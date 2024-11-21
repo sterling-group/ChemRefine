@@ -1,6 +1,32 @@
 import numpy as np
 import re
 from pathlib import Path
+import subprocess
+import argparse
+import os 
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(description='Code to automate the process of conformer searching, submits initial XTB calculation and improves precision')
+    parser.add_argument('input_file',help='Intial ORCA file for GOAT optimization for CHEAP level of theory')
+    parser.add_argument('output_dir',help='Directory where files will be written to')
+
+    #Optional arguments
+    parser.add_argument('-c','--cores',type=int,default=8,help='Max number of cores used throughout conformer search. For multiple files it will be cores/PAL')
+    
+def detect_goat_output(input_dir):
+    for files in os.listdir(input_dir):
+        if files.endswith('finalensemble.xyz'):
+            print('Final Ensemble File Already Exists Continuing with other Steps')
+            run_calc = False
+        else:
+            run_calc = True
+            print("No GOAT output found in directory, running GOAT.")
+
+def submit_qorca(input_file):
+    command = ["qorca", input_file] 
+    result = subprocess.run(command, check=True, text=True, capture_output=True)
+    jobid = result.stdout.split()[-1]
+    return jobid
 
 def read_input_file(input_path):
     """Read the ORCA input file."""
@@ -88,7 +114,10 @@ def write_preopt_coordinates(structures, output_file,cores):
             f.write("\n".join(structure["atoms"]) + "\n")
             f.write("*\n")
 
-
+def detect_goat_run(input_dir):
+    for files in os.listdir(input_dir):
+        if files.endswith('finalemsamble.xyz'):
+            print("File already exists")
 
 
 
