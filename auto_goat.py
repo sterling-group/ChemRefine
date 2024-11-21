@@ -8,19 +8,25 @@ import os
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Code to automate the process of conformer searching, submits initial XTB calculation and improves precision')
     parser.add_argument('input_file',help='Intial ORCA file for GOAT optimization for CHEAP level of theory')
-    parser.add_argument('output_dir',help='Directory where files will be written to')
 
     #Optional arguments
-    parser.add_argument('-c','--cores',type=int,default=8,help='Max number of cores used throughout conformer search. For multiple files it will be cores/PAL')
-    
+    parser.add_argument(
+    '-c','-cores',type=int,default=8,
+    help='Max number of cores used throughout conformer search. For multiple files it will be cores/PAL')
+    args = parser.parse_args()
+    return args
+
 def detect_goat_output(input_dir):
     for files in os.listdir(input_dir):
         if files.endswith('finalensemble.xyz'):
             print('Final Ensemble File Already Exists Continuing with other Steps')
             run_calc = False
+            break
         else:
             run_calc = True
-            print("No GOAT output found in directory, running GOAT.")
+    if run_calc == True:
+        print("No GOAT output found in directory, running GOAT.")
+    return run_calc
 
 def submit_qorca(input_file):
     command = ["qorca", input_file] 
@@ -114,10 +120,25 @@ def write_preopt_coordinates(structures, output_file,cores):
             f.write("\n".join(structure["atoms"]) + "\n")
             f.write("*\n")
 
-def detect_goat_run(input_dir):
-    for files in os.listdir(input_dir):
-        if files.endswith('finalemsamble.xyz'):
-            print("File already exists")
+def get_input_dir(input_file):
+    # Get directory from input file
+    input_dir = os.path.dirname(input_file)
+    
+    # If no directory is specified, default to the current working directory
+    if not input_dir:  # Empty string evaluates to False
+        input_dir = os.getcwd()
+    
+    return input_dir
 
+def main():
+    args = parse_arguments()
+    input_dir = get_input_dir(args.input_file)
+    goat_calc = detect_goat_output(input_dir)
+    if goat_calc: 
+        jobid = submit_qorca(args.input_file)
+    else: 
+        
+if __name__ == "__main__":
+    main()
 
 
