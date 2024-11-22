@@ -13,8 +13,9 @@ def parse_arguments():
 
     #Optional arguments
     parser.add_argument(
-    '-c','-cores',type=int,default=8,
+    '-cores','-c',type=int,default=8,
     help='Max number of cores used throughout conformer search. For multiple files it will be cores/PAL')
+    
     args = parser.parse_args()
     return args
 
@@ -216,40 +217,55 @@ def submit_multiple_files(max_cores, input_files, partition="sterling"):
     jobs = []  # List to track submitted jobs
 
     while input_files or jobs:
+        # Debugging: print current job status
+        print(f"Checking jobs. Jobs running: {len(jobs)}")
+        
         # Remove completed jobs from the list
-        jobs = [job for job in jobs if is_running(username, partition)]
+        jobs = [job for job in jobs if not is_job_finished(username, partition, job)]
+        
+        # Debugging: print jobs that are still running
+        print(f"Jobs still running: {jobs}")
 
         if input_files:
-            # Parse PAL value from the first input file
-            try:
-                pal_value = parse_pal_from_input(input_files[0])
-            except ValueError:
-                print("Error: PAL value not found in input file.")
-                return
+            input_file = input_files.pop(0)
+            input_path = Path(input_file)
             
+            try:
+                # Read the input file lines using the provided read_input_file function
+                lines = read_input_file(input_path)
+                
+                # Parse PAL value from the input file lines
+                pal_value = parse_pal_from_input(lines)
+                if pal_value is None:
+                    print(f"Error: PAL value not found in input file {input_file}.")
+                    continue
+            except Exception as e:
+                print(f"Error processing input file {input_file}: {e}")
+                continue
+
             # Check if max_cores is less than PAL value
             if max_cores < pal_value:
-                print(f"Warning: Max cores ({max_cores}) is less than the required PAL ({pal_value}). Defaulting to running 1 calculation at a time.")
+                print(f"Warning: Max cores ({max_cores}) is less than the required PAL ({pal_value}) in {input_file}. Defaulting to running 1 calculation at a time.")
                 cores_per_job = 1  # Only run 1 calculation at a time
             else:
                 cores_per_job = max_cores // pal_value  # Use available cores for multiple calculations
-            
+
             # Limit jobs to available cores
             num_jobs = min(len(input_files), cores_per_job)
 
             # Submit jobs
             for _ in range(num_jobs):
-                input_file = input_files.pop(0)
-                job_id = submit_job(input_file, partition)
+                job_id = submit_qorca(input_file)
                 print(f"Submitted job {job_id} for input file {input_file}")
                 jobs.append(job_id)
 
+        # If there are running jobs, wait a bit
         if jobs:
             print("Waiting for jobs to finish...")
             time.sleep(30)  # Wait before checking again
-
-
-
+        else:
+            print("No jobs to submit, exiting the loop.")
+            break
 
 def is_job_finished(job_id, partition="sterling"):
     """
@@ -287,6 +303,7 @@ def is_job_finished(job_id, partition="sterling"):
 
 def main():
     args = parse_arguments()
+    cores = args.cores
     input_file = args.input_file
     input_dir = get_input_dir(args.input_file)
     goat_calc = detect_goat_output(input_dir)
@@ -296,7 +313,7 @@ def main():
     coordinates = parse_ensemble_coordinates(final_ensemble_file)
     xyz_filenames = write_ensemble_coordinates(coordinates)
     input_files = create_orca_input(xyz_filenames)
-    submit_multiple_files(args.cores,input_files)
+    submit_multiple_files(cores,input_files)
 
 if __name__ == "__main__":
     main()
