@@ -13,7 +13,7 @@ def parse_arguments():
 
     #Optional arguments
     parser.add_argument(
-    '-cores','-c',type=int,default=8,
+    '-cores','-c',type=int,default=16,
     help='Max number of cores used throughout conformer search. For multiple files it will be cores/PAL')
     
     args = parser.parse_args()
@@ -132,6 +132,24 @@ def parse_coordinates(data):
     
     return result
 
+def submit_goat(input_file):
+    """
+    Submit a single file for calculation and wait until the job finishes.
+
+    Args:
+        input_file (str): Path to the input file to be submitted.
+    """
+    # Submit the job and get the job ID
+    jobid = submit_qorca(input_file)
+    print(f"Job {jobid} submitted for file {input_file}. Waiting for it to finish...")
+
+    # Check if the job is still running
+    while not is_job_finished(jobid):
+        print(f"Job {jobid} is still running. Checking again in 30 seconds...")
+        time.sleep(30)  # Wait for 30 seconds before checking again
+
+    print(f"Job {jobid} for file {input_file} has finished.")
+
 def write_preopt_coordinates(structures, output_file,cores):
     with open(output_file, "w") as f:
         f.write('%pal nprocs' + str(cores) +'\n')
@@ -192,16 +210,19 @@ def write_ensemble_coordinates(structures):
 
 def create_orca_input(xyz_files, template='step2.inp', output_dir='./'):
     input_files = []
+    output_files = []
     for file in xyz_files:
         base_name = os.path.splitext(os.path.basename(file))[0]
         input_file = os.path.join(output_dir, f"{base_name}.inp")
+        output_file = os.path.join(output_dir, f"{base_name}.out")
         input_files.append(input_file)
+        output_files.append(output_file)
         with open(template, "r") as tmpl:
             content = tmpl.read().replace("molecule.xyz", file)
         with open(input_file, "w") as inp:
             inp.write(content)
         print(f" Writing {input_file}:")
-    return input_files    
+    return input_files,output_files    
 
 def submit_multiple_files(max_cores, input_files, partition="sterling"):
     """
@@ -214,58 +235,86 @@ def submit_multiple_files(max_cores, input_files, partition="sterling"):
     - partition (str): SLURM partition to submit jobs.
     """
     username = subprocess.check_output("whoami", text=True).strip()
-    jobs = []  # List to track submitted jobs
+    jobs = []  # List to track submitted job IDs
 
     while input_files or jobs:
         # Debugging: print current job status
         print(f"Checking jobs. Jobs running: {len(jobs)}")
         
-        # Remove completed jobs from the list
-        jobs = [job for job in jobs if not is_job_finished(username, partition, job)]
+        # Remove completed jobs from the list by checking if they're finished
+        jobs = [job for job in jobs if not is_job_finished(job, partition)]
         
         # Debugging: print jobs that are still running
         print(f"Jobs still running: {jobs}")
-
-        if input_files:
-            input_file = input_files.pop(0)
-            input_path = Path(input_file)
-            
-            try:
-                # Read the input file lines using the provided read_input_file function
-                lines = read_input_file(input_path)
-                
-                # Parse PAL value from the input file lines
-                pal_value = parse_pal_from_input(lines)
-                if pal_value is None:
-                    print(f"Error: PAL value not found in input file {input_file}.")
-                    continue
-            except Exception as e:
-                print(f"Error processing input file {input_file}: {e}")
+        
+def submit_multiple_files(input_files,max_cores=16,partition="sterling"):
+    """
+    Submit multiple calculations based on available cores, ensuring the number of running jobs 
+    does not exceed the specified max_cores. Submissions are sequential, and the function waits 
+    for cores to free up before submitting more.
+    
+    Args:
+        max_cores (int): Maximum number of cores to use simultaneously.
+        input_files (list): List of input file paths for calculations.
+        partition (str): Partition name for SLURM queue.
+    """
+    total_cores_used = 0
+    active_jobs = {}  # Map of job_id to cores used for tracking active jobs
+    
+    for input_file in input_files:
+        input_path = Path(input_file)
+        try:
+            # Read the input file and extract the PAL value
+            lines = read_input_file(input_path)
+            pal_value = parse_pal_from_input(lines)
+            if pal_value is None:
+                print(f"Error: PAL value not found in input file {input_file}. Skipping...")
                 continue
+            
+            cores_needed = pal_value
+            
+            # Wait if there aren't enough free cores to submit the next job
+            while total_cores_used + cores_needed > max_cores:
+                print("Waiting for jobs to finish to free up cores...")
+                
+                # Check active jobs and remove completed ones
+                completed_jobs = []
+                for job_id, cores in active_jobs.items():
+                    if is_job_finished(job_id, partition):
+                        completed_jobs.append(job_id)
+                        total_cores_used -= cores
+                
+                # Remove completed jobs from active_jobs
+                for job_id in completed_jobs:
+                    del active_jobs[job_id]
+                
+                time.sleep(30)  # Check every 30 seconds
 
-            # Check if max_cores is less than PAL value
-            if max_cores < pal_value:
-                print(f"Warning: Max cores ({max_cores}) is less than the required PAL ({pal_value}) in {input_file}. Defaulting to running 1 calculation at a time.")
-                cores_per_job = 1  # Only run 1 calculation at a time
-            else:
-                cores_per_job = max_cores // pal_value  # Use available cores for multiple calculations
+            # Submit the job
+            print(f"Submitting job for {input_file} requiring {cores_needed} cores...")
+            job_id = submit_qorca(input_file)
+            active_jobs[job_id] = cores_needed
+            total_cores_used += cores_needed
 
-            # Limit jobs to available cores
-            num_jobs = min(len(input_files), cores_per_job)
+        except Exception as e:
+            print(f"Error processing input file {input_file}: {e}")
+            continue
 
-            # Submit jobs
-            for _ in range(num_jobs):
-                job_id = submit_qorca(input_file)
-                print(f"Submitted job {job_id} for input file {input_file}")
-                jobs.append(job_id)
+    # Wait for all remaining jobs to finish
+    print("All jobs submitted. Waiting for remaining jobs to complete...")
+    while active_jobs:
+        completed_jobs = []
+        for job_id, cores in active_jobs.items():
+            if is_job_finished(job_id, partition):
+                completed_jobs.append(job_id)
+                total_cores_used -= cores
 
-        # If there are running jobs, wait a bit
-        if jobs:
-            print("Waiting for jobs to finish...")
-            time.sleep(30)  # Wait before checking again
-        else:
-            print("No jobs to submit, exiting the loop.")
-            break
+        for job_id in completed_jobs:
+            del active_jobs[job_id]
+
+        time.sleep(30)
+
+    print("All calculations finished.")
 
 def is_job_finished(job_id, partition="sterling"):
     """
@@ -299,21 +348,125 @@ def is_job_finished(job_id, partition="sterling"):
     except subprocess.CalledProcessError as e:
         print(f"Error running command: {e}")
         return False
+    
+def parse_last_orca_total_energy(file_path):
+    """Parse the last total energy from an ORCA output file."""
+    with open(file_path, 'r') as file:
+        content = file.read()
+    
+    # Regular expression to capture all total energy values
+    total_energy_pattern = r":: total energy\s+(-?\d+\.\d+) Eh"
+    matches = re.findall(total_energy_pattern, content)
+    
+    if matches:
+        # Select the last matched value
+        last_total_energy = float(matches[-1])
+        return last_total_energy
+    else:
+        raise ValueError(f"Total energy not found in file: {file_path}")
 
+def find_lowest_energy_file(file_list):
+    """Find the file with the lowest total energy."""
+    energy_file_mapping = {}
+    
+    for file in file_list:
+        try:
+            energy = parse_last_orca_total_energy(file)
+            energy_file_mapping[file] = energy
+        except ValueError as e:
+            print(e)
+    
+    # Determine the file with the lowest energy
+    if energy_file_mapping:
+        lowest_energy_file = min(energy_file_mapping, key=energy_file_mapping.get)
+        lowest_energy = energy_file_mapping[lowest_energy_file]
+        return lowest_energy_file, lowest_energy
+    else:
+        raise ValueError("No valid energies found in the file list.")
+
+def parse_final_coordinates(file_path):
+    """
+    Extract the Cartesian coordinates after the final energy evaluation in an ORCA output file.
+    
+    Args:
+        file_path (str): Path to the ORCA output file.
+    
+    Returns:
+        list: A list of tuples where each tuple represents an atom's type and its (x, y, z) coordinates.
+    """
+    with open(file_path, 'r') as file:
+        content = file.read()
+    
+    # Pattern to locate the final energy evaluation section
+    final_energy_pattern = r"\*{3} FINAL ENERGY EVALUATION AT THE STATIONARY POINT \*{3}.*?CARTESIAN COORDINATES \(ANGSTROEM\)\n-+\n((?:\s*[A-Za-z]+\s+-?\d+\.\d+\s+-?\d+\.\d+\s+-?\d+\.\d+\n)+)"
+    
+    # Match the section with Cartesian coordinates
+    match = re.search(final_energy_pattern, content, re.DOTALL)
+    if not match:
+        raise ValueError("Final coordinates section not found in the file.")
+    
+    # Extract the coordinate block
+    coordinates_block = match.group(1)
+    
+    # Parse individual lines of coordinates
+    coordinates = []
+    for line in coordinates_block.strip().split('\n'):
+        parts = line.split()
+        atom_type = parts[0]
+        x, y, z = map(float, parts[1:4])
+        coordinates.append((atom_type, x, y, z))
+    
+    return coordinates
+
+def write_xyz(coordinates):
+    """
+    Write atomic coordinates to an XYZ file.
+    
+    Args:
+        coordinates (list): A list of tuples containing atom type and (x, y, z) coordinates.
+        output_file (str): Path to the output XYZ file.
+    """
+    # Number of atoms
+    num_atoms = len(coordinates)
+    output_file = './step3.xyz'
+    with open(output_file, 'w') as file:
+        # Write the number of atoms
+        file.write(f"{num_atoms}\n \n")
+        # Write the atomic data
+        for atom in coordinates:
+            atom_type, x, y, z = atom
+            file.write(f"{atom_type} {x:.6f} {y:.6f} {z:.6f}\n")
+    return output_file
 
 def main():
+    #Get parse arguments
     args = parse_arguments()
     cores = args.cores
     input_file = args.input_file
     input_dir = get_input_dir(args.input_file)
+    #Detect if GOAT has been run in this directory if not run it
     goat_calc = detect_goat_output(input_dir)
     if goat_calc: 
-        jobid = submit_qorca(args.input_file)
+        jobid = submit_goat(args.input_file)
+    #Parse final ensemble geometries 
     final_ensemble_file = Path(input_file.split('/')[-1].split('.')[0] + '.finalensemble.xyz')
     coordinates = parse_ensemble_coordinates(final_ensemble_file)
+    #Create XYZ files with ensemble coordinates
     xyz_filenames = write_ensemble_coordinates(coordinates)
-    input_files = create_orca_input(xyz_filenames)
-    submit_multiple_files(cores,input_files)
+    #Using template input file creates a ORCA input that reads ensemble files
+    input_files,output_files = create_orca_input(xyz_filenames)
+    #Submits and checks for completion of Step 2 ensemble
+    submit_multiple_files(input_files,cores)
+    try:
+        lowest_file, lowest_energy = find_lowest_energy_file(output_files)
+        print(f"The file with the lowest energy is {lowest_file} with an energy of {lowest_energy} Eh.")
+    except ValueError as e:
+        print(e)
+    coordinates = parse_final_coordinates(lowest_file)
+    step3_xyz = write_xyz(coordinates)
+    step3_xyz=[step3_xyz]
+    step3_input_file,step3_output_file = create_orca_input(step3_xyz,template='step3.inp')
+    submit_multiple_files(step3_input_file,cores)
 
 if __name__ == "__main__":
     main()
