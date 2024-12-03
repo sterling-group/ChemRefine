@@ -1,6 +1,6 @@
 # **Automated Conformer Sampling and Refinement using ORCA**
 
-This repository contains a streamlined Python code for conformer sampling and refinement using **ORCA 6.0**. The code automates the process of progressively refining the level of theory, eliminating the need for manual intervention.
+This repository contains a streamlined Python code for conformer sampling and refinement using **ORCA 6.0**. The code automates the process of progressively refining the level of theory, eliminating the need for manual intervention. This code is meant for HPC slurm submission system, minor modifications must be made if you use HPC outside of our group (UTD). 
 
 ---
 
@@ -16,7 +16,7 @@ This repository contains a streamlined Python code for conformer sampling and re
 2. **Python 3.x**: The code is written in Python and requires the following libraries:
    - `os`
    - `subprocess`
-   - Additional libraries (if any, list them here).
+   - `numpy`
 3. **QORCA**: This is a Python script in our Group Repo for Orca submission
 ---
 
