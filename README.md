@@ -42,6 +42,6 @@ An example folder with input files (`Examples/`) is provided for reference.
 ## **Example Usage**
 - `python auto_goat.py -c 128 step1.inp`
 If you want to run the code in the background and not disconnect when you log off HPC:
-- nohup python auto_goat.py step1.inp -c 256 &
+- `nohup python auto_goat.py step1.inp -c 256 &`
 
 
