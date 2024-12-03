@@ -1,4 +1,3 @@
-import numpy as np
 import re
 from pathlib import Path
 import subprocess
@@ -455,7 +454,8 @@ def main():
     if goat_calc: 
         jobid = submit_goat(args.input_file)
     #Parse final ensemble geometries 
-    final_ensemble_file = Path(input_file.split('/')[-1].split('.')[0] + '.finalensemble.xyz')
+    base_name = Path(input_file).stem
+    final_ensemble_file = Path(base_name + '.finalensemble.xyz')
     coordinates = parse_ensemble_coordinates(final_ensemble_file)
     #Create XYZ files with ensemble coordinates
     xyz_filenames = write_ensemble_coordinates(coordinates)
