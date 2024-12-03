@@ -12,12 +12,8 @@ This repository contains a streamlined Python code for conformer sampling and re
 ---
 
 ## **Requirements**
-1. **ORCA 6.0**: Ensure ORCA is installed and added to your system's `PATH`.
-2. **Python 3.x**: The code is written in Python and requires the following libraries:
-   - `os`
-   - `subprocess`
-   - `numpy`
-3. **QORCA**: This is a Python script in our Group Repo for Orca submission
+1. **Python 3.x**: The code is written in Python and requires the following libraries:
+2. **QORCA**: This is a Python script in our Group Repo for Orca submission
 ---
 
 ## **Required Files**
