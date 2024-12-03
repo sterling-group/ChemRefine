@@ -16,6 +16,7 @@ This repository contains a streamlined Python code for conformer sampling and re
 2. **Python 3.x**: The code is written in Python and requires the following libraries:
    - `os`
    - `subprocess`
+   - `numpy`
 3. **QORCA**: This is a Python script in our Group Repo for Orca submission
 ---
 
