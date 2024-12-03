@@ -350,20 +350,26 @@ def is_job_finished(job_id, partition="sterling"):
         return False
     
 def parse_last_orca_total_energy(file_path):
-    """Parse the last total energy from an ORCA output file."""
+    """Parse the last total energy from an ORCA output file, supporting both XTB and DFT calculations."""
     with open(file_path, 'r') as file:
         content = file.read()
     
-    # Regular expression to capture all total energy values
-    total_energy_pattern = r":: total energy\s+(-?\d+\.\d+) Eh"
-    matches = re.findall(total_energy_pattern, content)
+    # Regular expressions for both XTB and DFT energy patterns
+    xtb_energy_pattern = r":: total energy\s+(-?\d+\.\d+) Eh"
+    dft_energy_pattern = r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)"
     
-    if matches:
-        # Select the last matched value
-        last_total_energy = float(matches[-1])
-        return last_total_energy
+    # Check for the presence of DFT or XTB specific lines and apply the corresponding pattern
+    if re.search(dft_energy_pattern, content):
+        match = re.search(dft_energy_pattern, content)
+    elif re.search(xtb_energy_pattern, content):
+        match = re.search(xtb_energy_pattern, content)
     else:
-        raise ValueError(f"Total energy not found in file: {file_path}")
+        sys.exit(f"Error: Total energy not found for step 2 in file: {file_path}")
+    
+    if match:
+        # Extract and return the energy
+        energy = float(match.group(1))
+        return energy
 
 def find_lowest_energy_file(file_list):
     """Find the file with the lowest total energy."""
