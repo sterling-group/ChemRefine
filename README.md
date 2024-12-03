@@ -39,5 +39,8 @@ The code requires **three ORCA input files** to function:
 An example folder with input files (`Examples/`) is provided for reference.
 
 ---
+## **Example Usage**
+- `python auto_goat.py -c 128 step1.inp`
+
 
 
