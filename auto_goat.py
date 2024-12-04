@@ -219,7 +219,7 @@ def create_orca_input(xyz_files, template='step2.inp', output_dir='./'):
         with open(template, "r") as tmpl:
             content = tmpl.read().replace("molecule.xyz", file)
         with open(input_file, "w") as inp:
-            inp.write(content)
+            inp.write(content + ' ')
         print(f" Writing {input_file}:")
     return input_files,output_files    
 
