@@ -24,12 +24,12 @@ steps:
     sample_type:
       method: "integer"
       parameters:
-        num_samples: 10
+        num_samples: 1
 
   # Step 4: Using a high-precision DFT to finalize the calculations on the best energy. 
   - step: 4
     calculation_type: "DFT"
     sample_type:
-      method: "integer"
-      parameters:
-        num_samples: 1 #Number of files to run for this step.
+      method: "None"
+      parameters: {} #End of file all calculations have been finished. 
+        
