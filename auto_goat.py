@@ -248,7 +248,7 @@ def submit_multiple_files(max_cores, input_files, partition="sterling"):
         # Debugging: print jobs that are still running
         print(f"Jobs still running: {jobs}")
         
-def submit_multiple_files(input_files,max_cores=16,partition="sterling"):
+def submit_files(input_files,max_cores=16,partition="sterling"):
     """
     Submit multiple calculations based on available cores, ensuring the number of running jobs 
     does not exceed the specified max_cores. Submissions are sequential, and the function waits 
@@ -350,27 +350,45 @@ def is_job_finished(job_id, partition="sterling"):
         print(f"Error running command: {e}")
         return False
     
-def parse_last_orca_total_energy(file_path):
-    """Parse the last total energy from an ORCA output file, supporting both XTB and DFT calculations."""
-    with open(file_path, 'r') as file:
-        content = file.read()
+def parse_last_orca_total_energies(file_paths):
+    """
+    Parse the last total energies from a list of ORCA output files, 
+    supporting both XTB and DFT calculations.
     
-    # Regular expressions for both XTB and DFT energy patterns
-    xtb_energy_pattern = r":: total energy\s+(-?\d+\.\d+) Eh"
-    dft_energy_pattern = r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)"
+    Parameters:
+        file_paths (list of str): List of file paths to ORCA output files.
     
-    # Check for the presence of DFT or XTB specific lines and apply the corresponding pattern
-    if re.search(dft_energy_pattern, content):
-        match = re.search(dft_energy_pattern, content)
-    elif re.search(xtb_energy_pattern, content):
-        match = re.search(xtb_energy_pattern, content)
-    else:
-        sys.exit(f"Error: Total energy not found for step 2 in file: {file_path}")
+    Returns:
+        dict: Dictionary with file paths as keys and parsed total energies as values.
+    """
+    energies = {}
     
-    if match:
-        # Extract and return the energy
-        energy = float(match.group(1))
-        return energy
+    for file_path in file_paths:
+        try:
+            with open(file_path, 'r') as file:
+                content = file.read()
+            
+            # Regular expressions for both XTB and DFT energy patterns
+            xtb_energy_pattern = r":: total energy\s+(-?\d+\.\d+) Eh"
+            dft_energy_pattern = r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)"
+            
+            # Check for the presence of DFT or XTB specific lines and apply the corresponding pattern
+            match = None
+            if re.search(dft_energy_pattern, content):
+                match = re.search(dft_energy_pattern, content)
+            elif re.search(xtb_energy_pattern, content):
+                match = re.search(xtb_energy_pattern, content)
+            else:
+                sys.exit(f"Error: Total energy not found in file: {file_path}")
+            
+            if match:
+                # Extract and store the energy in the dictionary
+                energy = float(match.group(1))
+                energies[file_path] = energy
+        except Exception as e:
+            sys.exit(f"Error while processing file {file_path}: {e}")
+    
+    return energies
 
 def find_lowest_energy_file(file_list):
     """Find the file with the lowest total energy."""
@@ -378,7 +396,7 @@ def find_lowest_energy_file(file_list):
     
     for file in file_list:
         try:
-            energy = parse_last_orca_total_energy(file)
+            energy = parse_last_orca_total_energies(file)
             energy_file_mapping[file] = energy
         except ValueError as e:
             print(e)
@@ -450,17 +468,72 @@ def main():
     args = parse_arguments()
     cores = args.cores
     yaml_input = args.yaml
-    
+        # Load the YAML configuration
+    yaml_file = "/mnt/e/Documents/GitHub/auto-conformer-goat/Examples/input.yaml"  # Path to the YAML file
+    with open(yaml_file, 'r') as file:
+        config = yaml.safe_load(file)
+
+    steps = config.get('steps', [])
+    calculation_functions = ["GOAT","DFT","XTB","MLFF"]
+
+    for step in steps:
+        step_number = step['step']
+        calculation_type = step['calculation_type']
+        sample_method = step['sample_type']['method']
+        parameters = step['sample_type']['parameters']
+
+        # Ensure calculation type is valid
+        if calculation_type not in calculation_functions:
+            raise ValueError(f"Invalid calculation type '{calculation_type}' in step {step_number}. Exiting...")
+
+        # Validate the presence of the input file
+        input_file = f"step{step_number}.inp"
+        if not os.path.exists(input_file):
+            raise FileNotFoundError(f"Input file '{input_file}' not found for step {step_number}. Exiting...")
+        
+        # Call the respective function for the calculation type
+        print(f"Running step {step_number}: {calculation_type} with sampling method '{sample_method}'")
+
+        #Check if initial xyz file exists
+        if step_number == 1:
+            xyz_file = f"step{step_number}.xyz"
+            xyz_filenames = [xyz_file]
+            if not os.path.exists(xyz_file):
+                raise FileNotFoundError(f"Initial Geometry '{xyz_file}' not found for step 1. Exiting...")
+        
+        #Create template for ORCA Input
+        input_template = f"step{step_number}.inp"
+        input_files,output_files = create_orca_input(xyz_filenames,template=input_template)
+
+        #Submit Files
+        submit_files(input_files)
+        
+        #Parse GOAT files
+        if calculation_type == 'GOAT':
+            final_ensemble_file = f"step{step_number}.finalensemble.xyz"
+            coordinates = parse_ensemble_coordinates(final_ensemble_file)
+        
+        if calculation_type == 'DFT' or calculation_type == 'XTB':
+            #TODO create a function that parses coordinates and structure and pairs them together.
+            #energies = parse_last_orca_total_energies(output_files)
+            if sample_method == 'E_window':
+                print(f"Sampling files that are within {parameters} kcal/mol")
+                #TODO Grab files that are within E_win 
+                #Use write_xyz to write the selected xyz
+            if sample_method == 'Boltzman':
+                print(f"Sampling files that are within {parameters}% of Boltzmann Distribution")
+                #TODO function that uses energies, calculate Boltz. weight. 
+                #Use write_xyz to write the selected xyz
+            if sample_method == 'integer':
+                print(f"Sampling files the {parameters} lowest energy files")
+                #TODO function that takes the integer and grabs the n lowest structures
+                #Use write_xyz to write the selected xyz
 
 
-    input_dir = get_input_dir(args.input_file)
-    #Detect if GOAT has been run in this directory if not run it
-    goat_calc = detect_goat_output(input_dir)
-    if goat_calc: 
-        jobid = submit_goat(args.input_file)
-    #Parse final ensemble geometries 
-    base_name = Path(input_file).stem
-    final_ensemble_file = Path(base_name + '.finalensemble.xyz')
+
+    """"
+    old code
+
     coordinates = parse_ensemble_coordinates(final_ensemble_file)
     #Create XYZ files with ensemble coordinates
     xyz_filenames = write_ensemble_coordinates(coordinates)
@@ -478,6 +551,8 @@ def main():
     step3_xyz=[step3_xyz]
     step3_input_file,step3_output_file = create_orca_input(step3_xyz,template='step3.inp')
     submit_multiple_files(step3_input_file,cores)
+
+    """""
 
 if __name__ == "__main__":
     main()
