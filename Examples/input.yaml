@@ -1,8 +1,8 @@
 # Sequential ORCA Input Configuration File
 # Define each step with its specific parameters.
-
+#This workflow reflects using GOAT and refining methods to improve the accuracy
 steps:
-  # Step 1: Example using DFT with E_window sampling
+  # Step 1: Example using GOAT with None sampling (it's the only option for GOAT)
   - step: 1
     calculation_type: "GOAT"           # Options: GOAT, DFT, MLFF, XTB
     sample_type:
@@ -18,7 +18,7 @@ steps:
       parameters:
         weight: 99.99
 
-  # Step 3: Example using GOAT with integer sampling
+  # Step 3: Using DFT to refine the calculation
   - step: 3
     calculation_type: "DFT"
     sample_type:
@@ -26,7 +26,7 @@ steps:
       parameters:
         num_samples: 10
 
-  # Step 4: Example using XTB without sampling
+  # Step 4: Using a high-precision DFT to finalize the calculations on the best energy. 
   - step: 4
     calculation_type: "DFT"
     sample_type:
