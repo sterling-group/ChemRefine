@@ -5,10 +5,12 @@ import argparse
 import os 
 import sys 
 import time
+import yaml 
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Code to automate the process of conformer searching, submits initial XTB calculation and improves precision')
-    parser.add_argument('input_file',help='Intial ORCA file for GOAT optimization for CHEAP level of theory')
+    parser.add_argument('input_file',help='YAML input file containing instructions for automated workflow')
 
     #Optional arguments
     parser.add_argument(
@@ -447,7 +449,10 @@ def main():
     #Get parse arguments
     args = parse_arguments()
     cores = args.cores
-    input_file = args.input_file
+    yaml_input = args.yaml
+    
+
+
     input_dir = get_input_dir(args.input_file)
     #Detect if GOAT has been run in this directory if not run it
     goat_calc = detect_goat_output(input_dir)
