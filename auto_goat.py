@@ -20,27 +20,6 @@ def parse_arguments():
     args = parser.parse_args()
     return args
 
-def detect_goat_output(input_dir):
-    """
-    Detecs if there are GOAT outputs in the directory, if so continues with other steps without running GOAT. 
-
-    Args: 
-    Input Dir
-
-    Returns: 
-    Bool for running calculation
-    """
-    for files in os.listdir(input_dir):
-        if files.endswith('finalensemble.xyz'):
-            print('Final Ensemble File Already Exists Continuing with other Steps')
-            run_calc = False
-            break
-        else:
-            run_calc = True
-    if run_calc == True:
-        print("No GOAT output found in directory, running GOAT.")
-    return run_calc
-
 def submit_qorca(input_file):
     """
     Uses our in-house code for submitting ORCA calculations
@@ -100,39 +79,6 @@ def parse_pal_from_input(lines):
                     return pal_value
     return None
 
-def parse_coordinates(data):
-    # If data is already a list of lines, no need to split
-    if isinstance(data, str):
-        lines = data.strip().split('\n')
-    else:
-        lines = data  # Assume it's already a list
-    
-    result = []
-    recording = False
-
-    for line in lines:
-        line = line.strip()
-        if line.startswith('* xyz'):
-            # Parse charge and multiplicity
-            _, _, charge, multiplicity = line.split()
-            charge, multiplicity = int(charge), int(multiplicity)
-            recording = True
-            current_structure = {
-                "header": f"* xyz {charge} {multiplicity}",
-                "atoms": []
-            }
-        elif line.startswith('*'):
-            if recording:
-                result.append(current_structure)
-                recording = False
-        elif recording:
-            # Parse atom data
-            parts = line.split()
-            atom = f"{parts[0]:<2} {float(parts[1]):>12.6f} {float(parts[2]):>12.6f} {float(parts[3]):>12.6f}"
-            current_structure["atoms"].append(atom)
-    
-    return result
-
 def submit_goat(input_file):
     """
     Submit a single file for calculation and wait until the job finishes.
@@ -171,45 +117,7 @@ def get_input_dir(input_file):
     
     return input_dir
 
-def parse_ensemble_coordinates(file_path):
-    with open(file_path, 'r') as file:
-        lines = file.readlines()
-    structures = []
-    current_structure = []
-    for line in lines:
-        # Split the line into columns
-        columns = line.strip().split()
-        # Check if the line is a coordinate line (4 columns)
-        if len(columns) == 4:
-            current_structure.append(line.strip())
-        # Check if the line starts a new structure (number of atoms)
-        elif len(columns) == 1 and columns[0].isdigit():
-            if current_structure:
-                structures.append(current_structure)
-                current_structure = []
-
-    # Add the last structure if it exists
-    if current_structure:
-        structures.append(current_structure)
-
-    return structures
-
-def write_ensemble_coordinates(structures):
-    print("Writing Ensemble XYZ files")
-    base_name = 'step2'
-    xyz_filenames = []
-    for i, structure in enumerate(structures, start=1):
-        output_file = os.path.join('./', f"{base_name}_structure_{i}.xyz")
-        xyz_filenames.append(output_file)
-        with open(output_file, 'w') as file:
-            # Write the number of atoms (line 1) and a blank line (line 2)
-            file.write(f"{len(structure)}\n\n")
-            # Write the coordinates
-            for atom in structure:
-                file.write(f"{atom}\n")
-    return xyz_filenames
-
-def create_orca_input(xyz_files, template='step2.inp', output_dir='./'):
+def create_orca_input(xyz_files, template, output_dir='./'):
     input_files = []
     output_files = []
     for file in xyz_files:
@@ -350,46 +258,6 @@ def is_job_finished(job_id, partition="sterling"):
         print(f"Error running command: {e}")
         return False
     
-def parse_last_orca_total_energies(file_paths):
-    """
-    Parse the last total energies from a list of ORCA output files, 
-    supporting both XTB and DFT calculations.
-    
-    Parameters:
-        file_paths (list of str): List of file paths to ORCA output files.
-    
-    Returns:
-        dict: Dictionary with file paths as keys and parsed total energies as values.
-    """
-    energies = {}
-    
-    for file_path in file_paths:
-        try:
-            with open(file_path, 'r') as file:
-                content = file.read()
-            
-            # Regular expressions for both XTB and DFT energy patterns
-            xtb_energy_pattern = r":: total energy\s+(-?\d+\.\d+) Eh"
-            dft_energy_pattern = r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)"
-            
-            # Check for the presence of DFT or XTB specific lines and apply the corresponding pattern
-            match = None
-            if re.search(dft_energy_pattern, content):
-                match = re.search(dft_energy_pattern, content)
-            elif re.search(xtb_energy_pattern, content):
-                match = re.search(xtb_energy_pattern, content)
-            else:
-                sys.exit(f"Error: Total energy not found in file: {file_path}")
-            
-            if match:
-                # Extract and store the energy in the dictionary
-                energy = float(match.group(1))
-                energies[file_path] = energy
-        except Exception as e:
-            sys.exit(f"Error while processing file {file_path}: {e}")
-    
-    return energies
-
 def find_lowest_energy_file(file_list):
     """Find the file with the lowest total energy."""
     energy_file_mapping = {}
@@ -409,59 +277,21 @@ def find_lowest_energy_file(file_list):
     else:
         raise ValueError("No valid energies found in the file list.")
 
-def parse_final_coordinates(file_path):
-    """
-    Extract the Cartesian coordinates after the final energy evaluation in an ORCA output file.
-    
-    Args:
-        file_path (str): Path to the ORCA output file.
-    
-    Returns:
-        list: A list of tuples where each tuple represents an atom's type and its (x, y, z) coordinates.
-    """
-    with open(file_path, 'r') as file:
-        content = file.read()
-    
-    # Pattern to locate the final energy evaluation section
-    final_energy_pattern = r"\*{3} FINAL ENERGY EVALUATION AT THE STATIONARY POINT \*{3}.*?CARTESIAN COORDINATES \(ANGSTROEM\)\n-+\n((?:\s*[A-Za-z]+\s+-?\d+\.\d+\s+-?\d+\.\d+\s+-?\d+\.\d+\n)+)"
-    
-    # Match the section with Cartesian coordinates
-    match = re.search(final_energy_pattern, content, re.DOTALL)
-    if not match:
-        raise ValueError("Final coordinates section not found in the file.")
-    
-    # Extract the coordinate block
-    coordinates_block = match.group(1)
-    
-    # Parse individual lines of coordinates
-    coordinates = []
-    for line in coordinates_block.strip().split('\n'):
-        parts = line.split()
-        atom_type = parts[0]
-        x, y, z = map(float, parts[1:4])
-        coordinates.append((atom_type, x, y, z))
-    
-    return coordinates
-
-def write_xyz(coordinates):
-    """
-    Write atomic coordinates to an XYZ file.
-    
-    Args:
-        coordinates (list): A list of tuples containing atom type and (x, y, z) coordinates.
-        output_file (str): Path to the output XYZ file.
-    """
-    # Number of atoms
-    num_atoms = len(coordinates)
-    output_file = './step3.xyz'
-    with open(output_file, 'w') as file:
-        # Write the number of atoms
-        file.write(f"{num_atoms}\n \n")
-        # Write the atomic data
-        for atom in coordinates:
-            atom_type, x, y, z = atom
-            file.write(f"{atom_type} {x:.6f} {y:.6f} {z:.6f}\n")
-    return output_file
+def write_xyz(structures):
+    print("Writing Ensemble XYZ files")
+    base_name = 'test'
+    xyz_filenames = []
+    for i, structure in enumerate(structures, start=1):
+        output_file = os.path.join('./', f"{base_name}_structure_{i}.xyz")
+        xyz_filenames.append(output_file)
+        with open(output_file, 'w') as file:
+            # Write the number of atoms (line 1) and a blank line (line 2)
+            file.write(f"{len(structure)}\n\n")
+            # Write the coordinates
+            for atom in structure:
+                element, x, y, z = atom  # Unpack the atom's data
+                file.write(f"{element} {x} {y} {z}\n")
+    return xyz_filenames
 
 def main():
     #Get parse arguments
