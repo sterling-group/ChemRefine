@@ -6,7 +6,7 @@ import os
 import sys 
 import time
 import yaml 
-
+import numpy as np 
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Code to automate the process of conformer searching, submits initial XTB calculation and improves precision')
@@ -258,24 +258,81 @@ def is_job_finished(job_id, partition="sterling"):
         print(f"Error running command: {e}")
         return False
     
-def find_lowest_energy_file(file_list):
-    """Find the file with the lowest total energy."""
-    energy_file_mapping = {}
+def parse_orca_output(file_path):
+    with open(file_path, 'r') as f:
+        content = f.read()
     
-    for file in file_list:
-        try:
-            energy = parse_last_orca_total_energies(file)
-            energy_file_mapping[file] = energy
-        except ValueError as e:
-            print(e)
+    # Extract all blocks of Cartesian coordinates (Angstrom)
+    angstrom_coordinates_blocks = re.findall(
+        r"CARTESIAN COORDINATES \(ANGSTROEM\)\n-+\n((?:.*?\n)+?)-+\n",
+        content,
+        re.DOTALL  # Ensure multiline matching
+    )
     
-    # Determine the file with the lowest energy
-    if energy_file_mapping:
-        lowest_energy_file = min(energy_file_mapping, key=energy_file_mapping.get)
-        lowest_energy = energy_file_mapping[lowest_energy_file]
-        return lowest_energy_file, lowest_energy
+    all_coordinates = []
+    for block in angstrom_coordinates_blocks:
+        coordinates = [line.split() for line in block.strip().splitlines()]
+        all_coordinates.append(coordinates)
+    
+    # Extract all energies (if available)
+    energies = re.findall(r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)", content)
+
+    return all_coordinates,energies
+
+def filter_structures(coordinates_list, energies, method, **kwargs):
+    """
+    Filters structures based on the provided method.
+    
+    Parameters:
+        coordinates_list (list): List of coordinate blocks (parsed from ORCA output).
+        energies (list): List of energies corresponding to each structure.
+        method (str): Filtering method. Options are 'energy_window', 'boltzmann', 'integer'.
+        **kwargs: Additional arguments for filtering methods.
+            - 'energy_window': `window` (float) - Energy window from the lowest energy.
+            - 'boltzmann': `percentage` (float) - Percentage of Boltzmann probability.
+            - 'integer': `num_structures` (int) - Number of structures to select.
+    
+    Returns:
+        filtered_coordinates (list): List of selected coordinate blocks.
+        filtered_ids (list): List of structure IDs of selected structures.
+    """
+    if len(coordinates_list) != len(energies):
+        raise ValueError(
+            f"Mismatch in list lengths: coordinates_list ({len(coordinates_list)}) "
+            f"and energies ({len(energies)}) must have the same length."
+        )
+    
+    # Ensure energies are floats for calculations
+    energies = np.array([float(e) for e in energies])
+    sorted_indices = np.argsort(energies)  # Sort energies and maintain indices
+
+    if method == 'energy_window':
+        window = kwargs.get('window', 0.5)  # Default energy window is 0.5
+        min_energy = np.min(energies)
+        selected_indices = [i for i in sorted_indices if energies[i] <= min_energy + window]
+    
+    elif method == 'boltzmann':
+        percentage = kwargs.get('percentage', 5)  # Default percentage is 5%
+        min_energy = np.min(energies)
+        boltzmann_weights = np.exp(-(energies - min_energy))
+        boltzmann_probs = boltzmann_weights / np.sum(boltzmann_weights)
+        cumulative_probs = np.cumsum(boltzmann_probs)
+        cutoff_prob = percentage / 100.0
+        selected_indices = [i for i, prob in enumerate(cumulative_probs) if prob <= cutoff_prob]
+    
+    elif method == 'integer':
+        num_structures = kwargs.get('num_structures', 5)  # Default to top 5 structures
+        num_structures = min(num_structures, len(coordinates_list))  # Ensure we don't exceed list length
+        selected_indices = sorted_indices[:num_structures]
+    
     else:
-        raise ValueError("No valid energies found in the file list.")
+        raise ValueError("Invalid method. Choose from 'energy_window', 'boltzmann', or 'integer'.")
+    
+    # Filter coordinates and assign IDs
+    filtered_coordinates = [coordinates_list[i] for i in selected_indices]
+    filtered_ids = [f"structure_{i}" for i in selected_indices]
+
+    return filtered_coordinates, filtered_ids
 
 def write_xyz(structures):
     print("Writing Ensemble XYZ files")
@@ -339,9 +396,8 @@ def main():
         submit_files(input_files)
         
         #Parse GOAT files
-        if calculation_type == 'GOAT':
-            final_ensemble_file = f"step{step_number}.finalensemble.xyz"
-            coordinates = parse_ensemble_coordinates(final_ensemble_file)
+        if not calculation_type == 'MLFF':
+            coordinates,energies = parse_orca_output(output_files)
         
         if calculation_type == 'DFT' or calculation_type == 'XTB':
             #TODO create a function that parses coordinates and structure and pairs them together.
