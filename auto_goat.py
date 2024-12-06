@@ -258,26 +258,58 @@ def is_job_finished(job_id, partition="sterling"):
         print(f"Error running command: {e}")
         return False
     
-def parse_orca_output(file_path):
-    with open(file_path, 'r') as f:
-        content = f.read()
+def parse_orca_output(file_paths, calculation_type):
+    all_coordinates_list = []
+    all_energies_list = []
     
-    # Extract all blocks of Cartesian coordinates (Angstrom)
-    angstrom_coordinates_blocks = re.findall(
-        r"CARTESIAN COORDINATES \(ANGSTROEM\)\n-+\n((?:.*?\n)+?)-+\n",
-        content,
-        re.DOTALL  # Ensure multiline matching
-    )
-    
-    all_coordinates = []
-    for block in angstrom_coordinates_blocks:
-        coordinates = [line.split() for line in block.strip().splitlines()]
-        all_coordinates.append(coordinates)
-    
-    # Extract all energies (if available)
-    energies = re.findall(r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)", content)
+    for file_path in file_paths:
+        with open(file_path, 'r') as f:
+            content = f.read()
 
-    return all_coordinates,energies
+        if calculation_type == 'goat':
+            # Extract all blocks of Cartesian coordinates (Angstrom)
+            angstrom_coordinates_blocks = re.findall(
+                r"CARTESIAN COORDINATES \(ANGSTROEM\)\n-+\n((?:.*?\n)+?)-+\n",
+                content,
+                re.DOTALL  # Ensure multiline matching
+            )
+
+            # Ensure that coordinates and energies match by pairing them correctly
+            energies = re.findall(r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)", content)
+            if len(angstrom_coordinates_blocks) != len(energies):
+                raise ValueError(f"Mismatch between number of coordinate blocks and energies in file: {file_path}")
+
+            # Process each coordinate block and its corresponding energy
+            for block, energy in zip(angstrom_coordinates_blocks, energies):
+                coordinates = [line.split() for line in block.strip().splitlines()]
+                all_coordinates_list.append(coordinates)  # Store coordinates for this structure
+                all_energies_list.append(energy)  # Store energy for this structure
+
+        elif calculation_type in ['dft', 'mlff']:
+            # Extract only the final Cartesian coordinates (Angstrom)
+            final_coordinates_block = re.findall(
+                r"CARTESIAN COORDINATES \(ANGSTROEM\)\n-+\n((?:.*?\n)+?)-+\n",
+                content,
+                re.DOTALL  # Ensure multiline matching
+            )
+
+            if final_coordinates_block:
+                final_coordinates = [line.split() for line in final_coordinates_block[-1].strip().splitlines()]
+            else:
+                final_coordinates = []
+
+            # Extract only the final energy (if available)
+            final_energy = re.findall(r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)", content)
+            energy = final_energy[-1] if final_energy else None
+
+            # Ensure coordinates and energies match
+            all_coordinates_list.append(final_coordinates)  # Append final coordinates
+            all_energies_list.append(energy)  # Append corresponding energy
+
+        else:
+            raise ValueError("Invalid calculation_type. Choose from 'goat', 'dft', or 'mlff'.")
+
+    return all_coordinates_list, all_energies_list
 
 def filter_structures(coordinates_list, energies, method, **kwargs):
     """
