@@ -259,6 +259,8 @@ def is_job_finished(job_id, partition="sterling"):
         return False
     
 def parse_orca_output(file_paths, calculation_type):
+    
+    calculation_type = calculation_type.lower()
     all_coordinates_list = []
     all_energies_list = []
     
@@ -311,67 +313,68 @@ def parse_orca_output(file_paths, calculation_type):
 
     return all_coordinates_list, all_energies_list
 
-def filter_structures(coordinates_list, energies, method, **kwargs):
+def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
     """
-    Filters structures based on the provided method.
-    
+    Filters structures based on the provided method while preserving original ID order.
+
     Parameters:
         coordinates_list (list): List of coordinate blocks (parsed from ORCA output).
         energies (list): List of energies corresponding to each structure.
+        id_list (list): List of IDs corresponding to each structure.
         method (str): Filtering method. Options are 'energy_window', 'boltzmann', 'integer'.
         **kwargs: Additional arguments for filtering methods.
             - 'energy_window': `window` (float) - Energy window from the lowest energy.
             - 'boltzmann': `percentage` (float) - Percentage of Boltzmann probability.
             - 'integer': `num_structures` (int) - Number of structures to select.
-    
+
     Returns:
         filtered_coordinates (list): List of selected coordinate blocks.
-        filtered_ids (list): List of structure IDs of selected structures.
+        filtered_ids (list): List of IDs of selected structures, preserving original order.
     """
-    if len(coordinates_list) != len(energies):
+    if len(coordinates_list) != len(energies) or len(energies) != len(id_list):
         raise ValueError(
-            f"Mismatch in list lengths: coordinates_list ({len(coordinates_list)}) "
-            f"and energies ({len(energies)}) must have the same length."
+            f"Mismatch in list lengths: coordinates_list ({len(coordinates_list)}), "
+            f"energies ({len(energies)}), and id_list ({len(id_list)}) must have the same length."
         )
-    
-    # Ensure energies are floats for calculations
+
     energies = np.array([float(e) for e in energies])
-    sorted_indices = np.argsort(energies)  # Sort energies and maintain indices
+    sorted_indices = np.argsort(energies)  # Sort energies to determine favored structures
 
     if method == 'energy_window':
-        window = kwargs.get('window', 0.5)  # Default energy window is 0.5
+        window = kwargs.get('window', 0.5)
         min_energy = np.min(energies)
-        selected_indices = [i for i in sorted_indices if energies[i] <= min_energy + window]
-    
+        favored_indices = [i for i in sorted_indices if energies[i] <= min_energy + window]
+
     elif method == 'boltzmann':
-        percentage = kwargs.get('percentage', 5)  # Default percentage is 5%
+        percentage = kwargs.get('percentage', 5)
         min_energy = np.min(energies)
         boltzmann_weights = np.exp(-(energies - min_energy))
         boltzmann_probs = boltzmann_weights / np.sum(boltzmann_weights)
         cumulative_probs = np.cumsum(boltzmann_probs)
         cutoff_prob = percentage / 100.0
-        selected_indices = [i for i, prob in enumerate(cumulative_probs) if prob <= cutoff_prob]
-    
+        favored_indices = [i for i, prob in enumerate(cumulative_probs) if prob <= cutoff_prob]
+
     elif method == 'integer':
-        num_structures = kwargs.get('num_structures', 5)  # Default to top 5 structures
-        num_structures = min(num_structures, len(coordinates_list))  # Ensure we don't exceed list length
-        selected_indices = sorted_indices[:num_structures]
-    
+        num_structures = kwargs.get('num_structures', 5)
+        num_structures = min(num_structures, len(coordinates_list))
+        favored_indices = sorted_indices[:num_structures]
+
     else:
         raise ValueError("Invalid method. Choose from 'energy_window', 'boltzmann', or 'integer'.")
-    
-    # Filter coordinates and assign IDs
-    filtered_coordinates = [coordinates_list[i] for i in selected_indices]
-    filtered_ids = [f"structure_{i}" for i in selected_indices]
+
+    # Create a mask to preserve only the favored structures while maintaining original order
+    mask = [i in favored_indices for i in range(len(coordinates_list))]
+    filtered_coordinates = [coord for coord, keep in zip(coordinates_list, mask) if keep]
+    filtered_ids = [id_ for id_, keep in zip(id_list, mask) if keep]
 
     return filtered_coordinates, filtered_ids
 
-def write_xyz(structures):
+def write_xyz(structures,step_number,structure_id):
     print("Writing Ensemble XYZ files")
-    base_name = 'test'
+    base_name = f"step{step_number}"
     xyz_filenames = []
     for i, structure in enumerate(structures, start=1):
-        output_file = os.path.join('./', f"{base_name}_structure_{i}.xyz")
+        output_file = os.path.join('./', f"{base_name}_structure_{structure_id}.xyz")
         xyz_filenames.append(output_file)
         with open(output_file, 'w') as file:
             # Write the number of atoms (line 1) and a blank line (line 2)
@@ -388,8 +391,7 @@ def main():
     cores = args.cores
     yaml_input = args.yaml
         # Load the YAML configuration
-    yaml_file = "/mnt/e/Documents/GitHub/auto-conformer-goat/Examples/input.yaml"  # Path to the YAML file
-    with open(yaml_file, 'r') as file:
+    with open(yaml_input, 'r') as file:
         config = yaml.safe_load(file)
 
     steps = config.get('steps', [])
@@ -413,9 +415,9 @@ def main():
         # Call the respective function for the calculation type
         print(f"Running step {step_number}: {calculation_type} with sampling method '{sample_method}'")
 
-        #Check if initial xyz file exists
+        #Initialize 1st step
         if step_number == 1:
-            xyz_file = f"step{step_number}.xyz"
+            xyz_file = f"step{step_number}_structure_1.xyz"
             xyz_filenames = [xyz_file]
             if not os.path.exists(xyz_file):
                 raise FileNotFoundError(f"Initial Geometry '{xyz_file}' not found for step 1. Exiting...")
@@ -427,27 +429,15 @@ def main():
         #Submit Files
         submit_files(input_files)
         
-        #Parse GOAT files
+        #Parse ORCA files
         if not calculation_type == 'MLFF':
-            coordinates,energies = parse_orca_output(output_files)
-        
-        if calculation_type == 'DFT' or calculation_type == 'XTB':
-            #TODO create a function that parses coordinates and structure and pairs them together.
-            #energies = parse_last_orca_total_energies(output_files)
-            if sample_method == 'E_window':
-                print(f"Sampling files that are within {parameters} kcal/mol")
-                #TODO Grab files that are within E_win 
-                #Use write_xyz to write the selected xyz
-            if sample_method == 'Boltzman':
-                print(f"Sampling files that are within {parameters}% of Boltzmann Distribution")
-                #TODO function that uses energies, calculate Boltz. weight. 
-                #Use write_xyz to write the selected xyz
-            if sample_method == 'integer':
-                print(f"Sampling files the {parameters} lowest energy files")
-                #TODO function that takes the integer and grabs the n lowest structures
-                #Use write_xyz to write the selected xyz
+            coordinates,energies = parse_orca_output(output_files,calculation_type)
+            filtered_coordinates, filtered_ids = filter_structures(coordinates,energies,sample_method,parameters)
+        else:
+            #TODO Add MLFF functionality 
+            raise ValueError("We are still working on this feature")
 
-
+        xyz_filenames = write_xyz(filtered_coordinates)
 
     """"
     old code
