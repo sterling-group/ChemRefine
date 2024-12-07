@@ -439,29 +439,6 @@ def main():
 
         xyz_filenames = write_xyz(filtered_coordinates)
 
-    """"
-    old code
-
-    coordinates = parse_ensemble_coordinates(final_ensemble_file)
-    #Create XYZ files with ensemble coordinates
-    xyz_filenames = write_ensemble_coordinates(coordinates)
-    #Using template input file creates a ORCA input that reads ensemble files
-    input_files,output_files = create_orca_input(xyz_filenames)
-    #Submits and checks for completion of Step 2 ensemble
-    submit_multiple_files(input_files,cores)
-    try:
-        lowest_file, lowest_energy = find_lowest_energy_file(output_files)
-        print(f"The file with the lowest energy is {lowest_file} with an energy of {lowest_energy} Eh.")
-    except ValueError as e:
-        print(e)
-    coordinates = parse_final_coordinates(lowest_file)
-    step3_xyz = write_xyz(coordinates)
-    step3_xyz=[step3_xyz]
-    step3_input_file,step3_output_file = create_orca_input(step3_xyz,template='step3.inp')
-    submit_multiple_files(step3_input_file,cores)
-
-    """""
-
 if __name__ == "__main__":
     main()
 
