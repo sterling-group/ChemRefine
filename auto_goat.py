@@ -369,11 +369,12 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
 
     return filtered_coordinates, filtered_ids
 
-def write_xyz(structures,step_number,structure_id):
+def write_xyz(structures, step_number, structure_ids):
     print("Writing Ensemble XYZ files")
     base_name = f"step{step_number}"
     xyz_filenames = []
-    for i, structure in enumerate(structures, start=1):
+    
+    for structure, structure_id in zip(structures, structure_ids):
         output_file = os.path.join('./', f"{base_name}_structure_{structure_id}.xyz")
         xyz_filenames.append(output_file)
         with open(output_file, 'w') as file:
@@ -383,6 +384,7 @@ def write_xyz(structures,step_number,structure_id):
             for atom in structure:
                 element, x, y, z = atom  # Unpack the atom's data
                 file.write(f"{element} {x} {y} {z}\n")
+    
     return xyz_filenames
 
 def main():
@@ -438,7 +440,8 @@ def main():
             raise ValueError("We are still working on this feature")
 
         xyz_filenames = write_xyz(filtered_coordinates)
-
+        #create_orca_input
+        #submit_multiple_files
 if __name__ == "__main__":
     main()
 

@@ -6,15 +6,15 @@ steps:
   - step: 1
     calculation_type: "GOAT"           # Options: GOAT, DFT, MLFF, XTB
     sample_type:
-      method: "None"              # Options: E_window, Boltzmann_distribution, integer, None
-      parameters: {}       #GOAT takes all of the values from the final ensemble.
+      method: "integer"              # Options: E_window, Boltzmann_distribution, integer
+      parameters: 1      #GOAT takes all of the values from the final ensemble.
              
 
   # Step 2: Example using MLFF with Boltzmann distribution sampling
   - step: 2
-    calculation_type: "MLFF"
+    calculation_type: "DFT"
     sample_type:
-      method: "Boltzmann_distribution"
+      method: "boltzmann"
       parameters:
         weight: 99.99
 
@@ -22,7 +22,7 @@ steps:
   - step: 3
     calculation_type: "DFT"
     sample_type:
-      method: "integer"
+      method: "energy_window"
       parameters:
         num_samples: 1
 
