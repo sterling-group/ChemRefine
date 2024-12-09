@@ -440,12 +440,11 @@ def main():
             input_files,output_files = create_orca_input(xyz_filenames,template=input_template)
 
             #Submit Files
-            print(f"Submitting {input_files}:")
             submit_files(input_files,cores)
 
             #Parse and filter
             coordinates,energies = parse_orca_output(output_files,calculation_type)
-            filtered_coordinates, filtered_ids = filter_structures(coordinates,energies,ids,sample_method,parameters=parameters)
+            filtered_coordinates, filtered_ids = filter_structures(coordinates,energies,filtered_ids,sample_method,parameters=parameters)
 
         else:
             #TODO Add MLFF functionality 
