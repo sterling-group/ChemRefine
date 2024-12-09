@@ -420,14 +420,14 @@ def main():
 
         #Initialize 1st step
         if step_number == 1:
-            xyz_file = "step1_structure_1.xyz"
+            xyz_file = "step1.xyz"
             inp_file = "step1.inp"
             xyz_filenames = [xyz_file]
             input_files,output_files = create_orca_input(xyz_filenames,template=inp_file)
-            print(f"Submitting file {input_files}")
             submit_files(input_files,cores)
             coordinates,energies = parse_orca_output(output_files,calculation_type)
-            ids = [i for i in range(2, len(energies) + 2)]
+            ids = [i for i in range(1, len(energies) + 1)]
+            print(f"Checking length of lists: coords ={len(coordinates)},energies={len(energies)},ids={len(ids)}")
             continue
 
         
@@ -435,6 +435,7 @@ def main():
         if not calculation_type == 'MLFF':
             coordinates,energies = parse_orca_output(output_files,calculation_type)
             filtered_coordinates, filtered_ids = filter_structures(coordinates,energies,ids,sample_method,parameters=parameters)
+            print(f"Checking length of lists: coords ={len(coordinates)},energies={len(energies)},ids={len(ids)}")
         else:
             #TODO Add MLFF functionality 
             raise ValueError("We are still working on this feature")
