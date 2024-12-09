@@ -189,6 +189,7 @@ def submit_files(input_files,max_cores=16,partition="sterling"):
                 # Check active jobs and remove completed ones
                 completed_jobs = []
                 for job_id, cores in active_jobs.items():
+                    print(f"Job ID {job_id} is running with {cores}")
                     if is_job_finished(job_id, partition):
                         completed_jobs.append(job_id)
                         total_cores_used -= cores
@@ -423,18 +424,23 @@ def main():
             inp_file = "step1.inp"
             xyz_filenames = [xyz_file]
             input_files,output_files = create_orca_input(xyz_filenames,template=inp_file)
-            if not os.path.exists(xyz_file):
-                raise FileNotFoundError(f"Initial Geometry '{xyz_file}' not found for step 1. Exiting...")
+            print(f"Submitting file {input_files}")
+            submit_files(input_files,cores)
+            break
+
+
         
         #Parse ORCA files
         if not calculation_type == 'MLFF':
             coordinates,energies = parse_orca_output(output_files,calculation_type)
-            filtered_coordinates, filtered_ids = filter_structures(coordinates,energies,sample_method,parameters)
+            if step_number == 1:
+                ids = [i for i in range(2, len(energies) + 2)]
+            filtered_coordinates, filtered_ids = filter_structures(coordinates,energies,ids,sample_method,parameters=parameters)
         else:
             #TODO Add MLFF functionality 
             raise ValueError("We are still working on this feature")
 
-        xyz_filenames = write_xyz(filtered_coordinates)
+        xyz_filenames = write_xyz(filtered_coordinates,step_number,filtered_ids)
       
         #Create template for ORCA Input
         input_template = f"step{step_number}.inp"
@@ -442,11 +448,7 @@ def main():
 
         #Submit Files
         print(f"Submitting {input_files}:")
-        submit_files(input_files)
-
-
-
-
+        submit_files(input_files,cores)
 
 if __name__ == "__main__":
     main()
