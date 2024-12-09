@@ -391,7 +391,7 @@ def main():
     #Get parse arguments
     args = parse_arguments()
     cores = args.cores
-    yaml_input = args.yaml
+    yaml_input = args.input_file
         # Load the YAML configuration
     with open(yaml_input, 'r') as file:
         config = yaml.safe_load(file)
@@ -421,6 +421,7 @@ def main():
         if step_number == 1:
             xyz_file = f"step{step_number}_structure_1.xyz"
             xyz_filenames = [xyz_file]
+            
             if not os.path.exists(xyz_file):
                 raise FileNotFoundError(f"Initial Geometry '{xyz_file}' not found for step 1. Exiting...")
         
@@ -429,6 +430,7 @@ def main():
         input_files,output_files = create_orca_input(xyz_filenames,template=input_template)
 
         #Submit Files
+        print(f"Submitting {input_files}:")
         submit_files(input_files)
         
         #Parse ORCA files
