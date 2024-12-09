@@ -427,29 +427,32 @@ def main():
             submit_files(input_files,cores)
             coordinates,energies = parse_orca_output(output_files,calculation_type)
             ids = [i for i in range(1, len(energies) + 1)]
-            print(f"Checking length of lists: coords ={len(coordinates)},energies={len(energies)},ids={len(ids)}")
+            filtered_coordinates,filtered_ids = filter_structures(coordinates,energies,ids,sample_method,parameters=parameters)
             continue
 
         
         #For loop body
         if not calculation_type == 'MLFF':
+            xyz_filenames = write_xyz(filtered_coordinates,step_number,filtered_ids)
+
+            #Create template for ORCA Input
+            input_template = f"step{step_number}.inp"
+            input_files,output_files = create_orca_input(xyz_filenames,template=input_template)
+
+            #Submit Files
+            print(f"Submitting {input_files}:")
+            submit_files(input_files,cores)
+
+            #Parse and filter
             coordinates,energies = parse_orca_output(output_files,calculation_type)
             filtered_coordinates, filtered_ids = filter_structures(coordinates,energies,ids,sample_method,parameters=parameters)
-            print(f"Checking length of lists: coords ={len(coordinates)},energies={len(energies)},ids={len(ids)}")
+
         else:
             #TODO Add MLFF functionality 
             raise ValueError("We are still working on this feature")
 
         xyz_filenames = write_xyz(filtered_coordinates,step_number,filtered_ids)
       
-        #Create template for ORCA Input
-        input_template = f"step{step_number}.inp"
-        input_files,output_files = create_orca_input(xyz_filenames,template=input_template)
-
-        #Submit Files
-        print(f"Submitting {input_files}:")
-        submit_files(input_files,cores)
-
 if __name__ == "__main__":
     main()
 
