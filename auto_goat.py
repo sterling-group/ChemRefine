@@ -419,19 +419,12 @@ def main():
 
         #Initialize 1st step
         if step_number == 1:
-            xyz_file = f"step{step_number}_structure_1.xyz"
+            xyz_file = "step1_structure_1.xyz"
+            inp_file = "step1.inp"
             xyz_filenames = [xyz_file]
-            
+            input_files,output_files = create_orca_input(xyz_filenames,template=inp_file)
             if not os.path.exists(xyz_file):
                 raise FileNotFoundError(f"Initial Geometry '{xyz_file}' not found for step 1. Exiting...")
-        
-        #Create template for ORCA Input
-        input_template = f"step{step_number}.inp"
-        input_files,output_files = create_orca_input(xyz_filenames,template=input_template)
-
-        #Submit Files
-        print(f"Submitting {input_files}:")
-        submit_files(input_files)
         
         #Parse ORCA files
         if not calculation_type == 'MLFF':
@@ -442,8 +435,19 @@ def main():
             raise ValueError("We are still working on this feature")
 
         xyz_filenames = write_xyz(filtered_coordinates)
-        #create_orca_input
-        #submit_multiple_files
+      
+        #Create template for ORCA Input
+        input_template = f"step{step_number}.inp"
+        input_files,output_files = create_orca_input(xyz_filenames,template=input_template)
+
+        #Submit Files
+        print(f"Submitting {input_files}:")
+        submit_files(input_files)
+
+
+
+
+
 if __name__ == "__main__":
     main()
 
