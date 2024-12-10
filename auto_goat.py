@@ -342,13 +342,32 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
         favored_indices = [i for i in sorted_indices if energies[i] <= min_energy + window]
 
     elif method == 'boltzmann':
-        percentage = kwargs.get('percentage', 95)
-        min_energy = np.min(energies)
-        boltzmann_weights = np.exp(-(energies - min_energy))
+        # Constants
+        R_kcalmol_K = 0.0019872041  # kcal/(mol·K)
+        hartree_to_kcalmol = 627.5  # Conversion factor from Hartrees to kcal/mol
+
+        # Convert energies from Hartrees to kcal/mol
+        energies_kcalmol = energies * hartree_to_kcalmol
+
+        # Calculate minimum energy
+        min_energy = np.min(energies_kcalmol)
+
+        # Calculate Boltzmann weights (without normalization)
+        delta_E = energies_kcalmol - min_energy  # Energy differences (ΔE)
+        boltzmann_weights = np.exp(-delta_E / (R_kcalmol_K * temperature))
+
+        # Normalize Boltzmann weights to sum to 1
         boltzmann_probs = boltzmann_weights / np.sum(boltzmann_weights)
+
+        # Calculate cumulative probability distribution
         cumulative_probs = np.cumsum(boltzmann_probs)
+
+        # Determine the cutoff probability (percentage of total probability)
         cutoff_prob = percentage / 100.0
+
+        # Find the indices where cumulative probability exceeds the cutoff
         favored_indices = [i for i, prob in enumerate(cumulative_probs) if prob <= cutoff_prob]
+        
 
     elif method == 'integer':
         num_structures = kwargs.get('num_structures', 5)
