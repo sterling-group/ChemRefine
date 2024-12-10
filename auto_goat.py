@@ -250,7 +250,6 @@ def parse_orca_output(file_paths, calculation_type):
                 with open(finalensemble_file, 'r') as file:
                     lines = file.readlines()
 
-                structures = []
                 current_structure = []
                 energy = None
                 atom_count = None
@@ -259,7 +258,9 @@ def parse_orca_output(file_paths, calculation_type):
                     # Check if the line contains the number of atoms
                     if len(columns) == 1 and columns[0].isdigit():
                         if current_structure:  # If there's a current structure, save it
-                            structures.append((current_structure, energy))
+                            # Append the current structure and its corresponding energy
+                            all_coordinates_list.append([(atom.split()[0], float(atom.split()[1]), float(atom.split()[2]), float(atom.split()[3])) for atom in current_structure])
+                            all_energies_list.append(energy)
                             current_structure = []
                         atom_count = int(columns[0])
                         # The next line should contain the energy value
@@ -276,11 +277,7 @@ def parse_orca_output(file_paths, calculation_type):
 
                 # Add the last structure if it exists
                 if current_structure:
-                    structures.append((current_structure, energy))
-
-                # Process structures (coordinates) for this GOAT calculation
-                for structure, energy in structures:
-                    all_coordinates_list.append(structure)
+                    all_coordinates_list.append([(atom.split()[0], float(atom.split()[1]), float(atom.split()[2]), float(atom.split()[3])) for atom in current_structure])
                     all_energies_list.append(energy)
 
             except FileNotFoundError:
@@ -303,7 +300,7 @@ def parse_orca_output(file_paths, calculation_type):
             final_energy = re.findall(r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)", content)
             energy = final_energy[-1] if final_energy else None
 
-            # Ensure coordinates and energies match
+            # Append the coordinates and energy
             all_coordinates_list.append(final_coordinates)  # Append final coordinates
             all_energies_list.append(energy)  # Append corresponding energy
 
