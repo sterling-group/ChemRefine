@@ -231,7 +231,7 @@ def is_job_finished(job_id, partition="sterling"):
     except subprocess.CalledProcessError as e:
         print(f"Error running command: {e}")
         return False
-    
+
 def parse_orca_output(file_paths, calculation_type):
     calculation_type = calculation_type.lower()
     all_coordinates_list = []
@@ -286,32 +286,6 @@ def parse_orca_output(file_paths, calculation_type):
             except FileNotFoundError:
                 raise ValueError(f"Corresponding .finalensemble.xyz file not found: {finalensemble_file}")
         
-        elif calculation_type in ['dft', 'mlff']:
-            # Extract only the final Cartesian coordinates (Angstrom)
-            final_coordinates_block = re.findall(
-                r"CARTESIAN COORDINATES \(ANGSTROEM\)\n-+\n((?:.*?\n)+?)-+\n",
-                content,
-                re.DOTALL  # Ensure multiline matching
-            )
-
-            if final_coordinates_block:
-                final_coordinates = [line.split() for line in final_coordinates_block[-1].strip().splitlines()]
-            else:
-                final_coordinates = []
-
-            # Extract only the final energy (if available)
-            final_energy = re.findall(r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)", content)
-            energy = final_energy[-1] if final_energy else None
-
-            # Ensure coordinates and energies match
-            all_coordinates_list.append(final_coordinates)  # Append final coordinates
-            all_energies_list.append(energy)  # Append corresponding energy
-
-        else:
-            raise ValueError("Invalid calculation_type. Choose from 'goat', 'dft', or 'mlff'.")
-
-    return all_coordinates_list, all_energies_list
-
         elif calculation_type in ['dft', 'mlff']:
             # Extract only the final Cartesian coordinates (Angstrom)
             final_coordinates_block = re.findall(
@@ -531,7 +505,7 @@ def main():
             inp_file = "step1.inp"
             xyz_filenames = [xyz_file]
             input_files,output_files = create_orca_input(xyz_filenames,template=inp_file)
-            #submit_files(input_files,cores)
+            submit_files(input_files,cores)
             coordinates,energies = parse_orca_output(output_files,calculation_type)
             ids = [i for i in range(1, len(energies) + 1)]
             save_step_csv(energies,ids,step_number)
