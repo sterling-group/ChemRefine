@@ -421,8 +421,8 @@ def save_step_csv(energies, ids, step_number, temperature=298.15, filename="step
     """
     # Conversion factor from Hartrees to kcal/mol
     hartree_to_kcalmol = 627.5
-    # Boltzmann constant in kcal/(mol*K)
-    k_b_kcalmol = 0.0019872041  # Boltzmann constant in kcal/(mol*K)
+    # Gas constant in kcal/(mol*K)
+    R_kcalmol_K = 0.0019872041  # kcal/(mol*K)
     
     # Convert inputs to DataFrame
     df = pd.DataFrame({'Conformer': ids, 'Energy (Hartrees)': energies})
@@ -441,12 +441,16 @@ def save_step_csv(energies, ids, step_number, temperature=298.15, filename="step
     # Calculate energy differences (dE) in kcal/mol
     df['dE (kcal/mol)'] = df['Energy (kcal/mol)'] - df['Energy (kcal/mol)'].min()
     
-    # Calculate Boltzmann weights
-    df['Boltzmann Weight'] = np.exp(-df['dE (kcal/mol)'] / (k_b_kcalmol * temperature))
+    # Calculate Boltzmann weights using the corrected formula
+    delta_E_over_RT = df['dE (kcal/mol)'] / (R_kcalmol_K * temperature)
+    df['Boltzmann Weight'] = np.exp(-delta_E_over_RT)
     
     # Normalize Boltzmann weights to sum to 1
     total_weight = df['Boltzmann Weight'].sum()
-    df['% Total'] = (df['Boltzmann Weight'] / total_weight) * 100
+    df['Boltzmann Weight'] /= total_weight  # Normalize to ensure sum equals 1
+    
+    # Calculate % Total (percentage contribution of each Boltzmann weight)
+    df['% Total'] = df['Boltzmann Weight'] * 100
     
     # Calculate cumulative percentages
     df['% Cumulative'] = df['% Total'].cumsum()
