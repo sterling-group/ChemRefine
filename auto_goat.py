@@ -384,6 +384,41 @@ def move_step_files(step_number):
 
     print(f"Moved files for step {step_number} to directory '{step_dir}'")
 
+def save_step_csv(energies, ids, step_number, temperature=298.15, filename="steps.csv"):
+    """
+    Creates a new page of a CSV file for a given step with sorted energy data.
+    
+    Parameters:
+        energies (list or array): List of energy values.
+        ids (list or array): List of corresponding IDs.
+        step_number (int): Step number to label the CSV page.
+        temperature (float): Temperature in Kelvin (default is 298.15 K).
+        filename (str): Name of the output CSV file (default is "steps.csv").
+    """
+    # Boltzmann constant in eV/K
+    k_b = 8.617333262145e-5
+    
+    # Convert inputs to DataFrame
+    df = pd.DataFrame({'ID': ids, 'Energy': energies})
+    
+    # Sort by Energy
+    df = df.sort_values(by='Energy', ascending=True).reset_index(drop=True)
+    
+    # Calculate energy differences (dE) from the lowest energy
+    df['dE'] = df['Energy'] - df['Energy'].min()
+    
+    # Calculate Boltzmann weights
+    df['Boltzmann Weight'] = np.exp(-df['dE'] / (k_b * temperature))
+    
+    # Calculate cumulative Boltzmann weights
+    df['Cumulative Boltzmann Weight'] = df['Boltzmann Weight'].cumsum()
+    
+    # Save to CSV with step number as sheet name
+    mode = 'w' if step_number == 1 else 'a'  # Write if first step, append otherwise
+    header = step_number == 1  # Write header only for the first step
+    df.to_csv(filename, mode=mode, index=False, header=header)
+    print(f"Step {step_number} data saved to {filename}.")
+
 def main():
     #Get parse arguments
     args = parse_arguments()
@@ -422,6 +457,7 @@ def main():
             input_files,output_files = create_orca_input(xyz_filenames,template=inp_file)
             submit_files(input_files,cores)
             coordinates,energies = parse_orca_output(output_files,calculation_type)
+            save_step_csv(energies,ids,step_number)
             ids = [i for i in range(1, len(energies) + 1)]
             filtered_coordinates,filtered_ids = filter_structures(coordinates,energies,ids,sample_method,parameters=parameters) 
             move_step_files(1)
