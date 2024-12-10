@@ -7,6 +7,8 @@ import sys
 import time
 import yaml 
 import numpy as np 
+import glob
+import shutil
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Code to automate the process of conformer searching, submits initial XTB calculation and improves precision')
@@ -96,16 +98,7 @@ def submit_goat(input_file):
         time.sleep(30)  # Wait for 30 seconds before checking again
 
     print(f"Job {jobid} for file {input_file} has finished.")
-
-def write_preopt_coordinates(structures, output_file,cores):
-    with open(output_file, "w") as f:
-        f.write('%pal nprocs' + str(cores) +'\n')
-        f.write('\n!opt pbe def2svp \n')
-        f.write('%geom\nMaxIter 50 \nConvergence loose \nend \n')
-        for structure in structures:
-            f.write("\n" + structure["header"] + "\n")
-            f.write("\n".join(structure["atoms"]) + "\n")
-            f.write("*\n")
+    f.write("*\n")
 
 def get_input_dir(input_file):
     # Get directory from input file
@@ -120,6 +113,8 @@ def get_input_dir(input_file):
 def create_orca_input(xyz_files, template, output_dir='./'):
     input_files = []
     output_files = []
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
     for file in xyz_files:
         base_name = os.path.splitext(os.path.basename(file))[0]
         input_file = os.path.join(output_dir, f"{base_name}.inp")
@@ -132,29 +127,6 @@ def create_orca_input(xyz_files, template, output_dir='./'):
             inp.write(content + ' ')
         print(f" Writing {input_file}:")
     return input_files,output_files    
-
-def submit_multiple_files(max_cores, input_files, partition="sterling"):
-    """
-    Submit multiple calculations based on available cores, handling the case
-    where max_cores is less than the PAL value detected in the input files.
-
-    Parameters:
-    - max_cores (int): Maximum number of cores to use at one time.
-    - input_files (list): List of input files for calculations.
-    - partition (str): SLURM partition to submit jobs.
-    """
-    username = subprocess.check_output("whoami", text=True).strip()
-    jobs = []  # List to track submitted job IDs
-
-    while input_files or jobs:
-        # Debugging: print current job status
-        print(f"Checking jobs. Jobs running: {len(jobs)}")
-        
-        # Remove completed jobs from the list by checking if they're finished
-        jobs = [job for job in jobs if not is_job_finished(job, partition)]
-        
-        # Debugging: print jobs that are still running
-        print(f"Jobs still running: {jobs}")
         
 def submit_files(input_files,max_cores=16,partition="sterling"):
     """
@@ -388,6 +360,28 @@ def write_xyz(structures, step_number, structure_ids):
     
     return xyz_filenames
 
+def move_step_files(step_number):
+    """
+    Move all files starting with 'step{step_number}' to a directory named 'step{step_number}'.
+
+    Parameters:
+        step_number (int): The step number whose files need to be moved.
+    """
+    step_dir = f"step{step_number}"
+
+    # Create the directory if it doesn't exist
+    if not os.path.exists(step_dir):
+        os.makedirs(step_dir)
+
+    # Find all files starting with 'step{step_number}'
+    files_to_move = glob.glob(f"step{step_number}*")
+
+    # Move each file to the directory
+    for file in files_to_move:
+        shutil.move(file, step_dir)
+
+    print(f"Moved files for step {step_number} to directory '{step_dir}'")
+
 def main():
     #Get parse arguments
     args = parse_arguments()
@@ -427,7 +421,8 @@ def main():
             submit_files(input_files,cores)
             coordinates,energies = parse_orca_output(output_files,calculation_type)
             ids = [i for i in range(1, len(energies) + 1)]
-            filtered_coordinates,filtered_ids = filter_structures(coordinates,energies,ids,sample_method,parameters=parameters)
+            filtered_coordinates,filtered_ids = filter_structures(coordinates,energies,ids,sample_method,parameters=parameters) 
+            move_step_files(1)
             continue
 
         
@@ -449,9 +444,8 @@ def main():
         else:
             #TODO Add MLFF functionality 
             raise ValueError("We are still working on this feature")
-
-        xyz_filenames = write_xyz(filtered_coordinates,step_number,filtered_ids)
-      
+        move_step_files(step_number)
+        
 if __name__ == "__main__":
     main()
 
