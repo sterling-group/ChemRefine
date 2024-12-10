@@ -319,7 +319,7 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
         favored_indices = [i for i in sorted_indices if energies[i] <= min_energy + window]
 
     elif method == 'boltzmann':
-        percentage = kwargs.get('percentage', 5)
+        percentage = kwargs.get('percentage', 95)
         min_energy = np.min(energies)
         boltzmann_weights = np.exp(-(energies - min_energy))
         boltzmann_probs = boltzmann_weights / np.sum(boltzmann_weights)
@@ -329,9 +329,11 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
 
     elif method == 'integer':
         num_structures = kwargs.get('num_structures', 5)
-        num_structures = min(num_structures, len(coordinates_list))
-        favored_indices = sorted_indices[:num_structures]
-
+        num_structures = min(num_structures, len(coordinates_list))  # Ensure we don't exceed the list length
+        if num_structures <= 0 or num_structures >= len(coordinates_list):  # If num_structures is larger than or equal to the list size
+            favored_indices = sorted_indices  # Return all indices (sorted by energy)
+        else:
+                favored_indices = sorted_indices[:num_structures]  # Return top 'num_structures' based on energy sorting
     else:
         raise ValueError("Invalid method. Choose from 'energy_window', 'boltzmann', or 'integer'.")
 
