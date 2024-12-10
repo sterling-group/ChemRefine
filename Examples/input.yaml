@@ -4,12 +4,11 @@
 steps:
   # Step 1: Example using GOAT with None sampling (it's the only option for GOAT)
   - step: 1
-    calculation_type: "GOAT"           # Options: GOAT, DFT, MLFF, XTB
+    calculation_type: "GOAT"           # Options: GOAT, DFT, MLFF
     sample_type:
       method: "integer"              # Options: E_window, Boltzmann_distribution, integer
-      parameters: 1      #GOAT takes all of the values from the final ensemble.
-             
-
+      parameters: 0                   #The 0 option returns all of the values      
+        
   # Step 2: Example using MLFF with Boltzmann distribution sampling
   - step: 2
     calculation_type: "DFT"
@@ -22,9 +21,9 @@ steps:
   - step: 3
     calculation_type: "DFT"
     sample_type:
-      method: "energy_window"
+      method: "energy_window"  
       parameters:
-        num_samples: 1
+        energy: 1  #This energy is in Hartrees.
 
   # Step 4: Using a high-precision DFT to finalize the calculations on the best energy. 
   - step: 4
@@ -33,3 +32,4 @@ steps:
       method: "None"
       parameters: {} #End of file all calculations have been finished. 
         
+#You can add as many parameters are you wish. 
