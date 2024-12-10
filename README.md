@@ -33,9 +33,9 @@ The code requires **ORCA input files** and ***Input yaml file*** to function:
    - Depening on how many steps of refinement are in your calculation you need to provide their input files.  
    - It is **recommended** to include a frequency calculation for accurate results at the final step.
    - Input files must have the final line have molecule.xyz.
- ```
+   ```
      * xyz 0 1 molecule.xyz
-     ```
+   ```
 An example folder with input files (`Examples/`) is provided for reference.
 
 ---
