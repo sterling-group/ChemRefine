@@ -9,6 +9,7 @@ import yaml
 import numpy as np 
 import glob
 import shutil
+import pandas as pd
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Code to automate the process of conformer searching, submits initial XTB calculation and improves precision')
@@ -232,7 +233,6 @@ def is_job_finished(job_id, partition="sterling"):
         return False
     
 def parse_orca_output(file_paths, calculation_type):
-    
     calculation_type = calculation_type.lower()
     all_coordinates_list = []
     all_energies_list = []
@@ -241,24 +241,76 @@ def parse_orca_output(file_paths, calculation_type):
         with open(file_path, 'r') as f:
             content = f.read()
 
+        basename = os.path.splitext(file_path)[0]  # Get the base name of the current file
+        
         if calculation_type == 'goat':
-            # Extract all blocks of Cartesian coordinates (Angstrom)
-            angstrom_coordinates_blocks = re.findall(
+            # Parse the corresponding .finalensemble.xyz file
+            finalensemble_file = f"{basename}.finalensemble.xyz"
+            try:
+                with open(finalensemble_file, 'r') as file:
+                    lines = file.readlines()
+
+                structures = []
+                current_structure = []
+                energy = None
+                atom_count = None
+                for i, line in enumerate(lines):
+                    columns = line.strip().split()
+                    # Check if the line contains the number of atoms
+                    if len(columns) == 1 and columns[0].isdigit():
+                        if current_structure:  # If there's a current structure, save it
+                            structures.append((current_structure, energy))
+                            current_structure = []
+                        atom_count = int(columns[0])
+                        # The next line should contain the energy value
+                        if i + 1 < len(lines):
+                            energy_line = lines[i + 1].strip()
+                            energy_match = re.match(r"(-?\d+\.\d+)", energy_line)
+                            if energy_match:
+                                energy = energy_match.group(1)
+                            else:
+                                energy = None
+                    # Add coordinate lines to the current structure
+                    elif len(columns) == 4:  # Coordinates
+                        current_structure.append(line.strip())
+
+                # Add the last structure if it exists
+                if current_structure:
+                    structures.append((current_structure, energy))
+
+                # Process structures (coordinates) for this GOAT calculation
+                for structure, energy in structures:
+                    all_coordinates_list.append(structure)
+                    all_energies_list.append(energy)
+
+            except FileNotFoundError:
+                raise ValueError(f"Corresponding .finalensemble.xyz file not found: {finalensemble_file}")
+        
+        elif calculation_type in ['dft', 'mlff']:
+            # Extract only the final Cartesian coordinates (Angstrom)
+            final_coordinates_block = re.findall(
                 r"CARTESIAN COORDINATES \(ANGSTROEM\)\n-+\n((?:.*?\n)+?)-+\n",
                 content,
                 re.DOTALL  # Ensure multiline matching
             )
 
-            # Ensure that coordinates and energies match by pairing them correctly
-            energies = re.findall(r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)", content)
-            if len(angstrom_coordinates_blocks) != len(energies):
-                raise ValueError(f"Mismatch between number of coordinate blocks and energies in file: {file_path}")
+            if final_coordinates_block:
+                final_coordinates = [line.split() for line in final_coordinates_block[-1].strip().splitlines()]
+            else:
+                final_coordinates = []
 
-            # Process each coordinate block and its corresponding energy
-            for block, energy in zip(angstrom_coordinates_blocks, energies):
-                coordinates = [line.split() for line in block.strip().splitlines()]
-                all_coordinates_list.append(coordinates)  # Store coordinates for this structure
-                all_energies_list.append(energy)  # Store energy for this structure
+            # Extract only the final energy (if available)
+            final_energy = re.findall(r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)", content)
+            energy = final_energy[-1] if final_energy else None
+
+            # Ensure coordinates and energies match
+            all_coordinates_list.append(final_coordinates)  # Append final coordinates
+            all_energies_list.append(energy)  # Append corresponding energy
+
+        else:
+            raise ValueError("Invalid calculation_type. Choose from 'goat', 'dft', or 'mlff'.")
+
+    return all_coordinates_list, all_energies_list
 
         elif calculation_type in ['dft', 'mlff']:
             # Extract only the final Cartesian coordinates (Angstrom)
@@ -384,40 +436,64 @@ def move_step_files(step_number):
 
     print(f"Moved files for step {step_number} to directory '{step_dir}'")
 
-def save_step_csv(energies, ids, step_number, temperature=298.15, filename="steps.csv"):
+def save_step_csv(energies, ids, step_number, temperature=298.15, filename="steps.csv", precision=8):
     """
-    Creates a new page of a CSV file for a given step with sorted energy data.
+    Appends energy data for a given step to a CSV file, with step number included.
     
     Parameters:
-        energies (list or array): List of energy values.
+        energies (list or array): List of energy values in Hartrees.
         ids (list or array): List of corresponding IDs.
         step_number (int): Step number to label the CSV page.
         temperature (float): Temperature in Kelvin (default is 298.15 K).
         filename (str): Name of the output CSV file (default is "steps.csv").
+        precision (int): Decimal precision for output values (default is 8).
     """
-    # Boltzmann constant in eV/K
-    k_b = 8.617333262145e-5
+    # Conversion factor from Hartrees to kcal/mol
+    hartree_to_kcalmol = 627.5
+    # Boltzmann constant in kcal/(mol*K)
+    k_b_kcalmol = 0.0019872041  # Boltzmann constant in kcal/(mol*K)
     
     # Convert inputs to DataFrame
-    df = pd.DataFrame({'ID': ids, 'Energy': energies})
+    df = pd.DataFrame({'Conformer': ids, 'Energy (Hartrees)': energies})
     
-    # Sort by Energy
-    df = df.sort_values(by='Energy', ascending=True).reset_index(drop=True)
+    # Ensure Energy column is numeric
+    df['Energy (Hartrees)'] = pd.to_numeric(df['Energy (Hartrees)'], errors='coerce')
+    if df['Energy (Hartrees)'].isnull().any():
+        raise ValueError("Non-numeric or missing energy values found. Please clean the input data.")
     
-    # Calculate energy differences (dE) from the lowest energy
-    df['dE'] = df['Energy'] - df['Energy'].min()
+    # Convert energy to kcal/mol
+    df['Energy (kcal/mol)'] = df['Energy (Hartrees)'] * hartree_to_kcalmol
+    
+    # Sort by Energy in kcal/mol
+    df = df.sort_values(by='Energy (kcal/mol)', ascending=True).reset_index(drop=True)
+    
+    # Calculate energy differences (dE) in kcal/mol
+    df['dE (kcal/mol)'] = df['Energy (kcal/mol)'] - df['Energy (kcal/mol)'].min()
     
     # Calculate Boltzmann weights
-    df['Boltzmann Weight'] = np.exp(-df['dE'] / (k_b * temperature))
+    df['Boltzmann Weight'] = np.exp(-df['dE (kcal/mol)'] / (k_b_kcalmol * temperature))
     
-    # Calculate cumulative Boltzmann weights
-    df['Cumulative Boltzmann Weight'] = df['Boltzmann Weight'].cumsum()
+    # Normalize Boltzmann weights to sum to 1
+    total_weight = df['Boltzmann Weight'].sum()
+    df['% Total'] = (df['Boltzmann Weight'] / total_weight) * 100
     
-    # Save to CSV with step number as sheet name
+    # Calculate cumulative percentages
+    df['% Cumulative'] = df['% Total'].cumsum()
+    
+    # Round values to desired precision
+    df = df.round({'Energy (kcal/mol)': precision, 'dE (kcal/mol)': precision, 
+                   'Boltzmann Weight': precision, '% Total': precision, 
+                   '% Cumulative': precision})
+    
+    # Add step number as a new column
+    df.insert(0, 'Step', step_number)
+    
+    # Save to CSV
     mode = 'w' if step_number == 1 else 'a'  # Write if first step, append otherwise
     header = step_number == 1  # Write header only for the first step
     df.to_csv(filename, mode=mode, index=False, header=header)
     print(f"Step {step_number} data saved to {filename}.")
+
 
 def main():
     #Get parse arguments
@@ -455,15 +531,14 @@ def main():
             inp_file = "step1.inp"
             xyz_filenames = [xyz_file]
             input_files,output_files = create_orca_input(xyz_filenames,template=inp_file)
-            submit_files(input_files,cores)
+            #submit_files(input_files,cores)
             coordinates,energies = parse_orca_output(output_files,calculation_type)
-            save_step_csv(energies,ids,step_number)
             ids = [i for i in range(1, len(energies) + 1)]
+            save_step_csv(energies,ids,step_number)
             filtered_coordinates,filtered_ids = filter_structures(coordinates,energies,ids,sample_method,parameters=parameters) 
             move_step_files(1)
             continue
 
-        
         #For loop body
         if not calculation_type == 'MLFF':
             xyz_filenames = write_xyz(filtered_coordinates,step_number,filtered_ids)
@@ -477,6 +552,7 @@ def main():
 
             #Parse and filter
             coordinates,energies = parse_orca_output(output_files,calculation_type)
+            save_step_csv(energies,filtered_ids,step_number)
             filtered_coordinates, filtered_ids = filter_structures(coordinates,energies,filtered_ids,sample_method,parameters=parameters)
 
         else:
