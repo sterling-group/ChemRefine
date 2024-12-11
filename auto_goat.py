@@ -434,6 +434,7 @@ def write_xyz(structures, step_number, structure_ids):
 def move_step_files(step_number):
     """
     Move all files starting with 'step{step_number}' to a directory named 'step{step_number}'.
+    If a file already exists in the destination, rename the existing file by adding a prefix 'old_'.
 
     Parameters:
         step_number (int): The step number whose files need to be moved.
@@ -441,17 +442,25 @@ def move_step_files(step_number):
     step_dir = f"step{step_number}"
 
     # Create the directory if it doesn't exist
-    if not os.path.exists(step_dir):
-        os.makedirs(step_dir)
+    os.makedirs(step_dir, exist_ok=True)
 
     # Find all files starting with 'step{step_number}'
     files_to_move = glob.glob(f"step{step_number}*")
 
     # Move each file to the directory
     for file in files_to_move:
-        shutil.move(file, step_dir)
+        try:
+            dest_path = os.path.join(step_dir, os.path.basename(file))
+            
+            # Check if the file exists in the destination
+            if os.path.exists(dest_path):
+                old_path = os.path.join(step_dir, f"old_{os.path.basename(file)}")
+                os.rename(dest_path, old_path)  # Rename the existing file with 'old_' prefix
+            
+            shutil.move(file, dest_path)
+        except Exception as e:
+            print(f"There was an error moving the file {file}: {e}")
 
-    print(f"Moved files for step {step_number} to directory '{step_dir}'")
 
 def save_step_csv(energies, ids, step_number, temperature=298.15, filename="steps.csv", precision=8):
     """
