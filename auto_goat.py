@@ -5,10 +5,15 @@ import argparse
 import os 
 import sys 
 import time
+import yaml 
+import numpy as np 
+import glob
+import shutil
+import pandas as pd
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Code to automate the process of conformer searching, submits initial XTB calculation and improves precision')
-    parser.add_argument('input_file',help='Intial ORCA file for GOAT optimization for CHEAP level of theory')
+    parser.add_argument('input_file',help='YAML input file containing instructions for automated workflow')
 
     #Optional arguments
     parser.add_argument(
@@ -17,27 +22,6 @@ def parse_arguments():
     
     args = parser.parse_args()
     return args
-
-def detect_goat_output(input_dir):
-    """
-    Detecs if there are GOAT outputs in the directory, if so continues with other steps without running GOAT. 
-
-    Args: 
-    Input Dir
-
-    Returns: 
-    Bool for running calculation
-    """
-    for files in os.listdir(input_dir):
-        if files.endswith('finalensemble.xyz'):
-            print('Final Ensemble File Already Exists Continuing with other Steps')
-            run_calc = False
-            break
-        else:
-            run_calc = True
-    if run_calc == True:
-        print("No GOAT output found in directory, running GOAT.")
-    return run_calc
 
 def submit_qorca(input_file):
     """
@@ -98,39 +82,6 @@ def parse_pal_from_input(lines):
                     return pal_value
     return None
 
-def parse_coordinates(data):
-    # If data is already a list of lines, no need to split
-    if isinstance(data, str):
-        lines = data.strip().split('\n')
-    else:
-        lines = data  # Assume it's already a list
-    
-    result = []
-    recording = False
-
-    for line in lines:
-        line = line.strip()
-        if line.startswith('* xyz'):
-            # Parse charge and multiplicity
-            _, _, charge, multiplicity = line.split()
-            charge, multiplicity = int(charge), int(multiplicity)
-            recording = True
-            current_structure = {
-                "header": f"* xyz {charge} {multiplicity}",
-                "atoms": []
-            }
-        elif line.startswith('*'):
-            if recording:
-                result.append(current_structure)
-                recording = False
-        elif recording:
-            # Parse atom data
-            parts = line.split()
-            atom = f"{parts[0]:<2} {float(parts[1]):>12.6f} {float(parts[2]):>12.6f} {float(parts[3]):>12.6f}"
-            current_structure["atoms"].append(atom)
-    
-    return result
-
 def submit_goat(input_file):
     """
     Submit a single file for calculation and wait until the job finishes.
@@ -148,16 +99,7 @@ def submit_goat(input_file):
         time.sleep(30)  # Wait for 30 seconds before checking again
 
     print(f"Job {jobid} for file {input_file} has finished.")
-
-def write_preopt_coordinates(structures, output_file,cores):
-    with open(output_file, "w") as f:
-        f.write('%pal nprocs' + str(cores) +'\n')
-        f.write('\n!opt pbe def2svp \n')
-        f.write('%geom\nMaxIter 50 \nConvergence loose \nend \n')
-        for structure in structures:
-            f.write("\n" + structure["header"] + "\n")
-            f.write("\n".join(structure["atoms"]) + "\n")
-            f.write("*\n")
+    f.write("*\n")
 
 def get_input_dir(input_file):
     # Get directory from input file
@@ -169,47 +111,11 @@ def get_input_dir(input_file):
     
     return input_dir
 
-def parse_ensemble_coordinates(file_path):
-    with open(file_path, 'r') as file:
-        lines = file.readlines()
-    structures = []
-    current_structure = []
-    for line in lines:
-        # Split the line into columns
-        columns = line.strip().split()
-        # Check if the line is a coordinate line (4 columns)
-        if len(columns) == 4:
-            current_structure.append(line.strip())
-        # Check if the line starts a new structure (number of atoms)
-        elif len(columns) == 1 and columns[0].isdigit():
-            if current_structure:
-                structures.append(current_structure)
-                current_structure = []
-
-    # Add the last structure if it exists
-    if current_structure:
-        structures.append(current_structure)
-
-    return structures
-
-def write_ensemble_coordinates(structures):
-    print("Writing Ensemble XYZ files")
-    base_name = 'step2'
-    xyz_filenames = []
-    for i, structure in enumerate(structures, start=1):
-        output_file = os.path.join('./', f"{base_name}_structure_{i}.xyz")
-        xyz_filenames.append(output_file)
-        with open(output_file, 'w') as file:
-            # Write the number of atoms (line 1) and a blank line (line 2)
-            file.write(f"{len(structure)}\n\n")
-            # Write the coordinates
-            for atom in structure:
-                file.write(f"{atom}\n")
-    return xyz_filenames
-
-def create_orca_input(xyz_files, template='step2.inp', output_dir='./'):
+def create_orca_input(xyz_files, template, output_dir='./'):
     input_files = []
     output_files = []
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
     for file in xyz_files:
         base_name = os.path.splitext(os.path.basename(file))[0]
         input_file = os.path.join(output_dir, f"{base_name}.inp")
@@ -222,31 +128,8 @@ def create_orca_input(xyz_files, template='step2.inp', output_dir='./'):
             inp.write(content + ' ')
         print(f" Writing {input_file}:")
     return input_files,output_files    
-
-def submit_multiple_files(max_cores, input_files, partition="sterling"):
-    """
-    Submit multiple calculations based on available cores, handling the case
-    where max_cores is less than the PAL value detected in the input files.
-
-    Parameters:
-    - max_cores (int): Maximum number of cores to use at one time.
-    - input_files (list): List of input files for calculations.
-    - partition (str): SLURM partition to submit jobs.
-    """
-    username = subprocess.check_output("whoami", text=True).strip()
-    jobs = []  # List to track submitted job IDs
-
-    while input_files or jobs:
-        # Debugging: print current job status
-        print(f"Checking jobs. Jobs running: {len(jobs)}")
         
-        # Remove completed jobs from the list by checking if they're finished
-        jobs = [job for job in jobs if not is_job_finished(job, partition)]
-        
-        # Debugging: print jobs that are still running
-        print(f"Jobs still running: {jobs}")
-        
-def submit_multiple_files(input_files,max_cores=16,partition="sterling"):
+def submit_files(input_files,max_cores=16,partition="sterling"):
     """
     Submit multiple calculations based on available cores, ensuring the number of running jobs 
     does not exceed the specified max_cores. Submissions are sequential, and the function waits 
@@ -279,6 +162,7 @@ def submit_multiple_files(input_files,max_cores=16,partition="sterling"):
                 # Check active jobs and remove completed ones
                 completed_jobs = []
                 for job_id, cores in active_jobs.items():
+                    print(f"Job ID {job_id} is running with {cores}")
                     if is_job_finished(job_id, partition):
                         completed_jobs.append(job_id)
                         total_cores_used -= cores
@@ -347,133 +231,329 @@ def is_job_finished(job_id, partition="sterling"):
     except subprocess.CalledProcessError as e:
         print(f"Error running command: {e}")
         return False
-    
-def parse_last_orca_total_energy(file_path):
-    """Parse the last total energy from an ORCA output file, supporting both XTB and DFT calculations."""
-    with open(file_path, 'r') as file:
-        content = file.read()
-    
-    # Regular expressions for both XTB and DFT energy patterns
-    xtb_energy_pattern = r":: total energy\s+(-?\d+\.\d+) Eh"
-    dft_energy_pattern = r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)"
-    
-    # Check for the presence of DFT or XTB specific lines and apply the corresponding pattern
-    if re.search(dft_energy_pattern, content):
-        match = re.search(dft_energy_pattern, content)
-    elif re.search(xtb_energy_pattern, content):
-        match = re.search(xtb_energy_pattern, content)
-    else:
-        sys.exit(f"Error: Total energy not found for step 2 in file: {file_path}")
-    
-    if match:
-        # Extract and return the energy
-        energy = float(match.group(1))
-        return energy
 
-def find_lowest_energy_file(file_list):
-    """Find the file with the lowest total energy."""
-    energy_file_mapping = {}
+def parse_orca_output(file_paths, calculation_type):
+    calculation_type = calculation_type.lower()
+    all_coordinates_list = []
+    all_energies_list = []
     
-    for file in file_list:
-        try:
-            energy = parse_last_orca_total_energy(file)
-            energy_file_mapping[file] = energy
-        except ValueError as e:
-            print(e)
-    
-    # Determine the file with the lowest energy
-    if energy_file_mapping:
-        lowest_energy_file = min(energy_file_mapping, key=energy_file_mapping.get)
-        lowest_energy = energy_file_mapping[lowest_energy_file]
-        return lowest_energy_file, lowest_energy
-    else:
-        raise ValueError("No valid energies found in the file list.")
+    for file_path in file_paths:
+        with open(file_path, 'r') as f:
+            content = f.read()
 
-def parse_final_coordinates(file_path):
+        basename = os.path.splitext(file_path)[0]  # Get the base name of the current file
+        
+        if calculation_type == 'goat':
+            # Parse the corresponding .finalensemble.xyz file
+            finalensemble_file = f"{basename}.finalensemble.xyz"
+            try:
+                with open(finalensemble_file, 'r') as file:
+                    lines = file.readlines()
+
+                current_structure = []
+                energy = None
+                atom_count = None
+                for i, line in enumerate(lines):
+                    columns = line.strip().split()
+                    # Check if the line contains the number of atoms
+                    if len(columns) == 1 and columns[0].isdigit():
+                        if current_structure:  # If there's a current structure, save it
+                            # Append the current structure and its corresponding energy
+                            all_coordinates_list.append([(atom.split()[0], float(atom.split()[1]), float(atom.split()[2]), float(atom.split()[3])) for atom in current_structure])
+                            all_energies_list.append(energy)
+                            current_structure = []
+                        atom_count = int(columns[0])
+                        # The next line should contain the energy value
+                        if i + 1 < len(lines):
+                            energy_line = lines[i + 1].strip()
+                            energy_match = re.match(r"(-?\d+\.\d+)", energy_line)
+                            if energy_match:
+                                energy = energy_match.group(1)
+                            else:
+                                energy = None
+                    # Add coordinate lines to the current structure
+                    elif len(columns) == 4:  # Coordinates
+                        current_structure.append(line.strip())
+
+                # Add the last structure if it exists
+                if current_structure:
+                    all_coordinates_list.append([(atom.split()[0], float(atom.split()[1]), float(atom.split()[2]), float(atom.split()[3])) for atom in current_structure])
+                    all_energies_list.append(energy)
+
+            except FileNotFoundError:
+                raise ValueError(f"Corresponding .finalensemble.xyz file not found: {finalensemble_file}")
+        
+        elif calculation_type in ['dft', 'mlff']:
+            # Extract only the final Cartesian coordinates (Angstrom)
+            final_coordinates_block = re.findall(
+                r"CARTESIAN COORDINATES \(ANGSTROEM\)\n-+\n((?:.*?\n)+?)-+\n",
+                content,
+                re.DOTALL  # Ensure multiline matching
+            )
+
+            if final_coordinates_block:
+                final_coordinates = [line.split() for line in final_coordinates_block[-1].strip().splitlines()]
+            else:
+                final_coordinates = []
+
+            # Extract only the final energy (if available)
+            final_energy = re.findall(r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)", content)
+            energy = final_energy[-1] if final_energy else None
+
+            # Append the coordinates and energy
+            all_coordinates_list.append(final_coordinates)  # Append final coordinates
+            all_energies_list.append(energy)  # Append corresponding energy
+
+        else:
+            raise ValueError("Invalid calculation_type. Choose from 'goat', 'dft', or 'mlff'.")
+
+    return all_coordinates_list, all_energies_list
+
+def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
     """
-    Extract the Cartesian coordinates after the final energy evaluation in an ORCA output file.
-    
-    Args:
-        file_path (str): Path to the ORCA output file.
-    
+    Filters structures based on the provided method while preserving original ID order.
+
+    Parameters:
+        coordinates_list (list): List of coordinate blocks (parsed from ORCA output).
+        energies (list): List of energies corresponding to each structure.
+        id_list (list): List of IDs corresponding to each structure.
+        method (str): Filtering method. Options are 'energy_window', 'boltzmann', 'integer'.
+        **kwargs: Additional arguments for filtering methods.
+            - 'energy_window': `window` (float) - Energy window from the lowest energy.
+            - 'boltzmann': `percentage` (float) - Percentage of Boltzmann probability.
+            - 'integer': `num_structures` (int) - Number of structures to select.
+
     Returns:
-        list: A list of tuples where each tuple represents an atom's type and its (x, y, z) coordinates.
+        filtered_coordinates (list): List of selected coordinate blocks.
+        filtered_ids (list): List of IDs of selected structures, preserving original order.
     """
-    with open(file_path, 'r') as file:
-        content = file.read()
-    
-    # Pattern to locate the final energy evaluation section
-    final_energy_pattern = r"\*{3} FINAL ENERGY EVALUATION AT THE STATIONARY POINT \*{3}.*?CARTESIAN COORDINATES \(ANGSTROEM\)\n-+\n((?:\s*[A-Za-z]+\s+-?\d+\.\d+\s+-?\d+\.\d+\s+-?\d+\.\d+\n)+)"
-    
-    # Match the section with Cartesian coordinates
-    match = re.search(final_energy_pattern, content, re.DOTALL)
-    if not match:
-        raise ValueError("Final coordinates section not found in the file.")
-    
-    # Extract the coordinate block
-    coordinates_block = match.group(1)
-    
-    # Parse individual lines of coordinates
-    coordinates = []
-    for line in coordinates_block.strip().split('\n'):
-        parts = line.split()
-        atom_type = parts[0]
-        x, y, z = map(float, parts[1:4])
-        coordinates.append((atom_type, x, y, z))
-    
-    return coordinates
+    if len(coordinates_list) != len(energies) or len(energies) != len(id_list):
+        raise ValueError(
+            f"Mismatch in list lengths: coordinates_list ({len(coordinates_list)}), "
+            f"energies ({len(energies)}), and id_list ({len(id_list)}) must have the same length."
+        )
 
-def write_xyz(coordinates):
-    """
-    Write atomic coordinates to an XYZ file.
+    energies = np.array([float(e) for e in energies])
+    sorted_indices = np.argsort(energies)  # Sort energies to determine favored structures
+
+    if method == 'energy_window':
+        window = kwargs.get('window', 0.5)
+        min_energy = np.min(energies)
+        favored_indices = [i for i in sorted_indices if energies[i] <= min_energy + window]
+
+    elif method == 'boltzmann':
+        # Constants
+        R_kcalmol_K = 0.0019872041  # kcal/(mol·K)
+        hartree_to_kcalmol = 627.5  # Conversion factor from Hartrees to kcal/mol
+
+        # Convert energies from Hartrees to kcal/mol
+        energies_kcalmol = energies * hartree_to_kcalmol
+
+        # Calculate minimum energy
+        min_energy = np.min(energies_kcalmol)
+
+        # Calculate Boltzmann weights (without normalization)
+        delta_E = energies_kcalmol - min_energy  # Energy differences (ΔE)
+        boltzmann_weights = np.exp(-delta_E / (R_kcalmol_K * temperature))
+
+        # Normalize Boltzmann weights to sum to 1
+        boltzmann_probs = boltzmann_weights / np.sum(boltzmann_weights)
+
+        # Calculate cumulative probability distribution
+        cumulative_probs = np.cumsum(boltzmann_probs)
+
+        # Determine the cutoff probability (percentage of total probability)
+        cutoff_prob = percentage / 100.0
+
+        # Find the indices where cumulative probability exceeds the cutoff
+        favored_indices = [i for i, prob in enumerate(cumulative_probs) if prob <= cutoff_prob]
+        
+
+    elif method == 'integer':
+        num_structures = kwargs.get('num_structures', 5)
+        num_structures = min(num_structures, len(coordinates_list))  # Ensure we don't exceed the list length
+        if num_structures <= 0 or num_structures >= len(coordinates_list):  # If num_structures is larger than or equal to the list size
+            favored_indices = sorted_indices  # Return all indices (sorted by energy)
+        else:
+                favored_indices = sorted_indices[:num_structures]  # Return top 'num_structures' based on energy sorting
+    else:
+        raise ValueError("Invalid method. Choose from 'energy_window', 'boltzmann', or 'integer'.")
+
+    # Create a mask to preserve only the favored structures while maintaining original order
+    mask = [i in favored_indices for i in range(len(coordinates_list))]
+    filtered_coordinates = [coord for coord, keep in zip(coordinates_list, mask) if keep]
+    filtered_ids = [id_ for id_, keep in zip(id_list, mask) if keep]
+
+    return filtered_coordinates, filtered_ids
+
+def write_xyz(structures, step_number, structure_ids):
+    print("Writing Ensemble XYZ files")
+    base_name = f"step{step_number}"
+    xyz_filenames = []
     
-    Args:
-        coordinates (list): A list of tuples containing atom type and (x, y, z) coordinates.
-        output_file (str): Path to the output XYZ file.
+    for structure, structure_id in zip(structures, structure_ids):
+        output_file = os.path.join('./', f"{base_name}_structure_{structure_id}.xyz")
+        xyz_filenames.append(output_file)
+        with open(output_file, 'w') as file:
+            # Write the number of atoms (line 1) and a blank line (line 2)
+            file.write(f"{len(structure)}\n\n")
+            # Write the coordinates
+            for atom in structure:
+                element, x, y, z = atom  # Unpack the atom's data
+                file.write(f"{element} {x} {y} {z}\n")
+    
+    return xyz_filenames
+
+def move_step_files(step_number):
     """
-    # Number of atoms
-    num_atoms = len(coordinates)
-    output_file = './step3.xyz'
-    with open(output_file, 'w') as file:
-        # Write the number of atoms
-        file.write(f"{num_atoms}\n \n")
-        # Write the atomic data
-        for atom in coordinates:
-            atom_type, x, y, z = atom
-            file.write(f"{atom_type} {x:.6f} {y:.6f} {z:.6f}\n")
-    return output_file
+    Move all files starting with 'step{step_number}' to a directory named 'step{step_number}'.
+
+    Parameters:
+        step_number (int): The step number whose files need to be moved.
+    """
+    step_dir = f"step{step_number}"
+
+    # Create the directory if it doesn't exist
+    if not os.path.exists(step_dir):
+        os.makedirs(step_dir)
+
+    # Find all files starting with 'step{step_number}'
+    files_to_move = glob.glob(f"step{step_number}*")
+
+    # Move each file to the directory
+    for file in files_to_move:
+        shutil.move(file, step_dir)
+
+    print(f"Moved files for step {step_number} to directory '{step_dir}'")
+
+def save_step_csv(energies, ids, step_number, temperature=298.15, filename="steps.csv", precision=8):
+    """
+    Appends energy data for a given step to a CSV file, with step number included.
+    
+    Parameters:
+        energies (list or array): List of energy values in Hartrees.
+        ids (list or array): List of corresponding IDs.
+        step_number (int): Step number to label the CSV page.
+        temperature (float): Temperature in Kelvin (default is 298.15 K).
+        filename (str): Name of the output CSV file (default is "steps.csv").
+        precision (int): Decimal precision for output values (default is 8).
+    """
+    # Conversion factor from Hartrees to kcal/mol
+    hartree_to_kcalmol = 627.5
+    # Gas constant in kcal/(mol*K)
+    R_kcalmol_K = 0.0019872041  # kcal/(mol*K)
+    
+    # Convert inputs to DataFrame
+    df = pd.DataFrame({'Conformer': ids, 'Energy (Hartrees)': energies})
+    
+    # Ensure Energy column is numeric
+    df['Energy (Hartrees)'] = pd.to_numeric(df['Energy (Hartrees)'], errors='coerce')
+    if df['Energy (Hartrees)'].isnull().any():
+        raise ValueError("Non-numeric or missing energy values found. Please clean the input data.")
+    
+    # Convert energy to kcal/mol
+    df['Energy (kcal/mol)'] = df['Energy (Hartrees)'] * hartree_to_kcalmol
+    
+    # Sort by Energy in kcal/mol
+    df = df.sort_values(by='Energy (kcal/mol)', ascending=True).reset_index(drop=True)
+    
+    # Calculate energy differences (dE) in kcal/mol
+    df['dE (kcal/mol)'] = df['Energy (kcal/mol)'] - df['Energy (kcal/mol)'].min()
+    
+    # Calculate Boltzmann weights using the corrected formula
+    delta_E_over_RT = df['dE (kcal/mol)'] / (R_kcalmol_K * temperature)
+    df['Boltzmann Weight'] = np.exp(-delta_E_over_RT)
+    
+    # Normalize Boltzmann weights to sum to 1
+    total_weight = df['Boltzmann Weight'].sum()
+    df['Boltzmann Weight'] /= total_weight  # Normalize to ensure sum equals 1
+    
+    # Calculate % Total (percentage contribution of each Boltzmann weight)
+    df['% Total'] = df['Boltzmann Weight'] * 100
+    
+    # Calculate cumulative percentages
+    df['% Cumulative'] = df['% Total'].cumsum()
+    
+    # Round values to desired precision
+    df = df.round({'Energy (kcal/mol)': precision, 'dE (kcal/mol)': precision, 
+                   'Boltzmann Weight': precision, '% Total': precision, 
+                   '% Cumulative': precision})
+    
+    # Add step number as a new column
+    df.insert(0, 'Step', step_number)
+    
+    # Save to CSV
+    mode = 'w' if step_number == 1 else 'a'  # Write if first step, append otherwise
+    header = step_number == 1  # Write header only for the first step
+    df.to_csv(filename, mode=mode, index=False, header=header)
+    print(f"Step {step_number} data saved to {filename}.")
+
 
 def main():
     #Get parse arguments
     args = parse_arguments()
     cores = args.cores
-    input_file = args.input_file
-    input_dir = get_input_dir(args.input_file)
-    #Detect if GOAT has been run in this directory if not run it
-    goat_calc = detect_goat_output(input_dir)
-    if goat_calc: 
-        jobid = submit_goat(args.input_file)
-    #Parse final ensemble geometries 
-    base_name = Path(input_file).stem
-    final_ensemble_file = Path(base_name + '.finalensemble.xyz')
-    coordinates = parse_ensemble_coordinates(final_ensemble_file)
-    #Create XYZ files with ensemble coordinates
-    xyz_filenames = write_ensemble_coordinates(coordinates)
-    #Using template input file creates a ORCA input that reads ensemble files
-    input_files,output_files = create_orca_input(xyz_filenames)
-    #Submits and checks for completion of Step 2 ensemble
-    submit_multiple_files(input_files,cores)
-    try:
-        lowest_file, lowest_energy = find_lowest_energy_file(output_files)
-        print(f"The file with the lowest energy is {lowest_file} with an energy of {lowest_energy} Eh.")
-    except ValueError as e:
-        print(e)
-    coordinates = parse_final_coordinates(lowest_file)
-    step3_xyz = write_xyz(coordinates)
-    step3_xyz=[step3_xyz]
-    step3_input_file,step3_output_file = create_orca_input(step3_xyz,template='step3.inp')
-    submit_multiple_files(step3_input_file,cores)
+    yaml_input = args.input_file
+        # Load the YAML configuration
+    with open(yaml_input, 'r') as file:
+        config = yaml.safe_load(file)
 
+    steps = config.get('steps', [])
+    calculation_functions = ["GOAT","DFT","XTB","MLFF"]
+
+    for step in steps:
+        step_number = step['step']
+        calculation_type = step['calculation_type']
+        sample_method = step['sample_type']['method']
+        parameters = step['sample_type']['parameters']
+
+        # Ensure calculation type is valid
+        if calculation_type not in calculation_functions:
+            raise ValueError(f"Invalid calculation type '{calculation_type}' in step {step_number}. Exiting...")
+
+        # Validate the presence of the input file
+        input_file = f"step{step_number}.inp"
+        if not os.path.exists(input_file):
+            raise FileNotFoundError(f"Input file '{input_file}' not found for step {step_number}. Exiting...")
+        
+        # Call the respective function for the calculation type
+        print(f"Running step {step_number}: {calculation_type} with sampling method '{sample_method}'")
+
+        #Initialize 1st step
+        if step_number == 1:
+            xyz_file = "step1.xyz"
+            inp_file = "step1.inp"
+            xyz_filenames = [xyz_file]
+            input_files,output_files = create_orca_input(xyz_filenames,template=inp_file)
+            submit_files(input_files,cores)
+            coordinates,energies = parse_orca_output(output_files,calculation_type)
+            ids = [i for i in range(1, len(energies) + 1)]
+            save_step_csv(energies,ids,step_number)
+            filtered_coordinates,filtered_ids = filter_structures(coordinates,energies,ids,sample_method,parameters=parameters) 
+            move_step_files(1)
+            continue
+
+        #For loop body
+        if not calculation_type == 'MLFF':
+            xyz_filenames = write_xyz(filtered_coordinates,step_number,filtered_ids)
+
+            #Create template for ORCA Input
+            input_template = f"step{step_number}.inp"
+            input_files,output_files = create_orca_input(xyz_filenames,template=input_template)
+
+            #Submit Files
+            submit_files(input_files,cores)
+
+            #Parse and filter
+            coordinates,energies = parse_orca_output(output_files,calculation_type)
+            save_step_csv(energies,filtered_ids,step_number)
+            filtered_coordinates, filtered_ids = filter_structures(coordinates,energies,filtered_ids,sample_method,parameters=parameters)
+
+        else:
+            #TODO Add MLFF functionality 
+            raise ValueError("We are still working on this feature")
+        move_step_files(step_number)
+        
 if __name__ == "__main__":
     main()
 
