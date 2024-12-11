@@ -234,12 +234,25 @@ def is_job_finished(job_id, partition="sterling"):
         print(f"Error running command: {e}")
         return False
 
-def parse_orca_output(file_paths, calculation_type):
+def parse_orca_output(file_paths, calculation_type, dir='./'):
+    """
+    Parse ORCA output files for specified calculation types.
+
+    Parameters:
+        file_paths (list): List of file names (without directory) to process.
+        calculation_type (str): Type of calculation ('goat', 'dft', 'mlff').
+        dir (str): Directory to read files from. Defaults to './'.
+
+    Returns:
+        tuple: A list of coordinates and a list of energies.
+    """
     calculation_type = calculation_type.lower()
     all_coordinates_list = []
     all_energies_list = []
     
-    for file_path in file_paths:
+    for file_name in file_paths:
+        file_path = os.path.join(dir, file_name)  # Combine directory and file name
+        
         with open(file_path, 'r') as f:
             content = f.read()
 
@@ -261,7 +274,10 @@ def parse_orca_output(file_paths, calculation_type):
                     if len(columns) == 1 and columns[0].isdigit():
                         if current_structure:  # If there's a current structure, save it
                             # Append the current structure and its corresponding energy
-                            all_coordinates_list.append([(atom.split()[0], float(atom.split()[1]), float(atom.split()[2]), float(atom.split()[3])) for atom in current_structure])
+                            all_coordinates_list.append([
+                                (atom.split()[0], float(atom.split()[1]), float(atom.split()[2]), float(atom.split()[3]))
+                                for atom in current_structure
+                            ])
                             all_energies_list.append(energy)
                             current_structure = []
                         atom_count = int(columns[0])
@@ -279,7 +295,10 @@ def parse_orca_output(file_paths, calculation_type):
 
                 # Add the last structure if it exists
                 if current_structure:
-                    all_coordinates_list.append([(atom.split()[0], float(atom.split()[1]), float(atom.split()[2]), float(atom.split()[3])) for atom in current_structure])
+                    all_coordinates_list.append([
+                        (atom.split()[0], float(atom.split()[1]), float(atom.split()[2]), float(atom.split()[3]))
+                        for atom in current_structure
+                    ])
                     all_energies_list.append(energy)
 
             except FileNotFoundError:
@@ -530,12 +549,11 @@ def main():
             xyz_filenames = [xyz_file]
             if skip:
                 print("Skipping Step 1...")
-
-                print(f"Reading output from {output_files}.")
+                coordinates,energies = parse_orca_output(output_files,calculation_type,dir='./step1')
             else:
                 input_files,output_files = create_orca_input(xyz_filenames,template=inp_file)
                 submit_files(input_files,cores)
-            coordinates,energies = parse_orca_output(output_files,calculation_type)
+                coordinates,energies = parse_orca_output(output_files,calculation_type)
             ids = [i for i in range(1, len(energies) + 1)]
             save_step_csv(energies,ids,step_number)
             filtered_coordinates,filtered_ids = filter_structures(coordinates,energies,ids,sample_method,parameters=parameters) 
