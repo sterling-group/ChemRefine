@@ -33,7 +33,7 @@ def submit_qorca(input_file):
     Returns: 
             JobID of the submitted file
     """
-    command = ["qorca", input_file] 
+    command = ["qorca", "-x", "compute-2-07-01,compute-2-07-02", input_file]
     result = subprocess.run(command, check=True, text=True, capture_output=True)
     jobid = result.stdout.split()[-1]
     return jobid
