@@ -251,8 +251,13 @@ def parse_orca_output(file_paths, calculation_type, dir='./'):
     all_energies_list = []
     
     for file_name in file_paths:
-        file_path = os.path.join(dir, file_name)  # Combine directory and file name
+        # Ensure only the base name is appended to the directory
+        base_file_name = os.path.basename(file_name)
+        file_path = os.path.join(dir, base_file_name)
         
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+
         with open(file_path, 'r') as f:
             content = f.read()
 
