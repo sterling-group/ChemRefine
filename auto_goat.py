@@ -14,14 +14,14 @@ import pandas as pd # type: ignore
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Code to automate the process of conformer searching, submits initial XTB calculation and improves precision')
     parser.add_argument('input_file',help='YAML input file containing instructions for automated workflow')
-
+    
     #Optional arguments
     parser.add_argument(
     '-cores','-c',type=int,default=16,
     help='Max number of cores used throughout conformer search. For multiple files it will be cores/PAL')
     
-     parser.add_argument(
-    '-skip',store_bool,default=False
+    parser.add_argument(
+    '-skip',action='store_true',default=False,
     help='Skips the first step because it was already run, and starts with the next steps.')
     args = parser.parse_args()
     return args
@@ -497,6 +497,7 @@ def main():
     args = parse_arguments()
     cores = args.cores
     yaml_input = args.input_file
+    skip = args.skip
         # Load the YAML configuration
     with open(yaml_input, 'r') as file:
         config = yaml.safe_load(file)
@@ -527,13 +528,19 @@ def main():
             xyz_file = "step1.xyz"
             inp_file = "step1.inp"
             xyz_filenames = [xyz_file]
-            input_files,output_files = create_orca_input(xyz_filenames,template=inp_file)
-            submit_files(input_files,cores)
+            if skip:
+                print("Skipping Step 1...")
+
+                print(f"Reading output from {output_files}.")
+            else:
+                input_files,output_files = create_orca_input(xyz_filenames,template=inp_file)
+                submit_files(input_files,cores)
             coordinates,energies = parse_orca_output(output_files,calculation_type)
             ids = [i for i in range(1, len(energies) + 1)]
             save_step_csv(energies,ids,step_number)
             filtered_coordinates,filtered_ids = filter_structures(coordinates,energies,ids,sample_method,parameters=parameters) 
-            move_step_files(1)
+            if not skip:
+                move_step_files(1)
             continue
 
         #For loop body
