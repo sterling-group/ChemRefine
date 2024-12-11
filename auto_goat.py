@@ -549,9 +549,10 @@ def main():
             raise ValueError(f"Invalid calculation type '{calculation_type}' in step {step_number}. Exiting...")
 
         # Validate the presence of the input file
-        input_file = f"step{step_number}.inp"
-        if not os.path.exists(input_file):
-            raise FileNotFoundError(f"Input file '{input_file}' not found for step {step_number}. Exiting...")
+        if not skip:
+            input_file = f"step{step_number}.inp"
+            if not os.path.exists(input_file):
+                raise FileNotFoundError(f"Input file '{input_file}' not found for step {step_number}. Exiting...")
         
         # Call the respective function for the calculation type
         print(f"Running step {step_number}: {calculation_type} with sampling method '{sample_method}'")
