@@ -344,6 +344,7 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
     elif method == 'boltzmann':
         # Constants
         R_kcalmol_K = 0.0019872041  # kcal/(mol·K)
+        temperature = 298.15
         hartree_to_kcalmol = 627.5  # Conversion factor from Hartrees to kcal/mol
 
         # Convert energies from Hartrees to kcal/mol
