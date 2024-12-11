@@ -20,6 +20,9 @@ def parse_arguments():
     '-cores','-c',type=int,default=16,
     help='Max number of cores used throughout conformer search. For multiple files it will be cores/PAL')
     
+     parser.add_argument(
+    '-skip',store_bool,default=False
+    help='Skips the first step because it was already run, and starts with the next steps.')
     args = parser.parse_args()
     return args
 
