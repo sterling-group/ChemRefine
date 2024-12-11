@@ -5,11 +5,11 @@ import argparse
 import os 
 import sys 
 import time
-import yaml 
-import numpy as np 
+import yaml  # type: ignore
+import numpy as np  # type: ignore
 import glob
 import shutil
-import pandas as pd
+import pandas as pd # type: ignore
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Code to automate the process of conformer searching, submits initial XTB calculation and improves precision')
@@ -99,7 +99,6 @@ def submit_goat(input_file):
         time.sleep(30)  # Wait for 30 seconds before checking again
 
     print(f"Job {jobid} for file {input_file} has finished.")
-    f.write("*\n")
 
 def get_input_dir(input_file):
     # Get directory from input file
@@ -346,7 +345,7 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
         R_kcalmol_K = 0.0019872041  # kcal/(mol·K)
         temperature = 298.15
         hartree_to_kcalmol = 627.5  # Conversion factor from Hartrees to kcal/mol
-
+        percentage = kwargs.get('percentage',99)
         # Convert energies from Hartrees to kcal/mol
         energies_kcalmol = energies * hartree_to_kcalmol
 
