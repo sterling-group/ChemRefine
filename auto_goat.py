@@ -547,6 +547,7 @@ def main():
             xyz_file = "step1.xyz"
             inp_file = "step1.inp"
             xyz_filenames = [xyz_file]
+            input_files,output_files = create_orca_input(xyz_filenames,template=inp_file)
             if skip:
                 print("Skipping Step 1...")
                 coordinates,energies = parse_orca_output(output_files,calculation_type,dir='./step1')
