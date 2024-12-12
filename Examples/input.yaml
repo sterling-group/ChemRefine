@@ -31,7 +31,7 @@ steps:
   - step: 4
     calculation_type: "DFT"
     sample_type:
-      method: "Integer"
+      method: "integer"
       parameters: 
         num_structures: 0 
         
