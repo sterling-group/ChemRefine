@@ -29,7 +29,7 @@ steps:
   - step: 4
     calculation_type: "DFT"
     sample_type:
-      method: "None"
-      parameters: {} #End of file all calculations have been finished. 
+      method: "integer"
+      parameters: 1 #End of file all calculations have been finished. 
         
 #You can add as many parameters are you wish. 
