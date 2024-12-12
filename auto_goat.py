@@ -10,6 +10,10 @@ import numpy as np  # type: ignore
 import glob
 import shutil
 import pandas as pd # type: ignore
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Code to automate the process of conformer searching, submits initial XTB calculation and improves precision')
@@ -345,8 +349,8 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
         id_list (list): List of IDs corresponding to each structure.
         method (str): Filtering method. Options are 'energy_window', 'boltzmann', 'integer'.
         **kwargs: Additional arguments for filtering methods.
-            - 'energy_window': `window` (float) - Energy window from the lowest energy.
-            - 'boltzmann': `percentage` (float) - Percentage of Boltzmann probability.
+            - 'energy_window': `energy` (float) - Energy window from the lowest energy.
+            - 'boltzmann': `weight` (float) - Percentage of Boltzmann probability.
             - 'integer': `num_structures` (int) - Number of structures to select.
 
     Returns:
@@ -363,7 +367,12 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
     sorted_indices = np.argsort(energies)  # Sort energies to determine favored structures
 
     if method == 'energy_window':
-        window = kwargs.get('window', 0.5)
+        energy = kwargs.get('energy', 0.5)  # Default is 0.5 Hartrees
+        unit = kwargs.get('unit', 'hartree')  # Assume 'hartree' if no unit is specified
+        
+        if unit.lower() == 'kcal/mol':
+            energy /= 627.509474  # Convert kcal/mol to Hartrees
+
         min_energy = np.min(energies)
         favored_indices = [i for i in sorted_indices if energies[i] <= min_energy + window]
 
@@ -372,7 +381,7 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
         R_kcalmol_K = 0.0019872041  # kcal/(mol·K)
         temperature = 298.15
         hartree_to_kcalmol = 627.5  # Conversion factor from Hartrees to kcal/mol
-        percentage = kwargs.get('percentage',99)
+        percentage = kwargs.get('weight',99)
         # Convert energies from Hartrees to kcal/mol
         energies_kcalmol = energies * hartree_to_kcalmol
 
@@ -397,7 +406,7 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
         
 
     elif method == 'integer':
-        num_structures = kwargs.get('num_structures', 5)
+        num_structures = kwargs.get('num_structures', 0)
         num_structures = min(num_structures, len(coordinates_list))  # Ensure we don't exceed the list length
         if num_structures <= 0 or num_structures >= len(coordinates_list):  # If num_structures is larger than or equal to the list size
             favored_indices = sorted_indices  # Return all indices (sorted by energy)

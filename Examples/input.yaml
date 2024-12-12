@@ -7,7 +7,8 @@ steps:
     calculation_type: "GOAT"           # Options: GOAT, DFT, MLFF
     sample_type:
       method: "integer"              # Options: E_window, Boltzmann_distribution, integer
-      parameters: 0                   #The 0 option returns all of the values      
+      parameters: 
+        num_structures: 0                   #The 0 option returns all of the values      
         
   # Step 2: Example using MLFF with Boltzmann distribution sampling
   - step: 2
@@ -24,12 +25,14 @@ steps:
       method: "energy_window"  
       parameters:
         energy: 1  #This energy is in Hartrees.
+        unit: kcal/mol  #Options are (kcal/mol / hartree. Default is Hartree)
 
   # Step 4: Using a high-precision DFT to finalize the calculations on the best energy. 
   - step: 4
     calculation_type: "DFT"
     sample_type:
-      method: "None"
-      parameters: {} #End of file all calculations have been finished. 
+      method: "Integer"
+      parameters: 
+        num_structures: 0 
         
 #You can add as many parameters are you wish. 
