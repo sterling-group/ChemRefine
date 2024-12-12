@@ -371,10 +371,12 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
         unit = kwargs.get('unit', 'hartree')  # Assume 'hartree' if no unit is specified
         
         if unit.lower() == 'kcal/mol':
+            logging.info(f"Energy window provided in kcal/mol: {energy}")
             energy /= 627.509474  # Convert kcal/mol to Hartrees
+            logging.info(f"Converted energy window to Hartrees: {energy:.6f}")
 
         min_energy = np.min(energies)
-        favored_indices = [i for i in sorted_indices if energies[i] <= min_energy + window]
+        favored_indices = [i for i in sorted_indices if energies[i] <= min_energy + energy]
 
     elif method == 'boltzmann':
         # Constants
