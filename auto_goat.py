@@ -33,42 +33,42 @@ def parse_arguments():
         "-skip", action="store_true", default=False,
         help="Skips the first step because it was already run, and starts with the next steps."
     )
-
+    
     # Parse known and unknown arguments
     args, unknown = parser.parse_known_args()
 
     return args, unknown
 
 
-def submit_qorca(input_file, qorca_flags=None):
+def submit_qorca(input_file, additional_flags=None):
     """
-    Submit a job using the qorca command.
+    Submits the ORCA calculation without including --qorca-flags. The additional_flags can be passed if needed.
 
     Args:
-        input_file (str): Path to the input file to be submitted.
-        qorca_flags (list, optional): Additional flags to pass to qorca.
+        input_file (str): Path to the ORCA input file.
+        additional_flags (list, optional): A list of additional flags for qorca.
 
     Returns:
-        str: The job ID of the submitted job.
+        str: JobID of the submitted file.
     """
+    # Base command without --qorca-flags
     command = ["qorca", "-x", "compute-2-07-01,compute-2-07-02", input_file]
-    if qorca_flags:
-        command.extend(qorca_flags)
-    
+
+    # Add additional flags if provided
+    if additional_flags:
+        command.extend(additional_flags)  # Append the actual additional flags
+
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=True)
-        logging.info(f"Command executed successfully: {' '.join(command)}")
-        
-        # Extract job ID using split
-        job_id = result.stdout.strip().split()[-1]  # Remove whitespace and split to get the last element
-        logging.info(f"Extracted Job ID: {job_id}")
-        
-        return job_id
+        # Run the command
+        result = subprocess.run(command, check=True, text=True, capture_output=True)
+        # Extract job ID from the output (assuming job ID is the last item in the output)
+        jobid = result.stdout.split()[-1]
+        return jobid
     except subprocess.CalledProcessError as e:
-        logging.error(f"Error while executing command: {' '.join(command)}")
-        logging.error(f"Command output: {e.stdout}")
-        logging.error(f"Command error: {e.stderr}")
-        raise
+        # Handle command execution failure
+        logging.error(f"Error running qorca: {e}")
+        raise ValueError(f"qorca command failed: {e}")
+
 
 
 def read_input_file(input_path):
