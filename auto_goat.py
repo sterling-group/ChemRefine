@@ -42,28 +42,34 @@ def parse_arguments():
 
 def submit_qorca(input_file, qorca_flags=None):
     """
-    Uses our in-house code for submitting ORCA calculations.
+    Submit a job using the qorca command.
 
     Args:
-        input_file (str): Input file for the calculation.
+        input_file (str): Path to the input file to be submitted.
         qorca_flags (list, optional): Additional flags to pass to qorca.
 
     Returns:
-        str: JobID of the submitted file.
+        str: The job ID of the submitted job.
     """
-    # Base command
     command = ["qorca", "-x", "compute-2-07-01,compute-2-07-02", input_file]
-
-    # Add additional flags if provided
     if qorca_flags:
         command.extend(qorca_flags)
+    
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        logging.info(f"Command executed successfully: {' '.join(command)}")
+        
+        # Extract job ID using split
+        job_id = result.stdout.strip().split()[-1]  # Remove whitespace and split to get the last element
+        logging.info(f"Extracted Job ID: {job_id}")
+        
+        return job_id
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Error while executing command: {' '.join(command)}")
+        logging.error(f"Command output: {e.stdout}")
+        logging.error(f"Command error: {e.stderr}")
+        raise
 
-    # Run the subprocess
-    result = subprocess.run(command, check=True, text=True, capture_output=True)
-
-    # Extract JobID from the output
-    jobid = result.stdout.split()[-1]
-    return jobid
 
 def read_input_file(input_path):
     """Read the ORCA input file."""
