@@ -28,20 +28,45 @@ def parse_arguments():
     '-skip',action='store_true',default=False,
     help='Skips the first step because it was already run, and starts with the next steps.')
     args = parser.parse_args()
+
+    # Capture additional flags for qorca
+    parser.add_argument(
+        '--qorca-flags',
+        nargs=argparse.REMAINDER,
+        help='Flags to pass directly to qorca'
+    )
+     # Capture additional flags for qorca
+    parser.add_argument(
+        '--qorca-flags',
+        nargs=argparse.REMAINDER,
+        help='Flags to pass directly to qorca'
+    )
+
+
     return args
 
-def submit_qorca(input_file):
+def submit_qorca(input_file, qorca_flags=None):
     """
-    Uses our in-house code for submitting ORCA calculations
+    Uses our in-house code for submitting ORCA calculations.
 
     Args:
-        Input File
+        input_file (str): Input file for the calculation.
+        qorca_flags (list, optional): Additional flags to pass to qorca.
 
-    Returns: 
-            JobID of the submitted file
+    Returns:
+        str: JobID of the submitted file.
     """
+    # Base command
     command = ["qorca", "-x", "compute-2-07-01,compute-2-07-02", input_file]
+
+    # Add additional flags if provided
+    if qorca_flags:
+        command.extend(qorca_flags)
+
+    # Run the subprocess
     result = subprocess.run(command, check=True, text=True, capture_output=True)
+
+    # Extract JobID from the output
     jobid = result.stdout.split()[-1]
     return jobid
 
