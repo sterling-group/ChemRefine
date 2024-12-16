@@ -16,34 +16,29 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description='Code to automate the process of conformer searching, submits initial XTB calculation and improves precision')
-    parser.add_argument('input_file',help='YAML input file containing instructions for automated workflow')
-    
-    #Optional arguments
-    parser.add_argument(
-    '-cores','-c',type=int,default=16,
-    help='Max number of cores used throughout conformer search. For multiple files it will be cores/PAL')
-    
-    parser.add_argument(
-    '-skip',action='store_true',default=False,
-    help='Skips the first step because it was already run, and starts with the next steps.')
-    args = parser.parse_args()
+    import argparse
 
-    # Capture additional flags for qorca
-    parser.add_argument(
-        '--qorca-flags',
-        nargs=argparse.REMAINDER,
-        help='Flags to pass directly to qorca'
+    parser = argparse.ArgumentParser(
+        description="Code to automate the process of conformer searching, submits initial XTB calculation and improves precision"
     )
-     # Capture additional flags for qorca
     parser.add_argument(
-        '--qorca-flags',
-        nargs=argparse.REMAINDER,
-        help='Flags to pass directly to qorca'
+        "input_file",
+        help="YAML input file containing instructions for automated workflow",
+    )
+    parser.add_argument(
+        "-cores", "-c", type=int, default=16,
+        help="Max number of cores used throughout conformer search. For multiple files it will be cores/PAL"
+    )
+    parser.add_argument(
+        "-skip", action="store_true", default=False,
+        help="Skips the first step because it was already run, and starts with the next steps."
     )
 
+    # Parse known and unknown arguments
+    args, unknown = parser.parse_known_args()
 
-    return args
+    return args, unknown
+
 
 def submit_qorca(input_file, qorca_flags=None):
     """
@@ -114,15 +109,16 @@ def parse_pal_from_input(lines):
                     return pal_value
     return None
 
-def submit_goat(input_file):
+def submit_goat(input_file, qorca_flags=None):
     """
     Submit a single file for calculation and wait until the job finishes.
 
     Args:
         input_file (str): Path to the input file to be submitted.
+        qorca_flags (list, optional): Additional flags to pass to qorca.
     """
     # Submit the job and get the job ID
-    jobid = submit_qorca(input_file)
+    jobid = submit_qorca(input_file, qorca_flags=qorca_flags)
     logging.info(f"Job {jobid} submitted for file {input_file}. Waiting for it to finish...")
 
     # Check if the job is still running
@@ -131,6 +127,7 @@ def submit_goat(input_file):
         time.sleep(30)  # Wait for 30 seconds before checking again
 
     logging.info(f"Job {jobid} for file {input_file} has finished.")
+
 
 def get_input_dir(input_file):
     # Get directory from input file
@@ -160,16 +157,17 @@ def create_orca_input(xyz_files, template, output_dir='./'):
         logging.info(f" Writing {input_file}:")
     return input_files,output_files    
         
-def submit_files(input_files,max_cores=16,partition="sterling"):
+def submit_files(input_files, max_cores=32, partition="sterling", qorca_flags=None):
     """
     Submit multiple calculations based on available cores, ensuring the number of running jobs 
     does not exceed the specified max_cores. Submissions are sequential, and the function waits 
     for cores to free up before submitting more.
     
     Args:
-        max_cores (int): Maximum number of cores to use simultaneously.
         input_files (list): List of input file paths for calculations.
+        max_cores (int): Maximum number of cores to use simultaneously.
         partition (str): Partition name for SLURM queue.
+        qorca_flags (list, optional): Additional flags to pass to qorca.
     """
     total_cores_used = 0
     active_jobs = {}  # Map of job_id to cores used for tracking active jobs
@@ -206,7 +204,7 @@ def submit_files(input_files,max_cores=16,partition="sterling"):
 
             # Submit the job
             logging.info(f"Submitting job for {input_file} requiring {cores_needed} cores...")
-            job_id = submit_qorca(input_file)
+            job_id = submit_qorca(input_file, qorca_flags=qorca_flags)
             active_jobs[job_id] = cores_needed
             total_cores_used += cores_needed
 
@@ -229,6 +227,7 @@ def submit_files(input_files,max_cores=16,partition="sterling"):
         time.sleep(30)
 
     logging.info("All calculations finished.")
+
 
 def is_job_finished(job_id, partition="sterling"):
     """
@@ -564,7 +563,7 @@ def save_step_csv(energies, ids, step_number, temperature=298.15, filename="step
 
 def main():
     #Get parse arguments
-    args = parse_arguments()
+    args, qorca_flags = parse_arguments()
     cores = args.cores
     yaml_input = args.input_file
     skip = args.skip
@@ -605,7 +604,7 @@ def main():
                 coordinates,energies = parse_orca_output(output_files,calculation_type,dir='./step1')
             else:
                 input_files,output_files = create_orca_input(xyz_filenames,template=inp_file)
-                submit_files(input_files,cores)
+                submit_files(input_files,cores,qorca_flags=qorca_flags)
                 coordinates,energies = parse_orca_output(output_files,calculation_type)
             ids = [i for i in range(1, len(energies) + 1)]
             save_step_csv(energies,ids,step_number)
@@ -623,7 +622,7 @@ def main():
             input_files,output_files = create_orca_input(xyz_filenames,template=input_template)
 
             #Submit Files
-            submit_files(input_files,cores)
+            submit_files(input_files,cores,qorca_flags=qorca_flags)
 
             #Parse and filter
             coordinates,energies = parse_orca_output(output_files,calculation_type)
