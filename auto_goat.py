@@ -48,7 +48,7 @@ def submit_qorca(input_file):
 def read_input_file(input_path):
     """Read the ORCA input file."""
     if not input_path.is_file():
-        print(
+        logging.info(
             f"Error: Input file '{input_path}' does not exist. "
             "Please check the file path and try again.",
             file=sys.stderr
@@ -98,14 +98,14 @@ def submit_goat(input_file):
     """
     # Submit the job and get the job ID
     jobid = submit_qorca(input_file)
-    print(f"Job {jobid} submitted for file {input_file}. Waiting for it to finish...")
+    logging.info(f"Job {jobid} submitted for file {input_file}. Waiting for it to finish...")
 
     # Check if the job is still running
     while not is_job_finished(jobid):
-        print(f"Job {jobid} is still running. Checking again in 30 seconds...")
+        logging.info(f"Job {jobid} is still running. Checking again in 30 seconds...")
         time.sleep(30)  # Wait for 30 seconds before checking again
 
-    print(f"Job {jobid} for file {input_file} has finished.")
+    logging.info(f"Job {jobid} for file {input_file} has finished.")
 
 def get_input_dir(input_file):
     # Get directory from input file
@@ -132,7 +132,7 @@ def create_orca_input(xyz_files, template, output_dir='./'):
             content = tmpl.read().replace("molecule.xyz", file)
         with open(input_file, "w") as inp:
             inp.write(content + ' ')
-        print(f" Writing {input_file}:")
+        logging.info(f" Writing {input_file}:")
     return input_files,output_files    
         
 def submit_files(input_files,max_cores=16,partition="sterling"):
@@ -156,19 +156,19 @@ def submit_files(input_files,max_cores=16,partition="sterling"):
             lines = read_input_file(input_path)
             pal_value = parse_pal_from_input(lines)
             if pal_value is None:
-                print(f"Error: PAL value not found in input file {input_file}. Skipping...")
+                logging.info(f"Error: PAL value not found in input file {input_file}. Skipping...")
                 continue
             
             cores_needed = pal_value
             
             # Wait if there aren't enough free cores to submit the next job
             while total_cores_used + cores_needed > max_cores:
-                print("Waiting for jobs to finish to free up cores...")
+                logging.info("Waiting for jobs to finish to free up cores...")
                 
                 # Check active jobs and remove completed ones
                 completed_jobs = []
                 for job_id, cores in active_jobs.items():
-                    print(f"Job ID {job_id} is running with {cores}")
+                    logging.info(f"Job ID {job_id} is running with {cores}")
                     if is_job_finished(job_id, partition):
                         completed_jobs.append(job_id)
                         total_cores_used -= cores
@@ -180,17 +180,17 @@ def submit_files(input_files,max_cores=16,partition="sterling"):
                 time.sleep(30)  # Check every 30 seconds
 
             # Submit the job
-            print(f"Submitting job for {input_file} requiring {cores_needed} cores...")
+            logging.info(f"Submitting job for {input_file} requiring {cores_needed} cores...")
             job_id = submit_qorca(input_file)
             active_jobs[job_id] = cores_needed
             total_cores_used += cores_needed
 
         except Exception as e:
-            print(f"Error processing input file {input_file}: {e}")
+            logging.info(f"Error processing input file {input_file}: {e}")
             continue
 
     # Wait for all remaining jobs to finish
-    print("All jobs submitted. Waiting for remaining jobs to complete...")
+    logging.info("All jobs submitted. Waiting for remaining jobs to complete...")
     while active_jobs:
         completed_jobs = []
         for job_id, cores in active_jobs.items():
@@ -203,7 +203,7 @@ def submit_files(input_files,max_cores=16,partition="sterling"):
 
         time.sleep(30)
 
-    print("All calculations finished.")
+    logging.info("All calculations finished.")
 
 def is_job_finished(job_id, partition="sterling"):
     """
@@ -235,7 +235,7 @@ def is_job_finished(job_id, partition="sterling"):
         else:
             return True   # Job has finished or is not in the queue
     except subprocess.CalledProcessError as e:
-        print(f"Error running command: {e}")
+        logging.info(f"Error running command: {e}")
         return False
 
 def parse_orca_output(file_paths, calculation_type, dir='./'):
@@ -425,7 +425,8 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
     return filtered_coordinates, filtered_ids
 
 def write_xyz(structures, step_number, structure_ids):
-    print("Writing Ensemble XYZ files")
+    logging.info("Writing Ensemble XYZ files")
+    logging.info("Writing Ensemble XYZ files")
     base_name = f"step{step_number}"
     xyz_filenames = []
     
@@ -470,7 +471,7 @@ def move_step_files(step_number):
             
             shutil.move(file, dest_path)
         except Exception as e:
-            print(f"There was an error moving the file {file}: {e}")
+            logging.info(f"There was an error moving the file {file}: {e}")
 
 
 def save_step_csv(energies, ids, step_number, temperature=298.15, filename="steps.csv", precision=8):
@@ -533,7 +534,7 @@ def save_step_csv(energies, ids, step_number, temperature=298.15, filename="step
     mode = 'w' if step_number == 1 else 'a'  # Write if first step, append otherwise
     header = step_number == 1  # Write header only for the first step
     df.to_csv(filename, mode=mode, index=False, header=header)
-    print(f"Step {step_number} data saved to {filename}.")
+    logging.info(f"Step {step_number} data saved to {filename}.")
 
 
 def main():
@@ -566,7 +567,7 @@ def main():
                 raise FileNotFoundError(f"Input file '{input_file}' not found for step {step_number}. Exiting...")
         
         # Call the respective function for the calculation type
-        print(f"Running step {step_number}: {calculation_type} with sampling method '{sample_method}'")
+        logging.info(f"Running step {step_number}: {calculation_type} with sampling method '{sample_method}'")
 
         #Initialize 1st step
         if step_number == 1:
@@ -575,7 +576,7 @@ def main():
             xyz_filenames = [xyz_file]
             input_files,output_files = create_orca_input(xyz_filenames,template=inp_file)
             if skip:
-                print("Skipping Step 1...")
+                logging.info("Skipping Step 1...")
                 coordinates,energies = parse_orca_output(output_files,calculation_type,dir='./step1')
             else:
                 input_files,output_files = create_orca_input(xyz_filenames,template=inp_file)
