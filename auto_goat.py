@@ -16,7 +16,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 
 def parse_arguments():
-    import argparse
 
     parser = argparse.ArgumentParser(
         description="Code to automate the process of conformer searching, submits initial XTB calculation and improves precision"
@@ -40,13 +39,13 @@ def parse_arguments():
     return args, unknown
 
 
-def submit_qorca(input_file, additional_flags=None):
+def submit_qorca(input_file, qorca_flags=None):
     """
     Submits the ORCA calculation without including --qorca-flags. The additional_flags can be passed if needed.
 
     Args:
         input_file (str): Path to the ORCA input file.
-        additional_flags (list, optional): A list of additional flags for qorca.
+        qorca_flags (list, optional): A list of additional flags for qorca.
 
     Returns:
         str: JobID of the submitted file.
@@ -55,8 +54,8 @@ def submit_qorca(input_file, additional_flags=None):
     command = ["qorca", "-x", "compute-2-07-01,compute-2-07-02", input_file]
 
     # Add additional flags if provided
-    if additional_flags:
-        command.extend(additional_flags)  # Append the actual additional flags
+    if qorca_flags:
+        command.extend(qorca_flags)  # Append the actual additional flags
 
     try:
         # Run the command
