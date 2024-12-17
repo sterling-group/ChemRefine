@@ -1,5 +1,5 @@
 !OPT FREQ WB97X-D4 Def2-TZVP
 %pal nprocs 16 end
 
-* xyzfile 0 1  molecule.xyz
+
 
