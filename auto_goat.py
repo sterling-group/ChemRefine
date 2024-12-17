@@ -149,7 +149,7 @@ def create_orca_input(xyz_files, template, charge, multiplicity, output_dir='./'
     output_files = []
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-        
+    logging.info(f"Writing XYZ files")    
     for file in xyz_files:
         base_name = os.path.splitext(os.path.basename(file))[0]
         input_file = os.path.join(output_dir, f"{base_name}.inp")
@@ -614,7 +614,6 @@ def main():
             xyz_file = "step1.xyz"
             inp_file = "step1.inp"
             xyz_filenames = [xyz_file]
-            input_files,output_files = create_orca_input(xyz_filenames,template=inp_file,charge=charge,multiplicity=multiplicity)
             if skip:
                 logging.info("Skipping Step 1...")
                 coordinates,energies = parse_orca_output(output_files,calculation_type,dir='./step1')
