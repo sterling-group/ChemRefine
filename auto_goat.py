@@ -159,10 +159,11 @@ def create_orca_input(xyz_files, template, charge, multiplicity, output_dir='./'
         
         with open(template, "r") as tmpl:
             content = tmpl.read()
-            
-        # Add a blank line before and after the * xyzfile line
+        
+        # Add the * xyzfile line for this specific XYZ file only
         formatted_content = content + '\n\n' + f"* xyzfile {charge} {multiplicity} {file}\n\n"
         
+        # Write the formatted content to the input file
         with open(input_file, "w") as inp:
             inp.write(formatted_content)
         
