@@ -1,6 +1,8 @@
 # Sequential ORCA Input Configuration File
 # Define each step with its specific parameters.
 #This workflow reflects using GOAT and refining methods to improve the accuracy
+charge: 0
+multiplicity: 1 
 steps:
   # Step 1: Example using GOAT with None sampling (it's the only option for GOAT)
   - step: 1

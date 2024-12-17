@@ -144,23 +144,31 @@ def get_input_dir(input_file):
     
     return input_dir
 
-def create_orca_input(xyz_files, template, output_dir='./'):
+def create_orca_input(xyz_files, template, charge, multiplicity, output_dir='./'):
     input_files = []
     output_files = []
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
+        
     for file in xyz_files:
         base_name = os.path.splitext(os.path.basename(file))[0]
         input_file = os.path.join(output_dir, f"{base_name}.inp")
         output_file = os.path.join(output_dir, f"{base_name}.out")
         input_files.append(input_file)
         output_files.append(output_file)
+        
         with open(template, "r") as tmpl:
-            content = tmpl.read().replace("molecule.xyz", file)
+            content = tmpl.read()
+            
+        # Add a blank line before and after the * xyzfile line
+        formatted_content = content + '\n\n' + f"* xyzfile {charge} {multiplicity} {file}\n\n"
+        
         with open(input_file, "w") as inp:
-            inp.write(content + ' ')
-        logging.info(f" Writing {input_file}:")
-    return input_files,output_files    
+            inp.write(formatted_content)
+        
+        logging.info(f"Writing {input_file} with charge {charge} and multiplicity {multiplicity}")
+    
+    return input_files, output_files
         
 def submit_files(input_files, max_cores=32, partition="sterling", qorca_flags=None):
     """
@@ -577,6 +585,8 @@ def main():
         config = yaml.safe_load(file)
 
     steps = config.get('steps', [])
+    charge = config.get('charge')
+    multiplicity = config.get('multiplicity')
     calculation_functions = ["GOAT","DFT","XTB","MLFF"]
 
     for step in steps:
@@ -603,12 +613,12 @@ def main():
             xyz_file = "step1.xyz"
             inp_file = "step1.inp"
             xyz_filenames = [xyz_file]
-            input_files,output_files = create_orca_input(xyz_filenames,template=inp_file)
+            input_files,output_files = create_orca_input(xyz_filenames,template=inp_file,charge=charge,multiplicity=multiplicity)
             if skip:
                 logging.info("Skipping Step 1...")
                 coordinates,energies = parse_orca_output(output_files,calculation_type,dir='./step1')
             else:
-                input_files,output_files = create_orca_input(xyz_filenames,template=inp_file)
+                input_files,output_files = create_orca_input(xyz_filenames,template=inp_file,charge=charge,multiplicity=multiplicity)
                 submit_files(input_files,cores,qorca_flags=qorca_flags)
                 coordinates,energies = parse_orca_output(output_files,calculation_type)
             ids = [i for i in range(1, len(energies) + 1)]
@@ -624,7 +634,7 @@ def main():
 
             #Create template for ORCA Input
             input_template = f"step{step_number}.inp"
-            input_files,output_files = create_orca_input(xyz_filenames,template=input_template)
+            input_files,output_files = create_orca_input(xyz_filenames,template=input_template,charge=charge,multiplicity=multiplicity)
 
             #Submit Files
             submit_files(input_files,cores,qorca_flags=qorca_flags)
