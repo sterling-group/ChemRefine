@@ -12,7 +12,7 @@ This repository contains a streamlined Python code for conformer sampling and re
 ---
 
 ## **Requirements**
-1. **Python 3.x**: The code is written in Python and requires the following libraries:
+1. **Python 3.x**: The code is written in Python and requires the following libraries: \
    -numpy 
    -yaml 
    -pandas
