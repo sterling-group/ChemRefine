@@ -632,7 +632,6 @@ def main():
             xyz_filenames = [xyz_file]
             if skip:
                 output_files=check_if_dir_and_skip_step(step_number)
-                print("skip files works",output_files)
                 logging.info("Skipping Step 1...")
                 coordinates,energies = parse_orca_output(output_files,calculation_type,dir='./step1')
             else:
@@ -648,16 +647,21 @@ def main():
 
         #For loop body
         if not calculation_type == 'MLFF':
-            xyz_filenames = write_xyz(filtered_coordinates,step_number,filtered_ids)
+            if skip and check_if_dir_and_skip_step(step_number):
+                output_files=check_if_dir_and_skip_step(step_number)
+                coordinates,energies = parse_orca_output(output_files,calculation_type,dir=f'./step{step_number}')
+                continue
+            else:
+                xyz_filenames = write_xyz(filtered_coordinates,step_number,filtered_ids)
 
-            #Create template for ORCA Input
-            input_template = f"step{step_number}.inp"
-            input_files,output_files = create_orca_input(xyz_filenames,template=input_template,charge=charge,multiplicity=multiplicity)
+                #Create template for ORCA Input
+                input_template = f"step{step_number}.inp"
+                input_files,output_files = create_orca_input(xyz_filenames,template=input_template,charge=charge,multiplicity=multiplicity)
 
-            #Submit Files
-            submit_files(input_files,cores,qorca_flags=qorca_flags)
+                #Submit Files
+                submit_files(input_files,cores,qorca_flags=qorca_flags)
 
-            #Parse and filter
+                #Parse and filter
             coordinates,energies = parse_orca_output(output_files,calculation_type)
             save_step_csv(energies,filtered_ids,step_number)
             filtered_coordinates, filtered_ids = filter_structures(coordinates,energies,filtered_ids,sample_method,parameters=parameters)
