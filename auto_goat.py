@@ -574,7 +574,23 @@ def save_step_csv(energies, ids, step_number, temperature=298.15, filename="step
     df.to_csv(filename, mode=mode, index=False, header=header)
     logging.info(f"Step {step_number} data saved to {filename}.")
 
-
+def check_if_dir_and_skip_step(step_number):
+    """
+    If the directory of the step exists skip this step and continue to the next step.
+    
+    Parameters:
+        step_number (int): The step number to skip.
+    """
+    # Move all files starting with 'step{step_number}' to a directory named 'step{step_number}'
+    
+    # Log the skipped step
+    logging.info(f"Step {step_number} skipped. Files moved to 'step{step_number}' directory.")
+    if os.path.exists(f"step{step_number}"):
+        output_files = [os.path.join(f"step{step_number}", file) for file in os.listdir(f"step{step_number}") if file.endswith('.out')]
+        return output_files
+    else:
+        return False
+    
 def main():
     #Get parse arguments
     args, qorca_flags = parse_arguments()
@@ -615,6 +631,8 @@ def main():
             inp_file = "step1.inp"
             xyz_filenames = [xyz_file]
             if skip:
+                output_files=check_if_dir_and_skip_step(step_number)
+                print("skip files works",output_files)
                 logging.info("Skipping Step 1...")
                 coordinates,energies = parse_orca_output(output_files,calculation_type,dir='./step1')
             else:
