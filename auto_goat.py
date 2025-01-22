@@ -400,16 +400,16 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
             f"Mismatch in list lengths: coordinates_list ({len(coordinates_list)}), "
             f"energies ({len(energies)}), and id_list ({len(id_list)}) must have the same length."
         )
-
+    parameters = kwargs.get('parameters', {})
     energies = np.array([float(e) for e in energies])
     sorted_indices = np.argsort(energies)  # Sort energies to determine favored structures
 
     if method == 'energy_window':
-        energy = kwargs.get('energy', 0.5)  # Default is 0.5 Hartrees
-        unit = kwargs.get('unit', 'hartree')  # Assume 'hartree' if no unit is specified
-        
+        logging.info("Filtering structures based on energy window.")
+        energy = parameters.get('energy', 0.5)  # Default is 0.5 Hartrees
+        unit = parameters.get('unit', 'hartree')  # Assume 'hartree' if no unit is specified
+        logging.info(f"Filtering Energy window: {energy} {unit}")
         if unit.lower() == 'kcal/mol':
-            logging.info(f"Energy window provided in kcal/mol: {energy}")
             energy /= 627.509474  # Convert kcal/mol to Hartrees
             logging.info(f"Converted energy window to Hartrees: {energy:.6f}")
 
@@ -417,11 +417,13 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
         favored_indices = [i for i in sorted_indices if energies[i] <= min_energy + energy]
 
     elif method == 'boltzmann':
+        logging.info("Filtering structures based on Boltzmann probability.")
         # Constants
         R_kcalmol_K = 0.0019872041  # kcal/(mol·K)
         temperature = 298.15
         hartree_to_kcalmol = 627.5  # Conversion factor from Hartrees to kcal/mol
-        percentage = kwargs.get('weight',99)
+        percentage = parameters.get('weight',99)
+        logging.info(f"Filtering Boltzmann probability: {percentage}%")
         # Convert energies from Hartrees to kcal/mol
         energies_kcalmol = energies * hartree_to_kcalmol
 
@@ -430,14 +432,15 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
 
         # Calculate Boltzmann weights (without normalization)
         delta_E = energies_kcalmol - min_energy  # Energy differences (ΔE)
+        print(delta_E)
         boltzmann_weights = np.exp(-delta_E / (R_kcalmol_K * temperature))
 
         # Normalize Boltzmann weights to sum to 1
         boltzmann_probs = boltzmann_weights / np.sum(boltzmann_weights)
-
+        print(boltzmann_probs)
         # Calculate cumulative probability distribution
         cumulative_probs = np.cumsum(boltzmann_probs)
-
+        print(cumulative_probs)
         # Determine the cutoff probability (percentage of total probability)
         cutoff_prob = percentage / 100.0
 
@@ -446,9 +449,12 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
         
 
     elif method == 'integer':
-        num_structures = kwargs.get('num_structures', 0)
+        logging.info("Filtering structures based on integer count.")
+        num_structures = parameters.get('num_structures')
+        logging.info("Number of structures to select: %d", num_structures)
         num_structures = min(num_structures, len(coordinates_list))  # Ensure we don't exceed the list length
-        if num_structures <= 0 or num_structures >= len(coordinates_list):  # If num_structures is larger than or equal to the list size
+        if num_structures <= 0 or num_structures >= len(coordinates_list):
+            logging.info("Your input is either 0 or bigger than the total structures, taking all of the structures.")  # If num_structures is larger than or equal to the list size
             favored_indices = sorted_indices  # Return all indices (sorted by energy)
         else:
                 favored_indices = sorted_indices[:num_structures]  # Return top 'num_structures' based on energy sorting
@@ -459,7 +465,7 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
     mask = [i in favored_indices for i in range(len(coordinates_list))]
     filtered_coordinates = [coord for coord, keep in zip(coordinates_list, mask) if keep]
     filtered_ids = [id_ for id_, keep in zip(id_list, mask) if keep]
-
+    logging.info(f"Selected {len(filtered_coordinates)} structures based on '{method}' method.")
     return filtered_coordinates, filtered_ids
 
 def write_xyz(structures, step_number, structure_ids):
@@ -494,9 +500,11 @@ def move_step_files(step_number):
     # Create the directory if it doesn't exist
     os.makedirs(step_dir, exist_ok=True)
 
-    # Find all files starting with 'step{step_number}'
-    files_to_move = glob.glob(f"step{step_number}*")
+    if step_number == 1: 
+        files_to_move = [f for f in glob.glob(f"step{step_number}*") if os.path.isfile(f)]
 
+    else: 
+        files_to_move = glob.glob(f"step{step_number}_structure*")
     # Move each file to the directory
     for file in files_to_move:
         try:
@@ -638,7 +646,7 @@ def main():
                 input_files,output_files = create_orca_input(xyz_filenames,template=inp_file,charge=charge,multiplicity=multiplicity)
                 submit_files(input_files,cores,qorca_flags=qorca_flags)
                 coordinates,energies = parse_orca_output(output_files,calculation_type)
-            ids = [i for i in range(1, len(energies) + 1)]
+            ids = [i for i in range(0, len(energies))]
             save_step_csv(energies,ids,step_number)
             filtered_coordinates,filtered_ids = filter_structures(coordinates,energies,ids,sample_method,parameters=parameters) 
             if not skip:
