@@ -432,15 +432,12 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
 
         # Calculate Boltzmann weights (without normalization)
         delta_E = energies_kcalmol - min_energy  # Energy differences (ΔE)
-        print(delta_E)
         boltzmann_weights = np.exp(-delta_E / (R_kcalmol_K * temperature))
 
         # Normalize Boltzmann weights to sum to 1
         boltzmann_probs = boltzmann_weights / np.sum(boltzmann_weights)
-        print(boltzmann_probs)
         # Calculate cumulative probability distribution
         cumulative_probs = np.cumsum(boltzmann_probs)
-        print(cumulative_probs)
         # Determine the cutoff probability (percentage of total probability)
         cutoff_prob = percentage / 100.0
 
