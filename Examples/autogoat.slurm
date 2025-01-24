@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH     --partition=sterling
 #SBATCH     --nodes=1
+#SBATCH     --exclude=compute-2-09-05
 #SBATCH     --ntasks=1
 #SBATCH     --time=72:00:00
 #SBATCH     --cpus-per-task=1
