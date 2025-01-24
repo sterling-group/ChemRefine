@@ -51,7 +51,7 @@ def submit_qorca(input_file, qorca_flags=None):
         str: JobID of the submitted file.
     """
     # Base command without --qorca-flags
-    command = ["qorca", "-x", "compute-2-07-01,compute-2-07-02", input_file]
+    command = ["qorca", "-x", "compute-2-09-05", input_file]
 
     # Add additional flags if provided
     if qorca_flags:
