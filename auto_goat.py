@@ -417,39 +417,39 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
         favored_indices = [i for i in sorted_indices if energies[i] <= min_energy + energy]
 
     elif method == 'boltzmann':
-    logging.info("Filtering structures based on Boltzmann probability.")
-    # Constants
-    R_kcalmol_K = 0.0019872041  # kcal/(mol·K)
-    temperature = 298.15
-    hartree_to_kcalmol = 627.5  # Conversion factor from Hartrees to kcal/mol
-    percentage = parameters.get('weight', 99)
-    logging.info(f"Filtering Boltzmann probability: {percentage}%")
+        logging.info("Filtering structures based on Boltzmann probability.")
+        # Constants
+        R_kcalmol_K = 0.0019872041  # kcal/(mol·K)
+        temperature = 298.15
+        hartree_to_kcalmol = 627.5  # Conversion factor from Hartrees to kcal/mol
+        percentage = parameters.get('weight', 99)
+        logging.info(f"Filtering Boltzmann probability: {percentage}%")
 
-    # Convert energies from Hartrees to kcal/mol
-    energies_kcalmol = energies * hartree_to_kcalmol
+        # Convert energies from Hartrees to kcal/mol
+        energies_kcalmol = energies * hartree_to_kcalmol
 
-    # Calculate minimum energy
-    min_energy = np.min(energies_kcalmol)
+        # Calculate minimum energy
+        min_energy = np.min(energies_kcalmol)
 
-    # Calculate Boltzmann weights (without normalization)
-    delta_E = energies_kcalmol - min_energy  # Energy differences (ΔE)
-    boltzmann_weights = np.exp(-delta_E / (R_kcalmol_K * temperature))
+        # Calculate Boltzmann weights (without normalization)
+        delta_E = energies_kcalmol - min_energy  # Energy differences (ΔE)
+        boltzmann_weights = np.exp(-delta_E / (R_kcalmol_K * temperature))
 
-    # Normalize Boltzmann weights to sum to 1
-    boltzmann_probs = boltzmann_weights / np.sum(boltzmann_weights)
-    
-    # Calculate cumulative probability distribution
-    cumulative_probs = np.cumsum(boltzmann_probs)
-    
-    # Determine the cutoff probability (percentage of total probability)
-    cutoff_prob = percentage / 100.0
+        # Normalize Boltzmann weights to sum to 1
+        boltzmann_probs = boltzmann_weights / np.sum(boltzmann_weights)
+        
+        # Calculate cumulative probability distribution
+        cumulative_probs = np.cumsum(boltzmann_probs)
+        
+        # Determine the cutoff probability (percentage of total probability)
+        cutoff_prob = percentage / 100.0
 
-    # Find indices where cumulative probability does not exceed the threshold
-    favored_indices = [i for i, prob in enumerate(cumulative_probs) if prob <= cutoff_prob]
+        # Find indices where cumulative probability does not exceed the threshold
+        favored_indices = [i for i, prob in enumerate(cumulative_probs) if prob <= cutoff_prob]
 
-    # Ensure at least one structure is included if none satisfy the threshold
-    if not favored_indices or (favored_indices[-1] != len(cumulative_probs) - 1):
-        favored_indices.append(len(favored_indices))  # Include the first structure exceeding the threshold
+        # Ensure at least one structure is included if none satisfy the threshold
+        if not favored_indices or (favored_indices[-1] != len(cumulative_probs) - 1):
+            favored_indices.append(len(favored_indices))  # Include the first structure exceeding the threshold
 
         
 
