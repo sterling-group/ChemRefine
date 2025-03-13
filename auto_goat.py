@@ -418,40 +418,54 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
 
     elif method == 'boltzmann':
         logging.info("Filtering structures based on Boltzmann probability.")
+
+        if len(energies) == 0:
+            logging.warning("No structures available for Boltzmann filtering. Returning empty lists.")
+            return [], []
+
         # Constants
         R_kcalmol_K = 0.0019872041  # kcal/(mol·K)
         temperature = 298.15
-        hartree_to_kcalmol = 627.509474  # Accurate conversion factor from Hartrees to kcal/mol
-        percentage = parameters.get('weight', 99)
+        hartree_to_kcalmol = 627.509474  # Conversion factor from Hartrees to kcal/mol
+        percentage = parameters.get('weight', 99)  # User-specified probability threshold
         logging.info(f"Filtering Boltzmann probability: {percentage}%")
 
         # Convert energies from Hartrees to kcal/mol
         energies_kcalmol = energies * hartree_to_kcalmol
 
+        if energies_kcalmol.size == 0:
+            logging.warning("No energies available after conversion. Returning empty results.")
+            return [], []
+
         # Sort energies and retain original indices
         sorted_indices = np.argsort(energies_kcalmol)
         sorted_energies = energies_kcalmol[sorted_indices]
 
-        # Calculate Boltzmann weights
-        delta_E = sorted_energies - np.min(sorted_energies)
+        # Compute energy differences (relative to minimum energy)
+        min_energy = np.min(sorted_energies)
+        delta_E = sorted_energies - min_energy
+
+        # Compute Boltzmann weights
         boltzmann_weights = np.exp(-delta_E / (R_kcalmol_K * temperature))
         boltzmann_probs = boltzmann_weights / np.sum(boltzmann_weights)
 
-        # Cumulative probability
+        # Compute cumulative probabilities
         cumulative_probs = np.cumsum(boltzmann_probs)
 
-        # Identify indices within cutoff probability
+        # Define cutoff probability based on user input
         cutoff_prob = percentage / 100.0
-        cutoff_indices_sorted = [i for i, cum_prob in enumerate(cumulative_probs) if cum_prob <= cutoff_prob]
 
-        # Always include the first structure beyond cutoff if not exactly reached
-        if not cutoff_indices_sorted or (cutoff_indices_sorted[-1] != len(cumulative_probs) - 1):
-            cutoff_indices_sorted.append(len(cutoff_indices_sorted))
+        # Find indices where cumulative probability is within the threshold
+        favored_indices_sorted = [i for i, prob in enumerate(cumulative_probs) if prob <= cutoff_prob]
 
-        # Translate sorted indices back to original indices
-        favored_indices = sorted_indices[cutoff_indices_sorted]
+        # Ensure at least the first structure exceeding the cutoff is included
+        if favored_indices_sorted and favored_indices_sorted[-1] < len(cumulative_probs) - 1:
+            favored_indices_sorted.append(favored_indices_sorted[-1] + 1)
 
-        # Now create mask properly
+        # Map back to original indices
+        favored_indices = sorted_indices[favored_indices_sorted]
+
+        # Apply selection mask
         mask = [i in favored_indices for i in range(len(coordinates_list))]
         filtered_coordinates = [coord for coord, keep in zip(coordinates_list, mask) if keep]
         filtered_ids = [id_ for id_, keep in zip(id_list, mask) if keep]
@@ -476,6 +490,7 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
     filtered_coordinates = [coord for coord, keep in zip(coordinates_list, mask) if keep]
     filtered_ids = [id_ for id_, keep in zip(id_list, mask) if keep]
     logging.info(f"Selected {len(filtered_coordinates)} structures based on '{method}' method.")
+    
     return filtered_coordinates, filtered_ids
 
 def write_xyz(structures, step_number, structure_ids):
