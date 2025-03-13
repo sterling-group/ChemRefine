@@ -421,37 +421,42 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
         # Constants
         R_kcalmol_K = 0.0019872041  # kcal/(mol·K)
         temperature = 298.15
-        hartree_to_kcalmol = 627.5  # Conversion factor from Hartrees to kcal/mol
+        hartree_to_kcalmol = 627.509474  # Accurate conversion factor from Hartrees to kcal/mol
         percentage = parameters.get('weight', 99)
         logging.info(f"Filtering Boltzmann probability: {percentage}%")
 
         # Convert energies from Hartrees to kcal/mol
         energies_kcalmol = energies * hartree_to_kcalmol
 
-        # Calculate minimum energy
-        min_energy = np.min(energies_kcalmol)
+        # Sort energies and retain original indices
+        sorted_indices = np.argsort(energies_kcalmol)
+        sorted_energies = energies_kcalmol[sorted_indices]
 
-        # Calculate Boltzmann weights (without normalization)
-        delta_E = energies_kcalmol - min_energy  # Energy differences (ΔE)
+        # Calculate Boltzmann weights
+        delta_E = sorted_energies - np.min(sorted_energies)
         boltzmann_weights = np.exp(-delta_E / (R_kcalmol_K * temperature))
-
-        # Normalize Boltzmann weights to sum to 1
         boltzmann_probs = boltzmann_weights / np.sum(boltzmann_weights)
-        
-        # Calculate cumulative probability distribution
+
+        # Cumulative probability
         cumulative_probs = np.cumsum(boltzmann_probs)
-        
-        # Determine the cutoff probability (percentage of total probability)
+
+        # Identify indices within cutoff probability
         cutoff_prob = percentage / 100.0
+        cutoff_indices_sorted = [i for i, cum_prob in enumerate(cumulative_probs) if cum_prob <= cutoff_prob]
 
-        # Find indices where cumulative probability does not exceed the threshold
-        favored_indices = [i for i, prob in enumerate(cumulative_probs) if prob <= cutoff_prob]
+        # Always include the first structure beyond cutoff if not exactly reached
+        if not cutoff_indices_sorted or (cutoff_indices_sorted[-1] != len(cumulative_probs) - 1):
+            cutoff_indices_sorted.append(len(cutoff_indices_sorted))
 
-        # Ensure at least one structure is included if none satisfy the threshold
-        if not favored_indices or (favored_indices[-1] != len(cumulative_probs) - 1):
-            favored_indices.append(len(favored_indices))  # Include the first structure exceeding the threshold
+        # Translate sorted indices back to original indices
+        favored_indices = sorted_indices[cutoff_indices_sorted]
 
-        
+        # Now create mask properly
+        mask = [i in favored_indices for i in range(len(coordinates_list))]
+        filtered_coordinates = [coord for coord, keep in zip(coordinates_list, mask) if keep]
+        filtered_ids = [id_ for id_, keep in zip(id_list, mask) if keep]
+
+        logging.info(f"Selected {len(filtered_coordinates)} structures based on '{method}' method.")
 
     elif method == 'integer':
         logging.info("Filtering structures based on integer count.")
