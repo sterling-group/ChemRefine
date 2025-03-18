@@ -423,6 +423,10 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
             logging.warning("No structures available for Boltzmann filtering. Returning empty lists.")
             return [], []
 
+        if len(energies) == 1:
+            logging.info("Only one structure available; returning it.")
+            return coordinates_list, id_list
+        
         # Constants
         R_kcalmol_K = 0.0019872041  # kcal/(mol·K)
         temperature = 298.15
