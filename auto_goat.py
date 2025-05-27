@@ -12,11 +12,22 @@ import shutil
 import pandas as pd # type: ignore
 import logging
 
+# Constants
+HARTREE_TO_KCAL_MOL = 2625.5002/4.184  # Conversion factor from Hartrees to kcal/mol
+R_KCAL_MOL_K = 8.314462618e-3/4.184  # Gas constant in kcal/(mol*K)
+DEFAULT_TEMPERATURE = 298.15  # Temperature in Kelvin
+DEFAULT_CORES = 16
+DEFAULT_MAX_CORES = 32
+DEFAULT_PARTITION = "sterling"
+DEFAULT_ENERGY_WINDOW = 0.5  # Hartrees
+DEFAULT_BOLTZMANN_PERCENTAGE = 99  # Percentage
+JOB_CHECK_INTERVAL = 30  # Seconds between job status checks
+CSV_PRECISION = 8  # Decimal precision for CSV output
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 def parse_arguments():
-
     parser = argparse.ArgumentParser(
         description="Code to automate the process of conformer searching, submits initial XTB calculation and improves precision"
     )
@@ -25,7 +36,7 @@ def parse_arguments():
         help="YAML input file containing instructions for automated workflow",
     )
     parser.add_argument(
-        "-cores", "-c", type=int, default=16,
+        "-cores", "-c", type=int, default=DEFAULT_CORES,
         help="Max number of cores used throughout conformer search. For multiple files it will be cores/PAL"
     )
     parser.add_argument(
@@ -128,8 +139,8 @@ def submit_goat(input_file, qorca_flags=None):
 
     # Check if the job is still running
     while not is_job_finished(jobid):
-        logging.info(f"Job {jobid} is still running. Checking again in 30 seconds...")
-        time.sleep(30)  # Wait for 30 seconds before checking again
+        logging.info(f"Job {jobid} is still running. Checking again in {JOB_CHECK_INTERVAL} seconds...")
+        time.sleep(JOB_CHECK_INTERVAL)  # Wait before checking again
 
     logging.info(f"Job {jobid} for file {input_file} has finished.")
 
@@ -171,7 +182,7 @@ def create_orca_input(xyz_files, template, charge, multiplicity, output_dir='./'
     
     return input_files, output_files
         
-def submit_files(input_files, max_cores=32, partition="sterling", qorca_flags=None):
+def submit_files(input_files, max_cores=DEFAULT_MAX_CORES, partition=DEFAULT_PARTITION, qorca_flags=None):
     """
     Submit multiple calculations based on available cores, ensuring the number of running jobs 
     does not exceed the specified max_cores. Submissions are sequential, and the function waits 
@@ -214,7 +225,7 @@ def submit_files(input_files, max_cores=32, partition="sterling", qorca_flags=No
                 for job_id in completed_jobs:
                     del active_jobs[job_id]
                 
-                time.sleep(30)  # Check every 30 seconds
+                time.sleep(JOB_CHECK_INTERVAL)  # Check every 30 seconds
 
             # Submit the job
             logging.info(f"Submitting job for {input_file} requiring {cores_needed} cores...")
@@ -238,12 +249,12 @@ def submit_files(input_files, max_cores=32, partition="sterling", qorca_flags=No
         for job_id in completed_jobs:
             del active_jobs[job_id]
 
-        time.sleep(30)
+        time.sleep(JOB_CHECK_INTERVAL)
 
     logging.info("All calculations finished.")
 
 
-def is_job_finished(job_id, partition="sterling"):
+def is_job_finished(job_id, partition=DEFAULT_PARTITION):
     """
     Check if a SLURM job with a given job ID has finished.
     
@@ -406,11 +417,11 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
 
     if method == 'energy_window':
         logging.info("Filtering structures based on energy window.")
-        energy = parameters.get('energy', 0.5)  # Default is 0.5 Hartrees
+        energy = parameters.get('energy', DEFAULT_ENERGY_WINDOW)  # Default is 0.5 Hartrees
         unit = parameters.get('unit', 'hartree')  # Assume 'hartree' if no unit is specified
         logging.info(f"Filtering Energy window: {energy} {unit}")
         if unit.lower() == 'kcal/mol':
-            energy /= 627.509474  # Convert kcal/mol to Hartrees
+            energy /= HARTREE_TO_KCAL_MOL  # Convert kcal/mol to Hartrees
             logging.info(f"Converted energy window to Hartrees: {energy:.6f}")
 
         min_energy = np.min(energies)
@@ -428,14 +439,12 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
             return coordinates_list, id_list
         
         # Constants
-        R_kcalmol_K = 0.0019872041  # kcal/(mol·K)
-        temperature = 298.15
-        hartree_to_kcalmol = 627.509474  # Conversion factor from Hartrees to kcal/mol
-        percentage = parameters.get('weight', 99)  # User-specified probability threshold
+        temperature = DEFAULT_TEMPERATURE
+        percentage = parameters.get('weight', DEFAULT_BOLTZMANN_PERCENTAGE)  # User-specified probability threshold
         logging.info(f"Filtering Boltzmann probability: {percentage}%")
 
         # Convert energies from Hartrees to kcal/mol
-        energies_kcalmol = energies * hartree_to_kcalmol
+        energies_kcalmol = energies * HARTREE_TO_KCAL_MOL
 
         if energies_kcalmol.size == 0:
             logging.warning("No energies available after conversion. Returning empty results.")
@@ -450,7 +459,7 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
         delta_E = sorted_energies - min_energy
 
         # Compute Boltzmann weights
-        boltzmann_weights = np.exp(-delta_E / (R_kcalmol_K * temperature))
+        boltzmann_weights = np.exp(-delta_E / (R_KCAL_MOL_K * temperature))
         boltzmann_probs = boltzmann_weights / np.sum(boltzmann_weights)
 
         # Compute cumulative probabilities
@@ -549,7 +558,7 @@ def move_step_files(step_number):
             logging.info(f"There was an error moving the file {file}: {e}")
 
 
-def save_step_csv(energies, ids, step_number, temperature=298.15, filename="steps.csv", precision=8):
+def save_step_csv(energies, ids, step_number, temperature=DEFAULT_TEMPERATURE, filename="steps.csv", precision=CSV_PRECISION):
     """
     Appends energy data for a given step to a CSV file, with step number included.
     
@@ -561,11 +570,6 @@ def save_step_csv(energies, ids, step_number, temperature=298.15, filename="step
         filename (str): Name of the output CSV file (default is "steps.csv").
         precision (int): Decimal precision for output values (default is 8).
     """
-    # Conversion factor from Hartrees to kcal/mol
-    hartree_to_kcalmol = 627.5
-    # Gas constant in kcal/(mol*K)
-    R_kcalmol_K = 0.0019872041  # kcal/(mol*K)
-    
     # Convert inputs to DataFrame
     df = pd.DataFrame({'Conformer': ids, 'Energy (Hartrees)': energies})
     
@@ -575,7 +579,7 @@ def save_step_csv(energies, ids, step_number, temperature=298.15, filename="step
         raise ValueError("Non-numeric or missing energy values found. Please clean the input data.")
     
     # Convert energy to kcal/mol
-    df['Energy (kcal/mol)'] = df['Energy (Hartrees)'] * hartree_to_kcalmol
+    df['Energy (kcal/mol)'] = df['Energy (Hartrees)'] * HARTREE_TO_KCAL_MOL
     
     # Sort by Energy in kcal/mol
     df = df.sort_values(by='Energy (kcal/mol)', ascending=True).reset_index(drop=True)
@@ -584,7 +588,7 @@ def save_step_csv(energies, ids, step_number, temperature=298.15, filename="step
     df['dE (kcal/mol)'] = df['Energy (kcal/mol)'] - df['Energy (kcal/mol)'].min()
     
     # Calculate Boltzmann weights using the corrected formula
-    delta_E_over_RT = df['dE (kcal/mol)'] / (R_kcalmol_K * temperature)
+    delta_E_over_RT = df['dE (kcal/mol)'] / (R_KCAL_MOL_K * temperature)
     df['Boltzmann Weight'] = np.exp(-delta_E_over_RT)
     
     # Normalize Boltzmann weights to sum to 1
