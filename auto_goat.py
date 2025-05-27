@@ -21,7 +21,7 @@ DEFAULT_MAX_CORES = 32
 DEFAULT_PARTITION = "sterling"
 DEFAULT_ENERGY_WINDOW = 0.5  # Hartrees
 DEFAULT_BOLTZMANN_PERCENTAGE = 99  # Percentage
-JOB_CHECK_INTERVAL = 30  # Seconds between job status checks
+JOB_CHECK_INTERVAL = 5  # Seconds between job status checks
 CSV_PRECISION = 8  # Decimal precision for CSV output
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -36,11 +36,11 @@ def parse_arguments():
         help="YAML input file containing instructions for automated workflow",
     )
     parser.add_argument(
-        "-cores", "-c", type=int, default=DEFAULT_CORES,
+        "--maxcores", type=int, default=DEFAULT_CORES,
         help="Max number of cores used throughout conformer search. For multiple files it will be cores/PAL"
     )
     parser.add_argument(
-        "-skip", action="store_true", default=False,
+        "--skip", action="store_true", default=False,
         help="Skips the first step because it was already run, and starts with the next steps."
     )
     
@@ -62,9 +62,9 @@ def submit_qorca(input_file, qorca_flags=None):
         str: JobID of the submitted file.
     """
     # Base command without --qorca-flags
-    command = ["qorca", "-x", "compute-2-09-05", input_file]
+    qorca_path = os.path.join(os.path.dirname(__file__), "src", "qorca", "qorca")
+    command = ["python3", qorca_path, input_file]
 
-    # Add additional flags if provided
     if qorca_flags:
         command.extend(qorca_flags)  # Append the actual additional flags
 
@@ -635,7 +635,7 @@ def check_if_dir_and_skip_step(step_number):
 def main():
     #Get parse arguments
     args, qorca_flags = parse_arguments()
-    cores = args.cores
+    cores = args.maxcores
     yaml_input = args.input_file
     skip = args.skip
         # Load the YAML configuration
