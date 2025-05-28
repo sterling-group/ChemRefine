@@ -52,32 +52,71 @@ def parse_arguments():
 
 def submit_qorca(input_file, qorca_flags=None):
     """
-    Submits the ORCA calculation without including --qorca-flags. The additional_flags can be passed if needed.
+    Submits the ORCA calculation using qorca, showing output and extracting job info.
 
     Args:
         input_file (str): Path to the ORCA input file.
         qorca_flags (list, optional): A list of additional flags for qorca.
 
     Returns:
-        str: JobID of the submitted file.
+        tuple: (JobID, PAL_value) of the submitted file.
     """
-    # Base command without --qorca-flags
+    # Base command
     qorca_path = os.path.join(os.path.dirname(__file__), "src", "qorca", "qorca")
     command = ["python3", qorca_path, input_file]
 
     if qorca_flags:
-        command.extend(qorca_flags)  # Append the actual additional flags
+        command.extend(qorca_flags)
+
+    logging.info(f"Running qorca command: {' '.join(command)}")
 
     try:
-        # Run the command
+        # Run the command and show output in real-time
         result = subprocess.run(command, check=True, text=True, capture_output=True)
-        # Extract job ID from the output (assuming job ID is the last item in the output)
-        jobid = result.stdout.split()[-1]
-        return jobid
+        
+        # Print qorca output so user can see PAL messages
+        print(result.stdout)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+        
+        # Extract job ID from output
+        jobid_match = re.search(r'Submitted job (\d+)', result.stdout)
+        if jobid_match:
+            jobid = jobid_match.group(1)
+        else:
+            # Fallback parsing - try to find job ID in last line
+            lines = result.stdout.strip().split('\n')
+            for line in reversed(lines):
+                if line.strip():
+                    jobid = line.strip().split()[-1]
+                    break
+            else:
+                raise ValueError("Could not extract job ID from qorca output")
+          # Extract PAL value from qorca output (check both stdout and stderr)
+        combined_output = result.stdout + "\n" + (result.stderr or "")
+        pal_value = extract_pal_from_qorca_output(combined_output)
+        
+        if pal_value is not None:
+            logging.info(f"Extracted PAL value: {pal_value} from qorca output")
+        else:
+            logging.warning("Could not extract PAL value from qorca output - using default")
+            # Debug: show what we're trying to parse
+            logging.debug(f"Full qorca output for debugging:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
+        
+        return jobid, pal_value
+        
     except subprocess.CalledProcessError as e:
         # Handle command execution failure
-        logging.error(f"Error running qorca: {e}")
+        logging.error(f"qorca command failed with return code {e.returncode}")
+        if e.stdout:
+            logging.error(f"qorca stdout: {e.stdout}")
+        if e.stderr:
+            logging.error(f"qorca stderr: {e.stderr}")
+            print(e.stderr, file=sys.stderr)
         raise ValueError(f"qorca command failed: {e}")
+    except Exception as e:
+        logging.error(f"Unexpected error running qorca: {e}")
+        raise
 
 
 
@@ -94,35 +133,50 @@ def read_input_file(input_path):
         lines = f.readlines()
     return lines
 
-def parse_pal_from_input(lines):
-    """
-    Parse PAL value from ORCA input file lines.
+# Removed parse_pal_from_input - now handled by qorca
 
+def extract_pal_from_qorca_output(qorca_output):
+    """
+    Extract final PAL value from qorca output.
+    
     Args:
-        lines (list): List of strings representing lines in the ORCA input file.
-
+        qorca_output (str): Output from qorca command
+        
     Returns:
-        int: The PAL value found in the input file, or None if not found.
+        int or None: The final PAL value used, or None if not found
     """
-    input_text = ''.join(lines)
-    # Use regex to find %pal ... end blocks, regardless of formatting
-    pal_blocks = re.findall(r'%pal\s*(.*?)\s*end', input_text, re.IGNORECASE | re.DOTALL)
-    for pal_block in pal_blocks:
-        # Search for nprocs value within pal_block
-        match = re.search(r'nprocs\s+(\d+)', pal_block, re.IGNORECASE)
-        if match:
-            pal_value = int(match.group(1))
-            return pal_value
-    # Also check for pal in '!' line
-    for line in lines:
-        stripped_line = line.strip()
-        if stripped_line.startswith('!'):
-            tokens = stripped_line[1:].strip().split()
-            for token in tokens:
-                match = re.match(r'pal(\d+)', token.lower())
-                if match:
-                    pal_value = int(match.group(1))
-                    return pal_value
+    # Look for qorca's PAL adjustment messages (order matters - more specific first)
+    patterns = [
+        # Message when qorca overwrites PAL value in input file (most common)
+        r"Input file '[^']*' overwritten with specified PAL value \((\d+)\)",
+        r"Input file '[^']*' overwritten with adjusted PAL value \((\d+)\)",
+        
+        # Message when PAL is already correct
+        r"PAL value in '[^']*' is already set to (\d+)",
+        
+        # Command line specification patterns
+        r"-p\s+(\d+)",
+        r"--pal\s+(\d+)",
+        
+        # SLURM resource allocation messages
+        r"#SBATCH --ntasks=(\d+)",
+        r"Number of CPUs \((\d+)\)",
+        
+        # General PAL patterns
+        r"nprocs\s+(\d+)",
+        r"PAL.*?(\d+)",
+        r"pal(\d+)",
+        
+        # Fallback patterns
+        r"Using (\d+) cores",
+        r"cores?\s*[=:]\s*(\d+)",
+    ]
+    
+    for pattern in patterns:
+        pal_match = re.search(pattern, qorca_output, re.IGNORECASE | re.MULTILINE)
+        if pal_match:
+            return int(pal_match.group(1))
+    
     return None
 
 def submit_goat(input_file, qorca_flags=None):
@@ -134,7 +188,7 @@ def submit_goat(input_file, qorca_flags=None):
         qorca_flags (list, optional): Additional flags to pass to qorca.
     """
     # Submit the job and get the job ID
-    jobid = submit_qorca(input_file, qorca_flags=qorca_flags)
+    jobid, pal_value = submit_qorca(input_file, qorca_flags=qorca_flags)
     logging.info(f"Job {jobid} submitted for file {input_file}. Waiting for it to finish...")
 
     # Check if the job is still running
@@ -198,16 +252,10 @@ def submit_files(input_files, max_cores=DEFAULT_MAX_CORES, partition=DEFAULT_PAR
     active_jobs = {}  # Map of job_id to cores used for tracking active jobs
     
     for input_file in input_files:
-        input_path = Path(input_file)
         try:
-            # Read the input file and extract the PAL value
-            lines = read_input_file(input_path)
-            pal_value = parse_pal_from_input(lines)
-            if pal_value is None:
-                logging.info(f"Error: PAL value not found in input file {input_file}. Skipping...")
-                continue
-            
-            cores_needed = pal_value
+            # We don't pre-parse PAL since qorca will handle it and potentially modify it
+            # For now, assume a default core allocation that will be corrected by qorca output
+            cores_needed = DEFAULT_CORES  # Default assumption
             
             # Wait if there aren't enough free cores to submit the next job
             while total_cores_used + cores_needed > max_cores:
@@ -216,7 +264,7 @@ def submit_files(input_files, max_cores=DEFAULT_MAX_CORES, partition=DEFAULT_PAR
                 # Check active jobs and remove completed ones
                 completed_jobs = []
                 for job_id, cores in active_jobs.items():
-                    logging.info(f"Job ID {job_id} is running with {cores}")
+                    logging.info(f"Job ID {job_id} is running with {cores} cores")
                     if is_job_finished(job_id, partition):
                         completed_jobs.append(job_id)
                         total_cores_used -= cores
@@ -225,16 +273,20 @@ def submit_files(input_files, max_cores=DEFAULT_MAX_CORES, partition=DEFAULT_PAR
                 for job_id in completed_jobs:
                     del active_jobs[job_id]
                 
-                time.sleep(JOB_CHECK_INTERVAL)  # Check every 30 seconds
-
-            # Submit the job
-            logging.info(f"Submitting job for {input_file} requiring {cores_needed} cores...")
-            job_id = submit_qorca(input_file, qorca_flags=qorca_flags)
-            active_jobs[job_id] = cores_needed
-            total_cores_used += cores_needed
+                time.sleep(JOB_CHECK_INTERVAL)            # Submit the job and get actual PAL value used
+            logging.info(f"Submitting job for {input_file}...")
+            job_id, actual_pal_value = submit_qorca(input_file, qorca_flags=qorca_flags)
+            
+            # Use actual PAL value if available, otherwise use default
+            actual_cores = actual_pal_value if actual_pal_value is not None else cores_needed
+            active_jobs[job_id] = actual_cores
+            total_cores_used += actual_cores
+            
+            logging.info(f"Job {job_id} submitted using {actual_cores} cores (PAL value: {actual_pal_value})")
+            logging.info(f"Total cores in use: {total_cores_used}/{max_cores}")
 
         except Exception as e:
-            logging.info(f"Error processing input file {input_file}: {e}")
+            logging.error(f"Error processing input file {input_file}: {e}")
             continue
 
     # Wait for all remaining jobs to finish
@@ -638,7 +690,14 @@ def main():
     cores = args.maxcores
     yaml_input = args.input_file
     skip = args.skip
-        # Load the YAML configuration
+    
+    # Log CLI integration information
+    if qorca_flags:
+        logging.info(f"Passing qorca flags: {' '.join(qorca_flags)}")
+    else:
+        logging.info("No additional qorca flags specified")
+        
+    # Load the YAML configuration
     with open(yaml_input, 'r') as file:
         config = yaml.safe_load(file)
 
