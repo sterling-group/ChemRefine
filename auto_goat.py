@@ -13,12 +13,11 @@ import pandas as pd # type: ignore
 import logging
 
 # Constants
-HARTREE_TO_KCAL_MOL = 2625.5002/4.184  # Conversion factor from Hartrees to kcal/mol
+HARTREE_TO_KCAL_MOL = 2625.49964/4.184  # Conversion factor from Hartrees to kcal/mol
 R_KCAL_MOL_K = 8.314462618e-3/4.184  # Gas constant in kcal/(mol*K)
 DEFAULT_TEMPERATURE = 298.15  # Temperature in Kelvin
 DEFAULT_CORES = 16
 DEFAULT_MAX_CORES = 32
-DEFAULT_PARTITION = "sterling"
 DEFAULT_ENERGY_WINDOW = 0.5  # Hartrees
 DEFAULT_BOLTZMANN_PERCENTAGE = 99  # Percentage
 JOB_CHECK_INTERVAL = 5  # Seconds between job status checks
@@ -236,7 +235,7 @@ def create_orca_input(xyz_files, template, charge, multiplicity, output_dir='./'
     
     return input_files, output_files
         
-def submit_files(input_files, max_cores=DEFAULT_MAX_CORES, partition=DEFAULT_PARTITION, qorca_flags=None):
+def submit_files(input_files, max_cores=DEFAULT_MAX_CORES, qorca_flags=None):
     """
     Submit multiple calculations based on available cores, ensuring the number of running jobs 
     does not exceed the specified max_cores. Submissions are sequential, and the function waits 
@@ -245,7 +244,6 @@ def submit_files(input_files, max_cores=DEFAULT_MAX_CORES, partition=DEFAULT_PAR
     Args:
         input_files (list): List of input file paths for calculations.
         max_cores (int): Maximum number of cores to use simultaneously.
-        partition (str): Partition name for SLURM queue.
         qorca_flags (list, optional): Additional flags to pass to qorca.
     """
     total_cores_used = 0
@@ -260,12 +258,11 @@ def submit_files(input_files, max_cores=DEFAULT_MAX_CORES, partition=DEFAULT_PAR
             # Wait if there aren't enough free cores to submit the next job
             while total_cores_used + cores_needed > max_cores:
                 logging.info("Waiting for jobs to finish to free up cores...")
-                
-                # Check active jobs and remove completed ones
+                  # Check active jobs and remove completed ones
                 completed_jobs = []
                 for job_id, cores in active_jobs.items():
                     logging.info(f"Job ID {job_id} is running with {cores} cores")
-                    if is_job_finished(job_id, partition):
+                    if is_job_finished(job_id):
                         completed_jobs.append(job_id)
                         total_cores_used -= cores
                 
@@ -287,14 +284,12 @@ def submit_files(input_files, max_cores=DEFAULT_MAX_CORES, partition=DEFAULT_PAR
 
         except Exception as e:
             logging.error(f"Error processing input file {input_file}: {e}")
-            continue
-
-    # Wait for all remaining jobs to finish
+            continue    # Wait for all remaining jobs to finish
     logging.info("All jobs submitted. Waiting for remaining jobs to complete...")
     while active_jobs:
         completed_jobs = []
         for job_id, cores in active_jobs.items():
-            if is_job_finished(job_id, partition):
+            if is_job_finished(job_id):
                 completed_jobs.append(job_id)
                 total_cores_used -= cores
 
@@ -306,13 +301,12 @@ def submit_files(input_files, max_cores=DEFAULT_MAX_CORES, partition=DEFAULT_PAR
     logging.info("All calculations finished.")
 
 
-def is_job_finished(job_id, partition=DEFAULT_PARTITION):
+def is_job_finished(job_id):
     """
     Check if a SLURM job with a given job ID has finished.
     
     Parameters:
     - job_id (str): The SLURM job ID to check.
-    - partition (str): The SLURM partition to check. Default is "sterling".
     
     Returns:
     - bool: True if the job is not in the queue (finished), False otherwise.
@@ -321,8 +315,8 @@ def is_job_finished(job_id, partition=DEFAULT_PARTITION):
         # Get the current username using `whoami`
         username = subprocess.check_output("whoami", text=True).strip()
         
-        # Construct the squeue command
-        command = f"squeue -u {username} -p {partition} -o %i"
+        # Construct the squeue command (no partition filter needed since job IDs are unique)
+        command = f"squeue -u {username} -o %i"
         
         # Execute the command and capture the output
         output = subprocess.check_output(command, shell=True, text=True)
