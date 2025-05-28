@@ -5,6 +5,7 @@ import argparse
 import os 
 import sys 
 import time
+import getpass
 import yaml  # type: ignore
 import numpy as np  # type: ignore
 import glob
@@ -312,8 +313,8 @@ def is_job_finished(job_id):
     - bool: True if the job is not in the queue (finished), False otherwise.
     """
     try:
-        # Get the current username using `whoami`
-        username = subprocess.check_output("whoami", text=True).strip()
+        # Get the current username using getpass (more efficient than subprocess)
+        username = getpass.getuser()
         
         # Construct the squeue command (no partition filter needed since job IDs are unique)
         command = f"squeue -u {username} -o %i"
