@@ -585,6 +585,7 @@ def write_xyz(structures, step_number, structure_ids):
 def move_step_files(step_number):
     """
     Move all files starting with 'step{step_number}' to a directory named 'step{step_number}'.
+    Excludes .inp template files which should remain in the working directory.
     If a file already exists in the destination, rename the existing file by adding a prefix 'old_'.
 
     Parameters:
@@ -596,10 +597,13 @@ def move_step_files(step_number):
     os.makedirs(step_dir, exist_ok=True)
 
     if step_number == 1: 
-        files_to_move = [f for f in glob.glob(f"step{step_number}*") if os.path.isfile(f)]
-
+        # Get all files starting with step1, but exclude .inp template files
+        files_to_move = [f for f in glob.glob(f"step{step_number}*") 
+                        if os.path.isfile(f) and not f.endswith('.inp')]
     else: 
+        # For other steps, only move structure files
         files_to_move = glob.glob(f"step{step_number}_structure*")
+    
     # Move each file to the directory
     for file in files_to_move:
         try:
@@ -611,9 +615,11 @@ def move_step_files(step_number):
                 os.rename(dest_path, old_path)  # Rename the existing file with 'old_' prefix
             
             shutil.move(file, dest_path)
+            logging.info(f"Moved {file} to {dest_path}")
         except Exception as e:
-            logging.info(f"There was an error moving the file {file}: {e}")
-
+            logging.error(f"There was an error moving the file {file}: {e}")
+    
+    logging.info(f"Step {step_number} files organized (excluded .inp templates)")
 
 def save_step_csv(energies, ids, step_number, temperature=DEFAULT_TEMPERATURE, filename="steps.csv", precision=CSV_PRECISION):
     """
