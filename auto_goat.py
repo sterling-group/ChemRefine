@@ -316,23 +316,33 @@ def is_job_finished(job_id):
         # Get the current username using getpass (more efficient than subprocess)
         username = getpass.getuser()
         
-        # Construct the squeue command (no partition filter needed since job IDs are unique)
-        command = f"squeue -u {username} -o %i"
+        # Use modern subprocess approach with list of arguments (no shell=True)
+        command = ["squeue", "-u", username, "-o", "%i", "-h"]
         
         # Execute the command and capture the output
-        output = subprocess.check_output(command, shell=True, text=True)
+        result = subprocess.run(
+            command, 
+            capture_output=True, 
+            text=True,  # Python 3.7+ (returns string instead of bytes)
+            timeout=30,  # Prevent hanging
+            check=True   # Raise CalledProcessError on non-zero exit
+        )
         
         # Split the output into lines and check if job_id is present
-        job_ids = output.splitlines()
+        job_ids = result.stdout.strip().splitlines()
         
-        # The first line is usually the header, skip it
-        if job_id in job_ids[1:]:
-            return False  # Job is still in the queue
-        else:
-            return True   # Job has finished or is not in the queue
+        # No header to skip since we used -h flag
+        return job_id not in job_ids  # True if job finished, False if still running
+        
     except subprocess.CalledProcessError as e:
-        logging.info(f"Error running command: {e}")
-        return False
+        logging.warning(f"Error running squeue command: {e}")
+        return True  # Assume finished on error to avoid infinite loops
+    except subprocess.TimeoutExpired:
+        logging.warning(f"squeue command timed out for job {job_id}")
+        return True  # Assume finished on timeout
+    except Exception as e:
+        logging.warning(f"Unexpected error checking job {job_id}: {e}")
+        return True
 
 def parse_orca_output(file_paths, calculation_type, dir='./'):
     """
