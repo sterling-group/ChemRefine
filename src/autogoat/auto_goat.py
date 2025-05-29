@@ -62,7 +62,7 @@ def submit_qorca(input_file, qorca_flags=None):
         tuple: (JobID, PAL_value) of the submitted file.
     """
     # Base command
-    qorca_path = os.path.join(os.path.dirname(__file__), "vendor", "qorca", "qorca")
+    qorca_path = os.path.join(os.path.dirname(__file__), "..", "..", "vendor", "qorca", "qorca")
     command = ["python3", qorca_path, input_file]
 
     if qorca_flags:
