@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "auto-conformer-goat"
+name = "ChemRefine"
 dynamic = ["version"]
 description = "Automated conformer sampling and refinement using ORCA"
 readme = "README.md"
@@ -11,7 +11,7 @@ license = {file = "LICENSE"}
 license-expression = "GPL-3.0-or-later"
 requires-python = ">=3.6"
 authors = [
-    {name = "Sterling Research Group", email = ""},
+    {name = "Sterling Research Group", email = "ignaciomigliaro@outlook.com"},
 ]
 keywords = [
     "computational chemistry",
