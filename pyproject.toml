@@ -1,0 +1,115 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "auto-conformer-goat"
+dynamic = ["version"]
+description = "Automated conformer sampling and refinement using ORCA"
+readme = "README.md"
+license = {file = "LICENSE"}
+license-expression = "GPL-3.0-or-later"
+requires-python = ">=3.6"
+authors = [
+    {name = "Sterling Research Group", email = ""},
+]
+keywords = [
+    "computational chemistry",
+    "conformer sampling", 
+    "ORCA",
+    "molecular dynamics",
+    "quantum chemistry",
+    "automation",
+    "HPC"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 or later",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "numpy",
+    "pyyaml",
+    "pandas",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "black",
+    "flake8",
+    "mypy",
+]
+
+[project.urls]
+Homepage = "https://github.com/sterling-research-group/auto-conformer-goat"
+Documentation = "https://github.com/sterling-research-group/auto-conformer-goat/blob/main/README.md"
+Repository = "https://github.com/sterling-research-group/auto-conformer-goat.git"
+Issues = "https://github.com/sterling-research-group/auto-conformer-goat/issues"
+
+[project.scripts]
+auto-goat = "autogoat.auto_goat:main"
+
+[tool.hatch.version]
+path = "src/autogoat/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/autogoat"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/Examples",
+    "/vendor",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py36']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+  | vendor
+)/
+'''
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.mypy]
+python_version = "3.6"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+exclude = [
+    "vendor/",
+    "build/",
+    "dist/",
+]

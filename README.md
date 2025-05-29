@@ -1,45 +1,232 @@
-# **Automated Conformer Sampling and Refinement using ORCA**
+# **Auto-Conformer-GOAT**
+## **Automated Conformer Sampling and Refinement using ORCA**
 
-This repository contains a streamlined Python code for conformer sampling and refinement using **ORCA 6.0**. The code automates the process of progressively refining the level of theory, eliminating the need for manual intervention. This code is meant for HPC slurm submission system, minor modifications must be made if you use HPC outside of our group (UTD). Using an input yaml file we are able to automate the process of submitting calculations and then choosing a sampling method to choose the favored conformations, to then refine the calculation with more precise methods.
+[![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/License-GPL--3.0-green.svg)](LICENSE)
+[![ORCA](https://img.shields.io/badge/ORCA-6.0%2B-orange.svg)](https://orcaforum.kofo.mpg.de/)
+
+A streamlined Python package for conformer sampling and refinement using **ORCA 6.0**. This tool automates the process of progressively refining the level of theory, eliminating the need for manual intervention. Designed for HPC SLURM submission systems.
+
+Using an input YAML file, the package automates the process of submitting calculations and choosing sampling methods to select favored conformations, then refining calculations with increasingly precise methods.
 
 ---
 
 ## **Features**
-- Automated workflow for conformer sampling.
-- Gradual refinement of the computational level in subsequent steps.
-- Reduces manual errors and ensures efficient resource utilization.
+- 🔄 **Automated workflow** for conformer sampling and refinement
+- 📈 **Progressive refinement** of computational level across multiple steps
+- 🎯 **Intelligent sampling** with multiple selection algorithms (energy window, Boltzmann, integer-based)
+- 🚀 **HPC integration** with automatic SLURM job management and resource optimization
+- 📊 **Built-in analysis** with CSV output and structure filtering
+- 🔧 **Flexible configuration** via YAML input files
+- ⚡ **Error reduction** and efficient resource utilization
 
 ---
 
-## **Requirements**
-1. **Python 3.x**: The code is written in Python and requires the following libraries: \
-   -numpy \
-   -yaml \
-   -pandas
-2. **QORCA**: This is a Python script in our Group Repo for Orca submission
+## **Installation**
+
+### **Development Installation**
+```bash
+# Clone the repository
+git clone --recursive https://github.com/sterling-research-group/auto-conformer-goat.git
+cd auto-conformer-goat
+
+# Install in development mode
+pip install -e .
+```
+
+### **From PyPI** (when available)
+```bash
+pip install auto-conformer-goat
+```
+
+### **Requirements**
+- **Python 3.6+** with the following dependencies:
+  - `numpy` - Numerical computations
+  - `pyyaml` - YAML configuration parsing  
+  - `pandas` - Data analysis and CSV handling
+- **ORCA 6.0+** - Quantum chemistry calculations
+- **SLURM** - Job scheduling system
+- **QORCA** - Included as submodule for ORCA job submission
 ---
 
-## **Required Files**
-The code requires **ORCA input files** and ***Input yaml file*** to function:
+## **Quick Start**
 
-1. **First Input File**:  
-   - This file is the initial ORCA file and must include **GOAT specifications** for conformer optimization at the CHEAP level of theory i.e XTB.  
+### **1. Prepare Input Files**
 
-2. **Initial XYZ** (`step1.xyz`):  
-   - This file should be used for the intial geometry.
-   - Example line for coordinates:  
-    
-3. **N Input File** (`stepN.inp`):  
-   - Depending on how many steps of refinement are in your calculation you need to provide their input files.  
-   - It is **recommended** to include a frequency calculation for accurate results at the final step.
-   
-An example folder with input files (`Examples/`) is provided for reference.
+Create the required input files in your working directory:
+
+- **YAML Configuration** (`input.yaml`): Defines the workflow steps
+- **Initial XYZ** (`step1.xyz`): Starting molecular geometry  
+- **ORCA Templates** (`step1.inp`, `step2.inp`, etc.): Calculation templates for each step
+
+### **2. Run the Workflow**
+
+```bash
+# Basic usage
+auto-goat input.yaml
+
+# With custom core count
+auto-goat input.yaml --maxcores 128
+
+# Background execution (recommended for HPC)
+nohup auto-goat input.yaml --maxcores 128 &
+
+# Skip first step (if already completed)
+auto-goat input.yaml --skip
+```
+
+### **3. Monitor Progress**
+
+The tool provides detailed logging and creates organized output directories for each step:
+```
+step1/          # GOAT conformer generation outputs
+step2/          # First refinement level outputs  
+step3/          # Final high-level calculations
+steps.csv       # Summary of energies and structures
+```
 
 ---
-## **Example Usage**
-- `python auto_goat.py -c 128 input.yaml`
-  
-If you want to run the code in the background and not disconnect when you log off HPC:
-- `nohup python auto_goat.py input.yaml -c 128 &`
+
+## **Input Files Description**
+
+### **YAML Configuration File**
+```yaml
+charge: 0
+multiplicity: 1
+steps:
+  - step: 1
+    template: "step1.inp"
+    calculation_type: "GOAT"
+    sampling:
+      method: "integer"
+      parameters:
+        count: 10
+  - step: 2
+    template: "step2.inp" 
+    calculation_type: "DFT"
+    sampling:
+      method: "energy_window"
+      parameters:
+        window: 0.5
+```
+
+### **ORCA Template Files**
+
+1. **First Input File** (`step1.inp`):
+   - Must include **GOAT specifications** for conformer optimization
+   - Uses cheap level of theory (e.g., XTB) for initial sampling
+   - Example: `! XTB2 GOAT`
+
+2. **Subsequent Input Files** (`step2.inp`, `step3.inp`, etc.):
+   - Progressive refinement with higher-level methods
+   - **Recommended**: Include frequency calculations in final step
+   - Example: `! B3LYP def2-TZVP FREQ`
+
+3. **Initial XYZ File** (`step1.xyz`):
+   - Starting molecular geometry
+   - Standard XYZ format with atom count, comment line, and coordinates
+
+---
+
+## **Sampling Methods**
+
+### **Energy Window** 
+```yaml
+method: "energy_window"
+parameters:
+  window: 0.5  # Hartrees
+```
+Selects conformers within specified energy range of the global minimum.
+
+### **Boltzmann Population**
+```yaml
+method: "boltzmann"
+parameters:
+  percentage: 95  # Cumulative population %
+  temperature: 298.15  # Kelvin
+```
+Selects conformers based on Boltzmann population at given temperature.
+
+### **Integer Count**
+```yaml
+method: "integer" 
+parameters:
+  count: 10  # Number of conformers
+```
+Selects the N lowest-energy conformers.
+
+---
+
+## **Advanced Usage**
+
+### **Custom QORCA Flags**
+```bash
+# Pass additional flags to QORCA submission system
+auto-goat input.yaml -p 64 -t 2-00:00:00 --partition=gpu
+```
+
+### **Multi-Step Workflows**
+The tool supports complex multi-step refinement protocols:
+1. **Step 1**: GOAT conformer generation (XTB level)
+2. **Step 2**: DFT geometry optimization (B3LYP/def2-SVP)
+3. **Step 3**: High-level single points (B3LYP/def2-TZVP + frequencies)
+
+### **Resource Management**
+- Automatic core allocation based on ORCA PAL settings
+- Intelligent job queuing to maximize cluster utilization
+- Real-time monitoring of SLURM job status
+
+---
+
+## **Project Structure**
+```
+auto-conformer-goat/
+├── src/autogoat/           # Main package code
+├── vendor/qorca/           # QORCA submodule for job submission  
+├── Examples/               # Example input files and SLURM scripts
+├── README.md               # This file
+├── LICENSE                 # License
+└── pyproject.toml          # Package configuration
+```
+
+---
+
+## **Contributing**
+
+We welcome contributions! Please:
+1. Fork the repository
+2. Create a feature branch
+3. Add tests for new functionality  
+4. Submit a pull request
+
+---
+
+## **Citation**
+
+If you use Auto-Conformer-GOAT in your research, please cite:
+
+```bibtex
+@software{auto_conformer_goat,
+  title={Auto-Conformer-GOAT: Automated Conformer Sampling and Refinement},
+  author={Sterling Research Group},
+  url={https://github.com/sterling-research-group/auto-conformer-goat},
+  year={2025}
+}
+```
+
+---
+
+## **License**
+
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## **Support**
+
+For questions, issues, or feature requests:
+- 📧 Email: 
+- 🐛 Issues: [GitHub Issues](https://github.com/sterling-research-group/auto-conformer-goat/issues)
+- 📖 Documentation: [README.md](README.md)
 
 
