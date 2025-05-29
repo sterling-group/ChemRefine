@@ -214,7 +214,8 @@ def create_orca_input(xyz_files, template, charge, multiplicity, output_dir='./'
     output_files = []
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    logging.info(f"Writing XYZ files")    
+    logging.info(f"Writing ORCA input files")    
+    
     for file in xyz_files:
         base_name = os.path.splitext(os.path.basename(file))[0]
         input_file = os.path.join(output_dir, f"{base_name}.inp")
@@ -225,14 +226,24 @@ def create_orca_input(xyz_files, template, charge, multiplicity, output_dir='./'
         with open(template, "r") as tmpl:
             content = tmpl.read()
         
-        # Add the * xyzfile line for this specific XYZ file only
-        formatted_content = content + '\n\n' + f"* xyzfile {charge} {multiplicity} {file}\n\n"
+        # Remove any existing * xyzfile lines (case insensitive)
+        # This pattern matches lines that start with * and contain xyzfile
+        content = re.sub(r'^\s*\*\s+xyzfile.*$', '', content, flags=re.MULTILINE | re.IGNORECASE)
         
+        # Clean up any multiple consecutive newlines left by removal
+        content = re.sub(r'\n\s*\n\s*\n+', '\n\n', content)
+        
+        # Ensure content ends with proper spacing before adding xyzfile line
+        content = content.rstrip() + '\n\n'
+        
+        # Add the new * xyzfile line for this specific XYZ file
+        formatted_content = content + f"* xyzfile {charge} {multiplicity} {file}\n\n"
+
         # Write the formatted content to the input file
         with open(input_file, "w") as inp:
             inp.write(formatted_content)
         
-        logging.info(f"Writing {input_file} with charge {charge} and multiplicity {multiplicity}")
+        logging.info(f"Created {input_file} with charge {charge}, multiplicity {multiplicity}, and XYZ file {file}")
     
     return input_files, output_files
         
@@ -565,7 +576,6 @@ def filter_structures(coordinates_list, energies, id_list, method, **kwargs):
 
 def write_xyz(structures, step_number, structure_ids):
     logging.info("Writing Ensemble XYZ files")
-    logging.info("Writing Ensemble XYZ files")
     base_name = f"step{step_number}"
     xyz_filenames = []
     
@@ -615,11 +625,10 @@ def move_step_files(step_number):
                 os.rename(dest_path, old_path)  # Rename the existing file with 'old_' prefix
             
             shutil.move(file, dest_path)
-            logging.info(f"Moved {file} to {dest_path}")
         except Exception as e:
             logging.error(f"There was an error moving the file {file}: {e}")
     
-    logging.info(f"Step {step_number} files organized (excluded .inp templates)")
+    logging.info(f"Step {step_number} files organized.")
 
 def save_step_csv(energies, ids, step_number, temperature=DEFAULT_TEMPERATURE, filename="steps.csv", precision=CSV_PRECISION):
     """
