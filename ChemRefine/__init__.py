@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 """
 Auto-Conformer-GOAT: Automated conformer sampling and refinement using ORCA.
 
