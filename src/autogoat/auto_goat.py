@@ -73,11 +73,17 @@ def submit_qorca(input_file, qorca_flags=None):
     try:
         # Run the command and show output in real-time
         result = subprocess.run(command, check=True, text=True, capture_output=True)
+
+        # Log qorca output through the logging system for consistent formatting
+        if result.stdout.strip():
+            for line in result.stdout.strip().split('\n'):
+                if line.strip():
+                    logging.info(f"qorca: {line.strip()}")
         
-        # Print qorca output so user can see PAL messages
-        print(result.stdout)
-        if result.stderr:
-            print(result.stderr, file=sys.stderr)
+        if result.stderr.strip():
+            for line in result.stderr.strip().split('\n'):
+                if line.strip():
+                    logging.warning(f"qorca stderr: {line.strip()}")
         
         # Extract job ID from output
         jobid_match = re.search(r'Submitted job (\d+)', result.stdout)
