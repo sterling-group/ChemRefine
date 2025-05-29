@@ -25,6 +25,6 @@ __version__ = "1.0.0"
 __author__ = "Sterling Research Group"
 __email__ = "dal063121@utdallas.edu"
 
-from .auto_goat import main
+from .core import main
 
 __all__ = ["main"]
