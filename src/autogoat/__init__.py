@@ -1,11 +1,9 @@
-#!/usr/bin/env python3
 """
-Backward compatibility wrapper for auto_goat.py
+Auto-Conformer-GOAT: Automated conformer sampling and refinement using ORCA.
 
-This script maintains backward compatibility for users who expect to run:
-python auto_goat.py input.yaml
-
-It simply imports and calls the main function from the new package structure.
+A streamlined Python package for conformer sampling and refinement using ORCA 6.0.
+Automates the process of progressively refining the level of theory, eliminating 
+the need for manual intervention in HPC SLURM environments.
 
 Copyright (C) 2025 Sterling Research Group
 
@@ -23,13 +21,10 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-import sys
-import os
+__version__ = "1.0.0"
+__author__ = "Sterling Research Group"
+__email__ = "dal063121@utdallas.edu"
 
-# Add src to path to import autogoat package
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+from .auto_goat import main
 
-from autogoat.auto_goat import main
-
-if __name__ == "__main__":
-    main()
+__all__ = ["main"]
