@@ -1,3 +1,4 @@
+template_dir: ./templates
 # Sequential ORCA Input Configuration File
 # Define each step with its specific parameters.
 #This workflow reflects using GOAT and refining methods to improve the accuracy
