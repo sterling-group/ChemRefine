@@ -5,8 +5,7 @@ from .parse import ArgumentParser
 from .file_submission import FileSubmitter
 from .refine import StructureRefiner
 from .utils import Utility
-#from .mlip import MLIP
-from .orca_interface import OrcaInterface
+from .orca_interface import OrcaInterface  # Keep this if parse_output/create_input are here
 
 class ChemRefiner:
     def __init__(self):
@@ -14,7 +13,6 @@ class ChemRefiner:
         self.submitter = FileSubmitter()
         self.refiner = StructureRefiner()
         self.utils = Utility()
-        self.mlip = MLIP()
         self.orca = OrcaInterface()
 
     def run(self):
@@ -39,12 +37,16 @@ class ChemRefiner:
             parameters = step['sample_type']['parameters']
 
             if ctype.upper() == 'MLFF':
-                self.mlip.run()
+                logging.warning("MLIP support is under construction.")
                 continue
 
             if skip and os.path.exists(f"step{step_number}"):
                 logging.info(f"Skipping step {step_number} because its directory already exists.")
-                output_files = [os.path.join(f"step{step_number}", f) for f in os.listdir(f"step{step_number}") if f.endswith('.out')]
+                output_files = [
+                    os.path.join(f"step{step_number}", f)
+                    for f in os.listdir(f"step{step_number}")
+                    if f.endswith('.out')
+                ]
                 coordinates, energies = self.orca.parse_output(output_files, ctype, dir=f"./step{step_number}")
                 continue
 
@@ -52,22 +54,30 @@ class ChemRefiner:
                 xyz_file = "step1.xyz"
                 inp_file = "step1.inp"
                 xyz_filenames = [xyz_file]
-                input_files, output_files = self.orca.create_input(xyz_filenames, inp_file, charge, multiplicity)
+                input_files, output_files = self.orca.create_input(
+                    xyz_filenames, inp_file, charge, multiplicity
+                )
                 self.submitter.submit_files(input_files, cores, qorca_flags)
                 coordinates, energies = self.orca.parse_output(output_files, ctype)
-                filtered_ids = list(range(len(energies)))  # IDs assigned only once here
+                filtered_ids = list(range(len(energies)))
                 self.utils.save_step_csv(energies, filtered_ids, step_number)
-                filtered_coordinates, filtered_ids = self.refiner.filter(coordinates, energies, filtered_ids, sample_method, parameters)
+                filtered_coordinates, filtered_ids = self.refiner.filter(
+                    coordinates, energies, filtered_ids, sample_method, parameters
+                )
                 self.utils.move_step_files(step_number)
                 continue
 
             xyz_filenames = self.utils.write_xyz(filtered_coordinates, step_number, filtered_ids)
             input_template = f"step{step_number}.inp"
-            input_files, output_files = self.orca.create_input(xyz_filenames, input_template, charge, multiplicity)
+            input_files, output_files = self.orca.create_input(
+                xyz_filenames, input_template, charge, multiplicity
+            )
             self.submitter.submit_files(input_files, cores, qorca_flags)
             coordinates, energies = self.orca.parse_output(output_files, ctype)
-            self.utils.save_step_csv(energies, filtered_ids, step_number)  # IDs from step 1 reused
-            filtered_coordinates, filtered_ids = self.refiner.filter(coordinates, energies, filtered_ids, sample_method, parameters)
+            self.utils.save_step_csv(energies, filtered_ids, step_number)
+            filtered_coordinates, filtered_ids = self.refiner.filter(
+                coordinates, energies, filtered_ids, sample_method, parameters
+            )
             self.utils.move_step_files(step_number)
 
 def main():
