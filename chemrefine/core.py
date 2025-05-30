@@ -6,7 +6,7 @@ from .file_submission import FileSubmitter
 from .refine import StructureRefiner
 from .utils import Utility
 from .mlip import MLIP
-from .orca_interface import OrcaInterface  # New module to isolate ORCA-specific methods
+from .orca_interface import OrcaInterface
 
 class ChemRefiner:
     def __init__(self):
@@ -55,9 +55,9 @@ class ChemRefiner:
                 input_files, output_files = self.orca.create_input(xyz_filenames, inp_file, charge, multiplicity)
                 self.submitter.submit_files(input_files, cores, qorca_flags)
                 coordinates, energies = self.orca.parse_output(output_files, ctype)
-                ids = list(range(len(energies)))
-                self.utils.save_step_csv(energies, ids, step_number)
-                filtered_coordinates, filtered_ids = self.refiner.filter(coordinates, energies, ids, sample_method, parameters)
+                filtered_ids = list(range(len(energies)))  # IDs assigned only once here
+                self.utils.save_step_csv(energies, filtered_ids, step_number)
+                filtered_coordinates, filtered_ids = self.refiner.filter(coordinates, energies, filtered_ids, sample_method, parameters)
                 self.utils.move_step_files(step_number)
                 continue
 
@@ -66,7 +66,7 @@ class ChemRefiner:
             input_files, output_files = self.orca.create_input(xyz_filenames, input_template, charge, multiplicity)
             self.submitter.submit_files(input_files, cores, qorca_flags)
             coordinates, energies = self.orca.parse_output(output_files, ctype)
-            self.utils.save_step_csv(energies, filtered_ids, step_number)
+            self.utils.save_step_csv(energies, filtered_ids, step_number)  # IDs from step 1 reused
             filtered_coordinates, filtered_ids = self.refiner.filter(coordinates, energies, filtered_ids, sample_method, parameters)
             self.utils.move_step_files(step_number)
 

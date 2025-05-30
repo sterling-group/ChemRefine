@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ChemRefine"
-dynamic = ["version"]
-description = "Automated conformer sampling and refinement using ORCA"
+version = "0.3.0"  # Updated version
+description = "Automated conformer sampling and refinement using ORCA."
 readme = "README.md"
 license = {file = "LICENSE"}
 license-expression = "GPL-3.0-or-later"
@@ -15,7 +15,7 @@ authors = [
 ]
 keywords = [
     "computational chemistry",
-    "conformer sampling", 
+    "conformer sampling",
     "ORCA",
     "molecular dynamics",
     "quantum chemistry",
@@ -53,24 +53,20 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/sterling-research-group/auto-conformer-goat"
-Documentation = "https://github.com/sterling-research-group/auto-conformer-goat/blob/main/README.md"
-Repository = "https://github.com/sterling-research-group/auto-conformer-goat.git"
-Issues = "https://github.com/sterling-research-group/auto-conformer-goat/issues"
+Homepage = "https://github.com/sterling-research-group/ChemRefine"
+Documentation = "https://github.com/sterling-research-group/ChemRefine/blob/main/README.md"
+Repository = "https://github.com/sterling-research-group/ChemRefine.git"
+Issues = "https://github.com/sterling-research-group/ChemRefine/issues"
 
 [project.scripts]
-auto-goat = "autogoat.auto_goat:main"
-
-[tool.hatch.version]
-path = "src/autogoat/__init__.py"
+chemrefine = "chemrefine.core:ChemRefiner.run"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/autogoat"]
+packages = ["chemrefine"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "/src",
-    "/Examples",
+    "/chemrefine",
     "/vendor",
     "/README.md",
     "/LICENSE",
@@ -80,16 +76,15 @@ include = [
 [tool.black]
 line-length = 88
 target-version = ['py36']
-include = '\.pyi?$'
+include = '\\.pyi?$'
 extend-exclude = '''
 /(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
+  \\.eggs
+  | \\.git
+  | \\.hg
+  | \\.mypy_cache
+  | \\.tox
+  | \\.venv
   | build
   | dist
   | vendor
