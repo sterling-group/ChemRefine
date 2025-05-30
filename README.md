@@ -22,8 +22,8 @@ This repository contains a streamlined Python code for conformer sampling and re
 ### **Development Installation**
 ```bash
 # Clone the repository
-git clone --recursive https://github.com/sterling-research-group/auto-conformer-goat.git
-cd auto-conformer-goat
+git clone --recursive https://github.com/sterling-research-group/ChemRefine.git
+cd ChemRefine
 
 # Install in development mode
 pip install -e .
@@ -31,7 +31,7 @@ pip install -e .
 
 ### **From PyPI** (when available)
 ```bash
-pip install auto-conformer-goat
+pip install ChemRefine
 ```
 
 ### **Requirements**
@@ -220,8 +220,8 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 ## **Support**
 
 For questions, issues, or feature requests:
-- 📧 Email: 
-- 🐛 Issues: [GitHub Issues](https://github.com/sterling-research-group/auto-conformer-goat/issues)
+- 📧 Email: ignaciomigliaro@outlook.com
+- 🐛 Issues: [GitHub Issues](https://github.com/sterling-research-group/ChemRefine/issues)
 - 📖 Documentation: [README.md](README.md)
 
 

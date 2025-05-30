@@ -1,5 +1,7 @@
+#!/usr/bin/env python3
+
 """
-Auto-Conformer-GOAT: Automated conformer sampling and refinement using ORCA.
+ChemRefine: Automated conformer sampling and refinement using ORCA.
 
 A streamlined Python package for conformer sampling and refinement using ORCA 6.0.
 Automates the process of progressively refining the level of theory, eliminating 
@@ -21,10 +23,10 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-__version__ = "1.0.0"
+__version__ = "0.3.0"
 __author__ = "Sterling Research Group"
-__email__ = "dal063121@utdallas.edu"
+__email__ = "dal950773@utdallas.edu"
 
-from .auto_goat import main
+from .core import ChemRefiner
 
-__all__ = ["main"]
+__all__ = ["ChemRefiner"]
