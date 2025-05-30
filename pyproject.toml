@@ -59,7 +59,8 @@ Repository = "https://github.com/sterling-research-group/ChemRefine.git"
 Issues = "https://github.com/sterling-research-group/ChemRefine/issues"
 
 [project.scripts]
-chemrefine = "chemrefine.core:ChemRefiner.run"
+chemrefine = "chemrefine.core:main"
+
 
 [tool.hatch.build.targets.wheel]
 packages = ["chemrefine"]
