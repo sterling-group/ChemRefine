@@ -5,7 +5,7 @@ from .parse import ArgumentParser
 from .file_submission import FileSubmitter
 from .refine import StructureRefiner
 from .utils import Utility
-from .mlip import MLIP
+#from .mlip import MLIP
 from .orca_interface import OrcaInterface
 
 class ChemRefiner:
@@ -69,6 +69,9 @@ class ChemRefiner:
             self.utils.save_step_csv(energies, filtered_ids, step_number)  # IDs from step 1 reused
             filtered_coordinates, filtered_ids = self.refiner.filter(coordinates, energies, filtered_ids, sample_method, parameters)
             self.utils.move_step_files(step_number)
+
+def main():
+    ChemRefiner().run()
 
 if __name__ == "__main__":
     ChemRefiner().run()
