@@ -20,20 +20,20 @@ class ChemRefiner:
         self.utils = Utility()
         self.orca = OrcaInterface()
 
-        # Parse args
+        # === Parse command-line arguments first ===
         self.args, self.qorca_flags = self.arg_parser.parse()
 
-        # Load YAML config
+        # === Load the YAML configuration ===
         with open(self.args.input_file, 'r') as file:
             self.config = yaml.safe_load(file)
 
-        # Pull top-level config
+        # === Pull top-level config ===
         self.charge = self.config.get('charge', 0)
         self.multiplicity = self.config.get('multiplicity', 1)
         self.template_dir = self.config.get('template_dir', './templates')
         self.scratch_dir = self.config.get('scratch_dir', os.getenv("SCRATCH", "/tmp/orca_scratch"))
 
-        # Setup output directory
+        # === Setup output directory AFTER config is loaded ===
         self.output_dir = os.path.abspath(self.config.get('outputs', '.'))
         os.makedirs(self.output_dir, exist_ok=True)
 
