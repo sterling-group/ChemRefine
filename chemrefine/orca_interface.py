@@ -17,8 +17,26 @@ class OrcaJobSubmitter:
     - Submit ORCA jobs to the SLURM scheduler.
     """
 
-    def __init__(self, orca_executable: str = "orca"):
+    def __init__(self, orca_executable: str = "orca", scratch_dir: str = None, save_scratch: bool = False):
+        """
+            Initialize the ORCA job submitter.
+
+            Args:
+                orca_executable (str): Path to the ORCA executable.
+                scratch_dir (str): Path to the scratch directory. If not provided, the scratch directory is
+                                determined as follows:
+                                    1. If `scratch_dir` is provided, it is used.
+                                    2. If the environment variable 'SCRATCH' is set, it is used.
+                                    3. Otherwise, defaults to '/tmp/orca_scratch'.
+                save_scratch (bool): If True, scratch directories are not deleted after job completion.
+
+            The scratch directory hierarchy allows the user to override via command-line argument or environment variable.
+            """
         self.orca_executable = orca_executable
+        self.scratch_dir = scratch_dir or os.getenv("SCRATCH", "/tmp/orca_scratch")
+        self.save_scratch = save_scratch
+
+        
 
     def adjust_pal_in_input(self, input_file: Path, pal_value: int):
         """
@@ -86,35 +104,83 @@ class OrcaJobSubmitter:
 
     def generate_slurm_script(self, input_file: Path, pal_value: int, job_name: str = None):
         """
-        Generate a simple SLURM script to run the ORCA job.
+    Generate a SLURM script to run an ORCA job, including scratch directory handling.
 
-        Args:
-            input_file (Path): ORCA input file path.
-            pal_value (int): Number of CPUs to request.
-            job_name (str, optional): Job name in SLURM.
+    Args:
+        input_file (Path): Path to the ORCA input file.
+        pal_value (int): Number of CPUs to allocate for the job.
+        job_name (str, optional): Name of the SLURM job. Defaults to the input file stem.
 
-        Returns:
-            Path: Path to the generated SLURM script.
-        """
+    This script:
+        - Exports the scratch directory variable. Priority:
+            1. User-provided scratch directory.
+            2. Environment variable 'SCRATCH'.
+            3. Default '/tmp/orca_scratch'.
+        - Copies input and supporting files to the scratch directory.
+        - Runs the ORCA job from the scratch directory.
+        - Copies output files back to the original directory.
+        - Deletes the scratch directory after job completion unless `save_scratch` is True.
+    """
         if job_name is None:
             job_name = input_file.stem
 
         slurm_file = input_file.with_suffix(".slurm")
         with slurm_file.open("w") as f:
             f.write("#!/bin/bash\n")
+            f.write("#SBATCH --export=ALL\n")
             f.write(f"#SBATCH --job-name={job_name}\n")
             f.write(f"#SBATCH --output={job_name}.out\n")
             f.write(f"#SBATCH --error={job_name}.err\n")
             f.write(f"#SBATCH --ntasks={pal_value}\n")
-            f.write("#SBATCH --time=24:00:00\n")  # Default 24 hours
-
+            f.write("#SBATCH --cpus-per-task=1\n")
+            f.write("#SBATCH --time=24:00:00\n")
             f.write("\nmodule purge\n")
             f.write("# Load ORCA modules here if needed\n")
-            f.write("\n")
-            f.write(f"srun {self.orca_executable} {input_file.name}\n")
+
+            f.write("\n# Set scratch directory\n")
+            f.write("export ORIG=$PWD\n")
+            f.write("timestamp=$(date +%Y%m%d%H%M%S)\n")
+            f.write("random_str=$(tr -dc a-z0-9 </dev/urandom | head -c 8)\n")
+            if self.scratch_dir:
+                f.write(f"export SCRATCH_DIR={self.scratch_dir}\n")
+            else:
+                f.write(
+                    'export SCRATCH_DIR=/home/$USER/scratch/orca_${SLURM_JOB_ID}_${timestamp}_${random_str}\n'
+                )
+            f.write("mkdir -p $SCRATCH_DIR || { echo 'Error: Failed to create scratch directory'; exit 1; }\n")
+            f.write("echo 'SCRATCH_DIR is set to $SCRATCH_DIR'\n")
+
+            f.write("\n# Copy input file and necessary files to scratch\n")
+            f.write(f"cp {input_file} $SCRATCH_DIR/ || {{ echo 'Error: Failed to copy input file'; exit 1; }}\n")
+            f.write("for file in *.xyz *.pot *.gbw *.hess; do\n")
+            f.write("  if [ -e \"$file\" ]; then\n")
+            f.write("    cp \"$file\" $SCRATCH_DIR/ || { echo 'Error: Failed to copy $file'; exit 1; }\n")
+            f.write("  fi\n")
+            f.write("done\n")
+
+            f.write("\n# Change to scratch directory\n")
+            f.write("cd $SCRATCH_DIR || { echo 'Error: Failed to change directory'; exit 1; }\n")
+
+            f.write("\n# Start ORCA job\n")
+            f.write("export OMP_NUM_THREADS=1\n")
+            f.write(f"{self.orca_executable} {input_file.name} > $ORIG/{job_name}.out || {{ echo 'Error: ORCA execution failed.'; exit 1; }}\n")
+
+            f.write("\n# Copy output files back\n")
+            f.write("for file in *.xyz *.pot *.gbw *.out *.hess; do\n")
+            f.write("  if [ -f \"$file\" ]; then\n")
+            f.write("    cp \"$file\" $ORIG/ || { echo 'Error: Failed to copy $file back'; exit 1; }\n")
+            f.write("  fi\n")
+            f.write("done\n")
+
+            if not self.save_scratch:
+                f.write("\n# Clean up scratch directory\n")
+                f.write("rm -rf $SCRATCH_DIR || { echo 'Warning: Failed to remove scratch directory'; }\n")
+            else:
+                f.write("echo 'Not deleting scratch directory (save_scratch is True)'\n")
 
         logging.info(f"Generated SLURM script: {slurm_file}")
         return slurm_file
+
 
     def submit_job(self, slurm_script: Path):
         """
