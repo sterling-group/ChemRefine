@@ -7,6 +7,7 @@ from .utils import Utility
 from .orca_interface import OrcaInterface, OrcaJobSubmitter
 from pathlib import Path
 import shutil
+
 class ChemRefiner:
     """
     ChemRefiner class orchestrates the ChemRefine workflow, handling input parsing,
@@ -34,7 +35,11 @@ class ChemRefiner:
         self.scratch_dir = self.config.get('scratch_dir', os.getenv("SCRATCH", "/tmp/orca_scratch"))
 
         # === Setup output directory AFTER config is loaded ===
-        self.output_dir = os.path.abspath(self.config.get('outputs', '.'))
+        output_dir_raw = self.config.get('outputs', './outputs')  # Default to './outputs'
+        self.output_dir = os.path.abspath(output_dir_raw)
+        os.makedirs(self.output_dir, exist_ok=True)
+        logging.info(f"Output directory set to: {self.output_dir}")
+
         os.makedirs(self.output_dir, exist_ok=True)
 
 
