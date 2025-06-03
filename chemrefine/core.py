@@ -27,8 +27,11 @@ class ChemRefiner:
         steps = config['steps']
         charge = config['charge']
         multiplicity = config['multiplicity']
-
+        scratch_dir = config.get('scratch_dir', os.getenv("SCRATCH", "/tmp/orca_scratch"))
+        template_dir = config.get('template_dir', "./templates")
         filtered_coordinates, filtered_ids = None, None
+        logging.info(f"Using scratch directory: {scratch_dir}")
+        logging.info(f"Using template directory: {template_dir}")
 
         for step in steps:
             step_number = step['step']
@@ -52,7 +55,10 @@ class ChemRefiner:
 
             if step_number == 1:
                 xyz_file = "step1.xyz"
-                inp_file = "step1.inp"
+                inp_file = os.path.join(template_dir, "step1.inp")
+                if not os.path.exists(xyz_file):
+                    logging.error(f"XYZ file {xyz_file} does not exist. Please provide a valid file.")
+                    return
                 xyz_filenames = [xyz_file]
                 input_files, output_files = self.orca.create_input(
                     xyz_filenames, inp_file, charge, multiplicity
@@ -68,7 +74,7 @@ class ChemRefiner:
                 continue
 
             xyz_filenames = self.utils.write_xyz(filtered_coordinates, step_number, filtered_ids)
-            input_template = f"step{step_number}.inp"
+            input_template = os.path.join(template_dir, f"step{step_number}.inp")
             input_files, output_files = self.orca.create_input(
                 xyz_filenames, input_template, charge, multiplicity
             )
