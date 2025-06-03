@@ -6,7 +6,7 @@ from .refine import StructureRefiner
 from .utils import Utility
 from .orca_interface import OrcaInterface, OrcaJobSubmitter
 from pathlib import Path
-
+import shutil
 class ChemRefiner:
     """
     ChemRefiner class orchestrates the ChemRefine workflow, handling input parsing,
@@ -38,7 +38,7 @@ class ChemRefiner:
         os.makedirs(self.output_dir, exist_ok=True)
 
 
-    def prepare_step1_directory(self,step_number):
+    def prepare_step1_directory(self, step_number):
         """
         Prepares the step1 directory by copying template input files and creating input files.
 
@@ -55,10 +55,20 @@ class ChemRefiner:
         # Copy input files from template_dir to step_dir
         src_inp = os.path.join(self.template_dir, "step1.inp")
         dst_inp = os.path.join(step_dir, "step1.inp")
+
+        if not os.path.exists(src_inp):
+            raise FileNotFoundError(
+                f"Input file '{src_inp}' not found. Please ensure that 'step1.inp' exists in the template directory specified in your YAML file: '{self.template_dir}'."
+            )
         shutil.copyfile(src_inp, dst_inp)
 
         src_xyz = os.path.join(self.template_dir, "step1.xyz")
         dst_xyz = os.path.join(step_dir, "step1.xyz")
+
+        if not os.path.exists(src_xyz):
+            raise FileNotFoundError(
+                f"XYZ file '{src_xyz}' not found. Please ensure that 'step1.xyz' exists in the template directory specified in your YAML file: '{self.template_dir}'."
+            )
         shutil.copyfile(src_xyz, dst_xyz)
 
         xyz_filenames = [dst_xyz]
@@ -223,8 +233,8 @@ class ChemRefiner:
                     output_files, calculation_type, step_number, sample_method, parameters, step_dir
                 )
 
-    def main():
-        ChemRefiner().run()
+def main():
+    ChemRefiner().run()
 
-    if __name__ == "__main__":
+if __name__ == "__main__":
         ChemRefiner().run()
