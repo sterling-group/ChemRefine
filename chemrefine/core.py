@@ -13,6 +13,8 @@ class ChemRefiner:
         self.refiner = StructureRefiner()
         self.utils = Utility()
         self.orca = OrcaInterface()
+        self.output_dir = os.path.abspath(self.config.get('outputs', '.'))
+        os.makedirs(self.output_dir, exist_ok=True)
 
         # Parse args
         self.args, self.qorca_flags = self.arg_parser.parse()
@@ -90,7 +92,7 @@ class ChemRefiner:
                 # Parse output after job completion (simplified sequential logic)
                 coordinates, energies = self.orca.parse_output(output_files, calculation_type)
                 filtered_ids = list(range(len(energies)))
-                self.utils.save_step_csv(energies, filtered_ids, step_number)
+                self.utils.save_step_csv(energies, filtered_ids, step_number,output_dir=self.output_dir)
                 filtered_coordinates, filtered_ids = self.refiner.filter(
                     coordinates, energies, filtered_ids, sample_method, parameters
                 )

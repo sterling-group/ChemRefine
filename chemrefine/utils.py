@@ -1,9 +1,7 @@
 import re
-import os
+
 import glob
 import shutil
-import pandas as pd
-import numpy as np
 import logging
 from .constants import HARTREE_TO_KCAL_MOL, R_KCAL_MOL_K, CSV_PRECISION
 
@@ -18,7 +16,23 @@ class Utility:
                 return int(match.group(1))
         return None
 
-    def save_step_csv(self, energies, ids, step, filename="steps.csv", T=298.15):
+    def save_step_csv(self, energies, ids, step, filename="steps.csv", T=298.15, output_dir="."):
+        """
+        Save step-wise energies and Boltzmann weights to a CSV file.
+
+        Parameters:
+        - energies (list): List of energy values in Hartrees.
+        - ids (list): List of structure IDs.
+        - step (int): Current step number.
+        - filename (str): Output CSV file name (default: steps.csv).
+        - T (float): Temperature in Kelvin for Boltzmann weighting.
+        - output_dir (str): Directory to save the CSV file.
+        """
+        import os
+        import pandas as pd
+        import numpy as np
+
+        # Calculate energies
         df = pd.DataFrame({'Conformer': ids, 'Energy (Hartrees)': energies})
         df['Energy (kcal/mol)'] = df['Energy (Hartrees)'] * HARTREE_TO_KCAL_MOL
         df['dE (kcal/mol)'] = df['Energy (kcal/mol)'] - df['Energy (kcal/mol)'].min()
@@ -29,10 +43,17 @@ class Utility:
         df['% Cumulative'] = df['% Total'].cumsum()
         df.insert(0, 'Step', step)
         df = df.round(CSV_PRECISION)
+
+        # Construct output path
+        output_path = os.path.join(output_dir, filename)
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Write CSV
         mode = 'w' if step == 1 else 'a'
         header = step == 1
-        df.to_csv(filename, mode=mode, index=False, header=header)
-        logging.info(f"Saved CSV for step {step} to {filename}")
+        df.to_csv(output_path, mode=mode, index=False, header=header)
+        logging.info(f"Saved CSV for step {step} to {output_path}")
+
 
     def move_step_files(self, step_number):
         """
