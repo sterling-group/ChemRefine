@@ -215,10 +215,6 @@ class ChemRefiner:
                 output_files, calculation_type, step_number, sample_method, parameters, step_dir
             )
 
-
-
-
-
 def main():
     ChemRefiner().run()
 
