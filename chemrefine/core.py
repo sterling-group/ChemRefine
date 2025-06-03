@@ -2,15 +2,14 @@ import os
 import yaml
 import logging
 from .parse import ArgumentParser
-from .file_submission import FileSubmitter
 from .refine import StructureRefiner
 from .utils import Utility
-from .orca_interface import OrcaInterface  # Keep this if parse_output/create_input are here
+from .orca_interface import OrcaInterface, OrcaJobSubmitter
 
 class ChemRefiner:
     def __init__(self):
         self.arg_parser = ArgumentParser()
-        self.submitter = FileSubmitter()
+        self.orca_submitter = OrcaJobSubmitter()
         self.refiner = StructureRefiner()
         self.utils = Utility()
         self.orca = OrcaInterface()
@@ -65,7 +64,7 @@ class ChemRefiner:
                 input_files, output_files = self.orca.create_input(
                     xyz_filenames, inp_file, self.charge, self.multiplicity
                 )
-                self.submitter.submit_files(input_files, cores, self.qorca_flags)
+                self.orca_submitter = OrcaJobSubmitter()
                 coordinates, energies = self.orca.parse_output(output_files, ctype)
                 filtered_ids = list(range(len(energies)))
                 self.utils.save_step_csv(energies, filtered_ids, step_number)
@@ -80,7 +79,7 @@ class ChemRefiner:
             input_files, output_files = self.orca.create_input(
                 xyz_filenames, input_template, self.charge, self.multiplicity
             )
-            self.submitter.submit_files(input_files, cores, self.qorca_flags)
+            self.orca_submitter = OrcaJobSubmitter()
             coordinates, energies = self.orca.parse_output(output_files, ctype)
             self.utils.save_step_csv(energies, filtered_ids, step_number)
             filtered_coordinates, filtered_ids = self.refiner.filter(
