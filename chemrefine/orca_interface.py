@@ -36,7 +36,31 @@ class OrcaJobSubmitter:
         self.scratch_dir = scratch_dir or os.getenv("SCRATCH", "/tmp/orca_scratch")
         self.save_scratch = save_scratch
 
-        
+    def submit_files(self, input_files, max_cores, qorca_flags=None):
+        """
+        Submits multiple ORCA input files to SLURM.
+
+        Args:
+            input_files (list): List of input file paths.
+            max_cores (int): Maximum allowed cores per job.
+            qorca_flags (dict, optional): Additional flags (currently unused).
+        """
+        for input_file in input_files:
+            input_path = Path(input_file)
+
+            # 1️ Parse PAL value
+            pal_value = self.parse_pal_from_input(input_path)
+            pal_value = min(pal_value, max_cores)
+
+            # 2️ Adjust PAL in the input
+            self.adjust_pal_in_input(input_path, pal_value)
+
+            # 3️ Generate SLURM script
+            slurm_script = self.generate_slurm_script(input_path, pal_value)
+
+            # 4️ Submit the job
+            job_id = self.submit_job(slurm_script)
+            logging.info(f"Job submitted with ID: {job_id}")      
 
     def adjust_pal_in_input(self, input_file: Path, pal_value: int):
         """
@@ -180,7 +204,6 @@ class OrcaJobSubmitter:
 
         logging.info(f"Generated SLURM script: {slurm_file}")
         return slurm_file
-
 
     def submit_job(self, slurm_script: Path):
         """
