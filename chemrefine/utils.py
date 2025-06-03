@@ -1,5 +1,4 @@
 import re
-
 import glob
 import shutil
 import logging
@@ -76,3 +75,35 @@ class Utility:
                 os.rename(dest, os.path.join(step_dir, f"old_{os.path.basename(file)}"))
             shutil.move(file, dest)
 
+    def write_xyz(self, structures, step_number, structure_ids, output_dir='.'):
+        """
+        Writes XYZ files for each structure in the step directory.
+
+        Parameters:
+        - structures (list of lists or arrays): Coordinates and element data.
+        - step_number (int): The step number.
+        - structure_ids (list): List of structure IDs.
+        - output_dir (str): Output directory path.
+
+        Returns:
+        - List of XYZ filenames written.
+        """
+        import os
+        import logging
+
+        logging.info("Writing Ensemble XYZ files")
+        base_name = f"step{step_number}"
+        xyz_filenames = []
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        for structure, structure_id in zip(structures, structure_ids):
+            output_file = os.path.join(output_dir, f"{base_name}_structure_{structure_id}.xyz")
+            xyz_filenames.append(output_file)
+            with open(output_file, 'w') as file:
+                file.write(f"{len(structure)}\n\n")
+                for atom in structure:
+                    element, x, y, z = atom  # Unpack atom data
+                    file.write(f"{element} {x} {y} {z}\n")
+
+        return xyz_filenames
