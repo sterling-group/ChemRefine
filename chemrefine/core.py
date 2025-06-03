@@ -64,7 +64,7 @@ class ChemRefiner:
 
             # === STEP 1 ===
             if step_number == 1:
-                xyz_file = "step1.xyz"
+                xyz_file = os.path.join(self.template_dir,"step1.xyz")
                 inp_file = os.path.join(self.template_dir, "step1.inp")
                 if not os.path.exists(xyz_file):
                     raise FileNotFoundError(f"XYZ file '{xyz_file}' not found for step {step_number}. Exiting...")
