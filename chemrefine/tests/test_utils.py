@@ -10,7 +10,7 @@ def test_save_step_csv(tmp_path):
     ids = [0, 1, 2]
     utility = Utility()
     step_number = 1
-    utility.save_step_csv(energies, ids, step_number, output_dir=tmp_path)
+    utility.save_step_csv(energies, ids, step_number)
 
     csv_file = tmp_path / f"step{step_number}.csv"
     assert csv_file.exists()
