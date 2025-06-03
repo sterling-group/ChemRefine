@@ -7,29 +7,35 @@ from .utils import Utility
 from .orca_interface import OrcaInterface, OrcaJobSubmitter
 from pathlib import Path
 
-def __init__(self):
-    self.arg_parser = ArgumentParser()
-    self.orca_submitter = OrcaJobSubmitter()
-    self.refiner = StructureRefiner()
-    self.utils = Utility()
-    self.orca = OrcaInterface()
+class ChemRefiner:
+    """
+    ChemRefiner class orchestrates the ChemRefine workflow, handling input parsing,
+    job submission, output parsing, and structure refinement based on a YAML configuration.
+    It supports multiple steps with different calculation types and sampling methods.
+    """
+    def __init__(self):
+        self.arg_parser = ArgumentParser()
+        self.orca_submitter = OrcaJobSubmitter()
+        self.refiner = StructureRefiner()
+        self.utils = Utility()
+        self.orca = OrcaInterface()
 
-    # Parse args
-    self.args, self.qorca_flags = self.arg_parser.parse()
+        # Parse args
+        self.args, self.qorca_flags = self.arg_parser.parse()
 
-    # Load YAML config
-    with open(self.args.input_file, 'r') as file:
-        self.config = yaml.safe_load(file)
+        # Load YAML config
+        with open(self.args.input_file, 'r') as file:
+            self.config = yaml.safe_load(file)
 
-    # Pull top-level config
-    self.charge = self.config.get('charge', 0)
-    self.multiplicity = self.config.get('multiplicity', 1)
-    self.template_dir = self.config.get('template_dir', './templates')
-    self.scratch_dir = self.config.get('scratch_dir', os.getenv("SCRATCH", "/tmp/orca_scratch"))
+        # Pull top-level config
+        self.charge = self.config.get('charge', 0)
+        self.multiplicity = self.config.get('multiplicity', 1)
+        self.template_dir = self.config.get('template_dir', './templates')
+        self.scratch_dir = self.config.get('scratch_dir', os.getenv("SCRATCH", "/tmp/orca_scratch"))
 
-    # Setup output directory
-    self.output_dir = os.path.abspath(self.config.get('outputs', '.'))
-    os.makedirs(self.output_dir, exist_ok=True)
+        # Setup output directory
+        self.output_dir = os.path.abspath(self.config.get('outputs', '.'))
+        os.makedirs(self.output_dir, exist_ok=True)
 
 
     def prepare_step1_directory(self,step_number):
@@ -173,52 +179,52 @@ def __init__(self):
         return filtered_coordinates, filtered_ids
 
     def run(self):
-        """
-        Executes the ChemRefiner workflow, iterating through each step in the YAML config.
-        Handles step directory creation, input file preparation, ORCA job submission, and output parsing.
-        """
-        cores = self.args.maxcores
-        skip = self.args.skip
-        steps = self.config.get('steps', [])
-        calculation_functions = ["GOAT", "DFT", "XTB", "MLFF"]
+            """
+            Executes the ChemRefiner workflow, iterating through each step in the YAML config.
+            Handles step directory creation, input file preparation, ORCA job submission, and output parsing.
+            """
+            cores = self.args.maxcores
+            skip = self.args.skip
+            steps = self.config.get('steps', [])
+            calculation_functions = ["GOAT", "DFT", "XTB", "MLFF"]
 
-        filtered_coordinates, filtered_ids = None, None
+            filtered_coordinates, filtered_ids = None, None
 
-        for step in steps:
-            step_number = step['step']
-            calculation_type = step['calculation_type']
-            sample_method = step['sample_type']['method']
-            parameters = step['sample_type']['parameters']
+            for step in steps:
+                step_number = step['step']
+                calculation_type = step['calculation_type']
+                sample_method = step['sample_type']['method']
+                parameters = step['sample_type']['parameters']
 
-            if calculation_type not in calculation_functions:
-                raise ValueError(f"Invalid calculation type '{calculation_type}' in step {step_number}. Exiting...")
+                if calculation_type not in calculation_functions:
+                    raise ValueError(f"Invalid calculation type '{calculation_type}' in step {step_number}. Exiting...")
 
-            if skip:
-                filtered_coordinates, filtered_ids = self.handle_skip_step(
-                    step_number, calculation_type, sample_method, parameters
-                )
-                if filtered_coordinates is not None and filtered_ids is not None:
-                    continue
-
-            logging.info(f"Running step {step_number}: {calculation_type} with sampling method '{sample_method}'")
-
-            if step_number == 1:
-                step_dir, input_files, output_files = self.prepare_step1_directory(step_number)
-            else:
-                if calculation_type != "MLFF":
-                    step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
-                        step_number, filtered_coordinates, filtered_ids
+                if skip:
+                    filtered_coordinates, filtered_ids = self.handle_skip_step(
+                        step_number, calculation_type, sample_method, parameters
                     )
+                    if filtered_coordinates is not None and filtered_ids is not None:
+                        continue
+
+                logging.info(f"Running step {step_number}: {calculation_type} with sampling method '{sample_method}'")
+
+                if step_number == 1:
+                    step_dir, input_files, output_files = self.prepare_step1_directory(step_number)
                 else:
-                    raise ValueError("MLFF support is still under construction. Exiting...")
+                    if calculation_type != "MLFF":
+                        step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
+                            step_number, filtered_coordinates, filtered_ids
+                        )
+                    else:
+                        raise ValueError("MLFF support is still under construction. Exiting...")
 
-            self.submit_orca_jobs(input_files, cores, step_dir)
-            filtered_coordinates, filtered_ids = self.parse_and_filter_outputs(
-                output_files, calculation_type, step_number, sample_method, parameters, step_dir
-            )
+                self.submit_orca_jobs(input_files, cores, step_dir)
+                filtered_coordinates, filtered_ids = self.parse_and_filter_outputs(
+                    output_files, calculation_type, step_number, sample_method, parameters, step_dir
+                )
 
-def main():
-    ChemRefiner().run()
+    def main():
+        ChemRefiner().run()
 
-if __name__ == "__main__":
-    ChemRefiner().run()
+    if __name__ == "__main__":
+        ChemRefiner().run()
