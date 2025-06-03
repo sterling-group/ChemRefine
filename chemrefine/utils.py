@@ -54,15 +54,19 @@ class Utility:
         df.to_csv(output_path, mode=mode, index=False, header=header)
         logging.info(f"Saved CSV for step {step} to {output_path}")
 
-
-    def move_step_files(self, step_number):
+    def move_step_files(self, step_number, output_dir='.'):
         """
         Moves all files starting with 'step{step_number}' into a dedicated directory.
 
         Parameters:
         - step_number (int): The step number to organize files for.
+        - output_dir (str): The directory in which to create the step directory and move files.
         """
-        step_dir = f"step{step_number}"
+        import os
+        import glob
+        import shutil
+
+        step_dir = os.path.join(output_dir, f"step{step_number}")
         os.makedirs(step_dir, exist_ok=True)
 
         files = glob.glob(f"step{step_number}*")
