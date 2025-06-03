@@ -35,11 +35,19 @@ class Utility:
         logging.info(f"Saved CSV for step {step} to {filename}")
 
     def move_step_files(self, step_number):
+        """
+        Moves all files starting with 'step{step_number}' into a dedicated directory.
+
+        Parameters:
+        - step_number (int): The step number to organize files for.
+        """
         step_dir = f"step{step_number}"
         os.makedirs(step_dir, exist_ok=True)
-        files = [f for f in glob.glob(f"step{step_number}*") if not f.endswith('.inp')]
+
+        files = glob.glob(f"step{step_number}*")
         for file in files:
             dest = os.path.join(step_dir, os.path.basename(file))
             if os.path.exists(dest):
                 os.rename(dest, os.path.join(step_dir, f"old_{os.path.basename(file)}"))
             shutil.move(file, dest)
+
