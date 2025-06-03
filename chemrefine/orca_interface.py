@@ -126,7 +126,7 @@ class OrcaJobSubmitter:
             return pal_value
         return 1
 
-    def generate_slurm_script(self, input_file: Path, pal_value: int, template_dir: str, job_name: str = None):
+    def generate_slurm_script(self, input_file: Path, pal_value: int, template_dir: str, output_dir: str = ".", job_name: str = None):
         """
         Generate a SLURM script by combining a user-provided header with a consistent footer.
 
@@ -137,6 +137,7 @@ class OrcaJobSubmitter:
             input_file (Path): ORCA input file path.
             pal_value (int): Number of processors to allocate (ntasks).
             template_dir (str): Path to the directory containing the SLURM header.
+            output_dir (str): Path to the directory where the SLURM script will be saved.
             job_name (str, optional): Name of the SLURM job. Defaults to the input file stem.
 
         Returns:
@@ -155,7 +156,8 @@ class OrcaJobSubmitter:
         with open(header_template_path, 'r') as f:
             header_content = f.read()
 
-        slurm_file = input_file.with_suffix(".slurm")
+        # Create the Slurm script in the specified output_dir
+        slurm_file = Path(output_dir) / f"{job_name}.slurm"
         with open(slurm_file, 'w') as f:
             # Write user-provided header
             f.write(header_content)
