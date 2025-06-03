@@ -7,28 +7,30 @@ from .utils import Utility
 from .orca_interface import OrcaInterface, OrcaJobSubmitter
 from pathlib import Path
 
-class ChemRefiner:
-    def __init__(self):
-        self.arg_parser = ArgumentParser()
-        self.orca_submitter = OrcaJobSubmitter()
-        self.refiner = StructureRefiner()
-        self.utils = Utility()
-        self.orca = OrcaInterface()
-        self.output_dir = os.path.abspath(self.config.get('outputs', '.'))
-        os.makedirs(self.output_dir, exist_ok=True)
+def __init__(self):
+    self.arg_parser = ArgumentParser()
+    self.orca_submitter = OrcaJobSubmitter()
+    self.refiner = StructureRefiner()
+    self.utils = Utility()
+    self.orca = OrcaInterface()
 
-        # Parse args
-        self.args, self.qorca_flags = self.arg_parser.parse()
+    # Parse args
+    self.args, self.qorca_flags = self.arg_parser.parse()
 
-        # Load YAML config
-        with open(self.args.input_file, 'r') as file:
-            self.config = yaml.safe_load(file)
+    # Load YAML config
+    with open(self.args.input_file, 'r') as file:
+        self.config = yaml.safe_load(file)
 
-        # Pull top-level config
-        self.charge = self.config.get('charge', 0)
-        self.multiplicity = self.config.get('multiplicity', 1)
-        self.template_dir = self.config.get('template_dir', './templates')
-        self.scratch_dir = self.config.get('scratch_dir', os.getenv("SCRATCH", "/tmp/orca_scratch"))
+    # Pull top-level config
+    self.charge = self.config.get('charge', 0)
+    self.multiplicity = self.config.get('multiplicity', 1)
+    self.template_dir = self.config.get('template_dir', './templates')
+    self.scratch_dir = self.config.get('scratch_dir', os.getenv("SCRATCH", "/tmp/orca_scratch"))
+
+    # Setup output directory
+    self.output_dir = os.path.abspath(self.config.get('outputs', '.'))
+    os.makedirs(self.output_dir, exist_ok=True)
+
 
     def prepare_step1_directory(self,step_number):
         """
