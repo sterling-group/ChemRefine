@@ -15,24 +15,26 @@ class ChemRefiner:
         self.utils = Utility()
         self.orca = OrcaInterface()
 
+        # Parse args
+        self.args, self.qorca_flags = self.arg_parser.parse()
+
+        # Load YAML config
+        with open(self.args.input_file, 'r') as file:
+            self.config = yaml.safe_load(file)
+
+        # Pull top-level config
+        self.charge = self.config.get('charge', 0)
+        self.multiplicity = self.config.get('multiplicity', 1)
+        self.template_dir = self.config.get('template_dir', './templates')
+        self.scratch_dir = self.config.get('scratch_dir', os.getenv("SCRATCH", "/tmp/orca_scratch"))
+
+
     def run(self):
-        args, qorca_flags = self.arg_parser.parse()
-        cores = args.maxcores
-        yaml_input = args.input_file
-        skip = args.skip
+        cores = self.args.maxcores
+        skip = self.args.skip
+        steps = self.config['steps']
 
-        with open(yaml_input, 'r') as file:
-            config = yaml.safe_load(file)
-
-        steps = config['steps']
-        charge = config['charge']
-        multiplicity = config['multiplicity']
-        scratch_dir = config.get('scratch_dir', os.getenv("SCRATCH", "/tmp/orca_scratch"))
-        template_dir = config.get('template_dir', "./templates")
         filtered_coordinates, filtered_ids = None, None
-        logging.info(f"Using scratch directory: {scratch_dir}")
-        logging.info(f"Using template directory: {template_dir}")
-
         for step in steps:
             step_number = step['step']
             ctype = step['calculation_type']
@@ -55,15 +57,15 @@ class ChemRefiner:
 
             if step_number == 1:
                 xyz_file = "step1.xyz"
-                inp_file = os.path.join(template_dir, "step1.inp")
+                inp_file = os.path.join(self.template_dir, "step1.inp")
                 if not os.path.exists(xyz_file):
                     logging.error(f"XYZ file {xyz_file} does not exist. Please provide a valid file.")
                     return
                 xyz_filenames = [xyz_file]
                 input_files, output_files = self.orca.create_input(
-                    xyz_filenames, inp_file, charge, multiplicity
+                    xyz_filenames, inp_file, self.charge, self.multiplicity
                 )
-                self.submitter.submit_files(input_files, cores, qorca_flags)
+                self.submitter.submit_files(input_files, cores, self.qorca_flags)
                 coordinates, energies = self.orca.parse_output(output_files, ctype)
                 filtered_ids = list(range(len(energies)))
                 self.utils.save_step_csv(energies, filtered_ids, step_number)
@@ -74,11 +76,11 @@ class ChemRefiner:
                 continue
 
             xyz_filenames = self.utils.write_xyz(filtered_coordinates, step_number, filtered_ids)
-            input_template = os.path.join(template_dir, f"step{step_number}.inp")
+            input_template = os.path.join(self.template_dir, f"step{step_number}.inp")
             input_files, output_files = self.orca.create_input(
-                xyz_filenames, input_template, charge, multiplicity
+                xyz_filenames, input_template, self.charge, self.multiplicity
             )
-            self.submitter.submit_files(input_files, cores, qorca_flags)
+            self.submitter.submit_files(input_files, cores, self.qorca_flags)
             coordinates, energies = self.orca.parse_output(output_files, ctype)
             self.utils.save_step_csv(energies, filtered_ids, step_number)
             filtered_coordinates, filtered_ids = self.refiner.filter(
