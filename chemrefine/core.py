@@ -106,6 +106,7 @@ class ChemRefiner:
         # Write XYZ files in step_dir
         xyz_filenames = self.utils.write_xyz(filtered_coordinates, step_number, filtered_ids, output_dir=step_dir)
 
+
         # Copy the template input file from template_dir to step_dir
         input_template_src = os.path.join(self.template_dir, f"step{step_number}.inp")
         input_template_dst = os.path.join(step_dir, f"step{step_number}.inp")
@@ -156,7 +157,7 @@ class ChemRefiner:
             cores (int): Max number of cores.
             step_dir (str): Path to the step directory.
         """
-        self.orca_submitter = OrcaJobSubmitter()
+        self.orca_submitter = OrcaJobSubmitter(scratch_dir=self.scratch_dir)
 
         for input_file in input_files:
             input_path = Path(input_file)
