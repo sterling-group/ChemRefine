@@ -155,7 +155,7 @@ class OrcaJobSubmitter:
         if job_name is None:
             job_name = input_file.stem
 
-        header_template_path = Path(template_dir) / "orca.slurm.header"
+        header_template_path = Path(os.path.abspath(template_dir)) / "orca.slurm.header"
         if not header_template_path.is_file():
             logging.error(f"SLURM header template {header_template_path} not found.")
             raise FileNotFoundError(f"SLURM header template {header_template_path} not found.")
@@ -256,7 +256,7 @@ class OrcaInterface:
 
     def create_input(self, xyz_files, template, charge, multiplicity, output_dir='./'):
         input_files, output_files = [], []
-
+        logging.info(f"output_dir IN create_input: {output_dir}")
         os.makedirs(output_dir, exist_ok=True)
 
         for xyz in xyz_files:
