@@ -20,7 +20,7 @@ class ChemRefiner:
         self.refiner = StructureRefiner()
         self.utils = Utility()
         self.orca = OrcaInterface()
-
+        self.parameters = self.load_parameters(self.input_yaml)
         # === Parse command-line arguments first ===
         self.args, self.qorca_flags = self.arg_parser.parse()
 
@@ -207,47 +207,80 @@ class ChemRefiner:
         return filtered_coordinates, filtered_ids
 
     def run(self):
-        cores = self.args.maxcores
-        skip = self.args.skip
-        steps = self.config.get('steps', [])
-        calculation_functions = ["GOAT", "DFT", "XTB", "MLFF"]
+        """
+        Main pipeline execution function for ChemRefine.
+        Dynamically loops over all steps defined in the YAML input.
+        Handles skip-step logic and standard pipeline logic.
+        """
+        logging.info("Starting ChemRefine pipeline.")
 
-        filtered_coordinates, filtered_ids = None, None
+        previous_coordinates, previous_ids = None, None
+
+        steps = self.config.get('steps', [])
+        charge = self.config.get('charge', 0)
+        multiplicity = self.config.get('multiplicity', 1)
+        calculation_functions = ["GOAT", "DFT", "XTB", "MLFF"]
 
         for step in steps:
             step_number = step['step']
-            calculation_type = step['calculation_type']
+            calculation_type = step['calculation_type'].lower()
             sample_method = step['sample_type']['method']
-            parameters = step['sample_type']['parameters']
+            parameters = step['sample_type'].get('parameters', {})
 
-            if calculation_type not in calculation_functions:
+            if calculation_type.upper() not in calculation_functions:
                 raise ValueError(f"Invalid calculation type '{calculation_type}' in step {step_number}. Exiting...")
 
-            if skip:
+            filtered_coordinates, filtered_ids = (None, None)
+            if self.skip_steps:
                 filtered_coordinates, filtered_ids = self.handle_skip_step(
                     step_number, calculation_type, sample_method, parameters
                 )
-                if filtered_coordinates is not None and filtered_ids is not None:
-                    continue
 
-            logging.info(f"Running step {step_number}: {calculation_type} with sampling method '{sample_method}'")
-
-            if step_number == 1:
-                step_dir, input_files, output_files = self.prepare_step1_directory(step_number)
-            else:
-                if calculation_type != "MLFF":
-                    step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
-                        step_number, filtered_coordinates, filtered_ids
-                    )
+            if filtered_coordinates is None or filtered_ids is None:
+                logging.info(f"No valid skip outputs for step {step_number}. Proceeding with normal execution.")
+                if step_number == 1:
+                    step_dir, input_files, output_files = self.prepare_step1_directory(step_number)
                 else:
-                    raise ValueError("MLFF support is still under construction. Exiting...")
+                    step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
+                        step_number,
+                        previous_coordinates,
+                        previous_ids
+                    )
 
-            logging.info(f"Step directory prepared: {step_dir}")
+                self.orca_submitter.submit_files(
+                    input_files=input_files,
+                    max_cores=self.max_cores,
+                    partition=self.partition,
+                    template_dir=self.template_dir,
+                    output_dir=step_dir
+                )
 
-            self.submit_orca_jobs(input_files, cores, step_dir)
-            filtered_coordinates, filtered_ids = self.parse_and_filter_outputs(
-                output_files, calculation_type, step_number, sample_method, parameters, step_dir
-            )
+                coordinates, energies = self.orca.parse_output(
+                    output_files,
+                    calculation_type,
+                    dir=step_dir
+                )
+
+                ids = list(range(len(energies)))
+                filtered_coordinates, filtered_ids = self.refiner.filter(
+                    coordinates,
+                    energies,
+                    ids,
+                    sample_method,
+                    parameters
+                )
+            else:
+                step_dir = os.path.join(self.output_dir, f"step{step_number}")
+                logging.info(f"Skipping step {step_number} using existing outputs.")
+
+            self.save_step_csv(step_number, filtered_coordinates, filtered_ids)
+
+            previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
+
+            # Move files or handle file management if needed
+            self.move_step_files(step_number)
+
+        logging.info("ChemRefine pipeline completed.")
 
 def main():
     ChemRefiner().run()
