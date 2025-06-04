@@ -156,6 +156,7 @@ class OrcaJobSubmitter:
             f.write("export OMP_NUM_THREADS=1\n")
             f.write(f"$ORCA_EXEC {input_file.name} > $ORIG/{job_name}.out || {{ echo 'Error: ORCA execution failed.'; exit 1; }}\n")
             f.write("cp *.out $ORIG/\n")
+            f.write("cp *.xyz $ORIG/\n")
             if not self.save_scratch:
                 f.write("rm -rf $SCRATCH_DIR\n")
             else:
@@ -226,18 +227,7 @@ class OrcaJobSubmitter:
         """
         match = re.search(r"Submitted batch job (\d+)", sbatch_output)
         return match.group(1) if match else None
-        """
-        Extract the job ID from sbatch output.
-
-        Args:
-            sbatch_output (str): Output from sbatch command.
-
-        Returns:
-            str or None: Job ID if found, else None.
-        """
-        match = re.search(r"Submitted batch job (\d+)", sbatch_output)
-        return match.group(1) if match else None
-
+       
 class OrcaInterface:
     def __init__(self):
         self.utility = Utility()
@@ -268,36 +258,76 @@ class OrcaInterface:
         return input_files, output_files
 
     def parse_output(self, file_paths, calculation_type, dir='./'):
-        coordinates, energies = [], []
+        """
+        Parses ORCA output files for the specified calculation type.
+        
+        Args:
+            file_paths (list): List of .out file paths.
+            calculation_type (str): Type of calculation ('goat', 'dft', etc.).
+            dir (str): Directory to look for outputs.
+        
+        Returns:
+            tuple: (coordinates, energies)
+        """
+        coordinates, energies = []
+        logging.info(f"Parsing calculation type: {calculation_type.upper()}")
+        logging.info(f"Looking for output files in directory: {dir}")
+
         for out_file in file_paths:
             path = os.path.join(dir, os.path.basename(out_file))
+            logging.info(f"Checking output file: {path}")
+
             if not os.path.exists(path):
+                logging.warning(f"Output file not found: {path}")
                 continue
+
             with open(path) as f:
                 content = f.read()
 
             if calculation_type.lower() == 'goat':
                 final_xyz = path.replace('.out', '.finalensemble.xyz')
+                logging.info(f"Looking for GOAT ensemble file: {final_xyz}")
+
                 if os.path.exists(final_xyz):
+                    logging.info(f"GOAT ensemble file found: {final_xyz}")
                     with open(final_xyz) as fxyz:
                         lines = fxyz.readlines()
+
                     current_structure = []
                     for line in lines:
                         if len(line.strip().split()) == 4:
                             current_structure.append(tuple(line.strip().split()))
                     coordinates.append(current_structure)
+
                     energy_match = re.search(r"^\s*[-]?\d+\.\d+", lines[1])
                     energies.append(float(energy_match.group()) if energy_match else None)
+                else:
+                    logging.error(f"GOAT ensemble file not found for: {path}")
+                    continue
             else:
+                logging.info(f"Parsing standard DFT output for: {path}")
                 coord_block = re.findall(
                     r"CARTESIAN COORDINATES \\(ANGSTROEM\\)\n-+\n((?:.*?\n)+?)-+\n",
                     content,
                     re.DOTALL
                 )
-                coords = [line.split() for line in coord_block[-1].strip().splitlines()] if coord_block else []
+                if coord_block:
+                    coords = [line.split() for line in coord_block[-1].strip().splitlines()]
+                    coordinates.append(coords)
+                else:
+                    logging.warning(f"No coordinate block found in: {path}")
+                    coordinates.append([])
+
                 energy_match = re.findall(r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)", content)
-                energy = float(energy_match[-1]) if energy_match else None
-                coordinates.append(coords)
-                energies.append(energy)
+                if energy_match:
+                    energy = float(energy_match[-1])
+                    energies.append(energy)
+                else:
+                    logging.warning(f"No energy found in: {path}")
+                    energies.append(None)
+
+        if not coordinates or not energies:
+            logging.error(f"Failed to parse {calculation_type.upper()} outputs in directory: {dir}")
 
         return coordinates, energies
+
