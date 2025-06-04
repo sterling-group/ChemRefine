@@ -66,12 +66,11 @@ class Utility:
         - step_number (int): The step number to organize files for.
         - output_dir (str): The directory in which to create the step directory and move files.
         """
-        import glob
-        import os
-        import shutil
+        import glob,os,shutil
+        
 
         step_dir = os.path.join(output_dir, f"step{step_number}")
-        os.makedirs(step_dir, exist_ok=True)
+        #os.makedirs(step_dir, exist_ok=True)
 
         # Search for files in the output_dir
         pattern = os.path.join(output_dir, f"step{step_number}*")
