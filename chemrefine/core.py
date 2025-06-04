@@ -42,20 +42,11 @@ class ChemRefiner:
 
         os.makedirs(self.output_dir, exist_ok=True)
 
-
     def prepare_step1_directory(self, step_number):
-        """
-        Prepares the step1 directory by copying template input files and creating input files.
-
-        Args:
-            step_number (int): The step number (should be 1).
-        Returns:
-            step_dir (str): Path to the step directory.
-            input_files (list): List of generated ORCA input files.
-            output_files (list): List of expected ORCA output files.
-        """
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
-        os.makedirs(step_dir, exist_ok=True)
+        os.makedirs(step_dir, exist_ok=True)        
+        logging.info(f"step_dir BEFORE: {step_dir}")
+
 
         # Copy input files from template_dir to step_dir
         src_xyz = os.path.join(self.template_dir, "step1.xyz")
@@ -153,18 +144,40 @@ class ChemRefiner:
             cores (int): Max number of cores.
             step_dir (str): Path to the step directory.
         """
-        self.orca_submitter = OrcaJobSubmitter()
+        logging.info(f"Switching to working directory: {step_dir}")
+        original_dir = os.getcwd()
+        os.chdir(step_dir)
+        try:
+            self.orca_submitter = OrcaJobSubmitter(scratch_dir=self.scratch_dir)
+            for input_file in input_files:
+                input_path = Path(input_file)
+                
+                # Parse PAL value and adjust it to not exceed available cores
+                pal_value = self.orca_submitter.parse_pal_from_input(input_path)
+                pal_value = min(pal_value, cores)
+                logging.info(f"Setting PAL value to {pal_value} for {input_path.name}")
+                
+                # Adjust PAL value in the input file
+                self.orca_submitter.adjust_pal_in_input(input_path, pal_value)
+                
+                # Generate the SLURM script inside the step directory
+                slurm_script = self.orca_submitter.generate_slurm_script(
+                    input_path,
+                    pal_value,
+                    self.template_dir,
+                    output_dir=step_dir
+                )
+                
+                # Submit the SLURM job
+                job_id = self.orca_submitter.submit_job(slurm_script)
+                logging.info(f"Submitted ORCA job with ID: {job_id} for input: {input_path.name}")
+        except Exception as e:
+            logging.error(f"Error while submitting ORCA jobs in {step_dir}: {str(e)}")
+            raise
+        finally:
+            os.chdir(original_dir)
+            logging.info(f"Returned to original directory: {original_dir}")
 
-        for input_file in input_files:
-            input_path = Path(input_file)
-            pal_value = self.orca_submitter.parse_pal_from_input(input_path)
-            pal_value = min(pal_value, cores)
-            self.orca_submitter.adjust_pal_in_input(input_path, pal_value)
-            slurm_script = self.orca_submitter.generate_slurm_script(
-                input_path, pal_value, self.template_dir, output_dir=step_dir
-            )
-            job_id = self.orca_submitter.submit_job(slurm_script)
-            logging.info(f"Job submitted with ID: {job_id}")
 
     def parse_and_filter_outputs(self, output_files, calculation_type, step_number, sample_method, parameters, step_dir):
         """
@@ -187,53 +200,51 @@ class ChemRefiner:
         filtered_coordinates, filtered_ids = self.refiner.filter(
             coordinates, energies, filtered_ids, sample_method, parameters
         )
-        self.utils.move_step_files(step_number, output_dir=step_dir)
+        
         return filtered_coordinates, filtered_ids
 
     def run(self):
-            """
-            Executes the ChemRefiner workflow, iterating through each step in the YAML config.
-            Handles step directory creation, input file preparation, ORCA job submission, and output parsing.
-            """
-            cores = self.args.maxcores
-            skip = self.args.skip
-            steps = self.config.get('steps', [])
-            calculation_functions = ["GOAT", "DFT", "XTB", "MLFF"]
+        cores = self.args.maxcores
+        skip = self.args.skip
+        steps = self.config.get('steps', [])
+        calculation_functions = ["GOAT", "DFT", "XTB", "MLFF"]
 
-            filtered_coordinates, filtered_ids = None, None
+        filtered_coordinates, filtered_ids = None, None
 
-            for step in steps:
-                step_number = step['step']
-                calculation_type = step['calculation_type']
-                sample_method = step['sample_type']['method']
-                parameters = step['sample_type']['parameters']
+        for step in steps:
+            step_number = step['step']
+            calculation_type = step['calculation_type']
+            sample_method = step['sample_type']['method']
+            parameters = step['sample_type']['parameters']
 
-                if calculation_type not in calculation_functions:
-                    raise ValueError(f"Invalid calculation type '{calculation_type}' in step {step_number}. Exiting...")
+            if calculation_type not in calculation_functions:
+                raise ValueError(f"Invalid calculation type '{calculation_type}' in step {step_number}. Exiting...")
 
-                if skip:
-                    filtered_coordinates, filtered_ids = self.handle_skip_step(
-                        step_number, calculation_type, sample_method, parameters
-                    )
-                    if filtered_coordinates is not None and filtered_ids is not None:
-                        continue
-
-                logging.info(f"Running step {step_number}: {calculation_type} with sampling method '{sample_method}'")
-
-                if step_number == 1:
-                    step_dir, input_files, output_files = self.prepare_step1_directory(step_number)
-                else:
-                    if calculation_type != "MLFF":
-                        step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
-                            step_number, filtered_coordinates, filtered_ids
-                        )
-                    else:
-                        raise ValueError("MLFF support is still under construction. Exiting...")
-
-                self.submit_orca_jobs(input_files, cores, step_dir)
-                filtered_coordinates, filtered_ids = self.parse_and_filter_outputs(
-                    output_files, calculation_type, step_number, sample_method, parameters, step_dir
+            if skip:
+                filtered_coordinates, filtered_ids = self.handle_skip_step(
+                    step_number, calculation_type, sample_method, parameters
                 )
+                if filtered_coordinates is not None and filtered_ids is not None:
+                    continue
+
+            logging.info(f"Running step {step_number}: {calculation_type} with sampling method '{sample_method}'")
+
+            if step_number == 1:
+                step_dir, input_files, output_files = self.prepare_step1_directory(step_number)
+            else:
+                if calculation_type != "MLFF":
+                    step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
+                        step_number, filtered_coordinates, filtered_ids
+                    )
+                else:
+                    raise ValueError("MLFF support is still under construction. Exiting...")
+
+            logging.info(f"Step directory prepared: {step_dir}")
+
+            self.submit_orca_jobs(input_files, cores, step_dir)
+            filtered_coordinates, filtered_ids = self.parse_and_filter_outputs(
+                output_files, calculation_type, step_number, sample_method, parameters, step_dir
+            )
 
 def main():
     ChemRefiner().run()
