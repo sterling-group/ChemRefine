@@ -39,6 +39,7 @@ class ChemRefiner:
 
         # === Setup output directory AFTER config is loaded ===
         output_dir_raw = self.config.get('outputs', './outputs')  # Default to './outputs'
+        self.scratch_dir = os.path.abspath(self.scratch_dir)
         self.output_dir = os.path.abspath(output_dir_raw)
         os.makedirs(self.output_dir, exist_ok=True)
         logging.info(f"Output directory set to: {self.output_dir}")
@@ -62,7 +63,7 @@ class ChemRefiner:
     def prepare_step1_directory(self, step_number):
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         os.makedirs(step_dir, exist_ok=True)        
-        logging.info(f"step_dir BEFORE: {step_dir}")
+        logging.debug(f"step_dir BEFORE: {step_dir}")
 
 
         # Copy input files from template_dir to step_dir
@@ -170,7 +171,7 @@ class ChemRefiner:
             logging.info(f"Step directory {step_dir} does not exist. Will run this step.")
             return None, None
 
-    def submit_orca_jobs(self, input_files, cores, step_dir):
+    def submit_orca_jobs(self, input_files, cores, step_dir,scratch_dir=None):
         """
         Submits ORCA jobs for each input file in the step directory using the OrcaJobSubmitter.
 
@@ -178,7 +179,6 @@ class ChemRefiner:
             input_files (list): List of ORCA input files.
             cores (int): Maximum total cores allowed for all jobs.
             step_dir (str): Path to the step directory.
-            partition (str): SLURM partition to monitor jobs.
         """
         logging.info(f"Switching to working directory: {step_dir}")
         original_dir = os.getcwd()
@@ -266,7 +266,6 @@ class ChemRefiner:
                 self.orca_submitter.submit_files(
                     input_files=input_files,
                     max_cores=self.max_cores,
-                    partition=self.partition,
                     template_dir=self.template_dir,
                     output_dir=step_dir
                 )
@@ -289,12 +288,11 @@ class ChemRefiner:
                 step_dir = os.path.join(self.output_dir, f"step{step_number}")
                 logging.info(f"Skipping step {step_number} using existing outputs.")
 
-            self.save_step_csv(step_number, filtered_coordinates, filtered_ids)
+            self.utils.save_step_csv(step_number, filtered_coordinates, filtered_ids,output_dir=self.output_dir)
+
 
             previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
 
-            # Move files or handle file management if needed
-            self.move_step_files(step_number)
 
         logging.info("ChemRefine pipeline completed.")
 
