@@ -46,7 +46,7 @@ class OrcaJobSubmitter:
             qorca_flags (dict, optional): Additional flags (currently unused).
         """
         for input_file in input_files:
-            input_path = Path(input_file)
+            input_path = Path(input_file).resolve()
 
             # 1️ Parse PAL value
             pal_value = self.parse_pal_from_input(input_path)
@@ -126,7 +126,14 @@ class OrcaJobSubmitter:
             return pal_value
         return 1
 
-    def generate_slurm_script(self, input_file: Path, pal_value: int, template_dir: str, output_dir: str = ".", job_name: str = None):
+    def generate_slurm_script(
+        self,
+        input_file: Path,
+        pal_value: int,
+        template_dir: str,
+        output_dir: str = ".",
+        job_name: str = None
+    ):
         """
         Generate a SLURM script by combining a user-provided header with a consistent footer.
 
@@ -180,7 +187,8 @@ class OrcaJobSubmitter:
             f.write("export ORIG=$PWD\n")
             f.write("timestamp=$(date +%Y%m%d%H%M%S)\n")
             f.write("random_str=$(tr -dc a-z0-9 </dev/urandom | head -c 8)\n")
-            f.write(f"export SCRATCH_DIR={self.scratch_dir}\n")
+            f.write(f"export BASE_SCRATCH_DIR={self.scratch_dir}\n")
+            f.write("export SCRATCH_DIR=${BASE_SCRATCH_DIR}/ChemRefine_scratch_${SLURM_JOB_ID}_${timestamp}_${random_str}\n")
             f.write("mkdir -p $SCRATCH_DIR || { echo 'Error: Failed to create scratch directory'; exit 1; }\n")
             f.write("echo 'SCRATCH_DIR is set to $SCRATCH_DIR'\n\n")
 
