@@ -29,7 +29,7 @@ class OrcaJobSubmitter:
         self.scratch_dir = scratch_dir or os.getenv("SCRATCH", "/tmp/orca_scratch")
         self.save_scratch = save_scratch
 
-    def submit_files(self, input_files, max_cores=32, partition="sterling", template_dir=".", output_dir="."):
+    def submit_files(self, input_files, max_cores=32, template_dir=".", output_dir="."):
         """
         Submits multiple ORCA input files to SLURM, managing PAL values, active job tracking,
         and ensuring that the total PAL usage does not exceed max_cores.
@@ -37,7 +37,6 @@ class OrcaJobSubmitter:
         Args:
             input_files (list): List of ORCA input file paths.
             max_cores (int): Maximum total PAL usage allowed.
-            partition (str): SLURM partition to monitor jobs.
             template_dir (str): Directory containing SLURM header template.
             output_dir (str): Output directory for SLURM scripts and results.
         """
@@ -55,7 +54,7 @@ class OrcaJobSubmitter:
                 logging.info("Waiting for jobs to finish to free up cores...")
                 completed_jobs = []
                 for job_id, cores in list(active_jobs.items()):
-                    if self.is_job_finished(job_id, partition):
+                    if self.is_job_finished(job_id):
                         completed_jobs.append(job_id)
                         total_cores_used -= cores
                         logging.info(f"Job {job_id} completed. Freed {cores} cores.")
@@ -85,7 +84,7 @@ class OrcaJobSubmitter:
         while active_jobs:
             completed_jobs = []
             for job_id, cores in list(active_jobs.items()):
-                if self.is_job_finished(job_id, partition):
+                if self.is_job_finished(job_id):
                     completed_jobs.append(job_id)
                     total_cores_used -= cores
                     logging.info(f"Job {job_id} completed. Freed {cores} cores.")
@@ -194,20 +193,19 @@ class OrcaJobSubmitter:
             logging.error(f"Job submission failed: {e.stderr.strip()}")
             return "ERROR"
 
-    def is_job_finished(self, job_id, partition="sterling"):
+    def is_job_finished(self, job_id):
         """
         Check if a SLURM job with a given job ID has finished.
 
         Args:
             job_id (str): SLURM job ID to check.
-            partition (str): SLURM partition.
 
         Returns:
             bool: True if the job is no longer in the queue (finished), False otherwise.
         """
         try:
             username = getpass.getuser()
-            command = f"squeue -u {username} -p {partition} -o %i"
+            command = f"squeue -u {username} -o %i"
             output = subprocess.check_output(command, shell=True, text=True)
             job_ids = output.strip().splitlines()
             return job_id not in job_ids[1:]  # skip header
