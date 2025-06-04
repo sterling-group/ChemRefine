@@ -58,29 +58,25 @@ class ChemRefiner:
         os.makedirs(step_dir, exist_ok=True)
 
         # Copy input files from template_dir to step_dir
-        src_inp = os.path.join(self.template_dir, "step1.inp")
-        dst_inp = os.path.join(step_dir, "step1.inp")
-
-        if not os.path.exists(src_inp):
-            raise FileNotFoundError(
-                f"Input file '{src_inp}' not found. Please ensure that 'step1.inp' exists in the template directory specified in your YAML file: '{self.template_dir}'."
-            )
-        shutil.copyfile(src_inp, dst_inp)
-
         src_xyz = os.path.join(self.template_dir, "step1.xyz")
         dst_xyz = os.path.join(step_dir, "step1.xyz")
-
         if not os.path.exists(src_xyz):
             raise FileNotFoundError(
-                f"XYZ file '{src_xyz}' not found. Please ensure that 'step1.xyz' exists in the template directory specified in your YAML file: '{self.template_dir}'."
+                f"XYZ file '{src_xyz}' not found. Please ensure that 'step1.xyz' exists in the template directory."
             )
         shutil.copyfile(src_xyz, dst_xyz)
 
+        # Use template from template_dir directly
+        template_inp = os.path.join(self.template_dir, "step1.inp")
+        if not os.path.exists(template_inp):
+            raise FileNotFoundError(
+                f"Input file '{template_inp}' not found. Please ensure that 'step1.inp' exists in the template directory."
+            )
+
         xyz_filenames = [dst_xyz]
 
-        # Create ORCA input in step_dir
         input_files, output_files = self.orca.create_input(
-            xyz_filenames, dst_inp, self.charge, self.multiplicity, output_dir=step_dir
+            xyz_filenames, template_inp, self.charge, self.multiplicity, output_dir=step_dir
         )
 
         return step_dir, input_files, output_files
@@ -157,7 +153,7 @@ class ChemRefiner:
             cores (int): Max number of cores.
             step_dir (str): Path to the step directory.
         """
-        self.orca_submitter = OrcaJobSubmitter(scratch_dir=self.scratch_dir)
+        self.orca_submitter = OrcaJobSubmitter()
 
         for input_file in input_files:
             input_path = Path(input_file)
