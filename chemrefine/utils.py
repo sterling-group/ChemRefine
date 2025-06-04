@@ -4,6 +4,11 @@ import shutil
 import logging
 from .constants import HARTREE_TO_KCAL_MOL, R_KCAL_MOL_K, CSV_PRECISION
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+
 class Utility:
     def extract_pal_from_qorca_output(self, output):
         patterns = [
@@ -61,18 +66,22 @@ class Utility:
         - step_number (int): The step number to organize files for.
         - output_dir (str): The directory in which to create the step directory and move files.
         """
-        import os
         import glob
+        import os
         import shutil
 
         step_dir = os.path.join(output_dir, f"step{step_number}")
         os.makedirs(step_dir, exist_ok=True)
 
-        files = glob.glob(f"step{step_number}*")
+        # Search for files in the output_dir
+        pattern = os.path.join(output_dir, f"step{step_number}*")
+        files = [f for f in glob.glob(pattern) if not os.path.isdir(f)]
+        
         for file in files:
-            dest = os.path.join(step_dir, os.path.basename(file))
+            basename = os.path.basename(file)
+            dest = os.path.join(step_dir, basename)
             if os.path.exists(dest):
-                os.rename(dest, os.path.join(step_dir, f"old_{os.path.basename(file)}"))
+                os.rename(dest, os.path.join(step_dir, f"old_{basename}"))
             shutil.move(file, dest)
 
     def write_xyz(self, structures, step_number, structure_ids, output_dir='.'):
