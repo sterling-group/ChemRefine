@@ -8,28 +8,42 @@ from .orca_interface import OrcaInterface, OrcaJobSubmitter
 from pathlib import Path
 import shutil
 
-class ChemRefine:
-    def __init__(self, input_yaml, skip_steps=False, max_cores=32, partition="sterling", template_dir="."):
-        """
-        Initializes the ChemRefine pipeline.
-
-        Args:
-            input_yaml (str): Path to the input YAML file.
-            skip_steps (bool): Whether to skip steps with existing outputs.
-            max_cores (int): Maximum cores to use for each step.
-            partition (str): Partition name for job submission.
-            template_dir (str): Directory containing SLURM templates.
-        """
-        self.input_yaml = input_yaml
-        self.skip_steps = skip_steps
-        self.max_cores = max_cores
-        self.partition = partition
-        self.template_dir = template_dir
-
-        # Load YAML configuration
+class ChemRefiner:
+    """
+    ChemRefiner class orchestrates the ChemRefine workflow, handling input parsing,
+    job submission, output parsing, and structure refinement based on a YAML configuration.
+    It supports multiple steps with different calculation types and sampling methods.
+    """
+    def __init__(self):
+        self.arg_parser = ArgumentParser()
+        self.orca_submitter = OrcaJobSubmitter()
+        self.refiner = StructureRefiner()
+        self.utils = Utility()
+        self.orca = OrcaInterface()
+        self.args, self.qorca_flags = self.arg_parser.parse()
+        self.input_yaml = self.args.input_yaml
+        self.max_cores = self.args.maxcores
+        self.skip_steps = self.args.skip
         self.parameters = self.load_yaml_parameters(self.input_yaml)
-        self.output_dir = self.parameters.get('output_directory', './outputs')
-        self.orca_submitter = OrcaJobSubmitter(scratch_dir=self.parameters.get('scratch_dir', '/tmp/orca_scratch'))
+        
+
+        # === Load the YAML configuration ===
+        with open(self.input_yaml, 'r') as file:
+            self.config = yaml.safe_load(file)
+
+        # === Pull top-level config ===
+        self.charge = self.config.get('charge', 0)
+        self.multiplicity = self.config.get('multiplicity', 1)
+        self.template_dir = os.path.abspath(self.config.get('template_dir', './templates'))
+        self.scratch_dir = self.config.get('scratch_dir', os.getenv("SCRATCH", "/tmp/orca_scratch"))
+
+        # === Setup output directory AFTER config is loaded ===
+        output_dir_raw = self.config.get('outputs', './outputs')  # Default to './outputs'
+        self.output_dir = os.path.abspath(output_dir_raw)
+        os.makedirs(self.output_dir, exist_ok=True)
+        logging.info(f"Output directory set to: {self.output_dir}")
+
+        os.makedirs(self.output_dir, exist_ok=True)
 
     def load_yaml_parameters(self, yaml_path):
         """
@@ -44,8 +58,6 @@ class ChemRefine:
         import yaml
         with open(yaml_path, 'r') as file:
             return yaml.safe_load(file)
-
-
 
     def prepare_step1_directory(self, step_number):
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
@@ -158,7 +170,7 @@ class ChemRefine:
             logging.info(f"Step directory {step_dir} does not exist. Will run this step.")
             return None, None
 
-    def submit_orca_jobs(self, input_files, cores, step_dir, partition="sterling"):
+    def submit_orca_jobs(self, input_files, cores, step_dir):
         """
         Submits ORCA jobs for each input file in the step directory using the OrcaJobSubmitter.
 
@@ -176,7 +188,6 @@ class ChemRefine:
             self.orca_submitter.submit_files(
                 input_files=input_files,
                 max_cores=cores,
-                partition=partition,
                 template_dir=self.template_dir,
                 output_dir=step_dir
             )
