@@ -27,13 +27,11 @@ class ChemRefine:
         self.template_dir = template_dir
 
         # Load YAML configuration
-        self.config = self.load_yaml_config(self.input_yaml)
-        self.parameters = self.config  # Keep consistent with old code: .get('steps', []) etc.
+        self.parameters = self.load_yaml_parameters(self.input_yaml)
+        self.output_dir = self.parameters.get('output_directory', './outputs')
+        self.orca_submitter = OrcaJobSubmitter(scratch_dir=self.parameters.get('scratch_dir', '/tmp/orca_scratch'))
 
-        self.output_dir = self.config.get('output_directory', './outputs')
-        self.orca_submitter = OrcaJobSubmitter(scratch_dir=self.config.get('scratch_dir', '/tmp/orca_scratch'))
-
-    def load_yaml_config(self, yaml_path):
+    def load_yaml_parameters(self, yaml_path):
         """
         Loads the YAML configuration from file.
 
@@ -46,6 +44,7 @@ class ChemRefine:
         import yaml
         with open(yaml_path, 'r') as file:
             return yaml.safe_load(file)
+
 
 
     def prepare_step1_directory(self, step_number):
