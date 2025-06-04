@@ -135,49 +135,34 @@ class ChemRefiner:
         else:
             return None, None
 
-    def submit_orca_jobs(self, input_files, cores, step_dir):
+    def submit_orca_jobs(self, input_files, cores, step_dir, partition="sterling"):
         """
-        Submits ORCA jobs for each input file in the step directory.
+        Submits ORCA jobs for each input file in the step directory using the OrcaJobSubmitter.
 
         Args:
             input_files (list): List of ORCA input files.
-            cores (int): Max number of cores.
+            cores (int): Maximum total cores allowed for all jobs.
             step_dir (str): Path to the step directory.
+            partition (str): SLURM partition to monitor jobs.
         """
         logging.info(f"Switching to working directory: {step_dir}")
         original_dir = os.getcwd()
         os.chdir(step_dir)
         try:
             self.orca_submitter = OrcaJobSubmitter(scratch_dir=self.scratch_dir)
-            for input_file in input_files:
-                input_path = Path(input_file)
-                
-                # Parse PAL value and adjust it to not exceed available cores
-                pal_value = self.orca_submitter.parse_pal_from_input(input_path)
-                pal_value = min(pal_value, cores)
-                logging.info(f"Setting PAL value to {pal_value} for {input_path.name}")
-                
-                # Adjust PAL value in the input file
-                self.orca_submitter.adjust_pal_in_input(input_path, pal_value)
-                
-                # Generate the SLURM script inside the step directory
-                slurm_script = self.orca_submitter.generate_slurm_script(
-                    input_path,
-                    pal_value,
-                    self.template_dir,
-                    output_dir=step_dir
-                )
-                
-                # Submit the SLURM job
-                job_id = self.orca_submitter.submit_job(slurm_script)
-                logging.info(f"Submitted ORCA job with ID: {job_id} for input: {input_path.name}")
+            self.orca_submitter.submit_files(
+                input_files=input_files,
+                max_cores=cores,
+                partition=partition,
+                template_dir=self.template_dir,
+                output_dir=step_dir
+            )
         except Exception as e:
             logging.error(f"Error while submitting ORCA jobs in {step_dir}: {str(e)}")
             raise
         finally:
             os.chdir(original_dir)
             logging.info(f"Returned to original directory: {original_dir}")
-
 
     def parse_and_filter_outputs(self, output_files, calculation_type, step_number, sample_method, parameters, step_dir):
         """
