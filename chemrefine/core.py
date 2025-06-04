@@ -112,7 +112,7 @@ class ChemRefiner:
 
         Args:
             step_number (int): The current step number.
-            calculation_type (str): The type of calculation (DFT, XTB, etc.).
+            calculation_type (str): The type of calculation ('dft', 'goat', etc.).
             sample_method (str): The sampling method.
             parameters (dict): Additional parameters for filtering.
 
@@ -122,11 +122,28 @@ class ChemRefiner:
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         if os.path.exists(step_dir):
             logging.info(f"Skipping step {step_number} because its directory already exists.")
-            output_files = [
-                os.path.join(step_dir, f)
-                for f in os.listdir(step_dir)
-                if f.endswith('.out')
-            ]
+
+            if calculation_type.lower() == 'goat':
+                output_files = [
+                    os.path.join(step_dir, f)
+                    for f in os.listdir(step_dir)
+                    if f.endswith('.finalensemble.xyz')
+                ]
+                if not output_files:
+                    logging.warning(f"No GOAT ensemble files found in {step_dir}. Skipping skip-step parsing.")
+                    return None, None
+                logging.info(f"Found {len(output_files)} GOAT ensemble file(s) in {step_dir}.")
+            else:
+                output_files = [
+                    os.path.join(step_dir, f)
+                    for f in os.listdir(step_dir)
+                    if f.endswith('.out')
+                ]
+                if not output_files:
+                    logging.warning(f"No .out files found in {step_dir}. Skipping skip-step parsing.")
+                    return None, None
+                logging.info(f"Found {len(output_files)} .out file(s) in {step_dir}.")
+
             coordinates, energies = self.orca.parse_output(output_files, calculation_type, dir=step_dir)
             filtered_coordinates, filtered_ids = self.refiner.filter(
                 coordinates, energies, list(range(len(energies))), sample_method, parameters
