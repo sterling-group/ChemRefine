@@ -269,7 +269,8 @@ class OrcaInterface:
         Returns:
             tuple: (coordinates, energies)
         """
-        coordinates, energies = []
+        coordinates, energies = [], []
+
         logging.info(f"Parsing calculation type: {calculation_type.upper()}")
         logging.info(f"Looking for output files in directory: {dir}")
 

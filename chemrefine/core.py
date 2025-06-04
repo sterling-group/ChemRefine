@@ -108,7 +108,7 @@ class ChemRefiner:
 
     def handle_skip_step(self, step_number, calculation_type, sample_method, parameters):
         """
-        Handles skip logic for a step if its directory already exists.
+        Handles skip logic for a step if its directory already exists and required outputs are present.
 
         Args:
             step_number (int): The current step number.
@@ -121,7 +121,7 @@ class ChemRefiner:
         """
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         if os.path.exists(step_dir):
-            logging.info(f"Skipping step {step_number} because its directory already exists.")
+            logging.info(f"Checking skip condition for step {step_number} at: {step_dir}")
 
             if calculation_type.lower() == 'goat':
                 output_files = [
@@ -130,9 +130,9 @@ class ChemRefiner:
                     if f.endswith('.finalensemble.xyz')
                 ]
                 if not output_files:
-                    logging.warning(f"No GOAT ensemble files found in {step_dir}. Skipping skip-step parsing.")
+                    logging.warning(f"No GOAT ensemble files found in {step_dir}. Will rerun this step.")
                     return None, None
-                logging.info(f"Found {len(output_files)} GOAT ensemble file(s) in {step_dir}.")
+                logging.info(f"Found {len(output_files)} GOAT ensemble file(s) in {step_dir}. Skipping this step.")
             else:
                 output_files = [
                     os.path.join(step_dir, f)
@@ -140,9 +140,9 @@ class ChemRefiner:
                     if f.endswith('.out')
                 ]
                 if not output_files:
-                    logging.warning(f"No .out files found in {step_dir}. Skipping skip-step parsing.")
+                    logging.warning(f"No .out files found in {step_dir}. Will rerun this step.")
                     return None, None
-                logging.info(f"Found {len(output_files)} .out file(s) in {step_dir}.")
+                logging.info(f"Found {len(output_files)} .out file(s) in {step_dir}. Skipping this step.")
 
             coordinates, energies = self.orca.parse_output(output_files, calculation_type, dir=step_dir)
             filtered_coordinates, filtered_ids = self.refiner.filter(
@@ -150,6 +150,7 @@ class ChemRefiner:
             )
             return filtered_coordinates, filtered_ids
         else:
+            logging.info(f"Step directory {step_dir} does not exist. Will run this step.")
             return None, None
 
     def submit_orca_jobs(self, input_files, cores, step_dir, partition="sterling"):
