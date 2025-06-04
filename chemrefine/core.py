@@ -199,7 +199,7 @@ class ChemRefiner:
         """
         coordinates, energies = self.orca.parse_output(output_files, calculation_type, dir=step_dir)
         filtered_ids = list(range(len(energies)))
-        self.utils.save_step_csv(energies, filtered_ids, step_number, output_dir=step_dir)
+        self.utils.save_step_csv(energies, filtered_ids, step_number, output_dir=self.output_dir)
         filtered_coordinates, filtered_ids = self.refiner.filter(
             coordinates, energies, filtered_ids, sample_method, parameters
         )
