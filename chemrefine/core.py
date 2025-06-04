@@ -31,7 +31,7 @@ class ChemRefiner:
         # === Pull top-level config ===
         self.charge = self.config.get('charge', 0)
         self.multiplicity = self.config.get('multiplicity', 1)
-        self.template_dir = self.config.get('template_dir', './templates')
+        self.template_dir = os.path.abspath(self.config.get('template_dir', './templates'))
         self.scratch_dir = self.config.get('scratch_dir', os.getenv("SCRATCH", "/tmp/orca_scratch"))
 
         # === Setup output directory AFTER config is loaded ===
