@@ -8,39 +8,45 @@ from .orca_interface import OrcaInterface, OrcaJobSubmitter
 from pathlib import Path
 import shutil
 
-class ChemRefiner:
-    """
-    ChemRefiner class orchestrates the ChemRefine workflow, handling input parsing,
-    job submission, output parsing, and structure refinement based on a YAML configuration.
-    It supports multiple steps with different calculation types and sampling methods.
-    """
-    def __init__(self):
-        self.arg_parser = ArgumentParser()
-        self.orca_submitter = OrcaJobSubmitter()
-        self.refiner = StructureRefiner()
-        self.utils = Utility()
-        self.orca = OrcaInterface()
-        self.parameters = self.load_parameters(self.input_yaml)
-        # === Parse command-line arguments first ===
-        self.args, self.qorca_flags = self.arg_parser.parse()
+class ChemRefine:
+    def __init__(self, input_yaml, skip_steps=False, max_cores=32, partition="sterling", template_dir="."):
+        """
+        Initializes the ChemRefine pipeline.
 
-        # === Load the YAML configuration ===
-        with open(self.args.input_file, 'r') as file:
-            self.config = yaml.safe_load(file)
+        Args:
+            input_yaml (str): Path to the input YAML file.
+            skip_steps (bool): Whether to skip steps with existing outputs.
+            max_cores (int): Maximum cores to use for each step.
+            partition (str): Partition name for job submission.
+            template_dir (str): Directory containing SLURM templates.
+        """
+        self.input_yaml = input_yaml
+        self.skip_steps = skip_steps
+        self.max_cores = max_cores
+        self.partition = partition
+        self.template_dir = template_dir
 
-        # === Pull top-level config ===
-        self.charge = self.config.get('charge', 0)
-        self.multiplicity = self.config.get('multiplicity', 1)
-        self.template_dir = os.path.abspath(self.config.get('template_dir', './templates'))
-        self.scratch_dir = self.config.get('scratch_dir', os.getenv("SCRATCH", "/tmp/orca_scratch"))
+        # Load YAML configuration
+        self.config = self.load_yaml_config(self.input_yaml)
+        self.parameters = self.config  # Keep consistent with old code: .get('steps', []) etc.
 
-        # === Setup output directory AFTER config is loaded ===
-        output_dir_raw = self.config.get('outputs', './outputs')  # Default to './outputs'
-        self.output_dir = os.path.abspath(output_dir_raw)
-        os.makedirs(self.output_dir, exist_ok=True)
-        logging.info(f"Output directory set to: {self.output_dir}")
+        self.output_dir = self.config.get('output_directory', './outputs')
+        self.orca_submitter = OrcaJobSubmitter(scratch_dir=self.config.get('scratch_dir', '/tmp/orca_scratch'))
 
-        os.makedirs(self.output_dir, exist_ok=True)
+    def load_yaml_config(self, yaml_path):
+        """
+        Loads the YAML configuration from file.
+
+        Args:
+            yaml_path (str): Path to the YAML file.
+
+        Returns:
+            dict: Parsed YAML configuration.
+        """
+        import yaml
+        with open(yaml_path, 'r') as file:
+            return yaml.safe_load(file)
+
 
     def prepare_step1_directory(self, step_number):
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
