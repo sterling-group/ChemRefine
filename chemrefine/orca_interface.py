@@ -50,8 +50,6 @@ class OrcaJobSubmitter:
             pal_value = min(pal_value, max_cores)
             logging.info(f"Setting PAL value to {pal_value} for {input_path.name}")
 
-            self.adjust_pal_in_input(input_path, pal_value)
-
             # Wait if not enough free cores
             while total_cores_used + pal_value > max_cores:
                 logging.info("Waiting for jobs to finish to free up cores...")
@@ -116,28 +114,6 @@ class OrcaJobSubmitter:
             logging.info(f"Found PAL value {pal_value} in {input_file}")
             return pal_value
         return 1
-
-    def adjust_pal_in_input(self, input_file: Path, pal_value: int):
-        """
-        Adjust PAL value in the ORCA input file.
-
-        Args:
-            input_file (Path): ORCA input file path.
-            pal_value (int): PAL value to set.
-        """
-        content = input_file.read_text()
-        new_content = re.sub(
-            r"%pal\s+.*?end",
-            lambda m: re.sub(r"(nprocs\s+)\d+", fr"\1{pal_value}", m.group(0), flags=re.IGNORECASE),
-            content,
-            flags=re.IGNORECASE | re.DOTALL
-        )
-
-        if new_content == content:
-            new_content += f"\n%pal\n   nprocs {pal_value}\nend\n"
-
-        input_file.write_text(new_content)
-        logging.info(f"Adjusted PAL value to {pal_value} in {input_file}")
 
     def generate_slurm_script(self, input_file: Path, pal_value: int, template_dir: str, output_dir: str = ".", job_name: str = None):
         """
