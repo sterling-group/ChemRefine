@@ -120,7 +120,7 @@ class OrcaJobSubmitter:
 
     def wait_for_job_completion(self, job_id: str, input_file: str, poll_interval: int = 60):
         """
-        Wait for a SLURM job to complete using 'sacct' and handle failures.
+        Waits for a SLURM job to complete using 'sacct' and handles failures.
 
         Args:
             job_id (str): The SLURM job ID to wait for.
@@ -131,6 +131,7 @@ class OrcaJobSubmitter:
             sys.exit(1) if job fails.
         """
         logging.info(f"Waiting for job {job_id} (input: {input_file}) to complete...")
+
         while True:
             try:
                 result = subprocess.run(
@@ -141,31 +142,37 @@ class OrcaJobSubmitter:
                 )
                 lines = result.stdout.strip().split("\n")
                 job_states = [line.split("|")[1] for line in lines if line.strip()]
+
                 if not job_states:
                     logging.debug(f"Job {job_id} status not found yet. Waiting...")
                     time.sleep(poll_interval)
                     continue
 
                 latest_state = job_states[-1].strip().upper()
-                logging.debug(f"Job {job_id} state: {latest_state}")
+                logging.debug(f"Job {job_id} current state: {latest_state}")
 
-                if latest_state == "COMPLETED":
+                if latest_state in ("PENDING", "RUNNING", "CONFIGURING", "COMPLETING"):
+                    time.sleep(poll_interval)
+                    continue
+
+                elif latest_state == "COMPLETED":
                     logging.info(f"Job {job_id} completed successfully.")
                     break
+
                 elif latest_state in ("FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL"):
                     logging.error(f"Job {job_id} failed with state: {latest_state}.")
                     logging.error(f"Calculation for input file '{input_file}' failed. Exiting ChemRefine.")
                     sys.exit(1)
-                elif latest_state in ("RUNNING", "PENDING", "CONFIGURING"):
-                    time.sleep(poll_interval)
-                    continue
+
                 else:
-                    logging.warning(f"Job {job_id} in unexpected state: {latest_state}.")
+                    logging.warning(f"Job {job_id} in unexpected state: {latest_state}. Will continue polling.")
                     time.sleep(poll_interval)
+
             except subprocess.CalledProcessError as e:
                 logging.error(f"Failed to query job status: {e.stderr.strip()}")
                 logging.error(f"Could not check job status for input file '{input_file}'. Exiting ChemRefine.")
                 sys.exit(1)
+
 
     def parse_pal_from_input(self, input_file: Path):
         """
