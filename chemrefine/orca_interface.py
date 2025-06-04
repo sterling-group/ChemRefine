@@ -4,7 +4,8 @@ from .utils import Utility
 import subprocess
 import logging
 from pathlib import Path
-
+import sys
+import time
 # chemrefine/orca_interface.py
 
 class OrcaJobSubmitter:
@@ -36,31 +37,40 @@ class OrcaJobSubmitter:
         self.scratch_dir = scratch_dir or os.getenv("SCRATCH", "/tmp/orca_scratch")
         self.save_scratch = save_scratch
 
-    def submit_files(self, input_files, max_cores, qorca_flags=None):
+    def submit_files(self, input_files, max_cores, template_dir, output_dir='.', qorca_flags=None):
         """
-        Submits multiple ORCA input files to SLURM.
+        Submits multiple ORCA input files to SLURM and waits for each to finish.
 
         Args:
             input_files (list): List of input file paths.
             max_cores (int): Maximum allowed cores per job.
+            template_dir (str): Path to directory containing SLURM header templates.
+            output_dir (str): Directory to write SLURM scripts and outputs.
             qorca_flags (dict, optional): Additional flags (currently unused).
         """
         for input_file in input_files:
             input_path = Path(input_file).resolve()
 
-            # 1️ Parse PAL value
             pal_value = self.parse_pal_from_input(input_path)
             pal_value = min(pal_value, max_cores)
 
-            # 2️ Adjust PAL in the input
             self.adjust_pal_in_input(input_path, pal_value)
 
-            # 3️ Generate SLURM script
-            slurm_script = self.generate_slurm_script(input_path, pal_value)
+            slurm_script = self.generate_slurm_script(
+                input_file=input_path,
+                pal_value=pal_value,
+                template_dir=template_dir,
+                output_dir=output_dir
+            )
 
-            # 4️ Submit the job
             job_id = self.submit_job(slurm_script)
-            logging.info(f"Job submitted with ID: {job_id}")      
+            logging.info(f"Submitted ORCA job with ID: {job_id} for input: {input_file}")
+
+            if job_id.isdigit():
+                self.wait_for_job_completion(job_id, input_file)
+            else:
+                logging.warning(f"Skipping wait for job: invalid job ID '{job_id}'")
+
 
     def adjust_pal_in_input(self, input_file: Path, pal_value: int):
         """
@@ -108,6 +118,55 @@ class OrcaJobSubmitter:
         logging.info(f"No changes made to PAL value in {input_file}")
         return False
 
+    def wait_for_job_completion(self, job_id: str, input_file: str, poll_interval: int = 60):
+        """
+        Wait for a SLURM job to complete using 'sacct' and handle failures.
+
+        Args:
+            job_id (str): The SLURM job ID to wait for.
+            input_file (str): The input file name for logging.
+            poll_interval (int): Seconds to wait between polling attempts.
+
+        Exits:
+            sys.exit(1) if job fails.
+        """
+        logging.info(f"Waiting for job {job_id} (input: {input_file}) to complete...")
+        while True:
+            try:
+                result = subprocess.run(
+                    ["sacct", "-j", job_id, "--format=JobID,State", "--parsable2", "--noheader"],
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                lines = result.stdout.strip().split("\n")
+                job_states = [line.split("|")[1] for line in lines if line.strip()]
+                if not job_states:
+                    logging.debug(f"Job {job_id} status not found yet. Waiting...")
+                    time.sleep(poll_interval)
+                    continue
+
+                latest_state = job_states[-1].strip().upper()
+                logging.debug(f"Job {job_id} state: {latest_state}")
+
+                if latest_state == "COMPLETED":
+                    logging.info(f"Job {job_id} completed successfully.")
+                    break
+                elif latest_state in ("FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL"):
+                    logging.error(f"Job {job_id} failed with state: {latest_state}.")
+                    logging.error(f"Calculation for input file '{input_file}' failed. Exiting ChemRefine.")
+                    sys.exit(1)
+                elif latest_state in ("RUNNING", "PENDING", "CONFIGURING"):
+                    time.sleep(poll_interval)
+                    continue
+                else:
+                    logging.warning(f"Job {job_id} in unexpected state: {latest_state}.")
+                    time.sleep(poll_interval)
+            except subprocess.CalledProcessError as e:
+                logging.error(f"Failed to query job status: {e.stderr.strip()}")
+                logging.error(f"Could not check job status for input file '{input_file}'. Exiting ChemRefine.")
+                sys.exit(1)
+
     def parse_pal_from_input(self, input_file: Path):
         """
         Parse the PAL value from the ORCA input file.
@@ -126,64 +185,51 @@ class OrcaJobSubmitter:
             return pal_value
         return 1
 
-    def generate_slurm_script(
-        self,
-        input_file: Path,
-        pal_value: int,
-        template_dir: str,
-        output_dir: str = ".",
-        job_name: str = None
-    ):
+    def generate_slurm_script(self, input_file: Path, pal_value: int, template_dir: str, output_dir: str = ".", job_name: str = None):
         """
-        Generate a SLURM script by combining a user-provided header with a consistent footer.
-
-        The header (orca.slurm.header) is defined by the user and contains cluster-specific SLURM settings and module loads.
-        The footer (generated by this function) includes scratch directory management, file copying, and job execution.
-
-        Args:
-            input_file (Path): ORCA input file path.
-            pal_value (int): Number of processors to allocate (ntasks).
-            template_dir (str): Path to the directory containing the SLURM header.
-            output_dir (str): Path to the directory where the SLURM script will be saved.
-            job_name (str, optional): Name of the SLURM job. Defaults to the input file stem.
-
-        Returns:
-            Path: Path to the generated SLURM script.
+        Generate a SLURM script by merging user-provided header and ChemRefine additions.
         """
         import logging
 
         if job_name is None:
             job_name = input_file.stem
 
-        header_template_path = Path(os.path.abspath(template_dir)) / "orca.slurm.header"
+        header_template_path = Path(template_dir) / "orca.slurm.header"
         if not header_template_path.is_file():
             logging.error(f"SLURM header template {header_template_path} not found.")
             raise FileNotFoundError(f"SLURM header template {header_template_path} not found.")
 
         with open(header_template_path, 'r') as f:
-            header_content = f.read()
+            header_lines = f.readlines()
 
-        # Create the Slurm script in the specified output_dir
+        # Separate #SBATCH lines from the rest
+        sbatch_lines = []
+        non_sbatch_lines = []
+        for line in header_lines:
+            if line.strip().startswith("#SBATCH"):
+                sbatch_lines.append(line)
+            else:
+                non_sbatch_lines.append(line)
+
         slurm_file = Path(output_dir) / f"{job_name}.slurm"
         with open(slurm_file, 'w') as f:
-            # Write user-provided header
-            f.write(header_content)
-            f.write("\n")
-
-            # Append job-specific SBATCH directives
-            f.write("# Job-specific settings (generated by ChemRefine)\n")
+            f.write("#!/bin/bash\n")
+            # Write all SBATCH lines (user + ChemRefine)
+            f.writelines(sbatch_lines)
             f.write(f"#SBATCH --job-name={job_name}\n")
             f.write(f"#SBATCH --output={job_name}.out\n")
             f.write(f"#SBATCH --error={job_name}.err\n")
             f.write(f"#SBATCH --ntasks={pal_value}\n")
             f.write("#SBATCH --cpus-per-task=1\n\n")
 
-            # Write scratch management and ORCA execution block
-            f.write("# Scratch directory management and ORCA execution (generated by ChemRefine)\n")
+            # Write non-SBATCH lines from the user header
+            f.writelines(non_sbatch_lines)
+
+            # Append scratch and ORCA execution logic (same as before)
+            f.write("\n# Scratch directory management and ORCA execution (generated by ChemRefine)\n")
             f.write("if [ -z \"$ORCA_EXEC\" ]; then\n")
             f.write(f"    ORCA_EXEC={self.orca_executable}\n")
             f.write("fi\n\n")
-
             f.write("export ORIG=$PWD\n")
             f.write("timestamp=$(date +%Y%m%d%H%M%S)\n")
             f.write("random_str=$(tr -dc a-z0-9 </dev/urandom | head -c 8)\n")
@@ -191,13 +237,10 @@ class OrcaJobSubmitter:
             f.write("export SCRATCH_DIR=${BASE_SCRATCH_DIR}/ChemRefine_scratch_${SLURM_JOB_ID}_${timestamp}_${random_str}\n")
             f.write("mkdir -p $SCRATCH_DIR || { echo 'Error: Failed to create scratch directory'; exit 1; }\n")
             f.write("echo 'SCRATCH_DIR is set to $SCRATCH_DIR'\n\n")
-
             f.write(f"cp {input_file} $SCRATCH_DIR/ || {{ echo 'Error: Failed to copy input file'; exit 1; }}\n")
             f.write("cd $SCRATCH_DIR || { echo 'Error: Failed to change directory'; exit 1; }\n\n")
-
             f.write("export OMP_NUM_THREADS=1\n")
             f.write(f"$ORCA_EXEC {input_file.name} > $ORIG/{job_name}.out || {{ echo 'Error: ORCA execution failed.'; exit 1; }}\n\n")
-
             f.write("cp *.out $ORIG/ || { echo 'Error: Failed to copy output'; exit 1; }\n")
             if not self.save_scratch:
                 f.write("rm -rf $SCRATCH_DIR || { echo 'Warning: Failed to remove scratch directory'; }\n")
@@ -206,7 +249,6 @@ class OrcaJobSubmitter:
 
         logging.info(f"Generated SLURM script: {slurm_file}")
         return slurm_file
-
 
     def submit_job(self, slurm_script: Path):
         """
