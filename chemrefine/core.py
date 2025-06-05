@@ -7,7 +7,7 @@ from .utils import Utility
 from .orca_interface import OrcaInterface, OrcaJobSubmitter
 from pathlib import Path
 import shutil
-
+import sys
 class ChemRefiner:
     """
     ChemRefiner class orchestrates the ChemRefine workflow, handling input parsing,
@@ -117,6 +117,12 @@ class ChemRefiner:
         # Copy the template input file from template_dir to step_dir
         input_template_src = os.path.join(self.template_dir, f"step{step_number}.inp")
         input_template_dst = os.path.join(step_dir, f"step{step_number}.inp")
+        if not os.path.exists(input_template_src):
+            logging.warning(f"Input file '{input_template_src}' not found. Exiting pipeline.")
+            sys.exit(1)
+            raise FileNotFoundError(
+                f"Input file '{input_template_src}' not found. Please ensure that 'step{step_number}.inp' exists in the template directory."
+            )        
         shutil.copyfile(input_template_src, input_template_dst)
 
         # Create ORCA input files in step_dir
