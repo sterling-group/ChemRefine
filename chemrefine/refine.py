@@ -99,8 +99,18 @@ class StructureRefiner:
         return self._apply_mask(coordinates, ids, favored_indices)
 
     def _apply_mask(self, coordinates, ids, favored_indices):
+        """
+        Apply a mask to select structures based on favored indices.
+        Ensures that at least one structure is always selected.
+        """
+        if not favored_indices:
+            # No structures selected—take the lowest-energy structure (first in sorted_indices)
+            logging.warning("No structures selected after filtering. Taking the lowest-energy structure by default.")
+            favored_indices = [0]
+
         mask = [i in favored_indices for i in range(len(coordinates))]
         filtered_coordinates = [coord for coord, keep in zip(coordinates, mask) if keep]
         filtered_ids = [id_ for id_, keep in zip(ids, mask) if keep]
         logging.info(f"Selected {len(filtered_coordinates)} structures after filtering.")
         return filtered_coordinates, filtered_ids
+
