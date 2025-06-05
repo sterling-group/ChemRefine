@@ -26,7 +26,7 @@ class OrcaJobSubmitter:
             save_scratch (bool): If True, scratch directories are not deleted after job completion.
         """
         self.orca_executable = orca_executable
-        self.scratch_dir = scratch_dir or "/tmp/orca_scratch"
+        self.scratch_dir = scratch_dir
         self.save_scratch = save_scratch
 
     def submit_files(self, input_files, max_cores=32, template_dir=".", output_dir="."):
@@ -144,6 +144,9 @@ class OrcaJobSubmitter:
 
         if job_name is None:
             job_name = input_file.stem
+        if not self.scratch_dir:
+            logging.warning("scratch_dir not set; defaulting to /tmp/orca_scratch")
+            self.scratch_dir = "./tmp/orca_scratch"
 
         header_template_path = Path(os.path.abspath(template_dir)) / "orca.slurm.header"
         if not header_template_path.is_file():
@@ -176,9 +179,7 @@ class OrcaJobSubmitter:
         # Compose SLURM script
         slurm_file = Path(output_dir) / f"{job_name}.slurm"
         with open(slurm_file, 'w') as f:
-            # Always start with the shebang
-            f.write("#!/bin/bash\n")
-            # Write grouped SBATCH lines
+            f.write("#!/bin/bash\n\n")
             f.write("\n".join(sbatch_lines))
             f.write("\n\n")
             # Write the rest of the header
@@ -190,11 +191,12 @@ class OrcaJobSubmitter:
             f.write(f"    ORCA_EXEC={self.orca_executable}\n")
             f.write("fi\n\n")
 
-            f.write("export ORIG=$PWD\n")
             f.write("timestamp=$(date +%Y%m%d%H%M%S)\n")
             f.write("random_str=$(tr -dc a-z0-9 </dev/urandom | head -c 8)\n")
             f.write(f"export BASE_SCRATCH_DIR={self.scratch_dir}\n")
             f.write("export SCRATCH_DIR=${BASE_SCRATCH_DIR}/ChemRefine_scratch_${SLURM_JOB_ID}_${timestamp}_${random_str}\n")
+            f.write(f"export OUTPUT_DIR={os.path.abspath(output_dir)}\n")
+
             f.write("mkdir -p $SCRATCH_DIR || { echo 'Error: Failed to create scratch directory'; exit 1; }\n")
             f.write("echo 'SCRATCH_DIR is set to $SCRATCH_DIR'\n\n")
 
@@ -202,10 +204,13 @@ class OrcaJobSubmitter:
             f.write("cd $SCRATCH_DIR || { echo 'Error: Failed to change directory'; exit 1; }\n\n")
 
             f.write("export OMP_NUM_THREADS=1\n")
-            f.write(f"$ORCA_EXEC {input_file.name} > $ORIG/{job_name}.out || {{ echo 'Error: ORCA execution failed.'; exit 1; }}\n\n")
+            f.write(f"$ORCA_EXEC {input_file.name} > $OUTPUT_DIR/{job_name}.out || {{ echo 'Error: ORCA execution failed.'; exit 1; }}\n\n")
 
-            f.write("cp *.out $ORIG/ || { echo 'Error: Failed to copy output'; exit 1; }\n")
-            f.write("cp *.xyz $ORIG/ || { echo 'Error: Failed to copy XYZ'; exit 1; }\n")
+            # File copy commands
+            f.write("cp *.out $OUTPUT_DIR || { echo 'Error: Failed to copy output'; exit 1; }\n")
+            f.write("cp *.xyz $OUTPUT_DIR || { echo 'Error: Failed to copy XYZ'; exit 1; }\n")
+            f.write("cp *.finalensemble.*.xyz $OUTPUT_DIR || echo 'No finalensemble.*.xyz found to copy.'\n")
+            f.write("cp *.finalensemble.xyz $OUTPUT_DIR || echo 'No finalensemble.xyz found to copy.'\n")
 
             if not self.save_scratch:
                 f.write("rm -rf $SCRATCH_DIR || { echo 'Warning: Failed to remove scratch directory'; }\n")
