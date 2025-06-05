@@ -62,7 +62,7 @@ class OrcaJobSubmitter:
                 for job_id in completed_jobs:
                     del active_jobs[job_id]
 
-                time.sleep(30)
+                time.sleep(10)
 
             slurm_script = self.generate_slurm_script(
                 input_file=input_path,
