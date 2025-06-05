@@ -99,7 +99,7 @@ class Utility:
         import os
         import logging
 
-        logging.info("Writing Ensemble XYZ files")
+        logging.info(f"Writing Ensemble XYZ files to {output_dir} for step {step_number}")
         base_name = f"step{step_number}"
         xyz_filenames = []
 
