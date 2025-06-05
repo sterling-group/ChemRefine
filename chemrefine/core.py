@@ -35,7 +35,9 @@ class ChemRefiner:
         self.charge = self.config.get('charge', 0)
         self.multiplicity = self.config.get('multiplicity', 1)
         self.template_dir = os.path.abspath(self.config.get('template_dir', './templates'))
-        self.scratch_dir = self.config.get('scratch_dir', os.getenv("SCRATCH", "/tmp/orca_scratch"))
+        self.scratch_dir = self.config.get('scratch_dir')
+        logging.info(f"Using template directory: {self.template_dir}")
+        logging.info(f"Using scratch directory: {self.scratch_dir}")
 
         # === Setup output directory AFTER config is loaded ===
         output_dir_raw = self.config.get('outputs', './outputs')  # Default to './outputs'
@@ -171,7 +173,7 @@ class ChemRefiner:
             logging.info(f"Step directory {step_dir} does not exist. Will run this step.")
             return None, None
 
-    def submit_orca_jobs(self, input_files, cores, step_dir,scratch_dir=None):
+    def submit_orca_jobs(self, input_files, cores, step_dir):
         """
         Submits ORCA jobs for each input file in the step directory using the OrcaJobSubmitter.
 
@@ -183,6 +185,8 @@ class ChemRefiner:
         logging.info(f"Switching to working directory: {step_dir}")
         original_dir = os.getcwd()
         os.chdir(step_dir)
+        logging.info(f"Current working directory: {os.getcwd()}")
+        logging.info(f"Running in {self.scratch_dir} from submit_orca_jobs helper function.")
         try:
             self.orca_submitter = OrcaJobSubmitter(scratch_dir=self.scratch_dir)
             self.orca_submitter.submit_files(
@@ -263,12 +267,8 @@ class ChemRefiner:
                         previous_ids
                     )
 
-                self.orca_submitter.submit_files(
-                    input_files=input_files,
-                    max_cores=self.max_cores,
-                    template_dir=self.template_dir,
-                    output_dir=step_dir
-                )
+                self.submit_orca_jobs(input_files, self.max_cores, step_dir)
+
 
                 coordinates, energies = self.orca.parse_output(
                     output_files,
