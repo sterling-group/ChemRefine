@@ -1,6 +1,6 @@
 ![chemrefinelogo](https://github.com/user-attachments/assets/ae7b1ad5-0d90-445c-be83-ddcb76fa85c3)
 
-# **Automated Conformer Sampling and Refinement using ORCA**
+# **Automated Workflow for Conformer Sampling and Refinement.**
 
 This repository contains a streamlined Python code for conformer sampling and refinement for DFT and MLIPs. The code automates the process of progressively refining the level of theory, eliminating the need for manual intervention. This code is meant for HPC slurm submission system, minor modifications must be made if you use HPC outside of our group (UTD). Using an input yaml file we are able to automate the process of submitting calculations and then choosing a sampling method to choose the favored conformations, to then refine the calculation with more precise methods.
 
