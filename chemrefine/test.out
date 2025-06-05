@@ -1,0 +1,10 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.11, pytest-8.3.5, pluggy-1.6.0
+rootdir: /mfs/io/groups/sterling/mfshome/dal950773/GitHub/ChemRefine
+configfile: pyproject.toml
+collected 0 items
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! KeyboardInterrupt !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+<frozen importlib._bootstrap_external>:147: KeyboardInterrupt
+(to show a full traceback on KeyboardInterrupt use --full-trace)
+============================ no tests ran in 3.25s =============================
