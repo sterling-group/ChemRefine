@@ -90,8 +90,9 @@ class StructureRefiner:
         num_structures = parameters.get('num_structures', len(coordinates))
         logging.info(f"Number of structures to select: {num_structures}")
 
-        if num_structures <= 0 or num_structures >= len(coordinates):
-            logging.info("Input count exceeds available structures; taking all structures.")
+        # If user specifies 0 or a value greater than available structures, take all structures
+        if not num_structures or num_structures >= len(coordinates):
+            logging.info("Input count is 0 or exceeds available structures; taking all structures.")
             favored_indices = sorted_indices
         else:
             favored_indices = sorted_indices[:num_structures]
@@ -101,10 +102,9 @@ class StructureRefiner:
     def _apply_mask(self, coordinates, ids, favored_indices):
         """
         Apply a mask to select structures based on favored indices.
-        Ensures that at least one structure is always selected.
+        Ensures at least one structure is always selected.
         """
-        if not favored_indices:
-            # No structures selected—take the lowest-energy structure (first in sorted_indices)
+        if len(favored_indices) == 0:
             logging.warning("No structures selected after filtering. Taking the lowest-energy structure by default.")
             favored_indices = [0]
 
@@ -113,4 +113,3 @@ class StructureRefiner:
         filtered_ids = [id_ for id_, keep in zip(ids, mask) if keep]
         logging.info(f"Selected {len(filtered_coordinates)} structures after filtering.")
         return filtered_coordinates, filtered_ids
-
