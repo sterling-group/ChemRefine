@@ -341,13 +341,14 @@ class OrcaInterface:
 
                 logging.info(f"Parsing standard DFT output for: {path}")
                 coord_block = re.findall(
-                    r"CARTESIAN COORDINATES \\(ANGSTROEM\\)\n-+\n((?:.*?\n)+?)-+\n",
+                    r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n",
                     content,
                     re.DOTALL
                 )
                 if coord_block:
                     coords = [line.split() for line in coord_block[-1].strip().splitlines()]
                     coordinates.append(coords)
+                    logging.debug(f"Extracted coordinates block: {coords}")
                 else:
                     logging.warning(f"No coordinate block found in: {path}")
                     coordinates.append([])
