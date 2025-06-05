@@ -312,17 +312,6 @@ class OrcaInterface:
         return input_files, output_files
 
     def parse_output(self, file_paths, calculation_type, dir='./'):
-        """
-        Parses ORCA output files for the specified calculation type.
-        
-        Args:
-            file_paths (list): List of .out file paths.
-            calculation_type (str): Type of calculation ('goat', 'dft', etc.).
-            dir (str): Directory to look for outputs.
-        
-        Returns:
-            tuple: (coordinates, energies)
-        """
         coordinates, energies = [], []
 
         logging.info(f"Parsing calculation type: {calculation_type.upper()}")
@@ -336,30 +325,20 @@ class OrcaInterface:
                 logging.warning(f"Output file not found: {path}")
                 continue
 
-            with open(path) as f:
-                content = f.read()
-
             if calculation_type.lower() == 'goat':
-                final_xyz = path.replace('.out', '.finalensemble.xyz')
-                logging.info(f"Looking for GOAT ensemble file: {final_xyz}")
-
-                if os.path.exists(final_xyz):
-                    logging.info(f"GOAT ensemble file found: {final_xyz}")
-                    with open(final_xyz) as fxyz:
-                        lines = fxyz.readlines()
-
-                    current_structure = []
-                    for line in lines:
-                        if len(line.strip().split()) == 4:
-                            current_structure.append(tuple(line.strip().split()))
-                    coordinates.append(current_structure)
-
-                    energy_match = re.search(r"^\s*[-]?\d+\.\d+", lines[1])
-                    energies.append(float(energy_match.group()) if energy_match else None)
+                finalensemble_file = path.replace('.out', '.finalensemble.xyz')
+                logging.info(f"Looking for GOAT ensemble file: {finalensemble_file}")
+                if os.path.exists(finalensemble_file):
+                    coords, ens = self.parse_goat_finalensemble(finalensemble_file)
+                    coordinates.extend(coords)
+                    energies.extend(ens)
                 else:
                     logging.error(f"GOAT ensemble file not found for: {path}")
                     continue
             else:
+                with open(path) as f:
+                    content = f.read()
+
                 logging.info(f"Parsing standard DFT output for: {path}")
                 coord_block = re.findall(
                     r"CARTESIAN COORDINATES \\(ANGSTROEM\\)\n-+\n((?:.*?\n)+?)-+\n",
@@ -386,3 +365,45 @@ class OrcaInterface:
 
         return coordinates, energies
 
+    def parse_goat_finalensemble(self, file_path):
+        """
+        Parses a .finalensemble.xyz file from GOAT to extract multiple structures.
+
+        Args:
+            file_path (str): Path to the .finalensemble.xyz file.
+
+        Returns:
+            tuple: (coordinates, energies)
+        """
+        coordinates_list = []
+        energies_list = []
+
+        with open(file_path, 'r') as file:
+            lines = file.readlines()
+
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if line.isdigit():
+                atom_count = int(line)
+                if i + 1 >= len(lines):
+                    break  # Avoid index error
+                energy_line = lines[i + 1].strip()
+                energy_match = re.match(r"(-?\d+\.\d+)", energy_line)
+                energy = float(energy_match.group(1)) if energy_match else None
+
+                current_structure = []
+                for j in range(i + 2, i + 2 + atom_count):
+                    if j >= len(lines):
+                        break
+                    tokens = lines[j].strip().split()
+                    element, x, y, z = tokens[0], float(tokens[1]), float(tokens[2]), float(tokens[3])
+                    current_structure.append((element, x, y, z))
+                coordinates_list.append(current_structure)
+                energies_list.append(energy)
+                i += 2 + atom_count
+            else:
+                i += 1
+
+        logging.info(f"Parsed {len(coordinates_list)} structures and {len(energies_list)} energies from {file_path}.")
+        return coordinates_list, energies_list
