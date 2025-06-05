@@ -7,13 +7,14 @@ This repository contains a streamlined Python code for conformer sampling and re
 ---
 
 ## **Features**
-- 🔄 **Automated workflow** for conformer sampling and refinement
-- 📈 **Progressive refinement** of computational level across multiple steps
-- 🎯 **Intelligent sampling** with multiple selection algorithms (energy window, Boltzmann, integer-based)
-- 🚀 **HPC integration** with automatic SLURM job management and resource optimization
-- 📊 **Built-in analysis** with CSV output and structure filtering
-- 🔧 **Flexible configuration** via YAML input files
-- ⚡ **Error reduction** and efficient resource utilization
+- **Automated workflow** for conformer sampling and refinement
+- **Progressive refinement** of computational level across multiple steps
+- **Intelligent sampling** with multiple selection algorithms (energy window, Boltzmann, integer-based)
+- **HPC integration** with automatic SLURM job management and resource optimization
+- **Built-in analysis** with CSV output and structure filtering
+- **Flexible configuration** via YAML input files
+- **Error reduction** and efficient resource utilization
+- **Machine Learning Interatomic potentials** integration, seamless switch from foundation models to DFT. 
 
 ---
 
@@ -52,22 +53,31 @@ Create the required input files in your working directory:
 
 - **YAML Configuration** (`input.yaml`): Defines the workflow steps
 - **Initial XYZ** (`step1.xyz`): Starting molecular geometry  
-- **ORCA Templates** (`step1.inp`, `step2.inp`, etc.): Calculation templates for each step
+- **ORCA Templates** (`step1.inp`, `step2.inp`, `step3.inp`... `orca.slurm.header`, `mlff.slurm.header`): Calculation templates for each step
+
+You must provide **one ORCA input file** (e.g., `step1.inp`, `step2.inp`, etc.) for **each step** defined in your `input.yaml` configuration file. For example, if your `input.yaml` specifies three steps, then you need three corresponding ORCA input files in your templates directory.
+
+In addition to these input files, you must include one of each:
+- **`orca.slurm.header`**: A SLURM submission script header with your cluster-specific job settings (e.g., partition, time limit, memory).
+- **`mlff.slurm.header`**: A separate SLURM header file for machine learning force field (MLFF) jobs, GPU preferable.
+
+Make sure to specify the path to your **ORCA 6.0+** executable in the `ORCA_EXEC` line of your header file(s). Adjust any other parameters (such as modules or memory) to fit your cluster environment.
+
 
 ### **2. Run the Workflow**
 
 ```bash
 # Basic usage
-auto-goat input.yaml
+chemrefine input.yaml
 
 # With custom core count
-auto-goat input.yaml --maxcores 128
+chemrefine input.yaml --maxcores 128
 
 # Background execution (recommended for HPC)
-nohup auto-goat input.yaml --maxcores 128 &
+nohup chemrefine input.yaml --maxcores 128 &
 
-# Skip first step (if already completed)
-auto-goat input.yaml --skip
+# Skip any step (if already completed)
+chemrefine input.yaml --skip
 ```
 
 ### **3. Monitor Progress**
@@ -86,6 +96,9 @@ steps.csv       # Summary of energies and structures
 
 ### **YAML Configuration File**
 ```yaml
+template_dir: <location of template_files>
+scratch_dir:  <location of your scratch directory>
+output_dir: <location of your output directory>
 charge: 0
 multiplicity: 1
 steps:
@@ -152,14 +165,6 @@ Selects the N lowest-energy conformers.
 
 ---
 
-## **Advanced Usage**
-
-### **Custom QORCA Flags**
-```bash
-# Pass additional flags to QORCA submission system
-auto-goat input.yaml -p 64 -t 2-00:00:00 --partition=gpu
-```
-
 ### **Multi-Step Workflows**
 The tool supports complex multi-step refinement protocols:
 1. **Step 1**: GOAT conformer generation (XTB level)
@@ -176,8 +181,7 @@ The tool supports complex multi-step refinement protocols:
 ## **Project Structure**
 ```
 auto-conformer-goat/
-├── src/autogoat/           # Main package code
-├── vendor/qorca/           # QORCA submodule for job submission  
+├── chemrefine              # Main package code
 ├── Examples/               # Example input files and SLURM scripts
 ├── README.md               # This file
 ├── LICENSE                 # License
@@ -220,7 +224,7 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 ## **Support**
 
 For questions, issues, or feature requests:
-- 📧 Email: ignaciomigliaro@outlook.com
+- 📧 Email: ignacio.migliaro@utdallas.edu
 - 🐛 Issues: [GitHub Issues](https://github.com/sterling-research-group/ChemRefine/issues)
 - 📖 Documentation: [README.md](README.md)
 
