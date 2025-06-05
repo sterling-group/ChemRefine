@@ -165,9 +165,11 @@ class ChemRefiner:
                 logging.info(f"Found {len(output_files)} .out file(s) in {step_dir}. Skipping this step.")
 
             coordinates, energies = self.orca.parse_output(output_files, calculation_type, dir=step_dir)
+            logging.info(f"Parsed {len(coordinates)} coordinates and {len(energies)} energies from {output_files}.")
             filtered_coordinates, filtered_ids = self.refiner.filter(
                 coordinates, energies, list(range(len(energies))), sample_method, parameters
             )
+            logging.info(f"Filtered {len(filtered_coordinates)} coordinates and {len(filtered_ids)} IDs after filtering.")
             return filtered_coordinates, filtered_ids
         else:
             logging.info(f"Step directory {step_dir} does not exist. Will run this step.")
@@ -242,6 +244,7 @@ class ChemRefiner:
         calculation_functions = ["GOAT", "DFT", "XTB", "MLFF"]
 
         for step in steps:
+            logging.info(f"Processing step {step['step']} with calculation type '{step['calculation_type']}'.")
             step_number = step['step']
             calculation_type = step['calculation_type'].lower()
             sample_method = step['sample_type']['method']
