@@ -55,7 +55,14 @@ Create the required input files in your working directory:
 - **Initial XYZ** (`step1.xyz`): Starting molecular geometry  
 - **ORCA Templates** (`step1.inp`, `step2.inp`, `step3.inp`... `orca.slurm.header`, `mlff.slurm.header`): Calculation templates for each step
 
-You need to provide as many ORCA input files as steps you want and whichever many are put in the input.yaml file. The orca.slurm.header and the mlff.slurm.header are designed for you to change the setting related to your own Cluster and Slurm submission settings. Make sure to add the path to your ORCA 6.0+ code. 
+You must provide **one ORCA input file** (e.g., `step1.inp`, `step2.inp`, etc.) for **each step** defined in your `input.yaml` configuration file. For example, if your `input.yaml` specifies three steps, then you need three corresponding ORCA input files in your templates directory.
+
+In addition to these input files, you must include one of each:
+- **`orca.slurm.header`**: A SLURM submission script header with your cluster-specific job settings (e.g., partition, time limit, memory).
+- **`mlff.slurm.header`**: A separate SLURM header file for machine learning force field (MLFF) jobs, GPU preferable.
+
+Make sure to specify the path to your **ORCA 6.0+** executable in the `ORCA_EXEC` line of your header file(s). Adjust any other parameters (such as modules or memory) to fit your cluster environment.
+
 
 ### **2. Run the Workflow**
 
