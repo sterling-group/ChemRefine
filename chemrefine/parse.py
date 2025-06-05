@@ -6,7 +6,7 @@ class ArgumentParser:
         self.parser = argparse.ArgumentParser(
             description="Automated conformer searching with ORCA and refinement."
         )
-        self.parser.add_argument("input_file", help="YAML input for workflow.")
+        self.parser.add_argument("input_yaml", help="YAML input for workflow.")
         self.parser.add_argument("--maxcores", type=int, default=DEFAULT_CORES,
                                  help="Max cores for conformer search.")
         self.parser.add_argument("--skip", action="store_true", default=False,

@@ -4,67 +4,97 @@ from .utils import Utility
 import subprocess
 import logging
 from pathlib import Path
+import sys
+import time
+import getpass
 
 # chemrefine/orca_interface.py
 
 class OrcaJobSubmitter:
     """
     A lightweight ORCA job submission class for ChemRefine.
-
-    Features:
-    - Adjust PAL value in the input file.
-    - Generate a basic SLURM script.
-    - Submit ORCA jobs to the SLURM scheduler.
+    Handles job submission, PAL adjustment, and job monitoring.
     """
 
-    def __init__(self, orca_executable: str = "orca"):
-        self.orca_executable = orca_executable
-
-    def adjust_pal_in_input(self, input_file: Path, pal_value: int):
+    def __init__(self, orca_executable: str = "orca", scratch_dir: str = None, save_scratch: bool = False):
         """
-        Adjust PAL value in the ORCA input file.
-        Adds or updates a '%pal nprocs' block at the end.
+        Initialize the ORCA job submitter.
 
         Args:
-            input_file (Path): ORCA input file path.
-            pal_value (int): PAL value to set.
-
-        Returns:
-            bool: True if file was modified, False otherwise.
+            orca_executable (str): Path to the ORCA executable.
+            scratch_dir (str): Path to the scratch directory.
+            save_scratch (bool): If True, scratch directories are not deleted after job completion.
         """
-        content = input_file.read_text()
-        original_content = content
+        self.orca_executable = orca_executable
+        self.scratch_dir = scratch_dir
+        self.save_scratch = save_scratch
 
-        # Try to find and replace existing %pal block
-        def replace_pal_block(match):
-            block = match.group(0)
-            new_block = re.sub(
-                r"(nprocs\s+)\d+",
-                r"\g<1>{}".format(pal_value),
-                block,
-                flags=re.IGNORECASE
+    def submit_files(self, input_files, max_cores=32, template_dir=".", output_dir="."):
+        """
+        Submits multiple ORCA input files to SLURM, managing PAL values, active job tracking,
+        and ensuring that the total PAL usage does not exceed max_cores.
+
+        Args:
+            input_files (list): List of ORCA input file paths.
+            max_cores (int): Maximum total PAL usage allowed.
+            template_dir (str): Directory containing SLURM header template.
+            output_dir (str): Output directory for SLURM scripts and results.
+        """
+        total_cores_used = 0
+        active_jobs = {}
+
+        for input_file in input_files:
+            input_path = Path(input_file).resolve()
+            pal_value = self.parse_pal_from_input(input_path)
+            pal_value = min(pal_value, max_cores)
+            logging.info(f"Setting PAL value to {pal_value} for {input_path.name}")
+
+            # Wait if not enough free cores
+            while total_cores_used + pal_value > max_cores:
+                logging.info("Waiting for jobs to finish to free up cores...")
+                completed_jobs = []
+                for job_id, cores in list(active_jobs.items()):
+                    if self.is_job_finished(job_id):
+                        completed_jobs.append(job_id)
+                        total_cores_used -= cores
+                        logging.info(f"Job {job_id} completed. Freed {cores} cores.")
+
+                for job_id in completed_jobs:
+                    del active_jobs[job_id]
+
+                time.sleep(30)
+
+            slurm_script = self.generate_slurm_script(
+                input_file=input_path,
+                pal_value=pal_value,
+                template_dir=template_dir,
+                output_dir=output_dir
             )
-            return new_block
 
-        new_content = re.sub(
-            r"%pal\s+.*?end",
-            replace_pal_block,
-            content,
-            flags=re.IGNORECASE | re.DOTALL
-        )
+            job_id = self.submit_job(slurm_script)
+            logging.info(f"Submitted ORCA job with ID: {job_id} for input: {input_path.name}")
 
-        if new_content == content:
-            # Append PAL block at the end
-            new_content += f"\n%pal\n   nprocs {pal_value}\nend\n"
+            if job_id.isdigit():
+                active_jobs[job_id] = pal_value
+                total_cores_used += pal_value
+            else:
+                logging.warning(f"Skipping job tracking for invalid job ID '{job_id}'")
 
-        # Overwrite input file only if content changed
-        if new_content != original_content:
-            input_file.write_text(new_content)
-            logging.info(f"Adjusted PAL value to {pal_value} in {input_file}")
-            return True
+        logging.info("All jobs submitted. Waiting for remaining jobs to complete...")
+        while active_jobs:
+            completed_jobs = []
+            for job_id, cores in list(active_jobs.items()):
+                if self.is_job_finished(job_id):
+                    completed_jobs.append(job_id)
+                    total_cores_used -= cores
+                    logging.info(f"Job {job_id} completed. Freed {cores} cores.")
 
-        logging.info(f"No changes made to PAL value in {input_file}")
-        return False
+            for job_id in completed_jobs:
+                del active_jobs[job_id]
+
+            time.sleep(30)
+
+        logging.info("All calculations finished.")
 
     def parse_pal_from_input(self, input_file: Path):
         """
@@ -84,34 +114,108 @@ class OrcaJobSubmitter:
             return pal_value
         return 1
 
-    def generate_slurm_script(self, input_file: Path, pal_value: int, job_name: str = None):
+    def generate_slurm_script(
+    self,
+    input_file: Path,
+    pal_value: int,
+    template_dir: str,
+    output_dir: str = ".",
+    job_name: str = None
+):
         """
-        Generate a simple SLURM script to run the ORCA job.
+        Generate a SLURM script by combining a user-provided header with a consistent footer.
+
+        The header (orca.slurm.header) is defined by the user and contains cluster-specific SLURM settings and module loads.
+        This function groups all #SBATCH lines together at the top to comply with SLURM parsing, ensuring no non-SBATCH lines interrupt them.
+        The footer includes scratch directory management, file copying, and job execution.
 
         Args:
             input_file (Path): ORCA input file path.
-            pal_value (int): Number of CPUs to request.
-            job_name (str, optional): Job name in SLURM.
+            pal_value (int): Number of processors to allocate (ntasks).
+            template_dir (str): Path to the directory containing the SLURM header.
+            output_dir (str): Path to the directory where the SLURM script will be saved.
+            job_name (str, optional): Name of the SLURM job. Defaults to the input file stem.
 
         Returns:
             Path: Path to the generated SLURM script.
         """
+        import logging
+        from pathlib import Path
+
         if job_name is None:
             job_name = input_file.stem
+        if not self.scratch_dir:
+            logging.warning("scratch_dir not set; defaulting to /tmp/orca_scratch")
+            self.scratch_dir = "./tmp/orca_scratch"
 
-        slurm_file = input_file.with_suffix(".slurm")
-        with slurm_file.open("w") as f:
-            f.write("#!/bin/bash\n")
-            f.write(f"#SBATCH --job-name={job_name}\n")
-            f.write(f"#SBATCH --output={job_name}.out\n")
-            f.write(f"#SBATCH --error={job_name}.err\n")
-            f.write(f"#SBATCH --ntasks={pal_value}\n")
-            f.write("#SBATCH --time=24:00:00\n")  # Default 24 hours
+        header_template_path = Path(os.path.abspath(template_dir)) / "orca.slurm.header"
+        if not header_template_path.is_file():
+            logging.error(f"SLURM header template {header_template_path} not found.")
+            raise FileNotFoundError(f"SLURM header template {header_template_path} not found.")
 
-            f.write("\nmodule purge\n")
-            f.write("# Load ORCA modules here if needed\n")
-            f.write("\n")
-            f.write(f"srun {self.orca_executable} {input_file.name}\n")
+        with open(header_template_path, 'r') as f:
+            header_lines = f.readlines()
+
+        # Separate SBATCH and non-SBATCH lines to ensure all SBATCH lines are grouped
+        sbatch_lines = []
+        non_sbatch_lines = []
+
+        for line in header_lines:
+            stripped = line.strip()
+            if stripped.startswith("#SBATCH"):
+                if "--ntasks" in stripped or "--cpus-per-task" in stripped:
+                    continue  # skip existing directives that we'll override
+                sbatch_lines.append(line.rstrip())
+            else:
+                non_sbatch_lines.append(line.rstrip())
+
+        # Append job-specific SBATCH directives
+        sbatch_lines.append(f"#SBATCH --job-name={job_name}")
+        sbatch_lines.append(f"#SBATCH --output={job_name}.out")
+        sbatch_lines.append(f"#SBATCH --error={job_name}.err")
+        sbatch_lines.append(f"#SBATCH --ntasks={pal_value}")
+        sbatch_lines.append("#SBATCH --cpus-per-task=1")
+
+        # Compose SLURM script
+        slurm_file = Path(output_dir) / f"{job_name}.slurm"
+        with open(slurm_file, 'w') as f:
+            f.write("#!/bin/bash\n\n")
+            f.write("\n".join(sbatch_lines))
+            f.write("\n\n")
+            # Write the rest of the header
+            f.write("\n".join(non_sbatch_lines))
+            f.write("\n\n")
+            # Write scratch management and ORCA execution block
+            f.write("# Scratch directory management and ORCA execution (generated by ChemRefine)\n")
+            f.write("if [ -z \"$ORCA_EXEC\" ]; then\n")
+            f.write(f"    ORCA_EXEC={self.orca_executable}\n")
+            f.write("fi\n\n")
+
+            f.write("timestamp=$(date +%Y%m%d%H%M%S)\n")
+            f.write("random_str=$(tr -dc a-z0-9 </dev/urandom | head -c 8)\n")
+            f.write(f"export BASE_SCRATCH_DIR={self.scratch_dir}\n")
+            f.write("export SCRATCH_DIR=${BASE_SCRATCH_DIR}/ChemRefine_scratch_${SLURM_JOB_ID}_${timestamp}_${random_str}\n")
+            f.write(f"export OUTPUT_DIR={os.path.abspath(output_dir)}\n")
+
+            f.write("mkdir -p $SCRATCH_DIR || { echo 'Error: Failed to create scratch directory'; exit 1; }\n")
+            f.write("echo 'SCRATCH_DIR is set to $SCRATCH_DIR'\n\n")
+
+            f.write(f"cp {input_file} $SCRATCH_DIR/ || {{ echo 'Error: Failed to copy input file'; exit 1; }}\n")
+            f.write("cd $SCRATCH_DIR || { echo 'Error: Failed to change directory'; exit 1; }\n\n")
+
+            f.write("export OMP_NUM_THREADS=1\n")
+            f.write(f"$ORCA_EXEC {input_file.name} > $OUTPUT_DIR/{job_name}.out || {{ echo 'Error: ORCA execution failed.'; exit 1; }}\n\n")
+
+            # File copy commands
+            f.write("cp *.out $OUTPUT_DIR || { echo 'Error: Failed to copy output'; exit 1; }\n")
+            f.write("cp *.xyz $OUTPUT_DIR || { echo 'Error: Failed to copy XYZ'; exit 1; }\n")
+            f.write("cp *.finalensemble.*.xyz $OUTPUT_DIR || echo 'No finalensemble.*.xyz found to copy.'\n")
+            f.write("cp *.finalensemble.xyz $OUTPUT_DIR || echo 'No finalensemble.xyz found to copy.'\n")
+
+            if not self.save_scratch:
+                f.write("rm -rf $SCRATCH_DIR || { echo 'Warning: Failed to remove scratch directory'; }\n")
+            else:
+                f.write("echo 'Scratch directory not deleted (save_scratch is True)'\n")
 
         logging.info(f"Generated SLURM script: {slurm_file}")
         return slurm_file
@@ -145,6 +249,26 @@ class OrcaJobSubmitter:
             logging.error(f"Job submission failed: {e.stderr.strip()}")
             return "ERROR"
 
+    def is_job_finished(self, job_id):
+        """
+        Check if a SLURM job with a given job ID has finished.
+
+        Args:
+            job_id (str): SLURM job ID to check.
+
+        Returns:
+            bool: True if the job is no longer in the queue (finished), False otherwise.
+        """
+        try:
+            username = getpass.getuser()
+            command = f"squeue -u {username} -o %i"
+            output = subprocess.check_output(command, shell=True, text=True)
+            job_ids = output.strip().splitlines()
+            return job_id not in job_ids[1:]  # skip header
+        except subprocess.CalledProcessError as e:
+            logging.info(f"Error running squeue: {e}")
+            return False
+
     def _extract_job_id(self, sbatch_output: str):
         """
         Extract the job ID from sbatch output.
@@ -157,14 +281,14 @@ class OrcaJobSubmitter:
         """
         match = re.search(r"Submitted batch job (\d+)", sbatch_output)
         return match.group(1) if match else None
-
+       
 class OrcaInterface:
     def __init__(self):
         self.utility = Utility()
 
     def create_input(self, xyz_files, template, charge, multiplicity, output_dir='./'):
         input_files, output_files = [], []
-
+        logging.debug(f"output_dir IN create_input: {output_dir}")
         os.makedirs(output_dir, exist_ok=True)
 
         for xyz in xyz_files:
@@ -188,36 +312,77 @@ class OrcaInterface:
         return input_files, output_files
 
     def parse_output(self, file_paths, calculation_type, dir='./'):
+        """
+        Parses ORCA output files for the specified calculation type.
+        
+        Args:
+            file_paths (list): List of .out file paths.
+            calculation_type (str): Type of calculation ('goat', 'dft', etc.).
+            dir (str): Directory to look for outputs.
+        
+        Returns:
+            tuple: (coordinates, energies)
+        """
         coordinates, energies = [], []
+
+        logging.info(f"Parsing calculation type: {calculation_type.upper()}")
+        logging.info(f"Looking for output files in directory: {dir}")
+
         for out_file in file_paths:
             path = os.path.join(dir, os.path.basename(out_file))
+            logging.info(f"Checking output file: {path}")
+
             if not os.path.exists(path):
+                logging.warning(f"Output file not found: {path}")
                 continue
+
             with open(path) as f:
                 content = f.read()
 
             if calculation_type.lower() == 'goat':
                 final_xyz = path.replace('.out', '.finalensemble.xyz')
+                logging.info(f"Looking for GOAT ensemble file: {final_xyz}")
+
                 if os.path.exists(final_xyz):
+                    logging.info(f"GOAT ensemble file found: {final_xyz}")
                     with open(final_xyz) as fxyz:
                         lines = fxyz.readlines()
+
                     current_structure = []
                     for line in lines:
                         if len(line.strip().split()) == 4:
                             current_structure.append(tuple(line.strip().split()))
                     coordinates.append(current_structure)
+
                     energy_match = re.search(r"^\s*[-]?\d+\.\d+", lines[1])
                     energies.append(float(energy_match.group()) if energy_match else None)
+                else:
+                    logging.error(f"GOAT ensemble file not found for: {path}")
+                    continue
             else:
+                logging.info(f"Parsing standard DFT output for: {path}")
                 coord_block = re.findall(
                     r"CARTESIAN COORDINATES \\(ANGSTROEM\\)\n-+\n((?:.*?\n)+?)-+\n",
                     content,
                     re.DOTALL
                 )
-                coords = [line.split() for line in coord_block[-1].strip().splitlines()] if coord_block else []
+                if coord_block:
+                    coords = [line.split() for line in coord_block[-1].strip().splitlines()]
+                    coordinates.append(coords)
+                else:
+                    logging.warning(f"No coordinate block found in: {path}")
+                    coordinates.append([])
+
                 energy_match = re.findall(r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)", content)
-                energy = float(energy_match[-1]) if energy_match else None
-                coordinates.append(coords)
-                energies.append(energy)
+                if energy_match:
+                    energy = float(energy_match[-1])
+                    energies.append(energy)
+                else:
+                    logging.warning(f"No energy found in: {path}")
+                    energies.append(None)
+
+        if not coordinates or not energies:
+            logging.error(f"Failed to parse {calculation_type.upper()} outputs in directory: {dir}")
 
         return coordinates, energies
+
