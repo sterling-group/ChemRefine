@@ -1,5 +1,6 @@
 import logging
 import os
+import logging
 from typing import List, Tuple
 
 
@@ -20,16 +21,13 @@ def get_available_device() -> str:
 
 def run_mlff_calculation(
     xyz_path: str,
-    model_name: str = "uma-s-1",
-    device: str | None = None,
-    model_path: str | None = None,
-    fmax: float = 0.03,
-    steps: int = 200,
-) -> Tuple[List[List], float]:
-    """Optimize geometry using farichem-core.
-
-    Parameters
-    ----------
+    """Optimize geometry using a MACE potential.
+        loaded from this path instead of downloading from the internet.
+        from mace.calculators import MACECalculator
+            "MLFF calculations require the 'mace-torch' and 'ase' packages"
+            candidate = pkg_dir / "models" / f"{model_name}.model"
+        calc = MACECalculator(model_path=model_path, device=device)
+        calc = MACECalculator(model_name=model_name, device=device)
     xyz_path : str
         Path to an XYZ file containing the starting geometry.
     model_name : str, optional

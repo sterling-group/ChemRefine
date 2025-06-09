@@ -29,22 +29,15 @@ def test_run_mlff(monkeypatch, tmp_path):
     def dummy_read(path):
         return DummyAtoms()
 
-    def dummy_get_predict_unit(model_name="mol", device="cpu"):
-        class DummyPred:
-            pass
-
-        return DummyPred()
-
     class DummyCalc:
         pass
 
-    def dummy_calculator(pred, task_name="oc20"):
+    def dummy_calculator(**kwargs):
         return DummyCalc()
 
     monkeypatch.setitem(sys.modules, "ase.io", types.SimpleNamespace(read=dummy_read))
     monkeypatch.setitem(sys.modules, "ase.optimize", types.SimpleNamespace(LBFGS=DummyOpt))
-    monkeypatch.setitem(sys.modules, "fairchem.core.pretrained_mlip", types.SimpleNamespace(get_predict_unit=dummy_get_predict_unit))
-    monkeypatch.setitem(sys.modules, "fairchem.core", types.SimpleNamespace(FAIRChemCalculator=dummy_calculator, pretrained_mlip=types.SimpleNamespace(get_predict_unit=dummy_get_predict_unit)))
+    monkeypatch.setitem(sys.modules, "mace.calculators", types.SimpleNamespace(MACECalculator=dummy_calculator))
 
     coords, energy = run_mlff_calculation(str(xyz), steps=1)
     assert isinstance(coords, list)
@@ -60,24 +53,17 @@ def test_device_selection(monkeypatch, tmp_path):
 
     called_devices = []
 
-    def dummy_get_predict_unit(model_name="mol", device="cpu"):
-        called_devices.append(device)
+    def dummy_calculator(**kwargs):
+        called_devices.append(kwargs.get("device"))
 
-        class DummyPred:
+        class DummyCalc:
             pass
 
-        return DummyPred()
-
-    class DummyCalc:
-        pass
-
-    def dummy_calculator(pred, task_name="oc20"):
         return DummyCalc()
 
     monkeypatch.setitem(sys.modules, "ase.io", types.SimpleNamespace(read=dummy_read))
     monkeypatch.setitem(sys.modules, "ase.optimize", types.SimpleNamespace(LBFGS=DummyOpt))
-    monkeypatch.setitem(sys.modules, "fairchem.core.pretrained_mlip", types.SimpleNamespace(get_predict_unit=dummy_get_predict_unit))
-    monkeypatch.setitem(sys.modules, "fairchem.core", types.SimpleNamespace(FAIRChemCalculator=dummy_calculator, pretrained_mlip=types.SimpleNamespace(get_predict_unit=dummy_get_predict_unit)))
+    monkeypatch.setitem(sys.modules, "mace.calculators", types.SimpleNamespace(MACECalculator=dummy_calculator))
 
     monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda: True)))
     run_mlff_calculation(str(xyz), steps=1, device=None)
@@ -103,7 +89,7 @@ def test_mlff_slurm_script(tmp_path):
 def test_env_checkpoint(monkeypatch, tmp_path):
     xyz = tmp_path / "mol.xyz"
     xyz.write_text("2\n\nH 0 0 0\nH 0 0 0.74\n")
-    checkpoint = tmp_path / "mol.pt"
+    checkpoint = tmp_path / "mol.model"
     checkpoint.write_text("dummy")
 
     def dummy_read(path):
@@ -111,31 +97,17 @@ def test_env_checkpoint(monkeypatch, tmp_path):
 
     captured = {}
 
-    def dummy_get_predict_unit(model_name="mol", device="cpu", checkpoint_path=None):
-        captured["cp"] = checkpoint_path
+    def dummy_calculator(**kwargs):
+        captured["cp"] = kwargs.get("model_path")
 
-        class DummyPred:
+        class DummyCalc:
             pass
 
-        return DummyPred()
-
-    class DummyCalc:
-        pass
-
-    def dummy_calculator(pred, task_name="oc20"):
         return DummyCalc()
 
     monkeypatch.setitem(sys.modules, "ase.io", types.SimpleNamespace(read=dummy_read))
     monkeypatch.setitem(sys.modules, "ase.optimize", types.SimpleNamespace(LBFGS=DummyOpt))
-    monkeypatch.setitem(sys.modules, "fairchem.core.pretrained_mlip", types.SimpleNamespace(get_predict_unit=dummy_get_predict_unit))
-    monkeypatch.setitem(
-        sys.modules,
-        "fairchem.core",
-        types.SimpleNamespace(
-            FAIRChemCalculator=dummy_calculator,
-            pretrained_mlip=types.SimpleNamespace(get_predict_unit=dummy_get_predict_unit),
-        ),
-    )
+    monkeypatch.setitem(sys.modules, "mace.calculators", types.SimpleNamespace(MACECalculator=dummy_calculator))
 
     monkeypatch.setenv("CHEMREFINE_MLFF_CHECKPOINT", str(checkpoint))
     run_mlff_calculation(str(xyz), steps=1, device="cpu")

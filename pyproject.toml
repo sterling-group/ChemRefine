@@ -42,7 +42,7 @@ dependencies = [
     "pyyaml",
     "pandas",
     "ase",
-    "fairchem-core",
+    "mace-torch",
 ]
 
 [project.optional-dependencies]

@@ -14,7 +14,7 @@ This repository contains a streamlined Python code for conformer sampling and re
 - **Built-in analysis** with CSV output and structure filtering
 - **Flexible configuration** via YAML input files
 - **Error reduction** and efficient resource utilization
-- **Machine Learning Interatomic potentials** integration using pretrained `fairchem-core` models for fast geometry optimisation.
+- **Machine Learning Interatomic potentials** integration using pretrained `mace` models for fast geometry optimisation.
 
 ---
 
@@ -41,7 +41,7 @@ pip install ChemRefine
   - `pyyaml` - YAML configuration parsing  
   - `pandas` - Data analysis and CSV handling
   - `ase` - Geometry handling and optimisation
-  - `fairchem-core` - Machine learning force fields
+  - `mace-torch` - Machine learning force fields
 - **ORCA 6.0+** - Quantum chemistry calculations
 - **SLURM** - Job scheduling system
 - **QORCA** - Included as submodule for ORCA job submission
@@ -126,9 +126,9 @@ steps:
         num_structures: 1
 ```
 
-The optional MLFF step uses a pretrained model from `fairchem-core` (default `"mol"`) to optimise the provided geometries before proceeding with higher-level methods.
+The optional MLFF step uses a pretrained model from `mace` (default `"mol"`) to optimise the provided geometries before proceeding with higher-level methods.
 If a CUDA-capable GPU is detected, the MLFF optimisation runs on the GPU; otherwise it falls back to the CPU automatically.
-To avoid downloading the model each time, set the environment variable `CHEMREFINE_MLFF_CHECKPOINT` to the path of a locally downloaded checkpoint **or** place the file as `chemrefine/models/<model>.pt` within this repository.
+To avoid downloading the model each time, set the environment variable `CHEMREFINE_MLFF_CHECKPOINT` to the path of a locally downloaded checkpoint **or** place the file as `chemrefine/models/<model>.model` within this repository.
 
 ### **ORCA Template Files**
 
