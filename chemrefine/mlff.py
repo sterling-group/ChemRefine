@@ -21,13 +21,16 @@ def get_available_device() -> str:
 
 def run_mlff_calculation(
     xyz_path: str,
+    model_name: str = "mol",
+    device: str | None = None,
+    model_path: str | None = None,
+    fmax: float = 0.03,
+    steps: int = 200,
+) -> Tuple[List[List], float]:
     """Optimize geometry using a MACE potential.
-        loaded from this path instead of downloading from the internet.
-        from mace.calculators import MACECalculator
-            "MLFF calculations require the 'mace-torch' and 'ase' packages"
-            candidate = pkg_dir / "models" / f"{model_name}.model"
-        calc = MACECalculator(model_path=model_path, device=device)
-        calc = MACECalculator(model_name=model_name, device=device)
+
+    Parameters
+    ----------
     xyz_path : str
         Path to an XYZ file containing the starting geometry.
     model_name : str, optional
@@ -38,7 +41,7 @@ def run_mlff_calculation(
         device.
     model_path : str, optional
         Path to a local model checkpoint. If provided, the model is
-        loaded from this path instead of downloading from Hugging Face.
+        loaded from this path instead of downloading from the internet.
     fmax : float, optional
         Force convergence criterion for the optimiser. Defaults to ``0.03``.
     steps : int, optional
@@ -49,6 +52,8 @@ def run_mlff_calculation(
     tuple
         Optimised coordinates ``[[symbol, x, y, z], ...]`` and the energy in Hartree.
     """
+
+
     try:
         from ase.io import read
         from ase.optimize import LBFGS
