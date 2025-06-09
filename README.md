@@ -61,7 +61,7 @@ You must provide **one ORCA input file** (e.g., `step1.inp`, `step2.inp`, etc.) 
 
 In addition to these input files, you must include one of each:
 - **`orca.slurm.header`**: A SLURM submission script header with your cluster-specific job settings (e.g., partition, time limit, memory).
-- **`mlff.slurm.header`**: A separate SLURM header file for machine learning force field (MLFF) jobs. Specify your GPU node configuration here if available.
+- **`mlff.slurm.header`**: Required for MLFF jobs. Include your GPU node configuration here so MLFF calculations run under SLURM.
 
 Make sure to specify the path to your **ORCA 6.0+** executable in the `ORCA_EXEC` line of your header file(s). Adjust any other parameters (such as modules or memory) to fit your cluster environment.
 
@@ -128,6 +128,7 @@ steps:
 
 The optional MLFF step uses a pretrained model from `fairchem-core` (default `"mol"`) to optimise the provided geometries before proceeding with higher-level methods.
 If a CUDA-capable GPU is detected, the MLFF optimisation runs on the GPU; otherwise it falls back to the CPU automatically.
+To avoid downloading the model each time, set the environment variable `CHEMREFINE_MLFF_CHECKPOINT` to the path of a locally downloaded `mol` checkpoint.
 
 ### **ORCA Template Files**
 

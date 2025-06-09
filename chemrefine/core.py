@@ -5,7 +5,7 @@ from .parse import ArgumentParser
 from .refine import StructureRefiner
 from .utils import Utility
 from .orca_interface import OrcaInterface, OrcaJobSubmitter
-from .mlff import run_mlff_calculation
+from .mlff import run_mlff_calculation, MLFFJobSubmitter
 from pathlib import Path
 import shutil
 import sys
@@ -18,6 +18,7 @@ class ChemRefiner:
     def __init__(self):
         self.arg_parser = ArgumentParser()
         self.orca_submitter = OrcaJobSubmitter()
+        self.mlff_submitter = MLFFJobSubmitter()
         self.refiner = StructureRefiner()
         self.utils = Utility()
         self.orca = OrcaInterface()
@@ -297,6 +298,15 @@ class ChemRefiner:
                             previous_coordinates,
                             previous_ids,
                         )
+
+                    for xyz in xyz_files:
+                        script = self.mlff_submitter.generate_slurm_script(
+                            xyz_file=xyz,
+                            template_dir=self.template_dir,
+                            output_dir=step_dir,
+                        )
+                        self.mlff_submitter.submit_job(script)
+
                     coordinates, energies = [], []
                     for xyz in xyz_files:
                         coords, energy = run_mlff_calculation(xyz)
