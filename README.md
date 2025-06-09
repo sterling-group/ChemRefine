@@ -128,7 +128,7 @@ steps:
 
 The optional MLFF step uses a pretrained model from `fairchem-core` (default `"mol"`) to optimise the provided geometries before proceeding with higher-level methods.
 If a CUDA-capable GPU is detected, the MLFF optimisation runs on the GPU; otherwise it falls back to the CPU automatically.
-To avoid downloading the model each time, set the environment variable `CHEMREFINE_MLFF_CHECKPOINT` to the path of a locally downloaded `mol` checkpoint.
+To avoid downloading the model each time, set the environment variable `CHEMREFINE_MLFF_CHECKPOINT` to the path of a locally downloaded checkpoint **or** place the file as `chemrefine/models/<model>.pt` within this repository.
 
 ### **ORCA Template Files**
 
