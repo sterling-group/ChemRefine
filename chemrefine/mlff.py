@@ -19,7 +19,7 @@ def get_available_device() -> str:
 
 def run_mlff_calculation(
     xyz_path: str,
-    model_name: str = "mol",
+    model_name: str = "uma-s-1",
     device: str | None = None,
     fmax: float = 0.03,
     steps: int = 200,
