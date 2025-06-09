@@ -99,3 +99,45 @@ def test_mlff_slurm_script(tmp_path):
     script = submitter.generate_slurm_script(str(xyz), template_dir=tmp_path, output_dir=tmp_path)
     assert os.path.exists(script)
 
+
+def test_env_checkpoint(monkeypatch, tmp_path):
+    xyz = tmp_path / "mol.xyz"
+    xyz.write_text("2\n\nH 0 0 0\nH 0 0 0.74\n")
+    checkpoint = tmp_path / "mol.pt"
+    checkpoint.write_text("dummy")
+
+    def dummy_read(path):
+        return DummyAtoms()
+
+    captured = {}
+
+    def dummy_get_predict_unit(model_name="mol", device="cpu", checkpoint_path=None):
+        captured["cp"] = checkpoint_path
+
+        class DummyPred:
+            pass
+
+        return DummyPred()
+
+    class DummyCalc:
+        pass
+
+    def dummy_calculator(pred, task_name="oc20"):
+        return DummyCalc()
+
+    monkeypatch.setitem(sys.modules, "ase.io", types.SimpleNamespace(read=dummy_read))
+    monkeypatch.setitem(sys.modules, "ase.optimize", types.SimpleNamespace(LBFGS=DummyOpt))
+    monkeypatch.setitem(sys.modules, "fairchem.core.pretrained_mlip", types.SimpleNamespace(get_predict_unit=dummy_get_predict_unit))
+    monkeypatch.setitem(
+        sys.modules,
+        "fairchem.core",
+        types.SimpleNamespace(
+            FAIRChemCalculator=dummy_calculator,
+            pretrained_mlip=types.SimpleNamespace(get_predict_unit=dummy_get_predict_unit),
+        ),
+    )
+
+    monkeypatch.setenv("CHEMREFINE_MLFF_CHECKPOINT", str(checkpoint))
+    run_mlff_calculation(str(xyz), steps=1, device="cpu")
+    assert captured["cp"] == str(checkpoint)
+

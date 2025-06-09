@@ -65,6 +65,13 @@ def run_mlff_calculation(
 
     if model_path is None:
         model_path = os.environ.get("CHEMREFINE_MLFF_CHECKPOINT")
+        if model_path is None:
+            from pathlib import Path
+
+            pkg_dir = Path(__file__).resolve().parent
+            candidate = pkg_dir / "models" / f"{model_name}.pt"
+            if candidate.is_file():
+                model_path = str(candidate)
 
     logging.info(f"Loading MLFF model '{model_name}' on {device}.")
     atoms = read(xyz_path)
