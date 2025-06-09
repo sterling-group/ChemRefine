@@ -108,7 +108,7 @@ class MLFFJobSubmitter:
         template_dir: str,
         output_dir: str = ".",
         job_name: str | None = None,
-        model_name: str = "mol",
+        model_name: str = "uma-s-1",
         device: str | None = None,
         fmax: float = 0.03,
         steps: int = 200,
