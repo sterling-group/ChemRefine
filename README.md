@@ -14,7 +14,7 @@ This repository contains a streamlined Python code for conformer sampling and re
 - **Built-in analysis** with CSV output and structure filtering
 - **Flexible configuration** via YAML input files
 - **Error reduction** and efficient resource utilization
-- **Machine Learning Interatomic potentials** integration using the `fairchem-core` MOL model for fast geometry optimisation.
+- **Machine Learning Interatomic potentials** integration using pretrained `fairchem-core` models for fast geometry optimisation.
 
 ---
 
@@ -126,7 +126,7 @@ steps:
         num_structures: 1
 ```
 
-The optional MLFF step uses the `fairchem-core` MOL model to optimise the provided geometries before proceeding with higher-level methods.
+The optional MLFF step uses a pretrained model from `fairchem-core` (default `"mol"`) to optimise the provided geometries before proceeding with higher-level methods.
 If a CUDA-capable GPU is detected, the MLFF optimisation runs on the GPU; otherwise it falls back to the CPU automatically.
 
 ### **ORCA Template Files**

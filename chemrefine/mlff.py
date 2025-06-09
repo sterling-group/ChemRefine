@@ -48,8 +48,8 @@ def run_mlff_calculation(
     """
     try:
         from ase.io import read
-        from ase.optimize import BFGS
-        from fairchem.core import models
+        from ase.optimize import LBFGS
+        from fairchem.core import pretrained_mlip, FAIRChemCalculator
     except ImportError as exc:  # pragma: no cover - dependency missing at runtime
         raise ImportError(
             "MLFF calculations require the 'fairchem-core' and 'ase' packages"
@@ -60,10 +60,11 @@ def run_mlff_calculation(
 
     logging.info(f"Loading MLFF model '{model_name}' on {device}.")
     atoms = read(xyz_path)
-    model = models.load_model(model_name=model_name, device=device)
-    atoms.calc = model.get_calculator()
+    predictor = pretrained_mlip.get_predict_unit(model_name, device=device)
+    calc = FAIRChemCalculator(predictor, task_name="oc20")
+    atoms.calc = calc
 
-    optimizer = BFGS(atoms, logfile=None)
+    optimizer = LBFGS(atoms, logfile=None)
     optimizer.run(fmax=fmax, steps=steps)
 
     energy_ev = atoms.get_potential_energy()

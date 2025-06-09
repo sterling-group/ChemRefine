@@ -1,5 +1,5 @@
-import types
 import sys
+import types
 from chemrefine.mlff import run_mlff_calculation, get_available_device
 
 
@@ -28,16 +28,22 @@ def test_run_mlff(monkeypatch, tmp_path):
     def dummy_read(path):
         return DummyAtoms()
 
-    def dummy_load_model(model_name="mol", device="cpu"):
-        class DummyModel:
-            def get_calculator(self):
-                return object()
+    def dummy_get_predict_unit(model_name="mol", device="cpu"):
+        class DummyPred:
+            pass
 
-        return DummyModel()
+        return DummyPred()
+
+    class DummyCalc:
+        pass
+
+    def dummy_calculator(pred, task_name="oc20"):
+        return DummyCalc()
 
     monkeypatch.setitem(sys.modules, "ase.io", types.SimpleNamespace(read=dummy_read))
-    monkeypatch.setitem(sys.modules, "ase.optimize", types.SimpleNamespace(BFGS=DummyOpt))
-    monkeypatch.setitem(sys.modules, "fairchem.core.models", types.SimpleNamespace(load_model=dummy_load_model))
+    monkeypatch.setitem(sys.modules, "ase.optimize", types.SimpleNamespace(LBFGS=DummyOpt))
+    monkeypatch.setitem(sys.modules, "fairchem.core.pretrained_mlip", types.SimpleNamespace(get_predict_unit=dummy_get_predict_unit))
+    monkeypatch.setitem(sys.modules, "fairchem.core", types.SimpleNamespace(FAIRChemCalculator=dummy_calculator, pretrained_mlip=types.SimpleNamespace(get_predict_unit=dummy_get_predict_unit)))
 
     coords, energy = run_mlff_calculation(str(xyz), steps=1)
     assert isinstance(coords, list)
@@ -53,24 +59,31 @@ def test_device_selection(monkeypatch, tmp_path):
 
     called_devices = []
 
-    def dummy_load_model(model_name="mol", device="cpu"):
+    def dummy_get_predict_unit(model_name="mol", device="cpu"):
         called_devices.append(device)
 
-        class DummyModel:
-            def get_calculator(self):
-                return object()
+        class DummyPred:
+            pass
 
-        return DummyModel()
+        return DummyPred()
+
+    class DummyCalc:
+        pass
+
+    def dummy_calculator(pred, task_name="oc20"):
+        return DummyCalc()
 
     monkeypatch.setitem(sys.modules, "ase.io", types.SimpleNamespace(read=dummy_read))
-    monkeypatch.setitem(sys.modules, "ase.optimize", types.SimpleNamespace(BFGS=DummyOpt))
-    monkeypatch.setitem(sys.modules, "fairchem.core.models", types.SimpleNamespace(load_model=dummy_load_model))
+    monkeypatch.setitem(sys.modules, "ase.optimize", types.SimpleNamespace(LBFGS=DummyOpt))
+    monkeypatch.setitem(sys.modules, "fairchem.core.pretrained_mlip", types.SimpleNamespace(get_predict_unit=dummy_get_predict_unit))
+    monkeypatch.setitem(sys.modules, "fairchem.core", types.SimpleNamespace(FAIRChemCalculator=dummy_calculator, pretrained_mlip=types.SimpleNamespace(get_predict_unit=dummy_get_predict_unit)))
 
     monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda: True)))
-    coords, _ = run_mlff_calculation(str(xyz), steps=1, device=None)
+    run_mlff_calculation(str(xyz), steps=1, device=None)
     assert called_devices[0] == "cuda"
 
     called_devices.clear()
     monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda: False)))
-    coords, _ = run_mlff_calculation(str(xyz), steps=1, device=None)
+    run_mlff_calculation(str(xyz), steps=1, device=None)
     assert called_devices[0] == "cpu"
+
