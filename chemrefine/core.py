@@ -5,6 +5,7 @@ from .parse import ArgumentParser
 from .refine import StructureRefiner
 from .utils import Utility
 from .orca_interface import OrcaInterface, OrcaJobSubmitter
+from .mlff import run_mlff_calculation
 from pathlib import Path
 import shutil
 import sys
@@ -132,6 +133,24 @@ class ChemRefiner:
 
         return step_dir, input_files, output_files
 
+    def prepare_mlff_step1_directory(self, step_number):
+        step_dir = os.path.join(self.output_dir, f"step{step_number}")
+        os.makedirs(step_dir, exist_ok=True)
+        src_xyz = os.path.join(self.template_dir, "step1.xyz")
+        dst_xyz = os.path.join(step_dir, "step1.xyz")
+        if not os.path.exists(src_xyz):
+            raise FileNotFoundError(
+                f"XYZ file '{src_xyz}' not found. Please ensure that 'step1.xyz' exists in the template directory."
+            )
+        shutil.copyfile(src_xyz, dst_xyz)
+        return step_dir, [dst_xyz]
+
+    def prepare_mlff_directory(self, step_number, coordinates, ids):
+        step_dir = os.path.join(self.output_dir, f"step{step_number}")
+        os.makedirs(step_dir, exist_ok=True)
+        xyz_files = self.utils.write_xyz(coordinates, step_number, ids, output_dir=step_dir)
+        return step_dir, xyz_files
+
     def handle_skip_step(self, step_number, calculation_type, sample_method, parameters):
         """
         Handles skip logic for a step if its directory already exists and required outputs are present.
@@ -149,7 +168,9 @@ class ChemRefiner:
         if os.path.exists(step_dir):
             logging.info(f"Checking skip condition for step {step_number} at: {step_dir}")
 
-            if calculation_type.lower() == 'goat':
+            if calculation_type.lower() == 'mlff':
+                return None, None
+            elif calculation_type.lower() == 'goat':
                 output_files = [
                     os.path.join(step_dir, f)
                     for f in os.listdir(step_dir)
@@ -267,32 +288,54 @@ class ChemRefiner:
 
             if filtered_coordinates is None or filtered_ids is None:
                 logging.info(f"No valid skip outputs for step {step_number}. Proceeding with normal execution.")
-                if step_number == 1:
-                    step_dir, input_files, output_files = self.prepare_step1_directory(step_number)
+                if calculation_type == 'mlff':
+                    if step_number == 1:
+                        step_dir, xyz_files = self.prepare_mlff_step1_directory(step_number)
+                    else:
+                        step_dir, xyz_files = self.prepare_mlff_directory(
+                            step_number,
+                            previous_coordinates,
+                            previous_ids,
+                        )
+                    coordinates, energies = [], []
+                    for xyz in xyz_files:
+                        coords, energy = run_mlff_calculation(xyz)
+                        coordinates.append(coords)
+                        energies.append(energy)
+                    ids = list(range(len(energies)))
+                    filtered_coordinates, filtered_ids = self.refiner.filter(
+                        coordinates,
+                        energies,
+                        ids,
+                        sample_method,
+                        parameters,
+                    )
                 else:
-                    step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
-                        step_number,
-                        previous_coordinates,
-                        previous_ids
+                    if step_number == 1:
+                        step_dir, input_files, output_files = self.prepare_step1_directory(step_number)
+                    else:
+                        step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
+                            step_number,
+                            previous_coordinates,
+                            previous_ids,
+                        )
+
+                    self.submit_orca_jobs(input_files, self.max_cores, step_dir)
+
+                    coordinates, energies = self.orca.parse_output(
+                        output_files,
+                        calculation_type,
+                        dir=step_dir,
                     )
 
-                self.submit_orca_jobs(input_files, self.max_cores, step_dir)
-
-
-                coordinates, energies = self.orca.parse_output(
-                    output_files,
-                    calculation_type,
-                    dir=step_dir
-                )
-
-                ids = list(range(len(energies)))
-                filtered_coordinates, filtered_ids = self.refiner.filter(
-                    coordinates,
-                    energies,
-                    ids,
-                    sample_method,
-                    parameters
-                )
+                    ids = list(range(len(energies)))
+                    filtered_coordinates, filtered_ids = self.refiner.filter(
+                        coordinates,
+                        energies,
+                        ids,
+                        sample_method,
+                        parameters,
+                    )
             else:
                 step_dir = os.path.join(self.output_dir, f"step{step_number}")
                 logging.info(f"Skipping step {step_number} using existing outputs.")

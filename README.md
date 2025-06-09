@@ -14,7 +14,7 @@ This repository contains a streamlined Python code for conformer sampling and re
 - **Built-in analysis** with CSV output and structure filtering
 - **Flexible configuration** via YAML input files
 - **Error reduction** and efficient resource utilization
-- **Machine Learning Interatomic potentials** integration, seamless switch from foundation models to DFT. 
+- **Machine Learning Interatomic potentials** integration using the `fairchem-core` MOL model for fast geometry optimisation.
 
 ---
 
@@ -40,6 +40,8 @@ pip install ChemRefine
   - `numpy` - Numerical computations
   - `pyyaml` - YAML configuration parsing  
   - `pandas` - Data analysis and CSV handling
+  - `ase` - Geometry handling and optimisation
+  - `fairchem-core` - Machine learning force fields
 - **ORCA 6.0+** - Quantum chemistry calculations
 - **SLURM** - Job scheduling system
 - **QORCA** - Included as submodule for ORCA job submission
@@ -110,13 +112,21 @@ steps:
       parameters:
         count: 10
   - step: 2
-    template: "step2.inp" 
+    template: "step2.inp"
     calculation_type: "DFT"
     sampling:
       method: "energy_window"
       parameters:
         window: 0.5
+  - step: 3
+    calculation_type: "MLFF"
+    sampling:
+      method: "integer"
+      parameters:
+        num_structures: 1
 ```
+
+The optional MLFF step uses the `fairchem-core` MOL model to optimise the provided geometries before proceeding with higher-level methods.
 
 ### **ORCA Template Files**
 

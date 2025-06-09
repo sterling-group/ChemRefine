@@ -41,6 +41,8 @@ dependencies = [
     "numpy",
     "pyyaml",
     "pandas",
+    "ase",
+    "fairchem-core",
 ]
 
 [project.optional-dependencies]
