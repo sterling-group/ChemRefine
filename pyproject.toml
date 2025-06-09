@@ -62,6 +62,7 @@ Issues = "https://github.com/sterling-research-group/ChemRefine/issues"
 
 [project.scripts]
 chemrefine = "chemrefine.core:main"
+chemrefine-mlff = "chemrefine.mlff_runner:main"
 
 
 [tool.hatch.build.targets.wheel]

@@ -1,6 +1,7 @@
 import sys
 import types
-from chemrefine.mlff import run_mlff_calculation, get_available_device
+import os
+from chemrefine.mlff import run_mlff_calculation, get_available_device, MLFFJobSubmitter
 
 
 class DummyAtoms:
@@ -86,4 +87,15 @@ def test_device_selection(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda: False)))
     run_mlff_calculation(str(xyz), steps=1, device=None)
     assert called_devices[0] == "cpu"
+
+
+def test_mlff_slurm_script(tmp_path):
+    header = tmp_path / "mlff.slurm.header"
+    header.write_text("#SBATCH --time=01:00:00\nmodule load python\n")
+    xyz = tmp_path / "mol.xyz"
+    xyz.write_text("2\n\nH 0 0 0\nH 0 0 0.74\n")
+
+    submitter = MLFFJobSubmitter()
+    script = submitter.generate_slurm_script(str(xyz), template_dir=tmp_path, output_dir=tmp_path)
+    assert os.path.exists(script)
 
