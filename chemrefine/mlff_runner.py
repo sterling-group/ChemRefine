@@ -1,38 +1,42 @@
 import argparse
-from .mlff import run_mlff_calculation
-
+from ase.io import read
+from chemrefine.mlff import run_mlff_calculation
+from chemrefine.utils import write_extended_xyz  # assuming utils.py hosts write_extended_xyz
 
 def main():
-    parser = argparse.ArgumentParser(description="Run MLFF optimization on an XYZ file")
-    parser.add_argument("xyz", help="Path to the XYZ file")
-    parser.add_argument("--model", default="medium", help="Model name")
-    parser.add_argument(
-        "--foundation",
-        default="mace-off",
-        help="Foundation model backend (mace-off, mace-mp, fairchem)",
-    )
-    parser.add_argument("--device", default=None, help="Computation device")
-    parser.add_argument("--fmax", type=float, default=0.03, help="LBFGS force convergence")
-    parser.add_argument("--steps", type=int, default=200, help="Maximum optimisation steps")
+    parser = argparse.ArgumentParser(description="Run MLFF optimization on an XYZ file.")
+    parser.add_argument("xyz", help="Path to the XYZ file.")
+    parser.add_argument("--model", default="mace-off", help="Foundation model backend (mace-off, mace-mp, fairchem).")
+    parser.add_argument("--device", default=None, help="Computation device.")
+    parser.add_argument("--model-path", default=None, help="Path to a local model checkpoint.")
+    parser.add_argument("--fmax", type=float, default=0.03, help="LBFGS force convergence.")
+    parser.add_argument("--steps", type=int, default=200, help="Maximum optimization steps.")
+    parser.add_argument("--task-name", default="mace_off", help="Task name for MACE or FairChem models.")
     args = parser.parse_args()
 
     coords, energy = run_mlff_calculation(
-        args.xyz,
+        xyz_path=args.xyz,
         model_name=args.model,
-        foundation_model=args.foundation,
+        foundation_model=args.model,
         device=args.device,
+        model_path=args.model_path,
         fmax=args.fmax,
-        steps=args.steps,
+        steps=args.steps
     )
 
     base = args.xyz.rsplit(".", 1)[0]
-    with open(f"{base}.opt.xyz", "w") as f:
-        f.write(f"{len(coords)}\n\n")
-        for elem, x, y, z in coords:
-            f.write(f"{elem} {x} {y} {z}\n")
+    # Read original Atoms object
+    atoms = read(args.xyz)
+    # Update positions with optimized coordinates
+    for atom, coord in zip(atoms, coords):
+        atom.position = coord[1:]
+
+    # Write extended XYZ file
+    write_extended_xyz(atoms, energy, f"{base}.opt.extxyz")
+
+    # Write separate energy file
     with open(f"{base}.energy", "w") as f:
         f.write(str(energy))
-
 
 if __name__ == "__main__":
     main()
