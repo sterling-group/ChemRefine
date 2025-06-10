@@ -120,13 +120,17 @@ steps:
         window: 0.5
   - step: 3
     calculation_type: "MLFF"
+    foundation_model: "mace-off"  # or "mace-mp", "fairchem"
+    model_name: "medium"
     sampling:
       method: "integer"
       parameters:
         num_structures: 1
 ```
 
-The optional MLFF step uses a pretrained model from `mace` (default `"mol"`) to optimise the provided geometries before proceeding with higher-level methods.
+The optional MLFF step uses a pretrained model from `mace`. By default the
+``mace-off`` backend with the ``"medium"`` model is used, but you can select
+different backends and models via ``foundation_model`` and ``model_name``.
 If a CUDA-capable GPU is detected, the MLFF optimisation runs on the GPU; otherwise it falls back to the CPU automatically.
 To avoid downloading the model each time, set the environment variable `CHEMREFINE_MLFF_CHECKPOINT` to the path of a locally downloaded checkpoint **or** place the file as `chemrefine/models/<model>.model` within this repository.
 

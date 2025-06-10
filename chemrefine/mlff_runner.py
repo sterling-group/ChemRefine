@@ -5,7 +5,12 @@ from .mlff import run_mlff_calculation
 def main():
     parser = argparse.ArgumentParser(description="Run MLFF optimization on an XYZ file")
     parser.add_argument("xyz", help="Path to the XYZ file")
-    parser.add_argument("--model", default="mol", help="Model name")
+    parser.add_argument("--model", default="medium", help="Model name")
+    parser.add_argument(
+        "--foundation",
+        default="mace-off",
+        help="Foundation model backend (mace-off, mace-mp, fairchem)",
+    )
     parser.add_argument("--device", default=None, help="Computation device")
     parser.add_argument("--fmax", type=float, default=0.03, help="LBFGS force convergence")
     parser.add_argument("--steps", type=int, default=200, help="Maximum optimisation steps")
@@ -14,6 +19,7 @@ def main():
     coords, energy = run_mlff_calculation(
         args.xyz,
         model_name=args.model,
+        foundation_model=args.foundation,
         device=args.device,
         fmax=args.fmax,
         steps=args.steps,

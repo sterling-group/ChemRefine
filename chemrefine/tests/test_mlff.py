@@ -37,7 +37,11 @@ def test_run_mlff(monkeypatch, tmp_path):
 
     monkeypatch.setitem(sys.modules, "ase.io", types.SimpleNamespace(read=dummy_read))
     monkeypatch.setitem(sys.modules, "ase.optimize", types.SimpleNamespace(LBFGS=DummyOpt))
-    monkeypatch.setitem(sys.modules, "mace.calculators", types.SimpleNamespace(MACECalculator=dummy_calculator))
+    monkeypatch.setitem(
+        sys.modules,
+        "mace.calculators",
+        types.SimpleNamespace(mace_off=dummy_calculator, mace_mp=dummy_calculator)
+    )
 
     coords, energy = run_mlff_calculation(str(xyz), steps=1)
     assert isinstance(coords, list)
@@ -63,7 +67,11 @@ def test_device_selection(monkeypatch, tmp_path):
 
     monkeypatch.setitem(sys.modules, "ase.io", types.SimpleNamespace(read=dummy_read))
     monkeypatch.setitem(sys.modules, "ase.optimize", types.SimpleNamespace(LBFGS=DummyOpt))
-    monkeypatch.setitem(sys.modules, "mace.calculators", types.SimpleNamespace(MACECalculator=dummy_calculator))
+    monkeypatch.setitem(
+        sys.modules,
+        "mace.calculators",
+        types.SimpleNamespace(mace_off=dummy_calculator, mace_mp=dummy_calculator)
+    )
 
     monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda: True)))
     run_mlff_calculation(str(xyz), steps=1, device=None)
@@ -107,7 +115,11 @@ def test_env_checkpoint(monkeypatch, tmp_path):
 
     monkeypatch.setitem(sys.modules, "ase.io", types.SimpleNamespace(read=dummy_read))
     monkeypatch.setitem(sys.modules, "ase.optimize", types.SimpleNamespace(LBFGS=DummyOpt))
-    monkeypatch.setitem(sys.modules, "mace.calculators", types.SimpleNamespace(MACECalculator=dummy_calculator))
+    monkeypatch.setitem(
+        sys.modules,
+        "mace.calculators",
+        types.SimpleNamespace(mace_off=dummy_calculator, mace_mp=dummy_calculator)
+    )
 
     monkeypatch.setenv("CHEMREFINE_MLFF_CHECKPOINT", str(checkpoint))
     run_mlff_calculation(str(xyz), steps=1, device="cpu")

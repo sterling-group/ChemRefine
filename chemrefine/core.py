@@ -26,7 +26,6 @@ class ChemRefiner:
         self.input_yaml = self.args.input_yaml
         self.max_cores = self.args.maxcores
         self.skip_steps = self.args.skip
-        self.parameters = self.load_yaml_parameters(self.input_yaml)
         
 
         # === Load the YAML configuration ===
@@ -38,6 +37,8 @@ class ChemRefiner:
         self.multiplicity = self.config.get('multiplicity', 1)
         self.template_dir = os.path.abspath(self.config.get('template_dir', './templates'))
         self.scratch_dir = self.config.get('scratch_dir')
+        if self.scratch_dir is None:
+            self.scratch_dir = "./scratch"
         logging.info(f"Using template directory: {self.template_dir}")
         logging.info(f"Using scratch directory: {self.scratch_dir}")
 
@@ -49,20 +50,6 @@ class ChemRefiner:
         logging.info(f"Output directory set to: {self.output_dir}")
 
         os.makedirs(self.output_dir, exist_ok=True)
-
-    def load_yaml_parameters(self, yaml_path):
-        """
-        Loads the YAML configuration from file.
-
-        Args:
-            yaml_path (str): Path to the YAML file.
-
-        Returns:
-            dict: Parsed YAML configuration.
-        """
-        import yaml
-        with open(yaml_path, 'r') as file:
-            return yaml.safe_load(file)
 
     def prepare_step1_directory(self, step_number):
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
@@ -253,7 +240,9 @@ class ChemRefiner:
         filtered_coordinates, filtered_ids = self.refiner.filter(
             coordinates, energies, filtered_ids, sample_method, parameters
         )
-        
+
+        self.utils.move_step_files(step_number, output_dir=step_dir)
+
         return filtered_coordinates, filtered_ids
 
     def run(self):
@@ -275,6 +264,8 @@ class ChemRefiner:
             logging.info(f"Processing step {step['step']} with calculation type '{step['calculation_type']}'.")
             step_number = step['step']
             calculation_type = step['calculation_type'].lower()
+            model_name = step.get('model_name', 'medium')
+            foundation_model = step.get('foundation_model', 'mace-off')
             sample_method = step['sample_type']['method']
             parameters = step['sample_type'].get('parameters', {})
 
@@ -299,19 +290,24 @@ class ChemRefiner:
                             previous_ids,
                         )
 
+                    coordinates, energies = [], []
                     for xyz in xyz_files:
                         script = self.mlff_submitter.generate_slurm_script(
                             xyz_file=xyz,
                             template_dir=self.template_dir,
                             output_dir=step_dir,
+                            model_name=model_name,
+                            foundation_model=foundation_model,
                         )
-                        self.mlff_submitter.submit_job(script)
-
-                    coordinates, energies = [], []
-                    for xyz in xyz_files:
-                        coords, energy = run_mlff_calculation(xyz)
-                        coordinates.append(coords)
-                        energies.append(energy)
+                        result = self.mlff_submitter.submit_job(script)
+                        if result == "LOCAL":
+                            coords, energy = run_mlff_calculation(
+                                xyz,
+                                model_name=model_name,
+                                foundation_model=foundation_model,
+                            )
+                            coordinates.append(coords)
+                            energies.append(energy)
                     ids = list(range(len(energies)))
                     filtered_coordinates, filtered_ids = self.refiner.filter(
                         coordinates,
@@ -350,7 +346,10 @@ class ChemRefiner:
                 step_dir = os.path.join(self.output_dir, f"step{step_number}")
                 logging.info(f"Skipping step {step_number} using existing outputs.")
 
-            self.utils.save_step_csv(step_number, filtered_coordinates, filtered_ids,output_dir=self.output_dir)
+            if 'energies' in locals():
+                self.utils.save_step_csv(
+                    energies, filtered_ids, step_number, output_dir=self.output_dir
+                )
 
 
             previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
@@ -361,5 +360,6 @@ class ChemRefiner:
 def main():
     ChemRefiner().run()
 
+
 if __name__ == "__main__":
-        ChemRefiner().run()
+    main()
