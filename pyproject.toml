@@ -43,7 +43,7 @@ dependencies = [
     "pandas",
     "ase",
     "mace-torch",
-    "fairchem-core,
+    "fairchem-core",
 ]
 
 [project.optional-dependencies]
