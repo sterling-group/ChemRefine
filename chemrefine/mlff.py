@@ -21,7 +21,8 @@ def get_available_device() -> str:
 
 def run_mlff_calculation(
     xyz_path: str,
-    model_name: str = "mol",
+    model_name: str = "medium",
+    foundation_model: str = "mace-off",
     device: str | None = None,
     model_path: str | None = None,
     fmax: float = 0.03,
@@ -34,7 +35,11 @@ def run_mlff_calculation(
     xyz_path : str
         Path to an XYZ file containing the starting geometry.
     model_name : str, optional
-        Name of the MLFF model to load. Defaults to ``"mol"``.
+        Name of the MLFF model to load. Defaults to ``"medium"``.
+    foundation_model : str, optional
+        Which MLFF backend to use (e.g. ``"mace-off"`` or ``"mace-mp"``).
+        ``"mace-off"`` is used by default. ``"fairchem"`` is accepted but not
+        currently implemented.
     device : str or None, optional
         Device for model evaluation ("cpu" or "cuda"). If ``None``,
         ``get_available_device()`` is used to automatically select the
@@ -52,11 +57,24 @@ def run_mlff_calculation(
     tuple
         Optimised coordinates ``[[symbol, x, y, z], ...]`` and the energy in Hartree.
     """
+        from mace.calculators import MACECalculator, mace_off, mace_mp
 
-
-    try:
-        from ase.io import read
-        from ase.optimize import LBFGS
+    logging.info(
+        f"Loading {foundation_model} model '{model_name}' on {device}."
+    )
+    if foundation_model == "fairchem":
+        raise NotImplementedError(
+            "The FairChem backend is currently deprecated."
+        )
+        if foundation_model == "mace-off":
+            calc = mace_off(model=model_name, device=device)
+        elif foundation_model == "mace-mp":
+            calc = mace_mp(model=model_name, device=device)
+        else:
+            raise ValueError(f"Unknown foundation model '{foundation_model}'")
+        model_name: str = "medium",
+        foundation_model: str = "mace-off",
+            f.write(f" --foundation {foundation_model}")
         from fairchem.core import pretrained_mlip, FAIRChemCalculator
     except ImportError as exc:  # pragma: no cover - dependency missing at runtime
         raise ImportError(
