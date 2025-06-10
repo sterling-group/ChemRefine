@@ -1,10 +1,10 @@
 import logging
 import os
 import logging
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from ase.optimize import LBFGS
 from ase.io import read
-
+from ase import Atoms
 
 class MLFFCalculator:
     """Flexible MLFF calculator supporting multiple backend models."""
@@ -13,8 +13,9 @@ class MLFFCalculator:
         self,
         model_name: str,
         device: str = "cpu",
-        model_path: Optional[str] = None
-    ):
+        model_path: Optional[str] = None,
+        task_name: str = "mace_off"  # Default task for MACE,
+        ):
         """
         Initialize the MLFF calculator.
 
@@ -37,16 +38,16 @@ class MLFFCalculator:
         else:
             raise ValueError(f"Unknown model name: {model_name}")
 
-    def _setup_mace(self, task_name="mace_off"):
+    def _setup_mace(self):
         """Setup the MACE calculator."""
-        if task_name == "mace_off":
+        if self.task_name == "mace_off":
             from mace.calculators import mace_off
             self.calc = mace_off.MACE(device=self.device)
         else:
             from mace.calculators import mace_mp
-            self.calc = mace_mp(model_name=task_name, device=self.device)
+            self.calc = mace_mp(model_name=self.task_name, device=self.device)
 
-    def _setup_fairchem(self, model_name="uma-s-1",task_name="oc20"):
+    def _setup_fairchem(self, model_name="uma-s-1"):
         """Setup the FairChem calculator."""
         from fairchem.core import pretrained_mlip, FAIRChemCalculator
         predictor = pretrained_mlip.get_predict_unit(
@@ -55,7 +56,7 @@ class MLFFCalculator:
             #TODO currently offline models don't work on new FAIRCHEM checkpoint_path=None  # Use default or specify a path
         )
 
-        self.calc = FAIRChemCalculator(predictor, task_name="omol")
+        self.calc = FAIRChemCalculator(predictor, self.task_name)
 
     def calculate(self, atoms: Atoms, fmax: float = 0.03, steps: int = 200) -> Tuple[List[List], float]:
         """
