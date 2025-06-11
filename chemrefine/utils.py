@@ -58,30 +58,30 @@ class Utility:
         df.to_csv(output_path, mode=mode, index=False, header=header)
         logging.info(f"Saved CSV for step {step} to {output_path}")
 
-    def move_step_files(self, step_number, output_dir='.'):
-        """
-        Moves all files starting with 'step{step_number}' into a dedicated directory.
+    # def move_step_files(self, step_number, output_dir='.'):
+    #     """
+    #     Moves all files starting with 'step{step_number}' into a dedicated directory.
 
-        Parameters:
-        - step_number (int): The step number to organize files for.
-        - output_dir (str): The directory in which to create the step directory and move files.
-        """
-        import glob,os,shutil
+    #     Parameters:
+    #     - step_number (int): The step number to organize files for.
+    #     - output_dir (str): The directory in which to create the step directory and move files.
+    #     """
+    #     import glob,os,shutil
         
 
-        step_dir = os.path.join(output_dir, f"step{step_number}")
-        #os.makedirs(step_dir, exist_ok=True)
+    #     step_dir = os.path.join(output_dir, f"step{step_number}")
+    #     #os.makedirs(step_dir, exist_ok=True)
 
-        # Search for files in the output_dir
-        pattern = os.path.join(output_dir, f"step{step_number}*")
-        files = [f for f in glob.glob(pattern) if not os.path.isdir(f)]
+    #     # Search for files in the output_dir
+    #     pattern = os.path.join(output_dir, f"step{step_number}*")
+    #     files = [f for f in glob.glob(pattern) if not os.path.isdir(f)]
         
-        for file in files:
-            basename = os.path.basename(file)
-            dest = os.path.join(step_dir, basename)
-            if os.path.exists(dest):
-                os.rename(dest, os.path.join(step_dir, f"old_{basename}"))
-            shutil.move(file, dest)
+    #     for file in files:
+    #         basename = os.path.basename(file)
+    #         dest = os.path.join(step_dir, basename)
+    #         if os.path.exists(dest):
+    #             os.rename(dest, os.path.join(step_dir, f"old_{basename}"))
+    #         shutil.move(file, dest)
 
     def write_xyz(self, structures, step_number, structure_ids, output_dir='.'):
         """
