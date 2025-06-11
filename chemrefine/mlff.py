@@ -104,6 +104,7 @@ class MLFFJobSubmitter:
         device: str | None = None,
         fmax: float = 0.03,
         steps: int = 200,
+        task_name: str= "mace_off",  # Default task for MACE
     ) -> str:
         """Create a SLURM script for an MLFF optimisation."""
         from pathlib import Path
@@ -137,7 +138,7 @@ class MLFFJobSubmitter:
             f.write("\n".join(sbatch) + "\n\n")
             f.write("\n".join(non) + "\n\n")
             f.write(
-                f"python -m chemrefine.mlff_runner {xyz_file} --model {model_name}"
+                f"python -m chemrefine.mlff_runner {xyz_file} --model {model_name} --task-name {task_name}"
             )
             if device:
                 f.write(f" --device {device}")
