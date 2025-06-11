@@ -28,6 +28,6 @@ __author__ = "Sterling Research Group"
 __email__ = "dal950773@utdallas.edu"
 
 from .core import ChemRefiner
-from .mlff import run_mlff_calculation, MLFFJobSubmitter
+from .mlff import  MLFFJobSubmitter
 
 __all__ = ["ChemRefiner", "run_mlff_calculation", "MLFFJobSubmitter"]
