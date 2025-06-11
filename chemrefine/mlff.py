@@ -5,6 +5,7 @@ from typing import List, Tuple, Optional
 from ase.optimize import LBFGS
 from ase.io import read
 from ase import Atoms
+from .utils import Utility
 
 class MLFFCalculator:
     """Flexible MLFF calculator supporting multiple backend models."""
@@ -89,10 +90,25 @@ class MLFFCalculator:
         return coords, energy_hartree
 
 class MLFFJobSubmitter:
-    """Generate and submit SLURM jobs for MLFF calculations."""
+    """
+    Generate and submit SLURM jobs for MLFF calculations.
+    Handles job submission, active job tracking, and waiting for job completion.
+    """
 
-    def __init__(self, scratch_dir: str | None = None):
+    def __init__(self, scratch_dir: str | None = None, max_jobs: int = 32):
+        """
+        Initialize the MLFF job submitter.
+
+        Parameters
+        ----------
+        scratch_dir : str, optional
+            Directory for scratch files.
+        max_jobs : int, optional
+            Maximum number of concurrent jobs.
+        """
         self.scratch_dir = scratch_dir or "./tmp/mlff_scratch"
+        self.max_jobs = max_jobs
+        self.utility = Utility()
 
     def generate_slurm_script(
         self,
@@ -104,11 +120,37 @@ class MLFFJobSubmitter:
         device: str | None = None,
         fmax: float = 0.03,
         steps: int = 200,
-        task_name: str= "mace_off",  # Default task for MACE
+        task_name: str = "mace_off"
     ) -> str:
-        """Create a SLURM script for an MLFF optimisation."""
-        from pathlib import Path
+        """
+        Create a SLURM script for an MLFF optimization.
 
+        Parameters
+        ----------
+        xyz_file : str
+            Path to the XYZ file.
+        template_dir : str
+            Directory containing SLURM header template.
+        output_dir : str, optional
+            Directory to write the SLURM script to.
+        job_name : str, optional
+            Name of the SLURM job.
+        model_name : str, optional
+            MLFF model name.
+        device : str, optional
+            Device for model evaluation.
+        fmax : float, optional
+            Force convergence criterion.
+        steps : int, optional
+            Maximum optimization steps.
+        task_name : str, optional
+            MLFF task name.
+
+        Returns
+        -------
+        str
+            Path to the generated SLURM script.
+        """
         header = Path(template_dir) / "mlff.slurm.header"
         if not header.is_file():
             raise FileNotFoundError(f"SLURM header template {header} not found")
@@ -144,44 +186,91 @@ class MLFFJobSubmitter:
                 f.write(f" --device {device}")
             f.write(f" --fmax {fmax} --steps {steps}\n")
 
+        logging.info(f"Generated SLURM script: {slurm_path}")
         return str(slurm_path)
 
-    def submit_job(self, slurm_script: str) -> str:
-            """
-            Submit a SLURM script using sbatch.
+    def submit_jobs(
+        self,
+        xyz_files: list,
+        template_dir: str,
+        output_dir: str = ".",
+        model_name: str = "uma-s-1",
+        device: str | None = None,
+        fmax: float = 0.03,
+        steps: int = 200,
+        task_name: str = "mace_off"
+    ):
+        """
+        Submit multiple MLFF XYZ files to SLURM and monitor their progress.
 
-            Parameters
-            ----------
-            slurm_script : str
-                Path to the SLURM script to submit.
+        Parameters
+        ----------
+        xyz_files : list of str
+            Paths to XYZ files to submit.
+        template_dir : str
+            Directory containing the SLURM header template.
+        output_dir : str, optional
+            Directory for output.
+        model_name : str, optional
+            MLFF model name.
+        device : str, optional
+            Device for model evaluation.
+        fmax : float, optional
+            Force convergence criterion.
+        steps : int, optional
+            Maximum optimization steps.
+        task_name : str, optional
+            MLFF task name.
+        """
+        active_jobs = {}
 
-            Returns
-            -------
-            str
-                Job ID or error message.
+        for xyz_file in xyz_files:
+            xyz_path = Path(xyz_file).resolve()
+            job_name = xyz_path.stem
 
-            Raises
-            ------
-            FileNotFoundError
-                If sbatch is not found on the system.
-            RuntimeError
-                If sbatch fails to submit the job.
-            """
-            import subprocess
-            import shutil
+            # Check concurrency
+            while len(active_jobs) >= self.max_jobs:
+                logging.info("Maximum concurrent jobs reached. Waiting...")
+                completed_jobs = []
+                for job_id in list(active_jobs.keys()):
+                    if self.utility.is_job_finished(job_id):
+                        completed_jobs.append(job_id)
+                        logging.info(f"Job {job_id} completed.")
+                for job_id in completed_jobs:
+                    del active_jobs[job_id]
+                time.sleep(10)
 
-            if not shutil.which("sbatch"):
-                raise FileNotFoundError("sbatch command not found. SLURM is required to submit jobs.")
+            slurm_script = self.generate_slurm_script(
+                xyz_file=xyz_path,
+                template_dir=template_dir,
+                output_dir=output_dir,
+                job_name=job_name,
+                model_name=model_name,
+                device=device,
+                fmax=fmax,
+                steps=steps,
+                task_name=task_name
+            )
 
-            try:
-                result = subprocess.run(
-                    ["sbatch", slurm_script],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                return result.stdout.strip()
-            except subprocess.CalledProcessError as exc:
-                logging.error(f"sbatch failed: {exc.stderr}")
-                raise RuntimeError(f"sbatch submission failed: {exc.stderr}")
+            job_id = self.utility.submit_job(Path(slurm_script))
+            logging.info(f"Submitted MLFF job with ID: {job_id} for XYZ: {xyz_path.name}")
 
+            if job_id.isdigit():
+                active_jobs[job_id] = xyz_path
+            else:
+                logging.warning(f"Skipping job tracking for invalid job ID '{job_id}'")
+
+        logging.info("All MLFF jobs submitted. Waiting for remaining jobs to complete...")
+        while active_jobs:
+            completed_jobs = []
+            for job_id in list(active_jobs.keys()):
+                if self.utility.is_job_finished(job_id):
+                    completed_jobs.append(job_id)
+                    logging.info(f"Job {job_id} completed.")
+            for job_id in completed_jobs:
+                del active_jobs[job_id]
+            time.sleep(30)
+
+        logging.info("All MLFF calculations finished.")
+
+    
