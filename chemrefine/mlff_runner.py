@@ -1,28 +1,30 @@
 import argparse
 from ase.io import read
 from chemrefine.mlff import run_mlff_calculation
-from chemrefine.utils import write_extended_xyz  # assuming utils.py hosts write_extended_xyz
+from chemrefine.utils import Utility
 
 def main():
     parser = argparse.ArgumentParser(description="Run MLFF optimization on an XYZ file.")
     parser.add_argument("xyz", help="Path to the XYZ file.")
     parser.add_argument("--model", default="mace-off", help="Foundation model backend (mace-off, mace-mp, fairchem).")
     parser.add_argument("--device", default=None, help="Computation device.")
+    parser.add_argument("--model-name", default=None, help="Path to a local model checkpoint.")
+    parser.add_argument("--task-name", default=None, help="Task name for MACE or FairChem models.")
     parser.add_argument("--model-path", default=None, help="Path to a local model checkpoint.")
     parser.add_argument("--fmax", type=float, default=0.03, help="LBFGS force convergence.")
     parser.add_argument("--steps", type=int, default=200, help="Maximum optimization steps.")
-    parser.add_argument("--task-name", default="mace_off", help="Task name for MACE or FairChem models.")
     args = parser.parse_args()
 
     coords, energy = run_mlff_calculation(
-        xyz_path=args.xyz,
-        model_name=args.model,
-        foundation_model=args.model,
-        device=args.device,
-        model_path=args.model_path,
-        fmax=args.fmax,
-        steps=args.steps
-    )
+    xyz_path=args.xyz,
+    model_name=args.model,
+    task_name=args.task_name,  # required by MLFFCalculator
+    device=args.device,
+    model_path=args.model_path,
+    fmax=args.fmax,
+    steps=args.steps
+)
+
 
     base = args.xyz.rsplit(".", 1)[0]
     # Read original Atoms object
@@ -32,7 +34,9 @@ def main():
         atom.position = coord[1:]
 
     # Write extended XYZ file
-    write_extended_xyz(atoms, energy, f"{base}.opt.extxyz")
+    utility = Utility()
+    utility.write_extended_xyz(atoms, energy, f"{base}.opt.extxyz")
+
 
     # Write separate energy file
     with open(f"{base}.energy", "w") as f:

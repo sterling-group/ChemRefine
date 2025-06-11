@@ -33,11 +33,12 @@ class MLFFCalculator:
         """
         self.model_name = model_name
         self.device = device
+        self.task_name = task_name  
 
         if model_name.startswith("mace"):
-            self._setup_mace(model_name)
+            self._setup_mace()
         elif model_name.startswith("uma") or model_name.startswith("fairchem"):
-            self._setup_fairchem(model_name, model_path)
+            self._setup_fairchem(model_name)
         else:
             raise ValueError(f"Unknown model name: {model_name}")
 
@@ -45,7 +46,7 @@ class MLFFCalculator:
         """Setup the MACE calculator."""
         if self.task_name == "mace_off":
             from mace.calculators import mace_off
-            self.calc = mace_off.MACE(device=self.device)
+            self.calc = mace_off(device=self.device)
         else:
             from mace.calculators import mace_mp
             self.calc = mace_mp(model_name=self.task_name, device=self.device)
@@ -90,6 +91,51 @@ class MLFFCalculator:
             for atom in atoms
         ]
         return coords, energy_hartree
+    
+def run_mlff_calculation(
+        xyz_path: str,
+        model_name: str,
+        task_name: str = "mace_off",
+        device: Optional[str] = "cpu",
+        model_path: Optional[str] = None,
+        fmax: float = 0.03,
+        steps: int = 200
+    ) -> Tuple[List[List], float]:
+        """
+        Run MLFF optimization on a single XYZ file.
+
+        Parameters
+        ----------
+        xyz_path : str
+            Path to the XYZ file.
+        model_name : str
+            Name of the MLFF model (e.g., "mace", "fairchem").
+        task_name : str
+            Task name for the model (e.g., "mace_off").
+        device : str, optional
+            Computation device ("cpu" or "cuda").
+        model_path : str, optional
+            Path to local model checkpoint (if needed).
+        fmax : float
+            LBFGS force convergence criterion.
+        steps : int
+            Maximum optimization steps.
+
+        Returns
+        -------
+        coords : list of [element, x, y, z]
+            Optimized geometry.
+        energy : float
+            Final energy in Hartree.
+        """
+        atoms = read(xyz_path)
+        calculator = MLFFCalculator(
+            model_name=model_name,
+            task_name=task_name,
+            device=device,
+            model_path=model_path
+        )
+        return calculator.calculate(atoms, fmax=fmax, steps=steps)
 
 class MLFFJobSubmitter:
     """

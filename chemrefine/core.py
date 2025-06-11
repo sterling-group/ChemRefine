@@ -324,7 +324,7 @@ class ChemRefiner:
             logging.info(f"Processing step {step['step']} with calculation type '{step['calculation_type']}'.")
             step_number = step['step']
             calculation_type = step['calculation_type'].lower()
-            model_name = step.get('model_name', 'medium')
+            model_name = step.get('model_name', 'mace')
             task_name = step.get('task_type', 'mace_off')
             sample_method = step['sample_type']['method']
             parameters = step['sample_type'].get('parameters', {})
@@ -342,6 +342,7 @@ class ChemRefiner:
                 logging.info(f"No valid skip outputs for step {step_number}. Proceeding with normal execution.")
 
                 if calculation_type == 'mlff':
+                    logging.info(f"Running MLFF step {step_number} with model '{model_name}' and task '{task_name}'.")
                     filtered_coordinates, filtered_ids, step_dir, xyz_files = self.run_mlff_step(
                         step_number=step_number,
                         model_name=model_name,
@@ -390,9 +391,6 @@ class ChemRefiner:
             previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
 
         logging.info("ChemRefine pipeline completed.")
-
-
-
 
 def main():
     ChemRefiner().run()
