@@ -5,7 +5,7 @@ from .parse import ArgumentParser
 from .refine import StructureRefiner
 from .utils import Utility
 from .orca_interface import OrcaInterface, OrcaJobSubmitter
-from .mlff import run_mlff_calculation, MLFFJobSubmitter
+from .mlff import MLFFCalculator, MLFFJobSubmitter
 from pathlib import Path
 import shutil
 import sys
@@ -265,7 +265,7 @@ class ChemRefiner:
             step_number = step['step']
             calculation_type = step['calculation_type'].lower()
             model_name = step.get('model_name', 'medium')
-            foundation_model = step.get('foundation_model', 'mace-off')
+            task_name = step.get('task_type', 'mace_off')  # Read from YAML
             sample_method = step['sample_type']['method']
             parameters = step['sample_type'].get('parameters', {})
 
@@ -297,18 +297,20 @@ class ChemRefiner:
                             template_dir=self.template_dir,
                             output_dir=step_dir,
                             model_name=model_name,
-                            foundation_model=foundation_model,
+                            device='cuda',  # Optional device
+                            fmax=0.03,
+                            steps=200,
+                            task_name=task_name  # Use task_name from YAML
                         )
-                        result = self.mlff_submitter.submit_job(script)
-                        if result == "LOCAL":
-                            coords, energy = run_mlff_calculation(
-                                xyz,
-                                model_name=model_name,
-                                foundation_model=foundation_model,
-                            )
-                            coordinates.append(coords)
-                            energies.append(energy)
-                    ids = list(range(len(energies)))
+                        try:
+                            result = self.mlff_submitter.submit_job(script)
+                            logging.info(f"Submitted job with result: {result}")
+                        except Exception as e:
+                            logging.error(f"Failed to submit job: {e}")
+                            raise
+
+                    # No local run; wait for output parsing in a separate step
+                    ids = list(range(len(xyz_files)))
                     filtered_coordinates, filtered_ids = self.refiner.filter(
                         coordinates,
                         energies,
@@ -351,11 +353,11 @@ class ChemRefiner:
                     energies, filtered_ids, step_number, output_dir=self.output_dir
                 )
 
-
             previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
 
-
         logging.info("ChemRefine pipeline completed.")
+
+
 
 def main():
     ChemRefiner().run()

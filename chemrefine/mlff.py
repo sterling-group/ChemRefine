@@ -22,7 +22,7 @@ class MLFFCalculator:
         Parameters
         ----------
         model_name : str
-            Name of the MLFF model (e.g. "mace_off", "mace_omat-0", "uma-s-1").
+            Name of the MLFF model (e.g. "mace", "uma-s-1").
         device : str, optional
             Device for model evaluation ("cpu" or "cuda").
         model_path : str, optional
@@ -146,11 +146,32 @@ class MLFFJobSubmitter:
         return str(slurm_path)
 
     def submit_job(self, slurm_script: str) -> str:
-        """Submit a SLURM script if ``sbatch`` is available."""
-        import subprocess
-        import shutil
+            """
+            Submit a SLURM script using sbatch.
 
-        if shutil.which("sbatch"):
+            Parameters
+            ----------
+            slurm_script : str
+                Path to the SLURM script to submit.
+
+            Returns
+            -------
+            str
+                Job ID or error message.
+
+            Raises
+            ------
+            FileNotFoundError
+                If sbatch is not found on the system.
+            RuntimeError
+                If sbatch fails to submit the job.
+            """
+            import subprocess
+            import shutil
+
+            if not shutil.which("sbatch"):
+                raise FileNotFoundError("sbatch command not found. SLURM is required to submit jobs.")
+
             try:
                 result = subprocess.run(
                     ["sbatch", slurm_script],
@@ -161,8 +182,5 @@ class MLFFJobSubmitter:
                 return result.stdout.strip()
             except subprocess.CalledProcessError as exc:
                 logging.error(f"sbatch failed: {exc.stderr}")
-                return "ERROR"
-        else:
-            logging.info("sbatch not found; running script locally")
-            subprocess.run(["bash", slurm_script], check=True)
-            return "LOCAL"
+                raise RuntimeError(f"sbatch submission failed: {exc.stderr}")
+
