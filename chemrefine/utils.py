@@ -3,7 +3,7 @@ import glob
 import shutil
 import logging
 from .constants import HARTREE_TO_KCAL_MOL, R_KCAL_MOL_K, CSV_PRECISION
-
+from pathlib import Path
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"
@@ -115,3 +115,76 @@ class Utility:
                     file.write(f"{element} {x} {y} {z}\n")
 
         return xyz_filenames
+    
+    def submit_job(self, slurm_script: Path) -> str:
+        """
+        Submit a SLURM job and extract the job ID.
+
+        Parameters
+        ----------
+        slurm_script : Path
+            Path to the SLURM script.
+
+        Returns
+        -------
+        str
+            Job ID or 'ERROR' if submission failed.
+        """
+        try:
+            result = subprocess.run(
+                ["sbatch", str(slurm_script)],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            logging.info(f"sbatch output: {result.stdout.strip()}")
+            job_id = self._extract_job_id(result.stdout)
+            if job_id:
+                return job_id
+            else:
+                logging.warning("Failed to extract job ID from sbatch output.")
+                return "UNKNOWN"
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Job submission failed: {e.stderr.strip()}")
+            return "ERROR"
+
+    def is_job_finished(self, job_id: str) -> bool:
+        """
+        Check if a SLURM job with a given job ID has finished.
+
+        Parameters
+        ----------
+        job_id : str
+            SLURM job ID.
+
+        Returns
+        -------
+        bool
+            True if job has finished; False otherwise.
+        """
+        try:
+            username = getpass.getuser()
+            command = f"squeue -u {username} -o %i"
+            output = subprocess.check_output(command, shell=True, text=True)
+            job_ids = output.strip().splitlines()
+            return job_id not in job_ids[1:]  # skip header
+        except subprocess.CalledProcessError as e:
+            logging.info(f"Error running squeue: {e}")
+            return False
+
+    def _extract_job_id(self, sbatch_output: str) -> str | None:
+        """
+        Extract the job ID from sbatch output.
+
+        Parameters
+        ----------
+        sbatch_output : str
+            Output from sbatch command.
+
+        Returns
+        -------
+        str or None
+            Extracted job ID or None if not found.
+        """
+        match = re.search(r"Submitted batch job (\d+)", sbatch_output)
+        return match.group(1) if match else None
