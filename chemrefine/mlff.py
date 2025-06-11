@@ -6,6 +6,8 @@ from ase.optimize import LBFGS
 from ase.io import read
 from ase import Atoms
 from .utils import Utility
+from pathlib import Path
+import time
 
 class MLFFCalculator:
     """Flexible MLFF calculator supporting multiple backend models."""
