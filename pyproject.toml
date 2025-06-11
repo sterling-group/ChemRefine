@@ -41,7 +41,7 @@ dependencies = [
     "numpy",
     "pyyaml",
     "pandas",
-    "ase",
+    "ase>=3.25.0",
     "mace-torch",
     "fairchem-core",
 ]
