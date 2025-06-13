@@ -35,21 +35,23 @@ class MLFFCalculator:
         self.device = device
         self.task_name = task_name  
 
-        if model_name.startswith("mace"):
+        if task_name.startswith("mace"):
             self._setup_mace()
-        elif model_name.startswith("uma") or model_name.startswith("fairchem"):
-            self._setup_fairchem(model_name)
+        elif task_name.startswith("uma") or task_name.startswith("fairchem"):
+            self._setup_fairchem()
         else:
-            raise ValueError(f"Unknown model name: {model_name}")
+            raise ValueError(f"Unknown task name: {task_name}")
 
     def _setup_mace(self):
-        """Setup the MACE calculator."""
+        from mace.calculators import mace_off, mace_mp  # if needed
+
         if self.task_name == "mace_off":
-            from mace.calculators import mace_off
-            self.calc = mace_off(model="medium",device=self.device)
+            self.calculator = mace_off(model=self.model_name, device=self.device)
+        elif self.task_name == "mace_mp":
+            self.calculator = mace_mp(model=self.model_name, device=self.device)
         else:
-            from mace.calculators import mace_mp
-            self.calc = mace_mp(model_name=self.task_name, device=self.device)
+            raise ValueError(f"Unsupported MACE task name: {self.task_name}")
+
 
     def _setup_fairchem(self, model_name="uma-s-1"):
         """Setup the FairChem calculator."""
@@ -63,80 +65,82 @@ class MLFFCalculator:
         self.calc = FAIRChemCalculator(predictor, self.task_name)
     
     def calculate(self, atoms: Atoms, fmax: float = 0.03, steps: int = 200) -> Tuple[List[List], float]:
-        """
-        Optimize geometry using the selected MLFF.
+            """
+            Optimize geometry using the selected MLFF.
 
-        Parameters
-        ----------
-        atoms : Atoms
-            ASE Atoms object with initial geometry.
-        fmax : float, optional
-            Force convergence criterion.
-        steps : int, optional
-            Maximum number of optimization steps.
+            Parameters
+            ----------
+            atoms : Atoms
+                ASE Atoms object with initial geometry.
+            fmax : float, optional
+                Force convergence criterion.
+            steps : int, optional
+                Maximum number of optimization steps.
 
-        Returns
-        -------
-        tuple
-            Optimized coordinates and energy in Hartree.
-        """
-        atoms.calc = self.calc
-        optimizer = LBFGS(atoms, logfile=None)
-        optimizer.run(fmax=fmax, steps=steps)
+            Returns
+            -------
+            tuple
+                Optimized coordinates and energy in Hartree.
+            """
+            atoms.calc = self.calculator
+            optimizer = LBFGS(atoms, logfile=None)
+            optimizer.run(fmax=fmax, steps=steps)
 
-        energy_ev = atoms.get_potential_energy()
-        energy_hartree = energy_ev / 27.211386245988
-        coords = [
-            [atom.symbol, atom.position[0], atom.position[1], atom.position[2]]
-            for atom in atoms
-        ]
-        return coords, energy_hartree
+            energy_ev = atoms.get_potential_energy()
+            energy_hartree = energy_ev / 27.211386245988
+            forces_ev = atoms.get_forces()
+            forces_hartree = forces_ev / 27.211386245988
+            
+            coords = [
+                [atom.symbol, atom.position[0], atom.position[1], atom.position[2]]
+                for atom in atoms
+            ]
+            return coords, energy_hartree,forces_hartree
     
-
 def run_mlff_calculation(
-        xyz_path: str,
-        model_name: str,
-        task_name: str = "mace_off",
-        device: Optional[str] = "cpu",
-        model_path: Optional[str] = None,
-        fmax: float = 0.03,
-        steps: int = 200
-    ) -> Tuple[List[List], float]:
-        """
-        Run MLFF optimization on a single XYZ file.
+            xyz_path: str,
+            model_name: str,
+            task_name: str = "mace_off",
+            device: Optional[str] = "cpu",
+            model_path: Optional[str] = None,
+            fmax: float = 0.03,
+            steps: int = 200
+        ) -> Tuple[List[List], float]:
+            """
+            Run MLFF optimization on a single XYZ file.
 
-        Parameters
-        ----------
-        xyz_path : str
-            Path to the XYZ file.
-        model_name : str
-            Name of the MLFF model (e.g., "mace", "fairchem").
-        task_name : str
-            Task name for the model (e.g., "mace_off").
-        device : str, optional
-            Computation device ("cpu" or "cuda").
-        model_path : str, optional
-            Path to local model checkpoint (if needed).
-        fmax : float
-            LBFGS force convergence criterion.
-        steps : int
-            Maximum optimization steps.
+            Parameters
+            ----------
+            xyz_path : str
+                Path to the XYZ file.
+            model_name : str
+                Name of the MLFF model (e.g., "mace", "fairchem").
+            task_name : str
+                Task name for the model (e.g., "mace_off").
+            device : str, optional
+                Computation device ("cpu" or "cuda").
+            model_path : str, optional
+                Path to local model checkpoint (if needed).
+            fmax : float
+                LBFGS force convergence criterion.
+            steps : int
+                Maximum optimization steps.
 
-        Returns
-        -------
-        coords : list of [element, x, y, z]
-            Optimized geometry.
-        energy : float
-            Final energy in Hartree.
-        """
-        atoms = read(xyz_path)
-        calculator = MLFFCalculator(
-            model_name=model_name,
-            task_name=task_name,
-            device=device,
-            model_path=model_path
-        )
-        return calculator.calculate(atoms, fmax=fmax, steps=steps)
+            Returns
+            -------
+            coords : list of [element, x, y, z]
+                Optimized geometry.
+            energy : float
+                Final energy in Hartree.
+            """
+            atoms = read(xyz_path)
+            calculator = MLFFCalculator(
+                model_name=model_name,
+                task_name=task_name,
+                device=device,
+                model_path=model_path
+            )
+            return calculator.calculate(atoms, fmax=fmax, steps=steps)
 
 class MLFFJobSubmitter:
     """
@@ -319,12 +323,24 @@ class MLFFJobSubmitter:
 
         logging.info("All MLFF calculations finished.")
 
-    def infer_device_from_slurm(self):
+    def infer_device_from_slurm_script(script_path: str) -> str:
         """
-        Infers computation device based on SLURM environment variables.
-        Returns 'cuda' if GPU resources are requested, otherwise 'cpu'.
+        Parses a SLURM script and infers the compute device.
+        Returns 'cuda' if '--gres=gpu' is present, otherwise 'cpu'.
+
+        Parameters
+        ----------
+        script_path : str
+            Path to the SLURM submission script.
+
+        Returns
+        -------
+        str
+            'cuda' if GPU is requested, 'cpu' otherwise.
         """
-        gres = os.getenv("SLURM_JOB_GPUS") or os.getenv("CUDA_VISIBLE_DEVICES")
-        if gres and any(char.isdigit() for char in gres):
-            return "cuda"
+        with open(script_path, "r") as f:
+            for line in f:
+                if "--gres=gpu" in line.replace(" ", ""):
+                    return "cuda"
         return "cpu"
+
