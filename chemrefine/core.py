@@ -157,7 +157,7 @@ class ChemRefiner:
             logging.info(f"Checking skip condition for step {step_number} at: {step_dir}")
 
             if calculation_type.lower() == 'mlff':
-                return None, None
+                return None, None,None
             elif calculation_type.lower() == 'goat':
                 output_files = [
                     os.path.join(step_dir, f)
@@ -166,7 +166,7 @@ class ChemRefiner:
                 ]
                 if not output_files:
                     logging.warning(f"No GOAT ensemble files found in {step_dir}. Will rerun this step.")
-                    return None, None
+                    return None, None,None
                 logging.info(f"Found {len(output_files)} GOAT ensemble file(s) in {step_dir}. Skipping this step.")
             else:
                 output_files = [
@@ -176,7 +176,7 @@ class ChemRefiner:
                 ]
                 if not output_files:
                     logging.warning(f"No .out files found in {step_dir}. Will rerun this step.")
-                    return None, None
+                    return None, None,None
                 logging.info(f"Found {len(output_files)} .out file(s) in {step_dir}. Skipping this step.")
 
             coordinates, energies = self.orca.parse_output(output_files, calculation_type, dir=step_dir)
