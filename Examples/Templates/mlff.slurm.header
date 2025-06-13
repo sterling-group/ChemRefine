@@ -1,0 +1,7 @@
+#!/bin/bash
+#SBATCH --partition=<gpu-partition>
+#SBATCH --gres=gpu:1
+#SBATCH --time=01:00:00
+
+# Load modules for GPU computation
+module load cuda
