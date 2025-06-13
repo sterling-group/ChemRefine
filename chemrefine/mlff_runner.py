@@ -40,9 +40,6 @@ def main():
     utility = Utility()
     utility.write_single_xyz(atoms, f"{base}.opt.extxyz")
 
-    # Write separate energy file
-    with open(f"{base}.energy", "w") as f:
-        f.write(str(energy))
 
 if __name__ == "__main__":
     main()
