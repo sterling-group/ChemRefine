@@ -256,12 +256,14 @@ class ChemRefiner:
         previous_ids
     ):
         """
-        Handles MLFF job preparation, submission, and result filtering for a given step.
+        Handles MLFF job preparation, submission, parsing, and result filtering for a given step.
 
         Returns
         -------
         tuple: (filtered_coordinates, filtered_ids, step_dir, xyz_files)
         """
+        from .mlff import parse_mlff_output
+
         if step_number == 1:
             step_dir, xyz_files = self.prepare_mlff_step1_directory(step_number)
         else:
@@ -270,8 +272,6 @@ class ChemRefiner:
                 previous_coordinates,
                 previous_ids,
             )
-
-        coordinates, energies = [], []
 
         original_dir = os.getcwd()
         logging.info(f"Switching to working directory: {step_dir}")
@@ -293,7 +293,13 @@ class ChemRefiner:
             os.chdir(original_dir)
             logging.info(f"Returned to original directory: {original_dir}")
 
-        ids = list(range(len(xyz_files)))
+        # === Parse MLFF output ===
+        coords, energy, _ = parse_mlff_output(xyz_files[0])  # Assuming one XYZ per step
+        coordinates = [coords]
+        energies = [energy]
+        ids = [0]
+
+        # === Filter ===
         filtered_coordinates, filtered_ids = self.refiner.filter(
             coordinates,
             energies,
@@ -301,7 +307,9 @@ class ChemRefiner:
             sample_method,
             parameters,
         )
+
         return filtered_coordinates, filtered_ids, step_dir, xyz_files
+
 
 
     def run(self):
