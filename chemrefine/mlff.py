@@ -97,51 +97,6 @@ class MLFFCalculator:
             ]
             return coords, energy_hartree,forces_hartree
     
-def run_mlff_calculation(
-            xyz_path: str,
-            model_name: str,
-            task_name: str = "mace_off",
-            device: Optional[str] = "cpu",
-            model_path: Optional[str] = None,
-            fmax: float = 0.03,
-            steps: int = 200
-        ) -> Tuple[List[List], float]:
-            """
-            Run MLFF optimization on a single XYZ file.
-
-            Parameters
-            ----------
-            xyz_path : str
-                Path to the XYZ file.
-            model_name : str
-                Name of the MLFF model (e.g., "mace", "fairchem").
-            task_name : str
-                Task name for the model (e.g., "mace_off").
-            device : str, optional
-                Computation device ("cpu" or "cuda").
-            model_path : str, optional
-                Path to local model checkpoint (if needed).
-            fmax : float
-                LBFGS force convergence criterion.
-            steps : int
-                Maximum optimization steps.
-
-            Returns
-            -------
-            coords : list of [element, x, y, z]
-                Optimized geometry.
-            energy : float
-                Final energy in Hartree.
-            """
-            atoms = read(xyz_path)
-            calculator = MLFFCalculator(
-                model_name=model_name,
-                task_name=task_name,
-                device=device,
-                model_path=model_path
-            )
-            return calculator.calculate(atoms, fmax=fmax, steps=steps)
-
 class MLFFJobSubmitter:
     """
     Generate and submit SLURM jobs for MLFF calculations.
@@ -344,3 +299,74 @@ class MLFFJobSubmitter:
                     return "cuda"
         return "cpu"
 
+def run_mlff_calculation(
+            xyz_path: str,
+            model_name: str,
+            task_name: str = "mace_off",
+            device: Optional[str] = "cpu",
+            model_path: Optional[str] = None,
+            fmax: float = 0.03,
+            steps: int = 200
+        ) -> Tuple[List[List], float]:
+            """
+            Run MLFF optimization on a single XYZ file.
+
+            Parameters
+            ----------
+            xyz_path : str
+                Path to the XYZ file.
+            model_name : str
+                Name of the MLFF model (e.g., "mace", "fairchem").
+            task_name : str
+                Task name for the model (e.g., "mace_off").
+            device : str, optional
+                Computation device ("cpu" or "cuda").
+            model_path : str, optional
+                Path to local model checkpoint (if needed).
+            fmax : float
+                LBFGS force convergence criterion.
+            steps : int
+                Maximum optimization steps.
+
+            Returns
+            -------
+            coords : list of [element, x, y, z]
+                Optimized geometry.
+            energy : float
+                Final energy in Hartree.
+            """
+            atoms = read(xyz_path)
+            calculator = MLFFCalculator(
+                model_name=model_name,
+                task_name=task_name,
+                device=device,
+                model_path=model_path
+            )
+            return calculator.calculate(atoms, fmax=fmax, steps=steps)
+
+def parse_mlff_output(xyz_path: str) -> Tuple[List[List], float, List[List[float]]]:
+    """
+    Parse MLFF-optimized structure from an XYZ file.
+
+    Parameters
+    ----------
+    xyz_path : str
+        Path to the optimized XYZ file (expected to be .opt.extxyz or .xyz with energies/forces).
+
+    Returns
+    -------
+    coords : list of [element, x, y, z]
+        Atomic coordinates.
+    energy : float
+        Energy in Hartree.
+    forces : list of [fx, fy, fz]
+        Forces per atom in Hartree/Å.
+    """
+    atoms = read(xyz_path)
+    energy_ev = atoms.get_potential_energy()
+    energy_ha = energy_ev / 27.211386245988
+    forces_ev = atoms.get_forces()
+    forces_ha = forces_ev / 27.211386245988
+
+    coords = [[atom.symbol, *atom.position] for atom in atoms]
+    return coords, energy_ha, forces_ha.tolist()
