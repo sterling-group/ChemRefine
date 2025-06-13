@@ -191,3 +191,14 @@ class Utility:
         """
         match = re.search(r"Submitted batch job (\d+)", sbatch_output)
         return match.group(1) if match else None
+    
+    def write_single_xyz(self, atoms, output_file):
+        """
+        Writes a single ASE Atoms object to an XYZ file.
+
+        Parameters:
+        - atoms (ase.Atoms): The atoms object to write.
+        - output_file (str): Path to output XYZ file.
+        """
+        from ase.io import write
+        write(output_file, atoms)

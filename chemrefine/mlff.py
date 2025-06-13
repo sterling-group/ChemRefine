@@ -46,7 +46,7 @@ class MLFFCalculator:
         """Setup the MACE calculator."""
         if self.task_name == "mace_off":
             from mace.calculators import mace_off
-            self.calc = mace_off(device=self.device)
+            self.calc = mace_off(model="medium",device=self.device)
         else:
             from mace.calculators import mace_mp
             self.calc = mace_mp(model_name=self.task_name, device=self.device)
@@ -61,7 +61,7 @@ class MLFFCalculator:
         )
 
         self.calc = FAIRChemCalculator(predictor, self.task_name)
-
+    
     def calculate(self, atoms: Atoms, fmax: float = 0.03, steps: int = 200) -> Tuple[List[List], float]:
         """
         Optimize geometry using the selected MLFF.
@@ -92,6 +92,7 @@ class MLFFCalculator:
         ]
         return coords, energy_hartree
     
+
 def run_mlff_calculation(
         xyz_path: str,
         model_name: str,
@@ -165,7 +166,6 @@ class MLFFJobSubmitter:
         output_dir: str = ".",
         job_name: str | None = None,
         model_name: str = "uma-s-1",
-        device: str | None = None,
         fmax: float = 0.03,
         steps: int = 200,
         task_name: str = "mace_off"
@@ -185,7 +185,6 @@ class MLFFJobSubmitter:
             Name of the SLURM job.
         model_name : str, optional
             MLFF model name.
-        device : str, optional
             Device for model evaluation.
         fmax : float, optional
             Force convergence criterion.
@@ -230,8 +229,9 @@ class MLFFJobSubmitter:
             f.write(
                 f"python -m chemrefine.mlff_runner {xyz_file} --model {model_name} --task-name {task_name}"
             )
-            if device:
-                f.write(f" --device {device}")
+            device = self.infer_device_from_slurm()
+            logging.info(f"Inferred device from header: {device}")
+            f.write(f" --device {device}")
             f.write(f" --fmax {fmax} --steps {steps}\n")
 
         logging.info(f"Generated SLURM script: {slurm_path}")
@@ -243,7 +243,6 @@ class MLFFJobSubmitter:
         template_dir: str,
         output_dir: str = ".",
         model_name: str = "uma-s-1",
-        device: str | None = None,
         fmax: float = 0.03,
         steps: int = 200,
         task_name: str = "mace_off"
@@ -294,7 +293,6 @@ class MLFFJobSubmitter:
                 output_dir=output_dir,
                 job_name=job_name,
                 model_name=model_name,
-                device=device,
                 fmax=fmax,
                 steps=steps,
                 task_name=task_name
@@ -321,4 +319,12 @@ class MLFFJobSubmitter:
 
         logging.info("All MLFF calculations finished.")
 
-    
+    def infer_device_from_slurm(self):
+        """
+        Infers computation device based on SLURM environment variables.
+        Returns 'cuda' if GPU resources are requested, otherwise 'cpu'.
+        """
+        gres = os.getenv("SLURM_JOB_GPUS") or os.getenv("CUDA_VISIBLE_DEVICES")
+        if gres and any(char.isdigit() for char in gres):
+            return "cuda"
+        return "cpu"

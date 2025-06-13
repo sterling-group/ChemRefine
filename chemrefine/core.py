@@ -282,7 +282,6 @@ class ChemRefiner:
                 template_dir=self.template_dir,
                 output_dir=step_dir,
                 model_name=model_name,
-                device='cuda',
                 fmax=0.03,
                 steps=200,
                 task_name=task_name
