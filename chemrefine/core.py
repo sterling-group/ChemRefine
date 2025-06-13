@@ -150,7 +150,7 @@ class ChemRefiner:
             parameters (dict): Additional parameters for filtering.
 
         Returns:
-            tuple: (filtered_coordinates, filtered_ids) if step is skipped, else (None, None).
+            tuple: (filtered_coordinates, filtered_ids, energies) if step is skipped, else (None, None, None).
         """
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         if os.path.exists(step_dir):
@@ -185,10 +185,10 @@ class ChemRefiner:
                 coordinates, energies, list(range(len(energies))), sample_method, parameters
             )
             logging.info(f"Filtered {len(filtered_coordinates)} coordinates and {len(filtered_ids)} IDs after filtering.")
-            return filtered_coordinates, filtered_ids
+            return filtered_coordinates, filtered_ids, energies
         else:
             logging.info(f"Step directory {step_dir} does not exist. Will run this step.")
-            return None, None
+            return None, None, None
 
     def submit_orca_jobs(self, input_files, cores, step_dir):
         """
@@ -331,9 +331,9 @@ class ChemRefiner:
             if calculation_type.upper() not in calculation_functions:
                 raise ValueError(f"Invalid calculation type '{calculation_type}' in step {step_number}. Exiting...")
 
-            filtered_coordinates, filtered_ids = (None, None)
+            filtered_coordinates, filtered_ids, energies = (None, None, None)
             if self.skip_steps:
-                filtered_coordinates, filtered_ids = self.handle_skip_step(
+                filtered_coordinates, filtered_ids, energies = self.handle_skip_step(
                     step_number, calculation_type, sample_method, parameters
                 )
 
@@ -382,10 +382,6 @@ class ChemRefiner:
                 step_dir = os.path.join(self.output_dir, f"step{step_number}")
                 logging.info(f"Skipping step {step_number} using existing outputs.")
 
-            if 'energies' in locals():
-                self.utils.save_step_csv(
-                    energies, filtered_ids, step_number, output_dir=self.output_dir
-                )
 
             previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
 
