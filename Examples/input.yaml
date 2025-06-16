@@ -3,6 +3,10 @@
 template_dir: <your_template_directory>
 scratch_dir: <your_scratch_directory>
 output_dir: <your_output_directory>
+
+# Optional: Override default initial structure (default is /template_dir/step1.xyz)
+initial_xyz: /path/to/your/custom_initial_structure.xyz
+
 # Sequential ORCA Input Configuration File
 # Define each step with its specific parameters.
 #This workflow reflects using GOAT and refining methods to improve the accuracy

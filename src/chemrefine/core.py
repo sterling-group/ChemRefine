@@ -336,8 +336,6 @@ class ChemRefiner:
         previous_coordinates, previous_ids = None, None
 
         steps = self.config.get('steps', [])
-        charge = self.config.get('charge', 0)
-        multiplicity = self.config.get('multiplicity', 1)
         calculation_functions = ["GOAT", "DFT", "XTB", "MLFF"]
 
         for step in steps:
