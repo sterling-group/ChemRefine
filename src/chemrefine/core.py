@@ -265,9 +265,13 @@ class ChemRefiner:
         tuple: (filtered_coordinates, filtered_ids, step_dir, xyz_files)
         """
         from .mlff import parse_mlff_output
+        from ase.io import read
 
         if step_number == 1:
             step_dir, xyz_files = self.prepare_mlff_step1_directory(step_number)
+            # Generate initial IDs for step 1
+            structures = read(xyz_files[0], index=":")
+            previous_ids = list(range(len(structures)))
         else:
             step_dir, xyz_files = self.prepare_mlff_directory(
                 step_number,
@@ -297,7 +301,6 @@ class ChemRefiner:
 
         # === Parse MLFF output ===
         coords, energy, forces = parse_mlff_output(xyz_files)  # Assuming one XYZ per step
-        
 
         # === Filter ===
         filtered_coordinates, filtered_ids = self.refiner.filter(
@@ -309,8 +312,6 @@ class ChemRefiner:
         )
 
         return filtered_coordinates, filtered_ids, step_dir, xyz_files
-
-
 
     def run(self):
         """
