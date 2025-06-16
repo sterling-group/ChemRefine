@@ -15,7 +15,7 @@ def main():
     parser.add_argument("--steps", type=int, default=200, help="Maximum optimization steps.")
     args = parser.parse_args()
 
-    coords, energy,forces= run_mlff_calculation(
+    atoms= run_mlff_calculation(
     xyz_path=args.xyz,
     model_name=args.model,
     task_name=args.task_name,  # required by MLFFCalculator
@@ -25,21 +25,6 @@ def main():
     steps=args.steps
 )
 
-
-    base = args.xyz.rsplit(".", 1)[0]
-    # Read original Atoms object
-    atoms = read(args.xyz)
-    # Update positions with optimized coordinates
-    for atom, coord in zip(atoms, coords):
-        atom.position = coord[1:]
-
-    # Write extended XYZ file
-    atoms.info["mlff_energy"] = energy
-    atoms.arrays["mlff_forces"] = forces  # if forces are available from optimization
-
-    utility = Utility()
-    utility.write_single_xyz(atoms, f"{base}.opt.extxyz")
-
-
+    
 if __name__ == "__main__":
     main()

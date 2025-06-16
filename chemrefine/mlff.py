@@ -86,16 +86,7 @@ class MLFFCalculator:
             optimizer = LBFGS(atoms, logfile=None)
             optimizer.run(fmax=fmax, steps=steps)
 
-            energy_ev = atoms.get_potential_energy()
-            energy_hartree = energy_ev / 27.211386245988
-            forces_ev = atoms.get_forces()
-            forces_hartree = forces_ev / 27.211386245988
-            
-            coords = [
-                [atom.symbol, atom.position[0], atom.position[1], atom.position[2]]
-                for atom in atoms
-            ]
-            return coords, energy_hartree,forces_hartree
+            return atoms
     
 class MLFFJobSubmitter:
     """
@@ -118,6 +109,27 @@ class MLFFJobSubmitter:
         self.max_jobs = max_jobs
         self.utility = Utility()
 
+    def infer_device_from_slurm(self,script_path: str) -> str:
+        """
+        Parses a SLURM script and infers the compute device.
+        Returns 'cuda' if '--gres=gpu' is present, otherwise 'cpu'.
+
+        Parameters
+        ----------
+        script_path : str
+            Path to the SLURM submission script.
+
+        Returns
+        -------
+        str
+            'cuda' if GPU is requested, 'cpu' otherwise.
+        """
+        with open(script_path, "r") as f:
+            for line in f:
+                if "--gres=gpu" in line.replace(" ", ""):
+                    return "cuda"
+        return "cpu"
+    
     def generate_slurm_script(
         self,
         xyz_file: str,
@@ -188,7 +200,7 @@ class MLFFJobSubmitter:
             f.write(
                 f"python -m chemrefine.mlff_runner {xyz_file} --model {model_name} --task-name {task_name}"
             )
-            device = self.infer_device_from_slurm()
+            device = self.infer_device_from_slurm(header)
             logging.info(f"Inferred device from header: {device}")
             f.write(f" --device {device}")
             f.write(f" --fmax {fmax} --steps {steps}\n")
@@ -278,71 +290,60 @@ class MLFFJobSubmitter:
 
         logging.info("All MLFF calculations finished.")
 
-    def infer_device_from_slurm_script(script_path: str) -> str:
-        """
-        Parses a SLURM script and infers the compute device.
-        Returns 'cuda' if '--gres=gpu' is present, otherwise 'cpu'.
-
-        Parameters
-        ----------
-        script_path : str
-            Path to the SLURM submission script.
-
-        Returns
-        -------
-        str
-            'cuda' if GPU is requested, 'cpu' otherwise.
-        """
-        with open(script_path, "r") as f:
-            for line in f:
-                if "--gres=gpu" in line.replace(" ", ""):
-                    return "cuda"
-        return "cpu"
-
 def run_mlff_calculation(
-            xyz_path: str,
-            model_name: str,
-            task_name: str = "mace_off",
-            device: Optional[str] = "cpu",
-            model_path: Optional[str] = None,
-            fmax: float = 0.03,
-            steps: int = 200
-        ) -> Tuple[List[List], float]:
-            """
-            Run MLFF optimization on a single XYZ file.
+    xyz_path: str,
+    model_name: str,
+    task_name: str = "mace_off",
+    device: Optional[str] = "cpu",
+    model_path: Optional[str] = None,
+    fmax: float = 0.03,
+    steps: int = 200
+) -> Tuple[str, List[List], float]:
+    """
+    Run MLFF optimization and write the result to a .opt.extxyz file.
 
-            Parameters
-            ----------
-            xyz_path : str
-                Path to the XYZ file.
-            model_name : str
-                Name of the MLFF model (e.g., "mace", "fairchem").
-            task_name : str
-                Task name for the model (e.g., "mace_off").
-            device : str, optional
-                Computation device ("cpu" or "cuda").
-            model_path : str, optional
-                Path to local model checkpoint (if needed).
-            fmax : float
-                LBFGS force convergence criterion.
-            steps : int
-                Maximum optimization steps.
+    Parameters
+    ----------
+    xyz_path : str
+        Path to the input XYZ file.
+    model_name : str
+        MLFF model size (e.g., "small", "medium", "large").
+    task_name : str
+        Backend model task (e.g., "mace_off", "uma-s-1").
+    device : str, optional
+        Computation device ("cpu" or "cuda").
+    model_path : str, optional
+        Path to a local model checkpoint.
+    fmax : float, optional
+        Force convergence criterion.
+    steps : int, optional
+        Maximum number of optimization steps.
 
-            Returns
-            -------
-            coords : list of [element, x, y, z]
-                Optimized geometry.
-            energy : float
-                Final energy in Hartree.
-            """
-            atoms = read(xyz_path)
-            calculator = MLFFCalculator(
-                model_name=model_name,
-                task_name=task_name,
-                device=device,
-                model_path=model_path
-            )
-            return calculator.calculate(atoms, fmax=fmax, steps=steps)
+    Returns
+    -------
+    output_path : str
+        Path to the written optimized XYZ file.
+    coords : list of [element, x, y, z]
+        Optimized atomic coordinates.
+    energy : float
+        Final energy in Hartree.
+    """
+    atoms = read(xyz_path)
+    calculator = MLFFCalculator(
+        model_name=model_name,
+        task_name=task_name,
+        device=device,
+        model_path=model_path
+    )
+    coords, energy, forces = calculator.calculate(atoms, fmax=fmax, steps=steps)
+
+    base = xyz_path.rsplit(".", 1)[0]
+    output_path = f"{base}.opt.extxyz"
+
+    utility = Utility()
+    utility.write_single_xyz(atoms, output_path)
+
+    return output_path, coords, energy
 
 def parse_mlff_output(xyz_path: str) -> Tuple[List[List], float, List[List[float]]]:
     """
@@ -362,10 +363,11 @@ def parse_mlff_output(xyz_path: str) -> Tuple[List[List], float, List[List[float
     forces : list of [fx, fy, fz]
         Forces per atom in Hartree/Å.
     """
-    atoms = read(xyz_path)
-    energy_ev = atoms.get_potential_energy()
+    atoms = read(xyz_path,format="extxyz")
+    energy_ev = atoms.get_total_energy()
     energy_ha = energy_ev / 27.211386245988
-    forces_ev = atoms.get_forces()
+    forces_ev = atoms.get_forces()  # Forces in eV/Å
+
     forces_ha = forces_ev / 27.211386245988
 
     coords = [[atom.symbol, *atom.position] for atom in atoms]
