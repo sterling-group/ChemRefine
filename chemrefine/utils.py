@@ -3,6 +3,9 @@ import glob
 import shutil
 import logging
 from .constants import HARTREE_TO_KCAL_MOL, R_KCAL_MOL_K, CSV_PRECISION
+from pathlib import Path
+import subprocess
+import getpass
 
 logging.basicConfig(
     level=logging.INFO,
@@ -58,30 +61,30 @@ class Utility:
         df.to_csv(output_path, mode=mode, index=False, header=header)
         logging.info(f"Saved CSV for step {step} to {output_path}")
 
-    def move_step_files(self, step_number, output_dir='.'):
-        """
-        Moves all files starting with 'step{step_number}' into a dedicated directory.
+    # def move_step_files(self, step_number, output_dir='.'):
+    #     """
+    #     Moves all files starting with 'step{step_number}' into a dedicated directory.
 
-        Parameters:
-        - step_number (int): The step number to organize files for.
-        - output_dir (str): The directory in which to create the step directory and move files.
-        """
-        import glob,os,shutil
+    #     Parameters:
+    #     - step_number (int): The step number to organize files for.
+    #     - output_dir (str): The directory in which to create the step directory and move files.
+    #     """
+    #     import glob,os,shutil
         
 
-        step_dir = os.path.join(output_dir, f"step{step_number}")
-        #os.makedirs(step_dir, exist_ok=True)
+    #     step_dir = os.path.join(output_dir, f"step{step_number}")
+    #     #os.makedirs(step_dir, exist_ok=True)
 
-        # Search for files in the output_dir
-        pattern = os.path.join(output_dir, f"step{step_number}*")
-        files = [f for f in glob.glob(pattern) if not os.path.isdir(f)]
+    #     # Search for files in the output_dir
+    #     pattern = os.path.join(output_dir, f"step{step_number}*")
+    #     files = [f for f in glob.glob(pattern) if not os.path.isdir(f)]
         
-        for file in files:
-            basename = os.path.basename(file)
-            dest = os.path.join(step_dir, basename)
-            if os.path.exists(dest):
-                os.rename(dest, os.path.join(step_dir, f"old_{basename}"))
-            shutil.move(file, dest)
+    #     for file in files:
+    #         basename = os.path.basename(file)
+    #         dest = os.path.join(step_dir, basename)
+    #         if os.path.exists(dest):
+    #             os.rename(dest, os.path.join(step_dir, f"old_{basename}"))
+    #         shutil.move(file, dest)
 
     def write_xyz(self, structures, step_number, structure_ids, output_dir='.'):
         """
@@ -115,3 +118,87 @@ class Utility:
                     file.write(f"{element} {x} {y} {z}\n")
 
         return xyz_filenames
+    
+    def submit_job(self, slurm_script: Path) -> str:
+        """
+        Submit a SLURM job and extract the job ID.
+
+        Parameters
+        ----------
+        slurm_script : Path
+            Path to the SLURM script.
+
+        Returns
+        -------
+        str
+            Job ID or 'ERROR' if submission failed.
+        """
+        try:
+            result = subprocess.run(
+                ["sbatch", str(slurm_script)],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            logging.info(f"sbatch output: {result.stdout.strip()}")
+            job_id = self._extract_job_id(result.stdout)
+            if job_id:
+                return job_id
+            else:
+                logging.warning("Failed to extract job ID from sbatch output.")
+                return "UNKNOWN"
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Job submission failed: {e.stderr.strip()}")
+            return "ERROR"
+
+    def is_job_finished(self, job_id: str) -> bool:
+        """
+        Check if a SLURM job with a given job ID has finished.
+
+        Parameters
+        ----------
+        job_id : str
+            SLURM job ID.
+
+        Returns
+        -------
+        bool
+            True if job has finished; False otherwise.
+        """
+        try:
+            username = getpass.getuser()
+            command = f"squeue -u {username} -o %i"
+            output = subprocess.check_output(command, shell=True, text=True)
+            job_ids = output.strip().splitlines()
+            return job_id not in job_ids[1:]  # skip header
+        except subprocess.CalledProcessError as e:
+            logging.info(f"Error running squeue: {e}")
+            return False
+
+    def _extract_job_id(self, sbatch_output: str) -> str | None:
+        """
+        Extract the job ID from sbatch output.
+
+        Parameters
+        ----------
+        sbatch_output : str
+            Output from sbatch command.
+
+        Returns
+        -------
+        str or None
+            Extracted job ID or None if not found.
+        """
+        match = re.search(r"Submitted batch job (\d+)", sbatch_output)
+        return match.group(1) if match else None
+    
+    def write_single_xyz(self, atoms, output_file):
+        """
+        Writes a single ASE Atoms object to an XYZ file.
+
+        Parameters:
+        - atoms (ase.Atoms): The atoms object to write.
+        - output_file (str): Path to output XYZ file.
+        """
+        from ase.io import write
+        write(output_file, atoms)

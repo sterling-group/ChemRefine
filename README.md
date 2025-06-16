@@ -14,7 +14,7 @@ This repository contains a streamlined Python code for conformer sampling and re
 - **Built-in analysis** with CSV output and structure filtering
 - **Flexible configuration** via YAML input files
 - **Error reduction** and efficient resource utilization
-- **Machine Learning Interatomic potentials** integration, seamless switch from foundation models to DFT. 
+- **Machine Learning Interatomic potentials** integration using pretrained `mace` models for fast geometry optimisation.
 
 ---
 
@@ -40,6 +40,8 @@ pip install ChemRefine
   - `numpy` - Numerical computations
   - `pyyaml` - YAML configuration parsing  
   - `pandas` - Data analysis and CSV handling
+  - `ase` - Geometry handling and optimisation
+  - `mace-torch` - Machine learning force fields
 - **ORCA 6.0+** - Quantum chemistry calculations
 - **SLURM** - Job scheduling system
 - **QORCA** - Included as submodule for ORCA job submission
@@ -59,7 +61,7 @@ You must provide **one ORCA input file** (e.g., `step1.inp`, `step2.inp`, etc.) 
 
 In addition to these input files, you must include one of each:
 - **`orca.slurm.header`**: A SLURM submission script header with your cluster-specific job settings (e.g., partition, time limit, memory).
-- **`mlff.slurm.header`**: A separate SLURM header file for machine learning force field (MLFF) jobs, GPU preferable.
+- **`mlff.slurm.header`**: Required for MLFF jobs. Include your GPU node configuration here so MLFF calculations run under SLURM.
 
 Make sure to specify the path to your **ORCA 6.0+** executable in the `ORCA_EXEC` line of your header file(s). Adjust any other parameters (such as modules or memory) to fit your cluster environment.
 
@@ -110,13 +112,27 @@ steps:
       parameters:
         count: 10
   - step: 2
-    template: "step2.inp" 
+    template: "step2.inp"
     calculation_type: "DFT"
     sampling:
       method: "energy_window"
       parameters:
         window: 0.5
+  - step: 3
+    calculation_type: "MLFF"
+    foundation_model: "mace-off"  # or "mace-mp", "fairchem"
+    model_name: "medium"
+    sampling:
+      method: "integer"
+      parameters:
+        num_structures: 1
 ```
+
+The optional MLFF step uses a pretrained model from `mace`. By default the
+``mace-off`` backend with the ``"medium"`` model is used, but you can select
+different backends and models via ``foundation_model`` and ``model_name``.
+If a CUDA-capable GPU is detected, the MLFF optimisation runs on the GPU; otherwise it falls back to the CPU automatically.
+To avoid downloading the model each time, set the environment variable `CHEMREFINE_MLFF_CHECKPOINT` to the path of a locally downloaded checkpoint **or** place the file as `chemrefine/models/<model>.model` within this repository.
 
 ### **ORCA Template Files**
 

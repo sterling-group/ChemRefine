@@ -28,7 +28,7 @@ class OrcaJobSubmitter:
         self.orca_executable = orca_executable
         self.scratch_dir = scratch_dir
         self.save_scratch = save_scratch
-
+        self.utility = Utility()
     def submit_files(self, input_files, max_cores=32, template_dir=".", output_dir="."):
         """
         Submits multiple ORCA input files to SLURM, managing PAL values, active job tracking,
@@ -54,7 +54,7 @@ class OrcaJobSubmitter:
                 logging.info("Waiting for jobs to finish to free up cores...")
                 completed_jobs = []
                 for job_id, cores in list(active_jobs.items()):
-                    if self.is_job_finished(job_id):
+                    if self.utility.is_job_finished(job_id):
                         completed_jobs.append(job_id)
                         total_cores_used -= cores
                         logging.info(f"Job {job_id} completed. Freed {cores} cores.")
@@ -71,7 +71,7 @@ class OrcaJobSubmitter:
                 output_dir=output_dir
             )
 
-            job_id = self.submit_job(slurm_script)
+            job_id = self.utility.submit_job(slurm_script)
             logging.info(f"Submitted ORCA job with ID: {job_id} for input: {input_path.name}")
 
             if job_id.isdigit():
@@ -84,7 +84,7 @@ class OrcaJobSubmitter:
         while active_jobs:
             completed_jobs = []
             for job_id, cores in list(active_jobs.items()):
-                if self.is_job_finished(job_id):
+                if self.utility.is_job_finished(job_id):
                     completed_jobs.append(job_id)
                     total_cores_used -= cores
                     logging.info(f"Job {job_id} completed. Freed {cores} cores.")
@@ -217,68 +217,6 @@ class OrcaJobSubmitter:
         logging.info(f"Generated SLURM script: {slurm_file}")
         return slurm_file
 
-    def submit_job(self, slurm_script: Path):
-        """
-        Submit the SLURM script to the scheduler.
-
-        Args:
-            slurm_script (Path): Path to the SLURM script.
-
-        Returns:
-            str: Job ID or error message.
-        """
-        try:
-            result = subprocess.run(
-                ["sbatch", str(slurm_script)],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            logging.info(f"sbatch output: {result.stdout.strip()}")
-            job_id = self._extract_job_id(result.stdout)
-            if job_id:
-                logging.info(f"Submitted job ID: {job_id}")
-                return job_id
-            else:
-                logging.warning("Failed to extract job ID from sbatch output.")
-                return "UNKNOWN"
-        except subprocess.CalledProcessError as e:
-            logging.error(f"Job submission failed: {e.stderr.strip()}")
-            return "ERROR"
-
-    def is_job_finished(self, job_id):
-        """
-        Check if a SLURM job with a given job ID has finished.
-
-        Args:
-            job_id (str): SLURM job ID to check.
-
-        Returns:
-            bool: True if the job is no longer in the queue (finished), False otherwise.
-        """
-        try:
-            username = getpass.getuser()
-            command = f"squeue -u {username} -o %i"
-            output = subprocess.check_output(command, shell=True, text=True)
-            job_ids = output.strip().splitlines()
-            return job_id not in job_ids[1:]  # skip header
-        except subprocess.CalledProcessError as e:
-            logging.info(f"Error running squeue: {e}")
-            return False
-
-    def _extract_job_id(self, sbatch_output: str):
-        """
-        Extract the job ID from sbatch output.
-
-        Args:
-            sbatch_output (str): Output from sbatch command.
-
-        Returns:
-            str or None: Job ID if found, else None.
-        """
-        match = re.search(r"Submitted batch job (\d+)", sbatch_output)
-        return match.group(1) if match else None
-       
 class OrcaInterface:
     def __init__(self):
         self.utility = Utility()
