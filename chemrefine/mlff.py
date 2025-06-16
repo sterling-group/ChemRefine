@@ -52,7 +52,6 @@ class MLFFCalculator:
         else:
             raise ValueError(f"Unsupported MACE task name: {self.task_name}")
 
-
     def _setup_fairchem(self, model_name="uma-s-1"):
         """Setup the FairChem calculator."""
         from fairchem.core import pretrained_mlip, FAIRChemCalculator
@@ -335,40 +334,53 @@ def run_mlff_calculation(
         device=device,
         model_path=model_path
     )
-    coords, energy, forces = calculator.calculate(atoms, fmax=fmax, steps=steps)
-
+    atoms = calculator.calculate(atoms, fmax=fmax, steps=steps)
+    energy = atoms.get_total_energy()  # Energy in eV
+    energy /= 27.211386245988  # Convert eV to Hartree
+    coords = [[atom.symbol, *atom.position] for atom in atoms]
     base = xyz_path.rsplit(".", 1)[0]
     output_path = f"{base}.opt.extxyz"
 
     utility = Utility()
     utility.write_single_xyz(atoms, output_path)
 
-    return output_path, coords, energy
+    return output_path
 
-def parse_mlff_output(xyz_path: str) -> Tuple[List[List], float, List[List[float]]]:
+def parse_mlff_output(xyz_paths: List[str]) -> Tuple[List[List[List]], List[float], List[List[List[float]]]]:
     """
-    Parse MLFF-optimized structure from an XYZ file.
+    Parse multiple MLFF-optimized XYZ files. Assume you feed a list of pre-optimized XYZ files and then later optimized. 
 
     Parameters
     ----------
-    xyz_path : str
-        Path to the optimized XYZ file (expected to be .opt.extxyz or .xyz with energies/forces).
+    xyz_paths : list of str
+        List of input XYZ file paths. If a corresponding .opt.extxyz file exists, it will be used.
 
     Returns
     -------
-    coords : list of [element, x, y, z]
-        Atomic coordinates.
-    energy : float
-        Energy in Hartree.
-    forces : list of [fx, fy, fz]
-        Forces per atom in Hartree/Å.
+    all_coords : list of list of [element, x, y, z]
+        Atomic coordinates for each structure.
+    all_energies : list of float
+        Energies in Hartree for each structure.
+    all_forces : list of list of [fx, fy, fz]
+        Forces per atom in Hartree/Å for each structure.
     """
-    atoms = read(xyz_path,format="extxyz")
-    energy_ev = atoms.get_total_energy()
-    energy_ha = energy_ev / 27.211386245988
-    forces_ev = atoms.get_forces()  # Forces in eV/Å
+    all_coords = []
+    all_energies = []
+    all_forces = []
 
-    forces_ha = forces_ev / 27.211386245988
+    for xyz_path in xyz_paths:
+        base, _ = os.path.splitext(xyz_path)
+        opt_path = f"{base}.opt.extxyz"
+        if os.path.exists(opt_path):
+            xyz_path = opt_path
 
-    coords = [[atom.symbol, *atom.position] for atom in atoms]
-    return coords, energy_ha, forces_ha.tolist()
+        atoms = read(xyz_path, format="extxyz")
+        energy_ha = atoms.get_total_energy() / 27.211386245988
+        forces_ha = atoms.get_forces() / 27.211386245988
+        coords = [[atom.symbol, *atom.position] for atom in atoms]
+
+        all_coords.append(coords)
+        all_energies.append(energy_ha)
+        all_forces.append(forces_ha.tolist())
+
+    return all_coords, all_energies, all_forces

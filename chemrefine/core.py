@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import sys
 class ChemRefiner:
+
     """
     ChemRefiner class orchestrates the ChemRefine workflow, handling input parsing,
     job submission, output parsing, and structure refinement based on a YAML configuration.
@@ -241,7 +242,7 @@ class ChemRefiner:
             coordinates, energies, filtered_ids, sample_method, parameters
         )
 
-        self.utils.move_step_files(step_number, output_dir=step_dir)
+        #self.utils.move_step_files(step_number, output_dir=step_dir)
 
         return filtered_coordinates, filtered_ids
 
@@ -294,7 +295,7 @@ class ChemRefiner:
             logging.info(f"Returned to original directory: {original_dir}")
 
         # === Parse MLFF output ===
-        coords, energy, _ = parse_mlff_output(xyz_files[0])  # Assuming one XYZ per step
+        coords, energy, forces = parse_mlff_output(xyz_files)  # Assuming one XYZ per step
         coordinates = [coords]
         energies = [energy]
         ids = [0]
