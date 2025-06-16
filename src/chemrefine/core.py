@@ -332,8 +332,16 @@ class ChemRefiner:
             logging.info(f"Processing step {step['step']} with calculation type '{step['calculation_type']}'.")
             step_number = step['step']
             calculation_type = step['calculation_type'].lower()
-            model_name = step.get('model_name', 'mace')
-            task_name = step.get('task_type', 'mace_off')
+            
+            # Handle MLFF-specific nested structure
+            if calculation_type == 'mlff':
+                mlff_config = step.get('mlff', {})
+                model_name = mlff_config.get('model_name', 'mace')
+                task_name = mlff_config.get('task_name', 'mace_off')
+            else:
+                model_name = step.get('model_name', 'mace')
+                task_name = step.get('task_type', 'mace_off')
+
             sample_method = step['sample_type']['method']
             parameters = step['sample_type'].get('parameters', {})
 
