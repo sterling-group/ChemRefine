@@ -66,7 +66,7 @@ chemrefine-mlff = "chemrefine.mlff_runner:main"
 
 
 [tool.hatch.build.targets.wheel]
-packages = ["chemrefine"]
+packages = ["src/chemrefine"]
 
 [tool.hatch.build.targets.sdist]
 include = [
