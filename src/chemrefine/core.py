@@ -53,22 +53,27 @@ class ChemRefiner:
 
         os.makedirs(self.output_dir, exist_ok=True)
 
-    def prepare_step1_directory(self, step_number):
+    def prepare_step1_directory(self, step_number, initial_xyz=None):
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         os.makedirs(step_dir, exist_ok=True)        
         logging.debug(f"step_dir BEFORE: {step_dir}")
 
+        # Determine source xyz: use override if provided
+        if initial_xyz is None:
+            src_xyz = os.path.join(self.template_dir, "step1.xyz")
+        else:
+            src_xyz = initial_xyz
 
-        # Copy input files from template_dir to step_dir
-        src_xyz = os.path.join(self.template_dir, "step1.xyz")
         dst_xyz = os.path.join(step_dir, "step1.xyz")
+
         if not os.path.exists(src_xyz):
             raise FileNotFoundError(
-                f"XYZ file '{src_xyz}' not found. Please ensure that 'step1.xyz' exists in the template directory."
+                f"Initial XYZ file '{src_xyz}' not found. Please ensure the path is correct."
             )
+
         shutil.copyfile(src_xyz, dst_xyz)
 
-        # Use template from template_dir directly
+        # Use input template from template_dir
         template_inp = os.path.join(self.template_dir, "step1.inp")
         if not os.path.exists(template_inp):
             raise FileNotFoundError(
@@ -123,15 +128,22 @@ class ChemRefiner:
 
         return step_dir, input_files, output_files
 
-    def prepare_mlff_step1_directory(self, step_number):
+    def prepare_mlff_step1_directory(self, step_number, initial_xyz=None):
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         os.makedirs(step_dir, exist_ok=True)
-        src_xyz = os.path.join(self.template_dir, "step1.xyz")
+
+        if initial_xyz is None:
+            src_xyz = os.path.join(self.template_dir, "step1.xyz")
+        else:
+            src_xyz = initial_xyz
+
         dst_xyz = os.path.join(step_dir, "step1.xyz")
+
         if not os.path.exists(src_xyz):
             raise FileNotFoundError(
-                f"XYZ file '{src_xyz}' not found. Please ensure that 'step1.xyz' exists in the template directory."
+                f"XYZ file '{src_xyz}' not found. Please ensure the path is correct."
             )
+
         shutil.copyfile(src_xyz, dst_xyz)
         return step_dir, [dst_xyz]
 
@@ -371,6 +383,11 @@ class ChemRefiner:
 
                 else:
                     if step_number == 1:
+                        initial_xyz = self.config.get("initial_xyz", None)
+                        step_dir, input_files, output_files = self.prepare_step1_directory(
+                            step_number,
+                            initial_xyz=initial_xyz
+                        )
                         step_dir, input_files, output_files = self.prepare_step1_directory(step_number)
                     else:
                         step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
