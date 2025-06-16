@@ -19,7 +19,10 @@ steps:
         
   # Step 2: Example using MLFF with Boltzmann distribution sampling
   - step: 2
-    calculation_type: "DFT"
+    calculation_type: "MLFF"
+    mlff:
+      model_name: "medium"  # Options: small, medium, large
+      task_type: "mace_off"  # Options: mace_off, mace_on, energy, forces 
     sample_type:
       method: "boltzmann"
       parameters:
