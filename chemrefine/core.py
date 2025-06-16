@@ -296,15 +296,13 @@ class ChemRefiner:
 
         # === Parse MLFF output ===
         coords, energy, forces = parse_mlff_output(xyz_files)  # Assuming one XYZ per step
-        coordinates = [coords]
-        energies = [energy]
-        ids = [0]
+        
 
         # === Filter ===
         filtered_coordinates, filtered_ids = self.refiner.filter(
-            coordinates,
-            energies,
-            ids,
+            coords,
+            energy,
+            previous_ids,
             sample_method,
             parameters,
         )
