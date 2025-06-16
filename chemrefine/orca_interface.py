@@ -84,7 +84,7 @@ class OrcaJobSubmitter:
         while active_jobs:
             completed_jobs = []
             for job_id, cores in list(active_jobs.items()):
-                if self.is_job_finished(job_id):
+                if self.utility.is_job_finished(job_id):
                     completed_jobs.append(job_id)
                     total_cores_used -= cores
                     logging.info(f"Job {job_id} completed. Freed {cores} cores.")
