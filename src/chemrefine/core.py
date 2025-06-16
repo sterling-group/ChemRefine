@@ -53,7 +53,13 @@ class ChemRefiner:
 
         os.makedirs(self.output_dir, exist_ok=True)
 
-    def prepare_step1_directory(self, step_number, initial_xyz=None):
+    def prepare_step1_directory(self, step_number, initial_xyz=None,charge=None, multiplicity=None):
+        """ Prepares the directory for the first step by copying the initial XYZ file,"""
+        if charge is None:
+            charge = self.charge
+        if multiplicity is None:
+            multiplicity = self.multiplicity
+
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         os.makedirs(step_dir, exist_ok=True)        
         logging.debug(f"step_dir BEFORE: {step_dir}")
@@ -83,12 +89,12 @@ class ChemRefiner:
         xyz_filenames = [dst_xyz]
 
         input_files, output_files = self.orca.create_input(
-            xyz_filenames, template_inp, self.charge, self.multiplicity, output_dir=step_dir
+            xyz_filenames, template_inp, charge, multiplicity, output_dir=step_dir
         )
 
         return step_dir, input_files, output_files
 
-    def prepare_subsequent_step_directory(self, step_number, filtered_coordinates, filtered_ids):
+    def prepare_subsequent_step_directory(self, step_number, filtered_coordinates, filtered_ids,charge=None, multiplicity=None):
         """
         Prepares the directory for subsequent steps by writing XYZ files, copying the template input,
         and generating ORCA input files.
@@ -103,6 +109,11 @@ class ChemRefiner:
             input_files (list): List of generated ORCA input files.
             output_files (list): List of expected ORCA output files.
         """
+        if charge is None:
+            charge = self.charge
+        if multiplicity is None:
+            multiplicity = self.multiplicity
+
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         os.makedirs(step_dir, exist_ok=True)
 
@@ -123,7 +134,7 @@ class ChemRefiner:
 
         # Create ORCA input files in step_dir
         input_files, output_files = self.orca.create_input(
-            xyz_filenames, input_template_dst, self.charge, self.multiplicity, output_dir=step_dir
+            xyz_filenames, input_template_dst, charge, multiplicity, output_dir=step_dir
         )
 
         return step_dir, input_files, output_files
@@ -332,9 +343,7 @@ class ChemRefiner:
         Handles skip-step logic and standard pipeline logic.
         """
         logging.info("Starting ChemRefine pipeline.")
-
         previous_coordinates, previous_ids = None, None
-
         steps = self.config.get('steps', [])
         calculation_functions = ["GOAT", "DFT", "XTB", "MLFF"]
 
@@ -382,17 +391,27 @@ class ChemRefiner:
                 else:
                     if step_number == 1:
                         initial_xyz = self.config.get("initial_xyz", None)
+                        charge = step.get('charge', self.charge)
+                        multiplicity = step.get('multiplicity', self.multiplicity)
+                        logging.info(f"Step {step_number} using charge={charge}, multiplicity={multiplicity}")
                         step_dir, input_files, output_files = self.prepare_step1_directory(
                             step_number,
-                            initial_xyz=initial_xyz
-                        )
-                        step_dir, input_files, output_files = self.prepare_step1_directory(step_number)
+                            initial_xyz=initial_xyz,
+                            charge=charge,
+                            multiplicity=multiplicity
+                            )
                     else:
+                        charge = step.get('charge', self.charge)
+                        multiplicity = step.get('multiplicity', self.multiplicity)
+                        logging.info(f"Step {step_number} using charge={charge}, multiplicity={multiplicity}")
                         step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
                             step_number,
                             previous_coordinates,
                             previous_ids,
-                        )
+                            charge=charge,
+                            multiplicity=multiplicity
+    )
+
 
                     self.submit_orca_jobs(input_files, self.max_cores, step_dir)
 
