@@ -25,8 +25,8 @@ steps:
   - step: 2
     calculation_type: "MLFF"
     mlff:
-      model_name: "medium"      # Options: small, medium, large
-      task_type: "mace_off"     # Options: mace_off, mace_on, energy, forces 
+      model_name: "medium"      # For MACE: small,medium,large for FAIRCHEM "uma-s-1"
+      task_type: "mace_off"     # For MACE: "mace_off" or "mace_mp", for FairChem:oc20, omat, omol, odac, omc
     sample_type:
       method: "boltzmann"
       parameters:
