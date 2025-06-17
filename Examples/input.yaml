@@ -3,43 +3,50 @@
 template_dir: <your_template_directory>
 scratch_dir: <your_scratch_directory>
 output_dir: <your_output_directory>
-# Sequential ORCA Input Configuration File
-# Define each step with its specific parameters.
-#This workflow reflects using GOAT and refining methods to improve the accuracy
+
+# Optional: Override default initial structure (default is /template_dir/step1.xyz)
+initial_xyz: /path/to/your/custom_initial_structure.xyz
+
+# === Global configuration ===
 charge: 0
 multiplicity: 1 
+
+# === Step-by-step workflow ===
 steps:
-  # Step 1: Example using GOAT with None sampling (it's the only option for GOAT)
+  # Step 1: Using GOAT
   - step: 1
-    calculation_type: "GOAT"           # Options: GOAT, DFT, MLFF
+    calculation_type: "GOAT"
     sample_type:
-      method: "integer"              # Options: E_window, Boltzmann_distribution, integer
+      method: "integer"
       parameters: 
-        num_structures: 0                   #The 0 option returns all of the values      
-        
-  # Step 2: Example using MLFF with Boltzmann distribution sampling
+        num_structures: 0
+
+  # Step 2: MLFF with Boltzmann sampling
   - step: 2
-    calculation_type: "DFT"
+    calculation_type: "MLFF"
+    mlff:
+      model_name: "medium"      # Options: small, medium, large
+      task_type: "mace_off"     # Options: mace_off, mace_on, energy, forces 
     sample_type:
       method: "boltzmann"
       parameters:
         weight: 99.99
 
-  # Step 3: Using DFT to refine the calculation
+  # Step 3: DFT refinement with overridden charge and multiplicity
   - step: 3
     calculation_type: "DFT"
+    charge: -1                  # <--- Step-specific override
+    multiplicity: 2            # <--- Step-specific override
     sample_type:
-      method: "energy_window"  
+      method: "energy_window"
       parameters:
-        energy: 1  #This energy is in Hartrees.
-        unit: kcal/mol  #Options are (kcal/mol / hartree. Default is Hartree)
+        energy: 1               # In Hartrees
+        unit: kcal/mol          # Options: kcal/mol, hartree
 
-  # Step 4: Using a high-precision DFT to finalize the calculations on the best energy. 
+  # Step 4: Final high-precision DFT
   - step: 4
     calculation_type: "DFT"
     sample_type:
       method: "integer"
       parameters: 
-        num_structures: 0 
-        
-#You can add as many parameters are you wish. 
+        num_structures: 0

@@ -53,22 +53,33 @@ class ChemRefiner:
 
         os.makedirs(self.output_dir, exist_ok=True)
 
-    def prepare_step1_directory(self, step_number):
+    def prepare_step1_directory(self, step_number, initial_xyz=None,charge=None, multiplicity=None):
+        """ Prepares the directory for the first step by copying the initial XYZ file,"""
+        if charge is None:
+            charge = self.charge
+        if multiplicity is None:
+            multiplicity = self.multiplicity
+
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         os.makedirs(step_dir, exist_ok=True)        
         logging.debug(f"step_dir BEFORE: {step_dir}")
 
+        # Determine source xyz: use override if provided
+        if initial_xyz is None:
+            src_xyz = os.path.join(self.template_dir, "step1.xyz")
+        else:
+            src_xyz = initial_xyz
 
-        # Copy input files from template_dir to step_dir
-        src_xyz = os.path.join(self.template_dir, "step1.xyz")
         dst_xyz = os.path.join(step_dir, "step1.xyz")
+
         if not os.path.exists(src_xyz):
             raise FileNotFoundError(
-                f"XYZ file '{src_xyz}' not found. Please ensure that 'step1.xyz' exists in the template directory."
+                f"Initial XYZ file '{src_xyz}' not found. Please ensure the path is correct."
             )
+
         shutil.copyfile(src_xyz, dst_xyz)
 
-        # Use template from template_dir directly
+        # Use input template from template_dir
         template_inp = os.path.join(self.template_dir, "step1.inp")
         if not os.path.exists(template_inp):
             raise FileNotFoundError(
@@ -78,12 +89,12 @@ class ChemRefiner:
         xyz_filenames = [dst_xyz]
 
         input_files, output_files = self.orca.create_input(
-            xyz_filenames, template_inp, self.charge, self.multiplicity, output_dir=step_dir
+            xyz_filenames, template_inp, charge, multiplicity, output_dir=step_dir
         )
 
         return step_dir, input_files, output_files
 
-    def prepare_subsequent_step_directory(self, step_number, filtered_coordinates, filtered_ids):
+    def prepare_subsequent_step_directory(self, step_number, filtered_coordinates, filtered_ids,charge=None, multiplicity=None):
         """
         Prepares the directory for subsequent steps by writing XYZ files, copying the template input,
         and generating ORCA input files.
@@ -98,6 +109,11 @@ class ChemRefiner:
             input_files (list): List of generated ORCA input files.
             output_files (list): List of expected ORCA output files.
         """
+        if charge is None:
+            charge = self.charge
+        if multiplicity is None:
+            multiplicity = self.multiplicity
+
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         os.makedirs(step_dir, exist_ok=True)
 
@@ -118,20 +134,27 @@ class ChemRefiner:
 
         # Create ORCA input files in step_dir
         input_files, output_files = self.orca.create_input(
-            xyz_filenames, input_template_dst, self.charge, self.multiplicity, output_dir=step_dir
+            xyz_filenames, input_template_dst, charge, multiplicity, output_dir=step_dir
         )
 
         return step_dir, input_files, output_files
 
-    def prepare_mlff_step1_directory(self, step_number):
+    def prepare_mlff_step1_directory(self, step_number, initial_xyz=None):
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         os.makedirs(step_dir, exist_ok=True)
-        src_xyz = os.path.join(self.template_dir, "step1.xyz")
+
+        if initial_xyz is None:
+            src_xyz = os.path.join(self.template_dir, "step1.xyz")
+        else:
+            src_xyz = initial_xyz
+
         dst_xyz = os.path.join(step_dir, "step1.xyz")
+
         if not os.path.exists(src_xyz):
             raise FileNotFoundError(
-                f"XYZ file '{src_xyz}' not found. Please ensure that 'step1.xyz' exists in the template directory."
+                f"XYZ file '{src_xyz}' not found. Please ensure the path is correct."
             )
+
         shutil.copyfile(src_xyz, dst_xyz)
         return step_dir, [dst_xyz]
 
@@ -320,20 +343,24 @@ class ChemRefiner:
         Handles skip-step logic and standard pipeline logic.
         """
         logging.info("Starting ChemRefine pipeline.")
-
         previous_coordinates, previous_ids = None, None
-
         steps = self.config.get('steps', [])
-        charge = self.config.get('charge', 0)
-        multiplicity = self.config.get('multiplicity', 1)
         calculation_functions = ["GOAT", "DFT", "XTB", "MLFF"]
 
         for step in steps:
             logging.info(f"Processing step {step['step']} with calculation type '{step['calculation_type']}'.")
             step_number = step['step']
             calculation_type = step['calculation_type'].lower()
-            model_name = step.get('model_name', 'mace')
-            task_name = step.get('task_type', 'mace_off')
+            
+            # Handle MLFF-specific nested structure
+            if calculation_type == 'mlff':
+                mlff_config = step.get('mlff', {})
+                model_name = mlff_config.get('model_name', 'mace')
+                task_name = mlff_config.get('task_name', 'mace_off')
+            else:
+                model_name = step.get('model_name', 'mace')
+                task_name = step.get('task_type', 'mace_off')
+
             sample_method = step['sample_type']['method']
             parameters = step['sample_type'].get('parameters', {})
 
@@ -363,13 +390,28 @@ class ChemRefiner:
 
                 else:
                     if step_number == 1:
-                        step_dir, input_files, output_files = self.prepare_step1_directory(step_number)
+                        initial_xyz = self.config.get("initial_xyz", None)
+                        charge = step.get('charge', self.charge)
+                        multiplicity = step.get('multiplicity', self.multiplicity)
+                        logging.info(f"Step {step_number} using charge={charge}, multiplicity={multiplicity}")
+                        step_dir, input_files, output_files = self.prepare_step1_directory(
+                            step_number,
+                            initial_xyz=initial_xyz,
+                            charge=charge,
+                            multiplicity=multiplicity
+                            )
                     else:
+                        charge = step.get('charge', self.charge)
+                        multiplicity = step.get('multiplicity', self.multiplicity)
+                        logging.info(f"Step {step_number} using charge={charge}, multiplicity={multiplicity}")
                         step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
                             step_number,
                             previous_coordinates,
                             previous_ids,
-                        )
+                            charge=charge,
+                            multiplicity=multiplicity
+    )
+
 
                     self.submit_orca_jobs(input_files, self.max_cores, step_dir)
 
