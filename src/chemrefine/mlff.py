@@ -37,7 +37,7 @@ class MLFFCalculator:
 
         if task_name.startswith("mace"):
             self._setup_mace()
-        elif task_name.startswith("uma") or task_name.startswith("fairchem"):
+        elif task_name.startswith("omol") or task_name.startswith("omat") or task_name.startswith("odac"):
             self._setup_fairchem()
         else:
             raise ValueError(f"Unknown task name: {task_name}")
