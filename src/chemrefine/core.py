@@ -17,18 +17,12 @@ class ChemRefiner:
     job submission, output parsing, and structure refinement based on a YAML configuration.
     It supports multiple steps with different calculation types and sampling methods.
     """
-    def __init__(self):
+    def __init__(self,):
         self.arg_parser = ArgumentParser()
-        self.orca_submitter = OrcaJobSubmitter()
-        self.mlff_submitter = MLFFJobSubmitter()
-        self.refiner = StructureRefiner()
-        self.utils = Utility()
-        self.orca = OrcaInterface()
         self.args, self.qorca_flags = self.arg_parser.parse()
         self.input_yaml = self.args.input_yaml
         self.max_cores = self.args.maxcores
         self.skip_steps = self.args.skip
-        
 
         # === Load the YAML configuration ===
         with open(self.input_yaml, 'r') as file:
@@ -38,22 +32,27 @@ class ChemRefiner:
         self.charge = self.config.get('charge', 0)
         self.multiplicity = self.config.get('multiplicity', 1)
         self.template_dir = os.path.abspath(self.config.get('template_dir', './templates'))
-        self.scratch_dir = self.config.get('scratch_dir')
-        if self.scratch_dir is None:
-            self.scratch_dir = "./scratch"
-        logging.info(f"Using template directory: {self.template_dir}")
-        logging.info(f"Using scratch directory: {self.scratch_dir}")
+        self.scratch_dir = self.config.get('scratch_dir', "./scratch")
+        self.orca_executable = self.config.get('orca_executable', 'orca')
 
-        # === Setup output directory AFTER config is loaded ===
-        output_dir_raw = self.config.get('outputs', './outputs')  # Default to './outputs'
-        self.scratch_dir = os.path.abspath(self.scratch_dir)
+        # === Setup output directory ===
+        output_dir_raw = self.config.get('outputs', './outputs')
         self.output_dir = os.path.abspath(output_dir_raw)
         os.makedirs(self.output_dir, exist_ok=True)
+        self.scratch_dir = os.path.abspath(self.scratch_dir)
+
+        logging.info(f"Using template directory: {self.template_dir}")
+        logging.info(f"Using scratch directory: {self.scratch_dir}")
         logging.info(f"Output directory set to: {self.output_dir}")
 
-        os.makedirs(self.output_dir, exist_ok=True)
+        # === Instantiate components AFTER config ===
+        self.mlff_submitter = MLFFJobSubmitter()
+        self.refiner = StructureRefiner()
+        self.utils = Utility()
+        self.orca = OrcaInterface()
 
-    def prepare_step1_directory(self, step_number, initial_xyz=None,charge=None, multiplicity=None,calculation_type='dft',model_name=None, task_type=None):
+
+    def prepare_step1_directory(self, step_number, initial_xyz=None,charge=None, multiplicity=None,calculation_type='dft',model_name=None, task_type=None,device='cuda'):
         """ Prepares the directory for the first step by copying the initial XYZ file,"""
         if charge is None:
             charge = self.charge
@@ -89,12 +88,12 @@ class ChemRefiner:
         xyz_filenames = [dst_xyz]
 
         input_files, output_files = self.orca.create_input(
-            xyz_filenames, template_inp, charge, multiplicity, output_dir=step_dir,calculation_type=calculation_type,model_name=model_name,task_type=task_type
+            xyz_filenames, template_inp, charge, multiplicity, output_dir=step_dir,calculation_type=calculation_type,model_name=model_name,task_type=task_type,device=device
         )
 
         return step_dir, input_files, output_files
 
-    def prepare_subsequent_step_directory(self, step_number, filtered_coordinates, filtered_ids,charge=None, multiplicity=None,calculation_type='dft',model_name=None, task_type=None):
+    def prepare_subsequent_step_directory(self, step_number, filtered_coordinates, filtered_ids,charge=None, multiplicity=None,calculation_type='dft',model_name=None, task_type=None,device='cuda'):
         """
         Prepares the directory for subsequent steps by writing XYZ files, copying the template input,
         and generating ORCA input files.
@@ -134,7 +133,7 @@ class ChemRefiner:
 
         # Create ORCA input files in step_dir
         input_files, output_files = self.orca.create_input(
-            xyz_filenames, input_template_dst, charge, multiplicity, output_dir=step_dir,calculation_type=calculation_type,model_name=model_name, task_type=task_type
+            xyz_filenames, input_template_dst, charge, multiplicity, output_dir=step_dir,calculation_type=calculation_type,model_name=model_name, task_type=task_type,device=device
         )
 
         return step_dir, input_files, output_files
@@ -215,7 +214,7 @@ class ChemRefiner:
             logging.info(f"Step directory {step_dir} does not exist. Will run this step.")
             return None, None, None
 
-    def submit_orca_jobs(self, input_files, cores, step_dir):
+    def submit_orca_jobs(self, input_files, cores, step_dir,device='cuda'):
         """
         Submits ORCA jobs for each input file in the step directory using the OrcaJobSubmitter.
 
@@ -230,12 +229,13 @@ class ChemRefiner:
         logging.info(f"Current working directory: {os.getcwd()}")
         logging.info(f"Running in {self.scratch_dir} from submit_orca_jobs helper function.")
         try:
-            self.orca_submitter = OrcaJobSubmitter(scratch_dir=self.scratch_dir)
+            self.orca_submitter = OrcaJobSubmitter(scratch_dir=self.scratch_dir,orca_executable=self.orca_executable)
             self.orca_submitter.submit_files(
                 input_files=input_files,
                 max_cores=cores,
                 template_dir=self.template_dir,
-                output_dir=step_dir
+                output_dir=step_dir,
+                device=device,
             )
         except Exception as e:
             logging.error(f"Error while submitting ORCA jobs in {step_dir}: {str(e)}")
@@ -357,6 +357,7 @@ class ChemRefiner:
                 mlff_config = step.get('mlff', {})
                 model_name = mlff_config.get('model_name', 'mace')
                 task_type = mlff_config.get('task_type', 'mace_off')
+                device = mlff_config.get('device', 'cuda')
                 logging.info(f"Using MLFF model '{model_name}' with task '{task_type}' for step {step_number}.")
             else:
                 model_name = step.get('model_name', 'medium')
@@ -389,7 +390,8 @@ class ChemRefiner:
                         multiplicity=multiplicity,
                         calculation_type=calculation_type,
                         model_name=model_name,
-                        task_type=task_type
+                        task_type=task_type,
+                        device=device
                         )
                 else:
                     charge = step.get('charge', self.charge)
@@ -403,11 +405,12 @@ class ChemRefiner:
                         multiplicity=multiplicity,
                         calculation_type=calculation_type,
                         model_name=model_name,
-                        task_type=task_type
+                        task_type=task_type,
+                        device=device
 )
 
 
-                self.submit_orca_jobs(input_files, self.max_cores, step_dir)
+                self.submit_orca_jobs(input_files, self.max_cores, step_dir,calculation_type=calculation_type)
 
                 coordinates, energies = self.orca.parse_output(
                     output_files,
