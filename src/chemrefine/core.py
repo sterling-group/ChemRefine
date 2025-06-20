@@ -53,7 +53,7 @@ class ChemRefiner:
 
         os.makedirs(self.output_dir, exist_ok=True)
 
-    def prepare_step1_directory(self, step_number, initial_xyz=None,charge=None, multiplicity=None):
+    def prepare_step1_directory(self, step_number, initial_xyz=None,charge=None, multiplicity=None,calculation_type='dft',model_name=None, task_name=None):
         """ Prepares the directory for the first step by copying the initial XYZ file,"""
         if charge is None:
             charge = self.charge
@@ -89,12 +89,12 @@ class ChemRefiner:
         xyz_filenames = [dst_xyz]
 
         input_files, output_files = self.orca.create_input(
-            xyz_filenames, template_inp, charge, multiplicity, output_dir=step_dir
+            xyz_filenames, template_inp, charge, multiplicity, output_dir=step_dir,calculation_type=calculation_type,model_name=None,task_name=None
         )
 
         return step_dir, input_files, output_files
 
-    def prepare_subsequent_step_directory(self, step_number, filtered_coordinates, filtered_ids,charge=None, multiplicity=None):
+    def prepare_subsequent_step_directory(self, step_number, filtered_coordinates, filtered_ids,charge=None, multiplicity=None,calculation_type='dft',model_name=None, task_name=None):
         """
         Prepares the directory for subsequent steps by writing XYZ files, copying the template input,
         and generating ORCA input files.
@@ -134,7 +134,7 @@ class ChemRefiner:
 
         # Create ORCA input files in step_dir
         input_files, output_files = self.orca.create_input(
-            xyz_filenames, input_template_dst, charge, multiplicity, output_dir=step_dir
+            xyz_filenames, input_template_dst, charge, multiplicity, output_dir=step_dir,calculation_type=calculation_type,model_name=None, task_name=None
         )
 
         return step_dir, input_files, output_files
@@ -358,7 +358,7 @@ class ChemRefiner:
                 model_name = mlff_config.get('model_name', 'mace')
                 task_name = mlff_config.get('task_name', 'mace_off')
             else:
-                model_name = step.get('model_name', 'mace')
+                model_name = step.get('model_name', 'medium')
                 task_name = step.get('task_type', 'mace_off')
 
             sample_method = step['sample_type']['method']
@@ -376,67 +376,60 @@ class ChemRefiner:
             if filtered_coordinates is None or filtered_ids is None:
                 logging.info(f"No valid skip outputs for step {step_number}. Proceeding with normal execution.")
 
-                if calculation_type == 'mlff':
-                    logging.info(f"Running MLFF step {step_number} with model '{model_name}' and task '{task_name}'.")
-                    filtered_coordinates, filtered_ids, step_dir, xyz_files = self.run_mlff_step(
-                        step_number=step_number,
+                if step_number == 1:
+                    initial_xyz = self.config.get("initial_xyz", None)
+                    charge = step.get('charge', self.charge)
+                    multiplicity = step.get('multiplicity', self.multiplicity)
+                    logging.info(f"Step {step_number} using charge={charge}, multiplicity={multiplicity}")
+                    step_dir, input_files, output_files = self.prepare_step1_directory(
+                        step_number,
+                        initial_xyz=initial_xyz,
+                        charge=charge,
+                        multiplicity=multiplicity,
+                        calculation_type=calculation_type,
                         model_name=model_name,
-                        task_name=task_name,
-                        sample_method=sample_method,
-                        parameters=parameters,
-                        previous_coordinates=previous_coordinates,
-                        previous_ids=previous_ids,
-                    )
-
+                        task_name=task_name
+                        )
                 else:
-                    if step_number == 1:
-                        initial_xyz = self.config.get("initial_xyz", None)
-                        charge = step.get('charge', self.charge)
-                        multiplicity = step.get('multiplicity', self.multiplicity)
-                        logging.info(f"Step {step_number} using charge={charge}, multiplicity={multiplicity}")
-                        step_dir, input_files, output_files = self.prepare_step1_directory(
-                            step_number,
-                            initial_xyz=initial_xyz,
-                            charge=charge,
-                            multiplicity=multiplicity
-                            )
-                    else:
-                        charge = step.get('charge', self.charge)
-                        multiplicity = step.get('multiplicity', self.multiplicity)
-                        logging.info(f"Step {step_number} using charge={charge}, multiplicity={multiplicity}")
-                        step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
-                            step_number,
-                            previous_coordinates,
-                            previous_ids,
-                            charge=charge,
-                            multiplicity=multiplicity
-    )
+                    charge = step.get('charge', self.charge)
+                    multiplicity = step.get('multiplicity', self.multiplicity)
+                    logging.info(f"Step {step_number} using charge={charge}, multiplicity={multiplicity}")
+                    step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
+                        step_number,
+                        previous_coordinates,
+                        previous_ids,
+                        charge=charge,
+                        multiplicity=multiplicity,
+                        calculation_type=calculation_type,
+                        model_name=model_name,
+                        task_name=task_name
+)
 
 
-                    self.submit_orca_jobs(input_files, self.max_cores, step_dir)
+                self.submit_orca_jobs(input_files, self.max_cores, step_dir)
 
-                    coordinates, energies = self.orca.parse_output(
-                        output_files,
-                        calculation_type,
-                        dir=step_dir,  # Correct output directory used here
-                    )
+                coordinates, energies = self.orca.parse_output(
+                    output_files,
+                    calculation_type,
+                    dir=step_dir,  # Correct output directory used here
+                )
 
-                    ids = list(range(len(energies)))
-                    filtered_coordinates, filtered_ids = self.refiner.filter(
-                        coordinates,
-                        energies,
-                        ids,
-                        sample_method,
-                        parameters,
-                    )
-            else:
-                step_dir = os.path.join(self.output_dir, f"step{step_number}")
-                logging.info(f"Skipping step {step_number} using existing outputs.")
+                ids = list(range(len(energies)))
+                filtered_coordinates, filtered_ids = self.refiner.filter(
+                    coordinates,
+                    energies,
+                    ids,
+                    sample_method,
+                    parameters,
+                )
+        else:
+            step_dir = os.path.join(self.output_dir, f"step{step_number}")
+            logging.info(f"Skipping step {step_number} using existing outputs.")
 
 
-            previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
+        previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
 
-        logging.info("ChemRefine pipeline completed.")
+    logging.info("ChemRefine pipeline completed.")
 
 def main():
     ChemRefiner().run()
