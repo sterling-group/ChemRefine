@@ -29,7 +29,8 @@ class OrcaJobSubmitter:
         self.scratch_dir = scratch_dir
         self.save_scratch = save_scratch
         self.utility = Utility()
-    def submit_files(self, input_files, max_cores=32, template_dir=".", output_dir="."):
+
+    def submit_files(self, input_files, max_cores=32, template_dir=".", output_dir=".",calculation_type="dft"):
         """
         Submits multiple ORCA input files to SLURM, managing PAL values, active job tracking,
         and ensuring that the total PAL usage does not exceed max_cores.
@@ -120,7 +121,8 @@ class OrcaJobSubmitter:
     pal_value: int,
     template_dir: str,
     output_dir: str = ".",
-    job_name: str = None
+    job_name: str = None,
+    calculation_type: str = "dft"
 ):
         """
         Generate a SLURM script by combining a user-provided header with a consistent footer.
@@ -148,7 +150,9 @@ class OrcaJobSubmitter:
             logging.warning("scratch_dir not set; defaulting to /tmp/orca_scratch")
             self.scratch_dir = "./tmp/orca_scratch"
 
-        header_template_path = Path(os.path.abspath(template_dir)) / "orca.slurm.header"
+        header_name = "mlff.slurm.header" if calculation_type.lower() == "mlff" else "orca.slurm.header"
+        header_template_path = Path(os.path.abspath(template_dir)) / header_name
+
         if not header_template_path.is_file():
             logging.error(f"SLURM header template {header_template_path} not found.")
             raise FileNotFoundError(f"SLURM header template {header_template_path} not found.")
@@ -221,7 +225,8 @@ class OrcaInterface:
     def __init__(self):
         self.utility = Utility()
 
-    def create_input(self, xyz_files, template, charge, multiplicity, output_dir='./'):
+    def create_input(self, xyz_files, template, charge, multiplicity, output_dir='./', calculation_type=None,model_name=None,task_name=None):
+
         input_files, output_files = [], []
         logging.debug(f"output_dir IN create_input: {output_dir}")
         os.makedirs(output_dir, exist_ok=True)
@@ -232,6 +237,7 @@ class OrcaInterface:
             out = os.path.join(output_dir, f"{base}.out")
             input_files.append(inp)
             output_files.append(out)
+            
 
             with open(template, "r") as tmpl:
                 content = tmpl.read()
@@ -239,6 +245,13 @@ class OrcaInterface:
             # Strip existing xyzfile lines and clean formatting
             content = re.sub(r'^\s*\*\s+xyzfile.*$', '', content, flags=re.MULTILINE)
             content = content.rstrip() + '\n\n'
+            if calculation_type and calculation_type.lower() == 'mlff':
+                # Add MLFF method block if specified
+                run_mlff_path = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), "run_mlff.sh"))
+                ext_params = f"--model {model_name} --task-name {task_name}"
+                content = content.rstrip() + '\n'
+                content += f'%method\n  ProgExt "{run_mlff_path}"\n  Ext_Params "{ext_params}"\nend\n\n'
+
             content += f"* xyzfile {charge} {multiplicity} {xyz}\n\n"
 
             with open(inp, "w") as f:
