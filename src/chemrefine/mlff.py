@@ -73,8 +73,6 @@ class MLFFCalculator:
         optimizer.run(fmax=fmax, steps=steps)
         return atoms
 
-    
-    
 class MLFFJobSubmitter:
     """
     Generate and submit SLURM jobs for MLFF calculations.

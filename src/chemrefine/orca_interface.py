@@ -247,7 +247,7 @@ class OrcaInterface:
             content = content.rstrip() + '\n\n'
             if calculation_type and calculation_type.lower() == 'mlff':
                 # Add MLFF method block if specified
-                run_mlff_path = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), "run_mlff.sh"))
+                run_mlff_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "run_mlff.sh"))
                 ext_params = f"--model {model_name} --task-name {task_name}"
                 content = content.rstrip() + '\n'
                 content += f'%method\n  ProgExt "{run_mlff_path}"\n  Ext_Params "{ext_params}"\nend\n\n'
