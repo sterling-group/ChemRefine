@@ -1,6 +1,5 @@
 import logging
 import os
-import logging
 from typing import List, Tuple, Optional
 from ase.optimize import LBFGS
 from ase.io import read
@@ -15,7 +14,7 @@ class MLFFCalculator:
     def __init__(
         self,
         model_name: str,
-        device: str = "cpu",
+        device: str = "cuda",
         model_path: Optional[str] = None,
         task_name: str = "mace_off"
     ):
@@ -39,8 +38,10 @@ class MLFFCalculator:
     def _setup_mace(self):
         from mace.calculators import mace_off, mace_mp
         if self.task_name == "mace_off":
+            logging.info(f"Using MACE OFF model: {self.model_name} on device: {self.device}")   
             return mace_off(model=self.model_name, device=self.device)
         elif self.task_name == "mace_mp":
+            logging.info(f"Using MACE MP model: {self.model_name} on device: {self.device}")
             return mace_mp(model=self.model_name, device=self.device)
         else:
             raise ValueError(f"Unsupported MACE task name: {self.task_name}")
@@ -51,6 +52,7 @@ class MLFFCalculator:
             model_name=self.model_name,
             device=self.device,
         )
+        logging.info(f"Using FAIRChem model: {self.model_name} on device: {self.device}")
         return FAIRChemCalculator(predictor, task_name=self.task_name)
 
     def _setup_chgnet(self):
