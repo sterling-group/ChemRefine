@@ -151,6 +151,7 @@ class OrcaJobSubmitter:
             self.scratch_dir = "./tmp/orca_scratch"
 
         header_name = "mlff.slurm.header" if calculation_type.lower() == "mlff" else "orca.slurm.header"
+        logging.info(f"Using SLURM header template: {header_name}")
         header_template_path = Path(os.path.abspath(template_dir)) / header_name
 
         if not header_template_path.is_file():
