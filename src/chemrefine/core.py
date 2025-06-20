@@ -5,8 +5,6 @@ from .parse import ArgumentParser
 from .refine import StructureRefiner
 from .utils import Utility
 from .orca_interface import OrcaInterface, OrcaJobSubmitter
-from .mlff import MLFFCalculator, MLFFJobSubmitter
-from pathlib import Path
 import shutil
 import sys
 
