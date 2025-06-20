@@ -226,7 +226,7 @@ class OrcaInterface:
     def __init__(self):
         self.utility = Utility()
 
-    def create_input(self, xyz_files, template, charge, multiplicity, output_dir='./', calculation_type=None,model_name=None,task_name=None):
+    def create_input(self, xyz_files, template, charge, multiplicity, output_dir='./', calculation_type=None,model_name=None,task_type=None):
 
         input_files, output_files = [], []
         logging.debug(f"output_dir IN create_input: {output_dir}")
@@ -249,7 +249,7 @@ class OrcaInterface:
             if calculation_type and calculation_type.lower() == 'mlff':
                 # Add MLFF method block if specified
                 run_mlff_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "run_mlff.sh"))
-                ext_params = f"--model {model_name} --task-name {task_name}"
+                ext_params = f"--model {model_name} --task-name {task_type}"
                 content = content.rstrip() + '\n'
                 content += f'%method\n  ProgExt "{run_mlff_path}"\n  Ext_Params "{ext_params}"\nend\n\n'
 
