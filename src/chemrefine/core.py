@@ -89,7 +89,7 @@ class ChemRefiner:
         xyz_filenames = [dst_xyz]
 
         input_files, output_files = self.orca.create_input(
-            xyz_filenames, template_inp, charge, multiplicity, output_dir=step_dir,calculation_type=calculation_type,model_name=None,task_name=None
+            xyz_filenames, template_inp, charge, multiplicity, output_dir=step_dir,calculation_type=calculation_type,model_name=model_name,task_name=task_name
         )
 
         return step_dir, input_files, output_files
@@ -134,7 +134,7 @@ class ChemRefiner:
 
         # Create ORCA input files in step_dir
         input_files, output_files = self.orca.create_input(
-            xyz_filenames, input_template_dst, charge, multiplicity, output_dir=step_dir,calculation_type=calculation_type,model_name=None, task_name=None
+            xyz_filenames, input_template_dst, charge, multiplicity, output_dir=step_dir,calculation_type=calculation_type,model_name=model_name, task_name=task_name
         )
 
         return step_dir, input_files, output_files
