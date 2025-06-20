@@ -105,14 +105,12 @@ charge: 0
 multiplicity: 1
 steps:
   - step: 1
-    template: "step1.inp"
     calculation_type: "GOAT"
     sampling:
       method: "integer"
       parameters:
         count: 10
   - step: 2
-    template: "step2.inp"
     calculation_type: "DFT"
     charge: -1                  # <--- Step-specific override
     multiplicity: 2            # <--- Step-specific override
