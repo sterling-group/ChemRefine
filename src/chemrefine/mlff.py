@@ -109,29 +109,29 @@ def serve_mlff(model_name, task_name, device="cuda", port=50051):
                 energy, forces = calc.get_single_point(atoms)
                 result = pickle.dumps((energy, forces))
                 conn.sendall(result)    
-    
+
 def query_mlff_server(atoms, port=50051):
-    """
-    Send atoms to a running MLFF server and receive energy/forces.
+        """
+        Send atoms to a running MLFF server and receive energy/forces.
 
-    Args:
-        atoms (ASE Atoms): Structure to evaluate.
-        port (int): Port to connect to.
+        Args:
+            atoms (ASE Atoms): Structure to evaluate.
+            port (int): Port to connect to.
 
-    Returns:
-        tuple: (energy, forces)
-    """
-    import socket
-    import pickle
+        Returns:
+            tuple: (energy, forces)
+        """
+        import socket
+        import pickle
 
-    data = pickle.dumps(atoms)
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect(("localhost", port))
-        s.sendall(data)
-        response = b""
-        while True:
-            packet = s.recv(4096)
-            if not packet:
-                break
-            response += packet
-    return pickle.loads(response)
+        data = pickle.dumps(atoms)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect(("localhost", port))
+            s.sendall(data)
+            response = b""
+            while True:
+                packet = s.recv(4096)
+                if not packet:
+                    break
+                response += packet
+        return pickle.loads(response)
