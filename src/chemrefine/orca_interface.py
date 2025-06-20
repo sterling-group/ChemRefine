@@ -31,7 +31,7 @@ class OrcaJobSubmitter:
         self.utility = Utility()
         self.device = device = "cuda" 
 
-    def submit_files(self, input_files, max_cores=32, template_dir=".", output_dir=".",calculation_type="dft"):
+    def submit_files(self, input_files, max_cores=32, template_dir=".", output_dir="."):
         """
         Submits multiple ORCA input files to SLURM, managing PAL values, active job tracking,
         and ensuring that the total PAL usage does not exceed max_cores.
@@ -71,7 +71,6 @@ class OrcaJobSubmitter:
                 pal_value=pal_value,
                 template_dir=template_dir,
                 output_dir=output_dir,
-                calculation_type=calculation_type,
                 device=self.device
             )
 
@@ -232,7 +231,7 @@ class OrcaInterface:
     def __init__(self):
         self.utility = Utility()
 
-    def create_input(self, xyz_files, template, charge, multiplicity, output_dir='./', calculation_type=None,model_name=None,task_type=None,device='cuda'):
+    def create_input(self, xyz_files, template, charge, multiplicity, output_dir='./', calculation_type=None,model_name=None,task_name=None,device='cuda'):
 
         input_files, output_files = [], []
         logging.debug(f"output_dir IN create_input: {output_dir}")
@@ -255,7 +254,7 @@ class OrcaInterface:
             if calculation_type and calculation_type.lower() == 'mlff':
                 # Add MLFF method block if specified
                 run_mlff_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "run_mlff.sh"))
-                ext_params = f"--model_name {model_name} --task_type {task_type} --device {device}"
+                ext_params = f"--model_name {model_name} --task_name {task_name} --device {device}"
                 content = content.rstrip() + '\n'
                 content += f'%method\n  ProgExt "{run_mlff_path}"\n  Ext_Params "{ext_params}"\nend\n\n'
 

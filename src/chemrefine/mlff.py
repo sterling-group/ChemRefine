@@ -17,33 +17,33 @@ class MLFFCalculator:
         model_name: str,
         device: str = "cpu",
         model_path: Optional[str] = None,
-        task_type: str = "mace_off"
+        task_name: str = "mace_off"
     ):
         self.model_name = model_name
         self.device = device
-        self.task_type = task_type
+        self.task_name = task_name
         self.model_path = model_path
         self.calculator = self._setup_calculator()
 
     def _setup_calculator(self):
-        """Initialize and return the correct ASE calculator based on task_type."""
-        if self.task_type.startswith("mace"):
+        """Initialize and return the correct ASE calculator based on task_name."""
+        if self.task_name.startswith("mace"):
             return self._setup_mace()
-        elif self.task_type.startswith(("omol", "omat", "odac", "uma", "fairchem")):
+        elif self.task_name.startswith(("omol", "omat", "odac", "uma", "fairchem")):
             return self._setup_fairchem()
-        elif self.task_type.startswith("chgnet"):
+        elif self.task_name.startswith("chgnet"):
             return self._setup_chgnet()
         else:
-            raise ValueError(f"Unsupported task name: {self.task_type}")
+            raise ValueError(f"Unsupported task name: {self.task_name}")
 
     def _setup_mace(self):
         from mace.calculators import mace_off, mace_mp
-        if self.task_type == "mace_off":
+        if self.task_name == "mace_off":
             return mace_off(model=self.model_name, device=self.device)
-        elif self.task_type == "mace_mp":
+        elif self.task_name == "mace_mp":
             return mace_mp(model=self.model_name, device=self.device)
         else:
-            raise ValueError(f"Unsupported MACE task name: {self.task_type}")
+            raise ValueError(f"Unsupported MACE task name: {self.task_name}")
 
     def _setup_fairchem(self):
         from fairchem.core import pretrained_mlip, FAIRChemCalculator
@@ -51,7 +51,7 @@ class MLFFCalculator:
             model_name=self.model_name,
             device=self.device,
         )
-        return FAIRChemCalculator(predictor, task_type=self.task_type)
+        return FAIRChemCalculator(predictor, task_name=self.task_name)
 
     def _setup_chgnet(self):
         from chgnet.model import CHGNet
@@ -124,7 +124,7 @@ class MLFFJobSubmitter:
         model_name: str = "uma-s-1",
         fmax: float = 0.03,
         steps: int = 200,
-        task_type: str = "mace_off"
+        task_name: str = "mace_off"
     ) -> str:
         """
         Create a SLURM script for an MLFF optimization.
@@ -146,7 +146,7 @@ class MLFFJobSubmitter:
             Force convergence criterion.
         steps : int, optional
             Maximum optimization steps.
-        task_type : str, optional
+        task_name : str, optional
             MLFF task name.
 
         Returns
@@ -183,7 +183,7 @@ class MLFFJobSubmitter:
             f.write("\n".join(sbatch) + "\n\n")
             f.write("\n".join(non) + "\n\n")
             f.write(
-                f"python -m chemrefine.mlff_runner {xyz_file} --model {model_name} --task-name {task_type}"
+                f"python -m chemrefine.mlff_runner {xyz_file} --model {model_name} --task-name {task_name}"
             )
             device = self.infer_device_from_slurm(header)
             logging.info(f"Inferred device from header: {device}")
@@ -201,7 +201,7 @@ class MLFFJobSubmitter:
         model_name: str = "medium",
         fmax: float = 0.03,
         steps: int = 200,
-        task_type: str = "mace_off"
+        task_name: str = "mace_off"
     ):
         """
         Submit multiple MLFF XYZ files to SLURM and monitor their progress.
@@ -222,7 +222,7 @@ class MLFFJobSubmitter:
             Force convergence criterion.
         steps : int, optional
             Maximum optimization steps.
-        task_type : str, optional
+        task_name : str, optional
             MLFF task name.
         """
         active_jobs = {}
@@ -251,7 +251,7 @@ class MLFFJobSubmitter:
                 model_name=model_name,
                 fmax=fmax,
                 steps=steps,
-                task_type=task_type
+                task_name=task_name
             )
 
             job_id = self.utility.submit_job(Path(slurm_script))
