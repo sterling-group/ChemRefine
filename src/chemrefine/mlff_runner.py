@@ -3,6 +3,8 @@ from ase import Atoms
 from chemrefine.mlff import MLFFCalculator
 from chemrefine.utils_extopt import read_input, read_xyzfile, write_engrad, process_output
 import logging
+import torch
+logging.basicConfig(filename="mlff_debug.log", level=logging.INFO)
 
 def main():
     parser = argparse.ArgumentParser(description="ORCA external wrapper using MLFF.")
@@ -13,10 +15,18 @@ def main():
     parser.add_argument("--model-path", default=None, help="Optional path to a local model checkpoint")
     args = parser.parse_args()
 
+    if args.device == "cuda":
+        print(f"Using device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
+        logging.info(f"CUDA available: {torch.cuda.is_available()}")
+        if torch.cuda.is_available():
+            logging.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
+
     xyzname, charge, mult, ncores, dograd = read_input(args.inputfile)
     atom_types, coordinates = read_xyzfile(xyzname)
     atoms = Atoms(symbols=atom_types, positions=coordinates)
     atoms = Atoms(symbols=atom_types, positions=coordinates)
+
+
     logging.info(f"Running MLFF with model {args.model_name} on {args.device} for task {args.task_name}")
     # Only set charge/mult if backend supports it
     if args.task_name.startswith(("uma", "omol", "odac", "omat", "fairchem")):
