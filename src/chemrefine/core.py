@@ -433,7 +433,7 @@ class ChemRefiner:
 
         previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
 
-    logging.info("ChemRefine pipeline completed.")
+        logging.info("ChemRefine pipeline completed.")
 
 def main():
     ChemRefiner().run()
