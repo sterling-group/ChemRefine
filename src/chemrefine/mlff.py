@@ -10,82 +10,70 @@ from pathlib import Path
 import time
 
 class MLFFCalculator:
-    """Flexible MLFF calculator supporting multiple backend models."""
+    """Flexible MLFF calculator supporting MACE, UMA (FairChem), CHGNet, etc."""
 
     def __init__(
         self,
         model_name: str,
         device: str = "cpu",
         model_path: Optional[str] = None,
-        task_name: str = "mace_off"  # Default task for MACE,
-        ):
-        """
-        Initialize the MLFF calculator.
-
-        Parameters
-        ----------
-        model_name : str
-            Name of the MLFF model (e.g. "mace", "uma-s-1").
-        device : str, optional
-            Device for model evaluation ("cpu" or "cuda").
-        model_path : str, optional
-            Path to a local model checkpoint.
-        """
+        task_name: str = "mace_off"
+    ):
         self.model_name = model_name
         self.device = device
-        self.task_name = task_name  
+        self.task_name = task_name
+        self.model_path = model_path
+        self.calculator = self._setup_calculator()
 
-        if task_name.startswith("mace"):
-            self._setup_mace()
-        elif task_name.startswith("omol") or task_name.startswith("omat") or task_name.startswith("odac"):
-            self._setup_fairchem()
+    def _setup_calculator(self):
+        """Initialize and return the correct ASE calculator based on task_name."""
+        if self.task_name.startswith("mace"):
+            return self._setup_mace()
+        elif self.task_name.startswith(("omol", "omat", "odac", "uma", "fairchem")):
+            return self._setup_fairchem()
+        elif self.task_name.startswith("chgnet"):
+            return self._setup_chgnet()
         else:
-            raise ValueError(f"Unknown task name: {task_name}")
+            raise ValueError(f"Unsupported task name: {self.task_name}")
 
     def _setup_mace(self):
-        from mace.calculators import mace_off, mace_mp  # if needed
-
+        from mace.calculators import mace_off, mace_mp
         if self.task_name == "mace_off":
-            self.calculator = mace_off(model=self.model_name, device=self.device)
+            return mace_off(model=self.model_name, device=self.device)
         elif self.task_name == "mace_mp":
-            self.calculator = mace_mp(model=self.model_name, device=self.device)
+            return mace_mp(model=self.model_name, device=self.device)
         else:
             raise ValueError(f"Unsupported MACE task name: {self.task_name}")
 
-    def _setup_fairchem(self, model_name="uma-s-1"):
-        """Setup the FairChem calculator."""
+    def _setup_fairchem(self):
         from fairchem.core import pretrained_mlip, FAIRChemCalculator
         predictor = pretrained_mlip.get_predict_unit(
-            model_name=model_name,
+            model_name=self.model_name,
             device=self.device,
-            #TODO currently offline models don't work on new FAIRCHEM checkpoint_path=None  # Use default or specify a path
         )
+        return FAIRChemCalculator(predictor, task_name=self.task_name)
 
-        self.calc = FAIRChemCalculator(predictor, self.task_name)
+    def _setup_chgnet(self):
+        from chgnet.model import CHGNet
+        from chgnet.calculators import CHGNetCalculator
+        model = CHGNet.load(self.model_path) if self.model_path else CHGNet.load()
+        return CHGNetCalculator(model=model)
+
+    def get_single_point(self, atoms: Atoms) -> Tuple[float, List[float]]:
+        """Compute energy and gradient using the configured MLFF."""
+        atoms.calc = self.calculator
+        from chemrefine.utils_extopt import process_output
+        return process_output(atoms)
+
+    def calculate(self, atoms: Atoms, fmax: float = 0.03, steps: int = 200) -> Atoms:
+        """Optional: geometry optimization using LBFGS."""
+        atoms.calc = self.calculator
+        from ase.optimize import LBFGS
+        optimizer = LBFGS(atoms, logfile=None)
+        optimizer.run(fmax=fmax, steps=steps)
+        return atoms
+
     
-    def calculate(self, atoms: Atoms, fmax: float = 0.03, steps: int = 200) -> Tuple[List[List], float]:
-            """
-            Optimize geometry using the selected MLFF.
-
-            Parameters
-            ----------
-            atoms : Atoms
-                ASE Atoms object with initial geometry.
-            fmax : float, optional
-                Force convergence criterion.
-            steps : int, optional
-                Maximum number of optimization steps.
-
-            Returns
-            -------
-            tuple
-                Optimized coordinates and energy in Hartree.
-            """
-            atoms.calc = self.calculator
-            optimizer = LBFGS(atoms, logfile=None)
-            optimizer.run(fmax=fmax, steps=steps)
-
-            return atoms
     
 class MLFFJobSubmitter:
     """
@@ -288,99 +276,3 @@ class MLFFJobSubmitter:
             time.sleep(30)
 
         logging.info("All MLFF calculations finished.")
-
-def run_mlff_calculation(
-    xyz_path: str,
-    model_name: str,
-    task_name: str = "mace_off",
-    device: Optional[str] = "cpu",
-    model_path: Optional[str] = None,
-    fmax: float = 0.03,
-    steps: int = 200
-) -> Tuple[str, List[List], float]:
-    """
-    Run MLFF optimization and write the result to a .opt.extxyz file.
-
-    Parameters
-    ----------
-    xyz_path : str
-        Path to the input XYZ file.
-    model_name : str
-        MLFF model size (e.g., "small", "medium", "large").
-    task_name : str
-        Backend model task (e.g., "mace_off", "uma-s-1").
-    device : str, optional
-        Computation device ("cpu" or "cuda").
-    model_path : str, optional
-        Path to a local model checkpoint.
-    fmax : float, optional
-        Force convergence criterion.
-    steps : int, optional
-        Maximum number of optimization steps.
-
-    Returns
-    -------
-    output_path : str
-        Path to the written optimized XYZ file.
-    coords : list of [element, x, y, z]
-        Optimized atomic coordinates.
-    energy : float
-        Final energy in Hartree.
-    """
-    atoms = read(xyz_path)
-    calculator = MLFFCalculator(
-        model_name=model_name,
-        task_name=task_name,
-        device=device,
-        model_path=model_path
-    )
-    atoms = calculator.calculate(atoms, fmax=fmax, steps=steps)
-    energy = atoms.get_total_energy()  # Energy in eV
-    energy /= 27.211386245988  # Convert eV to Hartree
-    coords = [[atom.symbol, *atom.position] for atom in atoms]
-    base = xyz_path.rsplit(".", 1)[0]
-    output_path = f"{base}.opt.extxyz"
-
-    utility = Utility()
-    utility.write_single_xyz(atoms, output_path)
-
-    return output_path
-
-def parse_mlff_output(xyz_paths: List[str]) -> Tuple[List[List[List]], List[float], List[List[List[float]]]]:
-    """
-    Parse multiple MLFF-optimized XYZ files. Assume you feed a list of pre-optimized XYZ files and then later optimized. 
-
-    Parameters
-    ----------
-    xyz_paths : list of str
-        List of input XYZ file paths. If a corresponding .opt.extxyz file exists, it will be used.
-
-    Returns
-    -------
-    all_coords : list of list of [element, x, y, z]
-        Atomic coordinates for each structure.
-    all_energies : list of float
-        Energies in Hartree for each structure.
-    all_forces : list of list of [fx, fy, fz]
-        Forces per atom in Hartree/Å for each structure.
-    """
-    all_coords = []
-    all_energies = []
-    all_forces = []
-
-    for xyz_path in xyz_paths:
-        base, _ = os.path.splitext(xyz_path)
-        opt_path = f"{base}.opt.extxyz"
-        if os.path.exists(opt_path):
-            xyz_path = opt_path
-
-        atoms = read(xyz_path, format="extxyz")
-        energy_ha = atoms.get_total_energy() / 27.211386245988
-        forces_ha = atoms.get_forces() / 27.211386245988
-        coords = [[atom.symbol, *atom.position] for atom in atoms]
-
-        all_coords.append(coords)
-        all_energies.append(energy_ha)
-        all_forces.append(forces_ha.tolist())
-
-    return all_coords, all_energies, all_forces
