@@ -254,7 +254,7 @@ class OrcaInterface:
             if calculation_type and calculation_type.lower() == 'mlff':
                 # Add MLFF method block if specified
                 run_mlff_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "run_mlff.sh"))
-                ext_params = f"--model_name {model_name} --task_name {task_name} --device {device}"
+                ext_params = f"--model_name {model_name} --task_name {task_name} --device {device} --server"
                 content = content.rstrip() + '\n'
                 content += f'%method\n  ProgExt "{run_mlff_path}"\n  Ext_Params "{ext_params}"\nend\n\n'
 
