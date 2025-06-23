@@ -110,28 +110,35 @@ def serve_mlff(model_name, task_name, device="cuda", port=50051):
                 result = pickle.dumps((energy, forces))
                 conn.sendall(result)    
 
-def query_mlff_server(atoms, port=50051):
-        """
-        Send atoms to a running MLFF server and receive energy/forces.
+def query_mlff_server(atoms, host='127.0.0.1', port=8888):
+    """
+    Queries the MLFF server for energy and forces for the given Atoms object.
 
-        Args:
-            atoms (ASE Atoms): Structure to evaluate.
-            port (int): Port to connect to.
+    Parameters
+    ----------
+    atoms : ase.Atoms
+        Atomic structure for inference.
+    host : str
+        Server host address.
+    port : int
+        Port number the server is bound to.
 
-        Returns:
-            tuple: (energy, forces)
-        """
-        import socket
-        import pickle
-
-        data = pickle.dumps(atoms)
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect(("localhost", port))
-            s.sendall(data)
-            response = b""
-            while True:
-                packet = s.recv(4096)
-                if not packet:
-                    break
-                response += packet
-        return pickle.loads(response)
+    Returns
+    -------
+    Tuple[float, ndarray]
+        Energy and forces from the server.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.connect((host, port))
+        payload = pickle.dumps(atoms)
+        s.sendall(struct.pack(">I", len(payload)) + payload)
+        length_data = s.recv(4)
+        result_len = struct.unpack(">I", length_data)[0]
+        result = b""
+        while len(result) < result_len:
+            chunk = s.recv(result_len - len(result))
+            if not chunk:
+                raise RuntimeError("Connection lost.")
+            result += chunk
+        energy, forces = pickle.loads(result)
+        return energy, forces
