@@ -31,7 +31,7 @@ class OrcaJobSubmitter:
         self.utility = Utility()
         self.device = device = "cuda" 
 
-    def submit_files(self, input_files, max_cores=32, template_dir=".", output_dir="."):
+    def submit_files(self, input_files, max_cores=32, template_dir=".", output_dir=".",device=None,calculation_type='DFT',model_name=None,task_name=None):
         """
         Submits multiple ORCA input files to SLURM, managing PAL values, active job tracking,
         and ensuring that the total PAL usage does not exceed max_cores.
@@ -71,7 +71,11 @@ class OrcaJobSubmitter:
                 pal_value=pal_value,
                 template_dir=template_dir,
                 output_dir=output_dir,
-                device=self.device
+                device=self.device,
+                model_name=model_name,
+                task_name=task_name,
+                calculation_type=calculation_type
+
             )
 
             job_id = self.utility.submit_job(slurm_script)
@@ -125,6 +129,9 @@ class OrcaJobSubmitter:
     output_dir: str = ".",
     job_name: str = None,
     device: str = "cuda",
+    calculation_type: str = "dft",
+    model_name: str = "uma-s-1",
+    task_name: str = "omol"
 ):
         """
         Generate a SLURM script by combining a user-provided header with a consistent footer.
@@ -213,8 +220,18 @@ class OrcaJobSubmitter:
             f.write(f"cp {input_file} $SCRATCH_DIR/ || {{ echo 'Error: Failed to copy input file'; exit 1; }}\n")
             f.write("cd $SCRATCH_DIR || { echo 'Error: Failed to change directory'; exit 1; }\n\n")
 
-            f.write("export OMP_NUM_THREADS=1\n")
-            f.write(f"$ORCA_EXEC {input_file.name} > $OUTPUT_DIR/{job_name}.out || {{ echo 'Error: ORCA execution failed.'; exit 1; }}\n\n")
+            if calculation_type.lower() == "mlff":
+                f.write("# Start MLFF server in background\n")
+                f.write(f"python -m chemrefine.mlff_server --model {model_name} --task-name {task_name} --device {device} &\n")
+                f.write("SERVER_PID=$!\n")
+                f.write("sleep 3\n")
+                f.write("extinp=$(ls *.extinp.tmp)\n")
+                f.write("python -m chemrefine.mlff_runner $extinp --use-server\n")
+                f.write("kill $SERVER_PID\n\n")
+            else:
+                f.write("export OMP_NUM_THREADS=1\n")
+                f.write(f"$ORCA_EXEC {input_file.name} > $OUTPUT_DIR/{job_name}.out || {{ echo 'Error: ORCA execution failed.'; exit 1; }}\n\n")
+
 
             # File copy commands
             f.write("cp *.out *.xyz *.finalensemble.*.xyz *.finalensemble.xyz $OUTPUT_DIR \n")
@@ -254,7 +271,7 @@ class OrcaInterface:
             if calculation_type and calculation_type.lower() == 'mlff':
                 # Add MLFF method block if specified
                 run_mlff_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "run_mlff.sh"))
-                ext_params = f"--model_name {model_name} --task_name {task_name} --device {device} --server"
+                ext_params = f"--model_name {model_name} --task_name {task_name} --device {device} --use-server"
                 content = content.rstrip() + '\n'
                 content += f'%method\n  ProgExt "{run_mlff_path}"\n  Ext_Params "{ext_params}"\nend\n\n'
 
