@@ -223,7 +223,7 @@ class OrcaJobSubmitter:
 
             if calculation_type.lower() == "mlff":
                 f.write("# Start MLFF socket server before ORCA\n")
-                f.write(f"python -m chemrefine.server --model {model_name} --task-name {task_name} --device {device} --bind {bind} &\n")
+                f.write(f"python -m chemrefine.server --model {model_name} --task-name {task_name} --device {device} --bind {bind} & > $OUTPUT_DIR/server.log 2>&1 & \n")
                 f.write("SERVER_PID=$!\n")
                 f.write("sleep 10\n")
                 f.write(f"$ORCA_EXEC {input_file.name} > $OUTPUT_DIR/{job_name}.out || {{ echo 'Error: ORCA execution failed.'; kill $SERVER_PID; exit 1; }}\n")
