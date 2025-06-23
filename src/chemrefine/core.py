@@ -44,7 +44,6 @@ class ChemRefiner:
         logging.info(f"Output directory set to: {self.output_dir}")
 
         # === Instantiate components AFTER config ===
-        self.mlff_submitter = MLFFJobSubmitter()
         self.refiner = StructureRefiner()
         self.utils = Utility()
         self.orca = OrcaInterface()
@@ -212,7 +211,7 @@ class ChemRefiner:
             logging.info(f"Step directory {step_dir} does not exist. Will run this step.")
             return None, None, None
 
-    def submit_orca_jobs(self, input_files, cores, step_dir,device='cuda',calculation_type='dft'):
+    def submit_orca_jobs(self, input_files, cores, step_dir,device='cuda',calculation_type='dft', model_name=None, task_name=None):
         """
         Submits ORCA jobs for each input file in the step directory using the OrcaJobSubmitter.
 
@@ -233,6 +232,10 @@ class ChemRefiner:
                 max_cores=cores,
                 template_dir=self.template_dir,
                 output_dir=step_dir,
+                calculation_type=calculation_type,
+                model_name=model_name,
+                task_name=task_name
+                
                
             )
         except Exception as e:
@@ -268,71 +271,7 @@ class ChemRefiner:
 
         return filtered_coordinates, filtered_ids
 
-    def run_mlff_step(
-        self,
-        step_number: int,
-        model_name: str,
-        task_name: str,
-        sample_method: str,
-        parameters: dict,
-        previous_coordinates,
-        previous_ids
-    ):
-        """
-        Handles MLFF job preparation, submission, parsing, and result filtering for a given step.
-
-        Returns
-        -------
-        tuple: (filtered_coordinates, filtered_ids, step_dir, xyz_files)
-        """
-        from .mlff import parse_mlff_output
-        from ase.io import read
-
-        if step_number == 1:
-            step_dir, xyz_files = self.prepare_mlff_step1_directory(step_number)
-            # Generate initial IDs for step 1
-            structures = read(xyz_files[0], index=":")
-            previous_ids = list(range(len(structures)))
-        else:
-            step_dir, xyz_files = self.prepare_mlff_directory(
-                step_number,
-                previous_coordinates,
-                previous_ids,
-            )
-
-        original_dir = os.getcwd()
-        logging.info(f"Switching to working directory: {step_dir}")
-        os.chdir(step_dir)
-        try:
-            self.mlff_submitter.submit_jobs(
-                xyz_files=xyz_files,
-                template_dir=self.template_dir,
-                output_dir=step_dir,
-                model_name=model_name,
-                fmax=0.03,
-                steps=200,
-                task_name=task_name
-            )
-        except Exception as e:
-            logging.error(f"Failed to submit MLFF jobs in {step_dir}: {e}")
-            raise
-        finally:
-            os.chdir(original_dir)
-            logging.info(f"Returned to original directory: {original_dir}")
-
-        # === Parse MLFF output ===
-        coords, energy, forces = parse_mlff_output(xyz_files)  # Assuming one XYZ per step
-
-        # === Filter ===
-        filtered_coordinates, filtered_ids = self.refiner.filter(
-            coords,
-            energy,
-            previous_ids,
-            sample_method,
-            parameters,
-        )
-
-        return filtered_coordinates, filtered_ids, step_dir, xyz_files
+    
 
     def run(self):
         """
@@ -408,7 +347,7 @@ class ChemRefiner:
 )
 
 
-                self.submit_orca_jobs(input_files, self.max_cores, step_dir,calculation_type=calculation_type)
+                self.submit_orca_jobs(input_files, self.max_cores, step_dir,calculation_type=calculation_type,model_name=model_name, task_name=task_name, device=device)
 
                 coordinates, energies = self.orca.parse_output(
                     output_files,
