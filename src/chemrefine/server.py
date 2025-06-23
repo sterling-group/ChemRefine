@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 from __future__ import annotations
 
 import logging
@@ -27,17 +29,18 @@ app = Flask('umaserver')
 app.config["PROPAGATE_EXCEPTIONS"] = True
 app.debug = True  # Optional: Enables debug mode for Flask
 
-# Add logging
-import logging
+# Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("waitress")
 logger.setLevel(logging.DEBUG)
 
+# Global configuration set by CLI
+model_name: str = ''
+task_name: str = ''
+device: str = ''
 
-model: str = ''  # will hold the selected model
-
-calculators: dict[int | Callable] = {}  # will hold one UMACalculator per server thread
-
+# Store per-thread calculators
+calculators: dict[int | Callable] = {}
 
 @app.route('/calculate', methods=['POST'])
 def run_uma():
@@ -55,9 +58,11 @@ def run_uma():
         thread_id = threading.get_ident()
         global calculators
         if thread_id not in calculators:
-            # FIX THIS LINE IF NEEDED
+            logging.info(f"Initialized MLFF calculator with model: {model_name}, task: {task_name}, device: {device}")
             calculators[thread_id] = MLFFCalculator(
-                model_name=model, task_name="omol", device="cuda"
+                model_name=model_name,
+                task_name=task_name,
+                device=device
             )
 
         calc = calculators[thread_id]
@@ -72,30 +77,23 @@ def run_uma():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-
-
 def run(arglist: list[str]):
-    """Start the UMA calculation server using a specified model file."""
+    """Start the UMA calculation server using the specified MLFF model."""
     args = parse_server_args(arglist)
 
-    # get the absolute path of the model file as a plain string
-    global model
-    model = str(args.model)
+    global model_name, task_name, device
+    model_name = args.model
+    task_name = args.task_name
+    device = args.device
 
-    # set up logging
-    logger = logging.getLogger('waitress')
-    logger.setLevel(logging.DEBUG)
-
-    # start the server
-    logging.info(f'Starting UMA server with model: {model}')
+    logging.info(f'Starting UMA server with model: {model_name}')
     logging.info(f'Listening on {args.bind} with {args.nthreads} threads')
-    waitress.serve(app, listen=args.bind, threads=args.nthreads)
 
+    waitress.serve(app, listen=args.bind, threads=args.nthreads)
 
 def main():
     """Entry point for CLI execution"""
     run(sys.argv[1:])
-
 
 if __name__ == '__main__':
     main()
