@@ -131,7 +131,8 @@ class OrcaJobSubmitter:
     device: str = "cuda",
     calculation_type: str = "dft",
     model_name: str = "uma-s-1",
-    task_name: str = "omol"
+    task_name: str = "omol",
+    bind: str = "127.0.0.1:8888"
 ):
         """
         Generate a SLURM script by combining a user-provided header with a consistent footer.
@@ -187,8 +188,8 @@ class OrcaJobSubmitter:
 
         # Append job-specific SBATCH directives
         sbatch_lines.append(f"#SBATCH --job-name={job_name}")
-        sbatch_lines.append(f"#SBATCH --output={job_name}.out")
-        sbatch_lines.append(f"#SBATCH --error={job_name}.err")
+        sbatch_lines.append(f"#SBATCH --output=slurm_{job_name}.out")
+        sbatch_lines.append(f"#SBATCH --error=slurm_{job_name}.err")
         sbatch_lines.append(f"#SBATCH --ntasks={pal_value}")
         sbatch_lines.append("#SBATCH --cpus-per-task=1")
 
@@ -221,12 +222,11 @@ class OrcaJobSubmitter:
             f.write("cd $SCRATCH_DIR || { echo 'Error: Failed to change directory'; exit 1; }\n\n")
 
             if calculation_type.lower() == "mlff":
-                f.write("# Start MLFF server in background\n")
-                f.write(f"python -m chemrefine.mlff_server --model {model_name} --task-name {task_name} --device {device} &\n")
+                f.write("# Start MLFF socket server before ORCA\n")
+                f.write(f"python -m chemrefine.server --model {model_name} --task-name {task_name} --device {device} --bind {bind} &\n")
                 f.write("SERVER_PID=$!\n")
-                f.write("sleep 3\n")
-                f.write("extinp=$(ls *.extinp.tmp)\n")
-                f.write("python -m chemrefine.mlff_runner $extinp --use-server\n")
+                f.write("sleep 10\n")
+                f.write(f"$ORCA_EXEC {input_file.name} > $OUTPUT_DIR/{job_name}.out || {{ echo 'Error: ORCA execution failed.'; kill $SERVER_PID; exit 1; }}\n")
                 f.write("kill $SERVER_PID\n\n")
             else:
                 f.write("export OMP_NUM_THREADS=1\n")
@@ -248,7 +248,8 @@ class OrcaInterface:
     def __init__(self):
         self.utility = Utility()
 
-    def create_input(self, xyz_files, template, charge, multiplicity, output_dir='./', calculation_type=None,model_name=None,task_name=None,device='cuda'):
+    def create_input(self, xyz_files, template, charge, multiplicity, output_dir='./', calculation_type=None,model_name=None,task_name=None,device='cuda',bind='127.0.0.1:8888'
+):
 
         input_files, output_files = [], []
         logging.debug(f"output_dir IN create_input: {output_dir}")
@@ -270,8 +271,8 @@ class OrcaInterface:
             content = content.rstrip() + '\n\n'
             if calculation_type and calculation_type.lower() == 'mlff':
                 # Add MLFF method block if specified
-                run_mlff_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "run_mlff.sh"))
-                ext_params = f"--model_name {model_name} --task_name {task_name} --device {device} --use-server"
+                run_mlff_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "uma.sh"))
+                ext_params = f"--model_name {model_name} --task_name {task_name} --device {device} --bind {bind}"
                 content = content.rstrip() + '\n'
                 content += f'%method\n  ProgExt "{run_mlff_path}"\n  Ext_Params "{ext_params}"\nend\n\n'
 
