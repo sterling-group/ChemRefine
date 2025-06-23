@@ -73,7 +73,9 @@ def submit_uma(server_url: str,
         traceback.print_exc()
         sys.exit(1)
 
-    return data["energy"], data["gradient"]
+    energy = data["energy"]
+    gradient = data["gradient"]
+    return energy,gradient
 
 
 def run(arglist: list[str]):
