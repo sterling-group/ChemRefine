@@ -16,7 +16,7 @@ class OrcaJobSubmitter:
     Handles job submission, PAL adjustment, and job monitoring.
     """
 
-    def __init__(self, device,orca_executable: str = "orca",scratch_dir: str = None, save_scratch: bool = False):
+    def __init__(self, device,orca_executable: str = "orca",bind: str = "127.0.0.1:8888",scratch_dir: str = None, save_scratch: bool = False):
         """
         Initialize the ORCA job submitter.
 
@@ -30,7 +30,7 @@ class OrcaJobSubmitter:
         self.save_scratch = save_scratch
         self.utility = Utility()
         self.device = device = "cuda" 
-
+        self.bind = bind
     def submit_files(self, input_files, max_cores=32, template_dir=".", output_dir=".",device=None,calculation_type='DFT',model_name=None,task_name=None):
         """
         Submits multiple ORCA input files to SLURM, managing PAL values, active job tracking,
@@ -74,8 +74,8 @@ class OrcaJobSubmitter:
                 device=self.device,
                 model_name=model_name,
                 task_name=task_name,
-                calculation_type=calculation_type
-
+                calculation_type=calculation_type,
+                bind=self.bind
             )
 
             job_id = self.utility.submit_job(slurm_script)
@@ -248,7 +248,17 @@ class OrcaInterface:
     def __init__(self):
         self.utility = Utility()
 
-    def create_input(self, xyz_files, template, charge, multiplicity, output_dir='./', calculation_type=None,model_name=None,task_name=None,device='cuda',bind='127.0.0.1:8888'
+    def create_input(self, 
+                     xyz_files, 
+                     template, 
+                     charge, 
+                     multiplicity, 
+                     output_dir='./', 
+                     calculation_type=None,
+                     model_name=None,
+                     task_name=None,
+                     device='cuda',
+                     bind='127.0.0.1:8888'
 ):
 
         input_files, output_files = [], []
@@ -336,7 +346,7 @@ class OrcaInterface:
                 else:
                     logging.warning(f"No energy found in: {path}")
                     energies.append(None)
-                    
+
         if not coordinates or not energies:
             logging.error(f"Failed to parse {calculation_type.upper()} outputs in directory: {dir}")
 
