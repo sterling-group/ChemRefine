@@ -177,9 +177,8 @@ class ChemRefiner:
         if os.path.exists(step_dir):
             logging.info(f"Checking skip condition for step {step_number} at: {step_dir}")
 
-            if calculation_type.lower() == 'mlff':
-                return None, None,None
-            elif calculation_type.lower() == 'goat':
+            
+            if calculation_type.lower() == 'goat':
                 output_files = [
                     os.path.join(step_dir, f)
                     for f in os.listdir(step_dir)
@@ -261,6 +260,10 @@ class ChemRefiner:
             tuple: Filtered coordinates and IDs.
         """
         coordinates, energies = self.orca.parse_output(output_files, calculation_type, dir=step_dir)
+        if not coordinates or not energies:
+            logging.error(f"No valid coordinates or energies found in outputs for step {step_number}. Exiting pipeline.")
+            logging.error(f"Error in your output file, please check reason for failure")
+            sys.exit(1)
         filtered_ids = list(range(len(energies)))
         self.utils.save_step_csv(energies, filtered_ids, step_number, output_dir=self.output_dir)
         filtered_coordinates, filtered_ids = self.refiner.filter(
@@ -286,8 +289,7 @@ class ChemRefiner:
             logging.info(f"Processing step {step['step']} with calculation type '{step['calculation_type']}'.")
             step_number = step['step']
             calculation_type = step['calculation_type'].lower()
-            
-            # Handle MLFF-specific nested structure
+
             if calculation_type == 'mlff':
                 mlff_config = step.get('mlff', {})
                 model_name = mlff_config.get('model_name', 'mace')
@@ -297,6 +299,7 @@ class ChemRefiner:
             else:
                 model_name = step.get('model_name', 'medium')
                 task_name = step.get('task_name', 'mace_off')
+                device = 'cuda'  # fallback
 
             sample_method = step['sample_type']['method']
             parameters = step['sample_type'].get('parameters', {})
@@ -313,11 +316,12 @@ class ChemRefiner:
             if filtered_coordinates is None or filtered_ids is None:
                 logging.info(f"No valid skip outputs for step {step_number}. Proceeding with normal execution.")
 
+                charge = step.get('charge', self.charge)
+                multiplicity = step.get('multiplicity', self.multiplicity)
+                logging.info(f"Step {step_number} using charge={charge}, multiplicity={multiplicity}")
+
                 if step_number == 1:
                     initial_xyz = self.config.get("initial_xyz", None)
-                    charge = step.get('charge', self.charge)
-                    multiplicity = step.get('multiplicity', self.multiplicity)
-                    logging.info(f"Step {step_number} using charge={charge}, multiplicity={multiplicity}")
                     step_dir, input_files, output_files = self.prepare_step1_directory(
                         step_number,
                         initial_xyz=initial_xyz,
@@ -327,11 +331,13 @@ class ChemRefiner:
                         model_name=model_name,
                         task_name=task_name,
                         device=device
-                        )
+                    )
                 else:
+                    # ✅ Re-check charge and multiplicity for every step, not just step 1
                     charge = step.get('charge', self.charge)
                     multiplicity = step.get('multiplicity', self.multiplicity)
                     logging.info(f"Step {step_number} using charge={charge}, multiplicity={multiplicity}")
+
                     step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
                         step_number,
                         previous_coordinates,
@@ -342,33 +348,39 @@ class ChemRefiner:
                         model_name=model_name,
                         task_name=task_name,
                         device=device
-)
+                    )
 
+                self.submit_orca_jobs(
+                    input_files,
+                    self.max_cores,
+                    step_dir,
+                    calculation_type=calculation_type,
+                    model_name=model_name,
+                    task_name=task_name,
+                    device=device
+                )
 
-                self.submit_orca_jobs(input_files, self.max_cores, step_dir,calculation_type=calculation_type,model_name=model_name, task_name=task_name, device=device)
-
-                coordinates, energies = self.orca.parse_output(
+                filtered_coordinates, filtered_ids = self.parse_and_filter_outputs(
                     output_files,
                     calculation_type,
-                    dir=step_dir,  # Correct output directory used here
-                )
-
-                ids = list(range(len(energies)))
-                filtered_coordinates, filtered_ids = self.refiner.filter(
-                    coordinates,
-                    energies,
-                    ids,
+                    step_number,
                     sample_method,
                     parameters,
+                    step_dir
                 )
-        else:
-            step_dir = os.path.join(self.output_dir, f"step{step_number}")
-            logging.info(f"Skipping step {step_number} using existing outputs.")
 
+                if filtered_coordinates is None or filtered_ids is None:
+                    logging.error(f"Filtering failed at step {step_number}. Exiting pipeline.")
+                    return
 
-        previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
+            else:
+                step_dir = os.path.join(self.output_dir, f"step{step_number}")
+                logging.info(f"Skipping step {step_number} using existing outputs.")
+
+            previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
 
         logging.info("ChemRefine pipeline completed.")
+
 
 def main():
     ChemRefiner().run()
