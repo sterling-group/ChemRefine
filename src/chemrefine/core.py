@@ -57,7 +57,7 @@ class ChemRefiner:
                                 calculation_type='dft',
                                 model_name=None, 
                                 task_name=None,
-                                device='cuda',
+                                device='cpu',
                                 bind='127.0.0.1:8888'):
         
         """ Prepares the directory for the first step by copying the initial XYZ file,"""
@@ -248,7 +248,7 @@ class ChemRefiner:
             logging.info(f"Step directory {step_dir} does not exist. Will run this step.")
             return None, None, None
 
-    def submit_orca_jobs(self, input_files, cores, step_dir,device='cuda',calculation_type='dft', model_name=None, task_name=None):
+    def submit_orca_jobs(self, input_files, cores, step_dir,device='cpu',calculation_type='dft', model_name=None, task_name=None):
         """
         Submits ORCA jobs for each input file in the step directory using the OrcaJobSubmitter.
 
@@ -263,6 +263,7 @@ class ChemRefiner:
         logging.info(f"Current working directory: {os.getcwd()}")
         logging.info(f"Running in {self.scratch_dir} from submit_orca_jobs helper function.")
         try:
+            logging.info(f"Submitting ORCA jobs in {step_dir} with {len(input_files)} input files using {device}.")
             self.orca_submitter = OrcaJobSubmitter(scratch_dir=self.scratch_dir,orca_executable=self.orca_executable,device=device)
             self.orca_submitter.submit_files(
                 input_files=input_files,
@@ -343,7 +344,7 @@ class ChemRefiner:
 
             sample_method = step['sample_type']['method']
             parameters = step['sample_type'].get('parameters', {})
-
+        
             if calculation_type.upper() not in calculation_functions:
                 raise ValueError(f"Invalid calculation type '{calculation_type}' in step {step_number}. Exiting...")
 

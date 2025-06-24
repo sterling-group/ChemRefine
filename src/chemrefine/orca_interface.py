@@ -16,7 +16,7 @@ class OrcaJobSubmitter:
     Handles job submission, PAL adjustment, and job monitoring.
     """
 
-    def __init__(self, device,orca_executable: str = "orca",bind: str = "127.0.0.1:8888",scratch_dir: str = None, save_scratch: bool = False):
+    def __init__(self, device='cpu',orca_executable: str = "orca",bind: str = "127.0.0.1:8888",scratch_dir: str = None, save_scratch: bool = False):
         """
         Initialize the ORCA job submitter.
 
@@ -29,7 +29,7 @@ class OrcaJobSubmitter:
         self.scratch_dir = scratch_dir
         self.save_scratch = save_scratch
         self.utility = Utility()
-        self.device = device = "cuda" 
+        self.device = device  
         self.bind = bind
     def submit_files(self, input_files, max_cores=32, template_dir=".", output_dir=".",device=None,calculation_type='DFT',model_name=None,task_name=None):
         """
@@ -128,7 +128,7 @@ class OrcaJobSubmitter:
     template_dir: str,
     output_dir: str = ".",
     job_name: str = None,
-    device: str = "cuda",
+    device: str = "cpu",
     calculation_type: str = "dft",
     model_name: str = "uma-s-1",
     task_name: str = "omol",
