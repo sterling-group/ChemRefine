@@ -324,17 +324,19 @@ class OrcaInterface:
                 else:
                     logging.warning(f"No coordinate block found in: {path}")
                     coordinates.append([])
-                if calculation_type.lower() == 'mlff':
-                        energy_match = re.findall(r"FINAL SINGLE POINT ENERGY \(From external program\)\s+(-?\d+\.\d+)", content)
-                else:
-                        energy_match = re.findall(r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)", content)
+
+                # Try both standard and external energy formats
+                energy_match = re.findall(
+                    r"FINAL SINGLE POINT ENERGY(?: \(From external program\))?\s+(-?\d+\.\d+)",
+                    content
+                )
                 if energy_match:
                     energy = float(energy_match[-1])
                     energies.append(energy)
                 else:
                     logging.warning(f"No energy found in: {path}")
                     energies.append(None)
-
+                    
         if not coordinates or not energies:
             logging.error(f"Failed to parse {calculation_type.upper()} outputs in directory: {dir}")
 
