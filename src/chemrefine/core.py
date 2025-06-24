@@ -271,8 +271,6 @@ class ChemRefiner:
 
         return filtered_coordinates, filtered_ids
 
-    
-
     def run(self):
         """
         Main pipeline execution function for ChemRefine.
