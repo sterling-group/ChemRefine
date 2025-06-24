@@ -49,7 +49,17 @@ class ChemRefiner:
         self.orca = OrcaInterface()
 
 
-    def prepare_step1_directory(self, step_number, initial_xyz=None,charge=None, multiplicity=None,calculation_type='dft',model_name=None, task_name=None,device='cuda'):
+    def prepare_step1_directory(self, 
+                                step_number, 
+                                initial_xyz=None,
+                                charge=None, 
+                                multiplicity=None,
+                                calculation_type='dft',
+                                model_name=None, 
+                                task_name=None,
+                                device='cuda',
+                                bind='127.0.0.1:8888'):
+        
         """ Prepares the directory for the first step by copying the initial XYZ file,"""
         if charge is None:
             charge = self.charge
@@ -85,12 +95,31 @@ class ChemRefiner:
         xyz_filenames = [dst_xyz]
 
         input_files, output_files = self.orca.create_input(
-            xyz_filenames, template_inp, charge, multiplicity, output_dir=step_dir,calculation_type=calculation_type,model_name=model_name,task_name=task_name,device=device
+            xyz_filenames, 
+            template_inp, 
+            charge, 
+            multiplicity, 
+            output_dir=step_dir,
+            calculation_type=calculation_type,
+            model_name=model_name,
+            task_name=task_name,
+            device=device,
+            bind=bind
         )
 
         return step_dir, input_files, output_files
 
-    def prepare_subsequent_step_directory(self, step_number, filtered_coordinates, filtered_ids,charge=None, multiplicity=None,calculation_type='dft',model_name=None, task_name=None,device='cuda'):
+    def prepare_subsequent_step_directory(self, 
+                                          step_number, 
+                                          filtered_coordinates, 
+                                          filtered_ids,charge=None, 
+                                          multiplicity=None,
+                                          calculation_type='dft',
+                                          model_name=None, 
+                                          task_name=None,
+                                          device='cuda',
+                                          bind='127.0.0.1:8888'
+                                          ):
         """
         Prepares the directory for subsequent steps by writing XYZ files, copying the template input,
         and generating ORCA input files.
@@ -130,7 +159,16 @@ class ChemRefiner:
 
         # Create ORCA input files in step_dir
         input_files, output_files = self.orca.create_input(
-            xyz_filenames, input_template_dst, charge, multiplicity, output_dir=step_dir,calculation_type=calculation_type,model_name=model_name, task_name=task_name,device=device
+            xyz_filenames, 
+            input_template_dst, 
+            charge, 
+            multiplicity, 
+            output_dir=step_dir,
+            calculation_type=calculation_type,
+            model_name=model_name, 
+            task_name=task_name,
+            device=device,
+            bind=bind
         )
 
         return step_dir, input_files, output_files
@@ -295,6 +333,7 @@ class ChemRefiner:
                 model_name = mlff_config.get('model_name', 'mace')
                 task_name = mlff_config.get('task_name', 'mace_off')
                 device = mlff_config.get('device', 'cuda')
+                bind = mlff_config.get('bind','127.0.0.1:8888')
                 logging.info(f"Using MLFF model '{model_name}' with task '{task_name}' for step {step_number}.")
             else:
                 model_name = step.get('model_name', 'medium')
@@ -330,10 +369,10 @@ class ChemRefiner:
                         calculation_type=calculation_type,
                         model_name=model_name,
                         task_name=task_name,
-                        device=device
+                        device=device,
+                        bind=bind
                     )
                 else:
-                    # ✅ Re-check charge and multiplicity for every step, not just step 1
                     charge = step.get('charge', self.charge)
                     multiplicity = step.get('multiplicity', self.multiplicity)
                     logging.info(f"Step {step_number} using charge={charge}, multiplicity={multiplicity}")
@@ -347,7 +386,8 @@ class ChemRefiner:
                         calculation_type=calculation_type,
                         model_name=model_name,
                         task_name=task_name,
-                        device=device
+                        device=device,
+                        bind=bind,
                     )
 
                 self.submit_orca_jobs(
