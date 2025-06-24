@@ -3,7 +3,7 @@
 template_dir: <your_template_directory>
 scratch_dir: <your_scratch_directory>
 output_dir: <your_output_directory>
-
+orca_excutable: <path_to_your_orca_executable>
 # Optional: Override default initial structure (default is /template_dir/step1.xyz)
 initial_xyz: /path/to/your/custom_initial_structure.xyz
 
@@ -26,7 +26,8 @@ steps:
     calculation_type: "MLFF"
     mlff:
       model_name: "medium"      # For MACE: small,medium,large for FAIRCHEM "uma-s-1"
-      task_type: "mace_off"     # For MACE: "mace_off" or "mace_mp", for FairChem:oc20, omat, omol, odac, omc
+      task_name: "mace_off"     # For MACE: "mace_off" or "mace_mp", for FairChem:oc20, omat, omol, odac, omc
+      bind: '127.0.0.1:8888'    # ChemRefine uses a local server to avoid initializing the model multiple times, only adjust this if you know what you're doing. 
     sample_type:
       method: "boltzmann"
       parameters:
