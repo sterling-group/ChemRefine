@@ -1,0 +1,169 @@
+
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+#  Usually these files are written by a python script from a template
+#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+
+target/
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# celery beat schedule file
+celerybeat-schedule
+
+# dotenv
+.env
+.env.local
+.env.*.local
+.env.test
+.env.production
+
+# virtualenv
+venv/
+ENV/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# PyCharm
+.idea/
+
+# Visual Studio Code
+.vscode/
+
+# MacOS metadata
+.DS_Store
+
+__pycache__/auto_goat.cpython-311.pyc
+chemrefine/__pycache__/__init__.cpython-311.pyc
+chemrefine/__pycache__/constants.cpython-311.pyc
+chemrefine/__pycache__/core.cpython-311.pyc
+chemrefine/__pycache__/file_submission.cpython-311.pyc
+chemrefine/__pycache__/mlff_runner.cpython-311.pyc
+chemrefine/__pycache__/mlff.cpython-311.pyc
+chemrefine/__pycache__/mlip.cpython-311.pyc
+chemrefine/__pycache__/orca_interface.cpython-311.pyc
+chemrefine/__pycache__/parse.cpython-311.pyc
+chemrefine/__pycache__/refine.cpython-311.pyc
+chemrefine/__pycache__/utils.cpython-311.pyc
+chemrefine/models/mace-omat-0-medium.model
+chemrefine/models/uma-s-1.pt
+chemrefine/tests/__pycache__/test_chemrefiner_parse.cpython-311-pytest-8.4.0.pyc
+chemrefine/tests/__pycache__/test_chemrefiner_submit.cpython-311-pytest-8.4.0.pyc
+chemrefine/tests/__pycache__/test_init.cpython-311-pytest-8.3.5.pyc
+chemrefine/tests/__pycache__/test_interface.cpython-311-pytest-8.3.5.pyc
+chemrefine/tests/__pycache__/test_mlff.cpython-311-pytest-8.4.0.pyc
+chemrefine/tests/__pycache__/test_orca_submitter.cpython-311-pytest-8.3.5.pyc
+chemrefine/tests/__pycache__/test_orca_submitter.cpython-311-pytest-8.4.0.pyc
+chemrefine/tests/__pycache__/test_refine.cpython-311-pytest-8.3.5.pyc
+chemrefine/tests/__pycache__/test_submitter.cpython-311-pytest-8.3.5.pyc
+chemrefine/tests/__pycache__/test_utils.cpython-311-pytest-8.3.5.pyc
+src/chemrefine/__pycache__/__init__.cpython-311.pyc
+src/chemrefine/__pycache__/constants.cpython-311.pyc
+src/chemrefine/__pycache__/core.cpython-311.pyc
+src/chemrefine/__pycache__/file_submission.cpython-311.pyc
+src/chemrefine/__pycache__/mlff_runner.cpython-311.pyc
+src/chemrefine/__pycache__/mlff.cpython-311.pyc
+src/chemrefine/__pycache__/mlip.cpython-311.pyc
+src/chemrefine/__pycache__/orca_interface.cpython-311.pyc
+src/chemrefine/__pycache__/parse.cpython-311.pyc
+src/chemrefine/__pycache__/refine.cpython-311.pyc
+src/chemrefine/__pycache__/utils.cpython-311.pyc
+src/chemrefine/test.out
+src/chemrefine/models/.gitkeep
+src/chemrefine/models/mace-omat-0-medium.model
+src/chemrefine/models/uma-s-1.pt
+src/chemrefine/tests/__pycache__/test_chemrefiner_parse.cpython-311-pytest-8.4.0.pyc
+src/chemrefine/tests/__pycache__/test_chemrefiner_submit.cpython-311-pytest-8.4.0.pyc
+src/chemrefine/tests/__pycache__/test_init.cpython-311-pytest-8.3.5.pyc
+src/chemrefine/tests/__pycache__/test_interface.cpython-311-pytest-8.3.5.pyc
+src/chemrefine/tests/__pycache__/test_mlff.cpython-311-pytest-8.4.0.pyc
+src/chemrefine/tests/__pycache__/test_orca_submitter.cpython-311-pytest-8.3.5.pyc
+src/chemrefine/tests/__pycache__/test_orca_submitter.cpython-311-pytest-8.4.0.pyc
+src/chemrefine/tests/__pycache__/test_refine.cpython-311-pytest-8.3.5.pyc
+src/chemrefine/tests/__pycache__/test_submitter.cpython-311-pytest-8.3.5.pyc
+src/chemrefine/tests/__pycache__/test_utils.cpython-311-pytest-8.3.5.pyc
+src/chemrefine/tests/data/orca.out

@@ -1,3 +1,8 @@
+# This is an example input file for a sequential ORCA workflow.
+# Replace <your_template_directory>, <your_scratch_directory>, and <your_output_directory>
+template_dir: <your_template_directory>
+scratch_dir: <your_scratch_directory>
+output_dir: <your_output_directory>
 # Sequential ORCA Input Configuration File
 # Define each step with its specific parameters.
 #This workflow reflects using GOAT and refining methods to improve the accuracy
