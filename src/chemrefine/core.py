@@ -230,7 +230,7 @@ class ChemRefiner:
                 output_files = [
                     os.path.join(step_dir, f)
                     for f in os.listdir(step_dir)
-                    if f.endswith('.out') and not f.endswith('.smd.out')
+                    if f.endswith('.out') and not f.endswith('.smd.out') and not f.startswith('slurm')
                 ]
                 if not output_files:
                     logging.warning(f"No .out files found in {step_dir}. Will rerun this step.")
