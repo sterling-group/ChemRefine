@@ -339,6 +339,7 @@ class ChemRefiner:
                 model_name = step.get('model_name', 'medium')
                 task_name = step.get('task_name', 'mace_off')
                 device = 'cuda'  # fallback
+                bind = '127.0.0.1:8888'
 
             sample_method = step['sample_type']['method']
             parameters = step['sample_type'].get('parameters', {})
