@@ -48,7 +48,6 @@ class ChemRefiner:
         self.utils = Utility()
         self.orca = OrcaInterface()
 
-
     def prepare_step1_directory(self, 
                                 step_number, 
                                 initial_xyz=None,
@@ -431,7 +430,6 @@ class ChemRefiner:
             previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
 
         logging.info("ChemRefine pipeline completed.")
-
 
 def main():
     ChemRefiner().run()

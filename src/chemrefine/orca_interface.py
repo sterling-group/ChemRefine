@@ -317,7 +317,7 @@ class OrcaInterface:
                 else:
                     logging.error(f"GOAT ensemble file not found for: {path}")
                     continue
-            if calculation_type.lower() == 'pes':
+            elif calculation_type.lower() == 'pes':
                 coord_blocks = re.findall(
                     r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n",
                     content, re.DOTALL
