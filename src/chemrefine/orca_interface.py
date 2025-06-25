@@ -306,10 +306,7 @@ class OrcaInterface:
             if not os.path.exists(path):
                 logging.warning(f"Output file not found: {path}")
                 continue
-            else:
-                with open(path) as f:
-                    content = f.read()
-                    
+
             if calculation_type.lower() == 'goat':
                 finalensemble_file = path.replace('.out', '.finalensemble.xyz')
                 logging.info(f"Looking for GOAT ensemble file: {finalensemble_file}")
@@ -319,50 +316,41 @@ class OrcaInterface:
                     energies.extend(ens)
                 else:
                     logging.error(f"GOAT ensemble file not found for: {path}")
-                    continue
-            elif calculation_type.lower() == 'pes':
-                coord_blocks = re.findall(
-                    r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n",
-                    content, re.DOTALL
-                )
-                energy_matches = re.findall(
-                    r"FINAL SINGLE POINT ENERGY(?: \(From external program\))?\s+(-?\d+\.\d+)",
-                    content
-                )
-                pair_count = min(len(coord_blocks), len(energy_matches))
-                for i in range(pair_count):
-                    coords = [line.split() for line in coord_blocks[i].strip().splitlines()]
-                    coordinates.append(coords)
-                    energies.append(float(energy_matches[i]))
-                    logging.debug(f"Appended PES geometry #{i+1}: energy={energy_matches[i]}")
+                continue
 
-            
+            if calculation_type.lower() == 'pes':
+                coords, ens = self.parse_pes_output(path)
+                coordinates.extend(coords)
+                energies.extend(ens)
+                continue
 
-                logging.info(f"Parsing standard DFT output for: {path}")
-                coord_block = re.findall(
-                    r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n",
-                    content,
-                    re.DOTALL
-                )
-                if coord_block:
-                    coords = [line.split() for line in coord_block[-1].strip().splitlines()]
-                    coordinates.append(coords)
-                    logging.debug(f"Extracted coordinates block: {coords}")
-                else:
-                    logging.warning(f"No coordinate block found in: {path}")
-                    coordinates.append([])
+            # Standard DFT parsing
+            with open(path) as f:
+                content = f.read()
 
-                # Try both standard and external energy formats
-                energy_match = re.findall(
-                    r"FINAL SINGLE POINT ENERGY(?: \(From external program\))?\s+(-?\d+\.\d+)",
-                    content
-                )
-                if energy_match:
-                    energy = float(energy_match[-1])
-                    energies.append(energy)
-                else:
-                    logging.warning(f"No energy found in: {path}")
-                    energies.append(None)
+            logging.info(f"Parsing standard DFT output for: {path}")
+            coord_block = re.findall(
+                r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n",
+                content, re.DOTALL
+            )
+            if coord_block:
+                coords = [line.split() for line in coord_block[-1].strip().splitlines()]
+                coordinates.append(coords)
+                logging.debug(f"Extracted coordinates block: {coords}")
+            else:
+                logging.warning(f"No coordinate block found in: {path}")
+                coordinates.append([])
+
+            energy_match = re.findall(
+                r"FINAL SINGLE POINT ENERGY(?: \(From external program\))?\s+(-?\d+\.\d+)",
+                content
+            )
+            if energy_match:
+                energy = float(energy_match[-1])
+                energies.append(energy)
+            else:
+                logging.warning(f"No energy found in: {path}")
+                energies.append(None)
 
         if not coordinates or not energies:
             logging.error(f"Failed to parse {calculation_type.upper()} outputs in directory: {dir}")
@@ -410,4 +398,43 @@ class OrcaInterface:
                 i += 1
 
         logging.info(f"Parsed {len(coordinates_list)} structures and {len(energies_list)} energies from {file_path}.")
+        return coordinates_list, energies_list
+
+    def parse_pes_output(self, file_path):
+        """
+        Parses a PES scan ORCA .out file, extracting only final optimized geometries and energies.
+
+        Args:
+            file_path (str): Path to the ORCA output file.
+
+        Returns:
+            tuple: (coordinates_list, energies_list)
+        """
+        coordinates_list = []
+        energies_list = []
+
+        with open(file_path, 'r') as f:
+            content = f.read()
+
+        logging.info(f"Parsing PES output for: {file_path}")
+        blocks = content.split('*** OPTIMIZATION RUN DONE ***')
+
+        for i, block in enumerate(blocks):
+            energy_match = re.findall(
+                r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)", block
+            )
+            coord_match = re.findall(
+                r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n",
+                block, re.DOTALL
+            )
+
+            if energy_match and coord_match:
+                energy = float(energy_match[-1])
+                coords = [line.split() for line in coord_match[-1].strip().splitlines()]
+                energies_list.append(energy)
+                coordinates_list.append(coords)
+                logging.debug(f"Appended PES geometry #{i+1}: energy={energy}")
+            else:
+                logging.warning(f"Skipping PES block #{i+1}: missing energy or coordinates.")
+
         return coordinates_list, energies_list
