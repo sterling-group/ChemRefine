@@ -306,7 +306,10 @@ class OrcaInterface:
             if not os.path.exists(path):
                 logging.warning(f"Output file not found: {path}")
                 continue
-
+            else:
+                with open(path) as f:
+                    content = f.read()
+                    
             if calculation_type.lower() == 'goat':
                 finalensemble_file = path.replace('.out', '.finalensemble.xyz')
                 logging.info(f"Looking for GOAT ensemble file: {finalensemble_file}")
@@ -333,9 +336,7 @@ class OrcaInterface:
                     energies.append(float(energy_matches[i]))
                     logging.debug(f"Appended PES geometry #{i+1}: energy={energy_matches[i]}")
 
-            else:
-                with open(path) as f:
-                    content = f.read()
+            
 
                 logging.info(f"Parsing standard DFT output for: {path}")
                 coord_block = re.findall(
