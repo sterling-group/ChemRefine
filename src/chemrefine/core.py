@@ -5,8 +5,6 @@ from .parse import ArgumentParser
 from .refine import StructureRefiner
 from .utils import Utility
 from .orca_interface import OrcaInterface, OrcaJobSubmitter
-from .mlff import MLFFCalculator, MLFFJobSubmitter
-from pathlib import Path
 import shutil
 import sys
 
@@ -17,18 +15,12 @@ class ChemRefiner:
     job submission, output parsing, and structure refinement based on a YAML configuration.
     It supports multiple steps with different calculation types and sampling methods.
     """
-    def __init__(self):
+    def __init__(self,):
         self.arg_parser = ArgumentParser()
-        self.orca_submitter = OrcaJobSubmitter()
-        self.mlff_submitter = MLFFJobSubmitter()
-        self.refiner = StructureRefiner()
-        self.utils = Utility()
-        self.orca = OrcaInterface()
         self.args, self.qorca_flags = self.arg_parser.parse()
         self.input_yaml = self.args.input_yaml
         self.max_cores = self.args.maxcores
         self.skip_steps = self.args.skip
-        
 
         # === Load the YAML configuration ===
         with open(self.input_yaml, 'r') as file:
@@ -38,37 +30,62 @@ class ChemRefiner:
         self.charge = self.config.get('charge', 0)
         self.multiplicity = self.config.get('multiplicity', 1)
         self.template_dir = os.path.abspath(self.config.get('template_dir', './templates'))
-        self.scratch_dir = self.config.get('scratch_dir')
-        if self.scratch_dir is None:
-            self.scratch_dir = "./scratch"
-        logging.info(f"Using template directory: {self.template_dir}")
-        logging.info(f"Using scratch directory: {self.scratch_dir}")
+        self.scratch_dir = self.config.get('scratch_dir', "./scratch")
+        self.orca_executable = self.config.get('orca_executable', 'orca')
 
-        # === Setup output directory AFTER config is loaded ===
-        output_dir_raw = self.config.get('outputs', './outputs')  # Default to './outputs'
-        self.scratch_dir = os.path.abspath(self.scratch_dir)
+        # === Setup output directory ===
+        output_dir_raw = self.config.get('outputs', './outputs')
         self.output_dir = os.path.abspath(output_dir_raw)
         os.makedirs(self.output_dir, exist_ok=True)
+        self.scratch_dir = os.path.abspath(self.scratch_dir)
+
+        logging.info(f"Using template directory: {self.template_dir}")
+        logging.info(f"Using scratch directory: {self.scratch_dir}")
         logging.info(f"Output directory set to: {self.output_dir}")
 
-        os.makedirs(self.output_dir, exist_ok=True)
+        # === Instantiate components AFTER config ===
+        self.refiner = StructureRefiner()
+        self.utils = Utility()
+        self.orca = OrcaInterface()
 
-    def prepare_step1_directory(self, step_number):
+
+    def prepare_step1_directory(self, 
+                                step_number, 
+                                initial_xyz=None,
+                                charge=None, 
+                                multiplicity=None,
+                                calculation_type='dft',
+                                model_name=None, 
+                                task_name=None,
+                                device='cpu',
+                                bind='127.0.0.1:8888'):
+        
+        """ Prepares the directory for the first step by copying the initial XYZ file,"""
+        if charge is None:
+            charge = self.charge
+        if multiplicity is None:
+            multiplicity = self.multiplicity
+
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         os.makedirs(step_dir, exist_ok=True)        
         logging.debug(f"step_dir BEFORE: {step_dir}")
 
+        # Determine source xyz: use override if provided
+        if initial_xyz is None:
+            src_xyz = os.path.join(self.template_dir, "step1.xyz")
+        else:
+            src_xyz = initial_xyz
 
-        # Copy input files from template_dir to step_dir
-        src_xyz = os.path.join(self.template_dir, "step1.xyz")
         dst_xyz = os.path.join(step_dir, "step1.xyz")
+
         if not os.path.exists(src_xyz):
             raise FileNotFoundError(
-                f"XYZ file '{src_xyz}' not found. Please ensure that 'step1.xyz' exists in the template directory."
+                f"Initial XYZ file '{src_xyz}' not found. Please ensure the path is correct."
             )
+
         shutil.copyfile(src_xyz, dst_xyz)
 
-        # Use template from template_dir directly
+        # Use input template from template_dir
         template_inp = os.path.join(self.template_dir, "step1.inp")
         if not os.path.exists(template_inp):
             raise FileNotFoundError(
@@ -78,12 +95,31 @@ class ChemRefiner:
         xyz_filenames = [dst_xyz]
 
         input_files, output_files = self.orca.create_input(
-            xyz_filenames, template_inp, self.charge, self.multiplicity, output_dir=step_dir
+            xyz_filenames, 
+            template_inp, 
+            charge, 
+            multiplicity, 
+            output_dir=step_dir,
+            calculation_type=calculation_type,
+            model_name=model_name,
+            task_name=task_name,
+            device=device,
+            bind=bind
         )
 
         return step_dir, input_files, output_files
 
-    def prepare_subsequent_step_directory(self, step_number, filtered_coordinates, filtered_ids):
+    def prepare_subsequent_step_directory(self, 
+                                          step_number, 
+                                          filtered_coordinates, 
+                                          filtered_ids,charge=None, 
+                                          multiplicity=None,
+                                          calculation_type='dft',
+                                          model_name=None, 
+                                          task_name=None,
+                                          device='cuda',
+                                          bind='127.0.0.1:8888'
+                                          ):
         """
         Prepares the directory for subsequent steps by writing XYZ files, copying the template input,
         and generating ORCA input files.
@@ -98,6 +134,11 @@ class ChemRefiner:
             input_files (list): List of generated ORCA input files.
             output_files (list): List of expected ORCA output files.
         """
+        if charge is None:
+            charge = self.charge
+        if multiplicity is None:
+            multiplicity = self.multiplicity
+
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         os.makedirs(step_dir, exist_ok=True)
 
@@ -118,20 +159,36 @@ class ChemRefiner:
 
         # Create ORCA input files in step_dir
         input_files, output_files = self.orca.create_input(
-            xyz_filenames, input_template_dst, self.charge, self.multiplicity, output_dir=step_dir
+            xyz_filenames, 
+            input_template_dst, 
+            charge, 
+            multiplicity, 
+            output_dir=step_dir,
+            calculation_type=calculation_type,
+            model_name=model_name, 
+            task_name=task_name,
+            device=device,
+            bind=bind
         )
 
         return step_dir, input_files, output_files
 
-    def prepare_mlff_step1_directory(self, step_number):
+    def prepare_mlff_step1_directory(self, step_number, initial_xyz=None):
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         os.makedirs(step_dir, exist_ok=True)
-        src_xyz = os.path.join(self.template_dir, "step1.xyz")
+
+        if initial_xyz is None:
+            src_xyz = os.path.join(self.template_dir, "step1.xyz")
+        else:
+            src_xyz = initial_xyz
+
         dst_xyz = os.path.join(step_dir, "step1.xyz")
+
         if not os.path.exists(src_xyz):
             raise FileNotFoundError(
-                f"XYZ file '{src_xyz}' not found. Please ensure that 'step1.xyz' exists in the template directory."
+                f"XYZ file '{src_xyz}' not found. Please ensure the path is correct."
             )
+
         shutil.copyfile(src_xyz, dst_xyz)
         return step_dir, [dst_xyz]
 
@@ -158,9 +215,8 @@ class ChemRefiner:
         if os.path.exists(step_dir):
             logging.info(f"Checking skip condition for step {step_number} at: {step_dir}")
 
-            if calculation_type.lower() == 'mlff':
-                return None, None,None
-            elif calculation_type.lower() == 'goat':
+            
+            if calculation_type.lower() == 'goat':
                 output_files = [
                     os.path.join(step_dir, f)
                     for f in os.listdir(step_dir)
@@ -174,7 +230,7 @@ class ChemRefiner:
                 output_files = [
                     os.path.join(step_dir, f)
                     for f in os.listdir(step_dir)
-                    if f.endswith('.out')
+                    if f.endswith('.out') and not f.endswith('.smd.out') and not f.startswith('slurm')
                 ]
                 if not output_files:
                     logging.warning(f"No .out files found in {step_dir}. Will rerun this step.")
@@ -192,7 +248,7 @@ class ChemRefiner:
             logging.info(f"Step directory {step_dir} does not exist. Will run this step.")
             return None, None, None
 
-    def submit_orca_jobs(self, input_files, cores, step_dir):
+    def submit_orca_jobs(self, input_files, cores, step_dir,device='cpu',calculation_type='dft', model_name=None, task_name=None):
         """
         Submits ORCA jobs for each input file in the step directory using the OrcaJobSubmitter.
 
@@ -207,12 +263,18 @@ class ChemRefiner:
         logging.info(f"Current working directory: {os.getcwd()}")
         logging.info(f"Running in {self.scratch_dir} from submit_orca_jobs helper function.")
         try:
-            self.orca_submitter = OrcaJobSubmitter(scratch_dir=self.scratch_dir)
+            logging.info(f"Submitting ORCA jobs in {step_dir} with {len(input_files)} input files using {device}.")
+            self.orca_submitter = OrcaJobSubmitter(scratch_dir=self.scratch_dir,orca_executable=self.orca_executable,device=device)
             self.orca_submitter.submit_files(
                 input_files=input_files,
                 max_cores=cores,
                 template_dir=self.template_dir,
-                output_dir=step_dir
+                output_dir=step_dir,
+                calculation_type=calculation_type,
+                model_name=model_name,
+                task_name=task_name
+                
+               
             )
         except Exception as e:
             logging.error(f"Error while submitting ORCA jobs in {step_dir}: {str(e)}")
@@ -221,7 +283,7 @@ class ChemRefiner:
             os.chdir(original_dir)
             logging.info(f"Returned to original directory: {original_dir}")
 
-    def parse_and_filter_outputs(self, output_files, calculation_type, step_number, sample_method, parameters, step_dir):
+    def parse_and_filter_outputs(self, output_files, calculation_type, step_number, sample_method, parameters, step_dir,previous_ids=None):
         """
         Parses ORCA outputs, saves CSV, filters structures, and moves step files.
 
@@ -237,81 +299,28 @@ class ChemRefiner:
             tuple: Filtered coordinates and IDs.
         """
         coordinates, energies = self.orca.parse_output(output_files, calculation_type, dir=step_dir)
-        filtered_ids = list(range(len(energies)))
-        self.utils.save_step_csv(energies, filtered_ids, step_number, output_dir=self.output_dir)
-        filtered_coordinates, filtered_ids = self.refiner.filter(
-            coordinates, energies, filtered_ids, sample_method, parameters
-        )
+        if not coordinates or not energies:
+            logging.error(f"No valid coordinates or energies found in outputs for step {step_number}. Exiting pipeline.")
+            logging.error(f"Error in your output file, please check reason for failure")
+            sys.exit(1)
+        if previous_ids is None:
+            previous_ids = list(range(len(energies)))  # only for step 1
 
-        #self.utils.move_step_files(step_number, output_dir=step_dir)
+        self.utils.save_step_csv(
+                    energies=energies,
+                    ids=previous_ids,
+                    step=step_number,
+                    output_dir=self.output_dir
+                    )
+        filtered_coordinates, selected_ids = self.refiner.filter(
+                                            coordinates, 
+                                            energies, 
+                                            previous_ids, 
+                                            sample_method, 
+                                            parameters
+                                            )
 
-        return filtered_coordinates, filtered_ids
-
-    def run_mlff_step(
-        self,
-        step_number: int,
-        model_name: str,
-        task_name: str,
-        sample_method: str,
-        parameters: dict,
-        previous_coordinates,
-        previous_ids
-    ):
-        """
-        Handles MLFF job preparation, submission, parsing, and result filtering for a given step.
-
-        Returns
-        -------
-        tuple: (filtered_coordinates, filtered_ids, step_dir, xyz_files)
-        """
-        from .mlff import parse_mlff_output
-        from ase.io import read
-
-        if step_number == 1:
-            step_dir, xyz_files = self.prepare_mlff_step1_directory(step_number)
-            # Generate initial IDs for step 1
-            structures = read(xyz_files[0], index=":")
-            previous_ids = list(range(len(structures)))
-        else:
-            step_dir, xyz_files = self.prepare_mlff_directory(
-                step_number,
-                previous_coordinates,
-                previous_ids,
-            )
-
-        original_dir = os.getcwd()
-        logging.info(f"Switching to working directory: {step_dir}")
-        os.chdir(step_dir)
-        try:
-            self.mlff_submitter.submit_jobs(
-                xyz_files=xyz_files,
-                template_dir=self.template_dir,
-                output_dir=step_dir,
-                model_name=model_name,
-                fmax=0.03,
-                steps=200,
-                task_name=task_name
-            )
-        except Exception as e:
-            logging.error(f"Failed to submit MLFF jobs in {step_dir}: {e}")
-            raise
-        finally:
-            os.chdir(original_dir)
-            logging.info(f"Returned to original directory: {original_dir}")
-
-        # === Parse MLFF output ===
-        coords, energy, forces = parse_mlff_output(xyz_files)  # Assuming one XYZ per step
-
-        # === Filter ===
-        filtered_coordinates, filtered_ids = self.refiner.filter(
-            coords,
-            energy,
-            previous_ids,
-            sample_method,
-            parameters,
-        )
-
-        return filtered_coordinates, filtered_ids, step_dir, xyz_files
+        return filtered_coordinates, selected_ids
 
     def run(self):
         """
@@ -320,23 +329,31 @@ class ChemRefiner:
         Handles skip-step logic and standard pipeline logic.
         """
         logging.info("Starting ChemRefine pipeline.")
-
         previous_coordinates, previous_ids = None, None
-
         steps = self.config.get('steps', [])
-        charge = self.config.get('charge', 0)
-        multiplicity = self.config.get('multiplicity', 1)
         calculation_functions = ["GOAT", "DFT", "XTB", "MLFF"]
 
         for step in steps:
             logging.info(f"Processing step {step['step']} with calculation type '{step['calculation_type']}'.")
             step_number = step['step']
             calculation_type = step['calculation_type'].lower()
-            model_name = step.get('model_name', 'mace')
-            task_name = step.get('task_type', 'mace_off')
+
+            if calculation_type == 'mlff':
+                mlff_config = step.get('mlff', {})
+                model_name = mlff_config.get('model_name', 'mace')
+                task_name = mlff_config.get('task_name', 'mace_off')
+                device = mlff_config.get('device', 'cuda')
+                bind = mlff_config.get('bind','127.0.0.1:8888')
+                logging.info(f"Using MLFF model '{model_name}' with task '{task_name}' for step {step_number}.")
+            else:
+                model_name = step.get('model_name', 'medium')
+                task_name = step.get('task_name', 'mace_off')
+                device = 'cpu'  # fallback
+                bind = '127.0.0.1:8888'
+
             sample_method = step['sample_type']['method']
             parameters = step['sample_type'].get('parameters', {})
-
+        
             if calculation_type.upper() not in calculation_functions:
                 raise ValueError(f"Invalid calculation type '{calculation_type}' in step {step_number}. Exiting...")
 
@@ -349,52 +366,72 @@ class ChemRefiner:
             if filtered_coordinates is None or filtered_ids is None:
                 logging.info(f"No valid skip outputs for step {step_number}. Proceeding with normal execution.")
 
-                if calculation_type == 'mlff':
-                    logging.info(f"Running MLFF step {step_number} with model '{model_name}' and task '{task_name}'.")
-                    filtered_coordinates, filtered_ids, step_dir, xyz_files = self.run_mlff_step(
-                        step_number=step_number,
+                charge = step.get('charge', self.charge)
+                multiplicity = step.get('multiplicity', self.multiplicity)
+                logging.info(f"Step {step_number} using charge={charge}, multiplicity={multiplicity}")
+
+                if step_number == 1:
+                    initial_xyz = self.config.get("initial_xyz", None)
+                    step_dir, input_files, output_files = self.prepare_step1_directory(
+                        step_number,
+                        initial_xyz=initial_xyz,
+                        charge=charge,
+                        multiplicity=multiplicity,
+                        calculation_type=calculation_type,
                         model_name=model_name,
                         task_name=task_name,
-                        sample_method=sample_method,
-                        parameters=parameters,
-                        previous_coordinates=previous_coordinates,
-                        previous_ids=previous_ids,
+                        device=device,
+                        bind=bind
                     )
-
                 else:
-                    if step_number == 1:
-                        step_dir, input_files, output_files = self.prepare_step1_directory(step_number)
-                    else:
-                        step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
-                            step_number,
-                            previous_coordinates,
-                            previous_ids,
-                        )
+                    charge = step.get('charge', self.charge)
+                    multiplicity = step.get('multiplicity', self.multiplicity)
+                    logging.info(f"Step {step_number} using charge={charge}, multiplicity={multiplicity}")
 
-                    self.submit_orca_jobs(input_files, self.max_cores, step_dir)
-
-                    coordinates, energies = self.orca.parse_output(
-                        output_files,
-                        calculation_type,
-                        dir=step_dir,  # Correct output directory used here
+                    step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
+                        step_number,
+                        previous_coordinates,
+                        previous_ids,
+                        charge=charge,
+                        multiplicity=multiplicity,
+                        calculation_type=calculation_type,
+                        model_name=model_name,
+                        task_name=task_name,
+                        device=device,
+                        bind=bind,
                     )
 
-                    ids = list(range(len(energies)))
-                    filtered_coordinates, filtered_ids = self.refiner.filter(
-                        coordinates,
-                        energies,
-                        ids,
-                        sample_method,
-                        parameters,
-                    )
+                self.submit_orca_jobs(
+                    input_files,
+                    self.max_cores,
+                    step_dir,
+                    calculation_type=calculation_type,
+                    model_name=model_name,
+                    task_name=task_name,
+                    device=device
+                )
+
+                filtered_coordinates, filtered_ids = self.parse_and_filter_outputs(
+                    output_files,
+                    calculation_type,
+                    step_number,
+                    sample_method,
+                    parameters,
+                    step_dir
+                )
+
+                if filtered_coordinates is None or filtered_ids is None:
+                    logging.error(f"Filtering failed at step {step_number}. Exiting pipeline.")
+                    return
+
             else:
                 step_dir = os.path.join(self.output_dir, f"step{step_number}")
                 logging.info(f"Skipping step {step_number} using existing outputs.")
 
-
             previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
 
         logging.info("ChemRefine pipeline completed.")
+
 
 def main():
     ChemRefiner().run()

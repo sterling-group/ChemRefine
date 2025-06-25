@@ -17,6 +17,8 @@ class StructureRefiner:
         Returns:
             tuple: (filtered_coordinates, filtered_ids)
         """
+        logging.info("Starting structure filtering process.")
+        logging.info(f"Method: {method}, Parameters: {parameters} starting {len(coordinates)} structures.")
         if len(coordinates) != len(energies) or len(energies) != len(ids):
             raise ValueError(
                 f"Mismatch in list lengths: coordinates ({len(coordinates)}), "

@@ -112,3 +112,6 @@ exclude = [
     "build/",
     "dist/",
 ]
+
+[tool.setuptools.package-data]
+"chemrefine" = ["run_mlff.sh"]
