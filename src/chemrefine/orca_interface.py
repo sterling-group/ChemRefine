@@ -317,6 +317,22 @@ class OrcaInterface:
                 else:
                     logging.error(f"GOAT ensemble file not found for: {path}")
                     continue
+            if calculation_type.lower() == 'pes':
+                coord_blocks = re.findall(
+                    r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n",
+                    content, re.DOTALL
+                )
+                energy_matches = re.findall(
+                    r"FINAL SINGLE POINT ENERGY(?: \(From external program\))?\s+(-?\d+\.\d+)",
+                    content
+                )
+                pair_count = min(len(coord_blocks), len(energy_matches))
+                for i in range(pair_count):
+                    coords = [line.split() for line in coord_blocks[i].strip().splitlines()]
+                    coordinates.append(coords)
+                    energies.append(float(energy_matches[i]))
+                    logging.debug(f"Appended PES geometry #{i+1}: energy={energy_matches[i]}")
+
             else:
                 with open(path) as f:
                     content = f.read()
