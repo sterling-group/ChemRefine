@@ -25,41 +25,53 @@ class Utility:
 
     def save_step_csv(self, energies, ids, step, filename="steps.csv", T=298.15, output_dir="."):
         """
-        Save step-wise energies and Boltzmann weights to a CSV file.
+        Appends filtered structures for a step to a cumulative CSV, sorted by energy.
 
         Parameters:
-        - energies (list): List of energy values in Hartrees.
-        - ids (list): List of structure IDs.
-        - step (int): Current step number.
-        - filename (str): Output CSV file name (default: steps.csv).
-        - T (float): Temperature in Kelvin for Boltzmann weighting.
-        - output_dir (str): Directory to save the CSV file.
+            energies (list): Filtered energies in Hartrees.
+            ids (list): Persistent IDs of the filtered structures.
+            step (int): Step number.
+            filename (str): Cumulative CSV file.
+            T (float): Temperature in Kelvin for Boltzmann weighting.
+            output_dir (str): Output directory.
         """
         import os
         import pandas as pd
         import numpy as np
 
-        # Calculate energies
-        df = pd.DataFrame({'Conformer': ids, 'Energy (Hartrees)': energies})
+        df = pd.DataFrame({
+            'Conformer': ids,
+            'Energy (Hartrees)': energies
+        })
         df['Energy (kcal/mol)'] = df['Energy (Hartrees)'] * HARTREE_TO_KCAL_MOL
+
+        # ✅ Sort table by energy (kcal/mol)
+        df = df.sort_values(by='Energy (kcal/mol)', ascending=True).reset_index(drop=True)
+
+        # Boltzmann statistics
         df['dE (kcal/mol)'] = df['Energy (kcal/mol)'] - df['Energy (kcal/mol)'].min()
         dE_RT = df['dE (kcal/mol)'] / (R_KCAL_MOL_K * T)
         df['Boltzmann Weight'] = np.exp(-dE_RT)
         df['Boltzmann Weight'] /= df['Boltzmann Weight'].sum()
         df['% Total'] = df['Boltzmann Weight'] * 100
         df['% Cumulative'] = df['% Total'].cumsum()
-        df.insert(0, 'Step', step)
-        df = df.round(CSV_PRECISION)
 
-        # Construct output path
+        df.insert(0, 'Step', step)
+        df = df.round({
+            'Energy (kcal/mol)': CSV_PRECISION,
+            'dE (kcal/mol)': CSV_PRECISION,
+            'Boltzmann Weight': CSV_PRECISION,
+            '% Total': CSV_PRECISION,
+            '% Cumulative': CSV_PRECISION
+        })
+
         output_path = os.path.join(output_dir, filename)
         os.makedirs(output_dir, exist_ok=True)
-
-        # Write CSV
         mode = 'w' if step == 1 else 'a'
         header = step == 1
         df.to_csv(output_path, mode=mode, index=False, header=header)
-        logging.info(f"Saved CSV for step {step} to {output_path}")
+        logging.info(f"Saved filtered structures for step {step} to {output_path}")
+
 
     def write_xyz(self, structures, step_number, structure_ids, output_dir='.'):
         """
