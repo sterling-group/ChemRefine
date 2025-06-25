@@ -189,8 +189,9 @@ Selects the N lowest-energy conformers.
 ### ** Example Multi-Step Workflows**
 The tool supports complex multi-step refinement protocols:
 1. **Step 1**: GOAT or other conformer generation (XTB level)
-2. **Step 2**: DFT geometry optimization (B3LYP/def2-SVP)
-3. **Step 3**: High-level single points (B3LYP/def2-TZVP + frequencies)
+2. **Step 2**: Machine Learning interatomic potential optimization (uma-s-1/omol)
+2. **Step 3**: DFT geometry optimization (B3LYP/def2-SVP)
+3. **Step 4**: High-level single points (B3LYP/def2-TZVP + frequencies)
 
 ### **Resource Management**
 - Automatic core allocation based on ORCA PAL settings
