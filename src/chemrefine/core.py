@@ -283,7 +283,7 @@ class ChemRefiner:
             os.chdir(original_dir)
             logging.info(f"Returned to original directory: {original_dir}")
 
-    def parse_and_filter_outputs(self, output_files, calculation_type, step_number, sample_method, parameters, step_dir):
+    def parse_and_filter_outputs(self, output_files, calculation_type, step_number, sample_method, parameters, step_dir,previous_ids=None):
         """
         Parses ORCA outputs, saves CSV, filters structures, and moves step files.
 
@@ -303,15 +303,24 @@ class ChemRefiner:
             logging.error(f"No valid coordinates or energies found in outputs for step {step_number}. Exiting pipeline.")
             logging.error(f"Error in your output file, please check reason for failure")
             sys.exit(1)
-        filtered_ids = list(range(len(energies)))
-        self.utils.save_step_csv(energies, filtered_ids, step_number, output_dir=self.output_dir)
-        filtered_coordinates, filtered_ids = self.refiner.filter(
-            coordinates, energies, filtered_ids, sample_method, parameters
-        )
+        if previous_ids is None:
+            previous_ids = list(range(len(energies)))  # only for step 1
 
-        #self.utils.move_step_files(step_number, output_dir=step_dir)
+        self.utils.save_step_csv(
+                    energies=energies,
+                    ids=previous_ids,
+                    step=step_number,
+                    output_dir=self.output_dir
+                    )
+        filtered_coordinates, selected_ids = self.refiner.filter(
+                                            coordinates, 
+                                            energies, 
+                                            previous_ids, 
+                                            sample_method, 
+                                            parameters
+                                            )
 
-        return filtered_coordinates, filtered_ids
+        return filtered_coordinates, selected_ids
 
     def run(self):
         """
