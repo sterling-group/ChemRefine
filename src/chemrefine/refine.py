@@ -134,7 +134,7 @@ class StructureRefiner:
         """
         num_structures = parameters.get("num_structures", 1)
 
-        if not energies or all(e is None for e in energies):
+        if len(energies) == 0 or all(e is None for e in energies):
             raise ValueError("Energy list is empty or contains only None values.")
 
         energy_tuples = [(i, e) for i, e in enumerate(energies) if e is not None]
