@@ -306,8 +306,12 @@ class ChemRefiner:
         if previous_ids is None:
             previous_ids = list(range(len(energies)))  # only for step 1
 
-        self.utils.save_step_csv(energies, step_number, previous_ids, output_dir=self.output_dir)
-
+        self.utils.save_step_csv(
+                    energies=energies,
+                    ids=previous_ids,
+                    step=step_number,
+                    output_dir=self.output_dir
+                    )
         filtered_coordinates, selected_ids = self.refiner.filter(
                                             coordinates, 
                                             energies, 
