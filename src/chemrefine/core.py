@@ -330,7 +330,7 @@ class ChemRefiner:
         logging.info("Starting ChemRefine pipeline.")
         previous_coordinates, previous_ids = None, None
         steps = self.config.get('steps', [])
-        calculation_functions = ["GOAT", "DFT", "XTB", "MLFF","PES","docker","solvator"]
+        calculation_functions = ["GOAT", "DFT", "XTB", "MLFF","PES","DOCKER","SOLVATOR"]
 
         for step in steps:
             logging.info(f"Processing step {step['step']} with calculation type '{step['calculation_type']}'.")
