@@ -15,9 +15,9 @@ multiplicity: 1
 steps:
   # Step 1: Using GOAT
   - step: 1
-    calculation_type: "GOAT"
+    calculation_type: "GOAT"    # Options are "GOAT", "MLFF", or "DFT","PES","Docker","Solvator"
     sample_type:
-      method: "integer"
+      method: "integer"         # Options are "integer", "boltzmann", "energy_window", "high_energy"
       parameters: 
         num_structures: 0
 

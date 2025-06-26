@@ -48,7 +48,6 @@ class ChemRefiner:
         self.utils = Utility()
         self.orca = OrcaInterface()
 
-
     def prepare_step1_directory(self, 
                                 step_number, 
                                 initial_xyz=None,
@@ -331,7 +330,7 @@ class ChemRefiner:
         logging.info("Starting ChemRefine pipeline.")
         previous_coordinates, previous_ids = None, None
         steps = self.config.get('steps', [])
-        calculation_functions = ["GOAT", "DFT", "XTB", "MLFF"]
+        calculation_functions = ["GOAT", "DFT", "XTB", "MLFF","PES","Docker","Solvator"]
 
         for step in steps:
             logging.info(f"Processing step {step['step']} with calculation type '{step['calculation_type']}'.")
@@ -431,7 +430,6 @@ class ChemRefiner:
             previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
 
         logging.info("ChemRefine pipeline completed.")
-
 
 def main():
     ChemRefiner().run()
