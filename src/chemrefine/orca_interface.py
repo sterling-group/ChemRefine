@@ -336,32 +336,9 @@ class OrcaInterface:
                 continue
 
             # Standard DFT parsing
-            with open(path) as f:
-                content = f.read()
-
-            logging.info(f"Parsing standard DFT output for: {path}")
-            coord_block = re.findall(
-                r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n",
-                content, re.DOTALL
-            )
-            if coord_block:
-                coords = [line.split() for line in coord_block[-1].strip().splitlines()]
-                coordinates.append(coords)
-                logging.debug(f"Extracted coordinates block: {coords}")
-            else:
-                logging.warning(f"No coordinate block found in: {path}")
-                coordinates.append([])
-
-            energy_match = re.findall(
-                r"FINAL SINGLE POINT ENERGY(?: \(From external program\))?\s+(-?\d+\.\d+)",
-                content
-            )
-            if energy_match:
-                energy = float(energy_match[-1])
-                energies.append(energy)
-            else:
-                logging.warning(f"No energy found in: {path}")
-                energies.append(None)
+            coords, ens = self.parse_dft_output(path)
+            coordinates.extend(coords)
+            energies.extend(ens)
 
         if not coordinates or not energies:
             logging.error(f"Failed to parse {calculation_type.upper()} outputs in directory: {dir}")
@@ -497,36 +474,35 @@ class OrcaInterface:
         logging.info(f"Parsed {len(coordinates_list)} Docker structures from {file_path}.")
         return coordinates_list, energies_list
 
-#TODO make parse_dft a function to be called in parse_output
-    # def parse_dft_output(self,path):
-    #     coordinates = []
-    #     energies = []
-    #      # Standard DFT parsing
-    #     with open(path) as f:
-    #         content = f.read()
+    def parse_dft_output(self,path):
+        coordinates = []
+        energies = []
+         # Standard DFT parsing
+        with open(path) as f:
+            content = f.read()
 
-    #     logging.info(f"Parsing standard DFT output for: {path}")
-    #     coord_block = re.findall(
-    #         r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n",
-    #         content, re.DOTALL
-    #     )
-    #     if coord_block:
-    #         coords = [line.split() for line in coord_block[-1].strip().splitlines()]
-    #         coordinates.append(coords)
-    #         logging.debug(f"Extracted coordinates block: {coords}")
-    #     else:
-    #         logging.warning(f"No coordinate block found in: {path}")
-    #         coordinates.append([])
+        logging.info(f"Parsing standard DFT output for: {path}")
+        coord_block = re.findall(
+            r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n",
+            content, re.DOTALL
+        )
+        if coord_block:
+            coords = [line.split() for line in coord_block[-1].strip().splitlines()]
+            coordinates.append(coords)
+            logging.debug(f"Extracted coordinates block: {coords}")
+        else:
+            logging.warning(f"No coordinate block found in: {path}")
+            coordinates.append([])
 
-    #     energy_match = re.findall(
-    #         r"FINAL SINGLE POINT ENERGY(?: \(From external program\))?\s+(-?\d+\.\d+)",
-    #         content
-    #     )
-    #     if energy_match:
-    #         energy = float(energy_match[-1])
-    #         energies.append(energy)
-    #     else:
-    #         logging.warning(f"No energy found in: {path}")
-    #         energies.append(None)
+        energy_match = re.findall(
+            r"FINAL SINGLE POINT ENERGY(?: \(From external program\))?\s+(-?\d+\.\d+)",
+            content
+        )
+        if energy_match:
+            energy = float(energy_match[-1])
+            energies.append(energy)
+        else:
+            logging.warning(f"No energy found in: {path}")
+            energies.append(None)
 
-    #     return coordinates, energies
+        return coordinates, energies
