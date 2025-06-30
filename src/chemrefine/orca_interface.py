@@ -323,34 +323,22 @@ class OrcaInterface:
                 coordinates.extend(coords)
                 energies.extend(ens)
                 continue
+            
+            if calculation_type.lower() == 'docker':
+                docker_xyz_file = path.replace('.out', '.struc1.allopt.xyz')
+                logging.info(f"Looking for Docker structure file: {docker_xyz_file}")
+                if os.path.exists(docker_xyz_file):
+                    coords, ens = self.parse_docker_xyz(docker_xyz_file)
+                    coordinates.extend(coords)
+                    energies.extend(ens)
+                else:
+                    logging.error(f"Docker structure file not found for: {path}")
+                continue
 
             # Standard DFT parsing
-            with open(path) as f:
-                content = f.read()
-
-            logging.info(f"Parsing standard DFT output for: {path}")
-            coord_block = re.findall(
-                r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n",
-                content, re.DOTALL
-            )
-            if coord_block:
-                coords = [line.split() for line in coord_block[-1].strip().splitlines()]
-                coordinates.append(coords)
-                logging.debug(f"Extracted coordinates block: {coords}")
-            else:
-                logging.warning(f"No coordinate block found in: {path}")
-                coordinates.append([])
-
-            energy_match = re.findall(
-                r"FINAL SINGLE POINT ENERGY(?: \(From external program\))?\s+(-?\d+\.\d+)",
-                content
-            )
-            if energy_match:
-                energy = float(energy_match[-1])
-                energies.append(energy)
-            else:
-                logging.warning(f"No energy found in: {path}")
-                energies.append(None)
+            coords, ens = self.parse_dft_output(path)
+            coordinates.extend(coords)
+            energies.extend(ens)
 
         if not coordinates or not energies:
             logging.error(f"Failed to parse {calculation_type.upper()} outputs in directory: {dir}")
@@ -438,3 +426,83 @@ class OrcaInterface:
                 logging.warning(f"Skipping PES block #{i+1}: missing energy or coordinates.")
 
         return coordinates_list, energies_list
+
+    def parse_docker_xyz(self, file_path):
+        """
+        Parses a .docker.struc1.allopt.xyz file to extract coordinates and Eopt energies.
+
+        Args:
+            file_path (str): Path to the Docker-style XYZ file.
+
+        Returns:
+            tuple: (coordinates_list, energies_list)
+        """
+        coordinates_list = []
+        energies_list = []
+
+        with open(file_path, 'r') as file:
+            lines = file.readlines()
+
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if line.isdigit():
+                atom_count = int(line)
+                if i + 1 >= len(lines):
+                    break
+
+                comment_line = lines[i + 1].strip()
+                energy_match = re.search(r"Eopt=([-+]?\d*\.\d+|\d+)", comment_line)
+                energy = float(energy_match.group(1)) if energy_match else None
+
+                current_structure = []
+                for j in range(i + 2, i + 2 + atom_count):
+                    if j >= len(lines):
+                        break
+                    tokens = lines[j].strip().split()
+                    if len(tokens) >= 4:
+                        element = tokens[0]
+                        x, y, z = map(float, tokens[1:4])
+                        current_structure.append((element, x, y, z))
+
+                coordinates_list.append(current_structure)
+                energies_list.append(energy)
+                i += 2 + atom_count
+            else:
+                i += 1
+
+        logging.info(f"Parsed {len(coordinates_list)} Docker structures from {file_path}.")
+        return coordinates_list, energies_list
+
+    def parse_dft_output(self,path):
+        coordinates = []
+        energies = []
+         # Standard DFT parsing
+        with open(path) as f:
+            content = f.read()
+
+        logging.info(f"Parsing standard DFT output for: {path}")
+        coord_block = re.findall(
+            r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n",
+            content, re.DOTALL
+        )
+        if coord_block:
+            coords = [line.split() for line in coord_block[-1].strip().splitlines()]
+            coordinates.append(coords)
+            logging.debug(f"Extracted coordinates block: {coords}")
+        else:
+            logging.warning(f"No coordinate block found in: {path}")
+            coordinates.append([])
+
+        energy_match = re.findall(
+            r"FINAL SINGLE POINT ENERGY(?: \(From external program\))?\s+(-?\d+\.\d+)",
+            content
+        )
+        if energy_match:
+            energy = float(energy_match[-1])
+            energies.append(energy)
+        else:
+            logging.warning(f"No energy found in: {path}")
+            energies.append(None)
+
+        return coordinates, energies

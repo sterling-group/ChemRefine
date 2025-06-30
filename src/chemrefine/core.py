@@ -225,6 +225,17 @@ class ChemRefiner:
                     logging.warning(f"No GOAT ensemble files found in {step_dir}. Will rerun this step.")
                     return None, None,None
                 logging.info(f"Found {len(output_files)} GOAT ensemble file(s) in {step_dir}. Skipping this step.")
+
+            elif calculation_type.lower() == 'docker':
+                output_files = [
+                    os.path.join(step_dir, f)
+                    for f in os.listdir(step_dir)
+                    if f.endswith('struc1.allopt.xyz')
+                ]
+                if not output_files:
+                    logging.warning(f"No GOAT ensemble files found in {step_dir}. Will rerun this step.")
+                    return None, None,None
+                logging.info(f"Found {len(output_files)} GOAT ensemble file(s) in {step_dir}. Skipping this step.")
             else:
                 output_files = [
                     os.path.join(step_dir, f)
@@ -330,7 +341,7 @@ class ChemRefiner:
         logging.info("Starting ChemRefine pipeline.")
         previous_coordinates, previous_ids = None, None
         steps = self.config.get('steps', [])
-        calculation_functions = ["GOAT", "DFT", "XTB", "MLFF","PES","Docker","Solvator"]
+        calculation_functions = ["GOAT", "DFT", "XTB", "MLFF","PES","DOCKER","SOLVATOR"]
 
         for step in steps:
             logging.info(f"Processing step {step['step']} with calculation type '{step['calculation_type']}'.")
