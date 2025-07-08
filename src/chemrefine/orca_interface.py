@@ -335,6 +335,16 @@ class OrcaInterface:
                     logging.error(f"Docker structure file not found for: {path}")
                 continue
 
+            if calculation_type.lower() == 'solvator':
+                solvator_xyz_file = path.replace('.out', '.solvator.xyz')
+                logging.info(f"Looking for Solvator structure file: {solvator_xyz_file}")
+                if os.path.exists(solvator_xyz_file):
+                    coords, ens = self.parse_solvator_xyz(solvator_xyz_file)
+                    coordinates.extend(coords)
+                    energies.extend(ens)
+                else:
+                    logging.error(f"Solvator structure file not found for: {path}")
+                continue
             # Standard DFT parsing
             coords, ens = self.parse_dft_output(path)
             coordinates.extend(coords)
@@ -506,3 +516,40 @@ class OrcaInterface:
             energies.append(None)
 
         return coordinates, energies
+    
+    def parse_solvator(self, file_path):
+        """
+        Parses a solvator.xyz file containing a single XYZ structure without energy.
+        Assigns a placeholder energy value of 0.0.
+
+        Args:
+            file_path (str): Path to the .solvator.xyz file.
+
+        Returns:
+            tuple: (coordinates_list, energies_list) — energy is set to 0.0.
+        """
+        coordinates_list = []
+        energies_list = []
+
+        with open(file_path, 'r') as file:
+            lines = file.readlines()
+
+        if len(lines) < 3:
+            raise ValueError(f"File {file_path} does not contain a valid XYZ structure.")
+
+        atom_count = int(lines[0].strip())
+        current_structure = []
+
+        for line in lines[2:2 + atom_count]:
+            tokens = line.strip().split()
+            if len(tokens) >= 4:
+                element = tokens[0]
+                x, y, z = map(float, tokens[1:4])
+                current_structure.append((element, x, y, z))
+
+        coordinates_list.append(current_structure)
+        energies_list.append(0.0)
+
+        logging.info(f"Parsed 1 solvator structure from {file_path} with placeholder energy 0.0.")
+        return coordinates_list, energies_list
+
