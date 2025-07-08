@@ -34,7 +34,7 @@ class ChemRefiner:
         self.orca_executable = self.config.get('orca_executable', 'orca')
 
         # === Setup output directory ===
-        output_dir_raw = self.config.get('outputs', './outputs')
+        output_dir_raw = self.config.get('output_dir', './outputs')
         self.output_dir = os.path.abspath(output_dir_raw)
         os.makedirs(self.output_dir, exist_ok=True)
         self.scratch_dir = os.path.abspath(self.scratch_dir)
