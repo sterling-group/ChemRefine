@@ -53,7 +53,8 @@ class ChemRefiner:
                                 initial_xyz=None,
                                 charge=None, 
                                 multiplicity=None,
-                                calculation_type='dft',
+                                operation='OPT+SP',
+                                engine='dft',
                                 model_name=None, 
                                 task_name=None,
                                 device='cpu',
@@ -99,7 +100,8 @@ class ChemRefiner:
             charge, 
             multiplicity, 
             output_dir=step_dir,
-            calculation_type=calculation_type,
+            operation=operation,
+            engine=engine,
             model_name=model_name,
             task_name=task_name,
             device=device,
@@ -113,7 +115,8 @@ class ChemRefiner:
                                           filtered_coordinates, 
                                           filtered_ids,charge=None, 
                                           multiplicity=None,
-                                          calculation_type='dft',
+                                          operation='OPT+SP',
+                                          engine='dft',
                                           model_name=None, 
                                           task_name=None,
                                           device='cuda',
@@ -163,7 +166,8 @@ class ChemRefiner:
             charge, 
             multiplicity, 
             output_dir=step_dir,
-            calculation_type=calculation_type,
+            operation=operation,
+            engine=engine,
             model_name=model_name, 
             task_name=task_name,
             device=device,
@@ -171,31 +175,6 @@ class ChemRefiner:
         )
 
         return step_dir, input_files, output_files
-
-    def prepare_mlff_step1_directory(self, step_number, initial_xyz=None):
-        step_dir = os.path.join(self.output_dir, f"step{step_number}")
-        os.makedirs(step_dir, exist_ok=True)
-
-        if initial_xyz is None:
-            src_xyz = os.path.join(self.template_dir, "step1.xyz")
-        else:
-            src_xyz = initial_xyz
-
-        dst_xyz = os.path.join(step_dir, "step1.xyz")
-
-        if not os.path.exists(src_xyz):
-            raise FileNotFoundError(
-                f"XYZ file '{src_xyz}' not found. Please ensure the path is correct."
-            )
-
-        shutil.copyfile(src_xyz, dst_xyz)
-        return step_dir, [dst_xyz]
-
-    def prepare_mlff_directory(self, step_number, coordinates, ids):
-        step_dir = os.path.join(self.output_dir, f"step{step_number}")
-        os.makedirs(step_dir, exist_ok=True)
-        xyz_files = self.utils.write_xyz(coordinates, step_number, ids, output_dir=step_dir)
-        return step_dir, xyz_files
 
     def handle_skip_step(self, step_number, calculation_type, sample_method, parameters):
         """
@@ -340,107 +319,110 @@ class ChemRefiner:
         """
         logging.info("Starting ChemRefine pipeline.")
         previous_coordinates, previous_ids = None, None
+
+        valid_operations = {"OPT+SP","GOAT", "PES", "DOCKER", "SOLVATOR"}
+        valid_engines = {"dft", "mlff"}
+
         steps = self.config.get('steps', [])
-        calculation_functions = ["GOAT", "DFT", "XTB", "MLFF","PES","DOCKER","SOLVATOR"]
 
         for step in steps:
-            logging.info(f"Processing step {step['step']} with calculation type '{step['calculation_type']}'.")
-            step_number = step['step']
-            calculation_type = step['calculation_type'].lower()
+            step_id = step['step']
+            operation = step['operation'].upper()
+            engine = step.get('engine', 'dft').lower()
 
-            if calculation_type == 'mlff':
+            logging.info(f"Processing step {step_id}: operation '{operation}', engine '{engine}'.")
+
+            if operation not in valid_operations:
+                raise ValueError(f"Invalid operation '{operation}' at step {step_id}. Must be one of {valid_operations}.")
+
+            if engine not in valid_engines:
+                raise ValueError(f"Invalid engine '{engine}' at step {step_id}. Must be one of {valid_engines}.")
+
+            if engine == 'mlff':
                 mlff_config = step.get('mlff', {})
-                model_name = mlff_config.get('model_name', 'mace')
-                task_name = mlff_config.get('task_name', 'mace_off')
+                mlff_model = mlff_config.get('model_name', 'medium')
+                mlff_task = mlff_config.get('task_name', 'mace_off')
+                bind_address = mlff_config.get('bind', '127.0.0.1:8888')
                 device = mlff_config.get('device', 'cuda')
-                bind = mlff_config.get('bind','127.0.0.1:8888')
-                logging.info(f"Using MLFF model '{model_name}' with task '{task_name}' for step {step_number}.")
+
+                logging.info(f"Using MLFF model '{mlff_model}' with task '{mlff_task}' for step {step_id}.")
             else:
-                model_name = step.get('model_name', 'medium')
-                task_name = step.get('task_name', 'mace_off')
-                device = 'cpu'  # fallback
-                bind = '127.0.0.1:8888'
+                mlff_model = step.get('model_name', 'medium')
+                mlff_task = step.get('task_name', 'mace_off')
+                bind_address = '127.0.0.1:8888'
+                device = 'cpu'
 
             sample_method = step['sample_type']['method']
             parameters = step['sample_type'].get('parameters', {})
-        
-            if calculation_type.upper() not in calculation_functions:
-                raise ValueError(f"Invalid calculation type '{calculation_type}' in step {step_number}. Exiting...")
 
             filtered_coordinates, filtered_ids, energies = (None, None, None)
             if self.skip_steps:
                 filtered_coordinates, filtered_ids, energies = self.handle_skip_step(
-                    step_number, calculation_type, sample_method, parameters
+                    step_id, operation, sample_method, parameters
                 )
 
             if filtered_coordinates is None or filtered_ids is None:
-                logging.info(f"No valid skip outputs for step {step_number}. Proceeding with normal execution.")
-
+                logging.info(f"No valid skip outputs for step {step_id}. Proceeding with normal execution.")
                 charge = step.get('charge', self.charge)
                 multiplicity = step.get('multiplicity', self.multiplicity)
-                logging.info(f"Step {step_number} using charge={charge}, multiplicity={multiplicity}")
 
-                if step_number == 1:
+                if step_id == 1:
                     initial_xyz = self.config.get("initial_xyz", None)
                     step_dir, input_files, output_files = self.prepare_step1_directory(
-                        step_number,
+                        step_id,
                         initial_xyz=initial_xyz,
                         charge=charge,
                         multiplicity=multiplicity,
-                        calculation_type=calculation_type,
-                        model_name=model_name,
-                        task_name=task_name,
+                        calculation_type=operation,
+                        model_name=mlff_model,
+                        task_name=mlff_task,
                         device=device,
-                        bind=bind
+                        bind=bind_address
                     )
                 else:
-                    charge = step.get('charge', self.charge)
-                    multiplicity = step.get('multiplicity', self.multiplicity)
-                    logging.info(f"Step {step_number} using charge={charge}, multiplicity={multiplicity}")
-
                     step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
-                        step_number,
+                        step_id,
                         previous_coordinates,
                         previous_ids,
                         charge=charge,
                         multiplicity=multiplicity,
-                        calculation_type=calculation_type,
-                        model_name=model_name,
-                        task_name=task_name,
+                        calculation_type=operation,
+                        model_name=mlff_model,
+                        task_name=mlff_task,
                         device=device,
-                        bind=bind,
+                        bind=bind_address,
                     )
 
                 self.submit_orca_jobs(
                     input_files,
                     self.max_cores,
                     step_dir,
-                    calculation_type=calculation_type,
-                    model_name=model_name,
-                    task_name=task_name,
+                    calculation_type=engine,
+                    model_name=mlff_model,
+                    task_name=mlff_task,
                     device=device
                 )
 
                 filtered_coordinates, filtered_ids = self.parse_and_filter_outputs(
                     output_files,
-                    calculation_type,
-                    step_number,
+                    operation,
+                    step_id,
                     sample_method,
                     parameters,
                     step_dir
                 )
 
                 if filtered_coordinates is None or filtered_ids is None:
-                    logging.error(f"Filtering failed at step {step_number}. Exiting pipeline.")
+                    logging.error(f"Filtering failed at step {step_id}. Exiting pipeline.")
                     return
-
             else:
-                step_dir = os.path.join(self.output_dir, f"step{step_number}")
-                logging.info(f"Skipping step {step_number} using existing outputs.")
+                step_dir = os.path.join(self.output_dir, f"step{step_id}")
+                logging.info(f"Skipping step {step_id} using existing outputs.")
 
             previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
 
         logging.info("ChemRefine pipeline completed.")
+
 
 def main():
     ChemRefiner().run()
