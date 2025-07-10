@@ -260,7 +260,7 @@ class ChemRefiner:
                 max_cores=cores,
                 template_dir=self.template_dir,
                 output_dir=step_dir,
-                enegine=engine,
+                engine=engine,
                 operation=operation,
                 model_name=model_name,
                 task_name=task_name
