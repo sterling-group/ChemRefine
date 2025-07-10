@@ -260,7 +260,8 @@ class ChemRefiner:
                 max_cores=cores,
                 template_dir=self.template_dir,
                 output_dir=step_dir,
-                calculation_type=calculation_type,
+                enegine=engine,
+                operation=operation,
                 model_name=model_name,
                 task_name=task_name
                 
@@ -273,13 +274,12 @@ class ChemRefiner:
             os.chdir(original_dir)
             logging.info(f"Returned to original directory: {original_dir}")
 
-    def parse_and_filter_outputs(self, output_files, calculation_type, step_number, sample_method, parameters, step_dir,previous_ids=None):
+    def parse_and_filter_outputs(self, output_files, operation,engine, step_number, sample_method, parameters, step_dir,previous_ids=None):
         """
         Parses ORCA outputs, saves CSV, filters structures, and moves step files.
 
         Args:
             output_files (list): List of ORCA output files.
-            calculation_type (str): Calculation type.
             step_number (int): Current step number.
             sample_method (str): Sampling method.
             parameters (dict): Filtering parameters.
@@ -288,7 +288,7 @@ class ChemRefiner:
         Returns:
             tuple: Filtered coordinates and IDs.
         """
-        coordinates, energies = self.orca.parse_output(output_files, calculation_type, dir=step_dir)
+        coordinates, energies = self.orca.parse_output(output_files, operation, dir=step_dir)
         if not coordinates or not energies:
             logging.error(f"No valid coordinates or energies found in outputs for step {step_number}. Exiting pipeline.")
             logging.error(f"Error in your output file, please check reason for failure")
@@ -374,7 +374,8 @@ class ChemRefiner:
                         initial_xyz=initial_xyz,
                         charge=charge,
                         multiplicity=multiplicity,
-                        calculation_type=operation,
+                        operation=operation,
+                        engine=engine,
                         model_name=mlff_model,
                         task_name=mlff_task,
                         device=device,
@@ -387,7 +388,8 @@ class ChemRefiner:
                         previous_ids,
                         charge=charge,
                         multiplicity=multiplicity,
-                        calculation_type=operation,
+                        operation=operation,
+                        engine=engine,
                         model_name=mlff_model,
                         task_name=mlff_task,
                         device=device,
@@ -398,7 +400,8 @@ class ChemRefiner:
                     input_files,
                     self.max_cores,
                     step_dir,
-                    calculation_type=engine,
+                    operation=operation,
+                    engine=engine,
                     model_name=mlff_model,
                     task_name=mlff_task,
                     device=device
