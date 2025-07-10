@@ -176,13 +176,14 @@ class ChemRefiner:
 
         return step_dir, input_files, output_files
 
-    def handle_skip_step(self, step_number, calculation_type, sample_method, parameters):
+    def handle_skip_step(self, step_number, operation,engine, sample_method, parameters):
         """
         Handles skip logic for a step if its directory already exists and required outputs are present.
 
         Args:
             step_number (int): The current step number.
-            calculation_type (str): The type of calculation ('dft', 'goat', etc.).
+            operation (str): Algorithm used in ORCA (i.e GOAT, DOCKER, PES, OPT+SP).
+            engine (str): The calculation engine (e.g., 'dft', 'mlff
             sample_method (str): The sampling method.
             parameters (dict): Additional parameters for filtering.
 
@@ -194,7 +195,7 @@ class ChemRefiner:
             logging.info(f"Checking skip condition for step {step_number} at: {step_dir}")
 
             
-            if calculation_type.lower() == 'goat':
+            if operation.lower() == 'goat':
                 output_files = [
                     os.path.join(step_dir, f)
                     for f in os.listdir(step_dir)
@@ -205,7 +206,7 @@ class ChemRefiner:
                     return None, None,None
                 logging.info(f"Found {len(output_files)} GOAT ensemble file(s) in {step_dir}. Skipping this step.")
 
-            elif calculation_type.lower() == 'docker':
+            elif operation.lower() == 'docker':
                 output_files = [
                     os.path.join(step_dir, f)
                     for f in os.listdir(step_dir)
@@ -226,7 +227,7 @@ class ChemRefiner:
                     return None, None,None
                 logging.info(f"Found {len(output_files)} .out file(s) in {step_dir}. Skipping this step.")
 
-            coordinates, energies = self.orca.parse_output(output_files, calculation_type, dir=step_dir)
+            coordinates, energies = self.orca.parse_output(output_files, operation, dir=step_dir)
             logging.info(f"Parsed {len(coordinates)} coordinates and {len(energies)} energies from {output_files}.")
             filtered_coordinates, filtered_ids = self.refiner.filter(
                 coordinates, energies, list(range(len(energies))), sample_method, parameters
@@ -237,7 +238,7 @@ class ChemRefiner:
             logging.info(f"Step directory {step_dir} does not exist. Will run this step.")
             return None, None, None
 
-    def submit_orca_jobs(self, input_files, cores, step_dir,device='cpu',calculation_type='dft', model_name=None, task_name=None):
+    def submit_orca_jobs(self, input_files, cores, step_dir,device='cpu',operation='OPT+SP',engine='DFT', model_name=None, task_name=None):
         """
         Submits ORCA jobs for each input file in the step directory using the OrcaJobSubmitter.
 
