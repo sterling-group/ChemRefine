@@ -31,7 +31,17 @@ class OrcaJobSubmitter:
         self.utility = Utility()
         self.device = device  
         self.bind = bind
-    def submit_files(self, input_files, max_cores=32, template_dir=".", output_dir=".",device=None,calculation_type='DFT',model_name=None,task_name=None):
+
+    def submit_files(self, 
+                     input_files, 
+                     max_cores=32, 
+                     template_dir=".", 
+                     output_dir=".",
+                     device=None,
+                     operation='OPT+SP',
+                     engine='DFT',
+                     model_name=None,
+                     task_name=None):
         """
         Submits multiple ORCA input files to SLURM, managing PAL values, active job tracking,
         and ensuring that the total PAL usage does not exceed max_cores.
@@ -74,7 +84,8 @@ class OrcaJobSubmitter:
                 device=self.device,
                 model_name=model_name,
                 task_name=task_name,
-                calculation_type=calculation_type,
+                operation=operation,
+                engine=engine,
                 bind=self.bind
             )
 
@@ -129,7 +140,8 @@ class OrcaJobSubmitter:
     output_dir: str = ".",
     job_name: str = None,
     device: str = "cpu",
-    calculation_type: str = "dft",
+    operation: str = "OPT+SP",
+    engine: str = "DFT",
     model_name: str = "uma-s-1",
     task_name: str = "omol",
     bind: str = "127.0.0.1:8888"
@@ -221,7 +233,7 @@ class OrcaJobSubmitter:
             f.write(f"cp {input_file} $SCRATCH_DIR/ || {{ echo 'Error: Failed to copy input file'; exit 1; }}\n")
             f.write("cd $SCRATCH_DIR || { echo 'Error: Failed to change directory'; exit 1; }\n\n")
 
-            if calculation_type.lower() == "mlff":
+            if engine.lower() == "mlff":
                 f.write("# Start MLFF socket server before ORCA\n")
                 f.write(f"python -m chemrefine.server --model {model_name} --task-name {task_name} --device {device} --bind {bind} & > $OUTPUT_DIR/server.log 2>&1 & \n")
                 f.write("SERVER_PID=$!\n")
@@ -254,7 +266,8 @@ class OrcaInterface:
                      charge, 
                      multiplicity, 
                      output_dir='./', 
-                     calculation_type=None,
+                     operation='OPT+SP',
+                     engine='DFT',
                      model_name=None,
                      task_name=None,
                      device='cuda',
@@ -279,7 +292,7 @@ class OrcaInterface:
             # Strip existing xyzfile lines and clean formatting
             content = re.sub(r'^\s*\*\s+xyzfile.*$', '', content, flags=re.MULTILINE)
             content = content.rstrip() + '\n\n'
-            if calculation_type and calculation_type.lower() == 'mlff':
+            if engine and engine.lower() == 'mlff':
                 # Add MLFF method block if specified
                 run_mlff_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "uma.sh"))
                 ext_params = f"--model_name {model_name} --task_name {task_name} --device {device} --bind {bind}"
@@ -293,10 +306,10 @@ class OrcaInterface:
 
         return input_files, output_files
 
-    def parse_output(self, file_paths, calculation_type, dir='./'):
+    def parse_output(self, file_paths, operation, dir='./'):
         coordinates, energies = [], []
 
-        logging.info(f"Parsing calculation type: {calculation_type.upper()}")
+        logging.info(f"Parsing calculation type: {operation.upper()}")
         logging.info(f"Looking for output files in directory: {dir}")
 
         for out_file in file_paths:
@@ -307,7 +320,7 @@ class OrcaInterface:
                 logging.warning(f"Output file not found: {path}")
                 continue
 
-            if calculation_type.lower() == 'goat':
+            if operation.lower() == 'goat':
                 finalensemble_file = path.replace('.out', '.finalensemble.xyz')
                 logging.info(f"Looking for GOAT ensemble file: {finalensemble_file}")
                 if os.path.exists(finalensemble_file):
@@ -318,13 +331,13 @@ class OrcaInterface:
                     logging.error(f"GOAT ensemble file not found for: {path}")
                 continue
 
-            if calculation_type.lower() == 'pes':
+            if operation.lower() == 'pes':
                 coords, ens = self.parse_pes_output(path)
                 coordinates.extend(coords)
                 energies.extend(ens)
                 continue
             
-            if calculation_type.lower() == 'docker':
+            if operation.lower() == 'docker':
                 docker_xyz_file = path.replace('.out', '.struc1.allopt.xyz')
                 logging.info(f"Looking for Docker structure file: {docker_xyz_file}")
                 if os.path.exists(docker_xyz_file):
@@ -335,7 +348,7 @@ class OrcaInterface:
                     logging.error(f"Docker structure file not found for: {path}")
                 continue
 
-            if calculation_type.lower() == 'solvator':
+            if operation.lower() == 'solvator':
                 solvator_xyz_file = path.replace('.out', '.solvator.xyz')
                 logging.info(f"Looking for Solvator structure file: {solvator_xyz_file}")
                 if os.path.exists(solvator_xyz_file):
@@ -351,7 +364,7 @@ class OrcaInterface:
             energies.extend(ens)
 
         if not coordinates or not energies:
-            logging.error(f"Failed to parse {calculation_type.upper()} outputs in directory: {dir}")
+            logging.error(f"Failed to parse {operation.upper()} outputs in directory: {dir}")
 
         return coordinates, energies
 
