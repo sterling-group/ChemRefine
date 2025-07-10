@@ -15,7 +15,8 @@ multiplicity: 1
 steps:
   # Step 1: Using GOAT
   - step: 1
-    calculation_type: "GOAT"    # Options are "GOAT", "MLFF","DFT","PES","Docker","Solvator"
+    operation: "GOAT"    # Options are "GOAT","OPT+SP","PES","Docker","Solvator"
+    engine: "dft"        #Options are "DFT", "MLFF"
     sample_type:
       method: "integer"         # Options are "integer", "boltzmann", "energy_window", "high_energy"
       parameters: 
@@ -23,7 +24,8 @@ steps:
 
   # Step 2: MLFF with Boltzmann sampling
   - step: 2
-    calculation_type: "MLFF"
+    operation: "OPT+SP"    # Options are "GOAT","OPT+SP","PES","Docker","Solvator"
+    engine: "MLFF"         # Options are "DFT", "MLFF"
     mlff:
       model_name: "medium"      # For MACE: small,medium,large for FAIRCHEM "uma-s-1"
       task_name: "mace_off"     # For MACE: "mace_off" or "mace_mp", for FairChem:oc20, omat, omol, odac, omc
@@ -35,7 +37,8 @@ steps:
 
   # Step 3: DFT refinement with overridden charge and multiplicity
   - step: 3
-    calculation_type: "DFT"
+    operation: "OPT+SP"    # Options are "GOAT","OPT+SP","PES","Docker","Solvator"
+    engine: "DFT"          # Options are "DFT", "MLFF"
     charge: -1                  # <--- Step-specific override
     multiplicity: 2            # <--- Step-specific override
     sample_type:
@@ -46,7 +49,8 @@ steps:
 
   # Step 4: Final high-precision DFT
   - step: 4
-    calculation_type: "DFT"
+    operation: "OPT+SP"    # Options are "GOAT","OPT+SP","PES","Docker","Solvator
+    engine: "DFT"          # Options are "DFT", "MLFF"
     sample_type:
       method: "integer"
       parameters: 
