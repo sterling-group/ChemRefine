@@ -271,9 +271,26 @@ class OrcaInterface:
                      model_name=None,
                      task_name=None,
                      device='cuda',
-                     bind='127.0.0.1:8888'
-):
+                     bind='127.0.0.1:8888'):
+        """
+        Generate ORCA .inp files from xyz inputs, adding MLFF external method if specified.
 
+        Args:
+            xyz_files (list): List of xyz file paths.
+            template (str): ORCA input template path.
+            charge (int): Molecular charge.
+            multiplicity (int): Spin multiplicity.
+            output_dir (str): Destination directory.
+            operation (str): Operation type (e.g., 'GOAT', 'OPT+SP').
+            engine (str): Computational engine ('dft' or 'mlff').
+            model_name (str): MLFF model name (if using MLFF).
+            task_name (str): MLFF task name (if using MLFF).
+            device (str): Device for MLFF ('cuda' or 'cpu').
+            bind (str): Server bind address for MLFF.
+
+        Returns:
+            tuple: Lists of input and output file paths.
+        """
         input_files, output_files = [], []
         logging.debug(f"output_dir IN create_input: {output_dir}")
         os.makedirs(output_dir, exist_ok=True)
@@ -284,20 +301,21 @@ class OrcaInterface:
             out = os.path.join(output_dir, f"{base}.out")
             input_files.append(inp)
             output_files.append(out)
-            
 
             with open(template, "r") as tmpl:
                 content = tmpl.read()
 
-            # Strip existing xyzfile lines and clean formatting
+            # Remove any old xyzfile lines and clean formatting
             content = re.sub(r'^\s*\*\s+xyzfile.*$', '', content, flags=re.MULTILINE)
             content = content.rstrip() + '\n\n'
             if engine and engine.lower() == 'mlff':
                 # Add MLFF method block if specified
                 run_mlff_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "uma.sh"))
                 ext_params = f"--model_name {model_name} --task_name {task_name} --device {device} --bind {bind}"
-                content = content.rstrip() + '\n'
-                content += f'%method\n  ProgExt "{run_mlff_path}"\n  Ext_Params "{ext_params}"\nend\n\n'
+                content += '%method\n'
+                content += f'  ProgExt "{run_mlff_path}"\n'
+                content += f'  Ext_Params "{ext_params}"\n'
+                content += 'end\n\n'
 
             content += f"* xyzfile {charge} {multiplicity} {xyz}\n\n"
 
