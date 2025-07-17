@@ -359,7 +359,7 @@ class ChemRefiner:
             filtered_coordinates, filtered_ids, energies = (None, None, None)
             if self.skip_steps:
                 filtered_coordinates, filtered_ids, energies = self.handle_skip_step(
-                    step_id, operation, sample_method, parameters
+                    step_id, operation,engine, sample_method, parameters
                 )
 
             if filtered_coordinates is None or filtered_ids is None:
@@ -410,6 +410,7 @@ class ChemRefiner:
                 filtered_coordinates, filtered_ids = self.parse_and_filter_outputs(
                     output_files,
                     operation,
+                    engine,
                     step_id,
                     sample_method,
                     parameters,
