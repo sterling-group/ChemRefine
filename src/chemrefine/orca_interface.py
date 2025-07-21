@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import time
 import getpass
-
+import numpy as np 
 # chemrefine/orca_interface.py
 
 class OrcaJobSubmitter:
@@ -586,7 +586,8 @@ class OrcaInterface:
 
     def normal_mode_sampling(self,
                              output_filepaths,
-                             type_calc,
+                             calc_type,
+                             displacement_value=1.0,
                              template, 
                              charge, 
                              multiplicity, 
@@ -597,7 +598,7 @@ class OrcaInterface:
                              task_name=None,
                              device='cuda',
                              bind='127.0.0.1:8888'):
-                            
+        import                     
         """
         Samples normal modes and optionally removes imaginary frequencies for one or more ORCA output files.
 
@@ -618,23 +619,42 @@ class OrcaInterface:
         if isinstance(file_paths, str):
             file_paths = [file_paths]
 
-        results = []
+        if calc_type == "rm_imag":
+            imag=True
+        else: 
+            imag=False
+
         for file_path in file_paths:
-            imag_freq_dict = self.parse_imaginary_frequencies(file_path, imag=True)
+            imag_freq_dict = self.parse_imaginary_frequencies(file_path, imag=imag)
             num_atoms = self.get_num_atoms_from_input(file_path)
             normal_mode_tensor = self.parse_normal_modes_tensor_final(file_path, num_atoms)
             coordinates, _ = self.parse_dft_output(file_path)
 
-            random_mode = (type_calc == 'normal_modes')
+            random_mode = (calc_type == 'normal_modes')
             pos_coords, neg_coords = self.displace_least_imaginary_mode(
                 filepath=file_path,
                 imag_freq_dict=imag_freq_dict,
                 normal_mode_tensor=normal_mode_tensor,
                 coordinates=coordinates,
-                displacement_value=1.0,
+                displacement_value=displacement_value,
                 random_mode=random_mode
             )
 
+            # Generate new input files with displaced coordinates
+            xyz_files = [pos_coords, neg_coords]
+            xyz_filenames = self.utility.write_xyz(xyz_files, step_number=step_number, structure_ids=structure_ids, output_dir=output_dir)
+            input_files, output_files = self.orca.create_input(
+            template_inp, 
+            charge, 
+            multiplicity, 
+            output_dir=step_dir,
+            operation=operation,
+            engine=engine,
+            model_name=model_name,
+            task_name=task_name,
+            device=device,
+            bind=bind
+           )
         
 
     def imaginary_frequency_dict(self,file_paths, imag=True):
