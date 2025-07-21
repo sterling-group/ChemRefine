@@ -584,3 +584,153 @@ class OrcaInterface:
         logging.info(f"Parsed 1 solvator structure from {file_path} with placeholder energy 0.0.")
         return coordinates_list, energies_list
 
+    def normal_mode_sampling(self,file_path,type_calc='rm_imag'):
+        """
+        This method is used to sample normal modes and remove imaginary frequencies from the output file.           
+
+        Args:
+            file_path (str): Path to the normal mode sampling output file.
+
+        Returns:
+            tuple: (normal_modes, frequencies) — lists of normal modes and their corresponding frequencies.
+        """
+        
+        """If type_calc is 'rm_imag', it will remove imaginary frequencies from the output file"""
+
+    def imaginary_frequency_dict(self,file_paths, imag=True):
+        import numpy as np
+        """
+        Parses vibrational frequencies from an ORCA output file.
+
+        Parameters
+        ----------
+        orca_output_path : str or Path
+            Path to the ORCA output file.
+        imag : bool, optional
+            If True, return only imaginary frequencies (default). If False, return all frequencies.
+
+        Returns
+        -------
+        dict
+            Dictionary mapping frequency index (int) to frequency value (float).
+        """
+        freqs = {}
+        in_freq_block = False
+        scaling_found = False
+
+        with open(file_paths, 'r') as f:
+            for line in f:
+                if 'VIBRATIONAL FREQUENCIES' in line:
+                    in_freq_block = True
+                    continue
+                if in_freq_block and 'Scaling factor for frequencies' in line:
+                    scaling_found = True
+                    continue
+                if in_freq_block and scaling_found and ':' in line and 'cm**-1' in line:
+                    try:
+                        index_part, value_part = line.strip().split(':', 1)
+                        index = int(index_part.strip())
+                        value = float(value_part.strip().split()[0])
+                        if imag:
+                            if '***imaginary mode***' in line:
+                                freqs[index] = value
+                        else:
+                            freqs[index] = value
+                    except Exception:
+                        continue
+
+        return freqs
+    
+    def parse_normal_modes_tensor(filepath, num_atoms):
+        """
+        Parses all normal mode displacement vectors from an ORCA output file into a full tensor.
+
+        Parameters
+        ----------
+        filepath : str
+            Path to the ORCA output file.
+        num_atoms : int
+            Number of atoms in the system.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (num_atoms, 3, n_modes) with displacements.
+        """
+        with open(filepath, 'r') as f:
+            lines = f.readlines()
+
+        collecting = False
+        block_rows = []
+        all_blocks = []
+        current_mode_width = None
+
+        for line in lines:
+            if re.match(r'^\s+(\d+\s+)+\d+\s*$', line):  # Header like "0 1 2 3 4 5"
+                collecting = True
+                if block_rows:
+                    all_blocks.append(np.array(block_rows, dtype=float))
+                    block_rows = []
+                continue
+            if collecting:
+                if re.match(r'^\s*\d+\s+[-\d.Ee\s]+$', line):
+                    parts = line.strip().split()
+                    floats = list(map(float, parts[1:]))
+                    block_rows.append(floats)
+                elif 'IR SPECTRUM' in line or '--------' in line:
+                    if block_rows:
+                        all_blocks.append(np.array(block_rows, dtype=float))
+                    break
+
+        # Check number of rows per block and concatenate horizontally
+        for block in all_blocks:
+            if block.shape[0] != 3 * num_atoms:
+                raise ValueError(f"A block has incorrect number of rows: {block.shape[0]}")
+        full_matrix = np.hstack(all_blocks)
+        return full_matrix.reshape(num_atoms, 3, -1)
+    
+    def displace_normal_modes(filepath: str,
+                                   imag_freq_dict: dict,
+                                   normal_mode_tensor: np.ndarray,
+                                   coordinates,
+                                   displacement_value: float = 1.0,
+                                   random_mode: bool = False):
+        """
+        Parses coordinates from ORCA output and displaces them along a selected imaginary mode.
+
+        Parameters
+        ----------
+        filepath : str
+            ORCA output file path.
+        imag_freq_dict : dict
+            Dictionary of imaginary frequencies {mode_index: frequency}.
+        normal_mode_tensor : np.ndarray
+            Normal mode displacement tensor of shape (n_atoms, 3, n_modes).
+        coordinates : list
+            List of atomic coordinates (usually parsed from ORCA).
+        displacement_value : float
+            Scale factor for displacement.
+        random_mode : bool
+            If True, randomly selects one imaginary mode. Otherwise, selects the one with smallest magnitude.
+
+        Returns
+        -------
+        tuple
+            Positive and negative displaced coordinates (each as np.ndarray of shape (n_atoms, 3)).
+        """
+        if not imag_freq_dict:
+            raise ValueError("No imaginary frequencies found.")
+
+        coords = np.array(coordinates[0], dtype=float)
+
+        if random_mode:
+            min_mode_idx = random.choice(list(imag_freq_dict.keys()))
+        else:
+            min_mode_idx = min(imag_freq_dict.items(), key=lambda kv: abs(kv[1]))[0]
+
+        disp_vector = normal_mode_tensor[:, :, min_mode_idx]
+
+        pos_coords = coords + displacement_value * disp_vector
+        neg_coords = coords - displacement_value * disp_vector
+
+        return pos_coords, neg_coords
