@@ -584,18 +584,58 @@ class OrcaInterface:
         logging.info(f"Parsed 1 solvator structure from {file_path} with placeholder energy 0.0.")
         return coordinates_list, energies_list
 
-    def normal_mode_sampling(self,file_path,type_calc='rm_imag'):
+    def normal_mode_sampling(self,
+                             output_filepaths,
+                             type_calc,
+                             template, 
+                             charge, 
+                             multiplicity, 
+                             output_dir, 
+                             operation,
+                             engine,
+                             model_name,
+                             task_name=None,
+                             device='cuda',
+                             bind='127.0.0.1:8888'):
+                            
         """
-        This method is used to sample normal modes and remove imaginary frequencies from the output file.           
+        Samples normal modes and optionally removes imaginary frequencies for one or more ORCA output files.
 
-        Args:
-            file_path (str): Path to the normal mode sampling output file.
+        Parameters
+        ----------
+        file_paths : str or list of str
+            Path(s) to ORCA output file(s).
+        type_calc : str
+            Type of operation: 
+            - 'rm_imag': displace along least imaginary frequency.
+            - 'normal_modes': displace along a random mode.
 
-        Returns:
-            tuple: (normal_modes, frequencies) — lists of normal modes and their corresponding frequencies.
+        Returns
+        -------
+        list of tuples
+            Each tuple is (pos_coords, neg_coords, imag_freq_dict) for one output file.
         """
+        if isinstance(file_paths, str):
+            file_paths = [file_paths]
+
+        results = []
+        for file_path in file_paths:
+            imag_freq_dict = self.parse_imaginary_frequencies(file_path, imag=True)
+            num_atoms = self.get_num_atoms_from_input(file_path)
+            normal_mode_tensor = self.parse_normal_modes_tensor_final(file_path, num_atoms)
+            coordinates, _ = self.parse_dft_output(file_path)
+
+            random_mode = (type_calc == 'normal_modes')
+            pos_coords, neg_coords = self.displace_least_imaginary_mode(
+                filepath=file_path,
+                imag_freq_dict=imag_freq_dict,
+                normal_mode_tensor=normal_mode_tensor,
+                coordinates=coordinates,
+                displacement_value=1.0,
+                random_mode=random_mode
+            )
+
         
-        """If type_calc is 'rm_imag', it will remove imaginary frequencies from the output file"""
 
     def imaginary_frequency_dict(self,file_paths, imag=True):
         import numpy as np
