@@ -416,6 +416,29 @@ class ChemRefiner:
                     parameters,
                     step_dir
                 )
+                # Perform normal mode sampling if requested
+                if step.get('normal_mode_sampling', False):
+                    logging.info(f"Normal mode sampling requested for step {step_id}.")
+                    nms_params = step.get('normal_mode_sampling_parameters', {})
+                    
+                    self.normal_mode_sampling(
+                        calc_type=nms_params.get("calc_type", "rm_imag"),
+                        template=self.template_dir,
+                        charge=charge,
+                        multiplicity=multiplicity,
+                        output_dir=nms_params.get("output_dir", os.path.join(step_dir, "normal_modes")),
+                        operation=operation,
+                        engine=engine,
+                        model_name=mlff_model,
+                        step_number=step_id,
+                        structure_ids=filtered_ids,  # Ignored for now
+                        max_cores=self.max_cores,
+                        task_name=mlff_task,
+                        mlff_model=mlff_model,
+                        displacement_value=nms_params.get("displacement_vector", 1.0),
+                        device=device,
+                        bind=bind_address
+                    )
 
                 if filtered_coordinates is None or filtered_ids is None:
                     logging.error(f"Filtering failed at step {step_id}. Exiting pipeline.")
