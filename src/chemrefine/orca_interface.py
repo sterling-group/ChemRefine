@@ -655,7 +655,7 @@ class OrcaInterface:
         normal_output_dir = os.path.join(output_dir, f"{step_number}/normal_modes")
 
         for file_path in file_paths:
-            imag_freq_dict = self.parse_imaginary_frequencies(file_path, imag=imag)
+            imag_freq_dict = self.parse_imaginary_frequency(file_path, imag=imag)
             logging.info(f"{len(imag_freq_dict)} imaginary frequencies detected in {file_path}")
 
             num_atoms = self.get_num_atoms_from_input(file_path)
@@ -708,7 +708,7 @@ class OrcaInterface:
 
         logging.info("Successfully finished normal mode sampling.")
 
-    def imaginary_frequency_dict(self,file_paths, imag=True):
+    def parse_imaginary_frequency(self,file_paths, imag=True):
         import numpy as np
         """
         Parses vibrational frequencies from an ORCA output file.
