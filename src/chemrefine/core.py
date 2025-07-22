@@ -321,7 +321,7 @@ class ChemRefiner:
         logging.info("Starting ChemRefine pipeline.")
         previous_coordinates, previous_ids = None, None
 
-        valid_operations = {"OPT+SP","GOAT", "PES", "DOCKER", "SOLVATOR"}
+        valid_operations = {"OPT+SP", "GOAT", "PES", "DOCKER", "SOLVATOR"}
         valid_engines = {"dft", "mlff"}
 
         steps = self.config.get('steps', [])
@@ -345,7 +345,6 @@ class ChemRefiner:
                 mlff_task = mlff_config.get('task_name', 'mace_off')
                 bind_address = mlff_config.get('bind', '127.0.0.1:8888')
                 device = mlff_config.get('device', 'cuda')
-
                 logging.info(f"Using MLFF model '{mlff_model}' with task '{mlff_task}' for step {step_id}.")
             else:
                 mlff_model = step.get('model_name', 'medium')
@@ -359,7 +358,7 @@ class ChemRefiner:
             filtered_coordinates, filtered_ids, energies = (None, None, None)
             if self.skip_steps:
                 filtered_coordinates, filtered_ids, energies = self.handle_skip_step(
-                    step_id, operation,engine, sample_method, parameters
+                    step_id, operation, engine, sample_method, parameters
                 )
 
             if filtered_coordinates is None or filtered_ids is None:
@@ -393,7 +392,7 @@ class ChemRefiner:
                         model_name=mlff_model,
                         task_name=mlff_task,
                         device=device,
-                        bind=bind_address,
+                        bind=bind_address
                     )
 
                 self.submit_orca_jobs(
@@ -416,29 +415,6 @@ class ChemRefiner:
                     parameters,
                     step_dir
                 )
-                # Perform normal mode sampling if requested
-                if step.get('normal_mode_sampling', False):
-                    logging.info(f"Normal mode sampling requested for step {step_id}.")
-                    nms_params = step.get('normal_mode_sampling_parameters', {})
-                    
-                    self.normal_mode_sampling(
-                        calc_type=nms_params.get("calc_type", "rm_imag"),
-                        template=self.template_dir,
-                        charge=charge,
-                        multiplicity=multiplicity,
-                        output_dir=nms_params.get("output_dir", os.path.join(step_dir, "normal_modes")),
-                        operation=operation,
-                        engine=engine,
-                        model_name=mlff_model,
-                        step_number=step_id,
-                        structure_ids=filtered_ids,  # Ignored for now
-                        max_cores=self.max_cores,
-                        task_name=mlff_task,
-                        mlff_model=mlff_model,
-                        displacement_value=nms_params.get("displacement_vector", 1.0),
-                        device=device,
-                        bind=bind_address
-                    )
 
                 if filtered_coordinates is None or filtered_ids is None:
                     logging.error(f"Filtering failed at step {step_id}. Exiting pipeline.")
@@ -447,10 +423,46 @@ class ChemRefiner:
                 step_dir = os.path.join(self.output_dir, f"step{step_id}")
                 logging.info(f"Skipping step {step_id} using existing outputs.")
 
+            if step.get("normal_mode_sampling", False):
+                nms_params = step.get("normal_mode_sampling_parameters", {})
+                calc_type = nms_params.get("calc_type", "rm_imag")
+                displacement_vector = nms_params.get("displacement_vector", 1.0)
+                normal_output_dir = nms_params.get("output_dir", os.path.join(step_dir, "normal_mode"))
+
+                if 'output_files' not in locals() or not output_files:
+                    output_files = [
+                        os.path.join(step_dir, f)
+                        for f in os.listdir(step_dir)
+                        if f.endswith(".out") and not f.startswith("slurm")
+                    ]
+
+                if not output_files:
+                    logging.warning(f"No valid .out files found for normal mode sampling in step {step_id}. Skipping NMS.")
+                else:
+                    logging.info(f"Normal mode sampling requested for step {step_id}.")
+                    self.orca.normal_mode_sampling(
+                        file_paths=output_files,
+                        calc_type=calc_type,
+                        template=self.template_dir,
+                        charge=step.get('charge', self.charge),
+                        multiplicity=step.get('multiplicity', self.multiplicity),
+                        output_dir=normal_output_dir,
+                        operation=operation,
+                        engine=engine,
+                        model_name=mlff_model,
+                        step_number=step_id,
+                        structure_ids=filtered_ids,
+                        max_cores=self.max_cores,
+                        task_name=mlff_task,
+                        mlff_model=mlff_model,
+                        displacement_value=displacement_vector,
+                        device=device,
+                        bind=bind_address
+                    )
+
             previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
 
         logging.info("ChemRefine pipeline completed.")
-
 
 def main():
     ChemRefiner().run()
