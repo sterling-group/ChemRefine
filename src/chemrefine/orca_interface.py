@@ -657,10 +657,10 @@ class OrcaInterface:
         for file_path in file_paths:
             imag_freq_dict = self.parse_imaginary_frequency(file_path, imag=imag)
             logging.info(f"{len(imag_freq_dict)} imaginary frequencies detected in {file_path}")
-
-            num_atoms = self.get_num_atoms_from_input(file_path)
-            normal_mode_tensor = self.parse_normal_modes_tensor_final(file_path, num_atoms)
+            
             coordinates, _ = self.parse_dft_output(file_path)
+            num_atoms = len(coordinates[0])
+            normal_mode_tensor = self.parse_normal_modes_tensor_final(file_path, num_atoms)
 
             pos_coords, neg_coords = self.displace_least_imaginary_mode(
                 filepath=file_path,
