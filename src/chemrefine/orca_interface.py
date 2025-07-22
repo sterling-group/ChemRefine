@@ -585,23 +585,23 @@ class OrcaInterface:
         return coordinates_list, energies_list
 
     def normal_mode_sampling(self,
-                             calc_type,
-                             template, 
-                             charge, 
-                             multiplicity, 
-                             output_dir, 
-                             operation,
-                             engine,
-                             model_name,
-                             step_number,
-                             structure_ids,
-                             max_cores=32,
-                             task_name=None,
-                             mlff_model=None,
-                             displacement_value=1.0,
-                             device='cuda',
-                             bind='127.0.0.1:8888'):
-                        
+                         file_paths,
+                         calc_type,
+                         template, 
+                         charge, 
+                         multiplicity, 
+                         output_dir, 
+                         operation,
+                         engine,
+                         model_name,
+                         step_number,
+                         structure_ids,
+                         max_cores=32,
+                         task_name=None,
+                         mlff_model=None,
+                         displacement_value=1.0,
+                         device='cuda',
+                         bind='127.0.0.1:8888'):
         """
         Samples normal modes and optionally removes imaginary frequencies for one or more ORCA output files.
 
@@ -609,31 +609,59 @@ class OrcaInterface:
         ----------
         file_paths : str or list of str
             Path(s) to ORCA output file(s).
-        type_calc : str
-            Type of operation: 
+        calc_type : str
+            Type of operation:
             - 'rm_imag': displace along least imaginary frequency.
             - 'normal_modes': displace along a random mode.
-
-        Returns
-        -------
-        list of tuples
-            Each tuple is (pos_coords, neg_coords, imag_freq_dict) for one output file.
+        template : str
+            ORCA input template path.
+        charge : int
+            Molecular charge.
+        multiplicity : int
+            Spin multiplicity.
+        output_dir : str
+            Base output directory.
+        operation : str
+            ORCA operation type (e.g., OPT, SP).
+        engine : str
+            ORCA engine (e.g., DFT or MLFF).
+        model_name : str
+            Model name for ORCA MLFF input.
+        step_number : int
+            Step identifier for directory naming.
+        structure_ids : list
+            List of structure identifiers.
+        max_cores : int, optional
+            Number of cores per job.
+        task_name : str, optional
+            ML task name.
+        mlff_model : str, optional
+            MLFF model name.
+        displacement_value : float, optional
+            Displacement factor for sampling.
+        device : str, optional
+            Compute device.
+        bind : str, optional
+            MLFF server bind address.
         """
+        logging.info("Starting normal mode sampling.")
+        logging.info(f"Sampling type: {'remove imaginary modes' if calc_type == 'rm_imag' else 'displace random mode'}")
+
         if isinstance(file_paths, str):
             file_paths = [file_paths]
 
-        if calc_type == "rm_imag":
-            imag=True
-        else: 
-            imag=False
+        imag = calc_type == "rm_imag"
+        random_mode = calc_type == "normal_modes"
+        normal_output_dir = os.path.join(output_dir, f"{step_number}/normal_modes")
 
         for file_path in file_paths:
             imag_freq_dict = self.parse_imaginary_frequencies(file_path, imag=imag)
+            logging.info(f"{len(imag_freq_dict)} imaginary frequencies detected in {file_path}")
+
             num_atoms = self.get_num_atoms_from_input(file_path)
             normal_mode_tensor = self.parse_normal_modes_tensor_final(file_path, num_atoms)
             coordinates, _ = self.parse_dft_output(file_path)
 
-            random_mode = (calc_type == 'normal_modes')
             pos_coords, neg_coords = self.displace_least_imaginary_mode(
                 filepath=file_path,
                 imag_freq_dict=imag_freq_dict,
@@ -642,41 +670,43 @@ class OrcaInterface:
                 displacement_value=displacement_value,
                 random_mode=random_mode
             )
+            logging.info(f"Successfully displaced coordinates for {file_path}")
 
-            # Generate new input files with displaced coordinates
             xyz_files = [pos_coords, neg_coords]
 
-            normal_output_dir = os.path.join(output_dir, f"{step_number}/normal_modes")
+            xyz_filenames = self.utility.write_xyz(
+                xyz_files,
+                step_number=step_number,
+                structure_ids=structure_ids,
+                output_dir=normal_output_dir
+            )
 
-            xyz_filenames = self.utility.write_xyz(xyz_files, 
-                                                   step_number=step_number, 
-                                                   structure_ids=structure_ids, 
-                                                   output_dir=normal_output_dir)
-            
             input_files, output_files = self.orca.create_input(
-                                        xyz_filenames,
-                                        template, 
-                                        charge, 
-                                        multiplicity, 
-                                        output_dir=normal_output_dir,
-                                        operation=operation,
-                                        engine=engine,
-                                        model_name=model_name,
-                                        task_name=task_name,
-                                        device=device,
-                                        bind=bind
-                                    )
-        
+                xyz_filenames,
+                template,
+                charge,
+                multiplicity,
+                output_dir=normal_output_dir,
+                operation=operation,
+                engine=engine,
+                model_name=model_name,
+                task_name=task_name,
+                device=device,
+                bind=bind
+            )
+
             self.submit_orca_jobs(
-                    input_files,
-                    max_cores,
-                    step_dir=normal_output_dir,
-                    operation=operation,
-                    engine=engine,
-                    model_name=mlff_model,
-                    task_name=task_name,
-                    device=device
-                )
+                input_files,
+                max_cores,
+                step_dir=normal_output_dir,
+                operation=operation,
+                engine=engine,
+                model_name=mlff_model,
+                task_name=task_name,
+                device=device
+            )
+
+        logging.info("Successfully finished normal mode sampling.")
 
     def imaginary_frequency_dict(self,file_paths, imag=True):
         import numpy as np
