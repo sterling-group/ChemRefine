@@ -585,9 +585,7 @@ class OrcaInterface:
         return coordinates_list, energies_list
 
     def normal_mode_sampling(self,
-                             output_filepaths,
                              calc_type,
-                             displacement_value=1.0,
                              template, 
                              charge, 
                              multiplicity, 
@@ -595,10 +593,15 @@ class OrcaInterface:
                              operation,
                              engine,
                              model_name,
+                             step_number,
+                             structure_ids,
+                             max_cores=32,
                              task_name=None,
+                             mlff_model=None,
+                             displacement_value=1.0,
                              device='cuda',
                              bind='127.0.0.1:8888'):
-        import                     
+                        
         """
         Samples normal modes and optionally removes imaginary frequencies for one or more ORCA output files.
 
@@ -642,20 +645,38 @@ class OrcaInterface:
 
             # Generate new input files with displaced coordinates
             xyz_files = [pos_coords, neg_coords]
-            xyz_filenames = self.utility.write_xyz(xyz_files, step_number=step_number, structure_ids=structure_ids, output_dir=output_dir)
+
+            normal_output_dir = os.path.join(output_dir, f"{step_number}/normal_modes")
+
+            xyz_filenames = self.utility.write_xyz(xyz_files, 
+                                                   step_number=step_number, 
+                                                   structure_ids=structure_ids, 
+                                                   output_dir=normal_output_dir)
+            
             input_files, output_files = self.orca.create_input(
-            template_inp, 
-            charge, 
-            multiplicity, 
-            output_dir=step_dir,
-            operation=operation,
-            engine=engine,
-            model_name=model_name,
-            task_name=task_name,
-            device=device,
-            bind=bind
-           )
+                                        xyz_filenames,
+                                        template, 
+                                        charge, 
+                                        multiplicity, 
+                                        output_dir=normal_output_dir,
+                                        operation=operation,
+                                        engine=engine,
+                                        model_name=model_name,
+                                        task_name=task_name,
+                                        device=device,
+                                        bind=bind
+                                    )
         
+            self.submit_orca_jobs(
+                    input_files,
+                    max_cores,
+                    step_dir=normal_output_dir,
+                    operation=operation,
+                    engine=engine,
+                    model_name=mlff_model,
+                    task_name=task_name,
+                    device=device
+                )
 
     def imaginary_frequency_dict(self,file_paths, imag=True):
         import numpy as np
