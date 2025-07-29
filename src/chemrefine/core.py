@@ -440,11 +440,12 @@ class ChemRefiner:
                     logging.warning(f"No valid .out files found for normal mode sampling in step {step_id}. Skipping NMS.")
                 else:
                     logging.info(f"Normal mode sampling requested for step {step_id}.")
-                    template = os.path.join(self.template_dir, "cpu.slurm.header")
+                    input_template_path = os.path.join(self.template_dir, f"step{step_id}.inp")
                     self.orca.normal_mode_sampling(
                         file_paths=output_files,
                         calc_type=calc_type,
-                        template=template,
+                        input_template=input_template_path,
+                        slurm_template=self.template_dir,
                         charge=step.get('charge', self.charge),
                         multiplicity=step.get('multiplicity', self.multiplicity),
                         output_dir=normal_output_dir,
