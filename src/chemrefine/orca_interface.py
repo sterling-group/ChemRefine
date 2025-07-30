@@ -647,87 +647,102 @@ class OrcaInterface:
         bind : str, optional
             MLFF server bind address.
         """
+     
         logging.info("Starting normal mode sampling.")
         logging.info(f"Sampling type: {'remove imaginary modes' if calc_type == 'rm_imag' else 'displace random mode'}")
 
         if isinstance(file_paths, str):
             file_paths = [file_paths]
 
-        imag = calc_type == "rm_imag"
-        random_mode = calc_type == "normal_modes"
-        normal_output_dir = os.path.join(output_dir, f"step{step_number}/normal_modes")
+        step_dir_name = f"step{step_number}"
+        if output_dir.endswith(step_dir_name):
+            normal_output_dir = os.path.join(output_dir, "normal_mode_sampling")
+        else:
+            normal_output_dir = os.path.join(output_dir, step_dir_name, "normal_mode_sampling")
+        os.makedirs(normal_output_dir, exist_ok=True)
 
-        for file_path in file_paths:
-            imag_freq_dict = self.parse_imaginary_frequency(file_path, imag=imag)
-            logging.info(f"{len(imag_freq_dict)} imaginary frequencies detected in {file_path}")
+        original_dir = os.getcwd()
+        os.chdir(normal_output_dir)
+        logging.info(f"Switched to normal mode sampling directory: {normal_output_dir}")
 
-            coordinates, _ = self.parse_dft_output(file_path)
-            flattened = [[float(x), float(y), float(z)] for _, x, y, z in coordinates[0]]
-            coords = np.array(flattened, dtype=float)
-            num_atoms = len(coordinates[0])
+        try:
+            imag = calc_type == "rm_imag"
+            random_mode = calc_type == "normal_modes"
 
-            normal_mode_tensor = self.parse_normal_modes_tensor(file_path, num_atoms)
-            if normal_mode_tensor is None or normal_mode_tensor.shape[0] == 0:
-                logging.warning(f"No normal mode data found in {file_path}. Skipping this structure.")
-                continue
+            for file_path in file_paths:
+                imag_freq_dict = self.parse_imaginary_frequency(file_path, imag=imag)
+                logging.info(f"{len(imag_freq_dict)} imaginary frequencies detected in {file_path}")
 
-            pos_coords, neg_coords = self.displace_normal_modes(
-                filepath=file_path,
-                imag_freq_dict=imag_freq_dict,
-                normal_mode_tensor=normal_mode_tensor,
-                coordinates=coords,
-                displacement_value=displacement_value,
-                random_mode=random_mode
-            )
-            logging.info(f"Successfully displaced coordinates for {file_path}")
+                coordinates, _ = self.parse_dft_output(file_path)
+                flattened = [[float(x), float(y), float(z)] for _, x, y, z in coordinates[0]]
+                coords = np.array(flattened, dtype=float)
+                num_atoms = len(coordinates[0])
 
-            symbols = [atom[0] for atom in coordinates[0]]
-            if len(symbols) != len(pos_coords):
-                logging.warning(f"Mismatch in atom count for {file_path}: {len(symbols)} symbols vs {len(pos_coords)} coords.")
-                continue
+                normal_mode_tensor = self.parse_normal_modes_tensor(file_path, num_atoms)
+                if normal_mode_tensor is None or normal_mode_tensor.shape[0] == 0:
+                    logging.warning(f"No normal mode data found in {file_path}. Skipping this structure.")
+                    continue
 
-            def attach_symbols(symbols, coords):
-                return [[symbol] + list(map(str, coord)) for symbol, coord in zip(symbols, coords)]
+                pos_coords, neg_coords = self.displace_normal_modes(
+                    filepath=file_path,
+                    imag_freq_dict=imag_freq_dict,
+                    normal_mode_tensor=normal_mode_tensor,
+                    coordinates=coords,
+                    displacement_value=displacement_value,
+                    random_mode=random_mode
+                )
+                logging.info(f"Successfully displaced coordinates for {file_path}")
 
-            xyz_files = [
-                attach_symbols(symbols, pos_coords),
-                attach_symbols(symbols, neg_coords)
-            ]
+                symbols = [atom[0] for atom in coordinates[0]]
+                if len(symbols) != len(pos_coords):
+                    logging.warning(f"Mismatch in atom count for {file_path}: {len(symbols)} symbols vs {len(pos_coords)} coords.")
+                    continue
 
-            xyz_filenames = self.utility.write_xyz(
-                xyz_files,
-                step_number=step_number,
-                structure_ids=structure_ids,
-                output_dir=normal_output_dir
-            )
+                def attach_symbols(symbols, coords):
+                    return [[symbol] + list(map(str, coord)) for symbol, coord in zip(symbols, coords)]
 
-            input_files, output_files = self.create_input(
-                xyz_filenames,
-                input_template,
-                charge,
-                multiplicity,
-                output_dir=normal_output_dir,
-                operation=operation,
-                engine=engine,
-                model_name=model_name,
-                task_name=task_name,
-                device=device,
-                bind=bind
-            )
+                xyz_files = [
+                    attach_symbols(symbols, pos_coords),
+                    attach_symbols(symbols, neg_coords)
+                ]
 
-            self.job_submitter.submit_files(
-                input_files=input_files,
-                max_cores=max_cores,
-                template_dir=slurm_template,
-                output_dir=normal_output_dir,
-                device=device,
-                operation=operation,
-                engine=engine,
-                model_name=mlff_model,
-                task_name=task_name
-            )
+                xyz_filenames = self.utility.write_xyz(
+                    xyz_files,
+                    step_number=step_number,
+                    structure_ids=structure_ids,
+                    output_dir=normal_output_dir
+                )
 
-        logging.info("Successfully finished normal mode sampling.")
+                input_files, output_files = self.create_input(
+                    xyz_filenames,
+                    input_template,
+                    charge,
+                    multiplicity,
+                    output_dir=normal_output_dir,
+                    operation=operation,
+                    engine=engine,
+                    model_name=model_name,
+                    task_name=task_name,
+                    device=device,
+                    bind=bind
+                )
+
+                self.job_submitter.submit_files(
+                    input_files=input_files,
+                    max_cores=max_cores,
+                    template_dir=slurm_template,
+                    output_dir=normal_output_dir,
+                    device=device,
+                    operation=operation,
+                    engine=engine,
+                    model_name=mlff_model,
+                    task_name=task_name
+                )
+
+        finally:
+            os.chdir(original_dir)
+            logging.info(f"Returned to original directory: {original_dir}")
+            logging.info("Successfully finished normal mode sampling.")
 
 
     def parse_imaginary_frequency(self,file_paths, imag=True):
