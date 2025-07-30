@@ -427,7 +427,6 @@ class ChemRefiner:
                 nms_params = step.get("normal_mode_sampling_parameters", {})
                 calc_type = nms_params.get("calc_type", "rm_imag")
                 displacement_vector = nms_params.get("displacement_vector", 1.0)
-                normal_output_dir = nms_params.get("output_dir", os.path.join(step_dir, "normal_mode"))
 
                 if 'output_files' not in locals() or not output_files:
                     output_files = [
@@ -448,7 +447,7 @@ class ChemRefiner:
                         slurm_template=self.template_dir,
                         charge=step.get('charge', self.charge),
                         multiplicity=step.get('multiplicity', self.multiplicity),
-                        output_dir=normal_output_dir,
+                        output_dir=self.output_dir,
                         operation=operation,
                         engine=engine,
                         model_name=mlff_model,
