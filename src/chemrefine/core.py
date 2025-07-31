@@ -458,7 +458,9 @@ class ChemRefiner:
                         mlff_model=mlff_model,
                         displacement_value=displacement_vector,
                         device=device,
-                        bind=bind_address
+                        bind=bind_address,
+                        orca_executable=self.orca_executable,
+                        scratch_dir=self.scratch_dir
                     )
 
             previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
