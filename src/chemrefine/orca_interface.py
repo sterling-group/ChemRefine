@@ -602,7 +602,10 @@ class OrcaInterface:
                          mlff_model=None,
                          displacement_value=1.0,
                          device='cuda',
-                         bind='127.0.0.1:8888'):
+                         bind='127.0.0.1:8888',
+                         orca_executable='orca',
+                         scratch_dir=None,): 
+        
         """
         Samples normal modes and optionally removes imaginary frequencies for one or more ORCA output files.
 
@@ -648,7 +651,7 @@ class OrcaInterface:
             MLFF server bind address.
         """
      
-        logging.info("Starting normal mode sampling.")
+        logging.info("***Starting normal mode sampling.***")
         logging.info(f"Sampling type: {'remove imaginary modes' if calc_type == 'rm_imag' else 'displace random mode'}")
 
         if isinstance(file_paths, str):
@@ -674,47 +677,31 @@ class OrcaInterface:
                 logging.info(f"{len(imag_freq_dict)} imaginary frequencies detected in {file_path}")
 
                 coordinates, _ = self.parse_dft_output(file_path)
-                flattened = [[float(x), float(y), float(z)] for _, x, y, z in coordinates[0]]
-                coords = np.array(flattened, dtype=float)
                 num_atoms = len(coordinates[0])
-
+                logging.info(f"Parsed {len(coordinates)} in {step_dir_name}")
+                logging.info(f"Parsing Normal modes from {file_path}")
                 normal_mode_tensor = self.parse_normal_modes_tensor(file_path, num_atoms)
                 if normal_mode_tensor is None or normal_mode_tensor.shape[0] == 0:
                     logging.warning(f"No normal mode data found in {file_path}. Skipping this structure.")
                     continue
-
                 pos_coords, neg_coords = self.displace_normal_modes(
                     filepath=file_path,
                     imag_freq_dict=imag_freq_dict,
                     normal_mode_tensor=normal_mode_tensor,
-                    coordinates=coords,
+                    coordinates=coordinates,
                     displacement_value=displacement_value,
                     random_mode=random_mode
                 )
-                logging.info(f"Successfully displaced coordinates for {file_path}")
+                pos_ids = [f"{sid}_pos" for sid in structure_ids]
+                neg_ids = [f"{sid}_neg" for sid in structure_ids]
+                # Write to disk
+                pos_xyz = self.write_displaced_xyz(pos_coords, step_number, pos_ids, output_dir)
+                neg_xyz = self.write_displaced_xyz(neg_coords, step_number, neg_ids, output_dir)
 
-                symbols = [atom[0] for atom in coordinates[0]]
-                if len(symbols) != len(pos_coords):
-                    logging.warning(f"Mismatch in atom count for {file_path}: {len(symbols)} symbols vs {len(pos_coords)} coords.")
-                    continue
-
-                def attach_symbols(symbols, coords):
-                    return [[symbol] + list(map(str, coord)) for symbol, coord in zip(symbols, coords)]
-
-                xyz_files = [
-                    attach_symbols(symbols, pos_coords),
-                    attach_symbols(symbols, neg_coords)
-                ]
-
-                xyz_filenames = self.utility.write_xyz(
-                    xyz_files,
-                    step_number=step_number,
-                    structure_ids=structure_ids,
-                    output_dir=normal_output_dir
-                )
-
+                xyz_files = pos_xyz + neg_xyz
+                logging.info(f"Successfully displaced coordinates for {file_path}, generated {len(xyz_files)} XYZ files.")
                 input_files, output_files = self.create_input(
-                    xyz_filenames,
+                    xyz_files,
                     input_template,
                     charge,
                     multiplicity,
@@ -727,17 +714,25 @@ class OrcaInterface:
                     bind=bind
                 )
 
-                self.job_submitter.submit_files(
-                    input_files=input_files,
-                    max_cores=max_cores,
-                    template_dir=slurm_template,
-                    output_dir=normal_output_dir,
-                    device=device,
-                    operation=operation,
-                    engine=engine,
-                    model_name=mlff_model,
-                    task_name=task_name
-                )
+                self.job_submitter = OrcaJobSubmitter(
+                device=device,
+                orca_executable=orca_executable,
+                bind=bind,
+                scratch_dir=scratch_dir,
+            )
+
+            self.job_submitter.submit_files(
+                input_files=input_files,
+                max_cores=max_cores,
+                template_dir=slurm_template,
+                output_dir=normal_output_dir,
+                device=device,
+                operation=operation,
+                engine=engine,
+                model_name=mlff_model,
+                task_name=task_name
+            )
+
 
         finally:
             os.chdir(original_dir)
@@ -838,48 +833,125 @@ class OrcaInterface:
         return full_matrix.reshape(num_atoms, 3, -1)
     
     def displace_normal_modes(self,
-                              filepath: str,
-                                   imag_freq_dict: dict,
-                                   normal_mode_tensor: np.ndarray,
-                                   coordinates,
-                                   displacement_value: float = 1.0,
-                                   random_mode: bool = False):
+                          filepath: str,
+                          imag_freq_dict: dict,
+                          normal_mode_tensor: np.ndarray,
+                          coordinates,
+                          displacement_value: float = 1.0,
+                          random_mode: bool = False):
         """
-        Parses coordinates from ORCA output and displaces them along a selected imaginary mode.
+        Displaces atomic coordinates along a selected imaginary mode for each molecule.
 
         Parameters
         ----------
         filepath : str
-            ORCA output file path.
+            Path to the frequency file (unused, retained for compatibility).
         imag_freq_dict : dict
-            Dictionary of imaginary frequencies {mode_index: frequency}.
+            Dictionary mapping normal mode index to imaginary frequency.
         normal_mode_tensor : np.ndarray
-            Normal mode displacement tensor of shape (n_atoms, 3, n_modes).
-        coordinates : list
-            List of atomic coordinates (usually parsed from ORCA).
+            Array of shape (n_atoms, 3, n_modes) containing displacement vectors.
+        coordinates : list of list of list
+            Input coordinates with shape: [[['C', x, y, z], ...], ...] (one or more molecules).
         displacement_value : float
-            Scale factor for displacement.
+            Magnitude of the displacement.
         random_mode : bool
-            If True, randomly selects one imaginary mode. Otherwise, selects the one with smallest magnitude.
+            If True, displace along a random imaginary mode. Else, use the least negative.
 
         Returns
         -------
         tuple
-            Positive and negative displaced coordinates (each as np.ndarray of shape (n_atoms, 3)).
+            (pos_displaced, neg_displaced): two lists of displaced structures in the same shape as input.
         """
         if not imag_freq_dict:
             raise ValueError("No imaginary frequencies found.")
 
-        coords = np.array(coordinates[0], dtype=float)
-
         if random_mode:
-            min_mode_idx = random.choice(list(imag_freq_dict.keys()))
+            mode_idx = random.choice(list(imag_freq_dict.keys()))
         else:
-            min_mode_idx = min(imag_freq_dict.items(), key=lambda kv: abs(kv[1]))[0]
+            mode_idx = min(imag_freq_dict.items(), key=lambda kv: abs(kv[1]))[0]
 
-        disp_vector = normal_mode_tensor[:, :, min_mode_idx]
+        disp_vector = normal_mode_tensor[:, :, mode_idx]
 
-        pos_coords = coords + displacement_value * disp_vector
-        neg_coords = coords - displacement_value * disp_vector
+        pos_displaced = []
+        neg_displaced = []
 
-        return pos_coords, neg_coords
+        for mol in coordinates:
+            if not all(len(atom) == 4 for atom in mol):
+                raise ValueError("Each atom must have [symbol, x, y, z].")
+
+            symbols = [atom[0] for atom in mol]
+            positions = np.array([[float(x), float(y), float(z)] for _, x, y, z in mol])
+
+            pos = positions + displacement_value * disp_vector
+            neg = positions - displacement_value * disp_vector
+
+            pos_atoms = [
+                [symbols[i], f"{pos[i][0]:.4f}", f"{pos[i][1]:.4f}", f"{pos[i][2]:.4f}"]
+                for i in range(len(symbols))
+            ]
+            neg_atoms = [
+                [symbols[i], f"{neg[i][0]:.4f}", f"{neg[i][1]:.4f}", f"{neg[i][2]:.4f}"]
+                for i in range(len(symbols))
+            ]
+
+            pos_displaced.append(pos_atoms)
+            neg_displaced.append(neg_atoms)
+
+        return pos_displaced, neg_displaced
+
+    def write_displaced_xyz(self, structures, step_number, structure_ids, output_dir='.'):
+        """
+        Writes XYZ files for displaced structures (positive/negative modes).
+        Accepts nested structure format: [[['C', x, y, z], ...]] per structure.
+
+        Parameters
+        ----------
+        structures : list of list of list
+            List of structures (each structure is a list of atoms).
+        step_number : int
+            Step number for filename convention.
+        structure_ids : list
+            List of structure identifiers (e.g. ["0_pos", "0_neg"]).
+        output_dir : str
+            Directory to write XYZ files to.
+
+        Returns
+        -------
+        list
+            List of file paths written.
+        """
+        import os
+        import logging
+
+        logging.info(f"Writing Ensemble XYZ files to {output_dir} for step {step_number}")
+        base_name = f"step{step_number}"
+        xyz_filenames = []
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        for structure, sid in zip(structures, structure_ids):
+            # Flatten structure if nested
+            if isinstance(structure[0], list) and isinstance(structure[0][0], str):
+                atom_list = structure
+            else:
+                atom_list = [atom for mol in structure for atom in mol]
+
+            # Determine comment line based on suffix
+            if str(sid).endswith("_pos"):
+                comment = "Displaced along +imaginary mode"
+            elif str(sid).endswith("_neg"):
+                comment = "Displaced along -imaginary mode"
+            else:
+                comment = ""
+
+            output_file = os.path.join(output_dir, f"{base_name}_structure_{sid}.xyz")
+            xyz_filenames.append(output_file)
+
+            with open(output_file, 'w') as f:
+                f.write(f"{len(atom_list)}\n{comment}\n")
+                for atom in atom_list:
+                    element, x, y, z = atom
+                    f.write(f"{element} {x} {y} {z}\n")
+
+        return xyz_filenames
+
