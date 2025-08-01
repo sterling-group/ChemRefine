@@ -971,13 +971,13 @@ class OrcaInterface:
         Parameters
         ----------
         directory : str
-            Path to the normal_mode_sampling directory.
+            Path to the base output directory (typically 'outputs').
         pos_ids : list
             List of positive structure IDs (e.g. ['0_pos', '1_pos']).
         neg_ids : list
             List of negative structure IDs (e.g. ['0_neg', '1_neg']).
         step_number : int
-            Step number in the pipeline.
+            Step number in the workflow (e.g. 1, 2, 3).
 
         Returns
         -------
@@ -986,11 +986,11 @@ class OrcaInterface:
         """
         selected_coords = []
         selected_ids = []
-        base_dir = f"{directory}/step{step_number}/normal_mode_sampling"
+        base_dir = os.path.join(directory, f"step{step_number}", "normal_mode_sampling")
 
         for pos_id, neg_id in zip(pos_ids, neg_ids):
-            pos_path = os.path.join(directory, f"{base_dir}/step{step_number}_structure_{pos_id}.out")
-            neg_path = os.path.join(directory, f"{base_dir}/step{step_number}_structure_{neg_id}.out")
+            pos_path = os.path.join(base_dir, f"step{step_number}_structure_{pos_id}.out")
+            neg_path = os.path.join(base_dir, f"step{step_number}_structure_{neg_id}.out")
 
             pos_coords_list, pos_energies = self.parse_dft_output(pos_path)
             neg_coords_list, neg_energies = self.parse_dft_output(neg_path)
@@ -998,44 +998,30 @@ class OrcaInterface:
             pos_imag_freqs = self.parse_imaginary_frequency(pos_path, imag=True)
             neg_imag_freqs = self.parse_imaginary_frequency(neg_path, imag=True)
 
-            valid_pos = list(pos_imag_freqs.items())
-            valid_neg = list(neg_imag_freqs.items())
+            pos_valid = len(pos_imag_freqs) == 1
+            neg_valid = len(neg_imag_freqs) == 1
 
-            if len(valid_pos) == 1:
-                idx_pos, _ = valid_pos[0]
-                coord_pos = pos_coords_list[idx_pos]
-                energy_pos = pos_energies[idx_pos]
-            else:
-                idx_pos, coord_pos, energy_pos = None, None, None
-
-            if len(valid_neg) == 1:
-                idx_neg, _ = valid_neg[0]
-                coord_neg = neg_coords_list[idx_neg]
-                energy_neg = neg_energies[idx_neg]
-            else:
-                idx_neg, coord_neg, energy_neg = None, None, None
-
-            if coord_pos is not None and coord_neg is not None:
-                if energy_pos < energy_neg:
-                    selected_coords.append(coord_pos)
+            if pos_valid and neg_valid:
+                if pos_energies[0] < neg_energies[0]:
+                    selected_coords.append(pos_coords_list[0])
                     selected_ids.append(pos_id)
                     logging.info(
                         f"Both '{pos_id}' and '{neg_id}' have one imaginary frequency. "
-                        f"Selected '{pos_id}' due to lower energy ({energy_pos:.6f} eV)."
+                        f"Selected '{pos_id}' due to lower energy ({pos_energies[0]:.6f} eV)."
                     )
                 else:
-                    selected_coords.append(coord_neg)
+                    selected_coords.append(neg_coords_list[0])
                     selected_ids.append(neg_id)
                     logging.info(
                         f"Both '{pos_id}' and '{neg_id}' have one imaginary frequency. "
-                        f"Selected '{neg_id}' due to lower energy ({energy_neg:.6f} eV)."
+                        f"Selected '{neg_id}' due to lower energy ({neg_energies[0]:.6f} eV)."
                     )
-            elif coord_pos is not None:
-                selected_coords.append(coord_pos)
+            elif pos_valid:
+                selected_coords.append(pos_coords_list[0])
                 selected_ids.append(pos_id)
                 logging.info(f"Only '{pos_id}' has one imaginary frequency. Selected.")
-            elif coord_neg is not None:
-                selected_coords.append(coord_neg)
+            elif neg_valid:
+                selected_coords.append(neg_coords_list[0])
                 selected_ids.append(neg_id)
                 logging.info(f"Only '{neg_id}' has one imaginary frequency. Selected.")
             else:
