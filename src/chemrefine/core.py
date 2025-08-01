@@ -440,7 +440,7 @@ class ChemRefiner:
                 else:
                     logging.info(f"Normal mode sampling requested for step {step_id}.")
                     input_template_path = os.path.join(self.template_dir, f"step{step_id}.inp")
-                    self.orca.normal_mode_sampling(
+                    filtered_coordinates,filtered_ids = self.orca.normal_mode_sampling(
                         file_paths=output_files,
                         calc_type=calc_type,
                         input_template=input_template_path,
