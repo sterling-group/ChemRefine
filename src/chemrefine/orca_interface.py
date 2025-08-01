@@ -738,7 +738,16 @@ class OrcaInterface:
             os.chdir(original_dir)
             logging.info(f"Returned to original directory: {original_dir}")
             logging.info("Successfully finished normal mode sampling.")
-
+            if calc_type == 'rm_imag':
+                filtered_coords, filtered_ids = self.select_lowest_imaginary_structures(
+                    step_number=step_number,
+                    pos_ids=pos_ids,
+                    neg_ids=neg_ids,
+                    directory=output_dir,
+                )
+                return filtered_coords, filtered_ids
+            else:
+                return pos_coords + neg_coords, pos_ids + neg_ids
 
     def parse_imaginary_frequency(self,file_paths, imag=True):
         import numpy as np
@@ -944,7 +953,7 @@ class OrcaInterface:
             else:
                 comment = ""
 
-            output_file = os.path.join(output_dir, f"{base_name}_structure_{sid}.xyz")
+            output_file = os.path.join(output_dir, f"step{step_number}/normal_mode_sampling/{base_name}_structure_{sid}.xyz")
             xyz_filenames.append(output_file)
 
             with open(output_file, 'w') as f:
@@ -955,3 +964,85 @@ class OrcaInterface:
 
         return xyz_filenames
 
+    def select_lowest_imaginary_structures(self, directory, pos_ids, neg_ids, step_number):
+        """
+        Selects structures with exactly one imaginary frequency and lowest energy.
+
+        Parameters
+        ----------
+        directory : str
+            Path to the normal_mode_sampling directory.
+        pos_ids : list
+            List of positive structure IDs (e.g. ['0_pos', '1_pos']).
+        neg_ids : list
+            List of negative structure IDs (e.g. ['0_neg', '1_neg']).
+        step_number : int
+            Step number in the pipeline.
+
+        Returns
+        -------
+        tuple
+            (filtered_coordinates, filtered_ids)
+        """
+        selected_coords = []
+        selected_ids = []
+        base_dir = f"{directory}/step{step_number}/normal_mode_sampling"
+
+        for pos_id, neg_id in zip(pos_ids, neg_ids):
+            pos_path = os.path.join(directory, f"{base_dir}/step{step_number}_structure_{pos_id}.out")
+            neg_path = os.path.join(directory, f"{base_dir}/step{step_number}_structure_{neg_id}.out")
+
+            pos_coords_list, pos_energies = self.parse_dft_output(pos_path)
+            neg_coords_list, neg_energies = self.parse_dft_output(neg_path)
+
+            pos_imag_freqs = self.parse_imaginary_frequency(pos_path, imag=True)
+            neg_imag_freqs = self.parse_imaginary_frequency(neg_path, imag=True)
+
+            valid_pos = list(pos_imag_freqs.items())
+            valid_neg = list(neg_imag_freqs.items())
+
+            if len(valid_pos) == 1:
+                idx_pos, _ = valid_pos[0]
+                coord_pos = pos_coords_list[idx_pos]
+                energy_pos = pos_energies[idx_pos]
+            else:
+                idx_pos, coord_pos, energy_pos = None, None, None
+
+            if len(valid_neg) == 1:
+                idx_neg, _ = valid_neg[0]
+                coord_neg = neg_coords_list[idx_neg]
+                energy_neg = neg_energies[idx_neg]
+            else:
+                idx_neg, coord_neg, energy_neg = None, None, None
+
+            if coord_pos is not None and coord_neg is not None:
+                if energy_pos < energy_neg:
+                    selected_coords.append(coord_pos)
+                    selected_ids.append(pos_id)
+                    logging.info(
+                        f"Both '{pos_id}' and '{neg_id}' have one imaginary frequency. "
+                        f"Selected '{pos_id}' due to lower energy ({energy_pos:.6f} eV)."
+                    )
+                else:
+                    selected_coords.append(coord_neg)
+                    selected_ids.append(neg_id)
+                    logging.info(
+                        f"Both '{pos_id}' and '{neg_id}' have one imaginary frequency. "
+                        f"Selected '{neg_id}' due to lower energy ({energy_neg:.6f} eV)."
+                    )
+            elif coord_pos is not None:
+                selected_coords.append(coord_pos)
+                selected_ids.append(pos_id)
+                logging.info(f"Only '{pos_id}' has one imaginary frequency. Selected.")
+            elif coord_neg is not None:
+                selected_coords.append(coord_neg)
+                selected_ids.append(neg_id)
+                logging.info(f"Only '{neg_id}' has one imaginary frequency. Selected.")
+            else:
+                logging.error(
+                    f"Neither '{pos_id}' nor '{neg_id}' has exactly one imaginary frequency.\n"
+                    f"Unable to remove imaginary frequencies. Try a higher displacement value."
+                )
+                raise RuntimeError("Imaginary frequency removal failed. Aborting.")
+
+        return selected_coords, selected_ids
