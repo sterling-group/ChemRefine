@@ -675,7 +675,9 @@ class OrcaInterface:
             for file_path in file_paths:
                 imag_freq_dict = self.parse_imaginary_frequency(file_path, imag=imag)
                 logging.info(f"{len(imag_freq_dict)} imaginary frequencies detected in {file_path}")
-
+                if calc_type == "rm_imag" and len(imag_freq_dict) == 0:
+                        logging.warning(f"No imaginary frequencies found in {file_path}, skipping structure.")
+                        continue
                 coordinates, _ = self.parse_dft_output(file_path)
                 num_atoms = len(coordinates[0])
                 logging.info(f"Parsed {len(coordinates)} in {step_dir_name}")
