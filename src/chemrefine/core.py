@@ -427,7 +427,7 @@ class ChemRefiner:
                 nms_params = step.get("normal_mode_sampling_parameters", {})
                 calc_type = nms_params.get("calc_type", "rm_imag")
                 displacement_vector = nms_params.get("displacement_vector", 1.0)
-
+                nms_random_displacements = nms_params.get("num_random_displacements", 1)
                 if 'output_files' not in locals() or not output_files:
                     output_files = [
                         os.path.join(step_dir, f)
@@ -460,7 +460,8 @@ class ChemRefiner:
                         device=device,
                         bind=bind_address,
                         orca_executable=self.orca_executable,
-                        scratch_dir=self.scratch_dir
+                        scratch_dir=self.scratch_dir,
+                        num_random_modes=nms_random_displacements,
                     )
 
             previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
