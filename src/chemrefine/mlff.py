@@ -77,7 +77,6 @@ class MLFFCalculator:
     def _setup_custom_mace(self):
         from pathlib import Path
         from mace.calculators import MACECalculator
-
         model_file = Path(self.model_path)
         if not model_file.exists():
             raise FileNotFoundError(f"Custom MACE model file does not exist: {self.model_path}")
