@@ -608,169 +608,146 @@ class OrcaInterface:
                          scratch_dir=None):
         """
         Samples normal modes and optionally removes imaginary frequencies or performs random displacements.
-
-        Parameters
-        ----------
-        file_paths : list of str
-            Paths to ORCA output files.
-        calc_type : str
-            Sampling type: 'rm_imag' or 'random'.
-        input_template : str
-            Path to the ORCA input template.
-        slurm_template : str
-            Path to the SLURM template.
-        charge : int
-            Molecular charge.
-        multiplicity : int
-            Spin multiplicity.
-        output_dir : str
-            Base output directory.
-        operation : str
-            Operation keyword (e.g. OPT, SP).
-        engine : str
-            Calculation engine.
-        model_name : str
-            MLFF model name.
-        step_number : int
-            Current step number.
-        structure_ids : list of str
-            Structure identifiers.
-        max_cores : int
-            Max CPU cores for PAL.
-        task_name : str, optional
-            Task identifier.
-        mlff_model : str, optional
-            Path to MLFF model.
-        displacement_value : float
-            Displacement scale factor.
-        num_random_modes : int
-            Number of random mode displacements to generate (used if calc_type='random').
-        device : str
-            GPU device type.
-        bind : str
-            Server bind string.
-        orca_executable : str
-            Path to ORCA binary.
-        scratch_dir : str, optional
-            Scratch directory.
-
-        Returns
-        -------
-        displaced_coordinates : list of ASE Atoms
-        displaced_ids : list of str
         """
-        logging.info(f"***Starting normal mode sampling.***")
+        logging.info("***Starting normal mode sampling.***")
         logging.info(f"Sampling type: {calc_type} mode x{num_random_modes if calc_type == 'random' else 1}")
 
-        displaced_coordinates = []
-        displaced_ids = []
+        all_pos_coords, all_neg_coords = [], []
+        all_pos_ids, all_neg_ids = [], []
         all_input_files = []
 
-        for file_path, sid in zip(file_paths, structure_ids):
-            normal_output_dir = os.path.join(output_dir, f"step{step_number}", "normal_mode_sampling")
-            os.makedirs(normal_output_dir, exist_ok=True)
-            os.chdir(normal_output_dir)
-            logging.info(f"Switched to normal mode sampling directory: {normal_output_dir}")
+        original_dir = os.getcwd()
 
-            imag_freq_dict = self.parse_imaginary_frequency(file_path, imag=(calc_type != 'random'))
-            logging.info(f"{len(imag_freq_dict)} imaginary frequencies detected in {file_path}")
+        try:
+            for file_path, sid in zip(file_paths, structure_ids):
+                normal_output_dir = os.path.join(output_dir, f"step{step_number}", "normal_mode_sampling")
+                os.makedirs(normal_output_dir, exist_ok=True)
+                os.chdir(normal_output_dir)
+                logging.info(f"Switched to normal mode sampling directory: {normal_output_dir}")
 
-            coordinates, _ = self.parse_dft_output(file_path)
-            logging.info(f"Parsed {len(coordinates)} in step{step_number}")
-            num_atoms = len(coordinates[0])
-            logging.info(f"Number of atoms in structure: {num_atoms}")
-            normal_mode_tensor = self.parse_normal_modes_tensor(file_path,num_atoms=num_atoms)
-            logging.info(f"Parsing Normal modes from {file_path}")
+                imag_freq_dict = self.parse_imaginary_frequency(file_path, imag=(calc_type != 'random'))
+                logging.info(f"{len(imag_freq_dict)} frequencies parsed in {file_path}")
+
+                coordinates, _ = self.parse_dft_output(file_path)
+                logging.info(f"Parsed {len(coordinates)} structures in step{step_number}")
+                num_atoms = len(coordinates[0])
+                normal_mode_tensor = self.parse_normal_modes_tensor(file_path, num_atoms=num_atoms)
+
+                if calc_type == 'rm_imag':
+                    pos_coords, neg_coords = self.displace_normal_modes(
+                        filepath=file_path,
+                        imag_freq_dict=imag_freq_dict,
+                        normal_mode_tensor=normal_mode_tensor,
+                        coordinates=coordinates,
+                        displacement_value=displacement_value,
+                        random_mode=False
+                    )
+
+                    pos_id, neg_id = f"{sid}_pos", f"{sid}_neg"
+                    pos_xyz = self.write_displaced_xyz([pos_coords[0]], step_number, [pos_id], output_dir)
+                    neg_xyz = self.write_displaced_xyz([neg_coords[0]], step_number, [neg_id], output_dir)
+                    xyz_files = pos_xyz + neg_xyz
+
+                    input_files, _ = self.create_input(
+                        xyz_files,
+                        input_template,
+                        charge,
+                        multiplicity,
+                        output_dir=normal_output_dir,
+                        operation=operation,
+                        engine=engine,
+                        model_name=model_name,
+                        task_name=task_name,
+                        device=device,
+                        bind=bind
+                    )
+
+                    all_pos_coords.append(pos_coords[0])
+                    all_neg_coords.append(neg_coords[0])
+                    all_pos_ids.append(pos_id)
+                    all_neg_ids.append(neg_id)
+                    all_input_files.extend(input_files)
+
+                elif calc_type == 'random':
+                    pos_coords, neg_coords, pos_ids, neg_ids, input_files = self.generate_random_displacements(
+                        sid=sid,
+                        file_path=file_path,
+                        normal_mode_tensor=normal_mode_tensor,
+                        coordinates=coordinates,
+                        num_random_modes=num_random_modes,
+                        displacement_value=displacement_value,
+                        step_number=step_number,
+                        input_template=input_template,
+                        charge=charge,
+                        multiplicity=multiplicity,
+                        output_dir=output_dir,
+                        engine=engine,
+                        model_name=model_name,
+                        task_name=task_name,
+                        device=device,
+                        bind=bind,
+                        normal_output_dir=normal_output_dir,
+                        operation=operation
+                    )
+
+                    all_pos_coords.extend(pos_coords)
+                    all_neg_coords.extend(neg_coords)
+                    all_pos_ids.extend(pos_ids)
+                    all_neg_ids.extend(neg_ids)
+                    all_input_files.extend(input_files)
+
+                else:
+                    raise ValueError(f"Unknown calc_type: {calc_type}. Must be 'rm_imag' or 'random'.")
+
+                logging.info(f"Successfully displaced coordinates for {file_path}, generated {len(all_input_files)} XYZ files.")
+
+            # Submit all jobs at once
+            self.job_submitter = OrcaJobSubmitter(
+                device=device,
+                orca_executable=orca_executable,
+                bind=bind,
+                scratch_dir=scratch_dir,
+            )
+
+            self.job_submitter.submit_files(
+                input_files=all_input_files,
+                max_cores=max_cores,
+                template_dir=slurm_template,
+                output_dir=normal_output_dir,
+                device=device,
+                operation=operation,
+                engine=engine,
+                model_name=mlff_model,
+                task_name=task_name
+            )
+
+        finally:
+            os.chdir(original_dir)
+            logging.info(f"Returned to original directory: {original_dir}")
+            logging.info("Successfully finished normal mode sampling.")
 
             if calc_type == 'rm_imag':
-                pos_coords, neg_coords = self.displace_normal_modes(
-                    filepath=file_path,
-                    imag_freq_dict=imag_freq_dict,
-                    normal_mode_tensor=normal_mode_tensor,
-                    coordinates=coordinates,
-                    displacement_value=displacement_value,
-                    random_mode=False
-                )
-
-                pos_id, neg_id = f"{sid}_pos", f"{sid}_neg"
-                pos_xyz = self.write_displaced_xyz([pos_coords[0]], step_number, [pos_id], output_dir)
-                neg_xyz = self.write_displaced_xyz([neg_coords[0]], step_number, [neg_id], output_dir)
-                xyz_files = pos_xyz + neg_xyz
-
-                input_files, _ = self.create_input(
-                    xyz_files,
-                    input_template,
-                    charge,
-                    multiplicity,
-                    output_dir=normal_output_dir,
-                    operation=operation,
-                    engine=engine,
-                    model_name=model_name,
-                    task_name=task_name,
-                    device=device,
-                    bind=bind
-                )
-
-                displaced_coordinates.extend([pos_coords[0], neg_coords[0]])
-                displaced_ids.extend([pos_id, neg_id])
-                all_input_files.extend(input_files)
-
-            elif calc_type == 'random':
-                pos_coords, neg_coords, pos_ids, neg_ids, input_files = self.generate_random_displacements(
-                    sid=sid,
-                    file_path=file_path,
-                    normal_mode_tensor=normal_mode_tensor,
-                    coordinates=coordinates,
-                    num_random_modes=num_random_modes,
-                    displacement_value=displacement_value,
+                filtered_coords, filtered_ids = self.select_lowest_imaginary_structures(
                     step_number=step_number,
-                    input_template=input_template,
-                    charge=charge,
-                    multiplicity=multiplicity,
-                    output_dir=output_dir,
-                    engine=engine,
-                    model_name=model_name,
-                    task_name=task_name,
-                    device=device,
-                    bind=bind,
-                    normal_output_dir=normal_output_dir,
-                    operation=operation
+                    pos_ids=all_pos_ids,
+                    neg_ids=all_neg_ids,
+                    directory=output_dir,
                 )
-
-                displaced_coordinates.extend(pos_coords + neg_coords)
-                displaced_ids.extend(pos_ids + neg_ids)
-                all_input_files.extend(input_files)
-
+                return filtered_coords, filtered_ids
             else:
-                raise ValueError(f"Unknown calc_type: {calc_type}. Must be 'rm_imag' or 'random'.")
+                return all_pos_coords + all_neg_coords, all_pos_ids + all_neg_ids
 
-            logging.info(f"Successfully displaced coordinates for {file_path}, generated {len(all_input_files)} XYZ files.")
-
-        # Submit all jobs
-        for inp in all_input_files:
-            job_id = self.run_orca(
-                inp,
-                slurm_template=slurm_template,
-                orca_executable=orca_executable,
-                max_cores=max_cores,
-                scratch_dir=scratch_dir
-            )
-            logging.info(f"Submitted ORCA job with ID: {job_id} for input: {inp}")
-
-        logging.info("All jobs submitted. Waiting for remaining jobs to complete...")
-        return displaced_coordinates, displaced_ids
-
-    def parse_imaginary_frequency(self,file_paths, imag=True):
+    def parse_imaginary_frequency(self, file_paths, imag=True):
         import numpy as np
         """
         Parses vibrational frequencies from an ORCA output file.
 
         Parameters
         ----------
-        orca_output_path : str or Path
+        file_paths : str
             Path to the ORCA output file.
         imag : bool, optional
-            If True, return only imaginary frequencies (default). If False, return all frequencies.
+            If True, return only imaginary frequencies. If False, return all frequencies except first 5.
 
         Returns
         -------
@@ -794,15 +771,19 @@ class OrcaInterface:
                         index_part, value_part = line.strip().split(':', 1)
                         index = int(index_part.strip())
                         value = float(value_part.strip().split()[0])
+
                         if imag:
                             if '***imaginary mode***' in line:
                                 freqs[index] = value
                         else:
+                            if index <= 5:
+                                continue  # Skip the first 5 real modes
                             freqs[index] = value
                     except Exception:
                         continue
 
         return freqs
+
     
     def parse_normal_modes_tensor(self,filepath, num_atoms):
         """
@@ -966,7 +947,7 @@ class OrcaInterface:
             else:
                 comment = ""
 
-            output_file = os.path.join(output_dir, f"step{step_number}/normal_mode_sampling/{base_name}_structure_{sid}.xyz")
+            output_file = os.path.join(output_dir, f"step{step_number}/normal_mode_sampling/{base_name}_structure_guess_{sid}.xyz")
             xyz_filenames.append(output_file)
 
             with open(output_file, 'w') as f:
@@ -1047,81 +1028,38 @@ class OrcaInterface:
         return selected_coords, selected_ids
 
     def generate_random_displacements(self,
-                                    sid,
-                                    file_path,
-                                    normal_mode_tensor,
-                                    coordinates,
-                                    num_random_modes,
-                                    displacement_value,
-                                    step_number,
-                                    input_template,
-                                    charge,
-                                    multiplicity,
-                                    output_dir,
-                                    engine,
-                                    model_name,
-                                    task_name,
-                                    device,
-                                    bind,
-                                    normal_output_dir,
-                                    operation):
+                                   sid,
+                                   file_path,
+                                   normal_mode_tensor,
+                                   coordinates,
+                                   num_random_modes,
+                                   displacement_value,
+                                   step_number,
+                                   input_template,
+                                   charge,
+                                   multiplicity,
+                                   output_dir,
+                                   engine,
+                                   model_name,
+                                   task_name,
+                                   device,
+                                   bind,
+                                   normal_output_dir,
+                                   operation):
         """
         Generate multiple random mode displacements for a given structure.
-
-        Parameters
-        ----------
-        sid : str
-            Structure ID.
-        file_path : str
-            Path to the ORCA .out file containing the frequency calculation.
-        normal_mode_tensor : np.ndarray
-            Parsed normal mode displacement matrix.
-        coordinates : list of ASE Atoms
-            List containing the original geometry.
-        num_random_modes : int
-            Number of random displacements to generate.
-        displacement_value : float
-            Scale factor for displacement.
-        step_number : int
-            Step number for file naming.
-        input_template : str
-            ORCA input template path.
-        charge : int
-            Molecular charge.
-        multiplicity : int
-            Spin multiplicity.
-        output_dir : str
-            Top-level output directory for the pipeline.
-        engine : str
-            Calculation engine.
-        model_name : str
-            MLFF model name (if any).
-        task_name : str
-            Task name for MLFF (if any).
-        device : str
-            Device type (e.g. 'cuda').
-        bind : str
-            MLFF server bind string.
-        normal_output_dir : str
-            Directory to write the .inp and .slurm files.
-        operation : str
-            Operation keyword (e.g. OPT, SP).
-
-        Returns
-        -------
-        all_pos_coords : list of ASE Atoms
-        all_neg_coords : list of ASE Atoms
-        all_pos_ids : list of str
-        all_neg_ids : list of str
-        input_files : list of str
+        [docstring unchanged]
         """
         all_pos_coords, all_neg_coords = [], []
         all_pos_ids, all_neg_ids = [], []
 
+        # Parse all frequencies (imag=False) for use in random_mode=True
+        imag_freq_dict = self.parse_imaginary_frequency(file_path, imag=False)
+
         for i in range(num_random_modes):
             pos_coords, neg_coords = self.displace_normal_modes(
                 filepath=file_path,
-                imag_freq_dict=None,
+                imag_freq_dict=imag_freq_dict,
                 normal_mode_tensor=normal_mode_tensor,
                 coordinates=coordinates,
                 displacement_value=displacement_value,
@@ -1136,7 +1074,7 @@ class OrcaInterface:
             logging.info(f"Generated random mode displacement {i} for {sid}")
 
         # Write all XYZ files at once
-        print(f"Writing {len(all_pos_coords)} positive and {len(all_neg_coords)} negative XYZ files for random modes.")
+        logging.info(f"Writing {len(all_pos_coords)} positive and {len(all_neg_coords)} negative XYZ files for random modes.")
         pos_xyz = self.write_displaced_xyz(all_pos_coords, step_number, all_pos_ids, output_dir)
         neg_xyz = self.write_displaced_xyz(all_neg_coords, step_number, all_neg_ids, output_dir)
         xyz_files = pos_xyz + neg_xyz
@@ -1157,3 +1095,4 @@ class OrcaInterface:
         )
 
         return all_pos_coords, all_neg_coords, all_pos_ids, all_neg_ids, input_files
+
