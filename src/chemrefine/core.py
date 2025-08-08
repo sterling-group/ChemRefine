@@ -181,67 +181,121 @@ class ChemRefiner:
 
         return step_dir, input_files, output_files
 
-    def handle_skip_step(self, step_number, operation,engine, sample_method, parameters):
+    def handle_skip_step(self, step_number, operation, engine, sample_method, parameters):
         """
-        Handles skip logic for a step if its directory already exists and required outputs are present.
+        Decide whether to skip a step by validating that expected outputs already exist.
+        If so, re-parse and filter them while preserving persistent structure IDs
+        from the per-step manifest.
 
-        Args:
-            step_number (int): The current step number.
-            operation (str): Algorithm used in ORCA (i.e GOAT, DOCKER, PES, OPT+SP).
-            engine (str): The calculation engine (e.g., 'dft', 'mlff
-            sample_method (str): The sampling method.
-            parameters (dict): Additional parameters for filtering.
+        Parameters
+        ----------
+        step_number : int
+            Current step index.
+        operation : str
+            ORCA-level operation ("OPT+SP", "GOAT", "PES", "DOCKER", "SOLVATOR"), case-insensitive.
+        engine : str
+            Calculation engine ("dft" or "mlff"), case-insensitive. Present for completeness; logic is engine-agnostic.
+        sample_method : str
+            Filtering method name to pass to the refiner.
+        parameters : dict
+            Parameters for the filtering method.
 
-        Returns:
-            tuple: (filtered_coordinates, filtered_ids, energies) if step is skipped, else (None, None, None).
+        Returns
+        -------
+        tuple[list|None, list|None, list|None]
+            (filtered_coordinates, filtered_ids, energies) when outputs are reusable;
+            otherwise (None, None, None) to signal re-run.
         """
+        import os
+
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
-        if os.path.exists(step_dir):
-            logging.info(f"Checking skip condition for step {step_number} at: {step_dir}")
-
-            
-            if operation.lower() == 'goat':
-                output_files = [
-                    os.path.join(step_dir, f)
-                    for f in os.listdir(step_dir)
-                    if f.endswith('.finalensemble.xyz')
-                ]
-                if not output_files:
-                    logging.warning(f"No GOAT ensemble files found in {step_dir}. Will rerun this step.")
-                    return None, None,None
-                logging.info(f"Found {len(output_files)} GOAT ensemble file(s) in {step_dir}. Skipping this step.")
-
-            elif operation.lower() == 'docker':
-                output_files = [
-                    os.path.join(step_dir, f)
-                    for f in os.listdir(step_dir)
-                    if f.endswith('struc1.allopt.xyz')
-                ]
-                if not output_files:
-                    logging.warning(f"No GOAT ensemble files found in {step_dir}. Will rerun this step.")
-                    return None, None,None
-                logging.info(f"Found {len(output_files)} GOAT ensemble file(s) in {step_dir}. Skipping this step.")
-            else:
-                output_files = [
-                    os.path.join(step_dir, f)
-                    for f in os.listdir(step_dir)
-                    if f.endswith('.out') and not f.endswith('.smd.out') and not f.startswith('slurm')
-                ]
-                if not output_files:
-                    logging.warning(f"No .out files found in {step_dir}. Will rerun this step.")
-                    return None, None,None
-                logging.info(f"Found {len(output_files)} .out file(s) in {step_dir}. Skipping this step.")
-
-            coordinates, energies = self.orca.parse_output(output_files, operation, dir=step_dir)
-            logging.info(f"Parsed {len(coordinates)} coordinates and {len(energies)} energies from {output_files}.")
-            filtered_coordinates, filtered_ids = self.refiner.filter(
-                coordinates, energies, list(range(len(energies))), sample_method, parameters
-            )
-            logging.info(f"Filtered {len(filtered_coordinates)} coordinates and {len(filtered_ids)} IDs after filtering.")
-            return filtered_coordinates, filtered_ids, energies
-        else:
+        if not os.path.exists(step_dir):
             logging.info(f"Step directory {step_dir} does not exist. Will run this step.")
             return None, None, None
+
+        op = operation.strip().upper()
+
+        # Discover expected outputs by operation
+        if op == "GOAT":
+            output_files = [
+                os.path.join(step_dir, f)
+                for f in os.listdir(step_dir)
+                if f.endswith(".finalensemble.xyz")
+            ]
+            missing_msg = "No GOAT ensemble (.finalensemble.xyz) files found"
+            found_msg = f"Found {len(output_files)} GOAT ensemble file(s)"
+        elif op == "DOCKER":
+            output_files = [
+                os.path.join(step_dir, f)
+                for f in os.listdir(step_dir)
+                if f.endswith("struc1.allopt.xyz")
+            ]
+            missing_msg = "No DOCKER output (struc1.allopt.xyz) files found"
+            found_msg = f"Found {len(output_files)} DOCKER output file(s)"
+        elif op == "SOLVATOR":
+            candidates = [
+                os.path.join(step_dir, f)
+                for f in os.listdir(step_dir)
+                if f.lower() == "solvator.xyz"
+            ]
+            if not candidates:
+                candidates = [
+                    os.path.join(step_dir, f)
+                    for f in os.listdir(step_dir)
+                    if f.endswith(".xyz") and "solvator" in f.lower()
+                ]
+            output_files = candidates
+            missing_msg = "No SOLVATOR xyz files found"
+            found_msg = f"Found {len(output_files)} SOLVATOR xyz file(s)"
+        else:
+            # OPT+SP and PES: rely on ORCA .out files (exclude SMD aux and slurm)
+            output_files = [
+                os.path.join(step_dir, f)
+                for f in os.listdir(step_dir)
+                if f.endswith(".out") and not f.endswith(".smd.out") and not f.startswith("slurm")
+            ]
+            missing_msg = "No ORCA .out files found"
+            found_msg = f"Found {len(output_files)} .out file(s)"
+
+        if not output_files:
+            logging.warning(f"{missing_msg} in {step_dir}. Will rerun this step.")
+            return None, None, None
+
+        logging.info(f"{found_msg} in {step_dir}. Reusing existing outputs.")
+
+        # Update manifest with output filenames for better future matching
+        update_step_manifest_outputs(step_dir, step_number, output_files)
+
+        # Parse outputs
+        coordinates, energies = self.orca.parse_output(output_files, op, dir=step_dir)
+        if not coordinates or not energies or len(coordinates) != len(energies):
+            logging.warning(
+                f"Parsed outputs are incomplete or inconsistent for step {step_number} "
+                f"(coords={len(coordinates)}, energies={len(energies)}). Will rerun this step."
+            )
+            return None, None, None
+
+        # Resolve persistent IDs from manifest (or filename fallback)
+        structure_ids = map_outputs_to_ids(step_dir, step_number, output_files)
+        if any(i < 0 for i in structure_ids):
+            logging.warning(
+                f"Could not resolve persistent IDs for all outputs in step {step_number}. "
+                f"Will rerun this step to regenerate a complete manifest."
+            )
+            return None, None, None
+
+        # Filter with persistent IDs
+        filtered_coordinates, filtered_ids = self.refiner.filter(
+            coordinates,
+            energies,
+            structure_ids,
+            sample_method,
+            parameters,
+        )
+        logging.info(
+            f"After filtering step {step_number}: kept {len(filtered_coordinates)} structures."
+        )
+        return filtered_coordinates, filtered_ids, energies
 
     def submit_orca_jobs(self, input_files, cores, step_dir,device='cpu',operation='OPT+SP',engine='DFT', model_name=None, task_name=None):
         """
