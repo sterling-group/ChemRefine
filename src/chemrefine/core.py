@@ -7,6 +7,11 @@ from .utils import Utility
 from .orca_interface import OrcaInterface, OrcaJobSubmitter
 import shutil
 import sys
+from chemrefine.utils import (
+    write_step_manifest,
+    update_step_manifest_outputs,
+    map_outputs_to_ids,
+)
 
 class ChemRefiner:
 
@@ -312,161 +317,175 @@ class ChemRefiner:
 
         return filtered_coordinates, selected_ids
 
-    def run(self):
-        """
-        Main pipeline execution function for ChemRefine.
-        Dynamically loops over all steps defined in the YAML input.
-        Handles skip-step logic and standard pipeline logic.
-        """
-        logging.info("Starting ChemRefine pipeline.")
-        previous_coordinates, previous_ids = None, None
+def run(self):
+    """
+    Main pipeline execution function for ChemRefine.
+    Dynamically loops over all steps defined in the YAML input.
+    Handles skip-step logic, ID persistence, and normal pipeline execution.
+    """
+    logging.info("Starting ChemRefine pipeline.")
+    previous_coordinates, previous_ids = None, None
 
-        valid_operations = {"OPT+SP", "GOAT", "PES", "DOCKER", "SOLVATOR"}
-        valid_engines = {"dft", "mlff"}
+    valid_operations = {"OPT+SP", "GOAT", "PES", "DOCKER", "SOLVATOR"}
+    valid_engines = {"dft", "mlff"}
 
-        steps = self.config.get('steps', [])
+    steps = self.config.get('steps', [])
 
-        for step in steps:
-            step_id = step['step']
-            operation = step['operation'].upper()
-            engine = step.get('engine', 'dft').lower()
+    for step in steps:
+        step_id = step['step']
+        operation = step['operation'].upper()
+        engine = step.get('engine', 'dft').lower()
 
-            logging.info(f"Processing step {step_id}: operation '{operation}', engine '{engine}'.")
+        logging.info(f"Processing step {step_id}: operation '{operation}', engine '{engine}'.")
 
-            if operation not in valid_operations:
-                raise ValueError(f"Invalid operation '{operation}' at step {step_id}. Must be one of {valid_operations}.")
+        if operation not in valid_operations:
+            raise ValueError(f"Invalid operation '{operation}' at step {step_id}. Must be one of {valid_operations}.")
 
-            if engine not in valid_engines:
-                raise ValueError(f"Invalid engine '{engine}' at step {step_id}. Must be one of {valid_engines}.")
+        if engine not in valid_engines:
+            raise ValueError(f"Invalid engine '{engine}' at step {step_id}. Must be one of {valid_engines}.")
 
-            if engine == 'mlff':
-                mlff_config = step.get('mlff', {})
-                mlff_model = mlff_config.get('model_name', 'medium')
-                mlff_task = mlff_config.get('task_name', 'mace_off')
-                bind_address = mlff_config.get('bind', '127.0.0.1:8888')
-                device = mlff_config.get('device', 'cuda')
-                logging.info(f"Using MLFF model '{mlff_model}' with task '{mlff_task}' for step {step_id}.")
-            else:
-                mlff_model = step.get('model_name', 'medium')
-                mlff_task = step.get('task_name', 'mace_off')
-                bind_address = '127.0.0.1:8888'
-                device = 'cpu'
+        if engine == 'mlff':
+            mlff_config = step.get('mlff', {})
+            mlff_model = mlff_config.get('model_name', 'medium')
+            mlff_task = mlff_config.get('task_name', 'mace_off')
+            bind_address = mlff_config.get('bind', '127.0.0.1:8888')
+            device = mlff_config.get('device', 'cuda')
+            logging.info(f"Using MLFF model '{mlff_model}' with task '{mlff_task}' for step {step_id}.")
+        else:
+            mlff_model = step.get('model_name', 'medium')
+            mlff_task = step.get('task_name', 'mace_off')
+            bind_address = '127.0.0.1:8888'
+            device = 'cpu'
 
-            sample_method = step['sample_type']['method']
-            parameters = step['sample_type'].get('parameters', {})
+        sample_method = step['sample_type']['method']
+        parameters = step['sample_type'].get('parameters', {})
 
-            filtered_coordinates, filtered_ids, energies = (None, None, None)
-            if self.skip_steps:
-                filtered_coordinates, filtered_ids, energies = self.handle_skip_step(
-                    step_id, operation, engine, sample_method, parameters
-                )
+        filtered_coordinates, filtered_ids, energies = (None, None, None)
+        if self.skip_steps:
+            filtered_coordinates, filtered_ids, energies = self.handle_skip_step(
+                step_id, operation, engine, sample_method, parameters
+            )
 
-            if filtered_coordinates is None or filtered_ids is None:
-                logging.info(f"No valid skip outputs for step {step_id}. Proceeding with normal execution.")
-                charge = step.get('charge', self.charge)
-                multiplicity = step.get('multiplicity', self.multiplicity)
+        if filtered_coordinates is None or filtered_ids is None:
+            logging.info(f"No valid skip outputs for step {step_id}. Proceeding with normal execution.")
+            charge = step.get('charge', self.charge)
+            multiplicity = step.get('multiplicity', self.multiplicity)
 
-                if step_id == 1:
-                    initial_xyz = self.config.get("initial_xyz", None)
-                    step_dir, input_files, output_files = self.prepare_step1_directory(
-                        step_id,
-                        initial_xyz=initial_xyz,
-                        charge=charge,
-                        multiplicity=multiplicity,
-                        operation=operation,
-                        engine=engine,
-                        model_name=mlff_model,
-                        task_name=mlff_task,
-                        device=device,
-                        bind=bind_address
-                    )
-                else:
-                    step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
-                        step_id,
-                        previous_coordinates,
-                        previous_ids,
-                        charge=charge,
-                        multiplicity=multiplicity,
-                        operation=operation,
-                        engine=engine,
-                        model_name=mlff_model,
-                        task_name=mlff_task,
-                        device=device,
-                        bind=bind_address
-                    )
-
-                self.submit_orca_jobs(
-                    input_files,
-                    self.max_cores,
-                    step_dir,
+            if step_id == 1:
+                initial_xyz = self.config.get("initial_xyz", None)
+                step_dir, input_files, output_files = self.prepare_step1_directory(
+                    step_id,
+                    initial_xyz=initial_xyz,
+                    charge=charge,
+                    multiplicity=multiplicity,
                     operation=operation,
                     engine=engine,
                     model_name=mlff_model,
                     task_name=mlff_task,
-                    device=device
+                    device=device,
+                    bind=bind_address
                 )
-
-                filtered_coordinates, filtered_ids = self.parse_and_filter_outputs(
-                    output_files,
-                    operation,
-                    engine,
-                    step_id,
-                    sample_method,
-                    parameters,
-                    step_dir
-                )
-
-                if filtered_coordinates is None or filtered_ids is None:
-                    logging.error(f"Filtering failed at step {step_id}. Exiting pipeline.")
-                    return
             else:
-                step_dir = os.path.join(self.output_dir, f"step{step_id}")
-                logging.info(f"Skipping step {step_id} using existing outputs.")
+                step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
+                    step_id,
+                    previous_coordinates,
+                    previous_ids,
+                    charge=charge,
+                    multiplicity=multiplicity,
+                    operation=operation,
+                    engine=engine,
+                    model_name=mlff_model,
+                    task_name=mlff_task,
+                    device=device,
+                    bind=bind_address
+                )
 
-            if step.get("normal_mode_sampling", False):
-                nms_params = step.get("normal_mode_sampling_parameters", {})
-                calc_type = nms_params.get("calc_type", "rm_imag")
-                displacement_vector = nms_params.get("displacement_vector", 1.0)
-                nms_random_displacements = nms_params.get("num_random_displacements", 1)
-                if 'output_files' not in locals() or not output_files:
-                    output_files = [
-                        os.path.join(step_dir, f)
-                        for f in os.listdir(step_dir)
-                        if f.endswith(".out") and not f.startswith("slurm")
-                    ]
+            # Save manifest with input structure IDs
+            write_step_manifest(step_id, step_dir, input_files, operation, engine)
 
-                if not output_files:
-                    logging.warning(f"No valid .out files found for normal mode sampling in step {step_id}. Skipping NMS.")
-                else:
-                    logging.info(f"Normal mode sampling requested for step {step_id}.")
-                    input_template_path = os.path.join(self.template_dir, f"step{step_id}.inp")
-                    filtered_coordinates,filtered_ids = self.orca.normal_mode_sampling(
-                        file_paths=output_files,
-                        calc_type=calc_type,
-                        input_template=input_template_path,
-                        slurm_template=self.template_dir,
-                        charge=step.get('charge', self.charge),
-                        multiplicity=step.get('multiplicity', self.multiplicity),
-                        output_dir=self.output_dir,
-                        operation=operation,
-                        engine=engine,
-                        model_name=mlff_model,
-                        step_number=step_id,
-                        structure_ids=filtered_ids,
-                        max_cores=self.max_cores,
-                        task_name=mlff_task,
-                        mlff_model=mlff_model,
-                        displacement_value=displacement_vector,
-                        device=device,
-                        bind=bind_address,
-                        orca_executable=self.orca_executable,
-                        scratch_dir=self.scratch_dir,
-                        num_random_modes=nms_random_displacements,
-                    )
+            # Submit jobs
+            self.submit_orca_jobs(
+                input_files,
+                self.max_cores,
+                step_dir,
+                operation=operation,
+                engine=engine,
+                model_name=mlff_model,
+                task_name=mlff_task,
+                device=device
+            )
 
-            previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
+            # Parse outputs
+            filtered_coordinates, energies = self.orca.parse_output(output_files, operation, dir=step_dir)
 
-        logging.info("ChemRefine pipeline completed.")
+            # Update manifest with output file names
+            update_step_manifest_outputs(step_dir, step_id, output_files)
+
+            # Get persistent IDs for outputs
+            filtered_ids = map_outputs_to_ids(step_dir, step_id, output_files)
+
+            # Apply filtering
+            filtered_coordinates, filtered_ids = self.refiner.filter(
+                filtered_coordinates,
+                energies,
+                filtered_ids,
+                sample_method,
+                parameters
+            )
+
+            if filtered_coordinates is None or filtered_ids is None:
+                logging.error(f"Filtering failed at step {step_id}. Exiting pipeline.")
+                return
+        else:
+            step_dir = os.path.join(self.output_dir, f"step{step_id}")
+            logging.info(f"Skipping step {step_id} using existing outputs.")
+
+        # Optional: normal mode sampling
+        if step.get("normal_mode_sampling", False):
+            nms_params = step.get("normal_mode_sampling_parameters", {})
+            calc_type = nms_params.get("calc_type", "rm_imag")
+            displacement_vector = nms_params.get("displacement_vector", 1.0)
+            nms_random_displacements = nms_params.get("num_random_displacements", 1)
+            if 'output_files' not in locals() or not output_files:
+                output_files = [
+                    os.path.join(step_dir, f)
+                    for f in os.listdir(step_dir)
+                    if f.endswith(".out") and not f.startswith("slurm")
+                ]
+
+            if not output_files:
+                logging.warning(f"No valid .out files found for normal mode sampling in step {step_id}. Skipping NMS.")
+            else:
+                logging.info(f"Normal mode sampling requested for step {step_id}.")
+                input_template_path = os.path.join(self.template_dir, f"step{step_id}.inp")
+                filtered_coordinates, filtered_ids = self.orca.normal_mode_sampling(
+                    file_paths=output_files,
+                    calc_type=calc_type,
+                    input_template=input_template_path,
+                    slurm_template=self.template_dir,
+                    charge=step.get('charge', self.charge),
+                    multiplicity=step.get('multiplicity', self.multiplicity),
+                    output_dir=self.output_dir,
+                    operation=operation,
+                    engine=engine,
+                    model_name=mlff_model,
+                    step_number=step_id,
+                    structure_ids=filtered_ids,
+                    max_cores=self.max_cores,
+                    task_name=mlff_task,
+                    mlff_model=mlff_model,
+                    displacement_value=displacement_vector,
+                    device=device,
+                    bind=bind_address,
+                    orca_executable=self.orca_executable,
+                    scratch_dir=self.scratch_dir,
+                    num_random_modes=nms_random_displacements,
+                )
+
+        previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
+
+    logging.info("ChemRefine pipeline completed.")
+
 
 def main():
     ChemRefiner().run()
