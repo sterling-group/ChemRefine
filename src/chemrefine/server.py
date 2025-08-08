@@ -14,18 +14,30 @@ from flask import Flask, request, jsonify
 
 from chemrefine import utils_extopt as common
 from chemrefine.mlff import MLFFCalculator
-import argparse
-
 def parse_server_args(arglist):
-    parser = argparse.ArgumentParser(description="Start UMA MLFF server")
-    parser.add_argument("--model", required=True, help="Model name to use (e.g., uma-s-1)")
-    parser.add_argument("--task-name", default="omol", help="Task name (default: omol)")
+    """
+    Parse CLI arguments for the UMA/MLFF server.
+
+    Accepts either a pretrained model name via --model (with task-name),
+    or a custom MACE model via --model-path. At least one must be provided.
+    """
+    import argparse
+    parser = argparse.ArgumentParser(description="Start UMA/MLFF server")
+    parser.add_argument("--model", required=False, help="Pretrained model name (e.g., uma-s-1 or mace preset)")
+    parser.add_argument("--task-name", default="omol", help="Task name for pretrained models (default: omol)")
     parser.add_argument("--device", default="cuda", help="Device to run on (cuda or cpu)")
     parser.add_argument("--bind", default="127.0.0.1:8888", help="Bind address (default: 127.0.0.1:8888)")
     parser.add_argument("--nthreads", type=int, default=4, help="Number of threads (default: 4)")
-    parser.add_argument("--model-path", default=None, help="Optional custom MACE model path")
+    parser.add_argument("--model-path", default=None, help="Custom MACE model path (overrides task-name logic)")
 
-    return parser.parse_args(arglist)
+    args = parser.parse_args(arglist)
+
+    # Validation: require at least one of model or model-path
+    if not args.model and not args.model_path:
+        parser.error("Either --model or --model-path must be provided.")
+
+    return args
+
 
 app = Flask('umaserver')
 app.config["PROPAGATE_EXCEPTIONS"] = True
