@@ -420,3 +420,75 @@ def get_next_id(output_root: str) -> int:
     with open(p, "w") as f:
         json.dump(data, f, indent=2)
     return nid
+
+def write_synthetic_manifest_for_ensemble(step_number, step_dir, n_structures, operation, engine, output_basename):
+    """
+    Create a synthetic manifest for a GOAT step where only one ensemble file exists.
+    Assigns sequential IDs [0..n_structures-1] and writes to step{N}_manifest.json.
+
+    Parameters
+    ----------
+    step_number : int
+        The step index (e.g., 1).
+    step_dir : str
+        Path to the step directory.
+    n_structures : int
+        Number of structures in the ensemble.
+    operation : str
+        Operation string (e.g., "GOAT").
+    engine : str
+        Engine string (e.g., "dft").
+    output_basename : str
+        Filename of the ensemble file (without directory).
+    """
+    manifest_path = os.path.join(step_dir, f"step{step_number}_manifest.json")
+    manifest_data = {
+        "step": step_number,
+        "operation": operation,
+        "engine": engine,
+        "structures": [],
+        "outputs": [output_basename],
+    }
+    for idx in range(n_structures):
+        manifest_data["structures"].append({
+            "id": idx,
+            "input": f"step{step_number}_structure_{idx}.inp",
+            "output": output_basename
+        })
+    with open(manifest_path, "w") as f:
+        json.dump(manifest_data, f, indent=2)
+    logging.info(f"Wrote synthetic manifest for step {step_number} with {n_structures} IDs at {manifest_path}.")
+
+
+def get_ensemble_ids(step_dir, step_number, n_structures, operation, engine, output_basename):
+    """
+    Retrieve sequential IDs for a GOAT ensemble file. If the manifest does not exist,
+    generate it using write_synthetic_manifest_for_ensemble.
+
+    Parameters
+    ----------
+    step_dir : str
+        Path to the step directory.
+    step_number : int
+        Step index.
+    n_structures : int
+        Number of structures in the ensemble.
+    operation : str
+        Operation string.
+    engine : str
+        Engine string.
+    output_basename : str
+        Ensemble file name.
+
+    Returns
+    -------
+    list[int]
+        Sequential IDs [0..n_structures-1].
+    """
+    manifest_path = os.path.join(step_dir, f"step{step_number}_manifest.json")
+    if not os.path.exists(manifest_path):
+        logging.info(f"Manifest for step {step_number} not found; creating synthetic manifest.")
+        write_synthetic_manifest_for_ensemble(
+            step_number, step_dir, n_structures, operation, engine, output_basename
+        )
+    return list(range(n_structures))
