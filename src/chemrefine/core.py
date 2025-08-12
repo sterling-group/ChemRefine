@@ -14,8 +14,8 @@ from chemrefine.utils import (
     extract_structure_id,
     write_step_manifest,
     write_synthetic_manifest_for_ensemble,
-    get_ensemble_ids
-
+    get_ensemble_ids,
+    validate_structure_ids_or_raise
 )
 
 class ChemRefiner:
@@ -357,7 +357,6 @@ class ChemRefiner:
         logging.info(f"After filtering step {step_number}: kept {len(filtered_coordinates)} structures.")
         return filtered_coordinates, filtered_ids, energies
 
-
     def submit_orca_jobs(self, input_files, cores, step_dir,device='cpu',operation='OPT+SP',engine='DFT', model_name=None, task_name=None):
         """
         Submits ORCA jobs for each input file in the step directory using the OrcaJobSubmitter.
@@ -501,6 +500,7 @@ class ChemRefiner:
                         bind=bind_address
                     )
                 else:
+                    validate_structure_ids_or_raise(previous_ids, step_id)
                     step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
                         step_id,
                         previous_coordinates,

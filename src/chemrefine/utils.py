@@ -6,6 +6,7 @@ from .constants import HARTREE_TO_KCAL_MOL, R_KCAL_MOL_K, CSV_PRECISION
 from pathlib import Path
 import subprocess
 import getpass
+from typing import Optional
 
 logging.basicConfig(
     level=logging.INFO,
@@ -334,16 +335,8 @@ def update_step_manifest_outputs(step_dir: str, step_number: int,
 
 def map_outputs_to_ids(step_dir: str, step_number: int, output_files: List[str]) -> List[int]:
     """
-    Resolve structure IDs for outputs using the manifest; fall back to filename inference.
-
-    Parameters
-    ----------
-    step_dir : str
-        Step directory.
-    step_number : int
-        Step index.
-    output_files : list[str]
-        Output files (paths) in the order they will be parsed.
+    Resolve structure IDs for outputs using the manifest; fall back to robust parsing
+    from output filenames (handles suffixes like '_atom46', '_trj', etc.) and prefix matching.
 
     Returns
     -------
@@ -353,29 +346,70 @@ def map_outputs_to_ids(step_dir: str, step_number: int, output_files: List[str])
     manifest = read_step_manifest(step_dir, step_number)
     ids: List[int] = []
 
-    # Fast path via manifest
-    by_output_stem: Dict[str, Optional[int]] = {}
+    # Build indices from manifest
+    by_input_stem: Dict[str, Optional[int]] = {}
     if manifest and "records" in manifest:
         for r in manifest["records"]:
-            # Prefer output_file if set; otherwise use input_file stem
-            if r.get("output_file"):
-                stem = os.path.splitext(r["output_file"])[0]
-            else:
-                stem = os.path.splitext(r["input_file"])[0]
-            by_output_stem[stem] = r.get("structure_id")
+            stem = os.path.splitext(r["input_file"])[0]  # e.g., 'step3_structure_0'
+            by_input_stem[stem] = r.get("structure_id")
+
+    input_stems = list(by_input_stem.keys())
 
     for outp in output_files:
-        out_stem = os.path.splitext(os.path.basename(outp))[0]
-        sid = by_output_stem.get(out_stem)
+        out_base = os.path.basename(outp)
+        out_stem, _ = os.path.splitext(out_base)
+
+        # 1) Exact stem match via manifest (when outputs share stem with inputs)
+        if out_stem in by_input_stem and by_input_stem[out_stem] is not None:
+            ids.append(int(by_input_stem[out_stem]))
+            continue
+
+        # 2) Prefix match: output stem starts with input stem (handles '_atom46', '_trj', etc.)
+        pref = [s for s in input_stems if out_stem.startswith(s)]
+        if len(pref) == 1 and by_input_stem[pref[0]] is not None:
+            ids.append(int(by_input_stem[pref[0]]))
+            continue
+
+        # 3) Regex extraction from the output name itself
+        sid = extract_structure_id_from_any_name(out_base)
         if sid is not None:
             ids.append(sid)
             continue
-        # Fallback: locate a same-stem .inp and parse ID from its name
-        candidate_inp = os.path.join(step_dir, out_stem + ".inp")
-        sid2 = extract_structure_id(candidate_inp)
-        ids.append(sid2 if sid2 is not None else -1)
+
+        # 4) Try a corresponding .inp with truncated suffix (common case)
+        #    e.g., 'step3_structure_0_atom46' -> try 'step3_structure_0.inp'
+        if "_" in out_stem:
+            truncated = out_stem.rsplit("_", 1)[0]
+            candidate_inp = os.path.join(step_dir, truncated + ".inp")
+            sid2 = extract_structure_id(candidate_inp)
+            if sid2 is not None:
+                ids.append(sid2)
+                continue
+
+        # 5) Last resort: -1 (caller should fail fast before creating inputs)
+        ids.append(-1)
 
     return ids
+
+from typing import Sequence
+
+def validate_structure_ids_or_raise(structure_ids: Sequence[int], step_number: int) -> None:
+    """
+    Ensure all structure IDs are resolved (>= 0) and non-empty.
+    Raises ValueError if invalid, to prevent creating '..._-1.inp' files.
+
+    Parameters
+    ----------
+    structure_ids : Sequence[int]
+        IDs to validate.
+    step_number : int
+        Current step index.
+    """
+    if not structure_ids:
+        raise ValueError(f"Step {step_number}: empty structure ID list.")
+    if any((i is None) or (i < 0) for i in structure_ids):
+        bad = [i for i in structure_ids if (i is None) or (i < 0)]
+        raise ValueError(f"Step {step_number}: unresolved structure IDs present: {bad}")
 
 
 def registry_path(output_root: str) -> str:
@@ -492,3 +526,36 @@ def get_ensemble_ids(step_dir, step_number, n_structures, operation, engine, out
             step_number, step_dir, n_structures, operation, engine, output_basename
         )
     return list(range(n_structures))
+
+import os
+from typing import Optional
+
+_ID_ANYWHERE_RE = re.compile(
+    r"step(?P<step>\d+)_structure_(?P<id>\d+)(?:_|\.|$)", re.IGNORECASE
+)
+
+def extract_structure_id_from_any_name(name: str) -> Optional[int]:
+    """
+    Extract a structure ID from any filename or stem containing the pattern
+    'step{N}_structure_{ID}[...optional suffixes...]'.
+
+    Examples
+    --------
+    'step3_structure_0_atom46.out' → 0
+    'step4_structure_12_trj.xyz'   → 12
+    'step2_structure_5.out'        → 5
+
+    Parameters
+    ----------
+    name : str
+        A basename, full path, or stem.
+
+    Returns
+    -------
+    int | None
+        Parsed ID if found, else None.
+    """
+    base = os.path.basename(name)
+    stem = os.path.splitext(base)[0]
+    m = _ID_ANYWHERE_RE.search(stem)
+    return int(m.group("id")) if m else None
