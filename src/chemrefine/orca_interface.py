@@ -317,6 +317,7 @@ class OrcaInterface:
                 content += f'  Ext_Params "{ext_params}"\n'
                 content += 'end\n\n'
 
+            content += f'%base "{base}_opt" \n'
             content += f"* xyzfile {charge} {multiplicity} {xyz}\n\n"
 
             with open(inp, "w") as f:
@@ -607,135 +608,239 @@ class OrcaInterface:
                          orca_executable='orca',
                          scratch_dir=None):
         """
-        Samples normal modes and optionally removes imaginary frequencies or performs random displacements.
-        """
-        logging.info("***Starting normal mode sampling.***")
-        logging.info(f"Sampling type: {calc_type} mode x{num_random_modes if calc_type == 'random' else 1}")
+        Perform normal-mode sampling (remove imaginary or random-mode displacements),
+        write XYZ/INP files, and submit jobs directly with OrcaJobSubmitter.
+        Files lacking frequency data are skipped with a warning.
 
+        Parameters
+        ----------
+        file_paths : list[str]
+            ORCA output files (one per structure) to read modes/coordinates from.
+        calc_type : str
+            'rm_imag' for least-imaginary-mode displacement; 'random' for random mode sampling.
+        input_template : str
+            ORCA input template path.
+        slurm_template : str
+            SLURM header/template directory used by OrcaJobSubmitter.submit_files.
+        charge : int
+            Molecular charge.
+        multiplicity : int
+            Spin multiplicity.
+        output_dir : str
+            BASE outputs directory (e.g. ".../outputs"). `write_displaced_xyz`
+            appends `step{n}/normal_mode_sampling` internally.
+        operation : str
+            Operation label ('OPT', 'SP', 'OPT+SP', ...).
+        engine : str
+            'dft' or 'mlff'.
+        model_name : str
+            MLFF model name when `engine='mlff'`.
+        step_number : int
+            Current step index (1-based).
+        structure_ids : list[str]
+            IDs aligned with `file_paths`.
+        max_cores : int, optional
+            Max total cores across submissions.
+        task_name : str, optional
+            MLFF task variant (if applicable).
+        mlff_model : str, optional
+            Deprecated alias for `model_name`; if provided, overrides at submission.
+        displacement_value : float, optional
+            Displacement magnitude (Å).
+        num_random_modes : int, optional
+            Random modes to sample per structure when `calc_type='random'`.
+        device : str, optional
+            'cpu' or 'cuda' (for MLFF engine).
+        bind : str, optional
+            MLFF server bind address (passed through to input generation).
+        orca_executable : str, optional
+            ORCA executable path/name used by OrcaJobSubmitter.
+        scratch_dir : str, optional
+            Scratch directory used by OrcaJobSubmitter.
+
+        Returns
+        -------
+        tuple[list, list]
+            For 'rm_imag': (filtered_coords, original_ids).
+            For 'random' : (all_displaced_coords, displaced_ids).
+        """
+        import os, re, logging
+
+        def _has_normal_modes(path: str) -> bool:
+            """Quick check that the ORCA output contains a normal-mode table."""
+            hdr = False
+            try:
+                with open(path, "r") as fh:
+                    for line in fh:
+                        if "VIBRATIONAL FREQUENCIES" in line:
+                            hdr = True
+                        if hdr and re.match(r'^\s*(\d+\s+)+\d+\s*$', line):
+                            return True
+            except Exception:
+                return False
+            return False
+
+        logging.info("***Starting normal mode sampling.***")
+        logging.info(f"Sampling type: {calc_type} x{num_random_modes if calc_type == 'random' else 1}")
+
+        # Accumulators
         all_pos_coords, all_neg_coords = [], []
         all_pos_ids, all_neg_ids = [], []
-        all_input_files = []
+        all_inp_files = []
 
-        original_dir = os.getcwd()
+        # Directories
+        per_step_dir = os.path.join(output_dir, f"step{step_number}")
+        normal_output_dir = os.path.join(per_step_dir, "normal_mode_sampling")
+        os.makedirs(normal_output_dir, exist_ok=True)
 
-        try:
-            for file_path, sid in zip(file_paths, structure_ids):
-                normal_output_dir = os.path.join(output_dir, f"step{step_number}", "normal_mode_sampling")
-                os.makedirs(normal_output_dir, exist_ok=True)
-                os.chdir(normal_output_dir)
-                logging.info(f"Switched to normal mode sampling directory: {normal_output_dir}")
+        skipped = 0
+        for file_path, sid in zip(file_paths, structure_ids):
+            if not _has_normal_modes(file_path):
+                logging.warning(f"Skipping ID {sid}: no vibrational frequencies in {file_path}.")
+                skipped += 1
+                continue
 
-                imag_freq_dict = self.parse_imaginary_frequency(file_path, imag=(calc_type != 'random'))
-                logging.info(f"{len(imag_freq_dict)} frequencies parsed in {file_path}")
+            try:
+                imag_flag = (calc_type != 'random')
+                imag_freq_dict = self.parse_imaginary_frequency(file_path, imag=imag_flag)
 
                 coordinates, _ = self.parse_dft_output(file_path)
-                logging.info(f"Parsed {len(coordinates)} structures in step{step_number}")
+                if not coordinates:
+                    logging.warning(f"Skipping ID {sid}: no coordinates parsed from {file_path}.")
+                    skipped += 1
+                    continue
+
                 num_atoms = len(coordinates[0])
                 normal_mode_tensor = self.parse_normal_modes_tensor(file_path, num_atoms=num_atoms)
-
-                if calc_type == 'rm_imag':
-                    pos_coords, neg_coords = self.displace_normal_modes(
-                        filepath=file_path,
-                        imag_freq_dict=imag_freq_dict,
-                        normal_mode_tensor=normal_mode_tensor,
-                        coordinates=coordinates,
-                        displacement_value=displacement_value,
-                        random_mode=False
-                    )
-
-                    pos_id, neg_id = f"{sid}_pos", f"{sid}_neg"
-                    pos_xyz = self.write_displaced_xyz([pos_coords[0]], step_number, [pos_id], output_dir)
-                    neg_xyz = self.write_displaced_xyz([neg_coords[0]], step_number, [neg_id], output_dir)
-                    xyz_files = pos_xyz + neg_xyz
-
-                    input_files, _ = self.create_input(
-                        xyz_files,
-                        input_template,
-                        charge,
-                        multiplicity,
-                        output_dir=normal_output_dir,
-                        operation=operation,
-                        engine=engine,
-                        model_name=model_name,
-                        task_name=task_name,
-                        device=device,
-                        bind=bind
-                    )
-
-                    all_pos_coords.append(pos_coords[0])
-                    all_neg_coords.append(neg_coords[0])
-                    all_pos_ids.append(pos_id)
-                    all_neg_ids.append(neg_id)
-                    all_input_files.extend(input_files)
-
-                elif calc_type == 'random':
-                    pos_coords, neg_coords, pos_ids, neg_ids, input_files = self.generate_random_displacements(
-                        sid=sid,
-                        file_path=file_path,
-                        normal_mode_tensor=normal_mode_tensor,
-                        coordinates=coordinates,
-                        num_random_modes=num_random_modes,
-                        displacement_value=displacement_value,
-                        step_number=step_number,
-                        input_template=input_template,
-                        charge=charge,
-                        multiplicity=multiplicity,
-                        output_dir=output_dir,
-                        engine=engine,
-                        model_name=model_name,
-                        task_name=task_name,
-                        device=device,
-                        bind=bind,
-                        normal_output_dir=normal_output_dir,
-                        operation=operation
-                    )
-
-                    all_pos_coords.extend(pos_coords)
-                    all_neg_coords.extend(neg_coords)
-                    all_pos_ids.extend(pos_ids)
-                    all_neg_ids.extend(neg_ids)
-                    all_input_files.extend(input_files)
-
-                else:
-                    raise ValueError(f"Unknown calc_type: {calc_type}. Must be 'rm_imag' or 'random'.")
-
-                logging.info(f"Successfully displaced coordinates for {file_path}, generated {len(all_input_files)} XYZ files.")
-
-            # Submit all jobs at once
-            self.job_submitter = OrcaJobSubmitter(
-                device=device,
-                orca_executable=orca_executable,
-                bind=bind,
-                scratch_dir=scratch_dir,
-            )
-
-            self.job_submitter.submit_files(
-                input_files=all_input_files,
-                max_cores=max_cores,
-                template_dir=slurm_template,
-                output_dir=normal_output_dir,
-                device=device,
-                operation=operation,
-                engine=engine,
-                model_name=mlff_model,
-                task_name=task_name
-            )
-
-        finally:
-            os.chdir(original_dir)
-            logging.info(f"Returned to original directory: {original_dir}")
-            logging.info("Successfully finished normal mode sampling.")
+            except Exception as e:
+                logging.warning(f"Skipping ID {sid}: failed to parse modes from {file_path} ({e}).")
+                skipped += 1
+                continue
 
             if calc_type == 'rm_imag':
-                filtered_coords, filtered_ids = self.select_lowest_imaginary_structures(
-                    step_number=step_number,
-                    pos_ids=all_pos_ids,
-                    neg_ids=all_neg_ids,
-                    directory=output_dir,
+                pos_coords, neg_coords = self.displace_normal_modes(
+                    filepath=file_path,
+                    imag_freq_dict=imag_freq_dict,
+                    normal_mode_tensor=normal_mode_tensor,
+                    coordinates=coordinates,
+                    displacement_value=displacement_value,
+                    random_mode=False
                 )
-                return filtered_coords, filtered_ids
+
+                # XYZ under BASE outputs dir (writer appends step/normal_mode_sampling)
+                pos_xyz = self.write_displaced_xyz([pos_coords[0]], step_number, [f"{sid}_pos"], output_dir)
+                neg_xyz = self.write_displaced_xyz([neg_coords[0]], step_number, [f"{sid}_neg"], output_dir)
+
+                # INP under FINAL dir
+                inp_files, _ = self.create_input(
+                    xyz_files=pos_xyz + neg_xyz,
+                    input_template=input_template,
+                    charge=charge,
+                    multiplicity=multiplicity,
+                    output_dir=normal_output_dir,
+                    operation=operation,
+                    engine=engine,
+                    model_name=model_name,
+                    task_name=task_name,
+                    device=device,
+                    bind=bind
+                )
+
+                all_pos_coords.append(pos_coords[0])
+                all_neg_coords.append(neg_coords[0])
+                all_pos_ids.append(f"{sid}_pos")
+                all_neg_ids.append(f"{sid}_neg")
+                all_inp_files.extend(inp_files)
+
+            elif calc_type == 'random':
+                pos_coords, neg_coords, pos_ids, neg_ids, inp_files = self.generate_random_displacements(
+                    sid=sid,
+                    file_path=file_path,
+                    normal_mode_tensor=normal_mode_tensor,
+                    coordinates=coordinates,
+                    num_random_modes=num_random_modes,
+                    displacement_value=displacement_value,
+                    step_number=step_number,
+                    input_template=input_template,
+                    charge=charge,
+                    multiplicity=multiplicity,
+                    output_dir=output_dir,                # BASE for XYZ writer
+                    engine=engine,
+                    model_name=model_name,
+                    task_name=task_name,
+                    device=device,
+                    bind=bind,
+                    normal_output_dir=normal_output_dir,  # FINAL for INP
+                    operation=operation
+                )
+
+                all_pos_coords.extend(pos_coords)
+                all_neg_coords.extend(neg_coords)
+                all_pos_ids.extend(pos_ids)
+                all_neg_ids.extend(neg_ids)
+                all_inp_files.extend(inp_files)
+
             else:
-                return all_pos_coords + all_neg_coords, all_pos_ids + all_neg_ids
+                raise ValueError("calc_type must be 'rm_imag' or 'random'.")
+
+        if skipped:
+            logging.info(f"Normal-mode sampling: skipped {skipped} file(s) without usable frequency data.")
+
+        # ---- SUBMISSION (robust): chdir to FINAL dir and pass ABSOLUTE INP paths ----
+        import contextlib
+        logging.info(f"Total input files prepared: {len(all_inp_files)}")
+        if all_inp_files:
+            # Ensure absolute paths so submitter doesn't rely on cwd for locating inputs
+            abs_inp_files = [p if os.path.isabs(p) else os.path.abspath(os.path.join(normal_output_dir, p))
+                            for p in all_inp_files]
+            # Filter out any that don't exist (defensive)
+            abs_inp_files = [p for p in abs_inp_files if os.path.isfile(p)]
+            if not abs_inp_files:
+                logging.error("Prepared 0 valid INP files after existence check; submission skipped.")
+            else:
+                orig = os.getcwd()
+                try:
+                    logging.info(f"Switching to working directory for submission: {normal_output_dir}")
+                    os.chdir(normal_output_dir)
+
+                    submitter = OrcaJobSubmitter(
+                        scratch_dir=scratch_dir,
+                        orca_executable=orca_executable,
+                        device=device
+                    )
+                    submitter.submit_files(
+                        input_files=abs_inp_files,      # absolute paths to .inp
+                        max_cores=max_cores,
+                        template_dir=slurm_template,    # SLURM headers/templates live here
+                        output_dir=normal_output_dir,   # where INPs live and sbatch scripts will be written
+                        engine=engine,
+                        operation=operation,
+                        model_name=(mlff_model if mlff_model is not None else model_name),
+                        task_name=task_name
+                    )
+                    logging.info("ORCA submissions dispatched from normal_mode_sampling.")
+                except Exception as e:
+                    logging.error(f"Error while submitting ORCA jobs in {normal_output_dir}: {e}")
+                    raise
+                finally:
+                    with contextlib.suppress(Exception):
+                        os.chdir(orig)
+                    logging.info(f"Returned to original directory: {orig}")
+        else:
+            logging.warning("No input files generated; submission skipped.")
+
+        # ---- RETURNS ----
+        if calc_type == 'rm_imag':
+            filtered_coords, filtered_tmp_ids = self.select_lowest_imaginary_structures(
+                step_number=step_number,
+                pos_ids=all_pos_ids,
+                neg_ids=all_neg_ids,
+                directory=output_dir  # BASE; function appends step/normal_mode_sampling internally
+            )
+            original_ids = [tid.rsplit('_', 1)[0] for tid in filtered_tmp_ids]
+            return filtered_coords, original_ids
+        else:
+            return all_pos_coords + all_neg_coords, all_pos_ids + all_neg_ids
 
     def parse_imaginary_frequency(self, file_paths, imag=True):
         import numpy as np
@@ -784,55 +889,58 @@ class OrcaInterface:
 
         return freqs
 
-    
-    def parse_normal_modes_tensor(self,filepath, num_atoms):
+    def parse_normal_modes_tensor(self, filepath, num_atoms):
         """
-        Parses all normal mode displacement vectors from an ORCA output file into a full tensor.
+        Parse normal-mode displacement vectors from an ORCA output into
+        an array of shape (num_atoms, 3, n_modes).
 
-        Parameters
-        ----------
-        filepath : str
-            Path to the ORCA output file.
-        num_atoms : int
-            Number of atoms in the system.
-
-        Returns
-        -------
-        np.ndarray
-            Array of shape (num_atoms, 3, n_modes) with displacements.
+        Raises
+        ------
+        ValueError
+            If no normal-mode blocks are found in the file.
         """
         with open(filepath, 'r') as f:
             lines = f.readlines()
 
         collecting = False
-        block_rows = []
-        all_blocks = []
-        current_mode_width = None
+        block_rows, all_blocks = [], []
 
         for line in lines:
-            if re.match(r'^\s+(\d+\s+)+\d+\s*$', line):  # Header like "0 1 2 3 4 5"
+            # Mode-column header: "   1   2   3 ..."
+            if re.match(r'^\s*(\d+\s+)+\d+\s*$', line):
                 collecting = True
                 if block_rows:
                     all_blocks.append(np.array(block_rows, dtype=float))
                     block_rows = []
                 continue
+
             if collecting:
+                # Displacement rows: "<atom_index>  dX dY dZ [ per mode columns...]"
                 if re.match(r'^\s*\d+\s+[-\d.Ee\s]+$', line):
                     parts = line.strip().split()
                     floats = list(map(float, parts[1:]))
                     block_rows.append(floats)
-                elif 'IR SPECTRUM' in line or '--------' in line:
+                    continue
+
+                # End of a block/section
+                if "IR SPECTRUM" in line or "------------" in line:
                     if block_rows:
                         all_blocks.append(np.array(block_rows, dtype=float))
                     break
 
-        # Check number of rows per block and concatenate horizontally
-        for block in all_blocks:
-            if block.shape[0] != 3 * num_atoms:
-                raise ValueError(f"A block has incorrect number of rows: {block.shape[0]}")
+        if not all_blocks:
+            raise ValueError(
+                f"No normal-mode blocks found in '{filepath}'. "
+                "Ensure this is a frequency job output (FREQ) with printed normal modes."
+            )
+
+        for b in all_blocks:
+            if b.shape[0] != 3 * num_atoms:
+                raise ValueError(f"Malformed normal-mode block rows: got {b.shape[0]}, expected {3*num_atoms}.")
+
         full_matrix = np.hstack(all_blocks)
         return full_matrix.reshape(num_atoms, 3, -1)
-    
+ 
     def displace_normal_modes(self,
                           filepath: str,
                           imag_freq_dict: dict,
@@ -914,24 +1022,18 @@ class OrcaInterface:
         step_number : int
             Step number for filename convention.
         structure_ids : list
-            List of structure identifiers (e.g. ["0_pos", "0_neg"]).
+            Identifiers (e.g. ["0_pos", "0_neg"]).
         output_dir : str
-            Directory to write XYZ files to.
-
-        Returns
-        -------
-        list
-            List of file paths written.
+            BASE outputs directory (this function appends step{n}/normal_mode_sampling).
         """
         import os
         import logging
 
         logging.info(f"Writing Ensemble XYZ files to {output_dir} for step {step_number}")
         base_name = f"step{step_number}"
-        xyz_filenames = []
+        written = []
 
-        os.makedirs(output_dir, exist_ok=True)
-
+        # This function appends the subfolders; ensure the final parent exists:
         for structure, sid in zip(structures, structure_ids):
             # Flatten structure if nested
             if isinstance(structure[0], list) and isinstance(structure[0][0], str):
@@ -939,7 +1041,7 @@ class OrcaInterface:
             else:
                 atom_list = [atom for mol in structure for atom in mol]
 
-            # Determine comment line based on suffix
+            # Comment line
             if str(sid).endswith("_pos"):
                 comment = "Displaced along +imaginary mode"
             elif str(sid).endswith("_neg"):
@@ -947,16 +1049,19 @@ class OrcaInterface:
             else:
                 comment = ""
 
-            output_file = os.path.join(output_dir, f"step{step_number}/normal_mode_sampling/{base_name}_structure_guess_{sid}.xyz")
-            xyz_filenames.append(output_file)
+            # Build final path under BASE/step{n}/normal_mode_sampling
+            nested_dir = os.path.join(output_dir, f"step{step_number}", "normal_mode_sampling")
+            os.makedirs(nested_dir, exist_ok=True)  # <-- ensure parent exists
+            output_file = os.path.join(nested_dir, f"{base_name}_structure_{sid}.xyz")
 
             with open(output_file, 'w') as f:
                 f.write(f"{len(atom_list)}\n{comment}\n")
-                for atom in atom_list:
-                    element, x, y, z = atom
+                for element, x, y, z in atom_list:
                     f.write(f"{element} {x} {y} {z}\n")
 
-        return xyz_filenames
+            written.append(os.path.abspath(output_file))
+
+        return written
 
     def select_lowest_imaginary_structures(self, directory, pos_ids, neg_ids, step_number):
         """
@@ -1096,3 +1201,18 @@ class OrcaInterface:
 
         return all_pos_coords, all_neg_coords, all_pos_ids, all_neg_ids, input_files
 
+    def has_normal_modes(self, filepath: str) -> bool:
+        """
+        Fast check: does this ORCA output include a normal-mode table?
+        Returns True if a 'VIBRATIONAL FREQUENCIES' section and any normal-mode
+        column header are present.
+        """
+        hdr_seen = False
+        with open(filepath, "r") as f:
+            for line in f:
+                if "VIBRATIONAL FREQUENCIES" in line:
+                    hdr_seen = True
+                # column header like: "   1    2    3"
+                if hdr_seen and re.match(r'^\s*(\d+\s+)+\d+\s*$', line):
+                    return True
+        return False
