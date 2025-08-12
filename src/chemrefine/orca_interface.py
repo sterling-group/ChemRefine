@@ -317,6 +317,7 @@ class OrcaInterface:
                 content += f'  Ext_Params "{ext_params}"\n'
                 content += 'end\n\n'
 
+            content += f'%base {base}_opt\n'
             content += f"* xyzfile {charge} {multiplicity} {xyz}\n\n"
 
             with open(inp, "w") as f:
@@ -947,7 +948,7 @@ class OrcaInterface:
             else:
                 comment = ""
 
-            output_file = os.path.join(output_dir, f"step{step_number}/normal_mode_sampling/{base_name}_structure_guess_{sid}.xyz")
+            output_file = os.path.join(output_dir, f"step{step_number}/normal_mode_sampling/{base_name}_structure_{sid}.xyz")
             xyz_filenames.append(output_file)
 
             with open(output_file, 'w') as f:
