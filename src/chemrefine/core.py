@@ -244,7 +244,7 @@ class ChemRefiner:
             candidates = [
                 os.path.join(step_dir, f)
                 for f in os.listdir(step_dir)
-                if f.lower() == "solvator.xyz"
+                if f.lower() == "solvator.xyz" and "solvator" in f.lower()
             ]
             if not candidates:
                 candidates = [
@@ -290,59 +290,51 @@ class ChemRefiner:
         # 2) if unresolved → reconstruct depending on step/operation
         if all(i < 0 for i in structure_ids):
             if op == "GOAT":
-                # One ensemble file → N structures; synthesize IDs aligned to ensemble order.
-                logging.info(f"No usable manifest for GOAT step {step_number}; synthesizing ensemble IDs.")
-                ensemble_base = os.path.basename(output_files[0])  # usually one file
+                # existing GOAT synthesis...
+                ensemble_base = os.path.basename(output_files[0])
                 n_structs = len(energies)
-                # Prefer helper if present; otherwise inline synthesize:
-                try:
-                    ids = get_ensemble_ids(
-                        step_dir=step_dir,
-                        step_number=step_number,
-                        n_structures=n_structs,
-                        operation=op,
-                        engine=engine,
-                        output_basename=ensemble_base,
-                    )
-                except NameError:
-                    # Fallback: write synthetic manifest directly
-                    write_synthetic_manifest_for_ensemble(
-                        step_number=step_number,
-                        step_dir=step_dir,
-                        n_structures=n_structs,
-                        operation=op,
-                        engine=engine,
-                        output_basename=ensemble_base,
-                    )
-                    ids = list(range(n_structs))
-                structure_ids = ids
+                write_synthetic_manifest_for_ensemble(
+                    step_number=step_number,
+                    step_dir=step_dir,
+                    n_structures=n_structs,
+                    operation=op,
+                    engine=engine,
+                    output_basename=ensemble_base,
+                )
+                structure_ids = list(range(n_structs))
+
+            elif op == "SOLVATOR":
+                # SOLVATOR is a singleton: synthesize ID 0 and persist a manifest
+                solv_base = os.path.basename(output_files[0])
+                write_synthetic_manifest_for_ensemble(
+                    step_number=step_number,
+                    step_dir=step_dir,
+                    n_structures=1,
+                    operation=op,
+                    engine=engine,
+                    output_basename=solv_base,
+                )
+                structure_ids = [0]
+
             else:
-                # Non-GOAT: per-structure files exist. Rebuild IDs from filenames.
+                # existing non-GOAT/non-SOLVATOR filename recovery...
                 logging.info(f"No manifest for step {step_number}; reconstructing IDs from filenames.")
-                # We can parse the ID from either *.inp or directly from the output stem.
-                # Pattern matches step{N}_structure_{ID} with any extension.
-                pat = re.compile(rf"^step{step_number}_structure_(\d+)$", re.IGNORECASE)
                 recovered_ids = []
                 recovered_inps = []
                 for outp in output_files:
                     stem = os.path.splitext(os.path.basename(outp))[0]
-                    m = pat.match(stem)
-                    if m:
-                        sid = int(m.group(1))
-                        recovered_ids.append(sid)
-                        candidate_inp = os.path.join(step_dir, stem + ".inp")
-                        if os.path.exists(candidate_inp):
-                            recovered_inps.append(candidate_inp)
-                    else:
-                        # Try the .inp name directly through helper
-                        candidate_inp = os.path.join(step_dir, stem + ".inp")
-                        sid2 = extract_structure_id(candidate_inp)
-                        if sid2 is None:
-                            logging.warning(f"Could not resolve ID for {outp}; rerunning step.")
-                            return None, None, None
-                        recovered_ids.append(sid2)
-                        if os.path.exists(candidate_inp):
-                            recovered_inps.append(candidate_inp)
+                    candidate_inp = os.path.join(step_dir, stem + ".inp")
+                    sid = extract_structure_id(candidate_inp)
+                    if sid is None:
+                        logging.warning(f"Could not resolve ID for {outp}; rerunning step.")
+                        return None, None, None
+                    recovered_ids.append(sid)
+                    if os.path.exists(candidate_inp):
+                        recovered_inps.append(candidate_inp)
+                structure_ids = recovered_ids
+                if recovered_inps:
+                    write_step_manifest(step_number, step_dir, recovered_inps, op, engine)
+                    update_step_manifest_outputs(step_dir, step_number, output_files)
 
                 structure_ids = recovered_ids
                 # Persist recovered mapping so future skips are trivial
