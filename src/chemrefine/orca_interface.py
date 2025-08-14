@@ -371,7 +371,7 @@ class OrcaInterface:
                 solvator_xyz_file = path.replace('.out', '.solvator.xyz')
                 logging.info(f"Looking for Solvator structure file: {solvator_xyz_file}")
                 if os.path.exists(solvator_xyz_file):
-                    coords, ens = self.parse_solvator_xyz(solvator_xyz_file)
+                    coords, ens = self.parse_solvator(solvator_xyz_file)
                     coordinates.extend(coords)
                     energies.extend(ens)
                 else:
