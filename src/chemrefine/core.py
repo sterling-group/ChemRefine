@@ -189,16 +189,17 @@ class ChemRefiner:
     def handle_skip_step(self, step_number, operation, engine, sample_method, parameters):
         """
         Decide whether to skip a step by validating that expected outputs already exist.
-        Preserve persistent structure IDs using the step manifest when available.
-        If the manifest is missing (legacy runs), reconstruct IDs from current filenames
-        (e.g., 'stepN_structure_{ID}.*'); for GOAT-only ensembles, synthesize IDs [0..N-1].
-        
+        Preserves persistent structure IDs via the per-step manifest when available.
+        If a manifest is missing (legacy runs), reconstruct IDs from filenames or synthesize
+        them for ensemble-like outputs (GOAT, SOLVATOR). Also persists a manifest so
+        subsequent runs can skip cleanly.
+
         Parameters
         ----------
         step_number : int
             Current step index.
         operation : str
-            ORCA-level operation ("OPT+SP", "GOAT", "PES", "DOCKER", "SOLVATOR"), case-insensitive.
+            Operation ("OPT+SP", "GOAT", "PES", "DOCKER", "SOLVATOR"), case-insensitive.
         engine : str
             Calculation engine ("dft" or "mlff").
         sample_method : str
@@ -212,10 +213,6 @@ class ChemRefiner:
             (filtered_coordinates, filtered_ids, energies) when outputs are reusable;
             otherwise (None, None, None) to signal re-run.
         """
-        import os
-        import re
-        import logging
-
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         if not os.path.exists(step_dir):
             logging.info(f"Step directory {step_dir} does not exist. Will run this step.")
@@ -223,7 +220,7 @@ class ChemRefiner:
 
         op = operation.strip().upper()
 
-        # -------- discover outputs by operation --------
+        # ---------- Discover outputs by operation ----------
         if op == "GOAT":
             output_files = [
                 os.path.join(step_dir, f)
@@ -241,26 +238,28 @@ class ChemRefiner:
             missing_msg = "No DOCKER output (struc1.allopt.xyz) files found"
             found_msg = f"Found {len(output_files)} DOCKER output file(s)"
         elif op == "SOLVATOR":
-            candidates = [
+            # Prefer *.solvator.xyz (canonical). Fall back to a single .out if present.
+            xyz_candidates = [
                 os.path.join(step_dir, f)
                 for f in os.listdir(step_dir)
-                if f.lower() == "solvator.xyz" and "solvator" in f.lower()
+                if f.endswith(".solvator.xyz")
             ]
-            if not candidates:
-                candidates = [
+            if xyz_candidates:
+                output_files = xyz_candidates[:1]
+            else:
+                output_files = [
                     os.path.join(step_dir, f)
                     for f in os.listdir(step_dir)
-                    if f.endswith(".xyz") and "solvator" in f.lower()
-                ]
-            output_files = candidates
-            missing_msg = "No SOLVATOR xyz files found"
-            found_msg = f"Found {len(output_files)} SOLVATOR xyz file(s)"
+                    if f.endswith(".out") and not f.startswith("slurm") and not f.startswith("atom")
+                ][:1]
+            missing_msg = "No SOLVATOR outputs (.solvator.xyz or .out) found"
+            found_msg = f"Found {len(output_files)} SOLVATOR output file(s)"
         else:
-            # OPT+SP / PES: ORCA .out files (exclude SMD aux and slurm)
+            # OPT+SP / PES: ORCA .out files (exclude SLURM and atom-specific files)
             output_files = [
                 os.path.join(step_dir, f)
                 for f in os.listdir(step_dir)
-                if f.endswith(".out") and not f.endswith(".smd.out") and not f.startswith("slurm")
+                if f.endswith(".out") and not f.startswith("slurm") and not f.startswith("atom")
             ]
             missing_msg = "No ORCA .out files found"
             found_msg = f"Found {len(output_files)} .out file(s)"
@@ -271,10 +270,10 @@ class ChemRefiner:
 
         logging.info(f"{found_msg} in {step_dir}. Reusing existing outputs.")
 
-        # Update manifest with outputs if present (noop if missing)
+        # Update manifest (noop if missing)
         update_step_manifest_outputs(step_dir, step_number, output_files)
 
-        # -------- parse outputs --------
+        # ---------- Parse outputs ----------
         coordinates, energies = self.orca.parse_output(output_files, op, dir=step_dir)
         if not coordinates or not energies or len(coordinates) != len(energies):
             logging.warning(
@@ -283,14 +282,15 @@ class ChemRefiner:
             )
             return None, None, None
 
-        # -------- resolve IDs --------
-        # 1) try manifest path
+        # ---------- Resolve IDs ----------
+        # 1) Try manifest mapping first.
         structure_ids = map_outputs_to_ids(step_dir, step_number, output_files)
 
-        # 2) if unresolved → reconstruct depending on step/operation
+        # 2) If unresolved, recover/synthesize depending on operation.
         if all(i < 0 for i in structure_ids):
             if op == "GOAT":
-                # existing GOAT synthesis...
+                # One ensemble file → N structures (len(energies)); synthesize 0..N-1 and persist.
+                logging.info(f"No usable manifest for GOAT step {step_number}; synthesizing ensemble IDs.")
                 ensemble_base = os.path.basename(output_files[0])
                 n_structs = len(energies)
                 write_synthetic_manifest_for_ensemble(
@@ -304,45 +304,66 @@ class ChemRefiner:
                 structure_ids = list(range(n_structs))
 
             elif op == "SOLVATOR":
-                # SOLVATOR is a singleton: synthesize ID 0 and persist a manifest
+                # SOLVATOR is typically singleton; if parser returns >1, honor that.
+                logging.info(f"No usable manifest for SOLVATOR step {step_number}; synthesizing IDs.")
                 solv_base = os.path.basename(output_files[0])
+                n_structs = len(energies)
+                if n_structs <= 0:
+                    logging.warning(f"SOLVATOR parsed no structures for step {step_number}; rerunning.")
+                    return None, None, None
                 write_synthetic_manifest_for_ensemble(
                     step_number=step_number,
                     step_dir=step_dir,
-                    n_structures=1,
+                    n_structures=n_structs,
                     operation=op,
                     engine=engine,
                     output_basename=solv_base,
                 )
-                structure_ids = [0]
+                structure_ids = list(range(n_structs))
 
             else:
-                # existing non-GOAT/non-SOLVATOR filename recovery...
+                # Non-GOAT/SOLVATOR: per-structure outputs. Rebuild IDs from filenames.
                 logging.info(f"No manifest for step {step_number}; reconstructing IDs from filenames.")
+                # Accept stems like 'stepN_structure_12', and also with suffixes like '_atom46'
+                pat = re.compile(rf"^step{step_number}_structure_(\d+)(?:_|$)")
                 recovered_ids = []
                 recovered_inps = []
+
                 for outp in output_files:
                     stem = os.path.splitext(os.path.basename(outp))[0]
-                    candidate_inp = os.path.join(step_dir, stem + ".inp")
-                    sid = extract_structure_id(candidate_inp)
+                    m = pat.match(stem)
+                    if m:
+                        sid = int(m.group(1))
+                    else:
+                        # Try a corresponding .inp with truncated suffix
+                        truncated = stem.rsplit("_", 1)[0] if "_" in stem else stem
+                        candidate_inp = os.path.join(step_dir, truncated + ".inp")
+                        sid = extract_structure_id(candidate_inp)
+
                     if sid is None:
                         logging.warning(f"Could not resolve ID for {outp}; rerunning step.")
                         return None, None, None
+
                     recovered_ids.append(sid)
-                    if os.path.exists(candidate_inp):
-                        recovered_inps.append(candidate_inp)
+                    candidate_inp2 = os.path.join(step_dir, f"step{step_number}_structure_{sid}.inp")
+                    if os.path.exists(candidate_inp2):
+                        recovered_inps.append(candidate_inp2)
+
                 structure_ids = recovered_ids
+                # Persist recovered mapping if we found any corresponding inputs
                 if recovered_inps:
                     write_step_manifest(step_number, step_dir, recovered_inps, op, engine)
                     update_step_manifest_outputs(step_dir, step_number, output_files)
 
-                structure_ids = recovered_ids
-                # Persist recovered mapping so future skips are trivial
-                if recovered_inps:
-                    write_step_manifest(step_number, step_dir, recovered_inps, op, engine)
-                    update_step_manifest_outputs(step_dir, step_number, output_files)
+        # Sanity: lengths must agree before filtering
+        if len(structure_ids) != len(energies) or len(coordinates) != len(energies):
+            logging.error(
+                f"Step {step_number} ({op}): length mismatch before filtering: "
+                f"coords={len(coordinates)}, energies={len(energies)}, ids={len(structure_ids)}."
+            )
+            return None, None, None
 
-        # -------- filter with persistent/recovered IDs --------
+        # ---------- Filter ----------
         filtered_coordinates, filtered_ids = self.refiner.filter(
             coordinates, energies, structure_ids, sample_method, parameters
         )
