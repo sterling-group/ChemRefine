@@ -2,7 +2,7 @@
 
 # **Automated Workflow for Conformer Sampling and Refinement.**
 
-This repository contains a streamlined Python code for conformer sampling and refinement for DFT and MLIPs. The code automates the process of progressively refining the level of theory, eliminating the need for manual intervention. This code is meant for HPC slurm submission system, minor modifications must be made if you use HPC outside of our group (UTD). Using an input yaml file we are able to automate the process of submitting calculations and then choosing a sampling method to choose the favored conformations, to then refine the calculation with more precise methods.
+This repository contains a streamlined Python code for automated ORCA workflow for conformer sampling, TS finding,  and refinement for DFT and MLIPs. The code automates the process of progressively refining the level of theory, eliminating the need for manual intervention. This code seamlessly integrates state-of-the-art MLIP's that can be accessed through ORCA inputs. This code is meant for HPC slurm submission system. Using an input yaml file we are able to automate the process of submitting calculations and then choosing a sampling method to choose the favored conformations, to then refine the calculation with more precise methods.
 
 ---
 
@@ -57,11 +57,13 @@ Create the required input files in your working directory:
 - **Initial XYZ** (`step1.xyz`): Starting molecular geometry  
 - **ORCA Templates** (`step1.inp`, `step2.inp`, `step3.inp`... `orca.slurm.header`, `mlff.slurm.header`): Calculation templates for each step
 
-You must provide **one ORCA input file** (e.g., `step1.inp`, `step2.inp`, etc.) for **each ORCA step** defined in your `input.yaml` configuration file, otherwise you must define a MLFF step. For example, if your `input.yaml` specifies three ORCA steps, then you need three corresponding ORCA input files in your templates directory.
+You must provide **one ORCA input file** (e.g., `step1.inp`, `step2.inp`, etc.) for **each step** defined in your `input.yaml` configuration file, otherwise you must define a MLFF step. For example, if your `input.yaml` specifies three ORCA steps, then you need three corresponding ORCA input files in your templates directory.
+
+ChemRefine provides seamless MLIP integration through the use of the tool ExtOpt in Orca, which uses the ORCA optimization codes paired with ASE, you can use any optimization function of ORCA with MLIPS. For more [information](https://github.com/faccts/orca-external-tools).
 
 In addition to these input files, you must include one of each:
-- **`orca.slurm.header`**: A SLURM submission script header with your cluster-specific job settings (e.g., partition, time limit, memory).
-- **`mlff.slurm.header`**: Required for MLFF jobs. Include your GPU node configuration here so MLFF calculations run under SLURM.
+- **`cpu.slurm.header`**: A SLURM submission script header with your cluster-specific job settings (e.g., partition, time limit, memory).
+- **`cuda.slurm.header`**: Required for MLFF jobs. Include your GPU node configuration here so MLFF calculations run under SLURM.
 
 Make sure to specify the path to your **ORCA 6.0+** executable in the `ORCA_EXEC` line of your header file(s). Adjust any other parameters (such as modules or memory) to fit your cluster environment.
 
@@ -101,6 +103,7 @@ steps.csv       # Summary of energies and structures
 template_dir: <location of template_files>
 scratch_dir:  <location of your scratch directory>
 output_dir: <location of your output directory>
+orca_executable: <location of your ORCA executable> 
 charge: 0
 multiplicity: 1
 steps:
@@ -123,6 +126,7 @@ steps:
     mlff:
       model_name: "medium"  # For MACE: small,medium,large for FAIRCHEM "uma-s-1"
       task_type: "mace_off" # For MACE: "mace_off" or "mace_mp", for FairChem: oc20, omat, omol, odac, omc
+      bind: '127.0.0.1:8888'    # ChemRefine uses a local server to avoid initializing the model multiple times, only adjust this if you know what you're doing.
     sampling:
       method: "integer"
       parameters:
@@ -185,8 +189,9 @@ Selects the N lowest-energy conformers.
 ### ** Example Multi-Step Workflows**
 The tool supports complex multi-step refinement protocols:
 1. **Step 1**: GOAT or other conformer generation (XTB level)
-2. **Step 2**: DFT geometry optimization (B3LYP/def2-SVP)
-3. **Step 3**: High-level single points (B3LYP/def2-TZVP + frequencies)
+2. **Step 2**: Machine Learning interatomic potential optimization (uma-s-1/omol)
+2. **Step 3**: DFT geometry optimization (B3LYP/def2-SVP)
+3. **Step 4**: High-level single points (B3LYP/def2-TZVP + frequencies)
 
 ### **Resource Management**
 - Automatic core allocation based on ORCA PAL settings
