@@ -106,21 +106,30 @@ multiplicity: 1
 steps:
   - step: 1
     template: "step1.inp"
-    calculation_type: "GOAT"
+    operation: "GOAT"
+    engine: "DFT"
     sampling:
       method: "integer"
       parameters:
         count: 10
   - step: 2
-    template: "step2.inp"
-    calculation_type: "DFT"
-    sampling:
-      method: "energy_window"
+    operation: "OPT+SP"
+    engine: "MLFF"       
+    mlff:                           
+      model_name: "uma-s-1"         
+      task_name: "omol"             
+      device: "cuda"               
+    sample_type:
+      method: "integer"
       parameters:
-        window: 0.5
+       num_structures: 15 
+      method: "energy_window"  
+      parameters:
+        energy: 1  
+        unit: kcal/mol  
   - step: 3
     calculation_type: "MLFF"
-    foundation_model: "mace-off"  # or "mace-mp", "fairchem"
+    foundation_model: "mace-off"  
     model_name: "medium"
     sampling:
       method: "integer"
