@@ -17,6 +17,8 @@ class StructureRefiner:
         Returns:
             tuple: (filtered_coordinates, filtered_ids)
         """
+        logging.info("Starting structure filtering process.")
+        logging.info(f"Method: {method}, Parameters: {parameters} starting {len(coordinates)} structures.")
         if len(coordinates) != len(energies) or len(energies) != len(ids):
             raise ValueError(
                 f"Mismatch in list lengths: coordinates ({len(coordinates)}), "
@@ -37,6 +39,8 @@ class StructureRefiner:
             return self._filter_boltzmann(coordinates, energies, ids, sorted_indices, parameters)
         elif method == 'integer':
             return self._filter_integer(coordinates, energies, ids, sorted_indices, parameters)
+        elif method == 'high_energy':
+            return self._filter_high_energy(coordinates, energies, ids, sorted_indices, parameters)
         else:
             raise ValueError("Invalid method. Choose from 'energy_window', 'boltzmann', or 'integer'.")
 
@@ -113,3 +117,32 @@ class StructureRefiner:
         filtered_ids = [id_ for id_, keep in zip(ids, mask) if keep]
         logging.info(f"Selected {len(filtered_coordinates)} structures after filtering.")
         return filtered_coordinates, filtered_ids
+
+    def _filter_high_energy(self, coordinates, energies, ids, sorted_indices, parameters):
+        """
+        Selects the highest-energy structures from PES output.
+
+        Args:
+            coordinates (list): List of atomic coordinates.
+            energies (list): List of energies.
+            ids (list): List of structure IDs.
+            sorted_indices (list): Not used here.
+            parameters (dict): Must contain 'num_structures'.
+
+        Returns:
+            tuple: (filtered_coordinates, filtered_ids)
+        """
+        num_structures = parameters.get("num_structures", 1)
+
+        if len(energies) == 0 or all(e is None for e in energies):
+            raise ValueError("Energy list is empty or contains only None values.")
+
+        energy_tuples = [(i, e) for i, e in enumerate(energies) if e is not None]
+        sorted_by_energy = sorted(energy_tuples, key=lambda x: x[1], reverse=True)
+        selected = sorted_by_energy[:num_structures]
+        selected_indices = [i for i, _ in selected]
+
+        filtered_coords = [coordinates[i] for i in selected_indices]
+        filtered_ids = [ids[i] for i in selected_indices]
+
+        return filtered_coords, filtered_ids

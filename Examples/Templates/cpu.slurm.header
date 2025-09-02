@@ -3,5 +3,6 @@
 #SBATCH --time=24:00:00
 
 
-
+# Set ORCA executable path (user can override)
+ORCA_EXEC=/mfs/io/groups/sterling/software-tools/orca/orca_6_0_1_avx2/orca
 
