@@ -6,6 +6,7 @@ from .refine import StructureRefiner
 from .utils import Utility
 from .orca_interface import OrcaInterface, OrcaJobSubmitter
 import shutil
+import re
 import sys
 from chemrefine.utils import (
     write_step_manifest,
