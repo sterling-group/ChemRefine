@@ -3,6 +3,7 @@
 template_dir: <your_template_directory>
 scratch_dir: <your_scratch_directory>
 output_dir: <your_output_directory>
+
 orca_excutable: <path_to_your_orca_executable>
 # Optional: Override default initial structure (default is /template_dir/step1.xyz)
 initial_xyz: /path/to/your/custom_initial_structure.xyz
@@ -12,11 +13,25 @@ charge: 0
 multiplicity: 1 
 
 # === Step-by-step workflow ===
+
+orca_executable: <your_orca_executable_path>
+# Sequential ORCA Input Configuration File
+# Define each step with its specific parameters.
+#This workflow reflects using GOAT and refining methods to improve the accuracy
+charge: 0
+multiplicity: 1 
+
+# Optional: Override default initial structure (default is /template_dir/step1.xyz)
+initial_xyz: ./templates/step1.xyz
+
+
 steps:
   # Step 1: Using GOAT
   - step: 1
     operation: "GOAT"    # Options are "GOAT","OPT+SP","PES","Docker","Solvator"
     engine: "dft"        #Options are "DFT", "MLFF"
+    operation: "GOAT"           # Options: GOAT, DOCKER, PES, SOLVATOR, 
+    engine: "DFT"       # Options: DFT, MLFF
     sample_type:
       method: "integer"         # Options are "integer", "boltzmann", "energy_window", "high_energy"
       parameters: 
@@ -29,7 +44,7 @@ steps:
     mlff:
       model_name: "medium"      # For MACE: small,medium,large for FAIRCHEM "uma-s-1"
       task_name: "mace_off"     # For MACE: "mace_off" or "mace_mp", for FairChem:oc20, omat, omol, odac, omc
-      bind: '127.0.0.1:8888'    # ChemRefine uses a local server to avoid initializing the model multiple times, only adjust this if you know what you're doing. 
+      bind: '127.0.0.1:8888'    # ChemRefine uses a local server to avoid initializing the model multiple times, only adjust this if you know what you're doing.
     sample_type:
       method: "boltzmann"
       parameters:
@@ -43,9 +58,7 @@ steps:
     multiplicity: 2            # <--- Step-specific override
     sample_type:
       method: "energy_window"
-      parameters:
-        energy: 1               # In Hartrees
-        unit: kcal/mol          # Options: kcal/mol, hartree
+
 
   # Step 4: Final high-precision DFT
   - step: 4
@@ -55,3 +68,20 @@ steps:
       method: "integer"
       parameters: 
         num_structures: 0
+
+  
+  # Step 5: Optional - Remove imaginary frequencies. 
+  - step: 5
+    operation: "OPT+SP"
+    engine: "DFT"
+    normal_mode_sampling: True
+    normal_mode_sampling_parameters:
+      calc_type: "rm_imag"   # Two options for this [rm_imag, random]
+      displacement_vector: 1.0
+    sample_type:
+      method: "integer"  
+      parameters:
+       num_structures: 0  #This energy is in Hartrees.      
+
+#You can add as many parameters are you wish. 
+
