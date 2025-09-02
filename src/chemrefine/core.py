@@ -230,6 +230,7 @@ class ChemRefiner:
             ]
             missing_msg = "No GOAT ensemble (.finalensemble.xyz) files found"
             found_msg = f"Found {len(output_files)} GOAT ensemble file(s)"
+
         elif op == "DOCKER":
             output_files = [
                 os.path.join(step_dir, f)
@@ -238,6 +239,7 @@ class ChemRefiner:
             ]
             missing_msg = "No DOCKER output (struc1.allopt.xyz) files found"
             found_msg = f"Found {len(output_files)} DOCKER output file(s)"
+
         elif op == "SOLVATOR":
             # Prefer *.solvator.xyz (canonical). Fall back to a single .out if present.
             xyz_candidates = [
@@ -255,12 +257,18 @@ class ChemRefiner:
                 ][:1]
             missing_msg = "No SOLVATOR outputs (.solvator.xyz or .out) found"
             found_msg = f"Found {len(output_files)} SOLVATOR output file(s)"
+
         else:
-            # OPT+SP / PES: ORCA .out files (exclude SLURM and atom-specific files)
+            # OPT+SP / PES: ORCA .out files (exclude SLURM and atom-specific files).
+            # Be strict: only 'stepN.out' or 'stepN_structure_{id}.out'
+            out_pat = re.compile(rf"^step{step_number}(?:_structure_-?\d+)?\.out$", re.IGNORECASE)
             output_files = [
                 os.path.join(step_dir, f)
                 for f in os.listdir(step_dir)
-                if f.endswith(".out") and not f.startswith("slurm") and not f.startswith("atom")
+                if f.endswith(".out")
+                and not f.startswith("slurm")
+                and not f.startswith("atom")
+                and out_pat.match(f) is not None
             ]
             missing_msg = "No ORCA .out files found"
             found_msg = f"Found {len(output_files)} .out file(s)"
@@ -290,7 +298,7 @@ class ChemRefiner:
         # 2) If unresolved, recover/synthesize depending on operation.
         if all(i < 0 for i in structure_ids):
             if op == "GOAT":
-                # One ensemble file → N structures (len(energies)); synthesize 0..N-1 and persist.
+                # One ensemble file → N structures; synthesize 0..N-1 and persist.
                 logging.info(f"No usable manifest for GOAT step {step_number}; synthesizing ensemble IDs.")
                 ensemble_base = os.path.basename(output_files[0])
                 n_structs = len(energies)
@@ -305,7 +313,7 @@ class ChemRefiner:
                 structure_ids = list(range(n_structs))
 
             elif op == "SOLVATOR":
-                # SOLVATOR is typically singleton; if parser returns >1, honor that.
+                # SOLVATOR: treat as ensemble of length len(energies), usually 1.
                 logging.info(f"No usable manifest for SOLVATOR step {step_number}; synthesizing IDs.")
                 solv_base = os.path.basename(output_files[0])
                 n_structs = len(energies)
@@ -323,38 +331,52 @@ class ChemRefiner:
                 structure_ids = list(range(n_structs))
 
             else:
-                # Non-GOAT/SOLVATOR: per-structure outputs. Rebuild IDs from filenames.
+                # Non-GOAT/SOLVATOR: per-structure outputs or scalar case.
                 logging.info(f"No manifest for step {step_number}; reconstructing IDs from filenames.")
-                # Accept stems like 'stepN_structure_12', and also with suffixes like '_atom46'
-                pat = re.compile(rf"^step{step_number}_structure_(\d+)(?:_|$)")
-                recovered_ids = []
-                recovered_inps = []
 
-                for outp in output_files:
-                    stem = os.path.splitext(os.path.basename(outp))[0]
-                    m = pat.match(stem)
-                    if m:
-                        sid = int(m.group(1))
-                    else:
-                        # Try a corresponding .inp with truncated suffix
-                        truncated = stem.rsplit("_", 1)[0] if "_" in stem else stem
-                        candidate_inp = os.path.join(step_dir, truncated + ".inp")
-                        sid = extract_structure_id(candidate_inp)
-
-                    if sid is None:
-                        logging.warning(f"Could not resolve ID for {outp}; rerunning step.")
-                        return None, None, None
-
-                    recovered_ids.append(sid)
-                    candidate_inp2 = os.path.join(step_dir, f"step{step_number}_structure_{sid}.inp")
-                    if os.path.exists(candidate_inp2):
-                        recovered_inps.append(candidate_inp2)
-
-                structure_ids = recovered_ids
-                # Persist recovered mapping if we found any corresponding inputs
-                if recovered_inps:
-                    write_step_manifest(step_number, step_dir, recovered_inps, op, engine)
+                # Scalar OPT/SP: single .out and single structure → assign ID 0 and persist manifest.
+                if len(output_files) == 1 and len(energies) == 1:
+                    logging.info(
+                        f"Step {step_number}: single-output scalar case; assigning ID 0 and writing manifest."
+                    )
+                    structure_ids = [0]
+                    # If a real input exists, use it; else synthesize the filename in the record.
+                    candidate_inp = os.path.join(step_dir, f"step{step_number}_structure_0.inp")
+                    input_list = [candidate_inp] if os.path.exists(candidate_inp) else [f"step{step_number}_structure_0.inp"]
+                    write_step_manifest(step_number, step_dir, input_list, op, engine)
                     update_step_manifest_outputs(step_dir, step_number, output_files)
+
+                else:
+                    # General multi-file/ID recovery (handles suffixes like _atom46).
+                    pat = re.compile(rf"^step{step_number}_structure_(\d+)(?:_|$)", re.IGNORECASE)
+                    recovered_ids = []
+                    recovered_inps = []
+
+                    for outp in output_files:
+                        stem = os.path.splitext(os.path.basename(outp))[0]
+                        m = pat.match(stem)
+                        if m:
+                            sid = int(m.group(1))
+                        else:
+                            # Try a corresponding .inp with truncated suffix
+                            truncated = stem.rsplit("_", 1)[0] if "_" in stem else stem
+                            candidate_inp = os.path.join(step_dir, truncated + ".inp")
+                            sid = extract_structure_id(candidate_inp)
+
+                        if sid is None:
+                            logging.warning(f"Could not resolve ID for {outp}; rerunning step.")
+                            return None, None, None
+
+                        recovered_ids.append(sid)
+                        candidate_inp2 = os.path.join(step_dir, f"step{step_number}_structure_{sid}.inp")
+                        if os.path.exists(candidate_inp2):
+                            recovered_inps.append(candidate_inp2)
+
+                    structure_ids = recovered_ids
+                    # Persist recovered mapping if we found any corresponding inputs
+                    if recovered_inps:
+                        write_step_manifest(step_number, step_dir, recovered_inps, op, engine)
+                        update_step_manifest_outputs(step_dir, step_number, output_files)
 
         # Sanity: lengths must agree before filtering
         if len(structure_ids) != len(energies) or len(coordinates) != len(energies):
