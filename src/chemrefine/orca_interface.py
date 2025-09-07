@@ -371,7 +371,7 @@ class OrcaInterface:
                 solvator_xyz_file = path.replace('.out', '.solventbuild.xyz')
                 logging.info(f"Looking for Solvator structure file: {solvator_xyz_file}")
                 if os.path.exists(solvator_xyz_file):
-                    coords, ens = self.parse_goat_finalensemble(solvator_xyz_file)
+                    coords, ens = self.parse_solvator_ensemble(solvator_xyz_file)
                     coordinates.extend(coords)
                     energies.extend(ens)
                 else:
@@ -549,41 +549,89 @@ class OrcaInterface:
 
         return coordinates, energies
     
-    def parse_solvator(self, file_path):
+    def parse_solvator_ensemble(self, file_path):
         """
-        Parses a solvator.xyz file containing a single XYZ structure without energy.
-        Assigns a placeholder energy value of 0.0.
+        Parse SOLVATOR multi-structure XYZ written by solventbuild, with repeating blocks:
 
-        Args:
-            file_path (str): Path to the .solvator.xyz file.
+            <natoms>\n
+            Energy -123.456789   (case-insensitive; variations allowed)\n
+            <symbol x y z> * natoms
 
-        Returns:
-            tuple: (coordinates_list, energies_list) — energy is set to 0.0.
+        Accepts scientific notation and minor variations like "total energy: -123.45".
+        Returns
+        -------
+        (coordinates_list, energies_list)
+            coordinates_list: list[list[tuple[str, float, float, float]]]
+            energies_list:    list[float | None]
         """
-        coordinates_list = []
-        energies_list = []
+        import re
+        import logging
 
-        with open(file_path, 'r') as file:
-            lines = file.readlines()
+        coords, energies = [], []
 
-        if len(lines) < 3:
-            raise ValueError(f"File {file_path} does not contain a valid XYZ structure.")
+        # Match the first float on the line, allowing "Energy", "Total Energy", optional ":" / "=" and sci notation
+        energy_re = re.compile(
+            r"(?:^\s*(?:energy|total\s+energy)\s*[:=]?\s*|\b)"
+            r"(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)",
+            re.IGNORECASE,
+        )
 
-        atom_count = int(lines[0].strip())
-        current_structure = []
+        with open(file_path, "r") as fh:
+            lines = fh.readlines()
 
-        for line in lines[2:2 + atom_count]:
-            tokens = line.strip().split()
-            if len(tokens) >= 4:
-                element = tokens[0]
-                x, y, z = map(float, tokens[1:4])
-                current_structure.append((element, x, y, z))
+        i, n = 0, len(lines)
+        while i < n:
+            line = lines[i].strip()
+            # find a block header that is a pure integer
+            if not line or not line.isdigit():
+                i += 1
+                continue
 
-        coordinates_list.append(current_structure)
-        energies_list.append(0.0)
+            natoms = int(line)
+            if i + 1 >= n:
+                break
 
-        logging.info(f"Parsed 1 solvator structure from {file_path} with placeholder energy 0.0.")
-        return coordinates_list, energies_list
+            # energy line (immediately after natoms)
+            m = energy_re.search(lines[i + 1])
+            energy = float(m.group(1)) if m else None
+
+            # atom block
+            block = []
+            start = i + 2
+            end = start + natoms
+            if end > n:
+                logging.warning(f"Unexpected EOF while reading atom block starting at line {i+1} in {file_path}.")
+                break
+
+            for j in range(start, end):
+                parts = lines[j].split()
+                if len(parts) < 4:
+                    logging.warning(f"Malformed coordinate line at {j+1} in {file_path}: {lines[j].rstrip()}")
+                    block = []
+                    break
+                sym = parts[0]
+                try:
+                    x, y, z = map(float, parts[1:4])
+                except ValueError:
+                    logging.warning(f"Non-numeric coordinates at {j+1} in {file_path}: {lines[j].rstrip()}")
+                    block = []
+                    break
+                block.append((sym, x, y, z))
+
+            if block and len(block) == natoms:
+                coords.append(block)
+                energies.append(energy)
+            else:
+                logging.warning(f"Skipping one SOLVATOR structure (bad/missing atom block near lines {start}-{end}).")
+
+            # jump to the next block
+            i = end
+
+        missing = sum(e is None for e in energies)
+        if missing:
+            logging.warning(f"{missing} SOLVATOR energy value(s) were missing in {file_path}.")
+        logging.info(f"Parsed {len(coords)} structures and {len(energies)} energies from {file_path}.")
+        return coords, energies
 
     def normal_mode_sampling(self,
                          file_paths,
