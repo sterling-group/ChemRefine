@@ -186,7 +186,7 @@ class ChemRefiner:
         )
 
         return step_dir, input_files, output_files
-
+    
     def handle_skip_step(self, step_number, operation, engine, sample_method, parameters):
         """
         Decide whether to skip a step by validating that expected outputs already exist.
@@ -220,7 +220,52 @@ class ChemRefiner:
             return None, None, None
 
         op = operation.strip().upper()
+        def _ensure_solvator_ids(step_dir, step_number, engine, output_files, energies, structure_ids):
+            """
+            Normalize SOLVATOR IDs to per-structure cardinality and persist a synthetic manifest.
 
+            Parameters
+            ----------
+            step_dir : str
+                Step directory path.
+            step_number : int
+                Current step index.
+            engine : str
+                Calculation engine ("dft" or "mlff").
+            output_files : list[str]
+                SOLVATOR outputs (we use the first as basename anchor).
+            energies : list[float]
+                Energies parsed (one per structure).
+            structure_ids : list[int]
+                Current IDs (often length 1 for SOLVATOR).
+
+            Returns
+            -------
+            list[int]
+                Expanded per-structure IDs [0..N-1] of length len(energies).
+
+            Notes
+            -----
+            Keeps it simple: child IDs are 0..N-1. This avoids the length-mismatch
+            error and keeps downstream typing unchanged (ints). A synthetic manifest
+            is written so subsequent runs skip cleanly.
+            """
+            n_structs = len(energies)
+            if n_structs == 0:
+                return structure_ids
+            if len(structure_ids) == n_structs:
+                return structure_ids  # already aligned
+
+            solv_base = os.path.basename(output_files[0])
+            write_synthetic_manifest_for_ensemble(
+                step_number=step_number,
+                step_dir=step_dir,
+                n_structures=n_structs,
+                operation="SOLVATOR",
+                engine=engine,
+                output_basename=solv_base,
+            )
+            return list(range(n_structs))
         # ---------- Discover outputs by operation ----------
         if op == "GOAT":
             output_files = [
@@ -245,7 +290,7 @@ class ChemRefiner:
             xyz_candidates = [
                 os.path.join(step_dir, f)
                 for f in os.listdir(step_dir)
-                if f.endswith(".solvator.xyz")
+                if f.endswith("solvator.solventbuild.xyz")
             ]
             if xyz_candidates:
                 output_files = xyz_candidates[:1]
@@ -378,6 +423,17 @@ class ChemRefiner:
                         write_step_manifest(step_number, step_dir, recovered_inps, op, engine)
                         update_step_manifest_outputs(step_dir, step_number, output_files)
 
+        # ---------- Minimal change: expand SOLVATOR IDs if counts mismatch ----------
+        if op == "SOLVATOR" and len(structure_ids) != len(energies):
+            structure_ids = _ensure_solvator_ids(
+                step_dir=step_dir,
+                step_number=step_number,
+                engine=engine,
+                output_files=output_files,
+                energies=energies,
+                structure_ids=structure_ids,
+            )
+
         # Sanity: lengths must agree before filtering
         if len(structure_ids) != len(energies) or len(coordinates) != len(energies):
             logging.error(
@@ -392,7 +448,7 @@ class ChemRefiner:
         )
         logging.info(f"After filtering step {step_number}: kept {len(filtered_coordinates)} structures.")
         return filtered_coordinates, filtered_ids, energies
-
+ 
     def submit_orca_jobs(self, input_files, cores, step_dir,device='cpu',operation='OPT+SP',engine='DFT', model_name=None, task_name=None):
         """
         Submits ORCA jobs for each input file in the step directory using the OrcaJobSubmitter.
