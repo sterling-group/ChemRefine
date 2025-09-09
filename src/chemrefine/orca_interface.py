@@ -1335,7 +1335,8 @@ class OrcaInterface:
                                    device,
                                    bind,
                                    normal_output_dir,
-                                   operation):
+                                   operation,
+                                   create_inp=False,):
         """
         Generate multiple random mode displacements for a given structure.
         [docstring unchanged]
@@ -1370,21 +1371,24 @@ class OrcaInterface:
         xyz_files = pos_xyz + neg_xyz
 
         # Generate ORCA input files
-        input_files, _ = self.create_input(
-            xyz_files,
-            input_template,
-            charge,
-            multiplicity,
-            output_dir=normal_output_dir,
-            operation=operation,
-            engine=engine,
-            model_name=model_name,
-            task_name=task_name,
-            device=device,
-            bind=bind
-        )
+        if create_inp:
+            logging.info(f"Creating ORCA input files for {len(xyz_files)} random mode displacements.")
+            input_files, _ = self.create_input(
+                xyz_files,
+                input_template,
+                charge,
+                multiplicity,
+                output_dir=normal_output_dir,
+                operation=operation,
+                engine=engine,
+                model_name=model_name,
+                task_name=task_name,
+                device=device,
+                bind=bind
+            )
 
-        return all_pos_coords, all_neg_coords, all_pos_ids, all_neg_ids, input_files
+            return all_pos_coords, all_neg_coords, all_pos_ids, all_neg_ids, input_files
+        return all_pos_coords, all_neg_coords, all_pos_ids, all_neg_ids, []
 
     def has_normal_modes(self, filepath: str) -> bool:
         """
