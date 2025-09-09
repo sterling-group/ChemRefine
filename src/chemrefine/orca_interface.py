@@ -633,32 +633,173 @@ class OrcaInterface:
         logging.info(f"Parsed {len(coords)} structures and {len(energies)} energies from {file_path}.")
         return coords, energies
 
-    def normal_mode_sampling(self,
-                         file_paths,
-                         calc_type,
-                         input_template,
-                         slurm_template,
-                         charge,
-                         multiplicity,
-                         output_dir,
-                         operation,
-                         engine,
-                         model_name,
-                         step_number,
-                         structure_ids,
-                         max_cores=32,
-                         task_name=None,
-                         mlff_model=None,
-                         displacement_value=1.0,
-                         num_random_modes=1,
-                         device='cuda',
-                         bind='127.0.0.1:8888',
-                         orca_executable='orca',
-                         scratch_dir=None):
+    def generate_random_displacements(self,
+                                  sid,
+                                  file_path,
+                                  normal_mode_tensor,
+                                  coordinates,
+                                  num_random_modes,
+                                  displacement_value,
+                                  step_number,
+                                  input_template,
+                                  charge,
+                                  multiplicity,
+                                  output_dir,
+                                  engine,
+                                  model_name,
+                                  task_name,
+                                  device,
+                                  bind,
+                                  normal_output_dir,
+                                  operation,
+                                  create_inp=False):
         """
-        Perform normal-mode sampling (remove imaginary or random-mode displacements),
-        write XYZ/INP files, and submit jobs directly with OrcaJobSubmitter.
-        Files lacking frequency data are skipped with a warning.
+        Generate positive/negative random-mode displacements and (optionally) prepare inputs.
+
+        Parameters
+        ----------
+        sid : str
+            Base structure ID.
+        file_path : str
+            ORCA output file path (used only for logging/debug).
+        normal_mode_tensor : np.ndarray
+            Normal mode eigenvectors shaped (modes, natoms, 3) or equivalent.
+        coordinates : list[np.ndarray]
+            Parsed geometries (natoms, 3); the last entry is displaced.
+        num_random_modes : int
+            Number of random modes to sample.
+        displacement_value : float
+            Displacement magnitude in Å applied to the chosen eigenvector.
+        step_number : int
+            Current step index (1-based).
+        input_template : str
+            ORCA input template (ignored if create_inp=False).
+        charge : int
+            Molecular charge (ignored if create_inp=False).
+        multiplicity : int
+            Spin multiplicity (ignored if create_inp=False).
+        output_dir : str
+            BASE outputs directory; XYZ files are written under step{n}/normal_mode_sampling.
+        engine : str
+            'dft' or 'mlff' (ignored if create_inp=False).
+        model_name : str
+            MLFF model name (ignored if create_inp=False).
+        task_name : str
+            MLFF task variant (ignored if create_inp=False).
+        device : str
+            Compute device (ignored if create_inp=False).
+        bind : str
+            MLFF server bind (ignored if create_inp=False).
+        normal_output_dir : str
+            Directory for INPs if create_inp=True.
+        operation : str
+            Operation label for input preparation (ignored if create_inp=False).
+        create_inp : bool, optional
+            If True, create .inp files for all generated XYZs; otherwise skip.
+
+        Returns
+        -------
+        tuple[list, list, list, list, list]
+            (pos_coords, neg_coords, pos_ids, neg_ids, inp_files)
+            inp_files is empty if create_inp=False.
+        """
+        import numpy as np
+        import logging
+
+        # Use last geometry as the reference
+        base_xyz = np.asarray(coordinates[-1], dtype=float)
+        natoms = base_xyz.shape[0]
+
+        # Normalize expected shape
+        modes_arr = np.asarray(normal_mode_tensor)
+        if modes_arr.ndim == 2 and modes_arr.shape[0] == 3 * natoms:
+            modes_arr = modes_arr.reshape(3 * natoms, natoms, 3).transpose(0, 1, 2)
+        elif modes_arr.ndim == 3 and modes_arr.shape[1:] == (natoms, 3):
+            pass
+        else:
+            raise ValueError(f"Unexpected normal_mode_tensor shape: {modes_arr.shape}")
+
+        n_modes = modes_arr.shape[0]
+        rng = np.random.default_rng()
+
+        pos_coords, neg_coords = [], []
+        pos_ids, neg_ids = [], []
+        all_xyz_paths = []
+        inp_files = []
+
+        for k in range(num_random_modes):
+            mode_idx = int(rng.integers(0, n_modes))
+            mode_vec = modes_arr[mode_idx]
+
+            # Normalize displacement vector to unit norm per structure-scale application
+            denom = np.linalg.norm(mode_vec)
+            if denom == 0:
+                logging.warning(f"Mode {mode_idx} has zero norm in {sid}; skipping.")
+                continue
+            unit_vec = mode_vec / denom
+
+            disp = displacement_value * unit_vec
+            pos = base_xyz + disp
+            neg = base_xyz - disp
+
+            pid = f"{sid}_rnd{mode_idx:04d}_pos"
+            nid = f"{sid}_rnd{mode_idx:04d}_neg"
+
+            # Persist XYZs under step/normal_mode_sampling for provenance
+            pos_xyz = self.write_displaced_xyz([pos], step_number, [pid], output_dir)
+            neg_xyz = self.write_displaced_xyz([neg], step_number, [nid], output_dir)
+            all_xyz_paths.extend(pos_xyz + neg_xyz)
+
+            pos_coords.append(pos)
+            neg_coords.append(neg)
+            pos_ids.append(pid)
+            neg_ids.append(nid)
+
+        # Optionally create inputs (disabled for pass-through behavior)
+        if create_inp and all_xyz_paths:
+            created_inp, _ = self.create_input(
+                xyz_files=all_xyz_paths,
+                input_template=input_template,
+                charge=charge,
+                multiplicity=multiplicity,
+                output_dir=normal_output_dir,
+                operation=operation,
+                engine=engine,
+                model_name=model_name,
+                task_name=task_name,
+                device=device,
+                bind=bind
+            )
+            inp_files.extend(created_inp)
+
+        return pos_coords, neg_coords, pos_ids, neg_ids, inp_files
+
+
+    def normal_mode_sampling(self,
+                            file_paths,
+                            calc_type,
+                            input_template,
+                            slurm_template,
+                            charge,
+                            multiplicity,
+                            output_dir,
+                            operation,
+                            engine,
+                            model_name,
+                            step_number,
+                            structure_ids,
+                            max_cores=32,
+                            task_name=None,
+                            mlff_model=None,
+                            displacement_value=1.0,
+                            num_random_modes=1,
+                            device='cuda',
+                            bind='127.0.0.1:8888',
+                            orca_executable='orca',
+                            scratch_dir=None):
+        """
+        Perform normal-mode sampling. For 'random', only generate coords/IDs and defer
+        all calculations to the next step. For 'rm_imag', prepare inputs and submit.
 
         Parameters
         ----------
@@ -675,8 +816,7 @@ class OrcaInterface:
         multiplicity : int
             Spin multiplicity.
         output_dir : str
-            BASE outputs directory (e.g. ".../outputs"). `write_displaced_xyz`
-            appends `step{n}/normal_mode_sampling` internally.
+            BASE outputs directory; XYZs go under step{n}/normal_mode_sampling.
         operation : str
             Operation label ('OPT', 'SP', 'OPT+SP', ...).
         engine : str
@@ -688,7 +828,7 @@ class OrcaInterface:
         structure_ids : list[str]
             IDs aligned with `file_paths`.
         max_cores : int, optional
-            Max total cores across submissions.
+            Max total cores across submissions (rm_imag only).
         task_name : str, optional
             MLFF task variant (if applicable).
         mlff_model : str, optional
@@ -710,9 +850,9 @@ class OrcaInterface:
         -------
         tuple[list, list]
             For 'rm_imag': (filtered_coords, original_ids).
-            For 'random' : (all_displaced_coords, displaced_ids).
+            For 'random' : (all_displaced_coords, displaced_ids), with no submissions.
         """
-        import os, re, logging
+        import os, re, logging, contextlib
 
         def _has_normal_modes(path: str) -> bool:
             """Quick check that the ORCA output contains a normal-mode table."""
@@ -734,7 +874,7 @@ class OrcaInterface:
         # Accumulators
         all_pos_coords, all_neg_coords = [], []
         all_pos_ids, all_neg_ids = [], []
-        all_inp_files = []
+        rm_imag_inp_files = []
 
         # Directories
         per_step_dir = os.path.join(output_dir, f"step{step_number}")
@@ -775,11 +915,9 @@ class OrcaInterface:
                     random_mode=False
                 )
 
-                # XYZ under BASE outputs dir (writer appends step/normal_mode_sampling)
                 pos_xyz = self.write_displaced_xyz([pos_coords[0]], step_number, [f"{sid}_pos"], output_dir)
                 neg_xyz = self.write_displaced_xyz([neg_coords[0]], step_number, [f"{sid}_neg"], output_dir)
 
-                # INP under FINAL dir
                 inp_files, _ = self.create_input(
                     xyz_files=pos_xyz + neg_xyz,
                     input_template=input_template,
@@ -798,10 +936,11 @@ class OrcaInterface:
                 all_neg_coords.append(neg_coords[0])
                 all_pos_ids.append(f"{sid}_pos")
                 all_neg_ids.append(f"{sid}_neg")
-                all_inp_files.extend(inp_files)
+                rm_imag_inp_files.extend(inp_files)
 
             elif calc_type == 'random':
-                pos_coords, neg_coords, pos_ids, neg_ids, inp_files = self.generate_random_displacements(
+                # Pass-through behavior: only generate coords/IDs; do NOT create inputs or submit.
+                pos_coords, neg_coords, pos_ids, neg_ids, _ = self.generate_random_displacements(
                     sid=sid,
                     file_path=file_path,
                     normal_mode_tensor=normal_mode_tensor,
@@ -818,15 +957,15 @@ class OrcaInterface:
                     task_name=task_name,
                     device=device,
                     bind=bind,
-                    normal_output_dir=normal_output_dir,  # FINAL for INP
-                    operation=operation
+                    normal_output_dir=normal_output_dir,  # ignored when create_inp=False
+                    operation=operation,
+                    create_inp=False
                 )
 
                 all_pos_coords.extend(pos_coords)
                 all_neg_coords.extend(neg_coords)
                 all_pos_ids.extend(pos_ids)
                 all_neg_ids.extend(neg_ids)
-                all_inp_files.extend(inp_files)
 
             else:
                 raise ValueError("calc_type must be 'rm_imag' or 'random'.")
@@ -834,48 +973,46 @@ class OrcaInterface:
         if skipped:
             logging.info(f"Normal-mode sampling: skipped {skipped} file(s) without usable frequency data.")
 
-        # ---- SUBMISSION (robust): chdir to FINAL dir and pass ABSOLUTE INP paths ----
-        import contextlib
-        logging.info(f"Total input files prepared: {len(all_inp_files)}")
-        if all_inp_files:
-            # Ensure absolute paths so submitter doesn't rely on cwd for locating inputs
-            abs_inp_files = [p if os.path.isabs(p) else os.path.abspath(os.path.join(normal_output_dir, p))
-                            for p in all_inp_files]
-            # Filter out any that don't exist (defensive)
-            abs_inp_files = [p for p in abs_inp_files if os.path.isfile(p)]
-            if not abs_inp_files:
-                logging.error("Prepared 0 valid INP files after existence check; submission skipped.")
-            else:
-                orig = os.getcwd()
-                try:
-                    logging.info(f"Switching to working directory for submission: {normal_output_dir}")
-                    os.chdir(normal_output_dir)
+        # ---- SUBMISSION: only for rm_imag branch ----
+        if calc_type == 'rm_imag':
+            logging.info(f"Total rm_imag input files prepared: {len(rm_imag_inp_files)}")
+            if rm_imag_inp_files:
+                abs_inp_files = [p if os.path.isabs(p) else os.path.abspath(os.path.join(normal_output_dir, p))
+                                for p in rm_imag_inp_files]
+                abs_inp_files = [p for p in abs_inp_files if os.path.isfile(p)]
+                if not abs_inp_files:
+                    logging.error("Prepared 0 valid INP files after existence check; submission skipped.")
+                else:
+                    orig = os.getcwd()
+                    try:
+                        logging.info(f"Switching to working directory for submission: {normal_output_dir}")
+                        os.chdir(normal_output_dir)
 
-                    submitter = OrcaJobSubmitter(
-                        scratch_dir=scratch_dir,
-                        orca_executable=orca_executable,
-                        device=device
-                    )
-                    submitter.submit_files(
-                        input_files=abs_inp_files,      # absolute paths to .inp
-                        max_cores=max_cores,
-                        template_dir=slurm_template,    # SLURM headers/templates live here
-                        output_dir=normal_output_dir,   # where INPs live and sbatch scripts will be written
-                        engine=engine,
-                        operation=operation,
-                        model_name=(mlff_model if mlff_model is not None else model_name),
-                        task_name=task_name
-                    )
-                    logging.info("ORCA submissions dispatched from normal_mode_sampling.")
-                except Exception as e:
-                    logging.error(f"Error while submitting ORCA jobs in {normal_output_dir}: {e}")
-                    raise
-                finally:
-                    with contextlib.suppress(Exception):
-                        os.chdir(orig)
-                    logging.info(f"Returned to original directory: {orig}")
-        else:
-            logging.warning("No input files generated; submission skipped.")
+                        submitter = OrcaJobSubmitter(
+                            scratch_dir=scratch_dir,
+                            orca_executable=orca_executable,
+                            device=device
+                        )
+                        submitter.submit_files(
+                            input_files=abs_inp_files,
+                            max_cores=max_cores,
+                            template_dir=slurm_template,
+                            output_dir=normal_output_dir,
+                            engine=engine,
+                            operation=operation,
+                            model_name=(mlff_model if mlff_model is not None else model_name),
+                            task_name=task_name
+                        )
+                        logging.info("ORCA submissions dispatched for rm_imag displacements.")
+                    except Exception as e:
+                        logging.error(f"Error while submitting ORCA jobs in {normal_output_dir}: {e}")
+                        raise
+                    finally:
+                        with contextlib.suppress(Exception):
+                            os.chdir(orig)
+                        logging.info(f"Returned to original directory: {orig}")
+            else:
+                logging.warning("No rm_imag input files generated; submission skipped.")
 
         # ---- RETURNS ----
         if calc_type == 'rm_imag':
@@ -883,7 +1020,7 @@ class OrcaInterface:
                 step_number=step_number,
                 pos_ids=all_pos_ids,
                 neg_ids=all_neg_ids,
-                directory=output_dir  # BASE; function appends step/normal_mode_sampling internally
+                directory=output_dir
             )
             original_ids = [tid.rsplit('_', 1)[0] for tid in filtered_tmp_ids]
             return filtered_coords, original_ids
@@ -1198,7 +1335,8 @@ class OrcaInterface:
                                    device,
                                    bind,
                                    normal_output_dir,
-                                   operation):
+                                   operation,
+                                   create_inp=False,):
         """
         Generate multiple random mode displacements for a given structure.
         [docstring unchanged]
@@ -1233,21 +1371,24 @@ class OrcaInterface:
         xyz_files = pos_xyz + neg_xyz
 
         # Generate ORCA input files
-        input_files, _ = self.create_input(
-            xyz_files,
-            input_template,
-            charge,
-            multiplicity,
-            output_dir=normal_output_dir,
-            operation=operation,
-            engine=engine,
-            model_name=model_name,
-            task_name=task_name,
-            device=device,
-            bind=bind
-        )
+        if create_inp:
+            logging.info(f"Creating ORCA input files for {len(xyz_files)} random mode displacements.")
+            input_files, _ = self.create_input(
+                xyz_files,
+                input_template,
+                charge,
+                multiplicity,
+                output_dir=normal_output_dir,
+                operation=operation,
+                engine=engine,
+                model_name=model_name,
+                task_name=task_name,
+                device=device,
+                bind=bind
+            )
 
-        return all_pos_coords, all_neg_coords, all_pos_ids, all_neg_ids, input_files
+            return all_pos_coords, all_neg_coords, all_pos_ids, all_neg_ids, input_files
+        return all_pos_coords, all_neg_coords, all_pos_ids, all_neg_ids, []
 
     def has_normal_modes(self, filepath: str) -> bool:
         """
