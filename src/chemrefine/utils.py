@@ -393,24 +393,50 @@ def map_outputs_to_ids(step_dir: str, step_number: int, output_files: List[str])
 
 from typing import Sequence
 
-def validate_structure_ids_or_raise(structure_ids: Sequence[int], step_number: int) -> None:
+def validate_structure_ids_or_raise(structure_ids, step_id):
     """
-    Ensure all structure IDs are resolved (>= 0) and non-empty.
-    Raises ValueError if invalid, to prevent creating '..._-1.inp' files.
+    Validate structure IDs coming from previous steps.
+
+    Accepts integers (must be >= 0) and/or strings (must be non-empty after strip()).
+    Mixed lists are allowed. Raises a descriptive error on invalid input.
 
     Parameters
     ----------
-    structure_ids : Sequence[int]
-        IDs to validate.
-    step_number : int
-        Current step index.
-    """
-    if not structure_ids:
-        raise ValueError(f"Step {step_number}: empty structure ID list.")
-    if any((i is None) or (i < 0) for i in structure_ids):
-        bad = [i for i in structure_ids if (i is None) or (i < 0)]
-        raise ValueError(f"Step {step_number}: unresolved structure IDs present: {bad}")
+    structure_ids : Sequence[Union[int, str]]
+        List/tuple of IDs to validate.
+    step_id : int
+        Current step number, only used for error messaging.
 
+    Raises
+    ------
+    TypeError
+        If structure_ids is not a sequence or contains unsupported types.
+    ValueError
+        If any ID is invalid (negative int or empty string).
+    """
+    from collections.abc import Sequence
+
+    if structure_ids is None:
+        raise ValueError(f"[step {step_id}] structure_ids is None")
+
+    if not isinstance(structure_ids, Sequence) or isinstance(structure_ids, (str, bytes)):
+        raise TypeError(f"[step {step_id}] structure_ids must be a sequence of IDs")
+
+    if len(structure_ids) == 0:
+        raise ValueError(f"[step {step_id}] structure_ids is empty")
+
+    for idx, i in enumerate(structure_ids):
+        if isinstance(i, int):
+            if i < 0:
+                raise ValueError(f"[step {step_id}] structure_ids[{idx}] is negative: {i}")
+        elif isinstance(i, str):
+            if not i.strip():
+                raise ValueError(f"[step {step_id}] structure_ids[{idx}] is an empty/blank string")
+        else:
+            raise TypeError(
+                f"[step {step_id}] structure_ids[{idx}] has unsupported type {type(i).__name__}; "
+                "only int or str are allowed"
+            )
 
 def registry_path(output_root: str) -> str:
     """
