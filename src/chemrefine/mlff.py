@@ -27,11 +27,17 @@ class MLFFCalculator:
 
     def _setup_calculator(self):
         """Initialize and return the correct ASE calculator based on task_name."""
+        if self.model_path:
+            logging.info(f"Using custom MACE model from path: {self.model_path} on device: {self.device}")
+            return self._setup_custom_mace()
         if self.task_name.startswith("mace"):
+            logging.info(f"Using MACE model: {self.task_name} on device: {self.device}")
             return self._setup_mace()
         elif self.task_name.startswith(("omol", "omat", "odac", "uma", "fairchem")):
+            logging.info(f"Using FAIRChem model: {self.task_name} on device: {self.device}")
             return self._setup_fairchem()
         elif self.task_name.startswith("chgnet"):
+            logging.info(f"Using CHGNet model on device: {self.device}")
             return self._setup_chgnet()
         else:
             raise ValueError(f"Unsupported task name: {self.task_name}")
@@ -67,6 +73,16 @@ class MLFFCalculator:
         atoms.calc = self.calculator
         from chemrefine.utils_extopt import process_output
         return process_output(atoms)
+
+    def _setup_custom_mace(self):
+        from pathlib import Path
+        from mace.calculators import MACECalculator
+        model_file = Path(self.model_path)
+        if not model_file.exists():
+            raise FileNotFoundError(f"Custom MACE model file does not exist: {self.model_path}")
+
+        logging.info(f"Using custom MACE model from path: {self.model_path} on device: {self.device}")
+        return MACECalculator(model_path=self.model_path, device=self.device)
 
     def calculate(self, atoms: Atoms, fmax: float = 0.03, steps: int = 200) -> Atoms:
         """Optional: geometry optimization using LBFGS."""

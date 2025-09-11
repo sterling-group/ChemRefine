@@ -16,7 +16,12 @@ class OrcaJobSubmitter:
     Handles job submission, PAL adjustment, and job monitoring.
     """
 
-    def __init__(self, device='cpu',orca_executable: str = "orca",bind: str = "127.0.0.1:8888",scratch_dir: str = None, save_scratch: bool = False):
+    def __init__(self, 
+                 device='cpu',
+                 orca_executable: str = "orca",
+                 bind: str = "127.0.0.1:8888",
+                 scratch_dir: str = None, 
+                 save_scratch: bool = False):
         """
         Initialize the ORCA job submitter.
 
@@ -41,7 +46,8 @@ class OrcaJobSubmitter:
                      operation='OPT+SP',
                      engine='DFT',
                      model_name=None,
-                     task_name=None):
+                     task_name=None,
+                     model_path=None):
         """
         Submits multiple ORCA input files to SLURM, managing PAL values, active job tracking,
         and ensuring that the total PAL usage does not exceed max_cores.
@@ -86,7 +92,8 @@ class OrcaJobSubmitter:
                 task_name=task_name,
                 operation=operation,
                 engine=engine,
-                bind=self.bind
+                bind=self.bind,
+                model_path=model_path
             )
 
             job_id = self.utility.submit_job(slurm_script)
@@ -144,7 +151,8 @@ class OrcaJobSubmitter:
     engine: str = "DFT",
     model_name: str = "uma-s-1",
     task_name: str = "omol",
-    bind: str = "127.0.0.1:8888"
+    bind: str = "127.0.0.1:8888",
+    model_path: str = None
 ):
         """
         Generate a SLURM script by combining a user-provided header with a consistent footer.
@@ -235,7 +243,11 @@ class OrcaJobSubmitter:
 
             if engine.lower() == "mlff":
                 f.write("# Start MLFF socket server before ORCA\n")
-                f.write(f"python -m chemrefine.server --model {model_name} --task-name {task_name} --device {device} --bind {bind} & > $OUTPUT_DIR/server.log 2>&1 & \n")
+                if model_path:
+                    f.write(f"python -m chemrefine.server --model-path {model_path} --device {device} --bind {bind} & > $OUTPUT_DIR/server.log 2>&1 & \n")
+                else:
+                    f.write(f"python -m chemrefine.server --model {model_name} --task-name {task_name} --device {device} --bind {bind} & > $OUTPUT_DIR/server.log 2>&1 & \n")
+
                 f.write("SERVER_PID=$!\n")
                 f.write("sleep 10\n")
                 f.write(f"$ORCA_EXEC {input_file.name} > $OUTPUT_DIR/{job_name}.out || {{ echo 'Error: ORCA execution failed.'; kill $SERVER_PID; exit 1; }}\n")
@@ -271,7 +283,8 @@ class OrcaInterface:
                      model_name=None,
                      task_name=None,
                      device='cuda',
-                     bind='127.0.0.1:8888'):
+                     bind='127.0.0.1:8888',
+                     ):
         """
         Generate ORCA .inp files from xyz inputs, adding MLFF external method if specified.
 
@@ -311,7 +324,7 @@ class OrcaInterface:
             if engine and engine.lower() == 'mlff':
                 # Add MLFF method block if specified
                 run_mlff_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "uma.sh"))
-                ext_params = f"--model_name {model_name} --task_name {task_name} --device {device} --bind {bind}"
+                ext_params = f"--bind {bind}"
                 content += '%method\n'
                 content += f'  ProgExt "{run_mlff_path}"\n'
                 content += f'  Ext_Params "{ext_params}"\n'
