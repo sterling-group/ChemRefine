@@ -92,5 +92,63 @@ class MLFFCalculator:
         optimizer.run(fmax=fmax, steps=steps)
         return atoms
 
+class MLFFTrainer:
+    """
+    Handle training of MLFF models inside ChemRefine.
+
+    Parameters
+    ----------
+    step_id : int
+        Current workflow step number.
+    step_dir : str
+        Directory where training outputs (logs, checkpoints) are stored.
+    template_dir : str
+        Path to training templates (e.g., mace_train.yaml).
+    trainer_cfg : dict
+        Training parameters from workflow YAML (e.g., model_name, task_name).
+    coordinates : list
+        Coordinates passed from previous step.
+    structure_ids : list
+        IDs corresponding to the structures.
+    """
+
+    def __init__(self, step_id, step_dir, template_dir, trainer_cfg,
+                 coordinates=None, structure_ids=None):
+        self.step_id = step_id
+        self.step_dir = step_dir
+        self.template_dir = template_dir
+        self.trainer_cfg = trainer_cfg
+        self.coordinates = coordinates
+        self.structure_ids = structure_ids
+
+    def prepare_inputs(self):
+        """Convert coordinates and IDs into dataset files (XYZ, NPZ, etc.)."""
+        # TODO: implement data export
+        pass
+
+    def write_training_config(self):
+        """Generate training config from template and trainer_cfg."""
+        # TODO: read mace_train.yaml (or chgnet_train.yaml) from template_dir,
+        # merge with trainer_cfg, and write into step_dir.
+        pass
+
+    def submit(self):
+        """Submit training job (SLURM/local)."""
+        # TODO: call Filesubmit or direct subprocess
+        pass
+
+    def monitor(self):
+        """Monitor until training completes."""
+        # TODO: implement job monitoring
+        pass
+
+    def run(self):
+        """Main entry point: orchestrates full training step."""
+        self.prepare_inputs()
+        self.write_training_config()
+        self.submit()
+        self.monitor()
+        # Model path is defined inside the template; return as hint
+        return self.trainer_cfg.get("save_dir", self.step_dir)
 
     
