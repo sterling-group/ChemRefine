@@ -665,6 +665,9 @@ class ChemRefiner:
                     validate_structure_ids_or_raise(previous_ids, step_id)
 
                     if operation == "MLFF_TRAIN":
+                        if previous_ids is None or any(i < 0 for i in previous_ids):
+                            logging.warning(f"Step {step_id}: unresolved structure IDs, overriding for MLFF_TRAIN.")
+                            previous_ids = list(range(len(previous_coordinates)))
                         trainer_cfg = step.get("trainer", {})
                         model_name = trainer_cfg.get("model_name", "medium")
                         task_name = trainer_cfg.get("task_name", "mace_off")
@@ -684,7 +687,8 @@ class ChemRefiner:
                                 structure_ids=previous_ids,
                             )
                         
-                        trained_model_path = trainer.run()
+                        train_path, test_path = trainer.run()
+
                         # persist manifest so skip logic still works
                         write_step_manifest(
                             step_id,
@@ -693,7 +697,6 @@ class ChemRefiner:
                             operation,
                             "mlff_train",
                             engine="mlff_train",
-                            extra={"trained_model": trained_model_path}
                         )
                         previous_coordinates, previous_ids = previous_coordinates, previous_ids
                         continue
