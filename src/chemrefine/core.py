@@ -336,7 +336,7 @@ class ChemRefiner:
         update_step_manifest_outputs(step_dir, step_number, output_files)
 
         # ---------- Parse outputs ----------
-        coordinates, energies = self.orca.parse_output(output_files, op, dir=step_dir)
+        coordinates, energies,forces = self.orca.parse_output(output_files, op, dir=step_dir)
         if not coordinates or not energies or len(coordinates) != len(energies):
             logging.warning(
                 f"Parsed outputs are incomplete or inconsistent for step {step_number} "
@@ -507,7 +507,7 @@ class ChemRefiner:
         Returns:
             tuple: Filtered coordinates and IDs.
         """
-        coordinates, energies = self.orca.parse_output(output_files, operation, dir=step_dir)
+        coordinates, energies,forces = self.orca.parse_output(output_files, operation, dir=step_dir)
         if not coordinates or not energies:
             logging.error(f"No valid coordinates or energies found in outputs for step {step_number}. Exiting pipeline.")
             logging.error(f"Error in your output file, please check reason for failure")
@@ -720,7 +720,7 @@ class ChemRefiner:
                 )
 
                 # Parse outputs
-                filtered_coordinates, energies = self.orca.parse_output(output_files, operation, dir=step_dir)
+                filtered_coordinates, energies,forces = self.orca.parse_output(output_files, operation, dir=step_dir)
 
                 # Update manifest with output file names
                 update_step_manifest_outputs(step_dir, step_id, output_files)
