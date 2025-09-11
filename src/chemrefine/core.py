@@ -456,7 +456,7 @@ class ChemRefiner:
             coordinates, energies, structure_ids, sample_method, parameters
         )
         logging.info(f"After filtering step {step_number}: kept {len(filtered_coordinates)} structures.")
-        return filtered_coordinates, filtered_ids, energies
+        return filtered_coordinates, filtered_ids, energies,forces
  
     def submit_orca_jobs(self, input_files, cores, step_dir,device='cpu',operation='OPT+SP',engine='DFT', model_name=None, task_name=None):
         """
@@ -632,9 +632,9 @@ class ChemRefiner:
                 sample_method = sample_type_cfg.get('method')
                 parameters = sample_type_cfg.get('parameters', {})
 
-            filtered_coordinates, filtered_ids, energies = (None, None, None)
+            filtered_coordinates, filtered_ids, energies,forces = (None, None, None,None)
             if self.skip_steps:
-                filtered_coordinates, filtered_ids, energies = self.handle_skip_step(
+                filtered_coordinates, filtered_ids, energies,forces = self.handle_skip_step(
                     step_id, operation, engine, sample_method, parameters
                 )
 
@@ -662,7 +662,8 @@ class ChemRefiner:
                         bind=bind_address,
                     )
                 else:
-                    validate_structure_ids_or_raise(previous_ids, step_id)
+                    if operation != "MLFF_TRAIN":
+                        validate_structure_ids_or_raise(previous_ids, step_id)
 
                     if operation == "MLFF_TRAIN":
                         if previous_ids is None or any(i < 0 for i in previous_ids):
