@@ -499,74 +499,127 @@ class ChemRefiner:
     def run(self):
         """
         Main pipeline execution function for ChemRefine.
-        Dynamically loops over all steps defined in the YAML input.
-        Handles skip-step logic, ID persistence, and normal pipeline execution.
+
+        Dynamically loops over all steps defined in the YAML input. Supports skip-step
+        logic with ID/energy/force persistence. When encountering an MLFF_TRAIN step,
+        it consumes the results (coordinates, energies, forces, IDs) from the
+        immediately preceding step and only prepares training datasets (XYZ).
         """
         logging.info("Starting ChemRefine pipeline.")
-        previous_coordinates, previous_ids = None, None
 
-        valid_operations = {"OPT+SP", "GOAT", "PES", "DOCKER", "SOLVATOR","MLFF_TRAIN"}
+        # Results from the last completed (or skipped) step; used by MLFF_TRAIN.
+        last_coords = None
+        last_ids = None
+        last_energies = None
+        last_forces = None
+
+        valid_operations = {"OPT+SP", "GOAT", "PES", "DOCKER", "SOLVATOR", "MLFF_TRAIN"}
         valid_engines = {"dft", "mlff"}
 
-        steps = self.config.get('steps', [])
+        steps = self.config.get("steps", [])
 
         for step in steps:
-            step_id = step['step']
-            operation = step['operation'].upper()
-            engine = step.get('engine', 'dft').lower()
+            step_id = step["step"]
+            operation = step["operation"].upper()
+            engine = step.get("engine", "dft").lower()
 
             logging.info(f"Processing step {step_id}: operation '{operation}', engine '{engine}'.")
 
             if operation not in valid_operations:
-                raise ValueError(f"Invalid operation '{operation}' at step {step_id}. Must be one of {valid_operations}.")
-
+                raise ValueError(
+                    f"Invalid operation '{operation}' at step {step_id}. "
+                    f"Must be one of {valid_operations}."
+                )
             if engine not in valid_engines:
-                raise ValueError(f"Invalid engine '{engine}' at step {step_id}. Must be one of {valid_engines}.")
+                raise ValueError(
+                    f"Invalid engine '{engine}' at step {step_id}. "
+                    f"Must be one of {valid_engines}."
+                )
 
-            if engine == 'mlff':
-                mlff_config = step.get('mlff', {})
-                mlff_model = mlff_config.get('model_name', 'medium')
-                mlff_task = mlff_config.get('task_name', 'mace_off')
-                # mlff_model_path = mlff_config.get('model_path', None)
-                bind_address = mlff_config.get('bind', '127.0.0.1:8888')
-                device = mlff_config.get('device', 'cuda')
-                logging.info(f"Using MLFF model '{mlff_model}' with task '{mlff_task}' for step {step_id}.")
-                if mlff_model_path:
-                    logging.info(f"Custom MLFF model path specified {mlff_model_path}.")
+            # MLFF config (only relevant when engine == 'mlff' in compute steps)
+            if engine == "mlff":
+                mlff_config = step.get("mlff", {})
+                mlff_model = mlff_config.get("model_name", "medium")
+                mlff_task = mlff_config.get("task_name", "mace_off")
+                bind_address = mlff_config.get("bind", "127.0.0.1:8888")
+                device = mlff_config.get("device", "cuda")
+                logging.info(
+                    f"Using MLFF model '{mlff_model}' with task '{mlff_task}' for step {step_id}."
+                )
             else:
-               
                 mlff_model = None
                 mlff_task = None
-                mlff_model_path = None
                 bind_address = None
                 device = None
 
-            sample_type_cfg = step.get('sample_type')
-            if sample_type_cfg is None:
-                sample_method, parameters = None, {}
-            else:
-                sample_method = sample_type_cfg.get('method')
-                parameters = sample_type_cfg.get('parameters', {})
+            # Sampling (optional)
+            st = step.get("sample_type")
+            sample_method = st.get("method") if st else None
+            parameters = st.get("parameters", {}) if st else {}
 
-            filtered_coordinates, filtered_ids, energies,forces = (None, None, None,None)
+            # === Special: MLFF_TRAIN consumes the previous step results and writes datasets ===
+            if operation == "MLFF_TRAIN":
+                if step_id == 1:
+                    raise ValueError("Invalid workflow: MLFF_TRAIN cannot be used at step 1.")
+
+                # Must have previous results with energies and forces
+                if not (last_coords and last_ids and last_energies and last_forces):
+                    raise ValueError(
+                        f"MLFF_TRAIN at step {step_id} requires a prior step with "
+                        f"coordinates, energies, and forces. None found."
+                    )
+                # Basic length consistency
+                n = len(last_coords)
+                if not (len(last_ids) == len(last_energies) == len(last_forces) == n):
+                    raise ValueError(
+                        f"Inconsistent previous-step lengths before MLFF_TRAIN at step {step_id}: "
+                        f"coords={n}, ids={len(last_ids)}, energies={len(last_energies)}, forces={len(last_forces)}"
+                    )
+
+                trainer_cfg = step.get("trainer", {})
+                step_dir = os.path.join(self.output_dir, f"step{step_id}")
+                os.makedirs(step_dir, exist_ok=True)
+
+                logging.info(f"Preparing MLFF dataset at step {step_id}.")
+                trainer = MLFFTrainer(
+                    step_id=step_id,
+                    step_dir=step_dir,
+                    template_dir=self.template_dir,
+                    trainer_cfg=trainer_cfg,
+                    coordinates=last_coords,
+                    energies=last_energies,
+                    forces=last_forces,
+                    structure_ids=last_ids,
+                )
+                trainer.run()
+
+                # Manifest is informational for training steps
+                write_step_manifest(step_id, step_dir, [], operation, "mlff_train")
+                # Training does not change structures; keep last_* unchanged for any following steps
+                continue
+
+            # === Non-training steps (compute / parsing / filtering) ===
+            charge = step.get("charge", self.charge)
+            multiplicity = step.get("multiplicity", self.multiplicity)
+
+            filtered_coordinates = None
+            filtered_ids = None
+            energies = None
+            forces = None
+
+            # Try to reuse outputs via skip
             if self.skip_steps:
-                filtered_coordinates, filtered_ids, energies,forces = self.handle_skip_step(
+                filtered_coordinates, filtered_ids, energies, forces = self.handle_skip_step(
                     step_id, operation, engine, sample_method, parameters
                 )
 
             if filtered_coordinates is None or filtered_ids is None:
                 logging.info(f"No valid skip outputs for step {step_id}. Proceeding with normal execution.")
-                charge = step.get('charge', self.charge)
-                multiplicity = step.get('multiplicity', self.multiplicity)
 
                 if step_id == 1:
-                    if operation == "MLFF_TRAIN":
-                        raise ValueError(
-                            f"Invalid workflow: MLFF_TRAIN cannot be used at step {step_id}. "
-                            "Training requires coordinates and IDs from a previous step.")
                     initial_xyz = self.config.get("initial_xyz", None)
                     step_dir, input_files, output_files = self.prepare_step1_directory(
-                        step_id,
+                        step_id=step_id,
                         initial_xyz=initial_xyz,
                         charge=charge,
                         multiplicity=multiplicity,
@@ -578,50 +631,12 @@ class ChemRefiner:
                         bind=bind_address,
                     )
                 else:
-                    if operation != "MLFF_TRAIN":
-                        validate_structure_ids_or_raise(previous_ids, step_id)
-
-                    if operation == "MLFF_TRAIN":
-                        if previous_ids is None or any(i < 0 for i in previous_ids):
-                            logging.warning(f"Step {step_id}: unresolved structure IDs, overriding for MLFF_TRAIN.")
-                            previous_ids = list(range(len(previous_coordinates)))
-                        trainer_cfg = step.get("trainer", {})
-                        model_name = trainer_cfg.get("model_name", "medium")
-                        task_name = trainer_cfg.get("task_name", "mace_off")
-                        step_dir = os.path.join(self.output_dir, f"step{step_id}")
-                        logging.info(
-                                f"Training new MLFF model '{model_name}' with task '{task_name}' at step {step_id}."
-                                )
-
-                        trainer = MLFFTrainer(
-                                step_id=step_id,
-                                step_dir=step_dir,
-                                template_dir=self.template_dir,
-                                trainer_cfg=trainer_cfg,
-                                coordinates=previous_coordinates,
-                                energies=energies,              # parsed energies from previous step
-                                forces=forces,                  # parsed forces from previous step
-                                structure_ids=previous_ids,
-                            )
-                        
-                        train_path, test_path = trainer.run()
-
-                        # persist manifest so skip logic still works
-                        write_step_manifest(
-                            step_id,
-                            step_dir,
-                            [],
-                            operation,
-                            "mlff_train",
-                            engine="mlff_train",
-                        )
-                        previous_coordinates, previous_ids = previous_coordinates, previous_ids
-                        continue
-                    
+                    # Validate IDs for compute steps (not for training)
+                    validate_structure_ids_or_raise(last_ids, step_id)
                     step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
-                        step_id,
-                        previous_coordinates,
-                        previous_ids,
+                        step_id=step_id,
+                        previous_coordinates=last_coords,
+                        previous_ids=last_ids,
                         charge=charge,
                         multiplicity=multiplicity,
                         operation=operation,
@@ -630,7 +645,6 @@ class ChemRefiner:
                         task_name=mlff_task,
                         device=device,
                         bind=bind_address,
-                       
                     )
 
                 # Save manifest with input structure IDs
@@ -638,9 +652,9 @@ class ChemRefiner:
 
                 # Submit jobs
                 self.submit_orca_jobs(
-                    input_files,
-                    self.max_cores,
-                    step_dir,
+                    input_files=input_files,
+                    max_cores=self.max_cores,
+                    step_dir=step_dir,
                     operation=operation,
                     engine=engine,
                     model_name=mlff_model,
@@ -648,24 +662,25 @@ class ChemRefiner:
                     device=device,
                 )
 
-                # Parse outputs
-                filtered_coordinates, energies,forces = self.orca.parse_output(output_files, operation, dir=step_dir)
+                # Parse outputs (must return coords, energies, forces)
+                filtered_coordinates, energies, forces = self.orca.parse_output(
+                    output_files, operation, dir=step_dir
+                )
 
-                # Update manifest with output file names
+                # Update manifest with output files
                 update_step_manifest_outputs(step_dir, step_id, output_files)
 
-                # Get persistent IDs for outputs
+                # Resolve persistent IDs
                 filtered_ids = map_outputs_to_ids(step_dir, step_id, output_files)
 
-                # Apply filtering
+                # Apply filtering if configured
                 filtered_coordinates, filtered_ids = self.refiner.filter(
                     filtered_coordinates,
                     energies,
                     filtered_ids,
                     sample_method,
-                    parameters
+                    parameters,
                 )
-
                 if filtered_coordinates is None or filtered_ids is None:
                     logging.error(f"Filtering failed at step {step_id}. Exiting pipeline.")
                     return
@@ -673,13 +688,14 @@ class ChemRefiner:
                 step_dir = os.path.join(self.output_dir, f"step{step_id}")
                 logging.info(f"Skipping step {step_id} using existing outputs.")
 
-            # Optional: normal mode sampling
+            # Optional: normal mode sampling (may mutate coordinates/ids)
             if step.get("normal_mode_sampling", False):
                 nms_params = step.get("normal_mode_sampling_parameters", {})
                 calc_type = nms_params.get("calc_type", "rm_imag")
                 displacement_vector = nms_params.get("displacement_vector", 1.0)
                 nms_random_displacements = nms_params.get("num_random_displacements", 1)
-                if 'output_files' not in locals() or not output_files:
+
+                if "output_files" not in locals() or not output_files:
                     output_files = [
                         os.path.join(step_dir, f)
                         for f in os.listdir(step_dir)
@@ -687,7 +703,9 @@ class ChemRefiner:
                     ]
 
                 if not output_files:
-                    logging.warning(f"No valid .out files found for normal mode sampling in step {step_id}. Skipping NMS.")
+                    logging.warning(
+                        f"No valid .out files found for normal mode sampling in step {step_id}. Skipping NMS."
+                    )
                 else:
                     logging.info(f"Normal mode sampling requested for step {step_id}.")
                     input_template_path = os.path.join(self.template_dir, f"step{step_id}.inp")
@@ -696,8 +714,8 @@ class ChemRefiner:
                         calc_type=calc_type,
                         input_template=input_template_path,
                         slurm_template=self.template_dir,
-                        charge=step.get('charge', self.charge),
-                        multiplicity=step.get('multiplicity', self.multiplicity),
+                        charge=step.get("charge", self.charge),
+                        multiplicity=step.get("multiplicity", self.multiplicity),
                         output_dir=self.output_dir,
                         operation=operation,
                         engine=engine,
@@ -715,9 +733,12 @@ class ChemRefiner:
                         num_random_modes=nms_random_displacements,
                     )
 
-            previous_coordinates, previous_ids = filtered_coordinates, filtered_ids
+            # Commit this step's results for potential consumption by next step (e.g., MLFF_TRAIN)
+            last_coords, last_ids = filtered_coordinates, filtered_ids
+            last_energies, last_forces = energies, forces
 
         logging.info("ChemRefine pipeline completed.")
+
 
 def main():
     ChemRefiner().run()
