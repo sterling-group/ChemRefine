@@ -8,6 +8,7 @@ from .orca_interface import OrcaInterface, OrcaJobSubmitter
 import shutil
 import re
 import sys
+from .mlff import MLFFTrainer
 from chemrefine.utils import (
     write_step_manifest,
     update_step_manifest_outputs,
@@ -667,15 +668,23 @@ class ChemRefiner:
                         trainer_cfg = step.get("trainer", {})
                         model_name = trainer_cfg.get("model_name", "medium")
                         task_name = trainer_cfg.get("task_name", "mace_off")
-                        logging.info(f"Training new MLFF model '{model_name}' with task '{task_name}' at step {step_id}.")
-                        trained_model_path = self.train_mlff_model(
-                                            coordinates=previous_coordinates,
-                                            structure_ids=previous_ids,
-                                            model_name=model_name,
-                                            task_name=task_name,
-                                            trainer_cfg=trainer_cfg,
-                                            step_dir=os.path.join(self.output_dir, f"step{step_id}")
-                                            )
+                        step_dir = os.path.join(self.output_dir, f"step{step_id}")
+                        logging.info(
+                                f"Training new MLFF model '{model_name}' with task '{task_name}' at step {step_id}."
+                                )
+
+                        trainer = MLFFTrainer(
+                                step_id=step_id,
+                                step_dir=step_dir,
+                                template_dir=self.template_dir,
+                                trainer_cfg=trainer_cfg,
+                                coordinates=previous_coordinates,
+                                energies=energies,              # parsed energies from previous step
+                                forces=forces,                  # parsed forces from previous step
+                                structure_ids=previous_ids,
+                            )
+                        
+                        trained_model_path = trainer.run()
                         # persist manifest so skip logic still works
                         write_step_manifest(
                             step_id,
