@@ -222,6 +222,12 @@ class ChemRefiner:
             return None, None, None
 
         op = operation.strip().upper()
+        # === Special case: MLFF_TRAIN ===
+        if op == "MLFF_TRAIN":
+            manifest_path = os.path.join(step_dir, f"step{step_number}_manifest.json")
+            if not os.path.exists(manifest_path):
+                logging.info(f"No manifest for MLFF_TRAIN step {step_number}. Will rerun training.")
+                return None, None, None
         def _ensure_solvator_ids(step_dir, step_number, engine, output_files, energies, structure_ids):
             """
             Normalize SOLVATOR IDs to per-structure cardinality and persist a synthetic manifest.
@@ -477,7 +483,7 @@ class ChemRefiner:
                 operation=operation,
                 model_name=model_name,
                 task_name=task_name,
-                model_path=model_path
+                
                
             )
         except Exception as e:
@@ -524,6 +530,54 @@ class ChemRefiner:
                                             )
 
         return filtered_coordinates, selected_ids
+    def train_mlff_model(self, coordinates, structure_ids, model_name, task_name, trainer_cfg, step_dir):
+        """
+        Stub for MLFF training.
+        Uses provided coordinates and IDs to 'train' a new MLFF model.
+
+        Parameters
+        ----------
+        coordinates : list
+            List of atomic coordinates from the previous step.
+        structure_ids : list
+            IDs corresponding to the coordinates.
+        model_name : str
+            Name of the model size ("small", "medium", "large", etc.).
+        task_name : str
+            Task identifier ("mace_off", "mace_mp", etc.).
+        trainer_cfg : dict
+            Trainer configuration dictionary from the YAML input.
+        step_dir : str
+            Directory for storing training outputs.
+
+        Returns
+        -------
+        str
+            Path to the (dummy) trained model checkpoint.
+        """
+        import os
+        import json
+
+        os.makedirs(step_dir, exist_ok=True)
+
+        # Save metadata for debugging
+        metadata = {
+            "model_name": model_name,
+            "task_name": task_name,
+            "trainer_cfg": trainer_cfg,
+            "num_structures": len(coordinates) if coordinates is not None else 0,
+            "num_ids": len(structure_ids) if structure_ids is not None else 0,
+        }
+        with open(os.path.join(step_dir, "train_metadata.json"), "w") as f:
+            json.dump(metadata, f, indent=2)
+
+        # Create a dummy checkpoint to simulate training output
+        dummy_model_path = os.path.join(step_dir, f"{model_name}_{task_name}_checkpoint.pt")
+        with open(dummy_model_path, "w") as f:
+            f.write("DUMMY MODEL FILE\n")
+
+        logging.info(f"Stub MLFF training complete. Dummy model saved at {dummy_model_path}.")
+        return dummy_model_path
 
     def run(self):
         """
@@ -534,7 +588,7 @@ class ChemRefiner:
         logging.info("Starting ChemRefine pipeline.")
         previous_coordinates, previous_ids = None, None
 
-        valid_operations = {"OPT+SP", "GOAT", "PES", "DOCKER", "SOLVATOR"}
+        valid_operations = {"OPT+SP", "GOAT", "PES", "DOCKER", "SOLVATOR","MLFF_TRAIN"}
         valid_engines = {"dft", "mlff"}
 
         steps = self.config.get('steps', [])
@@ -556,7 +610,7 @@ class ChemRefiner:
                 mlff_config = step.get('mlff', {})
                 mlff_model = mlff_config.get('model_name', 'medium')
                 mlff_task = mlff_config.get('task_name', 'mace_off')
-                mlff_model_path = mlff_config.get('model_path', None)
+                # mlff_model_path = mlff_config.get('model_path', None)
                 bind_address = mlff_config.get('bind', '127.0.0.1:8888')
                 device = mlff_config.get('device', 'cuda')
                 logging.info(f"Using MLFF model '{mlff_model}' with task '{mlff_task}' for step {step_id}.")
@@ -570,8 +624,12 @@ class ChemRefiner:
                 bind_address = None
                 device = None
 
-            sample_method = step['sample_type']['method']
-            parameters = step['sample_type'].get('parameters', {})
+            sample_type_cfg = step.get('sample_type')
+            if sample_type_cfg is None:
+                sample_method, parameters = None, {}
+            else:
+                sample_method = sample_type_cfg.get('method')
+                parameters = sample_type_cfg.get('parameters', {})
 
             filtered_coordinates, filtered_ids, energies = (None, None, None)
             if self.skip_steps:
@@ -585,6 +643,10 @@ class ChemRefiner:
                 multiplicity = step.get('multiplicity', self.multiplicity)
 
                 if step_id == 1:
+                    if operation == "MLFF_TRAIN":
+                        raise ValueError(
+                            f"Invalid workflow: MLFF_TRAIN cannot be used at step {step_id}. "
+                            "Training requires coordinates and IDs from a previous step.")
                     initial_xyz = self.config.get("initial_xyz", None)
                     step_dir, input_files, output_files = self.prepare_step1_directory(
                         step_id,
@@ -600,6 +662,33 @@ class ChemRefiner:
                     )
                 else:
                     validate_structure_ids_or_raise(previous_ids, step_id)
+
+                    if operation == "MLFF_TRAIN":
+                        trainer_cfg = step.get("trainer", {})
+                        model_name = trainer_cfg.get("model_name", "medium")
+                        task_name = trainer_cfg.get("task_name", "mace_off")
+                        logging.info(f"Training new MLFF model '{model_name}' with task '{task_name}' at step {step_id}.")
+                        trained_model_path = self.train_mlff_model(
+                                            coordinates=previous_coordinates,
+                                            structure_ids=previous_ids,
+                                            model_name=model_name,
+                                            task_name=task_name,
+                                            trainer_cfg=trainer_cfg,
+                                            step_dir=os.path.join(self.output_dir, f"step{step_id}")
+                                            )
+                        # persist manifest so skip logic still works
+                        write_step_manifest(
+                            step_id,
+                            step_dir,
+                            [],
+                            operation,
+                            "mlff_train",
+                            engine="mlff_train",
+                            extra={"trained_model": trained_model_path}
+                        )
+                        previous_coordinates, previous_ids = previous_coordinates, previous_ids
+                        continue
+                    
                     step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
                         step_id,
                         previous_coordinates,
@@ -628,7 +717,6 @@ class ChemRefiner:
                     model_name=mlff_model,
                     task_name=mlff_task,
                     device=device,
-                    model_path = mlff_model_path
                 )
 
                 # Parse outputs
