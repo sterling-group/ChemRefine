@@ -12,6 +12,9 @@ import numpy as np
 
 #-----------GLOBALS-AND-REGEX----------------
 EV_PER_HARTREE = 27.211386245988
+HARTREE_TO_EV = 27.211386245988  # CODATA 2018
+BOHR_TO_ANGSTROM = 0.529177210903
+HARTREE_PER_BOHR_TO_EV_PER_A = HARTREE_TO_EV / BOHR_TO_ANGSTROM
 ANG_PER_BOHR = 0.529177210903
 _ORCA_COORD_BLOCK_RE = re.compile(
     r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n", re.DOTALL
@@ -354,6 +357,93 @@ class OrcaInterface:
 
         return input_files, output_files
 
+    def parse_output(self, file_paths, operation, dir: str = "./"):
+        """
+        Dispatch parser depending on the operation type.
+
+        Parameters
+        ----------
+        file_paths : list
+            List of ORCA output files to parse.
+        operation : str
+            Operation type (goat, pes, docker, solvator, dft).
+        dir : str, optional
+            Directory containing the output files. Default is current directory.
+
+        Returns
+        -------
+        tuple
+            (coordinates, energies, forces), each a list
+        """
+        coordinates, energies, forces = [], [], []
+
+        logging.info(f"Parsing calculation type: {operation.upper()}")
+        logging.info(f"Looking for output files in directory: {dir}")
+
+        for out_file in file_paths:
+            path = os.path.join(dir, os.path.basename(out_file))
+            logging.info(f"Checking output file: {path}")
+
+            if not os.path.exists(path):
+                logging.warning(f"Output file not found: {path}")
+                continue
+
+            op = operation.lower()
+
+            if op == "goat":
+                finalensemble_file = path.replace(".out", ".finalensemble.xyz")
+                logging.info(f"Looking for GOAT ensemble file: {finalensemble_file}")
+                if os.path.exists(finalensemble_file):
+                    coords, ens = self.parse_goat_finalensemble(finalensemble_file)
+                    coordinates.extend(coords)
+                    energies.extend(ens)
+                    forces.extend([None] * len(coords))  # dummy
+                else:
+                    logging.error(f"GOAT ensemble file not found for: {path}")
+                continue
+
+            if op == "pes":
+                coords, ens = self.parse_pes_output(path)
+                coordinates.extend(coords)
+                energies.extend(ens)
+                forces.extend([None] * len(coords))  # dummy
+                continue
+
+            if op == "docker":
+                docker_xyz_file = path.replace(".out", ".struc1.allopt.xyz")
+                logging.info(f"Looking for Docker structure file: {docker_xyz_file}")
+                if os.path.exists(docker_xyz_file):
+                    coords, ens = self.parse_docker_xyz(docker_xyz_file)
+                    coordinates.extend(coords)
+                    energies.extend(ens)
+                    forces.extend([None] * len(coords))  # dummy
+                else:
+                    logging.error(f"Docker structure file not found for: {path}")
+                continue
+
+            if op == "solvator":
+                solvator_xyz_file = path.replace(".out", ".solventbuild.xyz")
+                logging.info(f"Looking for Solvator structure file: {solvator_xyz_file}")
+                if os.path.exists(solvator_xyz_file):
+                    coords, ens = self.parse_solvator_ensemble(solvator_xyz_file)
+                    coordinates.extend(coords)
+                    energies.extend(ens)
+                    forces.extend([None] * len(coords))  # dummy
+                else:
+                    logging.error(f"Solvator structure file not found for: {path}")
+                continue
+
+            # Default: standard DFT parsing (energies + forces)
+            coords, ens, frc = self.parse_dft_output(path)
+            coordinates.extend(coords)
+            energies.extend(ens)
+            forces.extend(frc)
+
+        if not coordinates or not energies:
+            logging.error(f"Failed to parse {operation.upper()} outputs in directory: {dir}")
+
+        return coordinates, energies, forces
+
     def parse_dft_output(self, path):
         """
         Parse ORCA DFT output file to extract coordinates, energies, and forces.
@@ -416,7 +506,6 @@ class OrcaInterface:
             forces.append([])
 
         return coordinates, energies, forces
-
 
     def parse_goat_finalensemble(self, file_path):
         """
@@ -546,66 +635,6 @@ class OrcaInterface:
 
         logging.info(f"Parsed {len(coordinates_list)} Docker structures from {file_path}.")
         return coordinates_list, energies_list
-    
-    
-
-    def parse_dft_output(self, path: str):
-        """
-        Parse ORCA DFT output file to extract coordinates, energies (Hartree),
-        and forces (Hartree/Bohr).
-
-        Parameters
-        ----------
-        path : str
-            Path to the ORCA output file.
-
-        Returns
-        -------
-        tuple[list, list, list]
-            coordinates : list
-                Each element is a list of atomic coordinates (Å).
-            energies : list
-                Total energies in Hartree.
-            forces : list
-                Per-atom force arrays (N_atoms, 3) in Hartree/Bohr.
-                Empty if no gradients were found.
-        """
-        coordinates, energies, forces = [], [], []
-
-        with open(path, "r") as f:
-            content = f.read()
-
-        logging.info(f"Parsing standard DFT output for: {path}")
-
-        # --- Coordinates ---
-        coord_block = _ORCA_COORD_BLOCK_RE.findall(content)
-        if coord_block:
-            coords = [line.split() for line in coord_block[-1].strip().splitlines()]
-            coordinates.append(coords)
-        else:
-            logging.warning(f"No coordinate block found in: {path}")
-            coordinates.append([])
-
-        # --- Energy (Hartree) ---
-        energy_match = re.findall(
-            r"FINAL SINGLE POINT ENERGY(?: \(From external program\))?\s+(-?\d+\.\d+)",
-            content,
-        )
-        if energy_match:
-            energies.append(float(energy_match[-1]))
-        else:
-            logging.warning(f"No energy found in: {path}")
-            energies.append(None)
-
-        # --- Forces (Hartree/Bohr) ---
-        grad_forces = _orca_parse_all_gradients(content, to_ev_per_A=False)
-        if grad_forces:
-            forces.append(grad_forces[-1])  # last gradient block
-        else:
-            forces.append([])
-            logging.info(f"No gradient block found in: {path}")
-
-        return coordinates, energies, forces
 
     def parse_solvator_ensemble(self, file_path):
         """
