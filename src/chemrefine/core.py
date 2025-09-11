@@ -590,6 +590,7 @@ class ChemRefiner:
                     energies=last_energies,
                     forces=last_forces,
                     structure_ids=last_ids,
+                    utils=self.utils,
                 )
                 trainer.run()
 
