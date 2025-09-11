@@ -2,12 +2,13 @@ import logging
 from typing import List, Tuple, Optional
 from ase import Atoms
 from ase.io import read,write
-from .utils import Utility
 from pathlib import Path
 import numpy as np
 from sklearn.model_selection import train_test_split
 import os 
 import yaml
+import time
+
 #GLOBALS
 HARTREE_TO_EV = 27.211386245988
 HARTREE_BOHR_TO_EV_A = 51.422067  # if you decide to convert here
@@ -120,7 +121,7 @@ class MLFFTrainer:
     """
 
     def __init__(self, step_id, step_dir, template_dir, trainer_cfg,
-                 coordinates=None, energies=None, forces=None, structure_ids=None):
+                 coordinates=None, energies=None, forces=None, structure_ids=None,utils=None):
         self.step_id = step_id
         self.step_dir = step_dir
         self.template_dir = template_dir
@@ -129,6 +130,7 @@ class MLFFTrainer:
         self.energies = energies or []
         self.forces = forces or []
         self.structure_ids = structure_ids or []
+        self.utils = utils if utils is not None else Utility()
 
     def prepare_inputs(self):
         """
@@ -192,44 +194,31 @@ class MLFFTrainer:
 
     def write_training_config(self, train_path, test_path):
         """
-        Generate training config from template and trainer_cfg.
-
-        Loads the YAML template for this step (step{step_id}.inp),
-        rewrites file paths and output dirs relative to step_dir,
-        merges with trainer_cfg overrides, and writes final config.yaml.
+        Generate training config for MACE from step template.
+        Only overrides dataset paths and directories.
         """
-        # --- Load template file for this step ---
-        template_file = os.path.join(self.template_dir, f"step{self.step_id}.inp")
-        if not os.path.exists(template_file):
-            raise FileNotFoundError(f"No training template found at {template_file}")
+        import yaml
 
+        # Load the step-specific training template
+        template_file = os.path.join(self.template_dir, f"step{self.step_id}.inp")
         with open(template_file, "r") as f:
             config = yaml.safe_load(f)
 
-        # --- Rewrite dirs relative to step_dir ---
-        mace_dir = os.path.join(self.step_dir, "MACE_models")
-        os.makedirs(mace_dir, exist_ok=True)
-
-        config["model_dir"] = mace_dir
-        config["log_dir"] = mace_dir
-        config["checkpoints_dir"] = mace_dir
-        config["results_dir"] = mace_dir
-
-        # --- Use actual train/test files from prepare_inputs ---
+        # Override dataset paths
         config["train_file"] = train_path
         config["test_file"] = test_path
 
-        # --- Merge trainer_cfg overrides (e.g., batch_size, max_num_epochs) ---
-        for k, v in self.trainer_cfg.items():
-            config[k] = v
+        # Override directories relative to step_dir
+        for key in ["log_dir", "checkpoints_dir", "results_dir"]:
+            config[key] = os.path.join(self.step_dir, key)
 
-        # --- Write final config.yaml inside step_dir ---
-        final_cfg = os.path.join(self.step_dir, "input.yaml")
-        with open(final_cfg, "w") as f:
-            yaml.dump(config, f, sort_keys=False)
+        # Write out to input.yaml
+        config_path = os.path.join(self.step_dir, "input.yaml")
+        with open(config_path, "w") as f:
+            yaml.safe_dump(config, f, sort_keys=False)
 
-        logging.info(f"[MLFFTrainer] Wrote training config to {final_cfg}")
-        return final_cfg
+        logging.info(f"[MLFFTrainer] Wrote training config to {config_path}")
+        return config_path
 
     def write_slurm_script(self,step_dir: str, device: str, job_name: str = "mlff_train"):
         """
@@ -268,6 +257,7 @@ class MLFFTrainer:
         # build script
         script_path = os.path.join(step_dir, "train.slurm")
         with open(script_path, "w") as f:
+            f.write("#!/bin/bash\n")
             # header first
             f.writelines(header_text)
             # job info
@@ -276,9 +266,56 @@ class MLFFTrainer:
             f.write(f"#SBATCH --error={slurm_err}\n")
             f.write("\n")
             # training command
+            f.write("export MKL_THREADING_LAYER=GNU\n")
             f.write(f"mace_run_train --config {config_path}\n")
 
         return script_path
+
+    def submit_training(self, slurm_script, max_cores=32):
+        """
+        Submit the MLFF training SLURM script, track the job until completion.
+
+        Parameters
+        ----------
+        slurm_script : str
+            Path to the SLURM script generated for training.
+        max_cores : int
+            Maximum cores allowed (for consistency with ORCA submitter).
+        """
+        active_jobs = {}
+        total_cores_used = 0
+
+        # For MLFF we don't parse PAL; just assume a full node allocation
+        pal_value = max_cores
+        logging.info(f"[MLFFTrainer] Submitting training with up to {pal_value} cores.")
+
+        # Submit job
+        job_id = self.utils.submit_job(slurm_script)
+        logging.info(f"[MLFFTrainer] Submitted MLFF training job with ID: {job_id}")
+
+        if job_id and str(job_id).isdigit():
+            active_jobs[job_id] = pal_value
+            total_cores_used += pal_value
+        else:
+            logging.warning(f"[MLFFTrainer] Skipping job tracking for invalid job ID '{job_id}'")
+            return
+
+        # Wait for completion
+        logging.info("[MLFFTrainer] Waiting for training job to finish...")
+        while active_jobs:
+            completed_jobs = []
+            for job_id, cores in list(active_jobs.items()):
+                if self.utils.is_job_finished(job_id):
+                    completed_jobs.append(job_id)
+                    total_cores_used -= cores
+                    logging.info(f"[MLFFTrainer] Training job {job_id} completed. Freed {cores} cores.")
+
+            for job_id in completed_jobs:
+                del active_jobs[job_id]
+
+            time.sleep(30)
+
+        logging.info("[MLFFTrainer] Training finished successfully.")
 
     def run(self):
         """Simplified run: just prepare Atoms objects and write XYZ files."""
@@ -286,7 +323,7 @@ class MLFFTrainer:
         train_path, test_path = self.prepare_inputs()
         self.write_training_config(train_path, test_path)
         self.write_slurm_script(self.step_dir, self.trainer_cfg.get("device", "cuda"))
-        
+        self.submit_training(os.path.join(self.step_dir, "train.slurm"))
 
 def _to_atoms(coords, energy, forces):
         """
