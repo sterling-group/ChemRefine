@@ -9,8 +9,22 @@ import time
 import getpass
 import numpy as np 
 # chemrefine/orca_interface.py
+
+#-----------GLOBALS-AND-REGEX----------------
 EV_PER_HARTREE = 27.211386245988
 ANG_PER_BOHR = 0.529177210903
+_ORCA_COORD_BLOCK_RE = re.compile(
+    r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n", re.DOTALL
+)
+_ORCA_GRAD_BLOCK_RE = re.compile(
+    r"CARTESIAN GRADIENT\s*\n-+\n((?:.*?\n)+?)-+\n", re.DOTALL
+)
+_ORCA_GRAD_LINE_RE = re.compile(
+        r"^\s*(\d+)\s+[A-Za-z]{1,3}\s*:\s*"
+        r"([+-]?\d*\.?\d+(?:[EeDd][+-]?\d+)?)\s+"
+        r"([+-]?\d*\.?\d+(?:[EeDd][+-]?\d+)?)\s+"
+        r"([+-]?\d*\.?\d+(?:[EeDd][+-]?\d+)?)\s*$"
+    )
 
 class OrcaJobSubmitter:
     """
@@ -533,57 +547,7 @@ class OrcaInterface:
         logging.info(f"Parsed {len(coordinates_list)} Docker structures from {file_path}.")
         return coordinates_list, energies_list
     
-    _ORCA_GRAD_BLOCK_RE = re.compile(
-    r"CARTESIAN GRADIENT\s*\n-+\n((?:.*?\n)+?)-+\n", re.DOTALL
-)
-    _ORCA_GRAD_LINE_RE = re.compile(
-        r"^\s*(\d+)\s+[A-Za-z]{1,3}\s*:\s*"
-        r"([+-]?\d*\.?\d+(?:[EeDd][+-]?\d+)?)\s+"
-        r"([+-]?\d*\.?\d+(?:[EeDd][+-]?\d+)?)\s+"
-        r"([+-]?\d*\.?\d+(?:[EeDd][+-]?\d+)?)\s*$"
-    )
-
-    def _orca_parse_all_gradients(content: str, to_ev_per_A: bool = False):
-        """
-        Parse all CARTESIAN GRADIENT blocks in an ORCA output and return raw gradients.
-
-        Parameters
-        ----------
-        content : str
-            Full ORCA output file contents.
-        to_ev_per_A : bool, optional
-            Convert Hartree/Bohr gradients to eV/Å forces. Default False (keep Hartree/Bohr).
-
-        Returns
-        -------
-        list[np.ndarray]
-            Each entry is an (N_atoms, 3) array of forces.
-            By default in Hartree/Bohr (raw ORCA units).
-        """
-        blocks = _ORCA_GRAD_BLOCK_RE.findall(content)
-        out = []
-        for b in blocks:
-            rows = []
-            for line in b.strip().splitlines():
-                m = _ORCA_GRAD_LINE_RE.match(line)
-                if not m:
-                    continue
-                dEdx = float(m.group(2).replace("D", "E"))
-                dEdy = float(m.group(3).replace("D", "E"))
-                dEdz = float(m.group(4).replace("D", "E"))
-                fx, fy, fz = -dEdx, -dEdy, -dEdz  # F = -∇E
-                if to_ev_per_A:
-                    fx *= HARTREE_PER_BOHR_TO_EV_PER_A
-                    fy *= HARTREE_PER_BOHR_TO_EV_PER_A
-                    fz *= HARTREE_PER_BOHR_TO_EV_PER_A
-                rows.append([fx, fy, fz])
-            if rows:
-                out.append(np.array(rows, dtype=float))
-        return out
-
-    _ORCA_COORD_BLOCK_RE = re.compile(
-    r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n", re.DOTALL
-)
+    
 
     def parse_dft_output(self, path: str):
         """
@@ -1498,3 +1462,44 @@ class OrcaInterface:
                 if hdr_seen and re.match(r'^\s*(\d+\s+)+\d+\s*$', line):
                     return True
         return False
+
+def _orca_parse_all_gradients(content: str, to_ev_per_A: bool = False):
+        """
+        Parse all CARTESIAN GRADIENT blocks in an ORCA output and return raw gradients.
+
+        Parameters
+        ----------
+        content : str
+            Full ORCA output file contents.
+        to_ev_per_A : bool, optional
+            Convert Hartree/Bohr gradients to eV/Å forces. Default False (keep Hartree/Bohr).
+
+        Returns
+        -------
+        list[np.ndarray]
+            Each entry is an (N_atoms, 3) array of forces.
+            By default in Hartree/Bohr (raw ORCA units).
+        """
+        blocks = _ORCA_GRAD_BLOCK_RE.findall(content)
+        out = []
+        for b in blocks:
+            rows = []
+            for line in b.strip().splitlines():
+                m = _ORCA_GRAD_LINE_RE.match(line)
+                if not m:
+                    continue
+                dEdx = float(m.group(2).replace("D", "E"))
+                dEdy = float(m.group(3).replace("D", "E"))
+                dEdz = float(m.group(4).replace("D", "E"))
+                fx, fy, fz = -dEdx, -dEdy, -dEdz  # F = -∇E
+                if to_ev_per_A:
+                    fx *= HARTREE_PER_BOHR_TO_EV_PER_A
+                    fy *= HARTREE_PER_BOHR_TO_EV_PER_A
+                    fz *= HARTREE_PER_BOHR_TO_EV_PER_A
+                rows.append([fx, fy, fz])
+            if rows:
+                out.append(np.array(rows, dtype=float))
+        return out
+
+  
+
