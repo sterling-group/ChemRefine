@@ -239,10 +239,9 @@ def step_manifest_path(step_dir: str, step_number: int) -> str:
 
 
 def write_step_manifest(step_number: int, step_dir: str, input_files: List[str],
-                        operation: str, engine: str, extra: dict = None) -> None:
+                        operation: str, engine: str) -> None:
     """
     Create/update a per-step manifest mapping structure IDs to generated inputs.
-    For MLFF_TRAIN, stores model path and skips per-input records.
 
     Parameters
     ----------
@@ -253,15 +252,11 @@ def write_step_manifest(step_number: int, step_dir: str, input_files: List[str],
     input_files : list[str]
         Absolute (or relative) paths to the generated '.inp' files.
     operation : str
-        Operation label (e.g., 'OPT+SP', 'GOAT', 'MLFF_TRAIN').
+        Operation label (e.g., 'OPT+SP', 'GOAT').
     engine : str
-        Engine label ('dft', 'mlff', 'mlff_train').
-    extra : dict, optional
-        Extra metadata (e.g., trained model path).
+        Engine label ('dft' or 'mlff').
     """
     manifest_file = step_manifest_path(step_dir, step_number)
-
-    # Default record structure for standard operations
     records = []
     for inp in input_files:
         sid = extract_structure_id(inp)
@@ -272,20 +267,8 @@ def write_step_manifest(step_number: int, step_dir: str, input_files: List[str],
             "operation": operation.upper(),
             "engine": engine.lower(),
         })
-
-    manifest = {
-        "step": step_number,
-        "records": records
-    }
-
-    if extra:
-        manifest.update(extra)
-
     with open(manifest_file, "w") as f:
-        json.dump(manifest, f, indent=2)
-
-    logging.info(f"Wrote manifest for step {step_number} at {manifest_file}.")
-
+        json.dump({"step": step_number, "records": records}, f, indent=2)
 
 
 def read_step_manifest(step_dir: str, step_number: int) -> Optional[Dict]:
