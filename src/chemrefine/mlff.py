@@ -1,9 +1,11 @@
 import logging
 from typing import List, Tuple, Optional
 from ase import Atoms
+from ase.io import read,write
 from .utils import Utility
 from pathlib import Path
-import nump as np
+import numpy as np
+from sklearn.model_selection import train_test_split
 
 #GLOBALS
 HARTREE_TO_EV = 27.211386245988
@@ -107,21 +109,26 @@ class MLFFTrainer:
     trainer_cfg : dict
         Training parameters from workflow YAML (e.g., model_name, task_name).
     coordinates : list
-        Coordinates passed from previous step.
+        Parsed coordinates from ORCA (list of lists).
+    energies : list
+        Energies in Hartree.
+    forces : list
+        Forces in Hartree/Bohr (arrays, shape N×3).
     structure_ids : list
         IDs corresponding to the structures.
     """
 
     def __init__(self, step_id, step_dir, template_dir, trainer_cfg,
-                 coordinates=None, structure_ids=None):
+                 coordinates=None, energies=None, forces=None, structure_ids=None):
         self.step_id = step_id
         self.step_dir = step_dir
         self.template_dir = template_dir
         self.trainer_cfg = trainer_cfg
-        self.coordinates = coordinates
-        self.structure_ids = structure_ids
+        self.coordinates = coordinates or []
+        self.energies = energies or []
+        self.forces = forces or []
+        self.structure_ids = structure_ids or []
 
-    
     def prepare_inputs(self):
         """
         Convert coordinates, energies, and forces into extended XYZ train/test files.
@@ -131,18 +138,22 @@ class MLFFTrainer:
 
         os.makedirs(self.step_dir, exist_ok=True)
 
+        # Build Atoms list
         atoms_list = []
-        for coords, energy, forces in zip(self.coordinates, self.trainer_cfg.get("energies", []), self.trainer_cfg.get("forces", [])):
+        for coords, energy, forces in zip(self.coordinates, self.energies, self.forces):
             atoms = _to_atoms(coords, energy, forces)
             atoms_list.append(atoms)
 
-        # Split train/test
-        n_total = len(atoms_list)
-        n_test = max(1, int(0.1 * n_total))
-        train_structs = atoms_list[:-n_test]
-        test_structs = atoms_list[-n_test:]
+        # Use sklearn for random split (default 90/10, can override in trainer_cfg)
+        valid_fraction = self.trainer_cfg.get("valid_fraction", 0.1)
+        train_structs, test_structs = train_test_split(
+            atoms_list,
+            test_size=valid_fraction,
+            random_state=self.trainer_cfg.get("seed", 42),
+            shuffle=True
+        )
 
-        # Optionally convert energies/forces here to eV/eVÅ before writing
+        # Convert to eV/eVÅ just before writing
         for atoms in atoms_list:
             if "DFT_energy" in atoms.info:
                 atoms.info["DFT_energy"] *= HARTREE_TO_EV
