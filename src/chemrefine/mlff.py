@@ -3,11 +3,11 @@ from typing import List, Tuple, Optional
 from ase import Atoms
 from .utils import Utility
 from pathlib import Path
-import time
-import socket
-import pickle
-import torch
-from multiprocessing import Process
+import nump as np
+
+#GLOBALS
+HARTREE_TO_EV = 27.211386245988
+HARTREE_BOHR_TO_EV_A = 51.422067  # if you decide to convert here
 
 class MLFFCalculator:
     """Flexible MLFF calculator supporting MACE, UMA (FairChem), CHGNet, etc."""
@@ -121,10 +121,44 @@ class MLFFTrainer:
         self.coordinates = coordinates
         self.structure_ids = structure_ids
 
+    
     def prepare_inputs(self):
-        """Convert coordinates and IDs into dataset files (XYZ, NPZ, etc.)."""
-        # TODO: implement data export
-        pass
+        """
+        Convert coordinates, energies, and forces into extended XYZ train/test files.
+        """
+        if not self.coordinates or not self.structure_ids:
+            raise ValueError("No structures available for MLFF training.")
+
+        os.makedirs(self.step_dir, exist_ok=True)
+
+        atoms_list = []
+        for coords, energy, forces in zip(self.coordinates, self.trainer_cfg.get("energies", []), self.trainer_cfg.get("forces", [])):
+            atoms = _to_atoms(coords, energy, forces)
+            atoms_list.append(atoms)
+
+        # Split train/test
+        n_total = len(atoms_list)
+        n_test = max(1, int(0.1 * n_total))
+        train_structs = atoms_list[:-n_test]
+        test_structs = atoms_list[-n_test:]
+
+        # Optionally convert energies/forces here to eV/eVÅ before writing
+        for atoms in atoms_list:
+            if "DFT_energy" in atoms.info:
+                atoms.info["DFT_energy"] *= HARTREE_TO_EV
+            if "DFT_Forces" in atoms.arrays:
+                atoms.arrays["DFT_Forces"] *= HARTREE_BOHR_TO_EV_A
+
+        train_path = os.path.join(self.step_dir, "mace_train.xyz")
+        test_path = os.path.join(self.step_dir, "mace_test.xyz")
+
+        write(train_path, train_structs, format="extxyz")
+        write(test_path, test_structs, format="extxyz")
+
+        logging.info(f"Wrote {len(train_structs)} training structures to {train_path}")
+        logging.info(f"Wrote {len(test_structs)} test structures to {test_path}")
+
+        return train_path, test_path
 
     def write_training_config(self):
         """Generate training config from template and trainer_cfg."""
@@ -151,4 +185,32 @@ class MLFFTrainer:
         # Model path is defined inside the template; return as hint
         return self.trainer_cfg.get("save_dir", self.step_dir)
 
-    
+def _to_atoms(coords, energy, forces):
+        """
+        Convert parsed ORCA outputs into an ASE Atoms object.
+
+        Parameters
+        ----------
+        coords : list[list[str]]
+            Each row = [element, x, y, z] in Å.
+        energy : float
+            Total energy in Hartree.
+        forces : np.ndarray
+            Forces in Hartree/Bohr, shape (N_atoms, 3).
+
+        Returns
+        -------
+        Atoms
+            ASE Atoms object with energy and forces attached.
+        """
+        symbols = [row[0] for row in coords]
+        positions = np.array([[float(x), float(y), float(z)] for _, x, y, z in coords], dtype=float)
+
+        atoms = Atoms(symbols=symbols, positions=positions)
+
+        if energy is not None:
+            atoms.info["DFT_energy"] = energy
+        if isinstance(forces, np.ndarray) and forces.size > 0:
+            atoms.arrays["DFT_Forces"] = forces
+
+        return atoms    
