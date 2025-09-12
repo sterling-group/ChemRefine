@@ -1,16 +1,14 @@
 import os
 import re
 from .utils import Utility
-import subprocess
 import logging
 from pathlib import Path
-import sys
 import time
-import getpass
-import numpy as np 
+import numpy as np
+
 # chemrefine/orca_interface.py
 
-#-----------GLOBALS-AND-REGEX----------------
+# -----------GLOBALS-AND-REGEX----------------
 EV_PER_HARTREE = 27.211386245988
 HARTREE_TO_EV = 27.211386245988  # CODATA 2018
 BOHR_TO_ANGSTROM = 0.529177210903
@@ -23,11 +21,12 @@ _ORCA_GRAD_BLOCK_RE = re.compile(
     r"CARTESIAN GRADIENT\s*\n-+\n((?:.*?\n)+?)-+\n", re.DOTALL
 )
 _ORCA_GRAD_LINE_RE = re.compile(
-        r"^\s*(\d+)\s+[A-Za-z]{1,3}\s*:\s*"
-        r"([+-]?\d*\.?\d+(?:[EeDd][+-]?\d+)?)\s+"
-        r"([+-]?\d*\.?\d+(?:[EeDd][+-]?\d+)?)\s+"
-        r"([+-]?\d*\.?\d+(?:[EeDd][+-]?\d+)?)\s*$"
-    )
+    r"^\s*(\d+)\s+[A-Za-z]{1,3}\s*:\s*"
+    r"([+-]?\d*\.?\d+(?:[EeDd][+-]?\d+)?)\s+"
+    r"([+-]?\d*\.?\d+(?:[EeDd][+-]?\d+)?)\s+"
+    r"([+-]?\d*\.?\d+(?:[EeDd][+-]?\d+)?)\s*$"
+)
+
 
 class OrcaJobSubmitter:
     """
@@ -35,12 +34,14 @@ class OrcaJobSubmitter:
     Handles job submission, PAL adjustment, and job monitoring.
     """
 
-    def __init__(self, 
-                 device='cpu',
-                 orca_executable: str = "orca",
-                 bind: str = "127.0.0.1:8888",
-                 scratch_dir: str = None, 
-                 save_scratch: bool = False):
+    def __init__(
+        self,
+        device="cpu",
+        orca_executable: str = "orca",
+        bind: str = "127.0.0.1:8888",
+        scratch_dir: str = None,
+        save_scratch: bool = False,
+    ):
         """
         Initialize the ORCA job submitter.
 
@@ -53,20 +54,22 @@ class OrcaJobSubmitter:
         self.scratch_dir = scratch_dir
         self.save_scratch = save_scratch
         self.utility = Utility()
-        self.device = device  
+        self.device = device
         self.bind = bind
 
-    def submit_files(self, 
-                     input_files, 
-                     max_cores=32, 
-                     template_dir=".", 
-                     output_dir=".",
-                     device=None,
-                     operation='OPT+SP',
-                     engine='DFT',
-                     model_name=None,
-                     task_name=None,
-                     model_path=None):
+    def submit_files(
+        self,
+        input_files,
+        max_cores=32,
+        template_dir=".",
+        output_dir=".",
+        device=None,
+        operation="OPT+SP",
+        engine="DFT",
+        model_name=None,
+        task_name=None,
+        model_path=None,
+    ):
         """
         Submits multiple ORCA input files to SLURM, managing PAL values, active job tracking,
         and ensuring that the total PAL usage does not exceed max_cores.
@@ -112,11 +115,13 @@ class OrcaJobSubmitter:
                 operation=operation,
                 engine=engine,
                 bind=self.bind,
-                model_path=model_path
+                model_path=model_path,
             )
 
             job_id = self.utility.submit_job(slurm_script)
-            logging.info(f"Submitted ORCA job with ID: {job_id} for input: {input_path.name}")
+            logging.info(
+                f"Submitted ORCA job with ID: {job_id} for input: {input_path.name}"
+            )
 
             if job_id.isdigit():
                 active_jobs[job_id] = pal_value
@@ -159,20 +164,20 @@ class OrcaJobSubmitter:
         return 1
 
     def generate_slurm_script(
-    self,
-    input_file: Path,
-    pal_value: int,
-    template_dir: str,
-    output_dir: str = ".",
-    job_name: str = None,
-    device: str = "cpu",
-    operation: str = "OPT+SP",
-    engine: str = "DFT",
-    model_name: str = "uma-s-1",
-    task_name: str = "omol",
-    bind: str = "127.0.0.1:8888",
-    model_path: str = None
-):
+        self,
+        input_file: Path,
+        pal_value: int,
+        template_dir: str,
+        output_dir: str = ".",
+        job_name: str = None,
+        device: str = "cpu",
+        operation: str = "OPT+SP",
+        engine: str = "DFT",
+        model_name: str = "uma-s-1",
+        task_name: str = "omol",
+        bind: str = "127.0.0.1:8888",
+        model_path: str = None,
+    ):
         """
         Generate a SLURM script by combining a user-provided header with a consistent footer.
 
@@ -207,9 +212,11 @@ class OrcaJobSubmitter:
 
         if not header_template_path.is_file():
             logging.error(f"SLURM header template {header_template_path} not found.")
-            raise FileNotFoundError(f"SLURM header template {header_template_path} not found.")
+            raise FileNotFoundError(
+                f"SLURM header template {header_template_path} not found."
+            )
 
-        with open(header_template_path, 'r') as f:
+        with open(header_template_path, "r") as f:
             header_lines = f.readlines()
 
         # Separate SBATCH and non-SBATCH lines to ensure all SBATCH lines are grouped
@@ -234,7 +241,7 @@ class OrcaJobSubmitter:
 
         # Compose SLURM script
         slurm_file = Path(output_dir) / f"{job_name}.slurm"
-        with open(slurm_file, 'w') as f:
+        with open(slurm_file, "w") as f:
             f.write("#!/bin/bash\n\n")
             f.write("\n".join(sbatch_lines))
             f.write("\n\n")
@@ -243,67 +250,91 @@ class OrcaJobSubmitter:
             f.write("\n\n")
             # Write scratch management and ORCA execution block
             f.write(f"ORCA_EXEC={self.orca_executable}\n")
-            f.write("# Scratch directory management and ORCA execution (generated by ChemRefine)\n")
-            f.write("if [ -z \"$ORCA_EXEC\" ]; then\n")
+            f.write(
+                "# Scratch directory management and ORCA execution (generated by ChemRefine)\n"
+            )
+            f.write('if [ -z "$ORCA_EXEC" ]; then\n')
             f.write(f"    ORCA_EXEC={self.orca_executable}\n")
             f.write("fi\n\n")
 
             f.write("timestamp=$(date +%Y%m%d%H%M%S)\n")
             f.write("random_str=$(tr -dc a-z0-9 </dev/urandom | head -c 8)\n")
             f.write(f"export BASE_SCRATCH_DIR={self.scratch_dir}\n")
-            f.write("export SCRATCH_DIR=${BASE_SCRATCH_DIR}/ChemRefine_scratch_${SLURM_JOB_ID}_${timestamp}_${random_str}\n")
+            f.write(
+                "export SCRATCH_DIR=${BASE_SCRATCH_DIR}/ChemRefine_scratch_${SLURM_JOB_ID}_${timestamp}_${random_str}\n"
+            )
             f.write(f"export OUTPUT_DIR={os.path.abspath(output_dir)}\n")
 
-            f.write("mkdir -p $SCRATCH_DIR || { echo 'Error: Failed to create scratch directory'; exit 1; }\n")
+            f.write(
+                "mkdir -p $SCRATCH_DIR || { echo 'Error: Failed to create scratch directory'; exit 1; }\n"
+            )
             f.write("echo 'SCRATCH_DIR is set to $SCRATCH_DIR'\n\n")
 
-            f.write(f"cp {input_file} $SCRATCH_DIR/ || {{ echo 'Error: Failed to copy input file'; exit 1; }}\n")
-            f.write("cd $SCRATCH_DIR || { echo 'Error: Failed to change directory'; exit 1; }\n\n")
+            f.write(
+                f"cp {input_file} $SCRATCH_DIR/ || {{ echo 'Error: Failed to copy input file'; exit 1; }}\n"
+            )
+            f.write(
+                "cd $SCRATCH_DIR || { echo 'Error: Failed to change directory'; exit 1; }\n\n"
+            )
 
             if engine.lower() == "mlff":
                 f.write("# Start MLFF socket server before ORCA\n")
                 if model_path:
-                    f.write(f"python -m chemrefine.server --model-path {model_path} --device {device} --bind {bind} & > $OUTPUT_DIR/server.log 2>&1 & \n")
+                    f.write(
+                        f"python -m chemrefine.server --model-path {model_path} --device {device} --bind {bind} & > $OUTPUT_DIR/server.log 2>&1 & \n"
+                    )
                 else:
-                    f.write(f"python -m chemrefine.server --model {model_name} --task-name {task_name} --device {device} --bind {bind} & > $OUTPUT_DIR/server.log 2>&1 & \n")
+                    f.write(
+                        f"python -m chemrefine.server --model {model_name} --task-name {task_name} --device {device} --bind {bind} & > $OUTPUT_DIR/server.log 2>&1 & \n"
+                    )
 
                 f.write("SERVER_PID=$!\n")
                 f.write("sleep 10\n")
-                f.write(f"$ORCA_EXEC {input_file.name} > $OUTPUT_DIR/{job_name}.out || {{ echo 'Error: ORCA execution failed.'; kill $SERVER_PID; exit 1; }}\n")
+                f.write(
+                    f"$ORCA_EXEC {input_file.name} > $OUTPUT_DIR/{job_name}.out || {{ echo 'Error: ORCA execution failed.'; kill $SERVER_PID; exit 1; }}\n"
+                )
                 f.write("kill $SERVER_PID\n\n")
             else:
                 f.write("export OMP_NUM_THREADS=1\n")
-                f.write(f"$ORCA_EXEC {input_file.name} > $OUTPUT_DIR/{job_name}.out || {{ echo 'Error: ORCA execution failed.'; exit 1; }}\n\n")
-
+                f.write(
+                    f"$ORCA_EXEC {input_file.name} > $OUTPUT_DIR/{job_name}.out || {{ echo 'Error: ORCA execution failed.'; exit 1; }}\n\n"
+                )
 
             # File copy commands
-            f.write("cp *.out *.xyz *.finalensemble.*.xyz *.finalensemble.xyz $OUTPUT_DIR \n")
-            
+            f.write(
+                "cp *.out *.xyz *.finalensemble.*.xyz *.finalensemble.xyz $OUTPUT_DIR \n"
+            )
+
             if not self.save_scratch:
-                f.write("rm -rf $SCRATCH_DIR || { echo 'Warning: Failed to remove scratch directory'; }\n")
+                f.write(
+                    "rm -rf $SCRATCH_DIR || { echo 'Warning: Failed to remove scratch directory'; }\n"
+                )
             else:
                 f.write("echo 'Scratch directory not deleted (save_scratch is True)'\n")
 
         logging.info(f"Generated SLURM script: {slurm_file}")
         return slurm_file
 
+
 class OrcaInterface:
     def __init__(self):
         self.utility = Utility()
         self.job_submitter = OrcaJobSubmitter()
-    def create_input(self, 
-                     xyz_files, 
-                     template, 
-                     charge, 
-                     multiplicity, 
-                     output_dir='./', 
-                     operation='OPT+SP',
-                     engine='DFT',
-                     model_name=None,
-                     task_name=None,
-                     device='cuda',
-                     bind='127.0.0.1:8888',
-                     ):
+
+    def create_input(
+        self,
+        xyz_files,
+        template,
+        charge,
+        multiplicity,
+        output_dir="./",
+        operation="OPT+SP",
+        engine="DFT",
+        model_name=None,
+        task_name=None,
+        device="cuda",
+        bind="127.0.0.1:8888",
+    ):
         """
         Generate ORCA .inp files from xyz inputs, adding MLFF external method if specified.
 
@@ -338,16 +369,18 @@ class OrcaInterface:
                 content = tmpl.read()
 
             # Remove any old xyzfile lines and clean formatting
-            content = re.sub(r'^\s*\*\s+xyzfile.*$', '', content, flags=re.MULTILINE)
-            content = content.rstrip() + '\n\n'
-            if engine and engine.lower() == 'mlff':
+            content = re.sub(r"^\s*\*\s+xyzfile.*$", "", content, flags=re.MULTILINE)
+            content = content.rstrip() + "\n\n"
+            if engine and engine.lower() == "mlff":
                 # Add MLFF method block if specified
-                run_mlff_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "uma.sh"))
+                run_mlff_path = os.path.abspath(
+                    os.path.join(os.path.dirname(__file__), "uma.sh")
+                )
                 ext_params = f"--bind {bind}"
-                content += '%method\n'
+                content += "%method\n"
                 content += f'  ProgExt "{run_mlff_path}"\n'
                 content += f'  Ext_Params "{ext_params}"\n'
-                content += 'end\n\n'
+                content += "end\n\n"
 
             content += f'%base "{base}_opt" \n'
             content += f"* xyzfile {charge} {multiplicity} {xyz}\n\n"
@@ -423,7 +456,9 @@ class OrcaInterface:
 
             if op == "solvator":
                 solvator_xyz_file = path.replace(".out", ".solventbuild.xyz")
-                logging.info(f"Looking for Solvator structure file: {solvator_xyz_file}")
+                logging.info(
+                    f"Looking for Solvator structure file: {solvator_xyz_file}"
+                )
                 if os.path.exists(solvator_xyz_file):
                     coords, ens = self.parse_solvator_ensemble(solvator_xyz_file)
                     coordinates.extend(coords)
@@ -440,7 +475,9 @@ class OrcaInterface:
             forces.extend(frc)
 
         if not coordinates or not energies:
-            logging.error(f"Failed to parse {operation.upper()} outputs in directory: {dir}")
+            logging.error(
+                f"Failed to parse {operation.upper()} outputs in directory: {dir}"
+            )
 
         return coordinates, energies, forces
 
@@ -498,8 +535,7 @@ class OrcaInterface:
             # take the last gradient block (final forces after SCF/optimization)
             forces.append(grad_forces[-1])
             logging.debug(
-                f"Extracted forces for {len(grad_forces[-1])} atoms "
-                f"(units: eV/Å)."
+                f"Extracted forces for {len(grad_forces[-1])} atoms " f"(units: eV/Å)."
             )
         else:
             logging.info(f"No gradient block found in: {path}")
@@ -520,7 +556,7 @@ class OrcaInterface:
         coordinates_list = []
         energies_list = []
 
-        with open(file_path, 'r') as file:
+        with open(file_path, "r") as file:
             lines = file.readlines()
 
         i = 0
@@ -539,7 +575,12 @@ class OrcaInterface:
                     if j >= len(lines):
                         break
                     tokens = lines[j].strip().split()
-                    element, x, y, z = tokens[0], float(tokens[1]), float(tokens[2]), float(tokens[3])
+                    element, x, y, z = (
+                        tokens[0],
+                        float(tokens[1]),
+                        float(tokens[2]),
+                        float(tokens[3]),
+                    )
                     current_structure.append((element, x, y, z))
                 coordinates_list.append(current_structure)
                 energies_list.append(energy)
@@ -547,7 +588,9 @@ class OrcaInterface:
             else:
                 i += 1
 
-        logging.info(f"Parsed {len(coordinates_list)} structures and {len(energies_list)} energies from {file_path}.")
+        logging.info(
+            f"Parsed {len(coordinates_list)} structures and {len(energies_list)} energies from {file_path}."
+        )
         return coordinates_list, energies_list
 
     def parse_pes_output(self, file_path):
@@ -563,11 +606,11 @@ class OrcaInterface:
         coordinates_list = []
         energies_list = []
 
-        with open(file_path, 'r') as f:
+        with open(file_path, "r") as f:
             content = f.read()
 
         logging.info(f"Parsing PES output for: {file_path}")
-        blocks = content.split('*** OPTIMIZATION RUN DONE ***')
+        blocks = content.split("*** OPTIMIZATION RUN DONE ***")
 
         for i, block in enumerate(blocks):
             energy_match = re.findall(
@@ -575,7 +618,8 @@ class OrcaInterface:
             )
             coord_match = re.findall(
                 r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n",
-                block, re.DOTALL
+                block,
+                re.DOTALL,
             )
 
             if energy_match and coord_match:
@@ -585,7 +629,9 @@ class OrcaInterface:
                 coordinates_list.append(coords)
                 logging.debug(f"Appended PES geometry #{i+1}: energy={energy}")
             else:
-                logging.warning(f"Skipping PES block #{i+1}: missing energy or coordinates.")
+                logging.warning(
+                    f"Skipping PES block #{i+1}: missing energy or coordinates."
+                )
 
         return coordinates_list, energies_list
 
@@ -602,7 +648,7 @@ class OrcaInterface:
         coordinates_list = []
         energies_list = []
 
-        with open(file_path, 'r') as file:
+        with open(file_path, "r") as file:
             lines = file.readlines()
 
         i = 0
@@ -633,7 +679,9 @@ class OrcaInterface:
             else:
                 i += 1
 
-        logging.info(f"Parsed {len(coordinates_list)} Docker structures from {file_path}.")
+        logging.info(
+            f"Parsed {len(coordinates_list)} Docker structures from {file_path}."
+        )
         return coordinates_list, energies_list
 
     def parse_solvator_ensemble(self, file_path):
@@ -687,20 +735,26 @@ class OrcaInterface:
             start = i + 2
             end = start + natoms
             if end > n:
-                logging.warning(f"Unexpected EOF while reading atom block starting at line {i+1} in {file_path}.")
+                logging.warning(
+                    f"Unexpected EOF while reading atom block starting at line {i+1} in {file_path}."
+                )
                 break
 
             for j in range(start, end):
                 parts = lines[j].split()
                 if len(parts) < 4:
-                    logging.warning(f"Malformed coordinate line at {j+1} in {file_path}: {lines[j].rstrip()}")
+                    logging.warning(
+                        f"Malformed coordinate line at {j+1} in {file_path}: {lines[j].rstrip()}"
+                    )
                     block = []
                     break
                 sym = parts[0]
                 try:
                     x, y, z = map(float, parts[1:4])
                 except ValueError:
-                    logging.warning(f"Non-numeric coordinates at {j+1} in {file_path}: {lines[j].rstrip()}")
+                    logging.warning(
+                        f"Non-numeric coordinates at {j+1} in {file_path}: {lines[j].rstrip()}"
+                    )
                     block = []
                     break
                 block.append((sym, x, y, z))
@@ -709,180 +763,47 @@ class OrcaInterface:
                 coords.append(block)
                 energies.append(energy)
             else:
-                logging.warning(f"Skipping one SOLVATOR structure (bad/missing atom block near lines {start}-{end}).")
+                logging.warning(
+                    f"Skipping one SOLVATOR structure (bad/missing atom block near lines {start}-{end})."
+                )
 
             # jump to the next block
             i = end
 
         missing = sum(e is None for e in energies)
         if missing:
-            logging.warning(f"{missing} SOLVATOR energy value(s) were missing in {file_path}.")
-        logging.info(f"Parsed {len(coords)} structures and {len(energies)} energies from {file_path}.")
+            logging.warning(
+                f"{missing} SOLVATOR energy value(s) were missing in {file_path}."
+            )
+        logging.info(
+            f"Parsed {len(coords)} structures and {len(energies)} energies from {file_path}."
+        )
         return coords, energies
 
-    def generate_random_displacements(self,
-                                  sid,
-                                  file_path,
-                                  normal_mode_tensor,
-                                  coordinates,
-                                  num_random_modes,
-                                  displacement_value,
-                                  step_number,
-                                  input_template,
-                                  charge,
-                                  multiplicity,
-                                  output_dir,
-                                  engine,
-                                  model_name,
-                                  task_name,
-                                  device,
-                                  bind,
-                                  normal_output_dir,
-                                  operation,
-                                  create_inp=False):
-        """
-        Generate positive/negative random-mode displacements and (optionally) prepare inputs.
-
-        Parameters
-        ----------
-        sid : str
-            Base structure ID.
-        file_path : str
-            ORCA output file path (used only for logging/debug).
-        normal_mode_tensor : np.ndarray
-            Normal mode eigenvectors shaped (modes, natoms, 3) or equivalent.
-        coordinates : list[np.ndarray]
-            Parsed geometries (natoms, 3); the last entry is displaced.
-        num_random_modes : int
-            Number of random modes to sample.
-        displacement_value : float
-            Displacement magnitude in Å applied to the chosen eigenvector.
-        step_number : int
-            Current step index (1-based).
-        input_template : str
-            ORCA input template (ignored if create_inp=False).
-        charge : int
-            Molecular charge (ignored if create_inp=False).
-        multiplicity : int
-            Spin multiplicity (ignored if create_inp=False).
-        output_dir : str
-            BASE outputs directory; XYZ files are written under step{n}/normal_mode_sampling.
-        engine : str
-            'dft' or 'mlff' (ignored if create_inp=False).
-        model_name : str
-            MLFF model name (ignored if create_inp=False).
-        task_name : str
-            MLFF task variant (ignored if create_inp=False).
-        device : str
-            Compute device (ignored if create_inp=False).
-        bind : str
-            MLFF server bind (ignored if create_inp=False).
-        normal_output_dir : str
-            Directory for INPs if create_inp=True.
-        operation : str
-            Operation label for input preparation (ignored if create_inp=False).
-        create_inp : bool, optional
-            If True, create .inp files for all generated XYZs; otherwise skip.
-
-        Returns
-        -------
-        tuple[list, list, list, list, list]
-            (pos_coords, neg_coords, pos_ids, neg_ids, inp_files)
-            inp_files is empty if create_inp=False.
-        """
-        import numpy as np
-        import logging
-
-        # Use last geometry as the reference
-        base_xyz = np.asarray(coordinates[-1], dtype=float)
-        natoms = base_xyz.shape[0]
-
-        # Normalize expected shape
-        modes_arr = np.asarray(normal_mode_tensor)
-        if modes_arr.ndim == 2 and modes_arr.shape[0] == 3 * natoms:
-            modes_arr = modes_arr.reshape(3 * natoms, natoms, 3).transpose(0, 1, 2)
-        elif modes_arr.ndim == 3 and modes_arr.shape[1:] == (natoms, 3):
-            pass
-        else:
-            raise ValueError(f"Unexpected normal_mode_tensor shape: {modes_arr.shape}")
-
-        n_modes = modes_arr.shape[0]
-        rng = np.random.default_rng()
-
-        pos_coords, neg_coords = [], []
-        pos_ids, neg_ids = [], []
-        all_xyz_paths = []
-        inp_files = []
-
-        for k in range(num_random_modes):
-            mode_idx = int(rng.integers(0, n_modes))
-            mode_vec = modes_arr[mode_idx]
-
-            # Normalize displacement vector to unit norm per structure-scale application
-            denom = np.linalg.norm(mode_vec)
-            if denom == 0:
-                logging.warning(f"Mode {mode_idx} has zero norm in {sid}; skipping.")
-                continue
-            unit_vec = mode_vec / denom
-
-            disp = displacement_value * unit_vec
-            pos = base_xyz + disp
-            neg = base_xyz - disp
-
-            pid = f"{sid}_rnd{mode_idx:04d}_pos"
-            nid = f"{sid}_rnd{mode_idx:04d}_neg"
-
-            # Persist XYZs under step/normal_mode_sampling for provenance
-            pos_xyz = self.write_displaced_xyz([pos], step_number, [pid], output_dir)
-            neg_xyz = self.write_displaced_xyz([neg], step_number, [nid], output_dir)
-            all_xyz_paths.extend(pos_xyz + neg_xyz)
-
-            pos_coords.append(pos)
-            neg_coords.append(neg)
-            pos_ids.append(pid)
-            neg_ids.append(nid)
-
-        # Optionally create inputs (disabled for pass-through behavior)
-        if create_inp and all_xyz_paths:
-            created_inp, _ = self.create_input(
-                xyz_files=all_xyz_paths,
-                input_template=input_template,
-                charge=charge,
-                multiplicity=multiplicity,
-                output_dir=normal_output_dir,
-                operation=operation,
-                engine=engine,
-                model_name=model_name,
-                task_name=task_name,
-                device=device,
-                bind=bind
-            )
-            inp_files.extend(created_inp)
-
-        return pos_coords, neg_coords, pos_ids, neg_ids, inp_files
-
-    def normal_mode_sampling(self,
-                            file_paths,
-                            calc_type,
-                            input_template,
-                            slurm_template,
-                            charge,
-                            multiplicity,
-                            output_dir,
-                            operation,
-                            engine,
-                            model_name,
-                            step_number,
-                            structure_ids,
-                            max_cores=32,
-                            task_name=None,
-                            mlff_model=None,
-                            displacement_value=1.0,
-                            num_random_modes=1,
-                            device='cuda',
-                            bind='127.0.0.1:8888',
-                            orca_executable='orca',
-                            scratch_dir=None):
+    def normal_mode_sampling(
+        self,
+        file_paths,
+        calc_type,
+        input_template,
+        slurm_template,
+        charge,
+        multiplicity,
+        output_dir,
+        operation,
+        engine,
+        model_name,
+        step_number,
+        structure_ids,
+        max_cores=32,
+        task_name=None,
+        mlff_model=None,
+        displacement_value=1.0,
+        num_random_modes=1,
+        device="cuda",
+        bind="127.0.0.1:8888",
+        orca_executable="orca",
+        scratch_dir=None,
+    ):
         """
         Perform normal-mode sampling. For 'random', only generate coords/IDs and defer
         all calculations to the next step. For 'rm_imag', prepare inputs and submit.
@@ -938,7 +859,10 @@ class OrcaInterface:
             For 'rm_imag': (filtered_coords, original_ids).
             For 'random' : (all_displaced_coords, displaced_ids), with no submissions.
         """
-        import os, re, logging, contextlib
+        import os
+        import re
+        import logging
+        import contextlib
 
         def _has_normal_modes(path: str) -> bool:
             """Quick check that the ORCA output contains a normal-mode table."""
@@ -948,14 +872,16 @@ class OrcaInterface:
                     for line in fh:
                         if "VIBRATIONAL FREQUENCIES" in line:
                             hdr = True
-                        if hdr and re.match(r'^\s*(\d+\s+)+\d+\s*$', line):
+                        if hdr and re.match(r"^\s*(\d+\s+)+\d+\s*$", line):
                             return True
             except Exception:
                 return False
             return False
 
         logging.info("***Starting normal mode sampling.***")
-        logging.info(f"Sampling type: {calc_type} x{num_random_modes if calc_type == 'random' else 1}")
+        logging.info(
+            f"Sampling type: {calc_type} x{num_random_modes if calc_type == 'random' else 1}"
+        )
 
         # Accumulators
         all_pos_coords, all_neg_coords = [], []
@@ -970,39 +896,53 @@ class OrcaInterface:
         skipped = 0
         for file_path, sid in zip(file_paths, structure_ids):
             if not _has_normal_modes(file_path):
-                logging.warning(f"Skipping ID {sid}: no vibrational frequencies in {file_path}.")
+                logging.warning(
+                    f"Skipping ID {sid}: no vibrational frequencies in {file_path}."
+                )
                 skipped += 1
                 continue
 
             try:
-                imag_flag = (calc_type != 'random')
-                imag_freq_dict = self.parse_imaginary_frequency(file_path, imag=imag_flag)
+                imag_flag = calc_type != "random"
+                imag_freq_dict = self.parse_imaginary_frequency(
+                    file_path, imag=imag_flag
+                )
 
                 coordinates, _ = self.parse_dft_output(file_path)
                 if not coordinates:
-                    logging.warning(f"Skipping ID {sid}: no coordinates parsed from {file_path}.")
+                    logging.warning(
+                        f"Skipping ID {sid}: no coordinates parsed from {file_path}."
+                    )
                     skipped += 1
                     continue
 
                 num_atoms = len(coordinates[0])
-                normal_mode_tensor = self.parse_normal_modes_tensor(file_path, num_atoms=num_atoms)
+                normal_mode_tensor = self.parse_normal_modes_tensor(
+                    file_path, num_atoms=num_atoms
+                )
             except Exception as e:
-                logging.warning(f"Skipping ID {sid}: failed to parse modes from {file_path} ({e}).")
+                logging.warning(
+                    f"Skipping ID {sid}: failed to parse modes from {file_path} ({e})."
+                )
                 skipped += 1
                 continue
 
-            if calc_type == 'rm_imag':
+            if calc_type == "rm_imag":
                 pos_coords, neg_coords = self.displace_normal_modes(
                     filepath=file_path,
                     imag_freq_dict=imag_freq_dict,
                     normal_mode_tensor=normal_mode_tensor,
                     coordinates=coordinates,
                     displacement_value=displacement_value,
-                    random_mode=False
+                    random_mode=False,
                 )
 
-                pos_xyz = self.write_displaced_xyz([pos_coords[0]], step_number, [f"{sid}_pos"], output_dir)
-                neg_xyz = self.write_displaced_xyz([neg_coords[0]], step_number, [f"{sid}_neg"], output_dir)
+                pos_xyz = self.write_displaced_xyz(
+                    [pos_coords[0]], step_number, [f"{sid}_pos"], output_dir
+                )
+                neg_xyz = self.write_displaced_xyz(
+                    [neg_coords[0]], step_number, [f"{sid}_neg"], output_dir
+                )
 
                 inp_files, _ = self.create_input(
                     xyz_files=pos_xyz + neg_xyz,
@@ -1015,7 +955,7 @@ class OrcaInterface:
                     model_name=model_name,
                     task_name=task_name,
                     device=device,
-                    bind=bind
+                    bind=bind,
                 )
 
                 all_pos_coords.append(pos_coords[0])
@@ -1024,28 +964,30 @@ class OrcaInterface:
                 all_neg_ids.append(f"{sid}_neg")
                 rm_imag_inp_files.extend(inp_files)
 
-            elif calc_type == 'random':
+            elif calc_type == "random":
                 # Pass-through behavior: only generate coords/IDs; do NOT create inputs or submit.
-                pos_coords, neg_coords, pos_ids, neg_ids, _ = self.generate_random_displacements(
-                    sid=sid,
-                    file_path=file_path,
-                    normal_mode_tensor=normal_mode_tensor,
-                    coordinates=coordinates,
-                    num_random_modes=num_random_modes,
-                    displacement_value=displacement_value,
-                    step_number=step_number,
-                    input_template=input_template,
-                    charge=charge,
-                    multiplicity=multiplicity,
-                    output_dir=output_dir,                # BASE for XYZ writer
-                    engine=engine,
-                    model_name=model_name,
-                    task_name=task_name,
-                    device=device,
-                    bind=bind,
-                    normal_output_dir=normal_output_dir,  # ignored when create_inp=False
-                    operation=operation,
-                    create_inp=False
+                pos_coords, neg_coords, pos_ids, neg_ids, _ = (
+                    self.generate_random_displacements(
+                        sid=sid,
+                        file_path=file_path,
+                        normal_mode_tensor=normal_mode_tensor,
+                        coordinates=coordinates,
+                        num_random_modes=num_random_modes,
+                        displacement_value=displacement_value,
+                        step_number=step_number,
+                        input_template=input_template,
+                        charge=charge,
+                        multiplicity=multiplicity,
+                        output_dir=output_dir,  # BASE for XYZ writer
+                        engine=engine,
+                        model_name=model_name,
+                        task_name=task_name,
+                        device=device,
+                        bind=bind,
+                        normal_output_dir=normal_output_dir,  # ignored when create_inp=False
+                        operation=operation,
+                        create_inp=False,
+                    )
                 )
 
                 all_pos_coords.extend(pos_coords)
@@ -1057,27 +999,41 @@ class OrcaInterface:
                 raise ValueError("calc_type must be 'rm_imag' or 'random'.")
 
         if skipped:
-            logging.info(f"Normal-mode sampling: skipped {skipped} file(s) without usable frequency data.")
+            logging.info(
+                f"Normal-mode sampling: skipped {skipped} file(s) without usable frequency data."
+            )
 
         # ---- SUBMISSION: only for rm_imag branch ----
-        if calc_type == 'rm_imag':
-            logging.info(f"Total rm_imag input files prepared: {len(rm_imag_inp_files)}")
+        if calc_type == "rm_imag":
+            logging.info(
+                f"Total rm_imag input files prepared: {len(rm_imag_inp_files)}"
+            )
             if rm_imag_inp_files:
-                abs_inp_files = [p if os.path.isabs(p) else os.path.abspath(os.path.join(normal_output_dir, p))
-                                for p in rm_imag_inp_files]
+                abs_inp_files = [
+                    (
+                        p
+                        if os.path.isabs(p)
+                        else os.path.abspath(os.path.join(normal_output_dir, p))
+                    )
+                    for p in rm_imag_inp_files
+                ]
                 abs_inp_files = [p for p in abs_inp_files if os.path.isfile(p)]
                 if not abs_inp_files:
-                    logging.error("Prepared 0 valid INP files after existence check; submission skipped.")
+                    logging.error(
+                        "Prepared 0 valid INP files after existence check; submission skipped."
+                    )
                 else:
                     orig = os.getcwd()
                     try:
-                        logging.info(f"Switching to working directory for submission: {normal_output_dir}")
+                        logging.info(
+                            f"Switching to working directory for submission: {normal_output_dir}"
+                        )
                         os.chdir(normal_output_dir)
 
                         submitter = OrcaJobSubmitter(
                             scratch_dir=scratch_dir,
                             orca_executable=orca_executable,
-                            device=device
+                            device=device,
                         )
                         submitter.submit_files(
                             input_files=abs_inp_files,
@@ -1086,12 +1042,18 @@ class OrcaInterface:
                             output_dir=normal_output_dir,
                             engine=engine,
                             operation=operation,
-                            model_name=(mlff_model if mlff_model is not None else model_name),
-                            task_name=task_name
+                            model_name=(
+                                mlff_model if mlff_model is not None else model_name
+                            ),
+                            task_name=task_name,
                         )
-                        logging.info("ORCA submissions dispatched for rm_imag displacements.")
+                        logging.info(
+                            "ORCA submissions dispatched for rm_imag displacements."
+                        )
                     except Exception as e:
-                        logging.error(f"Error while submitting ORCA jobs in {normal_output_dir}: {e}")
+                        logging.error(
+                            f"Error while submitting ORCA jobs in {normal_output_dir}: {e}"
+                        )
                         raise
                     finally:
                         with contextlib.suppress(Exception):
@@ -1101,20 +1063,19 @@ class OrcaInterface:
                 logging.warning("No rm_imag input files generated; submission skipped.")
 
         # ---- RETURNS ----
-        if calc_type == 'rm_imag':
+        if calc_type == "rm_imag":
             filtered_coords, filtered_tmp_ids = self.select_lowest_imaginary_structures(
                 step_number=step_number,
                 pos_ids=all_pos_ids,
                 neg_ids=all_neg_ids,
-                directory=output_dir
+                directory=output_dir,
             )
-            original_ids = [tid.rsplit('_', 1)[0] for tid in filtered_tmp_ids]
+            original_ids = [tid.rsplit("_", 1)[0] for tid in filtered_tmp_ids]
             return filtered_coords, original_ids
         else:
             return all_pos_coords + all_neg_coords, all_pos_ids + all_neg_ids
 
     def parse_imaginary_frequency(self, file_paths, imag=True):
-        import numpy as np
         """
         Parses vibrational frequencies from an ORCA output file.
 
@@ -1134,22 +1095,22 @@ class OrcaInterface:
         in_freq_block = False
         scaling_found = False
 
-        with open(file_paths, 'r') as f:
+        with open(file_paths, "r") as f:
             for line in f:
-                if 'VIBRATIONAL FREQUENCIES' in line:
+                if "VIBRATIONAL FREQUENCIES" in line:
                     in_freq_block = True
                     continue
-                if in_freq_block and 'Scaling factor for frequencies' in line:
+                if in_freq_block and "Scaling factor for frequencies" in line:
                     scaling_found = True
                     continue
-                if in_freq_block and scaling_found and ':' in line and 'cm**-1' in line:
+                if in_freq_block and scaling_found and ":" in line and "cm**-1" in line:
                     try:
-                        index_part, value_part = line.strip().split(':', 1)
+                        index_part, value_part = line.strip().split(":", 1)
                         index = int(index_part.strip())
                         value = float(value_part.strip().split()[0])
 
                         if imag:
-                            if '***imaginary mode***' in line:
+                            if "***imaginary mode***" in line:
                                 freqs[index] = value
                         else:
                             if index <= 5:
@@ -1170,7 +1131,7 @@ class OrcaInterface:
         ValueError
             If no normal-mode blocks are found in the file.
         """
-        with open(filepath, 'r') as f:
+        with open(filepath, "r") as f:
             lines = f.readlines()
 
         collecting = False
@@ -1178,7 +1139,7 @@ class OrcaInterface:
 
         for line in lines:
             # Mode-column header: "   1   2   3 ..."
-            if re.match(r'^\s*(\d+\s+)+\d+\s*$', line):
+            if re.match(r"^\s*(\d+\s+)+\d+\s*$", line):
                 collecting = True
                 if block_rows:
                     all_blocks.append(np.array(block_rows, dtype=float))
@@ -1187,7 +1148,7 @@ class OrcaInterface:
 
             if collecting:
                 # Displacement rows: "<atom_index>  dX dY dZ [ per mode columns...]"
-                if re.match(r'^\s*\d+\s+[-\d.Ee\s]+$', line):
+                if re.match(r"^\s*\d+\s+[-\d.Ee\s]+$", line):
                     parts = line.strip().split()
                     floats = list(map(float, parts[1:]))
                     block_rows.append(floats)
@@ -1207,18 +1168,22 @@ class OrcaInterface:
 
         for b in all_blocks:
             if b.shape[0] != 3 * num_atoms:
-                raise ValueError(f"Malformed normal-mode block rows: got {b.shape[0]}, expected {3*num_atoms}.")
+                raise ValueError(
+                    f"Malformed normal-mode block rows: got {b.shape[0]}, expected {3*num_atoms}."
+                )
 
         full_matrix = np.hstack(all_blocks)
         return full_matrix.reshape(num_atoms, 3, -1)
- 
-    def displace_normal_modes(self,
-                          filepath: str,
-                          imag_freq_dict: dict,
-                          normal_mode_tensor: np.ndarray,
-                          coordinates,
-                          displacement_value: float = 1.0,
-                          random_mode: bool = False):
+
+    def displace_normal_modes(
+        self,
+        filepath: str,
+        imag_freq_dict: dict,
+        normal_mode_tensor: np.ndarray,
+        coordinates,
+        displacement_value: float = 1.0,
+        random_mode: bool = False,
+    ):
         """
         Displaces atomic coordinates along a selected imaginary mode for each molecule.
 
@@ -1248,6 +1213,7 @@ class OrcaInterface:
 
         if random_mode:
             import random
+
             mode_idx = random.choice(list(imag_freq_dict.keys()))
         else:
             mode_idx = min(imag_freq_dict.items(), key=lambda kv: abs(kv[1]))[0]
@@ -1281,7 +1247,9 @@ class OrcaInterface:
 
         return pos_displaced, neg_displaced
 
-    def write_displaced_xyz(self, structures, step_number, structure_ids, output_dir='.'):
+    def write_displaced_xyz(
+        self, structures, step_number, structure_ids, output_dir="."
+    ):
         """
         Writes XYZ files for displaced structures (positive/negative modes).
         Accepts nested structure format: [[['C', x, y, z], ...]] per structure.
@@ -1300,7 +1268,9 @@ class OrcaInterface:
         import os
         import logging
 
-        logging.info(f"Writing Ensemble XYZ files to {output_dir} for step {step_number}")
+        logging.info(
+            f"Writing Ensemble XYZ files to {output_dir} for step {step_number}"
+        )
         base_name = f"step{step_number}"
         written = []
 
@@ -1321,11 +1291,13 @@ class OrcaInterface:
                 comment = ""
 
             # Build final path under BASE/step{n}/normal_mode_sampling
-            nested_dir = os.path.join(output_dir, f"step{step_number}", "normal_mode_sampling")
+            nested_dir = os.path.join(
+                output_dir, f"step{step_number}", "normal_mode_sampling"
+            )
             os.makedirs(nested_dir, exist_ok=True)  # <-- ensure parent exists
             output_file = os.path.join(nested_dir, f"{base_name}_structure_{sid}.xyz")
 
-            with open(output_file, 'w') as f:
+            with open(output_file, "w") as f:
                 f.write(f"{len(atom_list)}\n{comment}\n")
                 for element, x, y, z in atom_list:
                     f.write(f"{element} {x} {y} {z}\n")
@@ -1334,7 +1306,9 @@ class OrcaInterface:
 
         return written
 
-    def select_lowest_imaginary_structures(self, directory, pos_ids, neg_ids, step_number):
+    def select_lowest_imaginary_structures(
+        self, directory, pos_ids, neg_ids, step_number
+    ):
         """
         Selects structures with exactly one imaginary frequency and lowest energy.
 
@@ -1359,8 +1333,12 @@ class OrcaInterface:
         base_dir = os.path.join(directory, f"step{step_number}", "normal_mode_sampling")
 
         for pos_id, neg_id in zip(pos_ids, neg_ids):
-            pos_path = os.path.join(base_dir, f"step{step_number}_structure_{pos_id}.out")
-            neg_path = os.path.join(base_dir, f"step{step_number}_structure_{neg_id}.out")
+            pos_path = os.path.join(
+                base_dir, f"step{step_number}_structure_{pos_id}.out"
+            )
+            neg_path = os.path.join(
+                base_dir, f"step{step_number}_structure_{neg_id}.out"
+            )
 
             pos_coords_list, pos_energies = self.parse_dft_output(pos_path)
             neg_coords_list, neg_energies = self.parse_dft_output(neg_path)
@@ -1403,26 +1381,28 @@ class OrcaInterface:
 
         return selected_coords, selected_ids
 
-    def generate_random_displacements(self,
-                                   sid,
-                                   file_path,
-                                   normal_mode_tensor,
-                                   coordinates,
-                                   num_random_modes,
-                                   displacement_value,
-                                   step_number,
-                                   input_template,
-                                   charge,
-                                   multiplicity,
-                                   output_dir,
-                                   engine,
-                                   model_name,
-                                   task_name,
-                                   device,
-                                   bind,
-                                   normal_output_dir,
-                                   operation,
-                                   create_inp=False,):
+    def generate_random_displacements(
+        self,
+        sid,
+        file_path,
+        normal_mode_tensor,
+        coordinates,
+        num_random_modes,
+        displacement_value,
+        step_number,
+        input_template,
+        charge,
+        multiplicity,
+        output_dir,
+        engine,
+        model_name,
+        task_name,
+        device,
+        bind,
+        normal_output_dir,
+        operation,
+        create_inp=False,
+    ):
         """
         Generate multiple random mode displacements for a given structure.
         [docstring unchanged]
@@ -1440,7 +1420,7 @@ class OrcaInterface:
                 normal_mode_tensor=normal_mode_tensor,
                 coordinates=coordinates,
                 displacement_value=displacement_value,
-                random_mode=True
+                random_mode=True,
             )
 
             all_pos_coords.append(pos_coords[0])
@@ -1451,14 +1431,22 @@ class OrcaInterface:
             logging.info(f"Generated random mode displacement {i} for {sid}")
 
         # Write all XYZ files at once
-        logging.info(f"Writing {len(all_pos_coords)} positive and {len(all_neg_coords)} negative XYZ files for random modes.")
-        pos_xyz = self.write_displaced_xyz(all_pos_coords, step_number, all_pos_ids, output_dir)
-        neg_xyz = self.write_displaced_xyz(all_neg_coords, step_number, all_neg_ids, output_dir)
+        logging.info(
+            f"Writing {len(all_pos_coords)} positive and {len(all_neg_coords)} negative XYZ files for random modes."
+        )
+        pos_xyz = self.write_displaced_xyz(
+            all_pos_coords, step_number, all_pos_ids, output_dir
+        )
+        neg_xyz = self.write_displaced_xyz(
+            all_neg_coords, step_number, all_neg_ids, output_dir
+        )
         xyz_files = pos_xyz + neg_xyz
 
         # Generate ORCA input files
         if create_inp:
-            logging.info(f"Creating ORCA input files for {len(xyz_files)} random mode displacements.")
+            logging.info(
+                f"Creating ORCA input files for {len(xyz_files)} random mode displacements."
+            )
             input_files, _ = self.create_input(
                 xyz_files,
                 input_template,
@@ -1470,7 +1458,7 @@ class OrcaInterface:
                 model_name=model_name,
                 task_name=task_name,
                 device=device,
-                bind=bind
+                bind=bind,
             )
 
             return all_pos_coords, all_neg_coords, all_pos_ids, all_neg_ids, input_files
@@ -1488,47 +1476,45 @@ class OrcaInterface:
                 if "VIBRATIONAL FREQUENCIES" in line:
                     hdr_seen = True
                 # column header like: "   1    2    3"
-                if hdr_seen and re.match(r'^\s*(\d+\s+)+\d+\s*$', line):
+                if hdr_seen and re.match(r"^\s*(\d+\s+)+\d+\s*$", line):
                     return True
         return False
 
+
 def _orca_parse_all_gradients(content: str, to_ev_per_A: bool = False):
-        """
-        Parse all CARTESIAN GRADIENT blocks in an ORCA output and return raw gradients.
+    """
+    Parse all CARTESIAN GRADIENT blocks in an ORCA output and return raw gradients.
 
-        Parameters
-        ----------
-        content : str
-            Full ORCA output file contents.
-        to_ev_per_A : bool, optional
-            Convert Hartree/Bohr gradients to eV/Å forces. Default False (keep Hartree/Bohr).
+    Parameters
+    ----------
+    content : str
+        Full ORCA output file contents.
+    to_ev_per_A : bool, optional
+        Convert Hartree/Bohr gradients to eV/Å forces. Default False (keep Hartree/Bohr).
 
-        Returns
-        -------
-        list[np.ndarray]
-            Each entry is an (N_atoms, 3) array of forces.
-            By default in Hartree/Bohr (raw ORCA units).
-        """
-        blocks = _ORCA_GRAD_BLOCK_RE.findall(content)
-        out = []
-        for b in blocks:
-            rows = []
-            for line in b.strip().splitlines():
-                m = _ORCA_GRAD_LINE_RE.match(line)
-                if not m:
-                    continue
-                dEdx = float(m.group(2).replace("D", "E"))
-                dEdy = float(m.group(3).replace("D", "E"))
-                dEdz = float(m.group(4).replace("D", "E"))
-                fx, fy, fz = -dEdx, -dEdy, -dEdz  # F = -∇E
-                if to_ev_per_A:
-                    fx *= HARTREE_PER_BOHR_TO_EV_PER_A
-                    fy *= HARTREE_PER_BOHR_TO_EV_PER_A
-                    fz *= HARTREE_PER_BOHR_TO_EV_PER_A
-                rows.append([fx, fy, fz])
-            if rows:
-                out.append(np.array(rows, dtype=float))
-        return out
-
-  
-
+    Returns
+    -------
+    list[np.ndarray]
+        Each entry is an (N_atoms, 3) array of forces.
+        By default in Hartree/Bohr (raw ORCA units).
+    """
+    blocks = _ORCA_GRAD_BLOCK_RE.findall(content)
+    out = []
+    for b in blocks:
+        rows = []
+        for line in b.strip().splitlines():
+            m = _ORCA_GRAD_LINE_RE.match(line)
+            if not m:
+                continue
+            dEdx = float(m.group(2).replace("D", "E"))
+            dEdy = float(m.group(3).replace("D", "E"))
+            dEdz = float(m.group(4).replace("D", "E"))
+            fx, fy, fz = -dEdx, -dEdy, -dEdz  # F = -∇E
+            if to_ev_per_A:
+                fx *= HARTREE_PER_BOHR_TO_EV_PER_A
+                fy *= HARTREE_PER_BOHR_TO_EV_PER_A
+                fz *= HARTREE_PER_BOHR_TO_EV_PER_A
+            rows.append([fx, fy, fz])
+        if rows:
+            out.append(np.array(rows, dtype=float))
+    return out
