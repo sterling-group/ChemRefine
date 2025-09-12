@@ -143,7 +143,7 @@ class MLFFTrainer:
 
     def __init__(
         self,
-        step_id,
+        step_number,
         step_dir,
         template_dir,
         trainer_cfg,
@@ -153,7 +153,7 @@ class MLFFTrainer:
         structure_ids=None,
         utils=None,
     ):
-        self.step_id = step_id
+        self.step_id = step_number
         self.step_dir = step_dir
         self.template_dir = template_dir
         self.trainer_cfg = trainer_cfg
