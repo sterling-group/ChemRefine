@@ -1,22 +1,32 @@
 import re
-import glob
-import shutil
 import logging
 from .constants import HARTREE_TO_KCAL_MOL, R_KCAL_MOL_K, CSV_PRECISION
 from pathlib import Path
 import subprocess
 import getpass
 from typing import Optional
+import os
+import pandas as pd
+import numpy as np
+import json
+from typing import List, Dict
+from ase.io import write
+from collections.abc import Sequence
+
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
+
 
 class Utility:
     def extract_pal_from_qorca_output(self, output):
         patterns = [
-            r"PAL.*?(\d+)", r"nprocs\s+(\d+)", r"--pal\s+(\d+)", r"pal(\d+)", r"Using (\d+) cores"
+            r"PAL.*?(\d+)",
+            r"nprocs\s+(\d+)",
+            r"--pal\s+(\d+)",
+            r"pal(\d+)",
+            r"Using (\d+) cores",
         ]
         for pattern in patterns:
             match = re.search(pattern, output, re.IGNORECASE)
@@ -24,7 +34,9 @@ class Utility:
                 return int(match.group(1))
         return None
 
-    def save_step_csv(self, energies, ids, step, filename="steps.csv", T=298.15, output_dir="."):
+    def save_step_csv(
+        self, energies, ids, step, filename="steps.csv", T=298.15, output_dir="."
+    ):
         """
         Appends filtered structures for a step to a cumulative CSV, sorted by energy.
 
@@ -36,45 +48,42 @@ class Utility:
             T (float): Temperature in Kelvin for Boltzmann weighting.
             output_dir (str): Output directory.
         """
-        import os
-        import pandas as pd
-        import numpy as np
 
-        df = pd.DataFrame({
-            'Conformer': ids,
-            'Energy (Hartrees)': energies
-        })
-        df['Energy (kcal/mol)'] = df['Energy (Hartrees)'] * HARTREE_TO_KCAL_MOL
+        df = pd.DataFrame({"Conformer": ids, "Energy (Hartrees)": energies})
+        df["Energy (kcal/mol)"] = df["Energy (Hartrees)"] * HARTREE_TO_KCAL_MOL
 
         # ✅ Sort table by energy (kcal/mol)
-        df = df.sort_values(by='Energy (kcal/mol)', ascending=True).reset_index(drop=True)
+        df = df.sort_values(by="Energy (kcal/mol)", ascending=True).reset_index(
+            drop=True
+        )
 
         # Boltzmann statistics
-        df['dE (kcal/mol)'] = df['Energy (kcal/mol)'] - df['Energy (kcal/mol)'].min()
-        dE_RT = df['dE (kcal/mol)'] / (R_KCAL_MOL_K * T)
-        df['Boltzmann Weight'] = np.exp(-dE_RT)
-        df['Boltzmann Weight'] /= df['Boltzmann Weight'].sum()
-        df['% Total'] = df['Boltzmann Weight'] * 100
-        df['% Cumulative'] = df['% Total'].cumsum()
+        df["dE (kcal/mol)"] = df["Energy (kcal/mol)"] - df["Energy (kcal/mol)"].min()
+        dE_RT = df["dE (kcal/mol)"] / (R_KCAL_MOL_K * T)
+        df["Boltzmann Weight"] = np.exp(-dE_RT)
+        df["Boltzmann Weight"] /= df["Boltzmann Weight"].sum()
+        df["% Total"] = df["Boltzmann Weight"] * 100
+        df["% Cumulative"] = df["% Total"].cumsum()
 
-        df.insert(0, 'Step', step)
-        df = df.round({
-            'Energy (kcal/mol)': CSV_PRECISION,
-            'dE (kcal/mol)': CSV_PRECISION,
-            'Boltzmann Weight': CSV_PRECISION,
-            '% Total': CSV_PRECISION,
-            '% Cumulative': CSV_PRECISION
-        })
+        df.insert(0, "Step", step)
+        df = df.round(
+            {
+                "Energy (kcal/mol)": CSV_PRECISION,
+                "dE (kcal/mol)": CSV_PRECISION,
+                "Boltzmann Weight": CSV_PRECISION,
+                "% Total": CSV_PRECISION,
+                "% Cumulative": CSV_PRECISION,
+            }
+        )
 
         output_path = os.path.join(output_dir, filename)
         os.makedirs(output_dir, exist_ok=True)
-        mode = 'w' if step == 1 else 'a'
+        mode = "w" if step == 1 else "a"
         header = step == 1
         df.to_csv(output_path, mode=mode, index=False, header=header)
         logging.info(f"Saved filtered structures for step {step} to {output_path}")
 
-
-    def write_xyz(self, structures, step_number, structure_ids, output_dir='.'):
+    def write_xyz(self, structures, step_number, structure_ids, output_dir="."):
         """
         Writes XYZ files for each structure in the step directory.
 
@@ -87,26 +96,28 @@ class Utility:
         Returns:
         - List of XYZ filenames written.
         """
-        import os
-        import logging
 
-        logging.info(f"Writing Ensemble XYZ files to {output_dir} for step {step_number}")
+        logging.info(
+            f"Writing Ensemble XYZ files to {output_dir} for step {step_number}"
+        )
         base_name = f"step{step_number}"
         xyz_filenames = []
 
         os.makedirs(output_dir, exist_ok=True)
 
         for structure, structure_id in zip(structures, structure_ids):
-            output_file = os.path.join(output_dir, f"{base_name}_structure_{structure_id}.xyz")
+            output_file = os.path.join(
+                output_dir, f"{base_name}_structure_{structure_id}.xyz"
+            )
             xyz_filenames.append(output_file)
-            with open(output_file, 'w') as file:
+            with open(output_file, "w") as file:
                 file.write(f"{len(structure)}\n\n")
                 for atom in structure:
                     element, x, y, z = atom  # Unpack atom data
                     file.write(f"{element} {x} {y} {z}\n")
 
         return xyz_filenames
-    
+
     def submit_job(self, slurm_script: Path) -> str:
         """
         Submit a SLURM job and extract the job ID.
@@ -126,7 +137,7 @@ class Utility:
                 ["sbatch", str(slurm_script)],
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
             )
             logging.info(f"sbatch output: {result.stdout.strip()}")
             job_id = self._extract_job_id(result.stdout)
@@ -179,7 +190,7 @@ class Utility:
         """
         match = re.search(r"Submitted batch job (\d+)", sbatch_output)
         return match.group(1) if match else None
-    
+
     def write_single_xyz(self, atoms, output_file):
         """
         Writes a single ASE Atoms object to an XYZ file.
@@ -188,15 +199,15 @@ class Utility:
         - atoms (ase.Atoms): The atoms object to write.
         - output_file (str): Path to output XYZ file.
         """
-        from ase.io import write
+
         write(output_file, atoms)
 
     # --- Append below your existing imports in chemrefine/utils.py ---
-import os
-import json
-from typing import List, Dict, Optional
 
-_ID_PATTERN = re.compile(r"^step(?P<step>\d+)_structure_(?P<id>\d+)\.inp$", re.IGNORECASE)
+
+_ID_PATTERN = re.compile(
+    r"^step(?P<step>\d+)_structure_(?P<id>\d+)\.inp$", re.IGNORECASE
+)
 
 
 def extract_structure_id(inp_filename: str) -> Optional[int]:
@@ -238,8 +249,9 @@ def step_manifest_path(step_dir: str, step_number: int) -> str:
     return os.path.join(step_dir, f"step{step_number}_manifest.json")
 
 
-def write_step_manifest(step_number: int, step_dir: str, input_files: List[str],
-                        operation: str, engine: str) -> None:
+def write_step_manifest(
+    step_number: int, step_dir: str, input_files: List[str], operation: str, engine: str
+) -> None:
     """
     Create/update a per-step manifest mapping structure IDs to generated inputs.
 
@@ -260,13 +272,15 @@ def write_step_manifest(step_number: int, step_dir: str, input_files: List[str],
     records = []
     for inp in input_files:
         sid = extract_structure_id(inp)
-        records.append({
-            "structure_id": sid,
-            "input_file": os.path.basename(inp),
-            "output_file": None,
-            "operation": operation.upper(),
-            "engine": engine.lower(),
-        })
+        records.append(
+            {
+                "structure_id": sid,
+                "input_file": os.path.basename(inp),
+                "output_file": None,
+                "operation": operation.upper(),
+                "engine": engine.lower(),
+            }
+        )
     with open(manifest_file, "w") as f:
         json.dump({"step": step_number, "records": records}, f, indent=2)
 
@@ -294,8 +308,9 @@ def read_step_manifest(step_dir: str, step_number: int) -> Optional[Dict]:
         return json.load(f)
 
 
-def update_step_manifest_outputs(step_dir: str, step_number: int,
-                                 output_files: List[str]) -> None:
+def update_step_manifest_outputs(
+    step_dir: str, step_number: int, output_files: List[str]
+) -> None:
     """
     Update the per-step manifest with resolved output filenames by matching stems.
 
@@ -333,7 +348,9 @@ def update_step_manifest_outputs(step_dir: str, step_number: int,
         json.dump(manifest, f, indent=2)
 
 
-def map_outputs_to_ids(step_dir: str, step_number: int, output_files: List[str]) -> List[int]:
+def map_outputs_to_ids(
+    step_dir: str, step_number: int, output_files: List[str]
+) -> List[int]:
     """
     Resolve structure IDs for outputs using the manifest; fall back to robust parsing
     from output filenames (handles suffixes like '_atom46', '_trj', etc.) and prefix matching.
@@ -391,7 +408,6 @@ def map_outputs_to_ids(step_dir: str, step_number: int, output_files: List[str])
 
     return ids
 
-from typing import Sequence
 
 def validate_structure_ids_or_raise(structure_ids, step_id):
     """
@@ -414,12 +430,13 @@ def validate_structure_ids_or_raise(structure_ids, step_id):
     ValueError
         If any ID is invalid (negative int or empty string).
     """
-    from collections.abc import Sequence
 
     if structure_ids is None:
         raise ValueError(f"[step {step_id}] structure_ids is None")
 
-    if not isinstance(structure_ids, Sequence) or isinstance(structure_ids, (str, bytes)):
+    if not isinstance(structure_ids, Sequence) or isinstance(
+        structure_ids, (str, bytes)
+    ):
         raise TypeError(f"[step {step_id}] structure_ids must be a sequence of IDs")
 
     if len(structure_ids) == 0:
@@ -428,15 +445,20 @@ def validate_structure_ids_or_raise(structure_ids, step_id):
     for idx, i in enumerate(structure_ids):
         if isinstance(i, int):
             if i < 0:
-                raise ValueError(f"[step {step_id}] structure_ids[{idx}] is negative: {i}")
+                raise ValueError(
+                    f"[step {step_id}] structure_ids[{idx}] is negative: {i}"
+                )
         elif isinstance(i, str):
             if not i.strip():
-                raise ValueError(f"[step {step_id}] structure_ids[{idx}] is an empty/blank string")
+                raise ValueError(
+                    f"[step {step_id}] structure_ids[{idx}] is an empty/blank string"
+                )
         else:
             raise TypeError(
                 f"[step {step_id}] structure_ids[{idx}] has unsupported type {type(i).__name__}; "
                 "only int or str are allowed"
             )
+
 
 def registry_path(output_root: str) -> str:
     """
@@ -481,7 +503,10 @@ def get_next_id(output_root: str) -> int:
         json.dump(data, f, indent=2)
     return nid
 
-def write_synthetic_manifest_for_ensemble(step_number, step_dir, n_structures, operation, engine, output_basename):
+
+def write_synthetic_manifest_for_ensemble(
+    step_number, step_dir, n_structures, operation, engine, output_basename
+):
     """
     Create a synthetic manifest for a GOAT step where only one ensemble file exists.
     Assigns sequential IDs [0..n_structures-1] and writes to step{N}_manifest.json.
@@ -510,17 +535,23 @@ def write_synthetic_manifest_for_ensemble(step_number, step_dir, n_structures, o
         "outputs": [output_basename],
     }
     for idx in range(n_structures):
-        manifest_data["structures"].append({
-            "id": idx,
-            "input": f"step{step_number}_structure_{idx}.inp",
-            "output": output_basename
-        })
+        manifest_data["structures"].append(
+            {
+                "id": idx,
+                "input": f"step{step_number}_structure_{idx}.inp",
+                "output": output_basename,
+            }
+        )
     with open(manifest_path, "w") as f:
         json.dump(manifest_data, f, indent=2)
-    logging.info(f"Wrote synthetic manifest for step {step_number} with {n_structures} IDs at {manifest_path}.")
+    logging.info(
+        f"Wrote synthetic manifest for step {step_number} with {n_structures} IDs at {manifest_path}."
+    )
 
 
-def get_ensemble_ids(step_dir, step_number, n_structures, operation, engine, output_basename):
+def get_ensemble_ids(
+    step_dir, step_number, n_structures, operation, engine, output_basename
+):
     """
     Retrieve sequential IDs for a GOAT ensemble file. If the manifest does not exist,
     generate it using write_synthetic_manifest_for_ensemble.
@@ -547,18 +578,19 @@ def get_ensemble_ids(step_dir, step_number, n_structures, operation, engine, out
     """
     manifest_path = os.path.join(step_dir, f"step{step_number}_manifest.json")
     if not os.path.exists(manifest_path):
-        logging.info(f"Manifest for step {step_number} not found; creating synthetic manifest.")
+        logging.info(
+            f"Manifest for step {step_number} not found; creating synthetic manifest."
+        )
         write_synthetic_manifest_for_ensemble(
             step_number, step_dir, n_structures, operation, engine, output_basename
         )
     return list(range(n_structures))
 
-import os
-from typing import Optional
 
 _ID_ANYWHERE_RE = re.compile(
     r"step(?P<step>\d+)_structure_(?P<id>\d+)(?:_|\.|$)", re.IGNORECASE
 )
+
 
 def extract_structure_id_from_any_name(name: str) -> Optional[int]:
     """
