@@ -310,19 +310,33 @@ class ChemRefiner:
             found_msg = f"Found {len(output_files)} SOLVATOR output file(s)"
 
         else:
-            out_pat = re.compile(
-                rf"^step{step_number}(?:_structure_-?\d+)?\.out$", re.IGNORECASE
+            # --- Replace the generic discovery block with this ---
+            struct_pat = re.compile(
+                rf"^step{step_number}_structure_-?\d+\.out$", re.IGNORECASE
             )
-            output_files = [
+            plain_pat = re.compile(rf"^step{step_number}\.out$", re.IGNORECASE)
+
+            all_outs = [
                 os.path.join(step_dir, f)
                 for f in os.listdir(step_dir)
                 if f.endswith(".out")
                 and not f.startswith("slurm")
                 and not f.startswith("atom")
-                and out_pat.match(f) is not None
             ]
-            missing_msg = "No ORCA .out files found"
-            found_msg = f"Found {len(output_files)} .out file(s)"
+
+            # Prefer per-structure outputs; ignore the plain aggregator if structure files exist.
+            struct_outs = [p for p in all_outs if struct_pat.match(os.path.basename(p))]
+            if struct_outs:
+                output_files = sorted(struct_outs)
+                missing_msg = "No per-structure ORCA .out files found"
+                found_msg = f"Found {len(output_files)} per-structure .out file(s)"
+            else:
+                # fallback to single aggregator only if no per-structure files exist
+                output_files = [
+                    p for p in all_outs if plain_pat.match(os.path.basename(p))
+                ]
+                missing_msg = "No ORCA .out files found"
+                found_msg = f"Found {len(output_files)} .out file(s)"
 
         if not output_files:
             logging.warning(f"{missing_msg} in {step_dir}. Will rerun this step.")
@@ -464,6 +478,19 @@ class ChemRefiner:
         logging.info(
             f"After filtering step {step_number}: kept {len(filtered_coordinates)} structures."
         )
+
+        # If any unresolved IDs slipped through, rebuild them
+        if not structure_ids or any(i < 0 for i in structure_ids):
+            logging.info(f"Step {step_number}: repairing invalid IDs.")
+            structure_ids = list(range(len(energies)))
+            write_synthetic_manifest_for_ensemble(
+                step_number=step_number,
+                step_dir=step_dir,
+                n_structures=len(energies),
+                operation=op,
+                engine=engine,
+                output_basename=os.path.basename(output_files[0]),
+            )
 
         return filtered_coordinates, filtered_ids, energies, forces
 
