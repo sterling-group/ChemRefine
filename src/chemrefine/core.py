@@ -268,7 +268,8 @@ class ChemRefiner:
             output_files = [
                 os.path.join(step_dir, f)
                 for f in os.listdir(step_dir)
-                if f.endswith(".finalensemble.xyz")
+                if f.endswith("opt.finalensemble.xyz")
+                or f.endswith("finalensemble.xyz")
             ]
             missing_msg = "No GOAT ensemble (.finalensemble.xyz) files found"
             found_msg = f"Found {len(output_files)} GOAT ensemble file(s)"
@@ -507,61 +508,6 @@ class ChemRefiner:
 
         return filtered_coordinates, selected_ids
 
-    def train_mlff_model(
-        self, coordinates, structure_ids, model_name, task_name, trainer_cfg, step_dir
-    ):
-        """
-        Stub for MLFF training.
-        Uses provided coordinates and IDs to 'train' a new MLFF model.
-
-        Parameters
-        ----------
-        coordinates : list
-            List of atomic coordinates from the previous step.
-        structure_ids : list
-            IDs corresponding to the coordinates.
-        model_name : str
-            Name of the model size ("small", "medium", "large", etc.).
-        task_name : str
-            Task identifier ("mace_off", "mace_mp", etc.).
-        trainer_cfg : dict
-            Trainer configuration dictionary from the YAML input.
-        step_dir : str
-            Directory for storing training outputs.
-
-        Returns
-        -------
-        str
-            Path to the (dummy) trained model checkpoint.
-        """
-        import os
-        import json
-
-        os.makedirs(step_dir, exist_ok=True)
-
-        # Save metadata for debugging
-        metadata = {
-            "model_name": model_name,
-            "task_name": task_name,
-            "trainer_cfg": trainer_cfg,
-            "num_structures": len(coordinates) if coordinates is not None else 0,
-            "num_ids": len(structure_ids) if structure_ids is not None else 0,
-        }
-        with open(os.path.join(step_dir, "train_metadata.json"), "w") as f:
-            json.dump(metadata, f, indent=2)
-
-        # Create a dummy checkpoint to simulate training output
-        dummy_model_path = os.path.join(
-            step_dir, f"{model_name}_{task_name}_checkpoint.pt"
-        )
-        with open(dummy_model_path, "w") as f:
-            f.write("DUMMY MODEL FILE\n")
-
-        logging.info(
-            f"Stub MLFF training complete. Dummy model saved at {dummy_model_path}."
-        )
-        return dummy_model_path
-
     def submit_orca_jobs(
         self,
         input_files,
@@ -631,8 +577,16 @@ class ChemRefiner:
         last_energies = None
         last_forces = None
 
-        valid_operations = {"OPT+SP", "GOAT", "PES", "DOCKER", "SOLVATOR", "MLFF_TRAIN"}
-        valid_engines = {"dft", "mlff"}
+        valid_operations = {
+            "OPT+SP",
+            "GOAT",
+            "PES",
+            "DOCKER",
+            "SOLVATOR",
+            "MLFF_TRAIN",
+            "MLIP_TRAIN",
+        }
+        valid_engines = {"dft", "mlff", "mlip"}
 
         steps = self.config.get("steps", [])
 
@@ -657,14 +611,18 @@ class ChemRefiner:
                 )
 
             # MLFF config (only relevant when engine == 'mlff' in compute steps)
-            if engine == "mlff":
-                mlff_config = step.get("mlff", {})
-                mlff_model = mlff_config.get("model_name", "medium")
-                mlff_task = mlff_config.get("task_name", "mace_off")
-                bind_address = mlff_config.get("bind", "127.0.0.1:8888")
-                device = mlff_config.get("device", "cuda")
+            # MLFF/MLIP config (engine-dependent)
+            if engine in {"mlff", "mlip"}:
+                ml_config = step.get(
+                    engine, {}
+                )  # pulls "mlff:" or "mlip:" block from YAML
+                model = ml_config.get("model_name", "medium")
+                task = ml_config.get("task_name", "mace_off")
+                bind_address = ml_config.get("bind", "127.0.0.1:8888")
+                device = ml_config.get("device", "cuda")
+
                 logging.info(
-                    f"Using MLFF model '{mlff_model}' with task '{mlff_task}' for step {step_number}."
+                    f"Using {engine.upper()} model '{model}' with task '{task}' for step {step_number}."
                 )
             else:
                 mlff_model = None
@@ -737,6 +695,9 @@ class ChemRefiner:
                         step_number, operation, engine, sample_method, parameters
                     )
                 )
+                if filtered_coordinates is not None and filtered_ids is not None:
+                    last_coords, last_ids = filtered_coordinates, filtered_ids
+                    last_energies, last_forces = energies, forces
 
             if filtered_coordinates is None or filtered_ids is None:
                 logging.info(
@@ -763,8 +724,8 @@ class ChemRefiner:
                     step_dir, input_files, output_files = (
                         self.prepare_subsequent_step_directory(
                             step_number=step_number,
-                            previous_coordinates=last_coords,
-                            previous_ids=last_ids,
+                            filtered_coordinates=last_coords,
+                            filtered_ids=last_ids,
                             charge=charge,
                             multiplicity=multiplicity,
                             operation=operation,
@@ -819,7 +780,9 @@ class ChemRefiner:
                     return
             else:
                 step_dir = os.path.join(self.output_dir, f"step{step_number}")
-                logging.info(f"Skipping step {step_number} using existing outputs.")
+                logging.info(
+                    f"Skipping step {step_number} using existing outputs."
+                )  # Even for skipped steps, carry forward filtered results
 
             # Optional: normal mode sampling (may mutate coordinates/ids)
             if step.get("normal_mode_sampling", False):
