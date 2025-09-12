@@ -1,17 +1,18 @@
 import logging
 from typing import List, Tuple, Optional
 from ase import Atoms
-from ase.io import read,write
+from ase.io import write
 from pathlib import Path
 import numpy as np
 from sklearn.model_selection import train_test_split
-import os 
+import os
 import yaml
 import time
 
-#GLOBALS
+# GLOBALS
 HARTREE_TO_EV = 27.211386245988
 HARTREE_BOHR_TO_EV_A = 51.422067  # if you decide to convert here
+
 
 class MLFFCalculator:
     """Flexible MLFF calculator supporting MACE, UMA (FairChem), CHGNet, etc."""
@@ -21,7 +22,7 @@ class MLFFCalculator:
         model_name: str,
         device: str = "cuda",
         model_path: Optional[str] = None,
-        task_name: str = "mace_off"
+        task_name: str = "mace_off",
     ):
         self.model_name = model_name
         self.device = device
@@ -32,13 +33,17 @@ class MLFFCalculator:
     def _setup_calculator(self):
         """Initialize and return the correct ASE calculator based on task_name."""
         if self.model_path:
-            logging.info(f"Using custom MACE model from path: {self.model_path} on device: {self.device}")
+            logging.info(
+                f"Using custom MACE model from path: {self.model_path} on device: {self.device}"
+            )
             return self._setup_custom_mace()
         if self.task_name.startswith("mace"):
             logging.info(f"Using MACE model: {self.task_name} on device: {self.device}")
             return self._setup_mace()
         elif self.task_name.startswith(("omol", "omat", "odac", "uma", "fairchem")):
-            logging.info(f"Using FAIRChem model: {self.task_name} on device: {self.device}")
+            logging.info(
+                f"Using FAIRChem model: {self.task_name} on device: {self.device}"
+            )
             return self._setup_fairchem()
         elif self.task_name.startswith("chgnet"):
             logging.info(f"Using CHGNet model on device: {self.device}")
@@ -48,27 +53,36 @@ class MLFFCalculator:
 
     def _setup_mace(self):
         from mace.calculators import mace_off, mace_mp
+
         if self.task_name == "mace_off":
-            logging.info(f"Using MACE OFF model: {self.model_name} on device: {self.device}")   
+            logging.info(
+                f"Using MACE OFF model: {self.model_name} on device: {self.device}"
+            )
             return mace_off(model=self.model_name, device=self.device)
         elif self.task_name == "mace_mp":
-            logging.info(f"Using MACE MP model: {self.model_name} on device: {self.device}")
+            logging.info(
+                f"Using MACE MP model: {self.model_name} on device: {self.device}"
+            )
             return mace_mp(model=self.model_name, device=self.device)
         else:
             raise ValueError(f"Unsupported MACE task name: {self.task_name}")
 
     def _setup_fairchem(self):
         from fairchem.core import pretrained_mlip, FAIRChemCalculator
+
         predictor = pretrained_mlip.get_predict_unit(
             model_name=self.model_name,
             device=self.device,
         )
-        logging.info(f"Using FAIRChem model: {self.model_name} on device: {self.device}")
+        logging.info(
+            f"Using FAIRChem model: {self.model_name} on device: {self.device}"
+        )
         return FAIRChemCalculator(predictor, task_name=self.task_name)
 
     def _setup_chgnet(self):
         from chgnet.model import CHGNet
         from chgnet.calculators import CHGNetCalculator
+
         model = CHGNet.load(self.model_path) if self.model_path else CHGNet.load()
         return CHGNetCalculator(model=model)
 
@@ -76,25 +90,32 @@ class MLFFCalculator:
         """Compute energy and gradient using the configured MLFF."""
         atoms.calc = self.calculator
         from chemrefine.utils_extopt import process_output
+
         return process_output(atoms)
 
     def _setup_custom_mace(self):
-        from pathlib import Path
         from mace.calculators import MACECalculator
+
         model_file = Path(self.model_path)
         if not model_file.exists():
-            raise FileNotFoundError(f"Custom MACE model file does not exist: {self.model_path}")
+            raise FileNotFoundError(
+                f"Custom MACE model file does not exist: {self.model_path}"
+            )
 
-        logging.info(f"Using custom MACE model from path: {self.model_path} on device: {self.device}")
+        logging.info(
+            f"Using custom MACE model from path: {self.model_path} on device: {self.device}"
+        )
         return MACECalculator(model_path=self.model_path, device=self.device)
 
     def calculate(self, atoms: Atoms, fmax: float = 0.03, steps: int = 200) -> Atoms:
         """Optional: geometry optimization using LBFGS."""
         atoms.calc = self.calculator
         from ase.optimize import LBFGS
+
         optimizer = LBFGS(atoms, logfile=None)
         optimizer.run(fmax=fmax, steps=steps)
         return atoms
+
 
 class MLFFTrainer:
     """
@@ -120,8 +141,18 @@ class MLFFTrainer:
         IDs corresponding to the structures.
     """
 
-    def __init__(self, step_id, step_dir, template_dir, trainer_cfg,
-                 coordinates=None, energies=None, forces=None, structure_ids=None,utils=None):
+    def __init__(
+        self,
+        step_id,
+        step_dir,
+        template_dir,
+        trainer_cfg,
+        coordinates=None,
+        energies=None,
+        forces=None,
+        structure_ids=None,
+        utils=None,
+    ):
         self.step_id = step_id
         self.step_dir = step_dir
         self.template_dir = template_dir
@@ -130,7 +161,7 @@ class MLFFTrainer:
         self.energies = energies or []
         self.forces = forces or []
         self.structure_ids = structure_ids or []
-        self.utils = utils if utils is not None else Utility()
+        self.utils = utils
 
     def prepare_inputs(self):
         """
@@ -197,7 +228,6 @@ class MLFFTrainer:
         Generate training config for MACE from step template.
         Only overrides dataset paths and directories.
         """
-        import yaml
 
         # Load the step-specific training template
         template_file = os.path.join(self.template_dir, f"step{self.step_id}.inp")
@@ -220,7 +250,9 @@ class MLFFTrainer:
         logging.info(f"[MLFFTrainer] Wrote training config to {config_path}")
         return config_path
 
-    def write_slurm_script(self,step_dir: str, device: str, job_name: str = "mlff_train"):
+    def write_slurm_script(
+        self, step_dir: str, device: str, job_name: str = "mlff_train"
+    ):
         """
         Create a SLURM submission script for MACE training.
 
@@ -252,7 +284,6 @@ class MLFFTrainer:
         # read header
         with open(header_path, "r") as f:
             header_text = f.read().rstrip()  # removes extra blank lines at end
-
 
         # build script
         script_path = os.path.join(step_dir, "train.slurm")
@@ -297,7 +328,9 @@ class MLFFTrainer:
             active_jobs[job_id] = pal_value
             total_cores_used += pal_value
         else:
-            logging.warning(f"[MLFFTrainer] Skipping job tracking for invalid job ID '{job_id}'")
+            logging.warning(
+                f"[MLFFTrainer] Skipping job tracking for invalid job ID '{job_id}'"
+            )
             return
 
         # Wait for completion
@@ -308,7 +341,9 @@ class MLFFTrainer:
                 if self.utils.is_job_finished(job_id):
                     completed_jobs.append(job_id)
                     total_cores_used -= cores
-                    logging.info(f"[MLFFTrainer] Training job {job_id} completed. Freed {cores} cores.")
+                    logging.info(
+                        f"[MLFFTrainer] Training job {job_id} completed. Freed {cores} cores."
+                    )
 
             for job_id in completed_jobs:
                 del active_jobs[job_id]
@@ -319,38 +354,41 @@ class MLFFTrainer:
 
     def run(self):
         """Simplified run: just prepare Atoms objects and write XYZ files."""
-        
+
         train_path, test_path = self.prepare_inputs()
         self.write_training_config(train_path, test_path)
         self.write_slurm_script(self.step_dir, self.trainer_cfg.get("device", "cuda"))
         self.submit_training(os.path.join(self.step_dir, "train.slurm"))
 
+
 def _to_atoms(coords, energy, forces):
-        """
-        Convert parsed ORCA outputs into an ASE Atoms object.
+    """
+    Convert parsed ORCA outputs into an ASE Atoms object.
 
-        Parameters
-        ----------
-        coords : list[list[str]]
-            Each row = [element, x, y, z] in Å.
-        energy : float
-            Total energy in Hartree.
-        forces : np.ndarray
-            Forces in Hartree/Bohr, shape (N_atoms, 3).
+    Parameters
+    ----------
+    coords : list[list[str]]
+        Each row = [element, x, y, z] in Å.
+    energy : float
+        Total energy in Hartree.
+    forces : np.ndarray
+        Forces in Hartree/Bohr, shape (N_atoms, 3).
 
-        Returns
-        -------
-        Atoms
-            ASE Atoms object with energy and forces attached.
-        """
-        symbols = [row[0] for row in coords]
-        positions = np.array([[float(x), float(y), float(z)] for _, x, y, z in coords], dtype=float)
+    Returns
+    -------
+    Atoms
+        ASE Atoms object with energy and forces attached.
+    """
+    symbols = [row[0] for row in coords]
+    positions = np.array(
+        [[float(x), float(y), float(z)] for _, x, y, z in coords], dtype=float
+    )
 
-        atoms = Atoms(symbols=symbols, positions=positions)
+    atoms = Atoms(symbols=symbols, positions=positions)
 
-        if energy is not None:
-            atoms.info["DFT_energy"] = energy
-        if isinstance(forces, np.ndarray) and forces.size > 0:
-            atoms.arrays["DFT_Forces"] = forces
+    if energy is not None:
+        atoms.info["DFT_energy"] = energy
+    if isinstance(forces, np.ndarray) and forces.size > 0:
+        atoms.arrays["DFT_Forces"] = forces
 
-        return atoms    
+    return atoms
