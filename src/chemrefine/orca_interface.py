@@ -423,14 +423,15 @@ class OrcaInterface:
 
             op = operation.lower()
 
-            if op == "goat":
-                finalensemble_file = path.replace(".out", "opt.finalensemble.xyz")
+            if op == "GOAT":
+                stem, _ = os.path.splitext(path)  # strip ".out"
+                finalensemble_file = f"{stem}_opt.finalensemble.xyz"
                 logging.info(f"Looking for GOAT ensemble file: {finalensemble_file}")
                 if os.path.exists(finalensemble_file):
                     coords, ens = self.parse_goat_finalensemble(finalensemble_file)
                     coordinates.extend(coords)
                     energies.extend(ens)
-                    forces.extend([None] * len(coords))  # dummy
+                    forces.extend([None] * len(coords))  # dummy forces placeholder
                 else:
                     logging.error(f"GOAT ensemble file not found for: {path}")
                 continue
