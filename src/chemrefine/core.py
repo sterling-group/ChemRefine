@@ -4,7 +4,7 @@ import logging
 from .parse import ArgumentParser
 from .refine import StructureRefiner
 from .utils import Utility
-from .orca_interface import OrcaInterface
+from .orca_interface import OrcaInterface, OrcaJobSubmitter
 import shutil
 import re
 import sys
@@ -561,6 +561,58 @@ class ChemRefiner:
             f"Stub MLFF training complete. Dummy model saved at {dummy_model_path}."
         )
         return dummy_model_path
+
+    def submit_orca_jobs(
+        self,
+        input_files,
+        cores,
+        step_dir,
+        device="cpu",
+        operation="OPT+SP",
+        engine="DFT",
+        model_name=None,
+        task_name=None,
+    ):
+        """
+        Submits ORCA jobs for each input file in the step directory using the OrcaJobSubmitter.
+
+        Args:
+            input_files (list): List of ORCA input files.
+            cores (int): Maximum total cores allowed for all jobs.
+            step_dir (str): Path to the step directory.
+        """
+        logging.info(f"Switching to working directory: {step_dir}")
+        original_dir = os.getcwd()
+        os.chdir(step_dir)
+        logging.info(f"Current working directory: {os.getcwd()}")
+        logging.info(
+            f"Running in {self.scratch_dir} from submit_orca_jobs helper function."
+        )
+        try:
+            logging.info(
+                f"Submitting ORCA jobs in {step_dir} with {len(input_files)} input files using {device}."
+            )
+            self.orca_submitter = OrcaJobSubmitter(
+                scratch_dir=self.scratch_dir,
+                orca_executable=self.orca_executable,
+                device=device,
+            )
+            self.orca_submitter.submit_files(
+                input_files=input_files,
+                max_cores=cores,
+                template_dir=self.template_dir,
+                output_dir=step_dir,
+                engine=engine,
+                operation=operation,
+                model_name=model_name,
+                task_name=task_name,
+            )
+        except Exception as e:
+            logging.error(f"Error while submitting ORCA jobs in {step_dir}: {str(e)}")
+            raise
+        finally:
+            os.chdir(original_dir)
+            logging.info(f"Returned to original directory: {original_dir}")
 
     def run(self):
         """
