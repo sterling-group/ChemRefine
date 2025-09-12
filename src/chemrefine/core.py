@@ -4,30 +4,31 @@ import logging
 from .parse import ArgumentParser
 from .refine import StructureRefiner
 from .utils import Utility
-from .orca_interface import OrcaInterface, OrcaJobSubmitter
+from .orca_interface import OrcaInterface
 import shutil
 import re
 import sys
 from .mlff import MLFFTrainer
 from chemrefine.utils import (
-    write_step_manifest,
     update_step_manifest_outputs,
     map_outputs_to_ids,
     extract_structure_id,
     write_step_manifest,
     write_synthetic_manifest_for_ensemble,
-    get_ensemble_ids,
-    validate_structure_ids_or_raise
+    validate_structure_ids_or_raise,
 )
 
-class ChemRefiner:
 
+class ChemRefiner:
     """
     ChemRefiner class orchestrates the ChemRefine workflow, handling input parsing,
     job submission, output parsing, and structure refinement based on a YAML configuration.
     It supports multiple steps with different calculation types and sampling methods.
     """
-    def __init__(self,):
+
+    def __init__(
+        self,
+    ):
         self.arg_parser = ArgumentParser()
         self.args, self.qorca_flags = self.arg_parser.parse()
         self.input_yaml = self.args.input_yaml
@@ -35,18 +36,20 @@ class ChemRefiner:
         self.skip_steps = self.args.skip
 
         # === Load the YAML configuration ===
-        with open(self.input_yaml, 'r') as file:
+        with open(self.input_yaml, "r") as file:
             self.config = yaml.safe_load(file)
 
         # === Pull top-level config ===
-        self.charge = self.config.get('charge', 0)
-        self.multiplicity = self.config.get('multiplicity', 1)
-        self.template_dir = os.path.abspath(self.config.get('template_dir', './templates'))
-        self.scratch_dir = self.config.get('scratch_dir', "./scratch")
-        self.orca_executable = self.config.get('orca_executable', 'orca')
+        self.charge = self.config.get("charge", 0)
+        self.multiplicity = self.config.get("multiplicity", 1)
+        self.template_dir = os.path.abspath(
+            self.config.get("template_dir", "./templates")
+        )
+        self.scratch_dir = self.config.get("scratch_dir", "./scratch")
+        self.orca_executable = self.config.get("orca_executable", "orca")
 
         # === Setup output directory ===
-        output_dir_raw = self.config.get('output_dir', './outputs')
+        output_dir_raw = self.config.get("output_dir", "./outputs")
         self.output_dir = os.path.abspath(output_dir_raw)
         os.makedirs(self.output_dir, exist_ok=True)
         self.scratch_dir = os.path.abspath(self.scratch_dir)
@@ -60,27 +63,27 @@ class ChemRefiner:
         self.utils = Utility()
         self.orca = OrcaInterface()
 
-    def prepare_step1_directory(self, 
-                                step_number, 
-                                initial_xyz=None,
-                                charge=None, 
-                                multiplicity=None,
-                                operation='OPT+SP',
-                                engine='dft',
-                                model_name=None, 
-                                task_name=None,
-                                device='cpu',
-                                bind='127.0.0.1:8888',
-                                ):
-        
-        """ Prepares the directory for the first step by copying the initial XYZ file,"""
+    def prepare_step1_directory(
+        self,
+        step_number,
+        initial_xyz=None,
+        charge=None,
+        multiplicity=None,
+        operation="OPT+SP",
+        engine="dft",
+        model_name=None,
+        task_name=None,
+        device="cpu",
+        bind="127.0.0.1:8888",
+    ):
+        """Prepares the directory for the first step by copying the initial XYZ file,"""
         if charge is None:
             charge = self.charge
         if multiplicity is None:
             multiplicity = self.multiplicity
 
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
-        os.makedirs(step_dir, exist_ok=True)        
+        os.makedirs(step_dir, exist_ok=True)
         logging.debug(f"step_dir BEFORE: {step_dir}")
 
         # Determine source xyz: use override if provided
@@ -108,10 +111,10 @@ class ChemRefiner:
         xyz_filenames = [dst_xyz]
 
         input_files, output_files = self.orca.create_input(
-            xyz_filenames, 
-            template_inp, 
-            charge, 
-            multiplicity, 
+            xyz_filenames,
+            template_inp,
+            charge,
+            multiplicity,
             output_dir=step_dir,
             operation=operation,
             engine=engine,
@@ -123,18 +126,20 @@ class ChemRefiner:
 
         return step_dir, input_files, output_files
 
-    def prepare_subsequent_step_directory(self, 
-                                          step_number, 
-                                          filtered_coordinates, 
-                                          filtered_ids,charge=None, 
-                                          multiplicity=None,
-                                          operation='OPT+SP',
-                                          engine='dft',
-                                          model_name=None, 
-                                          task_name=None,
-                                          device='cuda',
-                                          bind='127.0.0.1:8888',
-                                          ):
+    def prepare_subsequent_step_directory(
+        self,
+        step_number,
+        filtered_coordinates,
+        filtered_ids,
+        charge=None,
+        multiplicity=None,
+        operation="OPT+SP",
+        engine="dft",
+        model_name=None,
+        task_name=None,
+        device="cuda",
+        bind="127.0.0.1:8888",
+    ):
         """
         Prepares the directory for subsequent steps by writing XYZ files, copying the template input,
         and generating ORCA input files.
@@ -158,39 +163,43 @@ class ChemRefiner:
         os.makedirs(step_dir, exist_ok=True)
 
         # Write XYZ files in step_dir
-        xyz_filenames = self.utils.write_xyz(filtered_coordinates, step_number, filtered_ids, output_dir=step_dir)
-
+        xyz_filenames = self.utils.write_xyz(
+            filtered_coordinates, step_number, filtered_ids, output_dir=step_dir
+        )
 
         # Copy the template input file from template_dir to step_dir
         input_template_src = os.path.join(self.template_dir, f"step{step_number}.inp")
         input_template_dst = os.path.join(step_dir, f"step{step_number}.inp")
         if not os.path.exists(input_template_src):
-            logging.warning(f"Input file '{input_template_src}' not found. Exiting pipeline.")
+            logging.warning(
+                f"Input file '{input_template_src}' not found. Exiting pipeline."
+            )
             sys.exit(1)
             raise FileNotFoundError(
                 f"Input file '{input_template_src}' not found. Please ensure that 'step{step_number}.inp' exists in the template directory."
-            )        
+            )
         shutil.copyfile(input_template_src, input_template_dst)
 
         # Create ORCA input files in step_dir
         input_files, output_files = self.orca.create_input(
-            xyz_filenames, 
-            input_template_dst, 
-            charge, 
-            multiplicity, 
+            xyz_filenames,
+            input_template_dst,
+            charge,
+            multiplicity,
             output_dir=step_dir,
             operation=operation,
             engine=engine,
-            model_name=model_name, 
+            model_name=model_name,
             task_name=task_name,
             device=device,
             bind=bind,
-            
         )
 
         return step_dir, input_files, output_files
-    
-    def handle_skip_step(self, step_number, operation, engine, sample_method, parameters):
+
+    def handle_skip_step(
+        self, step_number, operation, engine, sample_method, parameters
+    ):
         """
         Decide whether to skip a step by validating that expected outputs already exist.
         Preserves persistent structure IDs via the per-step manifest when available.
@@ -219,7 +228,9 @@ class ChemRefiner:
         """
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         if not os.path.exists(step_dir):
-            logging.info(f"Step directory {step_dir} does not exist. Will run this step.")
+            logging.info(
+                f"Step directory {step_dir} does not exist. Will run this step."
+            )
             return None, None, None, None
 
         op = operation.strip().upper()
@@ -228,10 +239,14 @@ class ChemRefiner:
         if op == "MLFF_TRAIN":
             manifest_path = os.path.join(step_dir, f"step{step_number}_manifest.json")
             if not os.path.exists(manifest_path):
-                logging.info(f"No manifest for MLFF_TRAIN step {step_number}. Will rerun training.")
+                logging.info(
+                    f"No manifest for MLFF_TRAIN step {step_number}. Will rerun training."
+                )
                 return None, None, None, None
 
-        def _ensure_solvator_ids(step_dir, step_number, engine, output_files, energies, structure_ids):
+        def _ensure_solvator_ids(
+            step_dir, step_number, engine, output_files, energies, structure_ids
+        ):
             n_structs = len(energies)
             if n_structs == 0:
                 return structure_ids
@@ -279,13 +294,17 @@ class ChemRefiner:
                 output_files = [
                     os.path.join(step_dir, f)
                     for f in os.listdir(step_dir)
-                    if f.endswith(".out") and not f.startswith("slurm") and not f.startswith("atom")
+                    if f.endswith(".out")
+                    and not f.startswith("slurm")
+                    and not f.startswith("atom")
                 ][:1]
             missing_msg = "No SOLVATOR outputs (.solvator.xyz or .out) found"
             found_msg = f"Found {len(output_files)} SOLVATOR output file(s)"
 
         else:
-            out_pat = re.compile(rf"^step{step_number}(?:_structure_-?\d+)?\.out$", re.IGNORECASE)
+            out_pat = re.compile(
+                rf"^step{step_number}(?:_structure_-?\d+)?\.out$", re.IGNORECASE
+            )
             output_files = [
                 os.path.join(step_dir, f)
                 for f in os.listdir(step_dir)
@@ -307,7 +326,9 @@ class ChemRefiner:
         update_step_manifest_outputs(step_dir, step_number, output_files)
 
         # ---------- Parse outputs ----------
-        coordinates, energies, forces = self.orca.parse_output(output_files, op, dir=step_dir)
+        coordinates, energies, forces = self.orca.parse_output(
+            output_files, op, dir=step_dir
+        )
         if not coordinates or not energies or len(coordinates) != len(energies):
             logging.warning(
                 f"Parsed outputs are incomplete or inconsistent for step {step_number} "
@@ -320,7 +341,9 @@ class ChemRefiner:
 
         if all(i < 0 for i in structure_ids):
             if op == "GOAT":
-                logging.info(f"No usable manifest for GOAT step {step_number}; synthesizing ensemble IDs.")
+                logging.info(
+                    f"No usable manifest for GOAT step {step_number}; synthesizing ensemble IDs."
+                )
                 ensemble_base = os.path.basename(output_files[0])
                 n_structs = len(energies)
                 write_synthetic_manifest_for_ensemble(
@@ -334,11 +357,15 @@ class ChemRefiner:
                 structure_ids = list(range(n_structs))
 
             elif op == "SOLVATOR":
-                logging.info(f"No usable manifest for SOLVATOR step {step_number}; synthesizing IDs.")
+                logging.info(
+                    f"No usable manifest for SOLVATOR step {step_number}; synthesizing IDs."
+                )
                 solv_base = os.path.basename(output_files[0])
                 n_structs = len(energies)
                 if n_structs <= 0:
-                    logging.warning(f"SOLVATOR parsed no structures for step {step_number}; rerunning.")
+                    logging.warning(
+                        f"SOLVATOR parsed no structures for step {step_number}; rerunning."
+                    )
                     return None, None, None, None
                 write_synthetic_manifest_for_ensemble(
                     step_number=step_number,
@@ -351,16 +378,28 @@ class ChemRefiner:
                 structure_ids = list(range(n_structs))
 
             else:
-                logging.info(f"No manifest for step {step_number}; reconstructing IDs from filenames.")
+                logging.info(
+                    f"No manifest for step {step_number}; reconstructing IDs from filenames."
+                )
                 if len(output_files) == 1 and len(energies) == 1:
-                    logging.info(f"Step {step_number}: single-output scalar case; assigning ID 0 and writing manifest.")
+                    logging.info(
+                        f"Step {step_number}: single-output scalar case; assigning ID 0 and writing manifest."
+                    )
                     structure_ids = [0]
-                    candidate_inp = os.path.join(step_dir, f"step{step_number}_structure_0.inp")
-                    input_list = [candidate_inp] if os.path.exists(candidate_inp) else [f"step{step_number}_structure_0.inp"]
+                    candidate_inp = os.path.join(
+                        step_dir, f"step{step_number}_structure_0.inp"
+                    )
+                    input_list = (
+                        [candidate_inp]
+                        if os.path.exists(candidate_inp)
+                        else [f"step{step_number}_structure_0.inp"]
+                    )
                     write_step_manifest(step_number, step_dir, input_list, op, engine)
                     update_step_manifest_outputs(step_dir, step_number, output_files)
                 else:
-                    pat = re.compile(rf"^step{step_number}_structure_(\d+)(?:_|$)", re.IGNORECASE)
+                    pat = re.compile(
+                        rf"^step{step_number}_structure_(\d+)(?:_|$)", re.IGNORECASE
+                    )
                     recovered_ids = []
                     recovered_inps = []
                     for outp in output_files:
@@ -373,16 +412,24 @@ class ChemRefiner:
                             candidate_inp = os.path.join(step_dir, truncated + ".inp")
                             sid = extract_structure_id(candidate_inp)
                         if sid is None:
-                            logging.warning(f"Could not resolve ID for {outp}; rerunning step.")
+                            logging.warning(
+                                f"Could not resolve ID for {outp}; rerunning step."
+                            )
                             return None, None, None, None
                         recovered_ids.append(sid)
-                        candidate_inp2 = os.path.join(step_dir, f"step{step_number}_structure_{sid}.inp")
+                        candidate_inp2 = os.path.join(
+                            step_dir, f"step{step_number}_structure_{sid}.inp"
+                        )
                         if os.path.exists(candidate_inp2):
                             recovered_inps.append(candidate_inp2)
                     structure_ids = recovered_ids
                     if recovered_inps:
-                        write_step_manifest(step_number, step_dir, recovered_inps, op, engine)
-                        update_step_manifest_outputs(step_dir, step_number, output_files)
+                        write_step_manifest(
+                            step_number, step_dir, recovered_inps, op, engine
+                        )
+                        update_step_manifest_outputs(
+                            step_dir, step_number, output_files
+                        )
 
         # ---------- Expand SOLVATOR IDs if needed ----------
         if op == "SOLVATOR" and len(structure_ids) != len(energies):
@@ -406,11 +453,23 @@ class ChemRefiner:
         filtered_coordinates, filtered_ids = self.refiner.filter(
             coordinates, energies, structure_ids, sample_method, parameters
         )
-        logging.info(f"After filtering step {step_number}: kept {len(filtered_coordinates)} structures.")
+        logging.info(
+            f"After filtering step {step_number}: kept {len(filtered_coordinates)} structures."
+        )
 
         return filtered_coordinates, filtered_ids, energies, forces
 
-    def parse_and_filter_outputs(self, output_files, operation,engine, step_number, sample_method, parameters, step_dir,previous_ids=None):
+    def parse_and_filter_outputs(
+        self,
+        output_files,
+        operation,
+        engine,
+        step_number,
+        sample_method,
+        parameters,
+        step_dir,
+        previous_ids=None,
+    ):
         """
         Parses ORCA outputs, saves CSV, filters structures, and moves step files.
 
@@ -424,30 +483,33 @@ class ChemRefiner:
         Returns:
             tuple: Filtered coordinates and IDs.
         """
-        coordinates, energies,forces = self.orca.parse_output(output_files, operation, dir=step_dir)
+        coordinates, energies, forces = self.orca.parse_output(
+            output_files, operation, dir=step_dir
+        )
         if not coordinates or not energies:
-            logging.error(f"No valid coordinates or energies found in outputs for step {step_number}. Exiting pipeline.")
-            logging.error(f"Error in your output file, please check reason for failure")
+            logging.error(
+                f"No valid coordinates or energies found in outputs for step {step_number}. Exiting pipeline."
+            )
+            logging.error("Error in your output file, please check reason for failure")
             sys.exit(1)
         if previous_ids is None:
             previous_ids = list(range(len(energies)))  # only for step 1
 
         self.utils.save_step_csv(
-                    energies=energies,
-                    ids=previous_ids,
-                    step=step_number,
-                    output_dir=self.output_dir
-                    )
+            energies=energies,
+            ids=previous_ids,
+            step=step_number,
+            output_dir=self.output_dir,
+        )
         filtered_coordinates, selected_ids = self.refiner.filter(
-                                            coordinates, 
-                                            energies, 
-                                            previous_ids, 
-                                            sample_method, 
-                                            parameters
-                                            )
+            coordinates, energies, previous_ids, sample_method, parameters
+        )
 
         return filtered_coordinates, selected_ids
-    def train_mlff_model(self, coordinates, structure_ids, model_name, task_name, trainer_cfg, step_dir):
+
+    def train_mlff_model(
+        self, coordinates, structure_ids, model_name, task_name, trainer_cfg, step_dir
+    ):
         """
         Stub for MLFF training.
         Uses provided coordinates and IDs to 'train' a new MLFF model.
@@ -489,11 +551,15 @@ class ChemRefiner:
             json.dump(metadata, f, indent=2)
 
         # Create a dummy checkpoint to simulate training output
-        dummy_model_path = os.path.join(step_dir, f"{model_name}_{task_name}_checkpoint.pt")
+        dummy_model_path = os.path.join(
+            step_dir, f"{model_name}_{task_name}_checkpoint.pt"
+        )
         with open(dummy_model_path, "w") as f:
             f.write("DUMMY MODEL FILE\n")
 
-        logging.info(f"Stub MLFF training complete. Dummy model saved at {dummy_model_path}.")
+        logging.info(
+            f"Stub MLFF training complete. Dummy model saved at {dummy_model_path}."
+        )
         return dummy_model_path
 
     def run(self):
@@ -523,7 +589,9 @@ class ChemRefiner:
             operation = step["operation"].upper()
             engine = step.get("engine", "dft").lower()
 
-            logging.info(f"Processing step {step_id}: operation '{operation}', engine '{engine}'.")
+            logging.info(
+                f"Processing step {step_id}: operation '{operation}', engine '{engine}'."
+            )
 
             if operation not in valid_operations:
                 raise ValueError(
@@ -560,7 +628,9 @@ class ChemRefiner:
             # === Special: MLFF_TRAIN consumes the previous step results and writes datasets ===
             if operation == "MLFF_TRAIN":
                 if step_id == 1:
-                    raise ValueError("Invalid workflow: MLFF_TRAIN cannot be used at step 1.")
+                    raise ValueError(
+                        "Invalid workflow: MLFF_TRAIN cannot be used at step 1."
+                    )
 
                 # Must have previous results with energies and forces
                 if not (last_coords and last_ids and last_energies and last_forces):
@@ -610,12 +680,16 @@ class ChemRefiner:
 
             # Try to reuse outputs via skip
             if self.skip_steps:
-                filtered_coordinates, filtered_ids, energies, forces = self.handle_skip_step(
-                    step_id, operation, engine, sample_method, parameters
+                filtered_coordinates, filtered_ids, energies, forces = (
+                    self.handle_skip_step(
+                        step_id, operation, engine, sample_method, parameters
+                    )
                 )
 
             if filtered_coordinates is None or filtered_ids is None:
-                logging.info(f"No valid skip outputs for step {step_id}. Proceeding with normal execution.")
+                logging.info(
+                    f"No valid skip outputs for step {step_id}. Proceeding with normal execution."
+                )
 
                 if step_id == 1:
                     initial_xyz = self.config.get("initial_xyz", None)
@@ -634,18 +708,20 @@ class ChemRefiner:
                 else:
                     # Validate IDs for compute steps (not for training)
                     validate_structure_ids_or_raise(last_ids, step_id)
-                    step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
-                        step_id=step_id,
-                        previous_coordinates=last_coords,
-                        previous_ids=last_ids,
-                        charge=charge,
-                        multiplicity=multiplicity,
-                        operation=operation,
-                        engine=engine,
-                        model_name=mlff_model,
-                        task_name=mlff_task,
-                        device=device,
-                        bind=bind_address,
+                    step_dir, input_files, output_files = (
+                        self.prepare_subsequent_step_directory(
+                            step_id=step_id,
+                            previous_coordinates=last_coords,
+                            previous_ids=last_ids,
+                            charge=charge,
+                            multiplicity=multiplicity,
+                            operation=operation,
+                            engine=engine,
+                            model_name=mlff_model,
+                            task_name=mlff_task,
+                            device=device,
+                            bind=bind_address,
+                        )
                     )
 
                 # Save manifest with input structure IDs
@@ -683,7 +759,9 @@ class ChemRefiner:
                     parameters,
                 )
                 if filtered_coordinates is None or filtered_ids is None:
-                    logging.error(f"Filtering failed at step {step_id}. Exiting pipeline.")
+                    logging.error(
+                        f"Filtering failed at step {step_id}. Exiting pipeline."
+                    )
                     return
             else:
                 step_dir = os.path.join(self.output_dir, f"step{step_id}")
@@ -709,7 +787,9 @@ class ChemRefiner:
                     )
                 else:
                     logging.info(f"Normal mode sampling requested for step {step_id}.")
-                    input_template_path = os.path.join(self.template_dir, f"step{step_id}.inp")
+                    input_template_path = os.path.join(
+                        self.template_dir, f"step{step_id}.inp"
+                    )
                     filtered_coordinates, filtered_ids = self.orca.normal_mode_sampling(
                         file_paths=output_files,
                         calc_type=calc_type,
@@ -743,6 +823,7 @@ class ChemRefiner:
 
 def main():
     ChemRefiner().run()
+
 
 if __name__ == "__main__":
     main()
