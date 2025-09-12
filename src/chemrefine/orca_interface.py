@@ -424,7 +424,7 @@ class OrcaInterface:
             op = operation.lower()
 
             if op == "goat":
-                finalensemble_file = path.replace(".out", ".finalensemble.xyz")
+                finalensemble_file = path.replace(".out", "opt.finalensemble.xyz")
                 logging.info(f"Looking for GOAT ensemble file: {finalensemble_file}")
                 if os.path.exists(finalensemble_file):
                     coords, ens = self.parse_goat_finalensemble(finalensemble_file)
