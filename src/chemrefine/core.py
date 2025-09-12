@@ -565,7 +565,7 @@ class ChemRefiner:
     def submit_orca_jobs(
         self,
         input_files,
-        cores,
+        max_cores,
         step_dir,
         device="cpu",
         operation="OPT+SP",
@@ -599,7 +599,7 @@ class ChemRefiner:
             )
             self.orca_submitter.submit_files(
                 input_files=input_files,
-                max_cores=cores,
+                max_cores=max_cores,
                 template_dir=self.template_dir,
                 output_dir=step_dir,
                 engine=engine,
