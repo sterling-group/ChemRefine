@@ -237,12 +237,19 @@ class ChemRefiner:
 
         # === Special case: MLFF_TRAIN ===
         if op == "MLFF_TRAIN":
-            manifest_path = os.path.join(step_dir, f"step{step_number}_manifest.json")
-            if not os.path.exists(manifest_path):
-                logging.info(
-                    f"No manifest for MLFF_TRAIN step {step_number}. Will rerun training."
-                )
-                return None, None, None, None
+            prev_step = step_number - 1
+            logging.info(
+                f"MLFF_TRAIN step {step_number}: reusing results from step {prev_step}."
+            )
+
+            prev_cfg = self.config["steps"][prev_step - 1]  # YAML steps are 1-indexed
+            return self.handle_skip_step(
+                prev_step,
+                prev_cfg["operation"],
+                prev_cfg.get("engine", "dft"),
+                sample_method,
+                parameters,
+            )
 
         def _ensure_solvator_ids(
             step_dir, step_number, engine, output_files, energies, structure_ids
@@ -560,6 +567,61 @@ class ChemRefiner:
             os.chdir(original_dir)
             logging.info(f"Returned to original directory: {original_dir}")
 
+    def run_mlff_train(
+        self, step_number, step, last_coords, last_ids, last_energies, last_forces
+    ):
+        """
+        Handle MLFF_TRAIN steps: prepare training dataset or skip if already completed.
+
+        Parameters
+        ----------
+        step_number : int
+            Current step index.
+        step : dict
+            Step configuration from YAML.
+        last_coords, last_ids, last_energies, last_forces
+            Results from the previous step, required for training.
+        """
+        if step_number == 1:
+            raise ValueError("Invalid workflow: MLFF_TRAIN cannot be used at step 1.")
+
+        step_dir = os.path.join(self.output_dir, f"step{step_number}")
+        manifest_path = os.path.join(step_dir, f"step{step_number}_manifest.json")
+
+        # --- Skip handling ---
+        if self.skip_steps and os.path.exists(manifest_path):
+            logging.info(
+                f"Skipping MLFF_TRAIN at step {step_number}; training already completed."
+            )
+            return  # nothing new is produced
+
+        # --- Normal execution ---
+        if not (last_coords and last_ids and last_energies and last_forces):
+            raise ValueError(
+                f"MLFF_TRAIN at step {step_number} requires a prior step with "
+                f"coordinates, energies, and forces. None found."
+            )
+
+        os.makedirs(step_dir, exist_ok=True)
+        logging.info(f"Preparing MLFF dataset at step {step_number}.")
+
+        trainer_cfg = step.get("trainer", {})
+        trainer = MLFFTrainer(
+            step_number=step_number,
+            step_dir=step_dir,
+            template_dir=self.template_dir,
+            trainer_cfg=trainer_cfg,
+            coordinates=last_coords,
+            energies=last_energies,
+            forces=last_forces,
+            structure_ids=last_ids,
+            utils=self.utils,
+        )
+        trainer.run()
+
+        # Write manifest so skip can detect completion later
+        write_step_manifest(step_number, step_dir, [], "MLFF_TRAIN", "mlff_train")
+
     def run(self):
         """
         Main pipeline execution function for ChemRefine.
@@ -636,47 +698,10 @@ class ChemRefiner:
             parameters = st.get("parameters", {}) if st else {}
 
             # === Special: MLFF_TRAIN consumes the previous step results and writes datasets ===
-            if operation == "MLFF_TRAIN":
-                if step_number == 1:
-                    raise ValueError(
-                        "Invalid workflow: MLFF_TRAIN cannot be used at step 1."
-                    )
-
-                # Must have previous results with energies and forces
-                if not (last_coords and last_ids and last_energies and last_forces):
-                    raise ValueError(
-                        f"MLFF_TRAIN at step {step_number} requires a prior step with "
-                        f"coordinates, energies, and forces. None found."
-                    )
-                # Basic length consistency
-                n = len(last_coords)
-                if not (len(last_ids) == len(last_energies) == len(last_forces) == n):
-                    raise ValueError(
-                        f"Inconsistent previous-step lengths before MLFF_TRAIN at step {step_number}: "
-                        f"coords={n}, ids={len(last_ids)}, energies={len(last_energies)}, forces={len(last_forces)}"
-                    )
-
-                trainer_cfg = step.get("trainer", {})
-                step_dir = os.path.join(self.output_dir, f"step{step_number}")
-                os.makedirs(step_dir, exist_ok=True)
-
-                logging.info(f"Preparing MLFF dataset at step {step_number}.")
-                trainer = MLFFTrainer(
-                    step_number=step_number,
-                    step_dir=step_dir,
-                    template_dir=self.template_dir,
-                    trainer_cfg=trainer_cfg,
-                    coordinates=last_coords,
-                    energies=last_energies,
-                    forces=last_forces,
-                    structure_ids=last_ids,
-                    utils=self.utils,
+            if operation == "MLFF_TRAIN" or operation == "MLIP_TRAIN":
+                self.run_mlff_train(
+                    step_number, step, last_coords, last_ids, last_energies, last_forces
                 )
-                trainer.run()
-
-                # Manifest is informational for training steps
-                write_step_manifest(step_number, step_dir, [], operation, "mlff_train")
-                # Training does not change structures; keep last_* unchanged for any following steps
                 continue
 
             # === Non-training steps (compute / parsing / filtering) ===
