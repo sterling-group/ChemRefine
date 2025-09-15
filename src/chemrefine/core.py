@@ -69,7 +69,8 @@ class ChemRefiner:
                                 model_name=None, 
                                 task_name=None,
                                 device='cpu',
-                                bind='127.0.0.1:8888'):
+                                bind='127.0.0.1:8888',
+                                ):
         
         """ Prepares the directory for the first step by copying the initial XYZ file,"""
         if charge is None:
@@ -116,7 +117,7 @@ class ChemRefiner:
             model_name=model_name,
             task_name=task_name,
             device=device,
-            bind=bind
+            bind=bind,
         )
 
         return step_dir, input_files, output_files
@@ -131,7 +132,7 @@ class ChemRefiner:
                                           model_name=None, 
                                           task_name=None,
                                           device='cuda',
-                                          bind='127.0.0.1:8888'
+                                          bind='127.0.0.1:8888',
                                           ):
         """
         Prepares the directory for subsequent steps by writing XYZ files, copying the template input,
@@ -182,7 +183,8 @@ class ChemRefiner:
             model_name=model_name, 
             task_name=task_name,
             device=device,
-            bind=bind
+            bind=bind,
+            
         )
 
         return step_dir, input_files, output_files
@@ -474,8 +476,8 @@ class ChemRefiner:
                 engine=engine,
                 operation=operation,
                 model_name=model_name,
-                task_name=task_name
-                
+                task_name=task_name,
+                model_path=model_path
                
             )
         except Exception as e:
@@ -554,14 +556,19 @@ class ChemRefiner:
                 mlff_config = step.get('mlff', {})
                 mlff_model = mlff_config.get('model_name', 'medium')
                 mlff_task = mlff_config.get('task_name', 'mace_off')
+                mlff_model_path = mlff_config.get('model_path', None)
                 bind_address = mlff_config.get('bind', '127.0.0.1:8888')
                 device = mlff_config.get('device', 'cuda')
                 logging.info(f"Using MLFF model '{mlff_model}' with task '{mlff_task}' for step {step_id}.")
+                if mlff_model_path:
+                    logging.info(f"Custom MLFF model path specified {mlff_model_path}.")
             else:
-                mlff_model = step.get('model_name', 'medium')
-                mlff_task = step.get('task_name', 'mace_off')
-                bind_address = '127.0.0.1:8888'
-                device = 'cpu'
+               
+                mlff_model = None
+                mlff_task = None
+                mlff_model_path = None
+                bind_address = None
+                device = None
 
             sample_method = step['sample_type']['method']
             parameters = step['sample_type'].get('parameters', {})
@@ -589,7 +596,7 @@ class ChemRefiner:
                         model_name=mlff_model,
                         task_name=mlff_task,
                         device=device,
-                        bind=bind_address
+                        bind=bind_address,
                     )
                 else:
                     validate_structure_ids_or_raise(previous_ids, step_id)
@@ -604,7 +611,8 @@ class ChemRefiner:
                         model_name=mlff_model,
                         task_name=mlff_task,
                         device=device,
-                        bind=bind_address
+                        bind=bind_address,
+                       
                     )
 
                 # Save manifest with input structure IDs
@@ -619,7 +627,8 @@ class ChemRefiner:
                     engine=engine,
                     model_name=mlff_model,
                     task_name=mlff_task,
-                    device=device
+                    device=device,
+                    model_path = mlff_model_path
                 )
 
                 # Parse outputs

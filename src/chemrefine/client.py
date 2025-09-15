@@ -17,9 +17,6 @@ end_import = time.perf_counter()
 
 def parse_extended_args(arglist):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_name", type=str, default="uma-s-1")
-    parser.add_argument("--task_name", type=str, default="omol")
-    parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--bind", type=str, default="127.0.0.1:8888")
     parser.add_argument("inputfile")
     return parser.parse_args(arglist)
