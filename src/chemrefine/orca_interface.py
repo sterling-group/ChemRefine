@@ -916,7 +916,7 @@ class OrcaInterface:
                     file_path, imag=imag_flag
                 )
 
-                coordinates, _ = self.parse_dft_output(file_path)
+                coordinates, energies, forces = self.parse_dft_output(file_path)
                 if not coordinates:
                     logging.warning(
                         f"Skipping ID {sid}: no coordinates parsed from {file_path}."
@@ -1348,8 +1348,8 @@ class OrcaInterface:
                 base_dir, f"step{step_number}_structure_{neg_id}.out"
             )
 
-            pos_coords_list, pos_energies = self.parse_dft_output(pos_path)
-            neg_coords_list, neg_energies = self.parse_dft_output(neg_path)
+            pos_coords_list, pos_energies, _ = self.parse_dft_output(pos_path)
+            neg_coords_list, neg_energies, _ = self.parse_dft_output(neg_path)
 
             pos_imag_freqs = self.parse_imaginary_frequency(pos_path, imag=True)
             neg_imag_freqs = self.parse_imaginary_frequency(neg_path, imag=True)
