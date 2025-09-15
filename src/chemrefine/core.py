@@ -270,16 +270,54 @@ class ChemRefiner:
             )
             return list(range(n_structs))
 
-        # ---------- Discover outputs ----------
+        # ---------- GOAT special case ----------
         if op == "GOAT":
             output_files = [
                 os.path.join(step_dir, f)
                 for f in os.listdir(step_dir)
-                if f.endswith("opt.finalensemble.xyz")
-                or f.endswith("finalensemble.xyz")
+                if f.endswith("_opt.finalensemble.xyz")
             ]
-            missing_msg = "No GOAT ensemble (.finalensemble.xyz) files found"
-            found_msg = f"Found {len(output_files)} GOAT ensemble file(s)"
+            if not output_files:
+                logging.warning(
+                    f"No GOAT ensemble files in {step_dir}. Will rerun this step."
+                )
+                return None, None, None, None
+
+            goat_file = output_files[0]
+            logging.info(f"Found GOAT ensemble file: {goat_file}")
+
+            coords, ens = self.orca.parse_goat_finalensemble(goat_file)
+            if not coords or not ens:
+                logging.warning(
+                    f"GOAT parse failed at {goat_file}. Will rerun step {step_number}."
+                )
+                return None, None, None, None
+
+            # Placeholder IDs just to run filter
+            tmp_ids = list(range(len(ens)))
+            forces = [None] * len(coords)
+
+            filtered_coordinates, _ = self.refiner.filter(
+                coords, ens, tmp_ids, sample_method, parameters
+            )
+
+            # Rebuild IDs after filtering
+            final_n = len(filtered_coordinates)
+            ensemble_base = os.path.basename(goat_file)
+            write_synthetic_manifest_for_ensemble(
+                step_number=step_number,
+                step_dir=step_dir,
+                n_structures=final_n,
+                operation=op,
+                engine=engine,
+                output_basename=ensemble_base,
+            )
+            structure_ids = list(range(final_n))
+
+            logging.info(
+                f"After filtering GOAT step {step_number}: kept {final_n} structures."
+            )
+            return filtered_coordinates, structure_ids, ens, forces
 
         elif op == "DOCKER":
             output_files = [
@@ -362,23 +400,8 @@ class ChemRefiner:
         structure_ids = map_outputs_to_ids(step_dir, step_number, output_files)
 
         if all(i < 0 for i in structure_ids):
-            if op == "GOAT":
-                logging.info(
-                    f"No usable manifest for GOAT step {step_number}; synthesizing ensemble IDs."
-                )
-                ensemble_base = os.path.basename(output_files[0])
-                n_structs = len(energies)
-                write_synthetic_manifest_for_ensemble(
-                    step_number=step_number,
-                    step_dir=step_dir,
-                    n_structures=n_structs,
-                    operation=op,
-                    engine=engine,
-                    output_basename=ensemble_base,
-                )
-                structure_ids = list(range(n_structs))
 
-            elif op == "SOLVATOR":
+            if op == "SOLVATOR":
                 logging.info(
                     f"No usable manifest for SOLVATOR step {step_number}; synthesizing IDs."
                 )
