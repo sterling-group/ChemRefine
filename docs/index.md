@@ -224,10 +224,10 @@ We welcome contributions! Please:
 If you use Auto-Conformer-GOAT in your research, please cite:
 
 ```bibtex
-@software{auto_conformer_goat,
-  title={Auto-Conformer-GOAT: Automated Conformer Sampling and Refinement},
+@software{ChemRefine,
+  title={ChemRefine},
   author={Sterling Research Group},
-  url={https://github.com/sterling-research-group/auto-conformer-goat},
+  url={https://github.com/sterling-research-group/ChemRefine},
   year={2025}
 }
 ```
