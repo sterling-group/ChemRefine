@@ -1,1 +1,17 @@
-site_name: My Docs
+site_name: ChemRefine
+theme:
+  name: material
+
+nav:
+  - Home: index.md
+  - Install: install.md
+  - Tutorial:
+      - Overview: tutorial/index.md
+      - Conformer Sampling: tutorial/conformer_sampling.md
+      - Transition State Finding: tutorial/ts_finding.md
+      - Normal Mode Sampling: tutorial/normal_modes.md
+      - Oxidation: tutorial/oxidation.md
+      - Solvation: tutorial/solvation.md
+      - Spin: tutorial/spin.md
+
+  
