@@ -2,58 +2,55 @@
 
 ## Package Installation
 
-### Option 1: Development Installation (Recommended)
+### Option :Installation (Recommended)
 ```bash
-# Clone with submodules
-git clone --recursive https://github.com/sterling-research-group/auto-conformer-goat.git
-cd auto-conformer-goat
+git clone --recursive https://github.com/sterling-research-group/ChemRefine.git
+cd ChemRefine
 
 # Install in development mode
 pip install -e .
 
 # Verify installation
-auto-goat --help
-```
+chemrefine --help
 
-### Option 2: Direct Installation from Source
-```bash
 # Clone repository
-git clone https://github.com/sterling-research-group/auto-conformer-goat.git
-cd auto-conformer-goat
+git clone https://github.com/sterling-research-group/ChemRefine.git
+cd ChemRefine
 
-# Initialize submodules
-git submodule update --init --recursive
-
-# Install package
+# Install package6
 pip install .
 ```
 
+# Install package
+pip install .
+
+
 ## Dependencies
-
-The package automatically installs Python dependencies:
-- `numpy` - Numerical computations
-- `pyyaml` - YAML parsing
-- `pandas` - Data handling
-
+- **Python 3.6+** with the following dependencies:
+  - `numpy` - Numerical computations
+  - `pyyaml` - YAML configuration parsing  
+  - `pandas` - Data analysis and CSV handling
+  - `ase` - Geometry handling and optimisation
+  - `mace-torch` - Machine learning force fields
+  - `torch == 2.5.1` - Machine Learning (if you use later version of Pytorch it might not work with UMA models)
 ### External Requirements
-- **ORCA 6.0+**: Must be installed and accessible in your environment
-- **SLURM**: For HPC job submission
-- **Python 3.6+**: The package supports Python 3.6 and newer
+
+- **ORCA 6.0+** - Quantum chemistry calculations
+- **SLURM** - Job scheduling system for HPC
+- **MACE-torch** - MLIP platform for MACE architecture
+- **FAIRChem** - MLIP platform for UMA and esen models
 
 ## Verification
 
 After installation, verify everything works:
 
 ```bash
-# Check package installation
-python -c "import autogoat; print(autogoat.__version__)"
-
 # Test command-line interface
-auto-goat --help
+chemrefine --help
 
 # Test with example files
 cd Examples/
-auto-goat input.yaml --maxcores 32
+chemrefine input.yaml --maxcores 32
 ```
 
 ## Development Setup
@@ -66,13 +63,6 @@ pip install -e ".[dev]"
 
 # Run tests
 pytest
-
-# Format code
-black src/
-
-# Type checking
-mypy src/
-```
 
 ## License Information
 
