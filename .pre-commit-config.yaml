@@ -1,0 +1,14 @@
+repos:
+  # Black: Python code formatter
+  - repo: https://github.com/psf/black
+    rev: 24.3.0   # pick a stable release
+    hooks:
+      - id: black
+        language_version: python3
+
+  # Ruff: Python linter + quick fixes
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9   # latest stable release
+    hooks:
+      - id: ruff
+        args: [--fix]   # automatically fix what it can

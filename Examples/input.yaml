@@ -55,3 +55,9 @@ steps:
       method: "integer"
       parameters: 
         num_structures: 0
+
+  - step: 5
+    operation: "MLFF_TRAIN"    # Options are "GOAT","OPT+SP","PES","Docker","Solvator
+    trainer: 
+      model_name: "medium"      # For MACE: small,medium,large for FAIRCHEM "uma-s-1
+      task_name: "mace_off"
