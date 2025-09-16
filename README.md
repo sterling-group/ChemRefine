@@ -30,10 +30,6 @@ cd ChemRefine
 pip install -e .
 ```
 
-### **From PyPI** (when available)
-```bash
-pip install ChemRefine
-```
 
 ### **Requirements**
 - **Python 3.6+** with the following dependencies:
@@ -42,6 +38,7 @@ pip install ChemRefine
   - `pandas` - Data analysis and CSV handling
   - `ase` - Geometry handling and optimisation
   - `mace-torch` - Machine learning force fields
+  - `torch == 2.5.1` - Machine Learning (if you use later version of Pytorch it might not work with UMA models)
 - **ORCA 6.0+** - Quantum chemistry calculations
 - **SLURM** - Job scheduling system
 -**MACE-torch** - 

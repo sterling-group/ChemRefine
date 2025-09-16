@@ -737,8 +737,8 @@ class ChemRefiner:
                     f"Using {engine.upper()} model '{model}' with task '{task}' for step {step_number}."
                 )
             else:
-                mlff_model = None
-                mlff_task = None
+                model = None
+                task = None
                 bind_address = None
                 device = None
 
@@ -788,8 +788,8 @@ class ChemRefiner:
                         multiplicity=multiplicity,
                         operation=operation,
                         engine=engine,
-                        model_name=mlff_model,
-                        task_name=mlff_task,
+                        model_name=model,
+                        task_name=task,
                         device=device,
                         bind=bind_address,
                     )
@@ -805,8 +805,8 @@ class ChemRefiner:
                             multiplicity=multiplicity,
                             operation=operation,
                             engine=engine,
-                            model_name=mlff_model,
-                            task_name=mlff_task,
+                            model_name=model,
+                            task_name=task,
                             device=device,
                             bind=bind_address,
                         )
@@ -824,8 +824,8 @@ class ChemRefiner:
                     step_dir=step_dir,
                     operation=operation,
                     engine=engine,
-                    model_name=mlff_model,
-                    task_name=mlff_task,
+                    model_name=model,
+                    task_name=task,
                     device=device,
                 )
 
@@ -894,12 +894,12 @@ class ChemRefiner:
                         output_dir=self.output_dir,
                         operation=operation,
                         engine=engine,
-                        model_name=mlff_model,
+                        model_name=model,
                         step_number=step_number,
                         structure_ids=filtered_ids,
                         max_cores=self.max_cores,
-                        task_name=mlff_task,
-                        mlff_model=mlff_model,
+                        task_name=task,
+                        mlff_model=model,
                         displacement_value=displacement_vector,
                         device=device,
                         bind=bind_address,

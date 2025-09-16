@@ -482,9 +482,9 @@ class OrcaInterface:
             energies.extend(ens)
             forces.extend(frc)
 
-        if not coordinates or not energies:
-            logging.error(
-                f"Failed to parse {operation.upper()} outputs in directory: {dir}"
+        if not coordinates or not energies or not forces:
+            raise RuntimeError(
+                f"parse_output: No valid data found in {dir} for {operation}"
             )
 
         return coordinates, energies, forces
