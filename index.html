@@ -10,7 +10,7 @@
       
       
       
-        <link rel="next" href="tutorial/">
+        <link rel="next" href="INSTALL/">
       
       
       <link rel="icon" href="assets/images/favicon.png">
@@ -478,7 +478,7 @@
   
   
     <li class="md-nav__item">
-      <a href="install.md" class="md-nav__link">
+      <a href="INSTALL/" class="md-nav__link">
         
   
   
@@ -998,8 +998,9 @@ pip install -e .
 <li><code>mace-torch</code> - Machine learning force fields</li>
 <li><code>torch == 2.5.1</code> - Machine Learning (if you use later version of Pytorch it might not work with UMA models)</li>
 <li><strong>ORCA 6.0+</strong> - Quantum chemistry calculations</li>
-<li><strong>SLURM</strong> - Job scheduling system
--<strong>MACE-torch</strong> - </li>
+<li><strong>SLURM</strong> - Job scheduling system for HPC</li>
+<li><strong>MACE-torch</strong> - MLIP platform for MACE architecture</li>
+<li><strong>FAIRChem</strong> - MLIP platform for UMA and esen models</li>
 </ul>
 <hr />
 <h2 id="quick-start"><strong>Quick Start</strong></h2>
@@ -1136,6 +1137,7 @@ parameters:
 <pre><code>auto-conformer-goat/
 ├── src/chemrefine          # Main package code
 ├── Examples/               # Example input files and SLURM scripts
+├── docs                    # Files for the ChemRefine page
 ├── README.md               # This file
 ├── LICENSE                 # License
 └── pyproject.toml          # Package configuration
