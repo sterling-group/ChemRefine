@@ -4,7 +4,7 @@ theme:
 
 nav:
   - Home: index.md
-  - Install: install.md
+  - Install: INSTALL.md
   - Tutorial:
       - Overview: tutorial/index.md
       - Conformer Sampling: tutorial/conformer_sampling.md
