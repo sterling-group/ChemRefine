@@ -1,0 +1,9 @@
+#SBATCH --partition=gpu-preempt         # Partition name
+#SBATCH --nodes=1                       # Number of nodes
+#SBATCH --ntasks=1                      # Number of tasks (processes)
+#SBATCH --gres=gpu                    # Number of GPUs per node
+#SBATCH --cpus-per-task=16             #CPU
+#SBATCH --mem=16GB                      # Memory per node
+#SBATCH --time=12:00:00  #Time
+#SBATCH --exclusive
+
