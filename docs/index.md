@@ -40,8 +40,9 @@ pip install -e .
   - `mace-torch` - Machine learning force fields
   - `torch == 2.5.1` - Machine Learning (if you use later version of Pytorch it might not work with UMA models)
 - **ORCA 6.0+** - Quantum chemistry calculations
-- **SLURM** - Job scheduling system
--**MACE-torch** - 
+- **SLURM** - Job scheduling system for HPC
+- **MACE-torch** - MLIP platform for MACE architecture
+- **FAIRChem** - MLIP platform for UMA and esen models
 ---
 
 ## **Quick Start**
@@ -202,6 +203,7 @@ The tool supports complex multi-step refinement protocols:
 auto-conformer-goat/
 ├── src/chemrefine          # Main package code
 ├── Examples/               # Example input files and SLURM scripts
+├── docs                    # Files for the ChemRefine page
 ├── README.md               # This file
 ├── LICENSE                 # License
 └── pyproject.toml          # Package configuration
