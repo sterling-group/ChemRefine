@@ -2,7 +2,7 @@
 
 ## Package Installation
 
-### Option :Installation (Recommended)
+### Installation (Recommended)
 ```bash
 git clone --recursive https://github.com/sterling-research-group/ChemRefine.git
 cd ChemRefine
@@ -59,7 +59,7 @@ For developers who want to contribute:
 
 ```bash
 # Install with development dependencies
-pip install -e ".[dev]"
+pip install -e "."
 
 # Run tests
 pytest
