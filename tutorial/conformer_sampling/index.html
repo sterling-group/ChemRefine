@@ -648,7 +648,7 @@ ChemRefine automates this process by running a <strong>global optimization</stro
 <h2 id="input-files">Input Files</h2>
 <p>For this tutorial, we will use <strong>Pd(PPh₃)₄</strong>.<br />
 The XYZ file is provided in the repository:</p>
-<p>➡️ <a href="https://raw.githubusercontent.com/sterling-research-group/ChemRefine/main/Examples/Tutorials/Conformational%20Sampling/step1.xyz">Examples/Tutorials/Conformational Sampling/PdPPh3_4.xyz</a>
+<p>➡️ <a href="https://raw.githubusercontent.com/sterling-research-group/ChemRefine/main/Examples/Tutorials/Conformational-Sampling/step1.xyz">Examples/Tutorials/Conformational Sampling/PdPPh3_4.xyz</a>
 - 📂 File location in repo: <code>Examples/Tutorials/Conformational Sampling/PdPPh3_4.xyz</code></p>
 <hr />
 <h3 id="interactive-3d-viewer">Interactive 3D Viewer</h3>
@@ -661,7 +661,7 @@ The XYZ file is provided in the repository:</p>
   let viewer = $3Dmol.createViewer(element, config);
 
   // Load XYZ directly from raw GitHub link
-  $3Dmol.download("https://raw.githubusercontent.com/sterling-research-group/ChemRefine/main/Examples/Tutorials/Conformational%20Sampling/PdPPh3_4.xyz", viewer, {}, function() {
+  $3Dmol.download("https://raw.githubusercontent.com/sterling-research-group/ChemRefine/main/Examples/Tutorials/Conformational-Sampling/step1.xyz", viewer, {}, function() {
     viewer.setStyle({}, {stick:{radius:0.15}, sphere:{scale:0.25}});
     viewer.zoomTo();
     viewer.render();
@@ -671,7 +671,7 @@ The XYZ file is provided in the repository:</p>
 <hr />
 <h2 id="yaml-configuration">YAML Configuration</h2>
 <p>The YAML input for conformer sampling is also included in the tutorial folder:</p>
-<p>➡️ <a href="./Examples/Tutorials/Conformational%20Sampling/input.yaml">Examples/Tutorials/Conformational Sampling/input.yaml</a></p>
+<p>➡️ <a href="./Examples/Tutorials/Conformational-Sampling/input.yaml">Examples/Tutorials/Conformational Sampling/input.yaml</a></p>
 <p>Example content:</p>
 <pre><code class="language-yaml">charge: 0
 multiplicity: 1
