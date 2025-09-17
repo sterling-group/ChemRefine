@@ -9,7 +9,7 @@ charge: 0
 multiplicity: 1 
 
 # Optional: Override default initial structure (default is /template_dir/step1.xyz)
-initial_xyz: ./templates/step1.xyz
+initial_xyz: ./step1.xyz
 
 steps:
   - step: 1
