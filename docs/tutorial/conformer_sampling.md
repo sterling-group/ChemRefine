@@ -145,7 +145,7 @@ You can launch ChemRefine directly from the command line:
 chemrefine input.yaml --maxcores <N>
 ```
 
-Here N is the number of simultaneous jobs you want to run.
+Here N is the max number of simultaneous cores you want to use.
 
 ### Option 2: Run ChemRefine with SLURM script
 
