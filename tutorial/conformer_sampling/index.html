@@ -660,9 +660,9 @@ ChemRefine automates this process by running a <strong>global optimization</stro
   let config = { backgroundColor: "white" };
   let viewer = $3Dmol.createViewer(element, config);
 
-  // Load XYZ directly from mkdocs branch
+  // Explicitly set format to xyz
   $3Dmol.download("https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz",
-                  viewer, {}, function() {
+                  viewer, {format: "xyz"}, function() {
     viewer.setStyle({}, {stick:{radius:0.15}, sphere:{scale:0.25}});
     viewer.zoomTo();
     viewer.render();
