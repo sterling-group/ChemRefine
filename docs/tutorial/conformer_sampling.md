@@ -28,13 +28,11 @@ The workflow:
 
 ## Input Files
 
-For this tutorial, we will use **Pd(PPh₃)₄**.  
-The XYZ file is provided in the repository:
+For this tutorial, we will use **Pd(PPh₃)₄**.
 
-➡️ [Examples/Tutorials/Conformational Sampling/PdPPh3_4.xyz](https://raw.githubusercontent.com/sterling-research-group/ChemRefine/main/Examples/Tutorials/Conformational-Sampling/step1.xyz)
-- 📂 File location in repo: `Examples/Tutorials/Conformational Sampling/PdPPh3_4.xyz`
+- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz)  
+- 📥 [Download step1.xyz](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz)
 
----
 
 ### Interactive 3D Viewer
 
@@ -42,17 +40,20 @@ The XYZ file is provided in the repository:
 
 <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
 <script>
-  let element = document.getElementById("viewer");
-  let config = { backgroundColor: "white" };
-  let viewer = $3Dmol.createViewer(element, config);
+  let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
 
-  // Load XYZ directly from raw GitHub link
-  $3Dmol.download("https://raw.githubusercontent.com/sterling-research-group/ChemRefine/main/Examples/Tutorials/Conformational-Sampling/step1.xyz", viewer, {}, function() {
-    viewer.setStyle({}, {stick:{radius:0.15}, sphere:{scale:0.25}});
-    viewer.zoomTo();
-    viewer.render();
-  });
+  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz")
+    .then(r => r.text())
+    .then(data => {
+      viewer.addModel(data, "xyz");   // force XYZ format
+      viewer.setStyle({}, {stick:{radius:0.15}, sphere:{scale:0.25}});
+      viewer.zoomTo();
+      viewer.render();
+    })
+    .catch(err => console.error("Could not load XYZ:", err));
 </script>
+
+
 
 ---
 
@@ -61,7 +62,7 @@ The XYZ file is provided in the repository:
 
 The YAML input for conformer sampling is also included in the tutorial folder:
 
-➡️ [Examples/Tutorials/Conformational Sampling/input.yaml](./Examples/Tutorials/Conformational-Sampling/input.yaml)
+➡️ [Examples/Tutorials/Conformational Sampling/input.yaml](https://raw.githubusercontent.com/sterling-research-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz)
 
 
 
@@ -127,4 +128,47 @@ steps:
       parameters:
         num_structures: 15
 ```
+## How to Run
 
+Before running ChemRefine, ensure that:
+
+- The **ChemRefine Enviroment** is activated
+- The **ORCA executable** is installed and available in your `PATH`  
+- The **template directory** (`./templates/`) is correctly set up  
+- The **input structure file** (e.g., `input.xyz`) is prepared  
+
+### Option 1: Run from the Command Line
+
+You can launch ChemRefine directly from the command line:
+
+```bash
+chemrefine input.yaml --maxcores <N>
+```
+
+Here N is the number of simultaneous jobs you want to run.
+
+### Option 2: Run ChemRefine with SLURM script
+
+On HPC systems with SLURM, you can submit ChemRefine as a batch job.
+A ready-to-use SLURM script template is available at:
+
+[➡️Example ChemRefine SLURM script](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Templates/chemrefine.slurm)
+
+```bash
+#!/bin/bash
+#SBATCH --partition=<your_partition>
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=2G              # Limit memory to allow multiple jobs on the same node
+#SBATCH --time=72:00:00
+#SBATCH --exclude=g-07-02
+#SBATCH --job-name=conformer_search
+#SBATCH --output=%x.out   # Saves output to auto_goat_JOBID.out
+#SBATCH --error=%x.err    # Saves error log
+
+# Ensure the script allows for shared node usage
+export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+
+# Run the calculation
+chemrefine input.yaml --maxcores 480 
+```
