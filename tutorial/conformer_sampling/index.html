@@ -656,17 +656,17 @@ ChemRefine automates this process by running a <strong>global optimization</stro
 
 <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
 <script>
-  let element = document.getElementById("viewer");
-  let config = { backgroundColor: "white" };
-  let viewer = $3Dmol.createViewer(element, config);
+  let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
 
-  // Explicitly set format to xyz
-  $3Dmol.download("https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz",
-                  viewer, {format: "xyz"}, function() {
-    viewer.setStyle({}, {stick:{radius:0.15}, sphere:{scale:0.25}});
-    viewer.zoomTo();
-    viewer.render();
-  });
+  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz")
+    .then(r => r.text())
+    .then(data => {
+      viewer.addModel(data, "xyz");   // force XYZ format
+      viewer.setStyle({}, {stick:{radius:0.15}, sphere:{scale:0.25}});
+      viewer.zoomTo();
+      viewer.render();
+    })
+    .catch(err => console.error("Could not load XYZ:", err));
 </script>
 
 <hr />
