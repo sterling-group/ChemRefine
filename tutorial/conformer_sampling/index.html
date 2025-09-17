@@ -399,6 +399,39 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#how-to-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      How to Run
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to Run">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#option-1-run-from-the-command-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      Option 1: Run from the Command Line
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-2-run-chemrefine-with-slurm-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      Option 2: Run ChemRefine with SLURM script
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -607,6 +640,39 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#how-to-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      How to Run
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to Run">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#option-1-run-from-the-command-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      Option 1: Run from the Command Line
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-2-run-chemrefine-with-slurm-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      Option 2: Run ChemRefine with SLURM script
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -732,6 +798,40 @@ steps:
       method: &quot;integer&quot;
       parameters:
         num_structures: 15
+</code></pre>
+<h2 id="how-to-run">How to Run</h2>
+<p>Before running ChemRefine, ensure that:</p>
+<ul>
+<li>The <strong>ChemRefine Enviroment</strong> is activated</li>
+<li>The <strong>ORCA executable</strong> is installed and available in your <code>PATH</code>  </li>
+<li>The <strong>template directory</strong> (<code>./templates/</code>) is correctly set up  </li>
+<li>The <strong>input structure file</strong> (e.g., <code>input.xyz</code>) is prepared  </li>
+</ul>
+<h3 id="option-1-run-from-the-command-line">Option 1: Run from the Command Line</h3>
+<p>You can launch ChemRefine directly from the command line:</p>
+<pre><code class="language-bash">chemrefine input.yaml --maxcores &lt;N&gt;
+</code></pre>
+<p>Here N is the number of simultaneous jobs you want to run.</p>
+<h3 id="option-2-run-chemrefine-with-slurm-script">Option 2: Run ChemRefine with SLURM script</h3>
+<p>On HPC systems with SLURM, you can submit ChemRefine as a batch job.
+A ready-to-use SLURM script template is available at:</p>
+<p><a href="https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Templates/chemrefine.slurm">➡️Example ChemRefine SLURM script</a></p>
+<pre><code class="language-bash">#!/bin/bash
+#SBATCH --partition=&lt;your_partition&gt;
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=2G              # Limit memory to allow multiple jobs on the same node
+#SBATCH --time=72:00:00
+#SBATCH --exclude=g-07-02
+#SBATCH --job-name=conformer_search
+#SBATCH --output=%x.out   # Saves output to auto_goat_JOBID.out
+#SBATCH --error=%x.err    # Saves error log
+
+# Ensure the script allows for shared node usage
+export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+
+# Run the calculation
+chemrefine input.yaml --maxcores 480 
 </code></pre>
 
 
