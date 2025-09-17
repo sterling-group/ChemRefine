@@ -648,8 +648,10 @@ ChemRefine automates this process by running a <strong>global optimization</stro
 <h2 id="input-files">Input Files</h2>
 <p>For this tutorial, we will use <strong>Pd(PPh₃)₄</strong>.<br />
 The XYZ file is provided in the repository:</p>
-<p>➡️ <a href="https://raw.githubusercontent.com/sterling-research-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz">Examples/Tutorials/Conformational Sampling/PdPPh3_4.xyz</a>
-- 📂 File location in repo: <code>Examples/Tutorials/Conformational Sampling/PdPPh3_4.xyz</code></p>
+<p>➡️ <a href="https://github.com/sterling-research-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz">step1.xyz</a></p>
+<ul>
+<li>📂 File location in repo: <code>Examples/Tutorials/Conformational Sampling/step1.xyz</code></li>
+</ul>
 <hr />
 <h3 id="interactive-3d-viewer">Interactive 3D Viewer</h3>
 <div id="viewer" style="width: 100%; height: 400px; position: relative;"></div>
@@ -662,10 +664,10 @@ The XYZ file is provided in the repository:</p>
 
   // Load XYZ directly from raw GitHub link
   $3Dmol.download("https://raw.githubusercontent.com/sterling-research-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz", viewer, {}, function() {
-    viewer.setStyle({}, {stick:{radius:0.15}, sphere:{scale:0.25}});
-    viewer.zoomTo();
-    viewer.render();
-  });
+  viewer.setStyle({}, {stick:{radius:0.15}, sphere:{scale:0.25}});
+  viewer.zoomTo();
+  viewer.render();
+});
 </script>
 
 <hr />
