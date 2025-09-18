@@ -52,7 +52,6 @@ chemrefine --help
 cd Examples/
 chemrefine input.yaml --maxcores 32
 ```
-
 ## Development Setup
 
 For developers who want to contribute:
@@ -63,6 +62,7 @@ pip install -e "."
 
 # Run tests
 pytest
+```
 
 ## License Information
 
