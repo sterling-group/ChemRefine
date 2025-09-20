@@ -325,8 +325,47 @@ class ChemRefiner:
                 for f in os.listdir(step_dir)
                 if f.endswith("struc1.allopt.xyz")
             ]
-            missing_msg = "No DOCKER output (struc1.allopt.xyz) files found"
-            found_msg = f"Found {len(output_files)} DOCKER output file(s)"
+            if not output_files:
+                logging.warning(
+                    f"No DOCKER outputs found in {step_dir}. Will rerun this step."
+                )
+                return None, None, None, None
+
+            logging.info(
+                f"Found {len(output_files)} DOCKER output file(s) in {step_dir}. Reusing existing outputs."
+            )
+
+            coordinates, energies, forces = self.orca.parse_output(
+                output_files, op, dir=step_dir
+            )
+            if not coordinates or not energies or len(coordinates) != len(energies):
+                logging.warning(
+                    f"DOCKER parse failed for {output_files[0]}. Will rerun step {step_number}."
+                )
+                return None, None, None, None
+
+            # --- DOCKER structures have no IDs; synthesize sequential ones ---
+            structure_ids = list(range(len(energies)))
+            docker_base = os.path.basename(output_files[0])
+            write_synthetic_manifest_for_ensemble(
+                step_number=step_number,
+                step_dir=step_dir,
+                n_structures=len(energies),
+                operation=op,
+                engine=engine,
+                output_basename=docker_base,
+            )
+            update_step_manifest_outputs(step_dir, step_number, output_files)
+
+            # Run filter
+            filtered_coordinates, filtered_ids = self.refiner.filter(
+                coordinates, energies, structure_ids, sample_method, parameters
+            )
+            logging.info(
+                f"After filtering DOCKER step {step_number}: kept {len(filtered_coordinates)} structures."
+            )
+
+            return filtered_coordinates, filtered_ids, energies, forces
 
         elif op == "SOLVATOR":
             xyz_candidates = [
