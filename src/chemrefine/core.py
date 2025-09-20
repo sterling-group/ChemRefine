@@ -328,6 +328,33 @@ class ChemRefiner:
             missing_msg = "No DOCKER output (struc1.allopt.xyz) files found"
             found_msg = f"Found {len(output_files)} DOCKER output file(s)"
 
+            if not output_files:
+                logging.warning(f"{missing_msg} in {step_dir}. Will rerun this step.")
+                return None, None, None, None
+
+            logging.info(f"{found_msg} in {step_dir}. Reusing existing outputs.")
+
+            # Parse Docker outputs directly
+            coordinates, energies, forces = self.orca.parse_output(
+                output_files, op, dir=step_dir
+            )
+            if not coordinates or not energies or len(coordinates) != len(energies):
+                logging.warning(f"DOCKER parse failed. Will rerun step {step_number}.")
+                return None, None, None, None
+
+            # Synthesize IDs since filenames don't encode them
+            structure_ids = list(range(len(energies)))
+            docker_base = os.path.basename(output_files[0])
+            write_synthetic_manifest_for_ensemble(
+                step_number=step_number,
+                step_dir=step_dir,
+                n_structures=len(energies),
+                operation=op,
+                engine=engine,
+                output_basename=docker_base,
+            )
+            update_step_manifest_outputs(step_dir, step_number, output_files)
+
         elif op == "SOLVATOR":
             xyz_candidates = [
                 os.path.join(step_dir, f)
