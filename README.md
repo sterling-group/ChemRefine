@@ -16,6 +16,7 @@ This repository contains a streamlined Python code for automated ORCA workflow f
 - **Error reduction** and efficient resource utilization
 - **Machine Learning Interatomic potentials** integration using pretrained `mace` and `FairChem models` models for fast geometry optimisation, molecular dynamics, and more.
 
+
 ---
 
 ## **Installation**
@@ -105,7 +106,9 @@ charge: 0
 multiplicity: 1
 steps:
   - step: 1
-    calculation_type: "GOAT"
+    template: "step1.inp"
+    operation: "GOAT"
+    engine: "DFT"
     sampling:
       method: "integer"
       parameters:
@@ -124,16 +127,40 @@ steps:
       model_name: "medium"  # For MACE: small,medium,large for FAIRCHEM "uma-s-1"
       task_type: "mace_off" # For MACE: "mace_off" or "mace_mp", for FairChem: oc20, omat, omol, odac, omc
       bind: '127.0.0.1:8888'    # ChemRefine uses a local server to avoid initializing the model multiple times, only adjust this if you know what you're doing.
+    operation: "OPT+SP"
+    engine: "MLFF"       
+    mlff:                           
+      model_name: "uma-s-1"         
+      task_name: "omol"             
+      device: "cuda"               
+    sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 15 
+      method: "energy_window"  
+      parameters:
+        energy: 1  
+        unit: kcal/mol  
+  - step: 3
+    calculation_type: "MLFF"
+    foundation_model: "mace-off"  
+    model_name: "medium"
     sampling:
       method: "integer"
       parameters:
         num_structures: 1
 ```
 
+
 The optional MLFF step uses a pretrained model from `mace` or `FairChem`. By default the
 ``mace-off`` backend with the ``"medium"`` model is used, but you can select
 different backends and models via ``model_name`` and ``task_type``. With task_type you can select on what training data the model was trained on. 
 If a CUDA-capable GPU is detected, the MLFF optimisation runs on the GPU; otherwise it falls back to the CPU automatically.
+The optional MLFF step uses a pretrained model from `mace`. By default the
+``mace-off`` backend with the ``"medium"`` model is used, but you can select
+different backends and models via ``foundation_model`` and ``model_name``.
+If a CUDA-capable GPU is detected, the MLFF optimisation runs on the GPU; otherwise it falls back to the CPU automatically.
+To avoid downloading the model each time, set the environment variable `CHEMREFINE_MLFF_CHECKPOINT` to the path of a locally downloaded checkpoint **or** place the file as `chemrefine/models/<model>.model` within this repository.
 
 
 ### **ORCA Template Files**
