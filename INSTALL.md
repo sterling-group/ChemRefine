@@ -4,7 +4,7 @@
 
 ### Option :Installation (Recommended)
 ```bash
-git clone --recursive https://github.com/sterling-research-group/ChemRefine.git
+git clone --recursive https://github.com/sterling-group/ChemRefine.git
 cd ChemRefine
 
 # Install in development mode
@@ -14,7 +14,7 @@ pip install -e .
 chemrefine --help
 
 # Clone repository
-git clone https://github.com/sterling-research-group/ChemRefine.git
+git clone https://github.com/sterling-group/ChemRefine.git
 cd ChemRefine
 
 # Install package6
@@ -63,7 +63,7 @@ pip install -e ".[dev]"
 
 # Run tests
 pytest
-
+```
 ## License Information
 
 This software is licensed under the GNU General Public License v3.0. By installing and using this software, you agree to the terms of the GPL-3.0 license. See the [LICENSE](LICENSE) file for complete terms.
