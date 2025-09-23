@@ -603,43 +603,42 @@ class OrcaInterface:
 
     def parse_pes_output(self, file_path):
         """
-        Parses a PES scan ORCA .out file, extracting only final optimized geometries and energies.
+        Parse PES scan ORCA .out file, extracting the final optimized geometry
+        and final energy (last step of the geometry optimization).
 
         Args:
             file_path (str): Path to the ORCA output file.
 
         Returns:
-            tuple: (coordinates_list, energies_list)
+            tuple[list, list]: (coordinates_list, energies_list)
         """
-        coordinates_list = []
-        energies_list = []
+        coordinates_list, energies_list = [], []
 
         with open(file_path, "r") as f:
             content = f.read()
 
         logging.info(f"Parsing PES output for: {file_path}")
-        blocks = content.split("*** OPTIMIZATION RUN DONE ***")
 
-        for i, block in enumerate(blocks):
-            energy_match = re.findall(
-                r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)", block
-            )
-            coord_match = re.findall(
-                r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n",
-                block,
-                re.DOTALL,
-            )
+        # Last energy
+        energy_match = re.findall(
+            r"FINAL SINGLE POINT ENERGY(?: \(From external program\))?\s+(-?\d+\.\d+)",
+            content,
+        )
+        # Last coordinates
+        coord_matches = re.findall(
+            r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n[-]+\n(.*?)(?=\n[-]+\n)",
+            content,
+            re.DOTALL,
+        )
 
-            if energy_match and coord_match:
-                energy = float(energy_match[-1])
-                coords = [line.split() for line in coord_match[-1].strip().splitlines()]
-                energies_list.append(energy)
-                coordinates_list.append(coords)
-                logging.debug(f"Appended PES geometry #{i+1}: energy={energy}")
-            else:
-                logging.warning(
-                    f"Skipping PES block #{i+1}: missing energy or coordinates."
-                )
+        if energy_match and coord_matches:
+            energy = float(energy_match[-1])
+            coords = [line.split() for line in coord_matches[-1].strip().splitlines()]
+            coordinates_list.append(coords)
+            energies_list.append(energy)
+            logging.debug(f"PES final point: energy={energy}")
+        else:
+            logging.warning(f"No PES geometries found in {file_path}")
 
         return coordinates_list, energies_list
 
