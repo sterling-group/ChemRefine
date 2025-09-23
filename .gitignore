@@ -167,3 +167,7 @@ src/chemrefine/tests/__pycache__/test_refine.cpython-311-pytest-8.3.5.pyc
 src/chemrefine/tests/__pycache__/test_submitter.cpython-311-pytest-8.3.5.pyc
 src/chemrefine/tests/__pycache__/test_utils.cpython-311-pytest-8.3.5.pyc
 src/chemrefine/tests/data/orca.out
+src/chemrefine/__pycache__/server.cpython-311.pyc
+src/chemrefine/__pycache__/utils_extopt.cpython-311.pyc
+src/chemrefine/__pycache__/client.cpython-311.pyc
+src/chemrefine/__pycache__/utils_extopt.cpython-311.pyc
