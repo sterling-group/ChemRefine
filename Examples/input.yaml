@@ -69,19 +69,12 @@ steps:
       parameters: 
         num_structures: 0
 
-  
-  # Step 5: Optional - Remove imaginary frequencies. 
-  - step: 5
-    operation: "OPT+SP"
-    engine: "DFT"
-    normal_mode_sampling: True
-    normal_mode_sampling_parameters:
-      calc_type: "rm_imag"   # Two options for this [rm_imag, random]
-      displacement_vector: 1.0
-    sample_type:
-      method: "integer"  
-      parameters:
-       num_structures: 0  #This energy is in Hartrees.      
 
-#You can add as many parameters are you wish. 
+  - step: 5
+    operation: "MLFF_TRAIN"    # Options are "GOAT","OPT+SP","PES","Docker","Solvator
+    trainer: 
+      model_name: "medium"      # For MACE: small,medium,large for FAIRCHEM "uma-s-1
+
+  
+ 
 

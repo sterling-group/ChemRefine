@@ -43,6 +43,7 @@ dependencies = [
     "pandas",
     "ase>=3.25.0",
     "mace-torch",
+    "scikit-learn"
 ]
 
 [project.optional-dependencies]
@@ -71,7 +72,6 @@ packages = ["src/chemrefine"]
 [tool.hatch.build.targets.sdist]
 include = [
     "/chemrefine",
-    "/vendor",
     "/README.md",
     "/LICENSE",
     "/pyproject.toml",
