@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ChemRefine"
-version = "0.3.0"  # Updated version
+version = "1.2.1"  # Updated version
 description = "Automated conformer sampling and refinement using ORCA."
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -44,7 +44,7 @@ dependencies = [
     "ase>=3.25.0",
     "mace-torch",
     "scikit-learn",
-    "e3nn==0.5.1",
+    "e3nn==0.4.4",
 
 ]
 
