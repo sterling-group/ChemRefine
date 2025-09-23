@@ -45,25 +45,46 @@ class MLFFCalculator:
                 f"Using FAIRChem model: {self.task_name} on device: {self.device}"
             )
             return self._setup_fairchem()
+
         elif self.task_name.startswith("chgnet"):
             logging.info(f"Using CHGNet model on device: {self.device}")
             return self._setup_chgnet()
+
+        elif self.model_name.startswith("sevenn"):
+            logging.info(
+                f"Using SevenNN model: {self.model_name} on device: {self.device}"
+            )
+            return self._setup_sevenn()
+
+        elif self.model_name.startswith("orb"):
+            logging.info(f"Using ORB model: {self.model_name} on device: {self.device}")
+            return self._setup_sevenn()
+
         else:
             raise ValueError(f"Unsupported task name: {self.task_name}")
 
     def _setup_mace(self):
-        from mace.calculators import mace_off, mace_mp
-
         if self.task_name == "mace_off":
+            from mace.calculators import mace_off
+
             logging.info(
                 f"Using MACE OFF model: {self.model_name} on device: {self.device}"
             )
             return mace_off(model=self.model_name, device=self.device)
         elif self.task_name == "mace_mp":
+            from mace.calculators import mace_mp
+
             logging.info(
                 f"Using MACE MP model: {self.model_name} on device: {self.device}"
             )
             return mace_mp(model=self.model_name, device=self.device)
+        elif self.task_name == "mace_omol":
+            from mace.calculators import mace_omol
+
+            logging.info(
+                f"Using MACE OMOL model: {self.model_name} on device: {self.device}"
+            )
+            return mace_omol(device=self.device)
         else:
             raise ValueError(f"Unsupported MACE task name: {self.task_name}")
 
@@ -85,6 +106,14 @@ class MLFFCalculator:
 
         model = CHGNet.load(self.model_path) if self.model_path else CHGNet.load()
         return CHGNetCalculator(model=model)
+
+    def _setup_sevenn(self):
+        from sevenn.calculator import SevenNetCalculator
+
+        logging.info(
+            f"Using SevenNN model from path: {self.model_path} on device: {self.device}"
+        )
+        return SevenNetCalculator(model=self.task_name, device=self.device)
 
     def get_single_point(self, atoms: Atoms) -> Tuple[float, List[float]]:
         """Compute energy and gradient using the configured MLFF."""
