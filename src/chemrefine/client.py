@@ -4,6 +4,7 @@ from __future__ import annotations
 
 # Timings including imports
 import time
+
 start_time = time.perf_counter()
 
 import requests
@@ -18,18 +19,22 @@ end_import = time.perf_counter()
 def parse_extended_args(arglist):
     parser = argparse.ArgumentParser()
     parser.add_argument("--bind", type=str, default="127.0.0.1:8888")
+    parser.add_argument("--model_name", type=str, default="uma-s-1")
+    parser.add_argument("--task_name", type=str, default="omol")
+    parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("inputfile")
     return parser.parse_args(arglist)
 
 
-def submit_uma(server_url: str,
-               atom_types: list[str],
-               coordinates: list[tuple[float, float, float]],
-               charge: int,
-               mult: int,
-               dograd: bool,
-               nthreads: int
-               ) -> tuple[float, list[float]]:
+def submit_uma(
+    server_url: str,
+    atom_types: list[str],
+    coordinates: list[tuple[float, float, float]],
+    charge: int,
+    mult: int,
+    dograd: bool,
+    nthreads: int,
+) -> tuple[float, list[float]]:
     """
     Sends an UMA calculation to the server and returns the result.
     """
@@ -39,11 +44,11 @@ def submit_uma(server_url: str,
         "mult": mult,
         "charge": charge,
         "dograd": dograd,
-        "nthreads": nthreads
+        "nthreads": nthreads,
     }
 
     try:
-        response = requests.post(f'http://{server_url}/calculate', json=payload)
+        response = requests.post(f"http://{server_url}/calculate", json=payload)
         response.raise_for_status()
         data = response.json()
     except requests.exceptions.HTTPError as http_err:
@@ -72,7 +77,7 @@ def submit_uma(server_url: str,
 
     energy = data["energy"]
     gradient = data["gradient"]
-    return energy,gradient
+    return energy, gradient
 
 
 def run(arglist: list[str]):
@@ -98,7 +103,7 @@ def run(arglist: list[str]):
         charge=charge,
         mult=mult,
         dograd=dograd,
-        nthreads=ncores
+        nthreads=ncores,
     )
 
     # Save result

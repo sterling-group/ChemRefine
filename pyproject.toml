@@ -43,7 +43,9 @@ dependencies = [
     "pandas",
     "ase>=3.25.0",
     "mace-torch",
-    "scikit-learn"
+    "scikit-learn",
+    "e3nn==0.5.1",
+
 ]
 
 [project.optional-dependencies]
