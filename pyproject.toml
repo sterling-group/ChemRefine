@@ -4,14 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ChemRefine"
-version = "1.2.1"  # Updated version
-description = "Automated conformer sampling and refinement using ORCA."
+version = "1.2.5"  # bump this each release
+description = "An automated and interoperable manager for computational chemistry workflows."
 readme = "README.md"
 license = {file = "LICENSE"}
-license-expression = "GPL-3.0-or-later"
-requires-python = ">=3.6"
+requires-python = ">=3.8"
 authors = [
-    {name = "Sterling Research Group", email = "ignaciomigliaro@outlook.com"},
+    {name = "Sterling Group", email = "ignaciomigliaro@outlook.com"},
 ]
 keywords = [
     "computational chemistry",
@@ -28,8 +27,6 @@ classifiers = [
     "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.6",
-    "Programming Language :: Python :: 3.7",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -45,7 +42,10 @@ dependencies = [
     "mace-torch",
     "scikit-learn",
     "e3nn==0.4.4",
-
+    "waitress",
+    "requests",
+    "flask",
+    
 ]
 
 [project.optional-dependencies]
@@ -67,21 +67,20 @@ Issues = "https://github.com/sterling-research-group/ChemRefine/issues"
 chemrefine = "chemrefine.core:main"
 chemrefine-mlff = "chemrefine.mlff_runner:main"
 
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/chemrefine"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "/chemrefine",
-    "/README.md",
-    "/LICENSE",
-    "/pyproject.toml",
+    "src/chemrefine",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
 ]
 
 [tool.black]
 line-length = 88
-target-version = ['py36']
+target-version = ['py38']
 include = '\\.pyi?$'
 extend-exclude = '''
 /(
@@ -98,13 +97,13 @@ extend-exclude = '''
 '''
 
 [tool.pytest.ini_options]
-testpaths = ["chemrefine/tests"]
+testpaths = ["src/chemrefine/tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
 [tool.mypy]
-python_version = "3.6"
+python_version = "3.8"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
