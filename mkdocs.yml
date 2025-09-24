@@ -8,10 +8,10 @@ nav:
   - Tutorial:
       - Overview: tutorial/index.md
       - Conformer Sampling: tutorial/conformer_sampling.md
-      - Transition State Finding: tutorial/ts_finding.md
-      - Normal Mode Sampling: tutorial/normal_modes.md
-      - Oxidation: tutorial/oxidation.md
-      - Solvation: tutorial/solvation.md
+      - Transition State Finding: tutorial/ts_finding.md 
+      - Host-Guest Docking and Microsolvation: tutorial/solvation.md
+      - MLIP Training and Normal Mode Sampling: tutorial/normal_modes.md
+      - Redox: tutorial/oxidation.md
       - Spin: tutorial/spin.md
 
   
