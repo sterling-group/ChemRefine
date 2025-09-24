@@ -1,0 +1,65 @@
+orca_executable: /mfs/io/groups/sterling/software-tools/orca/orca_6_1_0_avx2/orca
+# Sequential ORCA Input Configuration File
+# Define each step with its specific parameters.
+#This workflow reflects using GOAT and refining methods to improve the accuracy
+charge: 0
+multiplicity: 1
+
+# Optional: Override default initial structure (default is /template_dir/step1.xyz)
+initial_xyz: ./templates/step1.xyz
+
+
+# === Global configuration ===
+charge: 0
+multiplicity: 1
+
+# === Step-by-step workflow ===
+steps:
+  - step: 1
+    operation: "GOAT"
+    engine: "DFT"
+    sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 15  #This energy is in Hartrees.
+
+  - step: 2
+    operation: "OPT+SP"
+    engine: "DFT"
+    normal_mode_sampling: True
+    normal_mode_sampling_parameters:
+      calc_type: "random"   # Two options for this [rm_imag, random]
+      displacement_vector: 1.0
+      num_random_displacements: 1
+    sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 0  #This energy is in Hartrees.
+ 
+
+  - step: 3
+    operation: "OPT+SP"    # Options are "GOAT","OPT+SP","PES","Docker","Solvator"
+    engine: "DFT"        #Options are "DFT", "MLFF"
+    sample_type:
+      method: "integer"         # Options are "integer", "boltzmann", "energy_window", "high_energy"
+      parameters:
+        num_structures: 0
+
+  - step: 4
+    operation: "MLFF_TRAIN"    # Options are "GOAT","OPT+SP","PES","Docker","Solvator
+    sample_type:
+      method: "integer"         # Options are "integer", "boltzmann", "energy_window", "high_energy"
+      parameters:
+        num_structures: 0
+
+  - step: 5
+    operation: "OPT+SP"
+    engine: "MLFF"
+    mlff:
+      model_name: "../step3/checkpoints_dir/goat_model_run-123_stagetwo.model"
+      task_name: "mace_off"
+      device: "cuda"
+    sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 0
