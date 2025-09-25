@@ -76,7 +76,8 @@ class ChemRefiner:
         device="cpu",
         bind="127.0.0.1:8888",
     ):
-        """Prepares the directory for the first step by copying the initial XYZ file,"""
+        """Prepare the directory for the first step by copying the initial XYZ file,
+        generating input/output files, and assigning IDs."""
         if charge is None:
             charge = self.charge
         if multiplicity is None:
@@ -84,28 +85,25 @@ class ChemRefiner:
 
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         os.makedirs(step_dir, exist_ok=True)
-        logging.debug(f"step_dir BEFORE: {step_dir}")
 
-        # Determine source xyz: use override if provided
+        # Determine source xyz
         if initial_xyz is None:
             src_xyz = os.path.join(self.template_dir, "step1.xyz")
         else:
             src_xyz = initial_xyz
 
         dst_xyz = os.path.join(step_dir, "step1.xyz")
-
         if not os.path.exists(src_xyz):
             raise FileNotFoundError(
                 f"Initial XYZ file '{src_xyz}' not found. Please ensure the path is correct."
             )
-
         shutil.copyfile(src_xyz, dst_xyz)
 
-        # Use input template from template_dir
+        # Input template
         template_inp = os.path.join(self.template_dir, "step1.inp")
         if not os.path.exists(template_inp):
             raise FileNotFoundError(
-                f"Input file '{template_inp}' not found. Please ensure that 'step1.inp' exists in the template directory."
+                f"Input file '{template_inp}' not found. Please ensure 'step1.inp' exists in template directory."
             )
 
         xyz_filenames = [dst_xyz]
@@ -124,7 +122,10 @@ class ChemRefiner:
             bind=bind,
         )
 
-        return step_dir, input_files, output_files
+        # Assign one ID per input file
+        ids = list(range(len(input_files)))
+
+        return step_dir, input_files, output_files, ids
 
     def prepare_subsequent_step_directory(
         self,
@@ -820,17 +821,19 @@ class ChemRefiner:
 
                 if step_number == 1:
                     initial_xyz = self.config.get("initial_xyz", None)
-                    step_dir, input_files, output_files = self.prepare_step1_directory(
-                        step_number=step_number,
-                        initial_xyz=initial_xyz,
-                        charge=charge,
-                        multiplicity=multiplicity,
-                        operation=operation,
-                        engine=engine,
-                        model_name=model,
-                        task_name=task,
-                        device=device,
-                        bind=bind_address,
+                    step_dir, input_files, output_files, filtered_ids = (
+                        self.prepare_step1_directory(
+                            step_number=step_number,
+                            initial_xyz=initial_xyz,
+                            charge=charge,
+                            multiplicity=multiplicity,
+                            operation=operation,
+                            engine=engine,
+                            model_name=model,
+                            task_name=task,
+                            device=device,
+                            bind=bind_address,
+                        )
                     )
                 else:
                     # Validate IDs for compute steps (not for training)
@@ -877,7 +880,10 @@ class ChemRefiner:
                 update_step_manifest_outputs(step_dir, step_number, output_files)
 
                 # Resolve persistent IDs
-                filtered_ids = map_outputs_to_ids(step_dir, step_number, output_files)
+                if filtered_ids is None:
+                    filtered_ids = map_outputs_to_ids(
+                        step_dir, step_number, output_files
+                    )
 
                 # Apply filtering if configured
                 filtered_coordinates, filtered_ids = self.refiner.filter(

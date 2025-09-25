@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ChemRefine"
-version = "1.2.7"  # bump this each release
+version = "1.2.9"  # bump this each release
 description = "An automated and interoperable manager for computational chemistry workflows."
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -35,7 +35,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Physics",
 ]
 dependencies = [
-    "numpy<2.0",
+    "numpy",
     "pyyaml",
     "pandas>=1.5",
     "ase>=3.25.0",
@@ -45,9 +45,13 @@ dependencies = [
     "waitress",
     "requests",
     "flask",
-    "fairchem-core"
-    
+    "torch<=2.5.1",
+    "fairchem-core @ git+https://github.com/sterling-group/fairchem-patched.git@main#subdirectory=packages/fairchem-core"
+
 ]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [project.optional-dependencies]
 dev = [
