@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ChemRefine"
-version = "1.2.5"  # bump this each release
+version = "1.2.6"  # bump this each release
 description = "An automated and interoperable manager for computational chemistry workflows."
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -35,19 +35,15 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Physics",
 ]
 dependencies = [
-    "numpy",
+    "numpy<2.0",          # Pin below 2.0 to avoid matscipy + pandas conflicts
     "pyyaml",
-    "pandas",
+    "pandas>=1.5",        # modern pandas (compatible with numpy<2.0)
     "ase>=3.25.0",
-    "mace-torch",
-    "scikit-learn",
-    "e3nn==0.4.4",
-    "waitress",
-    "requests",
-    "flask",
-    "fairchem-core"
-    
+    "mace-torch>=0.3.14", # current stable release
+    "scikit-learn>=1.3",  # modern sklearn
+    "e3nn==0.4.4",        # matches mace-torch requirement
 ]
+
 
 [project.optional-dependencies]
 dev = [
