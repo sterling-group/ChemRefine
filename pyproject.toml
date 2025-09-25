@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ChemRefine"
-version = "1.2.6"  # bump this each release
+version = "1.2.7"  # bump this each release
 description = "An automated and interoperable manager for computational chemistry workflows."
 readme = "README.md"
 license = {file = "LICENSE"}
