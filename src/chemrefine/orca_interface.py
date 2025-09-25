@@ -289,6 +289,7 @@ class OrcaJobSubmitter:
                     )
 
                 f.write("SERVER_PID=$!\n")
+                f.write("trap 'kill $SERVER_PID 2>/dev/null' EXIT\n")
                 f.write("sleep 10\n")
                 f.write(
                     f"$ORCA_EXEC {input_file.name} > $OUTPUT_DIR/{job_name}.out || {{ echo 'Error: ORCA execution failed.'; kill $SERVER_PID; exit 1; }}\n"
@@ -301,9 +302,7 @@ class OrcaJobSubmitter:
                 )
 
             # File copy commands
-            f.write(
-                "cp *.out *.xyz *.finalensemble.*.xyz *.finalensemble.xyz $OUTPUT_DIR \n"
-            )
+            f.write("cp *.out *.xyz *.xyz $OUTPUT_DIR \n")
 
             if not self.save_scratch:
                 f.write(
