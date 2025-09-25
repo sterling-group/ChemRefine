@@ -49,7 +49,7 @@ We start with an initial structure located in the templates folder:
 <script>
   let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
 
-  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/MLIP-Training/step1.xyz")
+  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/MLIPTraining/step1.xyz")
     .then(r => r.text())
     .then(data => {
       viewer.addModel(data, "xyz");   // force XYZ format
