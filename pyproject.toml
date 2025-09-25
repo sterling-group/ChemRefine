@@ -35,15 +35,19 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Physics",
 ]
 dependencies = [
-    "numpy<2.0",          # Pin below 2.0 to avoid matscipy + pandas conflicts
+    "numpy<2.0",
     "pyyaml",
-    "pandas>=1.5",        # modern pandas (compatible with numpy<2.0)
+    "pandas>=1.5",
     "ase>=3.25.0",
-    "mace-torch>=0.3.14", # current stable release
-    "scikit-learn>=1.3",  # modern sklearn
-    "e3nn==0.4.4",        # matches mace-torch requirement
+    "mace-torch>=0.3.14",
+    "scikit-learn>=1.3",
+    "e3nn==0.4.4",
+    "waitress",
+    "requests",
+    "flask",
+    "fairchem-core"
+    
 ]
-
 
 [project.optional-dependencies]
 dev = [
