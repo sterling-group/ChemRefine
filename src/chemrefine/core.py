@@ -880,10 +880,7 @@ class ChemRefiner:
                 update_step_manifest_outputs(step_dir, step_number, output_files)
 
                 # Resolve persistent IDs
-                if filtered_ids is None:
-                    filtered_ids = map_outputs_to_ids(
-                        step_dir, step_number, output_files
-                    )
+                filtered_ids = map_outputs_to_ids(step_dir, step_number, output_files)
 
                 # Apply filtering if configured
                 filtered_coordinates, filtered_ids = self.refiner.filter(
