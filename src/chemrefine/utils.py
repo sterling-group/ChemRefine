@@ -349,7 +349,7 @@ def update_step_manifest_outputs(
 
 
 def map_outputs_to_ids(
-    step_dir: str, step_number: int, output_files: List[str]
+    step_dir: str, step_number: int, output_files: List[str], operation: str
 ) -> List[int]:
     """
     Resolve structure IDs for outputs using the manifest; fall back to robust parsing
@@ -360,6 +360,13 @@ def map_outputs_to_ids(
     list[int]
         Structure IDs aligned with output_files order. Unresolved IDs are -1.
     """
+    # Special handling for first step
+    if step_number == 1:
+        # For OPT+SP, just one structure → [0]
+        if operation.upper() == "OPT+SP":
+            return [0 for _ in output_files]
+
+    # For PES, GOAT, DOCKER → let normal parsing run
     manifest = read_step_manifest(step_dir, step_number)
     ids: List[int] = []
 
@@ -617,3 +624,119 @@ def extract_structure_id_from_any_name(name: str) -> Optional[int]:
     stem = os.path.splitext(base)[0]
     m = _ID_ANYWHERE_RE.search(stem)
     return int(m.group("id")) if m else None
+
+
+def allocate_child_ids(parent_ids, fanouts, next_id_start):
+    """
+    Allocate persistent structure IDs for children spawned from parents.
+
+    Rules
+    -----
+    - If a parent yields exactly one child, that child keeps the parent's ID.
+    - If a parent yields more than one child, the first child keeps the parent's ID
+    and remaining children receive fresh IDs from a monotonically increasing counter.
+
+    Parameters
+    ----------
+    parent_ids : list[int]
+        IDs of parent structures in input order.
+    fanouts : list[int]
+        Number of children per parent, aligned with `parent_ids`.
+    next_id_start : int
+        Next fresh ID to assign for newly created children.
+
+    Returns
+    -------
+    tuple[list[int], int]
+        The assigned child IDs (in output order) and the updated `next_id_start`.
+    """
+    out, nxt = [], next_id_start
+    for pid, m in zip(parent_ids, fanouts):
+        if m <= 0:
+            continue
+        out.append(pid)
+        for _ in range(m - 1):
+            out.append(nxt)
+            nxt += 1
+    return out, nxt
+
+
+def resolve_persistent_ids(
+    *,
+    step_number: int,
+    last_ids: list[int] | None,
+    coords_count: int,
+    output_files: list[str],
+    operation: str,
+    next_id: int,
+    file_map_fn=None,
+    step_dir: str | None = None,
+):
+    """
+    Resolve persistent structure IDs for the current step from parent IDs and fan-out.
+
+    Strategy
+    --------
+    - Step 1: one implicit parent (ID 0); allocate `coords_count` children (PES/GOAT/DOCKER supported).
+    - General case:
+        * If `coords_count == len(last_ids)`, prefer 1:1 persistence; optionally use `file_map_fn`
+          for provenance mapping (must return fully-resolved, non-negative IDs).
+        * Otherwise infer fan-outs:
+            - Single parent: all outputs belong to that parent.
+            - Multiple parents:
+                · If `coords_count <= len(last_ids)`: first `coords_count` parents yield one child, others zero.
+                · If `coords_count > len(last_ids)`: first parent yields the extra, others yield one.
+
+    Parameters
+    ----------
+    step_number : int
+        Current step number (1-based).
+    last_ids : list[int] | None
+        Parent IDs from previous step; None for the first step.
+    coords_count : int
+        Number of coordinate sets returned by the parser.
+    output_files : list[str]
+        Output filenames produced in this step.
+    operation : str
+        Operation name (e.g., 'OPT+SP', 'PES', 'GOAT', 'DOCKER').
+    next_id : int
+        Next fresh ID to assign for newly created children.
+    file_map_fn : callable | None
+        Optional mapper `(step_dir, step_number, output_files) -> list[int]`.
+        Used only when `coords_count == len(last_ids)`.
+    step_dir : str | None
+        Step directory; required if `file_map_fn` is used.
+
+    Returns
+    -------
+    tuple[list[int], int]
+        The resolved IDs (length `coords_count`) and the updated `next_id`.
+    """
+    # Step 1 bootstrap
+    if step_number == 1:
+        return allocate_child_ids([0], [coords_count], next_id)
+
+    # No parents: assign fresh IDs
+    if not last_ids:
+        return list(range(next_id, next_id + coords_count)), next_id + coords_count
+
+    # 1:1 case (optionally use filename mapping)
+    if coords_count == len(last_ids):
+        if file_map_fn and step_dir is not None:
+            mapped = file_map_fn(step_dir, step_number, output_files)
+            if mapped and len(mapped) == coords_count and all(i >= 0 for i in mapped):
+                return mapped, next_id
+        return last_ids[:], next_id
+
+    # Fan-out inference
+    p = len(last_ids)
+    if p == 1:
+        fanouts = [coords_count]
+    else:
+        if coords_count <= p:
+            fanouts = [1] * coords_count + [0] * (p - coords_count)
+        else:
+            extra = coords_count - (p - 1)
+            fanouts = [extra] + [1] * (p - 1)
+
+    return allocate_child_ids(last_ids, fanouts, next_id)
