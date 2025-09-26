@@ -275,6 +275,65 @@ class ChemRefiner:
             )
             return list(range(n_structs))
 
+        def _skip_pes(step_dir, step_number, engine, sample_method, parameters):
+            """
+            Reuse PES outputs in a skip-run. Builds persistent IDs from the number
+            of parsed frames (not from filenames), writes a synthetic manifest, and
+            applies filtering.
+            """
+            op = "PES"
+            logging.info(f"Attempting to skip PES step {step_number} in {step_dir}.")
+            # discover the single PES .out; adjust pattern if you also allow plain 'stepN.out'
+            candidates = [
+                os.path.join(step_dir, f)
+                for f in os.listdir(step_dir)
+                if f.endswith(".out") and f.startswith(f"step{step_number}")
+            ]
+            if not candidates:
+                logging.warning(
+                    f"No PES outputs found in {step_dir}. Will rerun this step."
+                )
+                return None, None, None, None
+
+            outpath = candidates[0]
+            coordinates, energies, forces = self.orca.parse_output(
+                [outpath], op, dir=step_dir
+            )
+            if not coordinates or not energies or len(coordinates) != len(energies):
+                logging.warning(
+                    f"PES parse failed for {outpath}. Will rerun step {step_number}."
+                )
+                return None, None, None, None
+
+            # IDs must come from the number of frames (NOT from output files)
+            n = len(energies)
+            structure_ids = list(range(n))
+
+            # Persist a manifest for future skips
+            write_synthetic_manifest_for_ensemble(
+                step_number=step_number,
+                step_dir=step_dir,
+                n_structures=n,
+                operation=op,
+                engine=engine,
+                output_basename=os.path.basename(outpath),
+            )
+            update_step_manifest_outputs(step_dir, step_number, [outpath])
+
+            # Apply filter
+            filtered_coordinates, filtered_ids = self.refiner.filter(
+                coordinates, energies, structure_ids, sample_method, parameters
+            )
+            logging.info(
+                f"After filtering PES step {step_number}: kept {len(filtered_coordinates)} structures."
+            )
+
+            # Forces are typically unavailable for PES; keep as list of None
+            if not forces or len(forces) != len(coordinates):
+                forces = [None] * len(coordinates)
+
+            return filtered_coordinates, filtered_ids, energies, forces
+
         # ---------- GOAT special case ----------
         if op == "GOAT":
             output_files = [
@@ -323,6 +382,9 @@ class ChemRefiner:
                 f"After filtering GOAT step {step_number}: kept {final_n} structures."
             )
             return filtered_coordinates, structure_ids, ens, forces
+
+        elif op == "PES":
+            return _skip_pes(step_dir, step_number, engine, sample_method, parameters)
 
         elif op == "DOCKER":
             output_files = [
@@ -441,7 +503,9 @@ class ChemRefiner:
             return None, None, None, None
 
         # ---------- Resolve IDs ----------
-        structure_ids = map_outputs_to_ids(step_dir, step_number, output_files)
+        structure_ids = map_outputs_to_ids(
+            step_dir, step_number, output_files, operation
+        )
 
         if all(i < 0 for i in structure_ids):
 
