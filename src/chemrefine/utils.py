@@ -723,7 +723,7 @@ def resolve_persistent_ids(
     # 1:1 case (optionally use filename mapping)
     if coords_count == len(last_ids):
         if file_map_fn and step_dir is not None:
-            mapped = file_map_fn(step_dir, step_number, output_files)
+            mapped = file_map_fn(step_dir, step_number, output_files, operation)
             if mapped and len(mapped) == coords_count and all(i >= 0 for i in mapped):
                 return mapped, next_id
         return last_ids[:], next_id
