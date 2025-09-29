@@ -242,7 +242,6 @@ Selects conformers within specified energy range of the global minimum.
 method: "boltzmann"
 parameters:
   percentage: 95  # Cumulative population %
-  temperature: 298.15  # Kelvin
 ```
 Selects conformers based on Boltzmann population at given temperature.
 
