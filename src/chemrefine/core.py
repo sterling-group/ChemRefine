@@ -16,6 +16,7 @@ from chemrefine.utils import (
     write_step_manifest,
     write_synthetic_manifest_for_ensemble,
     validate_structure_ids_or_raise,
+    resolve_persistent_ids,
 )
 
 
@@ -62,6 +63,7 @@ class ChemRefiner:
         self.refiner = StructureRefiner()
         self.utils = Utility()
         self.orca = OrcaInterface()
+        self.next_id = 1  # 0 will be the initial seed; next fresh ID starts at 1
 
     def prepare_step1_directory(
         self,
@@ -76,7 +78,8 @@ class ChemRefiner:
         device="cpu",
         bind="127.0.0.1:8888",
     ):
-        """Prepares the directory for the first step by copying the initial XYZ file,"""
+        """Prepare the directory for the first step by copying the initial XYZ file,
+        generating input/output files, and assigning IDs."""
         if charge is None:
             charge = self.charge
         if multiplicity is None:
@@ -84,30 +87,29 @@ class ChemRefiner:
 
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         os.makedirs(step_dir, exist_ok=True)
-        logging.debug(f"step_dir BEFORE: {step_dir}")
 
-        # Determine source xyz: use override if provided
+        # Determine source xyz
         if initial_xyz is None:
             src_xyz = os.path.join(self.template_dir, "step1.xyz")
         else:
             src_xyz = initial_xyz
 
-        dst_xyz = os.path.join(step_dir, "step1.xyz")
-
+        # Force consistent naming with _structure_0
+        dst_xyz = os.path.join(step_dir, f"step{step_number}_structure_0.xyz")
         if not os.path.exists(src_xyz):
             raise FileNotFoundError(
                 f"Initial XYZ file '{src_xyz}' not found. Please ensure the path is correct."
             )
-
         shutil.copyfile(src_xyz, dst_xyz)
 
-        # Use input template from template_dir
+        # Input template
         template_inp = os.path.join(self.template_dir, "step1.inp")
         if not os.path.exists(template_inp):
             raise FileNotFoundError(
-                f"Input file '{template_inp}' not found. Please ensure that 'step1.inp' exists in the template directory."
+                f"Input file '{template_inp}' not found. Please ensure 'step1.inp' exists in the template directory."
             )
 
+        # Now pass correctly named xyz into create_input
         xyz_filenames = [dst_xyz]
 
         input_files, output_files = self.orca.create_input(
@@ -124,7 +126,10 @@ class ChemRefiner:
             bind=bind,
         )
 
-        return step_dir, input_files, output_files
+        # Assign IDs based on number of input files
+        ids = [0]  # step 1 always seeds with a single parent ID
+
+        return step_dir, input_files, output_files, ids
 
     def prepare_subsequent_step_directory(
         self,
@@ -270,6 +275,65 @@ class ChemRefiner:
             )
             return list(range(n_structs))
 
+        def _skip_pes(step_dir, step_number, engine, sample_method, parameters):
+            """
+            Reuse PES outputs in a skip-run. Builds persistent IDs from the number
+            of parsed frames (not from filenames), writes a synthetic manifest, and
+            applies filtering.
+            """
+            op = "PES"
+            logging.info(f"Attempting to skip PES step {step_number} in {step_dir}.")
+            # discover the single PES .out; adjust pattern if you also allow plain 'stepN.out'
+            candidates = [
+                os.path.join(step_dir, f)
+                for f in os.listdir(step_dir)
+                if f.endswith(".out") and f.startswith(f"step{step_number}")
+            ]
+            if not candidates:
+                logging.warning(
+                    f"No PES outputs found in {step_dir}. Will rerun this step."
+                )
+                return None, None, None, None
+
+            outpath = candidates[0]
+            coordinates, energies, forces = self.orca.parse_output(
+                [outpath], op, dir=step_dir
+            )
+            if not coordinates or not energies or len(coordinates) != len(energies):
+                logging.warning(
+                    f"PES parse failed for {outpath}. Will rerun step {step_number}."
+                )
+                return None, None, None, None
+
+            # IDs must come from the number of frames (NOT from output files)
+            n = len(energies)
+            structure_ids = list(range(n))
+
+            # Persist a manifest for future skips
+            write_synthetic_manifest_for_ensemble(
+                step_number=step_number,
+                step_dir=step_dir,
+                n_structures=n,
+                operation=op,
+                engine=engine,
+                output_basename=os.path.basename(outpath),
+            )
+            update_step_manifest_outputs(step_dir, step_number, [outpath])
+
+            # Apply filter
+            filtered_coordinates, filtered_ids = self.refiner.filter(
+                coordinates, energies, structure_ids, sample_method, parameters
+            )
+            logging.info(
+                f"After filtering PES step {step_number}: kept {len(filtered_coordinates)} structures."
+            )
+
+            # Forces are typically unavailable for PES; keep as list of None
+            if not forces or len(forces) != len(coordinates):
+                forces = [None] * len(coordinates)
+
+            return filtered_coordinates, filtered_ids, energies, forces
+
         # ---------- GOAT special case ----------
         if op == "GOAT":
             output_files = [
@@ -318,6 +382,9 @@ class ChemRefiner:
                 f"After filtering GOAT step {step_number}: kept {final_n} structures."
             )
             return filtered_coordinates, structure_ids, ens, forces
+
+        elif op == "PES":
+            return _skip_pes(step_dir, step_number, engine, sample_method, parameters)
 
         elif op == "DOCKER":
             output_files = [
@@ -436,7 +503,9 @@ class ChemRefiner:
             return None, None, None, None
 
         # ---------- Resolve IDs ----------
-        structure_ids = map_outputs_to_ids(step_dir, step_number, output_files)
+        structure_ids = map_outputs_to_ids(
+            step_dir, step_number, output_files, operation
+        )
 
         if all(i < 0 for i in structure_ids):
 
@@ -820,18 +889,21 @@ class ChemRefiner:
 
                 if step_number == 1:
                     initial_xyz = self.config.get("initial_xyz", None)
-                    step_dir, input_files, output_files = self.prepare_step1_directory(
-                        step_number=step_number,
-                        initial_xyz=initial_xyz,
-                        charge=charge,
-                        multiplicity=multiplicity,
-                        operation=operation,
-                        engine=engine,
-                        model_name=model,
-                        task_name=task,
-                        device=device,
-                        bind=bind_address,
+                    step_dir, input_files, output_files, seeds_ids = (
+                        self.prepare_step1_directory(
+                            step_number=step_number,
+                            initial_xyz=initial_xyz,
+                            charge=charge,
+                            multiplicity=multiplicity,
+                            operation=operation,
+                            engine=engine,
+                            model_name=model,
+                            task_name=task,
+                            device=device,
+                            bind=bind_address,
+                        )
                     )
+                    last_ids = seeds_ids
                 else:
                     # Validate IDs for compute steps (not for training)
                     validate_structure_ids_or_raise(last_ids, step_number)
@@ -876,9 +948,18 @@ class ChemRefiner:
                 # Update manifest with output files
                 update_step_manifest_outputs(step_dir, step_number, output_files)
 
-                # Resolve persistent IDs
-                filtered_ids = map_outputs_to_ids(step_dir, step_number, output_files)
-
+                # CORE CHANGE: persistent ID resolution
+                num_out = len(filtered_coordinates)
+                filtered_ids, self.next_id = resolve_persistent_ids(
+                    step_number=step_number,
+                    last_ids=last_ids,  # parents for this step
+                    coords_count=num_out,  # children produced this step
+                    output_files=output_files,
+                    operation=operation,
+                    next_id=self.next_id,  # fresh-ID counter
+                    file_map_fn=map_outputs_to_ids,  # used only when 1:1 cases
+                    step_dir=step_dir,
+                )
                 # Apply filtering if configured
                 filtered_coordinates, filtered_ids = self.refiner.filter(
                     filtered_coordinates,

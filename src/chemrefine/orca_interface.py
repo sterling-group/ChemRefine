@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 import time
 import numpy as np
+from typing import List, Tuple
 
 # chemrefine/orca_interface.py
 
@@ -600,46 +601,101 @@ class OrcaInterface:
         )
         return coordinates_list, energies_list
 
-    def parse_pes_output(self, file_path):
+    def parse_pes_output(
+        self, file_path: str
+    ) -> Tuple[List[List[Tuple[str, float, float, float]]], List[float]]:
         """
-        Parse PES scan ORCA .out file, extracting the final optimized geometry
-        and final energy (last step of the geometry optimization).
+        Parse an ORCA PES scan .out and extract one geometry + energy per completed scan point.
 
-        Args:
-            file_path (str): Path to the ORCA output file.
+        Splits the file by the marker "*** OPTIMIZATION RUN DONE ***".
+        For each completed segment:
+        - takes the LAST "CARTESIAN COORDINATES (ANGSTROEM)" block,
+        - takes the LAST "FINAL SINGLE POINT ENERGY" value.
 
-        Returns:
-            tuple[list, list]: (coordinates_list, energies_list)
+        Returns
+        -------
+        tuple[list[list[tuple[str,float,float,float]]], list[float]]
+            coordinates_list, energies_list
+            - coordinates_list: list over frames; each frame is a list of (symbol, x, y, z)
+            in Å, in the printed atom order.
+            - energies_list: list of energies (Hartree), one per frame.
         """
-        coordinates_list, energies_list = [], []
 
-        with open(file_path, "r") as f:
-            content = f.read()
+        def _is_float_triplet(tokens: List[str]) -> bool:
+            if len(tokens) != 3:
+                return False
+            try:
+                float(tokens[0])
+                float(tokens[1])
+                float(tokens[2])
+                return True
+            except Exception:
+                return False
 
-        logging.info(f"Parsing PES output for: {file_path}")
+        def _parse_last_coords_in_segment(
+            seg: str,
+        ) -> List[Tuple[str, float, float, float]]:
+            # Find all coordinate headers; take the last block
+            hdr = re.compile(
+                r"^\s*CARTESIAN COORDINATES\s*\(ANGSTROEM\)\s*$", re.MULTILINE
+            )
+            matches = list(hdr.finditer(seg))
+            if not matches:
+                return []
+            last_hdr = matches[-1]
 
-        # Last energy
-        energy_match = re.findall(
-            r"FINAL SINGLE POINT ENERGY(?: \(From external program\))?\s+(-?\d+\.\d+)",
-            content,
-        )
-        # Last coordinates
-        coord_matches = re.findall(
-            r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n[-]+\n(.*?)(?=\n[-]+\n)",
-            content,
-            re.DOTALL,
-        )
+            # Convert char offset to line index
+            lines = seg.splitlines()
+            start_line = seg.count("\n", 0, last_hdr.end())
 
-        if energy_match and coord_matches:
-            energy = float(energy_match[-1])
-            coords = [line.split() for line in coord_matches[-1].strip().splitlines()]
-            coordinates_list.append(coords)
-            energies_list.append(energy)
-            logging.debug(f"PES final point: energy={energy}")
-        else:
-            logging.warning(f"No PES geometries found in {file_path}")
+            # Skip dashed separator lines
+            i = start_line
+            while i < len(lines) and re.match(r"^\s*-{3,}\s*$", lines[i]):
+                i += 1
 
-        return coordinates_list, energies_list
+            atoms: List[Tuple[str, float, float, float]] = []
+            while i < len(lines):
+                ln = lines[i]
+                if re.match(r"^\s*$", ln):  # blank line ends block
+                    break
+                parts = ln.split()
+                # Two common ORCA formats:
+                #   "C    x    y    z"
+                #   "1   C    x    y    z"
+                if len(parts) == 4 and _is_float_triplet(parts[1:]):
+                    sym = parts[0]
+                    x, y, z = map(float, parts[1:])
+                    atoms.append((sym, x, y, z))
+                elif len(parts) == 5 and _is_float_triplet(parts[2:]):
+                    sym = parts[1]
+                    x, y, z = map(float, parts[2:])
+                    atoms.append((sym, x, y, z))
+                i += 1
+            return atoms
+
+        def _parse_last_energy_in_segment(seg: str) -> float | None:
+            e_pat = re.compile(
+                r"FINAL SINGLE POINT ENERGY(?:\s*\(From external program\))?\s+(-?\d+\.\d+)"
+            )
+            ms = list(e_pat.finditer(seg))
+            return float(ms[-1].group(1)) if ms else None
+
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            text = f.read()
+
+        # Split by the DONE marker; each completed point is a segment ending with this marker
+        parts = re.split(r"\*{3}\s*OPTIMIZATION RUN DONE\s*\*{3}", text)
+
+        coords_all: List[List[Tuple[str, float, float, float]]] = []
+        energies_all: List[float] = []
+        for seg in parts[:-1]:
+            atoms = _parse_last_coords_in_segment(seg)
+            energy = _parse_last_energy_in_segment(seg)
+            if atoms and (energy is not None):
+                coords_all.append(atoms)
+                energies_all.append(energy)
+
+        return coords_all, energies_all
 
     def parse_docker_xyz(self, file_path):
         """
