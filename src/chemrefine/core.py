@@ -339,7 +339,7 @@ class ChemRefiner:
             output_files = [
                 os.path.join(step_dir, f)
                 for f in os.listdir(step_dir)
-                if f.endswith("_opt.finalensemble.xyz")
+                if f.endswith("finalensemble.xyz")
             ]
             if not output_files:
                 logging.warning(
