@@ -1,6 +1,6 @@
-import pytest
 from unittest import mock
 from chemrefine.core import ChemRefiner
+
 
 def test_submit_orca_jobs(monkeypatch):
     """

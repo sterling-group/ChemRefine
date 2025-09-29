@@ -1,6 +1,6 @@
-import pytest
 from unittest import mock
 from chemrefine.core import ChemRefiner
+
 
 def test_parse_and_filter_outputs(monkeypatch):
     """
@@ -32,7 +32,9 @@ def test_parse_and_filter_outputs(monkeypatch):
     )
 
     # Assertions
-    chem.orca.parse_output.assert_called_once_with(output_files, calculation_type, dir=step_dir)
+    chem.orca.parse_output.assert_called_once_with(
+        output_files, calculation_type, dir=step_dir
+    )
     chem.utils.save_step_csv.assert_called_once()
     chem.refiner.filter.assert_called_once()
     chem.utils.move_step_files.assert_called_once()

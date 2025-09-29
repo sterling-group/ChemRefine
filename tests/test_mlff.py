@@ -1,7 +1,7 @@
 import sys
 import types
 import os
-from chemrefine.mlff import run_mlff_calculation, get_available_device, MLFFJobSubmitter
+from chemrefine.mlff import run_mlff_calculation, MLFFJobSubmitter
 
 
 class DummyAtoms:
@@ -36,11 +36,13 @@ def test_run_mlff(monkeypatch, tmp_path):
         return DummyCalc()
 
     monkeypatch.setitem(sys.modules, "ase.io", types.SimpleNamespace(read=dummy_read))
-    monkeypatch.setitem(sys.modules, "ase.optimize", types.SimpleNamespace(LBFGS=DummyOpt))
+    monkeypatch.setitem(
+        sys.modules, "ase.optimize", types.SimpleNamespace(LBFGS=DummyOpt)
+    )
     monkeypatch.setitem(
         sys.modules,
         "mace.calculators",
-        types.SimpleNamespace(mace_off=dummy_calculator, mace_mp=dummy_calculator)
+        types.SimpleNamespace(mace_off=dummy_calculator, mace_mp=dummy_calculator),
     )
 
     coords, energy = run_mlff_calculation(str(xyz), steps=1)
@@ -66,19 +68,29 @@ def test_device_selection(monkeypatch, tmp_path):
         return DummyCalc()
 
     monkeypatch.setitem(sys.modules, "ase.io", types.SimpleNamespace(read=dummy_read))
-    monkeypatch.setitem(sys.modules, "ase.optimize", types.SimpleNamespace(LBFGS=DummyOpt))
+    monkeypatch.setitem(
+        sys.modules, "ase.optimize", types.SimpleNamespace(LBFGS=DummyOpt)
+    )
     monkeypatch.setitem(
         sys.modules,
         "mace.calculators",
-        types.SimpleNamespace(mace_off=dummy_calculator, mace_mp=dummy_calculator)
+        types.SimpleNamespace(mace_off=dummy_calculator, mace_mp=dummy_calculator),
     )
 
-    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda: True)))
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda: True)),
+    )
     run_mlff_calculation(str(xyz), steps=1, device=None)
     assert called_devices[0] == "cuda"
 
     called_devices.clear()
-    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda: False)))
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda: False)),
+    )
     run_mlff_calculation(str(xyz), steps=1, device=None)
     assert called_devices[0] == "cpu"
 
@@ -90,7 +102,9 @@ def test_mlff_slurm_script(tmp_path):
     xyz.write_text("2\n\nH 0 0 0\nH 0 0 0.74\n")
 
     submitter = MLFFJobSubmitter()
-    script = submitter.generate_slurm_script(str(xyz), template_dir=tmp_path, output_dir=tmp_path)
+    script = submitter.generate_slurm_script(
+        str(xyz), template_dir=tmp_path, output_dir=tmp_path
+    )
     assert os.path.exists(script)
 
 
@@ -114,14 +128,15 @@ def test_env_checkpoint(monkeypatch, tmp_path):
         return DummyCalc()
 
     monkeypatch.setitem(sys.modules, "ase.io", types.SimpleNamespace(read=dummy_read))
-    monkeypatch.setitem(sys.modules, "ase.optimize", types.SimpleNamespace(LBFGS=DummyOpt))
+    monkeypatch.setitem(
+        sys.modules, "ase.optimize", types.SimpleNamespace(LBFGS=DummyOpt)
+    )
     monkeypatch.setitem(
         sys.modules,
         "mace.calculators",
-        types.SimpleNamespace(mace_off=dummy_calculator, mace_mp=dummy_calculator)
+        types.SimpleNamespace(mace_off=dummy_calculator, mace_mp=dummy_calculator),
     )
 
     monkeypatch.setenv("CHEMREFINE_MLFF_CHECKPOINT", str(checkpoint))
     run_mlff_calculation(str(xyz), steps=1, device="cpu")
     assert captured["cp"] == str(checkpoint)
-

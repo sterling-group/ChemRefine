@@ -171,3 +171,13 @@ src/chemrefine/__pycache__/server.cpython-311.pyc
 src/chemrefine/__pycache__/utils_extopt.cpython-311.pyc
 src/chemrefine/__pycache__/client.cpython-311.pyc
 src/chemrefine/__pycache__/utils_extopt.cpython-311.pyc
+tests/__pycache__/test_chemrefiner_submit.cpython-311-pytest-8.4.0.pyc
+tests/__pycache__/test_init.cpython-311-pytest-8.3.5.pyc
+tests/__pycache__/test_interface.cpython-311-pytest-8.3.5.pyc
+tests/__pycache__/test_mlff.cpython-311-pytest-8.4.0.pyc
+tests/__pycache__/test_orca_submitter.cpython-311-pytest-8.3.5.pyc
+tests/__pycache__/test_orca_submitter.cpython-311-pytest-8.4.0.pyc
+tests/__pycache__/test_refine.cpython-311-pytest-8.3.5.pyc
+tests/__pycache__/test_submitter.cpython-311-pytest-8.3.5.pyc
+tests/__pycache__/test_utils.cpython-311-pytest-8.3.5.pyc
+tests/__pycache__/test_chemrefiner_parse.cpython-311-pytest-8.4.0.pyc
