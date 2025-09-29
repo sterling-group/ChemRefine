@@ -171,3 +171,14 @@ src/chemrefine/__pycache__/server.cpython-311.pyc
 src/chemrefine/__pycache__/utils_extopt.cpython-311.pyc
 src/chemrefine/__pycache__/client.cpython-311.pyc
 src/chemrefine/__pycache__/utils_extopt.cpython-311.pyc
+src/chemrefine/__pycache__/__init__.cpython-312.pyc
+src/chemrefine/__pycache__/client.cpython-312.pyc
+src/chemrefine/__pycache__/constants.cpython-312.pyc
+src/chemrefine/__pycache__/core.cpython-312.pyc
+src/chemrefine/__pycache__/mlff.cpython-312.pyc
+src/chemrefine/__pycache__/orca_interface.cpython-312.pyc
+src/chemrefine/__pycache__/parse.cpython-312.pyc
+src/chemrefine/__pycache__/refine.cpython-312.pyc
+src/chemrefine/__pycache__/server.cpython-312.pyc
+src/chemrefine/__pycache__/utils_extopt.cpython-312.pyc
+src/chemrefine/__pycache__/utils.cpython-312.pyc
