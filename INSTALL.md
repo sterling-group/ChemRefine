@@ -2,93 +2,80 @@
 
 ## Package Installation
 
-### Option 1: Development Installation (Recommended)
+### Option 1: Installation from Source (Recommended)
 ```bash
-# Clone with submodules
-git clone --recursive https://github.com/sterling-research-group/auto-conformer-goat.git
-cd auto-conformer-goat
+git clone https://github.com/sterling-group/ChemRefine.git
+cd ChemRefine
 
+#Normal install 
+pip install . 
 # Install in development mode
 pip install -e .
 
 # Verify installation
-auto-goat --help
+chemrefine --help
 ```
 
-### Option 2: Direct Installation from Source
+### Option 2: Installation from source through pip
 ```bash
-# Clone repository
-git clone https://github.com/sterling-research-group/auto-conformer-goat.git
-cd auto-conformer-goat
-
-# Initialize submodules
-git submodule update --init --recursive
-
 # Install package
-pip install .
+pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git@main"
+
+#Editable/development Install
+pip install -e "git+https://github.com/sterling-group/ChemRefine.git@main#egg=chemrefine"
+
 ```
 
 ## Dependencies
-
-The package automatically installs Python dependencies:
-- `numpy` - Numerical computations
-- `pyyaml` - YAML parsing
-- `pandas` - Data handling
-
+- **Python 3.6+** with the following dependencies:
+  - `numpy` - Numerical computations
+  - `pyyaml` - YAML configuration parsing  
+  - `pandas` - Data analysis and CSV handling
+  - `ase` - Geometry handling and optimisation
+  - `mace-torch` - Machine learning force fields
+  - `torch == 2.5.1` - Machine Learning (if you use later version of Pytorch it might not work with UMA models)
+  - `e3nn == 0.4.4` MACE models work with this version of e3nn, FAIRCHEM models use a newer version, but they are backwards compatible from our testing. 
 ### External Requirements
-- **ORCA 6.0+**: Must be installed and accessible in your environment
-- **SLURM**: For HPC job submission
-- **Python 3.6+**: The package supports Python 3.6 and newer
+
+- **ORCA 6.0+** - Quantum chemistry calculations
+- **SLURM** - Job scheduling system for HPC
+- **MACE-torch** - MLIP platform for MACE architecture
+- **FAIRChem** - MLIP platform for UMA and esen models
+- **Sevenn** - MLIP platfrom for Sevenn models
+
+MACE models use an ealier version of e3nn and of Pytorch, we have determined that FairChem models allow for backwards compatiblity with these libraries, but due to their strict package controls, they do not allow them to be installed through pip. We have included a patched version of FairChem that relaxes these requirements. 
 
 ## Verification
 
 After installation, verify everything works:
 
 ```bash
-# Check package installation
-python -c "import autogoat; print(autogoat.__version__)"
-
 # Test command-line interface
-auto-goat --help
+chemrefine --help
 
 # Test with example files
 cd Examples/
-auto-goat input.yaml --maxcores 32
-```
-
-## Development Setup
-
-For developers who want to contribute:
-
-```bash
-# Install with development dependencies
-pip install -e ".[dev]"
-
-# Run tests
-pytest
-
-# Format code
-black src/
-
-# Type checking
-mypy src/
+chemrefine input.yaml --maxcores 32
 ```
 
 ## License Information
 
-This software is licensed under the GNU General Public License v3.0. By installing and using this software, you agree to the terms of the GPL-3.0 license. See the [LICENSE](LICENSE) file for complete terms.
+The GNU Affero General Public License is a free, copyleft license for
+software and other kinds of works, specifically designed to ensure
+cooperation with the community in the case of network server software.
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **QORCA not found**: Ensure submodules are initialized
-2. **ORCA not accessible**: Check ORCA installation and PATH
+1. **ORCA not found**: Ensure that Orca is installed correctly, and its directly pointed to.
+2. **ORCA not accessible**: Check the path for ORCA and point at the binary file not the directory.
 3. **SLURM errors**: Verify SLURM configuration for your cluster
 4. **Permission errors**: Check file permissions in working directory
 
 ### Getting Help
 
 - Check the main [README.md](../README.md) for usage examples
+- Check out our tutorial at [Tutorial](https://sterling-group.github.io/ChemRefine/)
 - Review [Examples/](Examples/) directory for sample inputs
 - Open an issue on GitHub for bugs or feature requests
