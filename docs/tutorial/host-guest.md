@@ -4,6 +4,14 @@ This tutorial demonstrates how to use **ChemRefine** for a host–guest docking 
 
 We will start with an initial structure (`step1.xyz`) and progressively refine docking poses through MLFF and DFT optimization.
 
+
+## Input Files
+
+For this tutorial, we will use the following files.
+
+- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Host-Guest/step1.xyz)  
+- 📥 [Download step1.xyz](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Host-Guest/step1.xyz)
+
 ---
 
 ### Interactive 3D Viewer
