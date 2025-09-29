@@ -14,7 +14,7 @@ We will start with an initial structure (`step1.xyz`) and progressively refine d
 <script>
   let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
 
-  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz")
+  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Host-Guest/step1.xyz")
     .then(r => r.text())
     .then(data => {
       viewer.addModel(data, "xyz");   // force XYZ format
