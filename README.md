@@ -318,6 +318,6 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 For questions, issues, or feature requests:
 - 📧 Email: ignacio.migliaro@utdallas.edu
 - 🐛 Issues: [GitHub Issues](https://github.com/sterling-research-group/ChemRefine/issues)
-- 📖 Documentation: [README.md](README.md)
+- 📖 Documentation: [README.md](https://sterling-group.github.io/ChemRefine/)
 
 
