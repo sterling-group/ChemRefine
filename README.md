@@ -24,7 +24,7 @@ This repository contains a streamlined Python code for automated ORCA workflow f
 ### **Development Installation**
 ```bash
 # Clone the repository
-git clone  https://github.com/sterling-research-group/ChemRefine.git
+git clone  https://github.com/sterling-group/ChemRefine.git
 cd ChemRefine
 
 # Install in development mode
@@ -299,7 +299,7 @@ If you use Auto-Conformer-GOAT in your research, please cite:
 @software{ChemRefine,
   title={ChemRefine},
   author={Sterling Research Group},
-  url={https://github.com/sterling-research-group/ChemRefine},
+  url={https://github.com/sterling-group/ChemRefine},
   year={2025}
 }
 ```
@@ -316,7 +316,7 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 
 For questions, issues, or feature requests:
 - 📧 Email: ignacio.migliaro@utdallas.edu
-- 🐛 Issues: [GitHub Issues](https://github.com/sterling-research-group/ChemRefine/issues)
+- 🐛 Issues: [GitHub Issues](https://github.com/sterling-group/ChemRefine/issues)
 - 📖 Documentation: [README.md](https://sterling-group.github.io/ChemRefine/)
 
 
