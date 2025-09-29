@@ -6,6 +6,25 @@ We will start with an initial structure (`step1.xyz`) and progressively refine d
 
 ---
 
+### Interactive 3D Viewer
+
+<div id="viewer" style="width: 100%; height: 400px; position: relative;"></div>
+
+<script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+<script>
+  let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
+
+  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz")
+    .then(r => r.text())
+    .then(data => {
+      viewer.addModel(data, "xyz");   // force XYZ format
+      viewer.setStyle({}, {stick:{radius:0.15}, sphere:{scale:0.25}});
+      viewer.zoomTo();
+      viewer.render();
+    })
+    .catch(err => console.error("Could not load XYZ:", err));
+</script>
+
 ## 1. Input File
 
 Below is a complete example of an input file (`input.yaml`) for a docking study:
