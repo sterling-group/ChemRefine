@@ -24,13 +24,12 @@ This repository contains a streamlined Python code for automated ORCA workflow f
 ### **Development Installation**
 ```bash
 # Clone the repository
-git clone --recursive https://github.com/sterling-research-group/ChemRefine.git
+git clone  https://github.com/sterling-research-group/ChemRefine.git
 cd ChemRefine
 
 # Install in development mode
 pip install -e .
 ```
-
 
 ### **Requirements**
 - **Python 3.6+** with the following dependencies:
@@ -44,9 +43,12 @@ pip install -e .
 - **SLURM** - Job scheduling system
 -**MACE-torch** - 
 ---
+## **Tutorial** 
+
+You can find examples for running multiple calculations that were in our publication in our [Tutorial](https://sterling-group.github.io/ChemRefine/)
 
 ## **Quick Start**
-
+ 
 ### **1. Prepare Input Files**
 
 Create the required input files in your working directory:
@@ -94,6 +96,53 @@ steps.csv       # Summary of energies and structures
 
 ---
 
+# ChemRefine Operations and Engines
+
+## Operations
+| Operation   | Description                                                                 |
+|-------------|-----------------------------------------------------------------------------|
+| OPT+SP      | General optimization followed by a single-point calculation                 |
+| DOCKER      | Host–guest docking workflow                                                 |
+| SOLVATOR    | Explicit solvation for a molecule                                           |
+| PES         | Parse potential energy surface (PES) scan energies                          |
+| MLFF_TRAIN  | Train or fine-tune a machine-learned force field (MLFF)                     |
+
+---
+
+## Engines
+
+### 1. DFT
+- **Description:** Quantum mechanical electronic structure calculations (e.g., ORCA).
+- **Usable operations:** `OPT+SP`, `DOCKER`, `SOLVATOR`, `PES`
+
+### 2. MLFF
+- **Description:** Machine-learned force fields (fast surrogates for DFT).
+- **Usable operations:** `OPT+SP`, `DOCKER`, `SOLVATOR`, `PES`, `MLFF_TRAIN`
+
+#### (a) UMA Models
+| Model Variant      | Task Types (Domain)                           |
+|--------------------|-----------------------------------------------|
+| uma-s-1            | omol, oc20, omat, odac, omc                   |
+| uma-s1.1           | omol, oc20, omat, odac, omc                   |
+| eSEN-sm-direct     | omol, oc20, omat, odac, omc                   |
+| eSEN-sm-conserving | omol, oc20, omat, odac, omc                   |
+
+**Task type domains:**
+- **omol** → molecules  
+- **oc20** → catalysis  
+- **omat** → inorganic materials  
+- **odac** → MOFs  
+- **omc** → molecular crystals  
+
+#### (b) MACE Models
+| Task Type   | Domain / Intended Use             |
+|-------------|-----------------------------------|
+| mace_off    | Mace potential trained on SPICE dataset (small,medium,large)  |
+| mace_omol   | MACE potential trained on OMol25 (extralarge model)                       
+| mace_mp     | MACE potential trained on Inorganic materials (Materials Project) |
+
+
+
 ## **Input Files Description**
 
 ### **YAML Configuration File**
@@ -114,7 +163,8 @@ steps:
       parameters:
         count: 10
   - step: 2
-    calculation_type: "DFT"
+    operation: "OPT+SP"
+    engine: "DFT"
     charge: -1                  # <--- Step-specific override
     multiplicity: 2            # <--- Step-specific override
     sampling:
@@ -122,17 +172,12 @@ steps:
       parameters:
         window: 0.5
   - step: 3
-    calculation_type: "MLFF"
+    operation: "OPT+SP"
+    engine: "MLFF"
     mlff:
       model_name: "medium"  # For MACE: small,medium,large for FAIRCHEM "uma-s-1"
-      task_type: "mace_off" # For MACE: "mace_off" or "mace_mp", for FairChem: oc20, omat, omol, odac, omc
+      task_name: "mace_off" # For MACE: "mace_off" or "mace_mp", for FairChem: oc20, omat, omol, odac, omc
       bind: '127.0.0.1:8888'    # ChemRefine uses a local server to avoid initializing the model multiple times, only adjust this if you know what you're doing.
-    operation: "OPT+SP"
-    engine: "MLFF"       
-    mlff:                           
-      model_name: "uma-s-1"         
-      task_name: "omol"             
-      device: "cuda"               
     sample_type:
       method: "integer"
       parameters:
@@ -142,9 +187,10 @@ steps:
         energy: 1  
         unit: kcal/mol  
   - step: 3
-    calculation_type: "MLFF"
-    foundation_model: "mace-off"  
-    model_name: "medium"
+    operation: "SOLVATOR"
+    engine: "MLFF"
+    model_name: "uma-s-1"
+    task_name:  "omol"
     sampling:
       method: "integer"
       parameters:
@@ -210,7 +256,7 @@ Selects the N lowest-energy conformers.
 
 ---
 
-### ** Example Multi-Step Workflows**
+### **Example Multi-Step Workflows**
 The tool supports complex multi-step refinement protocols:
 1. **Step 1**: GOAT or other conformer generation (XTB level)
 2. **Step 2**: Machine Learning interatomic potential optimization (uma-s-1/omol)
