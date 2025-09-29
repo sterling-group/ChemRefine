@@ -61,6 +61,11 @@
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
       
+        
+        <a href="#hostguest-docking-tutorial" class="md-skip">
+          Skip to content
+        </a>
+      
     </div>
     <div data-md-component="announce">
       
@@ -348,6 +353,21 @@
       <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
       
       
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Host-Guest Docking and Microsolvation
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
       
       <a href="./" class="md-nav__link md-nav__link--active">
         
@@ -360,6 +380,79 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#interactive-3d-viewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interactive 3D Viewer
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-input-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Input File
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-workflow-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Workflow Explanation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-running-the-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Running the Workflow
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-expected-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Expected Outputs
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-notes-tips" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Notes &amp; Tips
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -459,6 +552,70 @@
   
   
   
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#interactive-3d-viewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interactive 3D Viewer
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-input-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Input File
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-workflow-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Workflow Explanation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-running-the-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Running the Workflow
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-expected-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Expected Outputs
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-notes-tips" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Notes &amp; Tips
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
   
 </nav>
                   </div>
@@ -474,9 +631,156 @@
 
 
 
-  <h1>Host-Guest Docking and Microsolvation</h1>
+<h1 id="hostguest-docking-tutorial">Host–Guest Docking Tutorial</h1>
+<p>This tutorial demonstrates how to use <strong>ChemRefine</strong> for a host–guest docking workflow, followed by machine-learning refinement, DFT validation, and explicit solvation.  </p>
+<p>We will start with an initial structure (<code>step1.xyz</code>) and progressively refine docking poses through MLFF and DFT optimization.</p>
+<hr />
+<h3 id="interactive-3d-viewer">Interactive 3D Viewer</h3>
+<div id="viewer" style="width: 100%; height: 400px; position: relative;"></div>
 
+<script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+<script>
+  let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
 
+  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz")
+    .then(r => r.text())
+    .then(data => {
+      viewer.addModel(data, "xyz");   // force XYZ format
+      viewer.setStyle({}, {stick:{radius:0.15}, sphere:{scale:0.25}});
+      viewer.zoomTo();
+      viewer.render();
+    })
+    .catch(err => console.error("Could not load XYZ:", err));
+</script>
+
+<h2 id="1-input-file">1. Input File</h2>
+<p>Below is a complete example of an input file (<code>input.yaml</code>) for a docking study:</p>
+<pre><code class="language-yaml">template_dir: ./templates
+scratch_dir: /scratch/ganymede2/dal950773/orca_files/
+output_dir: ./fixed_charge
+orca_executable: /mfs/io/groups/sterling/software-tools/orca/orca_6_1_0_avx2/orca
+
+# Global system settings
+charge: 0
+multiplicity: 1
+
+# Optional: Override default initial structure
+initial_xyz: ./templates/step1.xyz
+
+# === Step-by-step workflow ===
+steps:
+  # Step 1: Perform docking with DFT
+  - step: 1
+    operation: &quot;DOCKER&quot;
+    engine: &quot;DFT&quot;
+    sample_type:
+      method: &quot;integer&quot;
+      parameters:
+        num_structures: 5   # Generate 5 docked structures
+
+  # Step 2: Refine docking poses with MLFF
+  - step: 2
+    operation: &quot;OPT+SP&quot;
+    engine: &quot;MLFF&quot;
+    charge: -1
+    multiplicity: 1
+    mlff:
+      model_name: &quot;uma-s-1&quot;
+      task_name: &quot;omol&quot;
+      device: &quot;cuda&quot;
+    sample_type:
+      method: &quot;energy_window&quot;
+      parameters:
+        energy: 10
+        unit: kcal/mol
+
+  # Step 3: Validate best candidates with DFT
+  - step: 3
+    operation: &quot;OPT+SP&quot;
+    engine: &quot;DFT&quot;
+    charge: -1
+    multiplicity: 1
+    sample_type:
+      method: &quot;integer&quot;
+      parameters:
+        num_structures: 1
+
+  # Step 4: Solvation refinement
+  - step: 4
+    operation: &quot;SOLVATOR&quot;
+    engine: &quot;DFT&quot;
+    sample_type:
+      method: &quot;integer&quot;
+      parameters:
+        num_structures: 0
+
+  - step: 5
+        engine: &quot;DFT&quot;
+        operation: &quot;OPT+SP&quot;
+        charge: -1
+        multiplicity: 1
+        sample_type:
+        method: &quot;energy_window&quot;
+        parameters:
+            energy: 10
+            unit: kcal/mol
+
+</code></pre>
+<hr />
+<h2 id="2-workflow-explanation">2. Workflow Explanation</h2>
+<ul>
+<li>
+<p><strong>Step 1 – Docking (DFT)</strong><br />
+  Generate 5 initial docking poses of the guest molecule into the host cavity using DFT-level scoring.</p>
+</li>
+<li>
+<p><strong>Step 2 – MLFF Optimization</strong><br />
+  Refine docked structures using the <strong>UMA-S-1 MLFF model</strong> (<code>omol</code> task).  </p>
+</li>
+<li>GPU acceleration is enabled (<code>device: cuda</code>).  </li>
+<li>
+<p>Retains structures within <strong>10 kcal/mol</strong> of the lowest energy.</p>
+</li>
+<li>
+<p><strong>Step 3 – DFT Re-optimization</strong><br />
+  The lowest-energy MLFF structure is re-optimized at the DFT level for accuracy.  </p>
+</li>
+<li>
+<p><strong>Step 4 – Solvation</strong><br />
+  Add explicit solvent molecules around the final optimized host–guest complex for solvation analysis.  </p>
+</li>
+<li>
+<p><strong>Step 5 - DFT calculations</strong>                                                                  </p>
+</li>
+</ul>
+<p>DFT calculations for each solvent molecule to get solvation free energies. </p>
+<hr />
+<h2 id="3-running-the-workflow">3. Running the Workflow</h2>
+<p>From the command line:</p>
+<pre><code class="language-bash">chemrefine input.yaml --maxcores 16
+</code></pre>
+<p>This runs the workflow locally with up to 16 parallel jobs.  </p>
+<p>On an HPC cluster with SLURM:</p>
+<pre><code class="language-bash">sbatch ./Examples/templates/chemrefine.slurm
+</code></pre>
+<hr />
+<h2 id="4-expected-outputs">4. Expected Outputs</h2>
+<ul>
+<li><strong>Docked poses</strong> from Step 1 in <code>outputs/step1/</code>  </li>
+<li><strong>Refined MLFF structures</strong> with energies in <code>outputs/step2/</code>  </li>
+<li><strong>Validated DFT structures</strong> in <code>outputs/step3/</code>  </li>
+<li><strong>Final solvated complex</strong> in <code>outputs/step4/</code>  </li>
+<li><strong>Free Energy Solvation Energies</strong> in <code>outputs/step5/</code></li>
+</ul>
+<p>Each step directory contains <code>.out</code> logs, <code>.xyz</code> geometries, and summary files.  </p>
+<hr />
+<h2 id="5-notes-tips">5. Notes &amp; Tips</h2>
+<ul>
+<li>Adjust <code>num_structures</code> in Step 1 to explore more docking poses.  </li>
+<li>Use MLFF refinement for speed, then confirm results with DFT.  </li>
+<li>Solvation step can be skipped by removing Step 4.  </li>
+<li>Large jobs should always be submitted via SLURM.  </li>
+</ul>
 
 
 
