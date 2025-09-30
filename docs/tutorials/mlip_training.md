@@ -8,7 +8,7 @@ Training an MLIP involves generating reference data, running the training proces
 ChemRefine automates this multi-step process:
 
 1. **Global Optimization (GOAT)**  
-   Performs a stochastic search of the PES to identify low-energy conformers.  
+   Performs a global search of the PES to identify low-energy conformers.  
 
 2. **Normal Mode Sampling (NMS)**  
    Generates additional diverse geometries by displacing atoms along vibrational modes.  
@@ -17,7 +17,7 @@ ChemRefine automates this multi-step process:
    Provides high-quality energies and forces for MLIP training.  
 
 4. **MLIP Training (MLFF_TRAIN)**  
-   Trains a potential (e.g., MACE) on the generated DFT dataset.  
+   Trains a potential (e.g., MACE) on the generated DFT dataset. We will be using MACE to train, as of writing this code (v1.2.1), Chemefine can only train/finetune with MACE. We need a MACE input yaml, explanation can be found [here](https://github.com/ACEsuit/mace).
 
 5. **MLIP Validation (OPT+SP with MLFF)**  
    Applies the trained model to evaluate new structures, testing its accuracy and efficiency.  
