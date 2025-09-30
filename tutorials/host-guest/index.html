@@ -256,7 +256,7 @@
   
   
   <span class="md-ellipsis">
-    Tutorial
+    Tutorials
     
   </span>
   
@@ -267,7 +267,7 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
-            Tutorial
+            Tutorials
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -397,6 +397,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      Overview
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#input-files" class="md-nav__link">
     <span class="md-ellipsis">
       Input Files
@@ -430,18 +439,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-workflow-explanation" class="md-nav__link">
+  <a href="#2-running-the-workflow" class="md-nav__link">
     <span class="md-ellipsis">
-      2. Workflow Explanation
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-running-the-workflow" class="md-nav__link">
-    <span class="md-ellipsis">
-      3. Running the Workflow
+      2. Running the Workflow
     </span>
   </a>
   
@@ -504,7 +504,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../oxidation/" class="md-nav__link">
+      <a href="../oxidation.md" class="md-nav__link">
         
   
   
@@ -577,6 +577,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      Overview
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#input-files" class="md-nav__link">
     <span class="md-ellipsis">
       Input Files
@@ -610,18 +619,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-workflow-explanation" class="md-nav__link">
+  <a href="#2-running-the-workflow" class="md-nav__link">
     <span class="md-ellipsis">
-      2. Workflow Explanation
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-running-the-workflow" class="md-nav__link">
-    <span class="md-ellipsis">
-      3. Running the Workflow
+      2. Running the Workflow
     </span>
   </a>
   
@@ -664,6 +664,33 @@
 <h1 id="hostguest-docking-tutorial">Host–Guest Docking Tutorial</h1>
 <p>This tutorial demonstrates how to use <strong>ChemRefine</strong> for a host–guest docking workflow, followed by machine-learning refinement, DFT validation, and explicit solvation.  </p>
 <p>We will start with an initial structure (<code>step1.xyz</code>) and progressively refine docking poses through MLFF and DFT optimization.</p>
+<h2 id="overview">Overview</h2>
+<ul>
+<li>
+<p><strong>Step 1 – Docking (DFT)</strong><br />
+  Generate 5 initial docking poses of the guest molecule into the host cavity using XTB-level scoring.</p>
+</li>
+<li>
+<p><strong>Step 2 – MLFF Optimization</strong><br />
+  Refine docked structures using the <strong>UMA-S-1 MLFF model</strong> (<code>omol</code> task).  </p>
+</li>
+<li>GPU acceleration is enabled (<code>device: cuda</code>).  </li>
+<li>
+<p>Retains structures within <strong>10 kcal/mol</strong> of the lowest energy.</p>
+</li>
+<li>
+<p><strong>Step 3 – DFT Re-optimization</strong><br />
+  The lowest-energy MLFF structure is re-optimized at the DFT level for accuracy.  </p>
+</li>
+<li>
+<p><strong>Step 4 – Solvation</strong><br />
+  Add explicit solvent molecules around the final optimized host–guest complex for solvation analysis.  </p>
+</li>
+<li>
+<p><strong>Step 5 - DFT calculations</strong>                                                                  </p>
+</li>
+</ul>
+<p>DFT calculations for each solvent molecule to get solvation free energies. </p>
 <h2 id="input-files">Input Files</h2>
 <p>For this tutorial, we will use the following files.</p>
 <ul>
@@ -763,35 +790,7 @@ steps:
 
 </code></pre>
 <hr />
-<h2 id="2-workflow-explanation">2. Workflow Explanation</h2>
-<ul>
-<li>
-<p><strong>Step 1 – Docking (DFT)</strong><br />
-  Generate 5 initial docking poses of the guest molecule into the host cavity using DFT-level scoring.</p>
-</li>
-<li>
-<p><strong>Step 2 – MLFF Optimization</strong><br />
-  Refine docked structures using the <strong>UMA-S-1 MLFF model</strong> (<code>omol</code> task).  </p>
-</li>
-<li>GPU acceleration is enabled (<code>device: cuda</code>).  </li>
-<li>
-<p>Retains structures within <strong>10 kcal/mol</strong> of the lowest energy.</p>
-</li>
-<li>
-<p><strong>Step 3 – DFT Re-optimization</strong><br />
-  The lowest-energy MLFF structure is re-optimized at the DFT level for accuracy.  </p>
-</li>
-<li>
-<p><strong>Step 4 – Solvation</strong><br />
-  Add explicit solvent molecules around the final optimized host–guest complex for solvation analysis.  </p>
-</li>
-<li>
-<p><strong>Step 5 - DFT calculations</strong>                                                                  </p>
-</li>
-</ul>
-<p>DFT calculations for each solvent molecule to get solvation free energies. </p>
-<hr />
-<h2 id="3-running-the-workflow">3. Running the Workflow</h2>
+<h2 id="2-running-the-workflow">2. Running the Workflow</h2>
 <p>From the command line:</p>
 <pre><code class="language-bash">chemrefine input.yaml --maxcores 16
 </code></pre>

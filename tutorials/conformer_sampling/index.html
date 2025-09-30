@@ -9,8 +9,10 @@
       
       
       
-        <link rel="prev" href="../oxidation/">
+        <link rel="prev" href="../">
       
+      
+        <link rel="next" href="../ts_finding/">
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
@@ -18,7 +20,7 @@
     
     
       
-        <title>Spin - ChemRefine</title>
+        <title>Conformer Sampling - ChemRefine</title>
       
     
     
@@ -59,6 +61,11 @@
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
       
+        
+        <a href="#conformer-sampling-tutorial" class="md-skip">
+          Skip to content
+        </a>
+      
     </div>
     <div data-md-component="announce">
       
@@ -91,7 +98,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Spin
+              Conformer Sampling
             
           </span>
         </div>
@@ -249,7 +256,7 @@
   
   
   <span class="md-ellipsis">
-    Tutorial
+    Tutorials
     
   </span>
   
@@ -260,7 +267,7 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
-            Tutorial
+            Tutorials
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -291,10 +298,32 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../conformer_sampling/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Conformer Sampling
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -305,6 +334,110 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      Overview
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      Prerequisites
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#input-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Input Files
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Input Files">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#interactive-3d-viewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interactive 3D Viewer
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#yaml-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      YAML Configuration
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      How to Run
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to Run">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#option-1-run-from-the-command-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      Option 1: Run from the Command Line
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-2-run-chemrefine-with-slurm-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      Option 2: Run ChemRefine with SLURM script
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -386,7 +519,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../oxidation/" class="md-nav__link">
+      <a href="../oxidation.md" class="md-nav__link">
         
   
   
@@ -406,17 +539,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../spin/" class="md-nav__link">
         
   
   
@@ -427,7 +553,6 @@
   
 
       </a>
-      
     </li>
   
 
@@ -457,6 +582,100 @@
   
   
   
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      Overview
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      Prerequisites
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#input-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Input Files
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Input Files">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#interactive-3d-viewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interactive 3D Viewer
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#yaml-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      YAML Configuration
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      How to Run
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to Run">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#option-1-run-from-the-command-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      Option 1: Run from the Command Line
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-2-run-chemrefine-with-slurm-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      Option 2: Run ChemRefine with SLURM script
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
   
 </nav>
                   </div>
@@ -472,9 +691,150 @@
 
 
 
-  <h1>Spin</h1>
+<h1 id="conformer-sampling-tutorial">Conformer Sampling Tutorial</h1>
+<p>This tutorial demonstrates how to use <strong>ChemRefine</strong> for conformational sampling with an initial <strong>global geometry optimization (GOAT)</strong> and ensemble generation.</p>
+<h2 id="overview">Overview</h2>
+<p>Conformer sampling is the first step in exploring molecular flexibility and generating diverse geometries.<br />
+ChemRefine automates this process by running a <strong>global optimization</strong> followed by ensemble generation, producing a set of candidate structures for further refinement.</p>
+<p>The workflow:</p>
+<ol>
+<li><strong>Global Optimization (GOAT):</strong><br />
+   Performs a stochastic search of the potential energy surface (PES) to identify low-energy conformers.  </li>
+<li><strong>Ensemble Generation:</strong><br />
+   Collects the lowest-energy structures into an ensemble for downstream calculations (e.g., DFT, MLFF).</li>
+<li><strong>Level of theory benchmarking:</strong> <br />
+   We're going to refine the level of theory starting from simple GFN2-xTB, UMA-S-1, PBE-D4, ωB97X-D4, B2PLYP </li>
+</ol>
+<hr />
+<h2 id="prerequisites">Prerequisites</h2>
+<ul>
+<li>Installed <strong>ChemRefine</strong> (see <a href="./installation.md">Installation Guide</a>)  </li>
+<li>Access to an <strong>ORCA executable</strong>  </li>
+<li>Example molecule and YAML input from the repository  </li>
+</ul>
+<hr />
+<h2 id="input-files">Input Files</h2>
+<p>For this tutorial, we will use <strong>Pd(PPh₃)₄</strong>.</p>
+<ul>
+<li>📄 <a href="https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz">View step1.xyz</a>  </li>
+<li>📥 <a href="https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz">Download step1.xyz</a></li>
+</ul>
+<h3 id="interactive-3d-viewer">Interactive 3D Viewer</h3>
+<div id="viewer" style="width: 100%; height: 400px; position: relative;"></div>
 
+<script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+<script>
+  let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
 
+  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz")
+    .then(r => r.text())
+    .then(data => {
+      viewer.addModel(data, "xyz");   // force XYZ format
+      viewer.setStyle({}, {stick:{radius:0.15}, sphere:{scale:0.25}});
+      viewer.zoomTo();
+      viewer.render();
+    })
+    .catch(err => console.error("Could not load XYZ:", err));
+</script>
+
+<hr />
+<h2 id="yaml-configuration">YAML Configuration</h2>
+<p>The YAML input for conformer sampling is also included in the tutorial folder:</p>
+<p>➡️ <a href="https://raw.githubusercontent.com/sterling-research-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz">Examples/Tutorials/Conformational Sampling/input.yaml</a></p>
+<p>Example content:</p>
+<pre><code class="language-yaml">charge: 0
+multiplicity: 1
+
+initial_xyz: ./Examples/Tutorials/Conformational Sampling/PdPPh3_4.xyz
+
+template_dir: ./templates
+scratch_dir: /scratch/
+output_dir: ./outputs
+orca_executable: /orca
+# Sequential ORCA Input Configuration File
+# Define each step with its specific parameters.
+#This workflow reflects using GOAT and refining methods to improve the accuracy
+charge: 0
+multiplicity: 1 
+
+# Optional: Override default initial structure (default is /template_dir/step1.xyz)
+initial_xyz: ./templates/step1.xyz
+
+steps:
+  - step: 1
+    calculation_type: &quot;GOAT&quot;
+    sample_type:
+      method: &quot;integer&quot;  
+      parameters:
+       num_structures: 15  #This energy is in Hartrees.
+
+  # Step 1: Using MLFF to refine the calculation
+  - step: 2
+    calculation_type: &quot;MLFF&quot;
+    mlff:
+      model_name: &quot;uma-s-1&quot;
+      task_name: &quot;omol&quot;
+      device: &quot;cuda&quot;
+    sample_type:
+      method: &quot;integer&quot;
+      parameters:
+       num_structures: 15 
+
+  - step: 3
+    calculation_type: &quot;DFT&quot;
+    sample_type:
+      method: &quot;integer&quot;
+      parameters:
+        num_strucures: 15      
+
+  - step: 4
+    calculation_type: &quot;DFT&quot;
+    sample_type:
+      method: &quot;integer&quot;
+      parameters:
+        num_strucures: 15
+
+  - step: 5
+    calculation_type: &quot;DFT&quot;
+    sample_type:
+      method: &quot;integer&quot;
+      parameters:
+        num_structures: 15
+</code></pre>
+<h2 id="how-to-run">How to Run</h2>
+<p>Before running ChemRefine, ensure that:</p>
+<ul>
+<li>The <strong>ChemRefine Enviroment</strong> is activated</li>
+<li>The <strong>ORCA executable</strong> is installed and available in your <code>PATH</code>  </li>
+<li>The <strong>template directory</strong> (<code>./templates/</code>) is correctly set up  </li>
+<li>The <strong>input structure file</strong> (e.g., <code>input.xyz</code>) is prepared  </li>
+</ul>
+<h3 id="option-1-run-from-the-command-line">Option 1: Run from the Command Line</h3>
+<p>You can launch ChemRefine directly from the command line:</p>
+<pre><code class="language-bash">chemrefine input.yaml --maxcores &lt;N&gt;
+</code></pre>
+<p>Here N is the max number of simultaneous cores you want to use.</p>
+<h3 id="option-2-run-chemrefine-with-slurm-script">Option 2: Run ChemRefine with SLURM script</h3>
+<p>On HPC systems with SLURM, you can submit ChemRefine as a batch job.
+A ready-to-use SLURM script template is available at:</p>
+<p><a href="https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Templates/chemrefine.slurm">➡️Example ChemRefine SLURM script</a></p>
+<pre><code class="language-bash">#!/bin/bash
+#SBATCH --partition=&lt;your_partition&gt;
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=2G              # Limit memory to allow multiple jobs on the same node
+#SBATCH --time=72:00:00
+#SBATCH --exclude=g-07-02
+#SBATCH --job-name=conformer_search
+#SBATCH --output=%x.out   # Saves output to auto_goat_JOBID.out
+#SBATCH --error=%x.err    # Saves error log
+
+# Ensure the script allows for shared node usage
+export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+
+# Run the calculation
+chemrefine input.yaml --maxcores 480 
+</code></pre>
 
 
 
