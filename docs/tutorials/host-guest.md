@@ -6,13 +6,25 @@ We will start with an initial structure (`step1.xyz`) and progressively refine d
 
 ## Overview
 
-Orca 6.0+ has added a featured called [Docker](https://www.faccts.de/docs/orca/6.0/manual/contents/typical/docker.html), which finds the best way of putting two systems and putting them together in the their best possible interaction. We will run the following workflow:
 
-1. **Host-Guest Docking (DOCKER):**     
-    Performs a stochastic search for the best interaction between the host molecule and the guest Cl<sup>-</sup> ion. We will refine with integer taking the 5 best structures. 
 
-2. **MLIP Optimization:**     
-    We will be using UMA-S-1, for geometry optimization
+- **Step 1 – Docking (DFT)**  
+  Generate 5 initial docking poses of the guest molecule into the host cavity using XTB-level scoring.
+
+- **Step 2 – MLFF Optimization**  
+  Refine docked structures using the **UMA-S-1 MLFF model** (`omol` task).  
+  - GPU acceleration is enabled (`device: cuda`).  
+  - Retains structures within **10 kcal/mol** of the lowest energy.
+
+- **Step 3 – DFT Re-optimization**  
+  The lowest-energy MLFF structure is re-optimized at the DFT level for accuracy.  
+
+- **Step 4 – Solvation**  
+  Add explicit solvent molecules around the final optimized host–guest complex for solvation analysis.  
+
+- **Step 5 - DFT calculations**                                                                  
+
+   DFT calculations for each solvent molecule to get solvation free energies. 
 
 ## Input Files
 
@@ -121,29 +133,8 @@ steps:
 
 ---
 
-## 2. Workflow Explanation
 
-- **Step 1 – Docking (DFT)**  
-  Generate 5 initial docking poses of the guest molecule into the host cavity using DFT-level scoring.
-
-- **Step 2 – MLFF Optimization**  
-  Refine docked structures using the **UMA-S-1 MLFF model** (`omol` task).  
-  - GPU acceleration is enabled (`device: cuda`).  
-  - Retains structures within **10 kcal/mol** of the lowest energy.
-
-- **Step 3 – DFT Re-optimization**  
-  The lowest-energy MLFF structure is re-optimized at the DFT level for accuracy.  
-
-- **Step 4 – Solvation**  
-  Add explicit solvent molecules around the final optimized host–guest complex for solvation analysis.  
-
-- **Step 5 - DFT calculations**                                                                  
-
-   DFT calculations for each solvent molecule to get solvation free energies. 
-
----
-
-## 3. Running the Workflow
+## 2. Running the Workflow
 
 From the command line:
 
