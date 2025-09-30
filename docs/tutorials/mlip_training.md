@@ -26,7 +26,7 @@ ChemRefine automates this multi-step process:
 
 ## Prerequisites
 
-- Installed **ChemRefine** (see [Installation Guide](./installation.md))  
+- Installed **ChemRefine** (see [Installation Guide](../INSTALL.md))  
 - Access to an **ORCA executable** (for DFT reference calculations)  
 - Example molecule and YAML input from the repository  
 

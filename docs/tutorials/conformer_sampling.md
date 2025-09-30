@@ -20,7 +20,7 @@ The workflow:
 
 ## Prerequisites
 
-- Installed **ChemRefine** (see [Installation Guide](./installation.md))  
+- Installed **ChemRefine** (see [Installation Guide](../INSTALL.md))  
 - Access to an **ORCA executable**  
 - Example molecule and YAML input from the repository  
 
