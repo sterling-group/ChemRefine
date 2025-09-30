@@ -3,7 +3,7 @@ theme:
   name: material
 
 nav:
-  - Home: index.md
+  - Home: home.md
   - Install: INSTALL.md
   - Tutorials:
       - Overview: tutorials/index.md

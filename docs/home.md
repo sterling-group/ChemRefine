@@ -16,6 +16,7 @@ This repository contains a streamlined Python code for automated ORCA workflow f
 - **Error reduction** and efficient resource utilization
 - **Machine Learning Interatomic potentials** integration using pretrained `mace` and `FairChem models` models for fast geometry optimisation, molecular dynamics, and more.
 
+
 ---
 
 ## **Installation**
@@ -23,13 +24,12 @@ This repository contains a streamlined Python code for automated ORCA workflow f
 ### **Development Installation**
 ```bash
 # Clone the repository
-git clone --recursive https://github.com/sterling-research-group/ChemRefine.git
+git clone  https://github.com/sterling-group/ChemRefine.git
 cd ChemRefine
 
 # Install in development mode
 pip install -e .
 ```
-
 
 ### **Requirements**
 - **Python 3.6+** with the following dependencies:
@@ -40,13 +40,15 @@ pip install -e .
   - `mace-torch` - Machine learning force fields
   - `torch == 2.5.1` - Machine Learning (if you use later version of Pytorch it might not work with UMA models)
 - **ORCA 6.0+** - Quantum chemistry calculations
-- **SLURM** - Job scheduling system for HPC
-- **MACE-torch** - MLIP platform for MACE architecture
-- **FAIRChem** - MLIP platform for UMA and esen models
+- **SLURM** - Job scheduling system
+-**MACE-torch** - 
 ---
+## **Tutorial** 
+
+You can find examples for running multiple calculations that were in our publication in our [Tutorial](https://sterling-group.github.io/ChemRefine/)
 
 ## **Quick Start**
-
+ 
 ### **1. Prepare Input Files**
 
 Create the required input files in your working directory:
@@ -94,6 +96,53 @@ steps.csv       # Summary of energies and structures
 
 ---
 
+# ChemRefine Operations and Engines
+
+## Operations
+| Operation   | Description                                                                 |
+|-------------|-----------------------------------------------------------------------------|
+| OPT+SP      | General optimization followed by a single-point calculation                 |
+| DOCKER      | Host–guest docking workflow                                                 |
+| SOLVATOR    | Explicit solvation for a molecule                                           |
+| PES         | Parse potential energy surface (PES) scan energies                          |
+| MLFF_TRAIN  | Train or fine-tune a machine-learned force field (MLFF)                     |
+
+---
+
+## Engines
+
+### 1. DFT
+- **Description:** Quantum mechanical electronic structure calculations (e.g., ORCA).
+- **Usable operations:** `OPT+SP`, `DOCKER`, `SOLVATOR`, `PES`
+
+### 2. MLFF
+- **Description:** Machine-learned force fields (fast surrogates for DFT).
+- **Usable operations:** `OPT+SP`, `DOCKER`, `SOLVATOR`, `PES`, `MLFF_TRAIN`
+
+#### (a) UMA Models
+| Model Variant      | Task Types (Domain)                           |
+|--------------------|-----------------------------------------------|
+| uma-s-1            | omol, oc20, omat, odac, omc                   |
+| uma-s1.1           | omol, oc20, omat, odac, omc                   |
+| eSEN-sm-direct     | omol, oc20, omat, odac, omc                   |
+| eSEN-sm-conserving | omol, oc20, omat, odac, omc                   |
+
+**Task type domains:**
+- **omol** → molecules  
+- **oc20** → catalysis  
+- **omat** → inorganic materials  
+- **odac** → MOFs  
+- **omc** → molecular crystals  
+
+#### (b) MACE Models
+| Task Type   | Domain / Intended Use             |
+|-------------|-----------------------------------|
+| mace_off    | Mace potential trained on SPICE dataset (small,medium,large)  |
+| mace_omol   | MACE potential trained on OMol25 (extralarge model)                       
+| mace_mp     | MACE potential trained on Inorganic materials (Materials Project) |
+
+
+
 ## **Input Files Description**
 
 ### **YAML Configuration File**
@@ -106,13 +155,16 @@ charge: 0
 multiplicity: 1
 steps:
   - step: 1
-    calculation_type: "GOAT"
+    template: "step1.inp"
+    operation: "GOAT"
+    engine: "DFT"
     sampling:
       method: "integer"
       parameters:
         count: 10
   - step: 2
-    calculation_type: "DFT"
+    operation: "OPT+SP"
+    engine: "DFT"
     charge: -1                  # <--- Step-specific override
     multiplicity: 2            # <--- Step-specific override
     sampling:
@@ -120,21 +172,41 @@ steps:
       parameters:
         window: 0.5
   - step: 3
-    calculation_type: "MLFF"
+    operation: "OPT+SP"
+    engine: "MLFF"
     mlff:
       model_name: "medium"  # For MACE: small,medium,large for FAIRCHEM "uma-s-1"
-      task_type: "mace_off" # For MACE: "mace_off" or "mace_mp", for FairChem: oc20, omat, omol, odac, omc
+      task_name: "mace_off" # For MACE: "mace_off" or "mace_mp", for FairChem: oc20, omat, omol, odac, omc
       bind: '127.0.0.1:8888'    # ChemRefine uses a local server to avoid initializing the model multiple times, only adjust this if you know what you're doing.
+    sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 15 
+      method: "energy_window"  
+      parameters:
+        energy: 1  
+        unit: kcal/mol  
+  - step: 3
+    operation: "SOLVATOR"
+    engine: "MLFF"
+    model_name: "uma-s-1"
+    task_name:  "omol"
     sampling:
       method: "integer"
       parameters:
         num_structures: 1
 ```
 
+
 The optional MLFF step uses a pretrained model from `mace` or `FairChem`. By default the
 ``mace-off`` backend with the ``"medium"`` model is used, but you can select
 different backends and models via ``model_name`` and ``task_type``. With task_type you can select on what training data the model was trained on. 
 If a CUDA-capable GPU is detected, the MLFF optimisation runs on the GPU; otherwise it falls back to the CPU automatically.
+The optional MLFF step uses a pretrained model from `mace`. By default the
+``mace-off`` backend with the ``"medium"`` model is used, but you can select
+different backends and models via ``foundation_model`` and ``model_name``.
+If a CUDA-capable GPU is detected, the MLFF optimisation runs on the GPU; otherwise it falls back to the CPU automatically.
+To avoid downloading the model each time, set the environment variable `CHEMREFINE_MLFF_CHECKPOINT` to the path of a locally downloaded checkpoint **or** place the file as `chemrefine/models/<model>.model` within this repository.
 
 
 ### **ORCA Template Files**
@@ -170,7 +242,6 @@ Selects conformers within specified energy range of the global minimum.
 method: "boltzmann"
 parameters:
   percentage: 95  # Cumulative population %
-  temperature: 298.15  # Kelvin
 ```
 Selects conformers based on Boltzmann population at given temperature.
 
@@ -184,7 +255,7 @@ Selects the N lowest-energy conformers.
 
 ---
 
-### ** Example Multi-Step Workflows**
+### **Example Multi-Step Workflows**
 The tool supports complex multi-step refinement protocols:
 1. **Step 1**: GOAT or other conformer generation (XTB level)
 2. **Step 2**: Machine Learning interatomic potential optimization (uma-s-1/omol)
@@ -203,7 +274,6 @@ The tool supports complex multi-step refinement protocols:
 auto-conformer-goat/
 ├── src/chemrefine          # Main package code
 ├── Examples/               # Example input files and SLURM scripts
-├── docs                    # Files for the ChemRefine page
 ├── README.md               # This file
 ├── LICENSE                 # License
 └── pyproject.toml          # Package configuration
@@ -229,7 +299,7 @@ If you use Auto-Conformer-GOAT in your research, please cite:
 @software{ChemRefine,
   title={ChemRefine},
   author={Sterling Research Group},
-  url={https://github.com/sterling-research-group/ChemRefine},
+  url={https://github.com/sterling-group/ChemRefine},
   year={2025}
 }
 ```
@@ -246,8 +316,7 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 
 For questions, issues, or feature requests:
 - 📧 Email: ignacio.migliaro@utdallas.edu
-- 🐛 Issues: [GitHub Issues](https://github.com/sterling-research-group/ChemRefine/issues)
-- 📖 Documentation: [README.md](README.md)
-
+- 🐛 Issues: [GitHub Issues](https://github.com/sterling-group/ChemRefine/issues)
+- 📖 Documentation: [README.md](https://sterling-group.github.io/ChemRefine/)
 
 

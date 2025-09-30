@@ -69,6 +69,8 @@ The full YAML input for this MLIP training workflow is included:
 
 ➡️ [Examples/Tutorials/MLIP-Training/input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/MLIP-Training/input.yaml)
 
+Download the template files [here](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/MLIP-Training/)
+
 Example content:
 
 ```yaml

@@ -72,14 +72,65 @@ initial_xyz: ./templates/step1.xyz
 
 steps:
   - step: 1
+    operation: "GOAT"
+    engine: "DFT"
+    sample_type:
+      method: "boltzmann"  
+      parameters:
+       weight: 95 
+
+  - step: 2
+    operation: "OPT+SP"
+    engine: "DFT"
+    sample_type:
+      method: "energy_window"
+      parameters:
+        energy: 10      
+        unit: kcal/mol
+
+  - step: 3
     operation: "OPT+SP"
     engine: "MLFF"
+    charge: -1 
+    multiplicity: 2
     mlff:
       model_name: "uma-s-1"
       task_name: "omol"
       device: "cuda"
+    sample_type:
+      method: "integer"  
+      parameters:
+       num_structures: 0  
+              
+  - step: 4
+    operation: "OPT+SP"
+    engine: "MLFF"
+    charge: 0
+    multiplicity: 1
+    mlff:
+      model_name: "uma-s-1"
+      task_name: "omol"
+      device: "cuda"
+    sample_type:
+      method: "integer"  
+      parameters:
+       num_structures: 0  
 
-  - step: 2
+  - step: 5
+    operation: "OPT+SP"
+    engine: "MLFF"
+    charge: 1
+    multiplicity: 2
+    mlff:
+      model_name: "uma-s-1"
+      task_name: "omol"
+      device: "cuda"
+    sample_type:
+      method: "integer"  
+      parameters:
+       num_structures: 0  
+
+  - step: 6
     operation: "OPT+SP"
     engine: "DFT"
     charge: -1
@@ -87,17 +138,27 @@ steps:
     sample_type:
       method: "integer"
       parameters:
-        num_structures: 1
+       num_structures: 0  
 
-  - step: 3
-    operation: "OPT+SP"
-    engine: "DFT"
-    charge: +1
-    multiplicity: 1
-    sample_type:
+  -  step: 7
+     operation: "OPT+SP"
+     engine: "DFT"
+     charge: 0
+     multiplicity: 1
+     sample_type:
       method: "integer"
       parameters:
-        num_structures: 1
+       num_structures: 0  
+ 
+  -  step: 8
+     operation: "OPT+SP"
+     engine: "DFT"
+     charge: 1
+     multiplicity: 2
+     sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 0  
 ```
 
 This workflow optimizes the neutral, reduced (–1), and oxidized (+1) charge states.
