@@ -5,13 +5,13 @@ theme:
 nav:
   - Home: index.md
   - Install: INSTALL.md
-  - Tutorial:
-      - Overview: tutorial/index.md
-      - Conformer Sampling: tutorial/conformer_sampling.md
-      - Transition State Finding: tutorial/ts_finding.md 
-      - Host-Guest Docking and Microsolvation: tutorial/host-guest.md
-      - MLIP Training and Normal Mode Sampling: tutorial/mlip_training.md
-      - Redox: tutorial/oxidation.md
-      - Spin: tutorial/spin.md
+  - Tutorials:
+      - Overview: tutorials/index.md
+      - Conformer Sampling: tutorials/conformer_sampling.md
+      - Transition State Finding: tutorials/ts_finding.md 
+      - Host-Guest Docking and Microsolvation: tutorials/host-guest.md
+      - MLIP Training and Normal Mode Sampling: tutorials/mlip_training.md
+      - Redox: tutorials/oxidation.md
+      - Spin: tutorials/spin.md
 
   
