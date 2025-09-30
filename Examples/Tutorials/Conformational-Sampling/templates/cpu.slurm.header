@@ -1,0 +1,6 @@
+#SBATCH --partition=sterling
+#SBATCH --time=24:00:00
+#SBATCH --exclude=g-07-02
+#SBATCH --mem-per-cpu=4000
+# Set ORCA executable path (user can override)
+

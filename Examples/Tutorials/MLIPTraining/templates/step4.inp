@@ -1,0 +1,11 @@
+model: "MACE"
+name: "goat_model"
+valid_fraction: 0.10
+E0s: "average"
+energy_key: "energy_dft"
+forces_key: "forces_dft"
+device: cuda
+batch_size: 10
+max_num_epochs: 100
+swa: True
+

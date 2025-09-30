@@ -1,0 +1,13 @@
+!OPT PBE def2-SVP LooseOpt LooseSCF
+%scf
+    MaxIter 50
+    Convergence Loose
+end
+%geom
+    MaxIter 30
+    TolE 1e-4
+    TolRMSD 1e-2
+    TolMaxD 2e-2
+end
+
+%pal nprocs 16 end

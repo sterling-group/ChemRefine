@@ -1,0 +1,8 @@
+! GOAT XTB PAL32
+
+%DOCKER
+	GUEST "../templates/cl.xyz"
+	GuestCharge -1
+END
+
+*XYZFILE 0 1 docker_opt.xyz

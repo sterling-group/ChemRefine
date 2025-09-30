@@ -1,0 +1,6 @@
+! XTB ALPB(WATER)
+
+%solvator
+nsolv 30
+end 
+

@@ -1,0 +1,72 @@
+template_dir: ./templates
+scratch_dir: /scratch/
+output_dir: ./outputs
+orca_executable: /orca
+
+charge: 0
+multiplicity: 1 
+
+# Optional: Override default initial structure (default is /template_dir/step1.xyz)
+initial_xyz: ./templates/step1.xyz
+
+steps:
+  - step: 1
+    calculation_type: "DFT"
+    sample_type:
+      method: "energy_window"  
+      parameters:
+       energy: 10  
+       unit: kcal/mol
+
+  # Step 2: Using MLFF to refine the calculation
+  - step: 2
+    calculation_type: "MLFF"
+    mlff:
+      model_name: "uma-s-1"
+      task_name: "omol"
+      device: "cuda"
+    sample_type:
+      method: "boltzmann"
+      parameters:
+        weight: 95      
+              
+  - step: 3
+    calculation_type: "DFT"
+    sample_type:
+      method: "integer"  
+      parameters:
+       num_structures: 3 
+
+  - step: 4
+    calculation_type: "DFT"
+    sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 1  
+
+  - step: 5
+    calculation_type: "DFT"
+    charge: 0
+    multiplicity: 1
+    sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 0  
+
+  -  step: 6
+     calculation_type: "DFT"
+     charge: 0
+     multiplicity: 3
+     sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 0  
+ 
+  -  step: 7
+     calculation_type: "DFT"
+     charge: 0
+     multiplicity: 1
+     sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 0 

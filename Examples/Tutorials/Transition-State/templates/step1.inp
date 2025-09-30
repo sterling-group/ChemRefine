@@ -1,0 +1,12 @@
+!OPT B3LYP D3BJ Def2-SVP
+
+%pal nprocs 32 end
+
+%geom
+   simul_Scan true
+   Scan B 19 5 = 1.46829, 2.8, 10 end
+   Scan B 17 6 = 1.45385, 2.8, 10 end
+end
+
+
+

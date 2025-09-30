@@ -1,0 +1,50 @@
+template_dir: ./templates
+scratch_dir: /scratch/
+output_dir: ./outputs
+orca_executable: /orca/orca_6_1_0_avx2/orca
+
+charge: 0
+multiplicity: 1 
+
+# Optional: Override default initial structure (default is /template_dir/step1.xyz)
+initial_xyz: ./templates/step1.xyz
+
+steps:
+  - step: 1
+    operation: "PES"
+    engine: "DFT"
+    sample_type:
+      method: "high_energy"
+      parameters:
+       num_structures: 5  
+
+  - step: 2
+    operation: "OPT+SP"
+    engine: "DFT"
+    sample_type:
+      method: "integer"
+      parameters:
+        num_structures: 5
+
+  - step: 3
+    operation: "OPT+SP"
+    engine: "DFT"
+    normal_mode_sampling: True
+    normal_mode_sampling_parameters:
+      calc_type: "rm_imag"   # Two options for this [rm_imag, random]
+      displacement_vector: 1.0
+    sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 3  
+
+  - step: 4
+    operation: "OPT+SP"
+    engine: "DFT"
+    sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 1 
+
+  
+ 
