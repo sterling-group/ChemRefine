@@ -61,6 +61,11 @@
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
       
+        
+        <a href="#transition-state-ts-finding-tutorial" class="md-skip">
+          Skip to content
+        </a>
+      
     </div>
     <div data-md-component="announce">
       
@@ -325,6 +330,21 @@
       <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
       
       
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Transition State Finding
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
       
       <a href="./" class="md-nav__link md-nav__link--active">
         
@@ -337,6 +357,142 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      Overview
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      Prerequisites
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#input-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Input Files
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Input Files">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#interactive-3d-viewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interactive 3D Viewer
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#yaml-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      YAML Configuration
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      How to Run
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to Run">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#option-1-run-from-the-command-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      Option 1: Run from the Command Line
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-2-run-with-slurm" class="md-nav__link">
+    <span class="md-ellipsis">
+      Option 2: Run with SLURM
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#expected-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Expected Outputs
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes-tips" class="md-nav__link">
+    <span class="md-ellipsis">
+      Notes &amp; Tips
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Notes &amp; Tips">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#identifying-good-vs-bad-imaginary-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Identifying Good vs Bad Imaginary Modes
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -459,6 +615,133 @@
   
   
   
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      Overview
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      Prerequisites
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#input-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Input Files
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Input Files">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#interactive-3d-viewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interactive 3D Viewer
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#yaml-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      YAML Configuration
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      How to Run
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to Run">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#option-1-run-from-the-command-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      Option 1: Run from the Command Line
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-2-run-with-slurm" class="md-nav__link">
+    <span class="md-ellipsis">
+      Option 2: Run with SLURM
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#expected-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Expected Outputs
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes-tips" class="md-nav__link">
+    <span class="md-ellipsis">
+      Notes &amp; Tips
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Notes &amp; Tips">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#identifying-good-vs-bad-imaginary-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Identifying Good vs Bad Imaginary Modes
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
   
 </nav>
                   </div>
@@ -474,9 +757,155 @@
 
 
 
-  <h1>Transition State Finding</h1>
+<h1 id="transition-state-ts-finding-tutorial">Transition State (TS) Finding Tutorial</h1>
+<p>This tutorial demonstrates how to use <strong>ChemRefine</strong> to locate and validate <strong>transition states (TS)</strong> using a stepwise pipeline that combines <strong>PES scans, optimizations, frequency analysis, and final single-point energy evaluation</strong>.</p>
+<hr />
+<h2 id="overview">Overview</h2>
+<p>Transition states are critical for understanding chemical reactivity and kinetics.<br />
+ChemRefine automates TS exploration with the following workflow:</p>
+<ol>
+<li><strong>PES Scan:</strong> Explore bond distances/angles to identify high-energy regions.  </li>
+<li><strong>TS Optimization (Top 5):</strong> Optimize the five highest-energy structures from the PES scan.  </li>
+<li><strong>Frequency Analysis:</strong> Confirm the presence of one imaginary mode.  </li>
+<li><strong>Imaginary Mode Displacement:</strong> Remove the mode and generate corrected geometries.  </li>
+<li><strong>Final SP Calculation:</strong> Compute high-level single-point energies on the corrected TS structure.  </li>
+</ol>
+<hr />
+<h2 id="prerequisites">Prerequisites</h2>
+<ul>
+<li>Installed <strong>ChemRefine</strong> (see <a href="../install.md">Installation Guide</a>)  </li>
+<li>Access to an <strong>ORCA executable</strong>  </li>
+<li>Example input (<code>ts_input.yaml</code>) from this tutorial folder  </li>
+<li>Initial structure (<code>step1.xyz</code>)  </li>
+</ul>
+<hr />
+<h2 id="input-files">Input Files</h2>
+<p>For this tutorial, we will use the provided <strong>transition state input file</strong>.</p>
+<ul>
+<li>📄 <a href="https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Transition-State/ts_input.yaml">View ts_input.yaml</a>  </li>
+<li>
+<p>📥 <a href="https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Transition-State/ts_input.yaml">Download ts_input.yaml</a>  </p>
+</li>
+<li>
+<p>📄 <a href="https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Transition-State/step1.xyz">View step1.xyz</a>  </p>
+</li>
+<li>📥 <a href="https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Transition-State/step1.xyz">Download step1.xyz</a>  </li>
+</ul>
+<h3 id="interactive-3d-viewer">Interactive 3D Viewer</h3>
+<div id="viewer" style="width: 100%; height: 400px; position: relative;"></div>
 
+<script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+<script>
+  let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
 
+  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Transition-State/step1.xyz")
+    .then(r => r.text())
+    .then(data => {
+      viewer.addModel(data, "xyz");   // force XYZ format
+      viewer.setStyle({}, {stick:{radius:0.15}, sphere:{scale:0.25}});
+      viewer.zoomTo();
+      viewer.render();
+    })
+    .catch(err => console.error("Could not load XYZ:", err));
+</script>
+
+<hr />
+<h2 id="yaml-configuration">YAML Configuration</h2>
+<p>➡️ <a href="https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Transition-State/ts_input.yaml">Examples/Tutorials/Transition-State/ts_input.yaml</a></p>
+<p>Example content (excerpt):</p>
+<pre><code class="language-yaml">template_dir: ./templates
+scratch_dir: /scratch/ts_jobs
+output_dir: ./outputs/ts
+orca_executable: /mfs/io/groups/sterling/software-tools/orca/orca_6_1_0_avx2/orca
+
+initial_xyz: ./templates/step1.xyz
+
+steps:
+  # Step 1: PES scan
+  - step: 1
+    operation: &quot;PES&quot;
+    engine: &quot;DFT&quot;
+    sample_type:
+      method: &quot;integer&quot;
+      parameters:
+        num_structures: 20
+    constraints:
+      bonds: [(82-91), (0-79), (0-80), (0-82)]
+
+  # Step 2: Optimize top 5 high-energy structures
+  - step: 2
+    operation: &quot;OPT+SP&quot;
+    engine: &quot;DFT&quot;
+    sample_type:
+      method: &quot;energy_window&quot;
+      parameters:
+        energy: top5
+
+  # Step 3: Frequency calculation
+  - step: 3
+    operation: &quot;FREQ&quot;
+    engine: &quot;DFT&quot;
+
+  # Step 4: Displace along imaginary mode
+  - step: 4
+    operation: &quot;NORMAL_MODE_SAMPLING&quot;
+    engine: &quot;DFT&quot;
+    parameters:
+      mode: imaginary
+
+  # Step 5: Final SP calculation on corrected TS
+  - step: 5
+    operation: &quot;SP&quot;
+    engine: &quot;DFT&quot;
+</code></pre>
+<hr />
+<h2 id="how-to-run">How to Run</h2>
+<p>Before running ChemRefine, ensure that:</p>
+<ul>
+<li>The <strong>ChemRefine environment</strong> is activated  </li>
+<li>The <strong>ORCA executable</strong> is in your <code>PATH</code>  </li>
+<li>The <strong>template directory</strong> (<code>./templates/</code>) is set up  </li>
+<li>The <strong>input structure file</strong> (e.g., <code>step1.xyz</code>) is prepared  </li>
+</ul>
+<h3 id="option-1-run-from-the-command-line">Option 1: Run from the Command Line</h3>
+<pre><code class="language-bash">chemrefine ts_input.yaml --maxcores &lt;N&gt;
+</code></pre>
+<p>Here <code>&lt;N&gt;</code> is the maximum number of simultaneous jobs.  </p>
+<h3 id="option-2-run-with-slurm">Option 2: Run with SLURM</h3>
+<p>On HPC systems with SLURM:</p>
+<pre><code class="language-bash">sbatch ./Examples/templates/chemrefine.slurm
+</code></pre>
+<p>➡️ <a href="https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Templates/chemrefine.slurm">Example ChemRefine SLURM script</a></p>
+<hr />
+<h2 id="expected-outputs">Expected Outputs</h2>
+<ul>
+<li><strong>PES scan geometries</strong> in <code>outputs/ts/step1/</code>  </li>
+<li><strong>Top 5 optimized candidates</strong> in <code>outputs/ts/step2/</code>  </li>
+<li><strong>Frequency analysis files</strong> in <code>outputs/ts/step3/</code>  </li>
+<li><strong>Imaginary mode displacement results</strong> in <code>outputs/ts/step4/</code>  </li>
+<li><strong>Final single-point energy</strong> in <code>outputs/ts/step5/</code>  </li>
+</ul>
+<p>Each directory contains <code>.out</code> logs, <code>.xyz</code> geometries, and summary files.  </p>
+<hr />
+<h2 id="notes-tips">Notes &amp; Tips</h2>
+<ul>
+<li>Increase the PES scan resolution for difficult reactions.  </li>
+<li>Ensure only <strong>one imaginary frequency</strong> is present for a valid TS.  </li>
+<li>Use <code>NORMAL_MODE_SAMPLING</code> to visualize imaginary modes.  </li>
+<li>Always double-check <code>.xyz</code> files to confirm correct TS geometry.  </li>
+</ul>
+<h3 id="identifying-good-vs-bad-imaginary-modes">Identifying Good vs Bad Imaginary Modes</h3>
+<p>ChemRefine helps distinguish <strong>spurious imaginary modes</strong> (bad TS guesses) from <strong>true transition states</strong>.  </p>
+<ul>
+<li>
+<p>❌ Bad imaginary frequency:<br />
+<img alt="Bad Imaginary" src="../bad_imag.gif" />  </p>
+</li>
+<li>
+<p>✅ Corrected good imaginary frequency:<br />
+<img alt="Good Imaginary" src="../good_imag.gif" />  </p>
+</li>
+</ul>
 
 
 
