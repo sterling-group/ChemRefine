@@ -47,7 +47,9 @@ MACE models use an ealier version of e3nn and of Pytorch, we have determined tha
 
 ### Using FAIRChem models
 
-FAIRChem models require a special type of permission through HuggingFace to be able to use them. Please follow the Tutorial from 
+FAIRChem models require a special type of permission through HuggingFace to be able to use them. Please follow the Tutorial from [FAIRChem](https://github.com/facebookresearch/fairchem).
+
+
 ## Verification
 
 After installation, verify everything works:
