@@ -119,7 +119,7 @@ Before running ChemRefine, ensure that:
 chemrefine redox_input.yaml --maxcores <N>
 ```
 
-Here `<N>` is the maximum number of simultaneous jobs.  
+Here `<N>` is the maximum number of simultaneous cores.  
 
 ### Option 2: Run with SLURM
 
