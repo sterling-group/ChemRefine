@@ -788,14 +788,65 @@ initial_xyz: ./templates/step1.xyz
 
 steps:
   - step: 1
+    operation: &quot;GOAT&quot;
+    engine: &quot;DFT&quot;
+    sample_type:
+      method: &quot;boltzmann&quot;  
+      parameters:
+       weight: 95 
+
+  - step: 2
+    operation: &quot;OPT+SP&quot;
+    engine: &quot;DFT&quot;
+    sample_type:
+      method: &quot;energy_window&quot;
+      parameters:
+        energy: 10      
+        unit: kcal/mol
+
+  - step: 3
     operation: &quot;OPT+SP&quot;
     engine: &quot;MLFF&quot;
+    charge: -1 
+    multiplicity: 2
     mlff:
       model_name: &quot;uma-s-1&quot;
       task_name: &quot;omol&quot;
       device: &quot;cuda&quot;
+    sample_type:
+      method: &quot;integer&quot;  
+      parameters:
+       num_structures: 0  
 
-  - step: 2
+  - step: 4
+    operation: &quot;OPT+SP&quot;
+    engine: &quot;MLFF&quot;
+    charge: 0
+    multiplicity: 1
+    mlff:
+      model_name: &quot;uma-s-1&quot;
+      task_name: &quot;omol&quot;
+      device: &quot;cuda&quot;
+    sample_type:
+      method: &quot;integer&quot;  
+      parameters:
+       num_structures: 0  
+
+  - step: 5
+    operation: &quot;OPT+SP&quot;
+    engine: &quot;MLFF&quot;
+    charge: 1
+    multiplicity: 2
+    mlff:
+      model_name: &quot;uma-s-1&quot;
+      task_name: &quot;omol&quot;
+      device: &quot;cuda&quot;
+    sample_type:
+      method: &quot;integer&quot;  
+      parameters:
+       num_structures: 0  
+
+  - step: 6
     operation: &quot;OPT+SP&quot;
     engine: &quot;DFT&quot;
     charge: -1
@@ -803,17 +854,27 @@ steps:
     sample_type:
       method: &quot;integer&quot;
       parameters:
-        num_structures: 1
+       num_structures: 0  
 
-  - step: 3
-    operation: &quot;OPT+SP&quot;
-    engine: &quot;DFT&quot;
-    charge: +1
-    multiplicity: 1
-    sample_type:
+  -  step: 7
+     operation: &quot;OPT+SP&quot;
+     engine: &quot;DFT&quot;
+     charge: 0
+     multiplicity: 1
+     sample_type:
       method: &quot;integer&quot;
       parameters:
-        num_structures: 1
+       num_structures: 0  
+
+  -  step: 8
+     operation: &quot;OPT+SP&quot;
+     engine: &quot;DFT&quot;
+     charge: 1
+     multiplicity: 2
+     sample_type:
+      method: &quot;integer&quot;
+      parameters:
+       num_structures: 0  
 </code></pre>
 <p>This workflow optimizes the neutral, reduced (–1), and oxidized (+1) charge states.</p>
 <hr />
