@@ -13,7 +13,6 @@ ChemRefine automates spin exploration with the following workflow:
 2. **Optimize structures** at multiple spin multiplicities.  
 3. **Compare MLFF vs DFT predictions** for spin energetics and geometries.  
 4. **Extract spin energy gaps** for further analysis.  
-
 ---
 
 ## Prerequisites
@@ -64,33 +63,70 @@ Example content (excerpt):
 
 ```yaml
 template_dir: ./templates
-scratch_dir: /scratch/spin_jobs
-output_dir: ./outputs/spin
-orca_executable: /mfs/io/groups/sterling/software-tools/orca/orca_6_1_0_avx2/orca
+scratch_dir: /scratch/
+output_dir: ./outputs
+orca_executable: /orca
 
+charge: 0
+multiplicity: 5 
+
+# Optional: Override default initial structure (default is /template_dir/step1.xyz)
 initial_xyz: ./templates/step1.xyz
 
 steps:
-  # MLFF optimization of singlet
   - step: 1
     operation: "OPT+SP"
-    engine: "MLFF"
-    charge: 0
-    multiplicity: 1
-    mlff:
-      model_name: "uma-s-1"
-      task_name: "omol"
-      device: "cuda"
+    engine: "DFT"
+    sample_type:
+      method: "integer"  
+      parameters: 
+        num_structures: 0
 
-  # DFT optimization of singlet
   - step: 2
     operation: "OPT+SP"
     engine: "DFT"
-    charge: 0
-    multiplicity: 1
+    charge: 0 
+    multiplicity: 5
+    sample_type:
+      method: "integer"
+      parameters:
+        num_structures: 0
 
-  # MLFF optimization of triplet
   - step: 3
+    operation: "OPT+SP"
+    engine: "DFT"
+    charge: 0 
+    multiplicity: 3
+    sample_type:
+      method: "integer"
+      parameters:
+        num_structures: 0   
+
+  - step: 4
+    operation: "OPT+SP"
+    engine: "DFT"
+    charge: 0 
+    multiplicity: 1
+    sample_type:
+      method: "integer"
+      parameters:
+        num_structures: 0   
+
+  - step: 5
+    operation: "OPT+SP"
+    engine: "MLFF"
+    charge: 0
+    multiplicity: 5
+    mlff:
+      model_name: "uma-s-1"
+      task_name: "omol"
+      device: "cuda"
+    sample_type:
+      method: "integer"  
+      parameters:
+       num_structures: 0  
+
+  - step: 6
     operation: "OPT+SP"
     engine: "MLFF"
     charge: 0
@@ -99,13 +135,24 @@ steps:
       model_name: "uma-s-1"
       task_name: "omol"
       device: "cuda"
+    sample_type:
+      method: "integer"  
+      parameters:
+       num_structures: 0   
 
-  # DFT optimization of triplet
-  - step: 4
+  - step: 7
     operation: "OPT+SP"
-    engine: "DFT"
+    engine: "MLFF"
     charge: 0
-    multiplicity: 3
+    multiplicity: 1
+    mlff:
+      model_name: "uma-s-1"
+      task_name: "omol"
+      device: "cuda"
+    sample_type:
+      method: "integer"  
+      parameters:
+       num_structures: 0  
 ```
 
 This workflow optimizes the same molecule in **singlet and triplet spin states** using both MLFF and DFT.
@@ -127,7 +174,7 @@ Before running ChemRefine, ensure that:
 chemrefine spin_input.yaml --maxcores <N>
 ```
 
-Here `<N>` is the maximum number of simultaneous jobs.  
+Here `<N>` is the maximum number of simultaneous cores.  
 
 ### Option 2: Run with SLURM
 
