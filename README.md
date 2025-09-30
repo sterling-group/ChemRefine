@@ -1,5 +1,5 @@
 [![GitHub release](https://img.shields.io/github/v/release/sterling-group/ChemRefine.svg)](https://github.com/sterling-group/ChemRefine/releases/)
-[![Paper](https://img.shields.io/badge/Paper-ChemRefine-blue)](https://doi.org/10.26434/chemrxiv-XXXX) <!-- replace with DOI or arXiv/chemRxiv link -->
+[![Paper](https://img.shields.io/badge/Paper-ChemRefine-blue)](https://doi.org/10.26434/chemrxiv-2025-cvg1x) 
 [![License](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![GitHub issues](https://img.shields.io/github/issues/sterling-group/ChemRefine.svg)](https://github.com/sterling-group/ChemRefine/issues/)
 [![Documentation Status](https://img.shields.io/badge/docs-latest-brightgreen.svg)](https://sterling-group.github.io/ChemRefine/)
