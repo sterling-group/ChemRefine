@@ -3,8 +3,9 @@ theme:
   name: material
 
 nav:
-  - Home: home.md
+  - Home: index.md
   - Install: INSTALL.md
+  - License: LICENSE.md
   - Tutorials:
       - Overview: tutorials/index.md
       - Conformer Sampling: tutorials/conformer_sampling.md
