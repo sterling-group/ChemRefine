@@ -19,7 +19,7 @@ ChemRefine automates TS exploration with the following workflow:
 
 ## Prerequisites
 
-- Installed **ChemRefine** (see [Installation Guide](../install.md))  
+- Installed **ChemRefine** (see [Installation Guide](../INSTALL.md))  
 - Access to an **ORCA executable**  
 - Example input (`ts_input.yaml`) from this tutorial folder  
 - Initial structure (`step1.xyz`)  
