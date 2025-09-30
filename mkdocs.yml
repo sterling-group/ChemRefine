@@ -5,7 +5,7 @@ theme:
 nav:
   - Home: index.md
   - Install: INSTALL.md
-  - License: LICENSE
+  - License: LICENSE.md
   - Tutorials:
       - Overview: tutorials/index.md
       - Conformer Sampling: tutorials/conformer_sampling.md
