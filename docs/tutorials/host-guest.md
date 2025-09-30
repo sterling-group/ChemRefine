@@ -4,6 +4,15 @@ This tutorial demonstrates how to use **ChemRefine** for a host–guest docking 
 
 We will start with an initial structure (`step1.xyz`) and progressively refine docking poses through MLFF and DFT optimization.
 
+## Overview
+
+Orca 6.0+ has added a featured called [Docker](https://www.faccts.de/docs/orca/6.0/manual/contents/typical/docker.html), which finds the best way of putting two systems and putting them together in the their best possible interaction. We will run the following workflow:
+
+1. **Host-Guest Docking (DOCKER):**     
+    Performs a stochastic search for the best interaction between the host molecule and the guest Cl<sup>-</sup> ion. We will refine with integer taking the 5 best structures. 
+
+2. **MLIP Optimization:**     
+    We will be using UMA-S-1, for geometry optimization
 
 ## Input Files
 
