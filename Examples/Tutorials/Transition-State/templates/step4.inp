@@ -1,0 +1,6 @@
+!SP WB97X-D3BJ Def2-TZVPPD RIJCOSX def2/J UKS GUESSMIX
+
+%pal nprocs 32 end
+
+%cpcm epsilon 4.0 end
+

@@ -1,0 +1,94 @@
+template_dir: ./templates
+scratch_dir: /scratch/
+output_dir: ./outputs
+orca_executable: /orca
+
+charge: 0
+multiplicity: 5 
+
+# Optional: Override default initial structure (default is /template_dir/step1.xyz)
+initial_xyz: ./templates/step1.xyz
+
+steps:
+  - step: 1
+    operation: "OPT+SP"
+    engine: "DFT"
+    sample_type:
+      method: "integer"  
+      parameters: 
+        num_structures: 0
+
+  - step: 2
+    operation: "OPT+SP"
+    engine: "DFT"
+    charge: 0 
+    multiplicity: 5
+    sample_type:
+      method: "integer"
+      parameters:
+        num_structures: 0
+
+  - step: 3
+    operation: "OPT+SP"
+    engine: "DFT"
+    charge: 0 
+    multiplicity: 3
+    sample_type:
+      method: "integer"
+      parameters:
+        num_structures: 0   
+
+  - step: 4
+    operation: "OPT+SP"
+    engine: "DFT"
+    charge: 0 
+    multiplicity: 1
+    sample_type:
+      method: "integer"
+      parameters:
+        num_structures: 0   
+
+  - step: 5
+    operation: "OPT+SP"
+    engine: "MLFF"
+    charge: 0
+    multiplicity: 5
+    mlff:
+      model_name: "uma-s-1"
+      task_name: "omol"
+      device: "cuda"
+    sample_type:
+      method: "integer"  
+      parameters:
+       num_structures: 0  
+
+  - step: 6
+    operation: "OPT+SP"
+    engine: "MLFF"
+    charge: 0
+    multiplicity: 3
+    mlff:
+      model_name: "uma-s-1"
+      task_name: "omol"
+      device: "cuda"
+    sample_type:
+      method: "integer"  
+      parameters:
+       num_structures: 0   
+
+  - step: 7
+    operation: "OPT+SP"
+    engine: "MLFF"
+    charge: 0
+    multiplicity: 1
+    mlff:
+      model_name: "uma-s-1"
+      task_name: "omol"
+      device: "cuda"
+    sample_type:
+      method: "integer"  
+      parameters:
+       num_structures: 0  
+
+  
+

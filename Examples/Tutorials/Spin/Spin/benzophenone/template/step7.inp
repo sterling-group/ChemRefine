@@ -1,0 +1,5 @@
+! B2PLYP D4 def2-TZVPPD SMD(benzene) AutoAux RIJCOSX
+%pal nprocs 32 end
+%TDDFT
+    NROOTS    20
+END

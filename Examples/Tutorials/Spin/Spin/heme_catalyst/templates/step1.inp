@@ -1,0 +1,8 @@
+!OPT B3LYP D4 DEF2-SVP
+
+%basis
+    NewGTO Fe "def2-TZVP" end
+end
+
+%pal nprocs 32 end
+

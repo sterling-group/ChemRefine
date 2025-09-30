@@ -1,0 +1,4 @@
+!OPT FREQ PBE D4 Def2-SVP SMD(o-dichlorobenzene) 
+
+%pal nprocs 32 end
+

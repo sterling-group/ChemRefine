@@ -1,0 +1,3 @@
+!OPT wb97x-d4 def2-SVP 
+
+%pal nprocs 32 end
