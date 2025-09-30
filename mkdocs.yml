@@ -11,7 +11,7 @@ nav:
       - Transition State Finding: tutorials/ts_finding.md 
       - Host-Guest Docking and Microsolvation: tutorials/host-guest.md
       - MLIP Training and Normal Mode Sampling: tutorials/mlip_training.md
-      - Redox: tutorials/oxidation.md
+      - Redox: tutorials/redox.md
       - Spin: tutorials/spin.md
 
   
