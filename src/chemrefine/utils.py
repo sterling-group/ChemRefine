@@ -11,7 +11,6 @@ import numpy as np
 import json
 from typing import List, Dict
 from ase.io import write
-from collections.abc import Sequence
 
 STRIDE = 1000  # number of IDs per parent block
 
@@ -352,32 +351,34 @@ def update_step_manifest_outputs(
 
 def map_outputs_to_ids(
     step_dir: str, step_number: int, output_files: List[str], operation: str
-) -> List[int]:
+) -> List[str]:
     """
     Resolve structure IDs for outputs using the manifest; fall back to robust parsing
     from output filenames (handles suffixes like '_atom46', '_trj', etc.) and prefix matching.
 
     Returns
     -------
-    list[int]
-        Structure IDs aligned with output_files order. Unresolved IDs are -1.
+    list[str]
+        Structure IDs aligned with output_files order. Unresolved IDs are '-1'.
     """
     # Special handling for first step
     if step_number == 1:
-        # For OPT+SP, just one structure → [0]
+        # For OPT+SP, just one structure → ["0"]
         if operation.upper() == "OPT+SP":
-            return [0 for _ in output_files]
+            return ["0" for _ in output_files]
 
     # For PES, GOAT, DOCKER → let normal parsing run
     manifest = read_step_manifest(step_dir, step_number)
-    ids: List[int] = []
+    ids: List[str] = []
 
     # Build indices from manifest
-    by_input_stem: Dict[str, Optional[int]] = {}
+    by_input_stem: Dict[str, Optional[str]] = {}
     if manifest and "records" in manifest:
         for r in manifest["records"]:
             stem = os.path.splitext(r["input_file"])[0]  # e.g., 'step3_structure_0'
-            by_input_stem[stem] = r.get("structure_id")
+            sid = r.get("structure_id")
+            if sid is not None:
+                by_input_stem[stem] = str(sid)
 
     input_stems = list(by_input_stem.keys())
 
@@ -385,72 +386,40 @@ def map_outputs_to_ids(
         out_base = os.path.basename(outp)
         out_stem, _ = os.path.splitext(out_base)
 
-        # 1) Exact stem match via manifest (when outputs share stem with inputs)
+        # 1) Exact stem match via manifest
         if out_stem in by_input_stem and by_input_stem[out_stem] is not None:
-            ids.append(int(by_input_stem[out_stem]))
+            ids.append(by_input_stem[out_stem])
             continue
 
-        # 2) Prefix match: output stem starts with input stem (handles '_atom46', '_trj', etc.)
+        # 2) Prefix match (handles suffixes like '_atom46', '_trj')
         pref = [s for s in input_stems if out_stem.startswith(s)]
         if len(pref) == 1 and by_input_stem[pref[0]] is not None:
-            ids.append(int(by_input_stem[pref[0]]))
+            ids.append(by_input_stem[pref[0]])
             continue
 
-        # 3) Regex extraction from the output name itself
+        # 3) Regex extraction from filename
         sid = extract_structure_id_from_any_name(out_base)
         if sid is not None:
-            ids.append(sid)
+            ids.append(str(sid))
             continue
 
-        # 4) Try a corresponding .inp with truncated suffix (common case)
-        #    e.g., 'step3_structure_0_atom46' -> try 'step3_structure_0.inp'
+        # 4) Try corresponding .inp file
         if "_" in out_stem:
             truncated = out_stem.rsplit("_", 1)[0]
             candidate_inp = os.path.join(step_dir, truncated + ".inp")
             sid2 = extract_structure_id(candidate_inp)
             if sid2 is not None:
-                ids.append(sid2)
+                ids.append(str(sid2))
                 continue
 
-        # 5) Last resort: -1 (caller should fail fast before creating inputs)
-        ids.append(-1)
+        # 5) Last resort
+        ids.append("-1")
 
     return ids
 
 
 def validate_structure_ids_or_raise(structure_ids, step_id):
-    """
-    Validate structure IDs coming from previous steps.
-
-    Accepts integers (must be >= 0) and/or strings (must be non-empty after strip()).
-    Mixed lists are allowed. Raises a descriptive error on invalid input.
-
-    Parameters
-    ----------
-    structure_ids : Sequence[Union[int, str]]
-        List/tuple of IDs to validate.
-    step_id : int
-        Current step number, only used for error messaging.
-
-    Raises
-    ------
-    TypeError
-        If structure_ids is not a sequence or contains unsupported types.
-    ValueError
-        If any ID is invalid (negative int or empty string).
-    """
-
-    if structure_ids is None:
-        raise ValueError(f"[step {step_id}] structure_ids is None")
-
-    if not isinstance(structure_ids, Sequence) or isinstance(
-        structure_ids, (str, bytes)
-    ):
-        raise TypeError(f"[step {step_id}] structure_ids must be a sequence of IDs")
-
-    if len(structure_ids) == 0:
-        raise ValueError(f"[step {step_id}] structure_ids is empty")
-
+    ...
     for idx, i in enumerate(structure_ids):
         if isinstance(i, int):
             if i < 0:
@@ -458,15 +427,18 @@ def validate_structure_ids_or_raise(structure_ids, step_id):
                     f"[step {step_id}] structure_ids[{idx}] is negative: {i}"
                 )
         elif isinstance(i, str):
-            if not i.strip():
+            if not i.strip() or i.strip() == "-1":
                 raise ValueError(
-                    f"[step {step_id}] structure_ids[{idx}] is an empty/blank string"
+                    f"[step {step_id}] structure_ids[{idx}] is invalid: '{i}'"
                 )
         else:
             raise TypeError(
                 f"[step {step_id}] structure_ids[{idx}] has unsupported type {type(i).__name__}; "
                 "only int or str are allowed"
             )
+
+    # normalize everything to str for downstream consistency
+    return [str(i) for i in structure_ids]
 
 
 def registry_path(output_root: str) -> str:
@@ -628,35 +600,39 @@ def extract_structure_id_from_any_name(name: str) -> Optional[int]:
     return int(m.group("id")) if m else None
 
 
-def allocate_child_ids(parents: list[int], fanouts: list[int], next_id: int):
+def allocate_child_ids(parents: list[str], fanouts: list[int], next_id: int):
     """
     Allocate persistent IDs for children given parent IDs and fanout counts.
-    Uses block allocation: each parent gets a reserved stride of 1000 IDs.
+    - If fanout == 1 → reuse parent ID unchanged
+    - If fanout > 1 → append -childIndex (e.g., '0-0', '0-1', ...)
 
     Returns
     -------
-    tuple[list[int], int]
+    tuple[list[str], int]
         child_ids : list of allocated child IDs
-        next_id   : updated counter (monotonic, but unused in block scheme)
+        next_id   : updated counter (unused here, just monotonic)
     """
-    stride = 1000
     child_ids = []
 
     for parent, fanout in zip(parents, fanouts):
         if fanout == 0:
             continue
-        base = parent * stride
-        for i in range(fanout):
-            child_ids.append(base + i)
+        elif fanout == 1:
+            # carry forward parent ID
+            child_ids.append(str(parent))
+        else:
+            # branch children
+            for i in range(fanout):
+                child_ids.append(f"{parent}-{i}")
 
-    # Keep next_id monotonic even if not used in block scheme
-    return child_ids, max(child_ids) + 1 if child_ids else next_id
+    # keep next_id monotonic (for compatibility)
+    return child_ids, next_id + len(child_ids)
 
 
 def resolve_persistent_ids(
     *,
     step_number: int,
-    last_ids: list[int] | None,
+    last_ids: list[str] | None,
     coords_count: int,
     output_files: list[str],
     operation: str,
@@ -669,7 +645,7 @@ def resolve_persistent_ids(
 
     Strategy
     --------
-    - Step 1: allocate from an implicit parent [0] → coords_count children.
+    - Step 1: allocate from an implicit parent ["0"] → coords_count children.
     - General case:
         * If coords_count == len(last_ids): prefer 1:1 persistence.
           Optionally use `file_map_fn` for provenance mapping.
@@ -679,21 +655,21 @@ def resolve_persistent_ids(
                 · If coords_count <= len(last_ids): first coords_count parents yield one child, others zero.
                 · If coords_count > len(last_ids): first parent yields the extra, others yield one.
     """
-    # Step 1 bootstrap (implicit parent 0)
+    # Step 1 bootstrap (implicit parent "0")
     if step_number == 1:
-        return allocate_child_ids([0], [coords_count], next_id)
+        return allocate_child_ids(["0"], [coords_count], next_id)
 
-    # No parents: assign fresh IDs
+    # No parents: assign fresh IDs (seeded as strings)
     if not last_ids:
         return allocate_child_ids(
-            list(range(coords_count)), [1] * coords_count, next_id
+            [str(i) for i in range(coords_count)], [1] * coords_count, next_id
         )
 
     # 1:1 case (prefer to reuse IDs directly)
     if coords_count == len(last_ids):
         if file_map_fn and step_dir is not None:
             mapped = file_map_fn(step_dir, step_number, output_files, operation)
-            if mapped and len(mapped) == coords_count and all(i >= 0 for i in mapped):
+            if mapped and len(mapped) == coords_count:
                 return mapped, next_id
         # fallback: identity mapping
         return last_ids[:], next_id
