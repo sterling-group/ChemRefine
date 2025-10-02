@@ -663,33 +663,26 @@ def resolve_persistent_ids(
 
     Strategy
     --------
-    - Step 1: allocate from an implicit parent ["0"] → coords_count children.
+    - Step 1: implicit parent 0 → allocate children.
     - General case:
-        * If coords_count == len(last_ids): prefer 1:1 persistence.
-          Optionally use `file_map_fn` for provenance mapping.
-        * Otherwise infer fan-outs:
-            - Single parent: all outputs belong to that parent.
-            - Multiple parents:
-                · If coords_count <= len(last_ids): first coords_count parents yield one child, others zero.
-                · If coords_count > len(last_ids): first parent yields the extra, others yield one.
+        * If coords_count == len(last_ids): 1:1 persistence, keep IDs.
+        * If fan-out: generate child IDs using hyphen ancestry notation.
     """
-    # Step 1 bootstrap (implicit parent "0")
+
+    # Step 1 bootstrap
     if step_number == 1:
-        return allocate_child_ids(["0"], [coords_count], next_id)
+        return [str(i) for i in range(coords_count)], next_id + coords_count
 
-    # No parents: assign fresh IDs (seeded as strings)
+    # Defensive: no parents
     if not last_ids:
-        return allocate_child_ids(
-            [str(i) for i in range(coords_count)], [1] * coords_count, next_id
-        )
+        return [str(i) for i in range(coords_count)], next_id + coords_count
 
-    # 1:1 case (prefer to reuse IDs directly)
+    # 1:1 case (reuse parent IDs directly)
     if coords_count == len(last_ids):
         if file_map_fn and step_dir is not None:
             mapped = file_map_fn(step_dir, step_number, output_files, operation)
-            if mapped and len(mapped) == coords_count:
-                return mapped, next_id
-        # fallback: identity mapping
+            if mapped and len(mapped) == coords_count and all(i != -1 for i in mapped):
+                return [str(m) for m in mapped], next_id
         return last_ids[:], next_id
 
     # Fan-out inference
@@ -697,7 +690,6 @@ def resolve_persistent_ids(
     if p == 1:
         fanouts = [coords_count]
     elif coords_count % p == 0:
-        # evenly divisible: assume each parent yields coords_count/p children
         per_parent = coords_count // p
         fanouts = [per_parent] * p
     else:
@@ -707,4 +699,13 @@ def resolve_persistent_ids(
             extra = coords_count - (p - 1)
             fanouts = [extra] + [1] * (p - 1)
 
-    return allocate_child_ids(last_ids, fanouts, next_id)
+    # Allocate child IDs with ancestry strings
+    child_ids = []
+    for parent, fanout in zip(last_ids, fanouts):
+        if fanout == 0:
+            continue
+        for i in range(fanout):
+            # attach child index with hyphen
+            child_ids.append(f"{parent}-{i}")
+
+    return child_ids, next_id + len(child_ids)
