@@ -702,6 +702,10 @@ def resolve_persistent_ids(
     p = len(last_ids)
     if p == 1:
         fanouts = [coords_count]
+    elif coords_count % p == 0:
+        # evenly divisible: assume each parent yields coords_count/p children
+        per_parent = coords_count // p
+        fanouts = [per_parent] * p
     else:
         if coords_count <= p:
             fanouts = [1] * coords_count + [0] * (p - coords_count)
