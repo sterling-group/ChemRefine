@@ -976,18 +976,31 @@ class ChemRefiner:
                     step_dir=step_dir,
                 )
                 # Apply filtering if configured
-                filtered_coordinates, filtered_ids = self.refiner.filter(
-                    filtered_coordinates,
-                    energies,
-                    filtered_ids,
-                    sample_method,
-                    parameters,
-                )
+                if operation in {"GOAT", "PES", "DOCKER", "SOLVATOR"}:
+                    filtered_coordinates, filtered_ids = self.refiner.filter(
+                        filtered_coordinates,
+                        energies,
+                        filtered_ids,
+                        sample_method,
+                        parameters,
+                        by_parent=True,  # NEW: refine within each ensemble group
+                    )
+                else:
+                    filtered_coordinates, filtered_ids = self.refiner.filter(
+                        filtered_coordinates,
+                        energies,
+                        filtered_ids,
+                        sample_method,
+                        parameters,
+                        by_parent=False,  # default global filtering
+                    )
+
                 if filtered_coordinates is None or filtered_ids is None:
                     logging.error(
                         f"Filtering failed at step {step_number}. Exiting pipeline."
                     )
                     return
+
             else:
                 step_dir = os.path.join(self.output_dir, f"step{step_number}")
                 logging.info(
