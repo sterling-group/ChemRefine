@@ -13,6 +13,8 @@ from typing import List, Dict
 from ase.io import write
 from collections.abc import Sequence
 
+STRIDE = 1000  # number of IDs per parent block
+
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -626,39 +628,31 @@ def extract_structure_id_from_any_name(name: str) -> Optional[int]:
     return int(m.group("id")) if m else None
 
 
-def allocate_child_ids(parent_ids, fanouts, next_id_start):
+def allocate_child_ids(
+    parent_ids: list[int], fanouts: list[int], next_id: int
+) -> tuple[list[int], int]:
     """
-    Allocate persistent structure IDs for children spawned from parents.
+    Allocate persistent integer IDs for children using block-based allocation.
+    Each parent gets a block of STRIDE IDs, so children are always unique and
+    parentage can be recovered.
 
-    Rules
-    -----
-    - If a parent yields exactly one child, that child keeps the parent's ID.
-    - If a parent yields more than one child, the first child keeps the parent's ID
-    and remaining children receive fresh IDs from a monotonically increasing counter.
-
-    Parameters
-    ----------
-    parent_ids : list[int]
-        IDs of parent structures in input order.
-    fanouts : list[int]
-        Number of children per parent, aligned with `parent_ids`.
-    next_id_start : int
-        Next fresh ID to assign for newly created children.
+    Example
+    -------
+    parent_ids = [0, 1, 2]
+    fanouts    = [2, 1, 0]  # two children from parent 0, one from parent 1, none from parent 2
 
     Returns
     -------
-    tuple[list[int], int]
-        The assigned child IDs (in output order) and the updated `next_id_start`.
+    ([1000, 1001, 2000], next_id)
     """
-    out, nxt = [], next_id_start
-    for pid, m in zip(parent_ids, fanouts):
-        if m <= 0:
-            continue
-        out.append(pid)
-        for _ in range(m - 1):
-            out.append(nxt)
-            nxt += 1
-    return out, nxt
+    child_ids = []
+    for pid, count in zip(parent_ids, fanouts):
+        # block start = (parent_id + 1) * STRIDE
+        base = (pid + 1) * STRIDE
+        for i in range(count):
+            child_ids.append(base + i)
+
+    return child_ids, next_id  # next_id unused with block scheme
 
 
 def resolve_persistent_ids(
