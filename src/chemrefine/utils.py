@@ -11,6 +11,7 @@ import numpy as np
 import json
 from typing import List, Dict
 from ase.io import write
+from collections.abc import Sequence
 
 STRIDE = 1000  # number of IDs per parent block
 
@@ -419,26 +420,43 @@ def map_outputs_to_ids(
 
 
 def validate_structure_ids_or_raise(structure_ids, step_id):
-    ...
+    """
+    Validate structure IDs and normalize to strings.
+    IDs can be int (>=0) or str (non-empty, not '-1').
+    Always returns a list of strings.
+    """
+    if structure_ids is None:
+        raise ValueError(f"[step {step_id}] structure_ids is None")
+
+    if not isinstance(structure_ids, Sequence) or isinstance(
+        structure_ids, (str, bytes)
+    ):
+        raise TypeError(f"[step {step_id}] structure_ids must be a sequence of IDs")
+
+    if len(structure_ids) == 0:
+        raise ValueError(f"[step {step_id}] structure_ids is empty")
+
+    normalized = []
     for idx, i in enumerate(structure_ids):
         if isinstance(i, int):
             if i < 0:
                 raise ValueError(
                     f"[step {step_id}] structure_ids[{idx}] is negative: {i}"
                 )
+            normalized.append(str(i))
         elif isinstance(i, str):
             if not i.strip() or i.strip() == "-1":
                 raise ValueError(
                     f"[step {step_id}] structure_ids[{idx}] is invalid: '{i}'"
                 )
+            normalized.append(i.strip())
         else:
             raise TypeError(
                 f"[step {step_id}] structure_ids[{idx}] has unsupported type {type(i).__name__}; "
                 "only int or str are allowed"
             )
 
-    # normalize everything to str for downstream consistency
-    return [str(i) for i in structure_ids]
+    return normalized
 
 
 def registry_path(output_root: str) -> str:
