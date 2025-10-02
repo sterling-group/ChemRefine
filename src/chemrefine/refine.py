@@ -30,16 +30,34 @@ class StructureRefiner:
 
     def _filter_global(self, coordinates, energies, ids, method, parameters):
         """Global filtering (current behavior)."""
+        logging.info("Filtering structures globally.")
         return self._dispatch(coordinates, energies, ids, method, parameters)
 
     def _filter_by_parent(self, coordinates, energies, ids, method, parameters):
-        """Filter structures grouped by parent ID block (1000 stride)."""
+        """
+        Filter structures grouped by parent ID.
+
+        Supports both:
+        - Integer block allocation scheme (stride = 1000).
+        - Hyphen-separated string scheme ("0-1-2").
+        """
+        import logging
         from collections import defaultdict
+
+        logging.info("Filtering structures by parent ID groups.")
 
         groups = defaultdict(lambda: {"coords": [], "energies": [], "ids": []})
 
         for coord, e, sid in zip(coordinates, energies, ids):
-            parent = sid // 1000  # block allocation scheme
+            if isinstance(sid, int):
+                # old block allocation scheme
+                parent = sid // 1000
+            elif isinstance(sid, str):
+                # new hyphen scheme: parent is everything before the last "-"
+                parent = sid.rsplit("-", 1)[0] if "-" in sid else sid
+            else:
+                raise TypeError(f"Unsupported structure_id type: {type(sid)}")
+
             groups[parent]["coords"].append(coord)
             groups[parent]["energies"].append(e)
             groups[parent]["ids"].append(sid)
