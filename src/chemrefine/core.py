@@ -8,6 +8,7 @@ from .orca_interface import OrcaInterface, OrcaJobSubmitter
 import shutil
 import re
 import sys
+import glob
 from .mlff import MLFFTrainer
 from chemrefine.utils import (
     update_step_manifest_outputs,
@@ -78,8 +79,10 @@ class ChemRefiner:
         device="cpu",
         bind="127.0.0.1:8888",
     ):
-        """Prepare the directory for the first step by copying the initial XYZ file,
-        generating input/output files, and assigning IDs."""
+        """
+        Prepare the directory for the first step by copying one or more initial XYZ files,
+        generating input/output files, and assigning seed IDs (one per XYZ).
+        """
         if charge is None:
             charge = self.charge
         if multiplicity is None:
@@ -88,30 +91,42 @@ class ChemRefiner:
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         os.makedirs(step_dir, exist_ok=True)
 
-        # Determine source xyz
+        # --- Discover initial xyz files ---
         if initial_xyz is None:
-            src_xyz = os.path.join(self.template_dir, "step1.xyz")
-        else:
-            src_xyz = initial_xyz
-
-        # Force consistent naming with _structure_0
-        dst_xyz = os.path.join(step_dir, f"step{step_number}_structure_0.xyz")
-        if not os.path.exists(src_xyz):
-            raise FileNotFoundError(
-                f"Initial XYZ file '{src_xyz}' not found. Please ensure the path is correct."
+            # Default: look for "step1.xyz" in template_dir
+            src_xyz_files = [os.path.join(self.template_dir, "step1.xyz")]
+        elif os.path.isdir(initial_xyz):
+            # User provided a directory → take all *.xyz inside
+            src_xyz_files = sorted(
+                f
+                for f in glob.glob(os.path.join(initial_xyz, "*.xyz"))
+                if os.path.isfile(f)
             )
-        shutil.copyfile(src_xyz, dst_xyz)
+            if not src_xyz_files:
+                raise FileNotFoundError(
+                    f"No .xyz files found in directory '{initial_xyz}'."
+                )
+        else:
+            # User provided a single file
+            src_xyz_files = [initial_xyz]
 
-        # Input template
+        # --- Copy them into step_dir with canonical names ---
+        xyz_filenames = []
+        for idx, src in enumerate(src_xyz_files):
+            if not os.path.exists(src):
+                raise FileNotFoundError(f"Initial XYZ file '{src}' not found.")
+            dst = os.path.join(step_dir, f"step{step_number}_structure_{idx}.xyz")
+            shutil.copyfile(src, dst)
+            xyz_filenames.append(dst)
+
+        # --- Input template ---
         template_inp = os.path.join(self.template_dir, "step1.inp")
         if not os.path.exists(template_inp):
             raise FileNotFoundError(
-                f"Input file '{template_inp}' not found. Please ensure 'step1.inp' exists in the template directory."
+                f"Input file '{template_inp}' not found. Please ensure it exists."
             )
 
-        # Now pass correctly named xyz into create_input
-        xyz_filenames = [dst_xyz]
-
+        # --- Generate inputs/outputs ---
         input_files, output_files = self.orca.create_input(
             xyz_filenames,
             template_inp,
@@ -126,10 +141,10 @@ class ChemRefiner:
             bind=bind,
         )
 
-        # Assign IDs based on number of input files
-        ids = [0]  # step 1 always seeds with a single parent ID
+        # --- Assign seed IDs (one per input structure) ---
+        seed_ids = list(range(len(input_files)))
 
-        return step_dir, input_files, output_files, ids
+        return step_dir, input_files, output_files, seed_ids
 
     def prepare_subsequent_step_directory(
         self,
@@ -961,18 +976,31 @@ class ChemRefiner:
                     step_dir=step_dir,
                 )
                 # Apply filtering if configured
-                filtered_coordinates, filtered_ids = self.refiner.filter(
-                    filtered_coordinates,
-                    energies,
-                    filtered_ids,
-                    sample_method,
-                    parameters,
-                )
+                if operation in {"GOAT", "PES", "DOCKER", "SOLVATOR"}:
+                    filtered_coordinates, filtered_ids = self.refiner.filter(
+                        filtered_coordinates,
+                        energies,
+                        filtered_ids,
+                        sample_method,
+                        parameters,
+                        by_parent=True,  # NEW: refine within each ensemble group
+                    )
+                else:
+                    filtered_coordinates, filtered_ids = self.refiner.filter(
+                        filtered_coordinates,
+                        energies,
+                        filtered_ids,
+                        sample_method,
+                        parameters,
+                        by_parent=False,  # default global filtering
+                    )
+
                 if filtered_coordinates is None or filtered_ids is None:
                     logging.error(
                         f"Filtering failed at step {step_number}. Exiting pipeline."
                     )
                     return
+
             else:
                 step_dir = os.path.join(self.output_dir, f"step{step_number}")
                 logging.info(
