@@ -1140,7 +1140,8 @@ class ChemRefiner:
             # Commit this step's results for next step
             last_coords, last_ids = filtered_coordinates, filtered_ids
             last_energies, last_forces = energies, forces
-
+            print(f"Step {step_number} completed: {len(last_coords)} structures ready.")
+            print(f"Your ID's for this step are: {last_ids}")
         logging.info("ChemRefine pipeline completed.")
 
 
