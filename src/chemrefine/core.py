@@ -1002,6 +1002,15 @@ class ChemRefiner:
                         )
                     )
 
+                    # If this is a 1:1 propagation case (OPT+SP or similar), just reuse last_ids
+                    if len(last_ids) == len(output_files) and operation in {"OPT+SP"}:
+                        logging.info(
+                            f"[step {step_number}] 1:1 propagation detected, reusing parent IDs."
+                        )
+                        filtered_ids = last_ids[:]
+                    else:
+                        filtered_ids = None  # let the ID allocation run later
+
                 # Save manifest with input structure IDs
                 write_step_manifest(
                     step_number, step_dir, input_files, operation, engine
