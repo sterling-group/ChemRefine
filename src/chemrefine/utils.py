@@ -4,7 +4,7 @@ from .constants import HARTREE_TO_KCAL_MOL, R_KCAL_MOL_K, CSV_PRECISION
 from pathlib import Path
 import subprocess
 import getpass
-from typing import Optional
+from typing import Optional, Union
 import os
 import pandas as pd
 import numpy as np
@@ -209,29 +209,44 @@ class Utility:
     # --- Append below your existing imports in chemrefine/utils.py ---
 
 
+# Accept either pure digits ("12") or hierarchical hyphen IDs ("0-1-2")
 _ID_PATTERN = re.compile(
-    r"^step(?P<step>\d+)_structure_(?P<id>\d+)\.inp$", re.IGNORECASE
+    r"^step(?P<step>\d+)_structure_(?P<id>\d+(?:-\d+)*)\.inp$",
+    re.IGNORECASE,
+)
+
+_ID_ANYWHERE_RE = re.compile(
+    r"step(?P<step>\d+)_structure_(?P<id>\d+(?:-\d+)*)(?:_|\.|$)",
+    re.IGNORECASE,
 )
 
 
-def extract_structure_id(inp_filename: str) -> Optional[int]:
+def _coerce_id(id_text: str) -> Union[int, str]:
+    """Return int for plain digits, else the original hyphenated string."""
+    return int(id_text) if id_text.isdigit() else id_text
+
+
+def extract_structure_id(inp_filename: str) -> Optional[Union[int, str]]:
     """
-    Extract the integer structure ID from an input filename of the form
-    'step{N}_structure_{ID}.inp'.
+    Extract the structure ID from 'step{N}_structure_{ID}.inp'.
+    Supports hierarchical IDs like '0-1-2'.
 
-    Parameters
-    ----------
-    inp_filename : str
-        Basename or path to the .inp file.
-
-    Returns
-    -------
-    int | None
-        Parsed ID if pattern matches; otherwise None.
+    Returns int for plain numeric IDs, or str for hyphenated IDs.
     """
     name = os.path.basename(inp_filename)
     m = _ID_PATTERN.match(name)
-    return int(m.group("id")) if m else None
+    return _coerce_id(m.group("id")) if m else None
+
+
+def extract_structure_id_from_any_name(name: str) -> Optional[Union[int, str]]:
+    """
+    Extract a structure ID from any basename/stem containing
+    'step{N}_structure_{ID}[...]'. Supports hierarchical IDs.
+    """
+    base = os.path.basename(name)
+    stem = os.path.splitext(base)[0]
+    m = _ID_ANYWHERE_RE.search(stem)
+    return _coerce_id(m.group("id")) if m else None
 
 
 def step_manifest_path(step_dir: str, step_number: int) -> str:
@@ -591,33 +606,6 @@ def get_ensemble_ids(
 _ID_ANYWHERE_RE = re.compile(
     r"step(?P<step>\d+)_structure_(?P<id>\d+)(?:_|\.|$)", re.IGNORECASE
 )
-
-
-def extract_structure_id_from_any_name(name: str) -> Optional[int]:
-    """
-    Extract a structure ID from any filename or stem containing the pattern
-    'step{N}_structure_{ID}[...optional suffixes...]'.
-
-    Examples
-    --------
-    'step3_structure_0_atom46.out' → 0
-    'step4_structure_12_trj.xyz'   → 12
-    'step2_structure_5.out'        → 5
-
-    Parameters
-    ----------
-    name : str
-        A basename, full path, or stem.
-
-    Returns
-    -------
-    int | None
-        Parsed ID if found, else None.
-    """
-    base = os.path.basename(name)
-    stem = os.path.splitext(base)[0]
-    m = _ID_ANYWHERE_RE.search(stem)
-    return int(m.group("id")) if m else None
 
 
 def allocate_child_ids(parents: list[str], fanouts: list[int], next_id: int):
