@@ -13,7 +13,7 @@ from .mlff import MLFFTrainer
 from chemrefine.utils import (
     update_step_manifest_outputs,
     map_outputs_to_ids,
-    extract_structure_id,
+    extract_structure_id_from_any_name,
     write_step_manifest,
     write_synthetic_manifest_for_ensemble,
     validate_structure_ids_or_raise,
@@ -589,7 +589,7 @@ class ChemRefiner:
                         else:
                             truncated = stem.rsplit("_", 1)[0] if "_" in stem else stem
                             candidate_inp = os.path.join(step_dir, truncated + ".inp")
-                            sid = extract_structure_id(candidate_inp)
+                            sid = extract_structure_id_from_any_name(candidate_inp)
                         if sid is None:
                             logging.warning(
                                 f"Could not resolve ID for {outp}; rerunning step."
