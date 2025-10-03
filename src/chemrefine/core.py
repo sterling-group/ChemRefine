@@ -637,7 +637,9 @@ class ChemRefiner:
         )
 
         # If any unresolved IDs slipped through, rebuild them
-        if not structure_ids or any(i < 0 for i in structure_ids):
+        if not structure_ids or any(
+            isinstance(i, int) and i < 0 for i in structure_ids
+        ):
             logging.info(f"Step {step_number}: repairing invalid IDs.")
             structure_ids = list(range(len(energies)))
             write_synthetic_manifest_for_ensemble(
