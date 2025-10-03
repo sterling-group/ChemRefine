@@ -806,6 +806,62 @@ class ChemRefiner:
         # Write manifest so skip can detect completion later
         write_step_manifest(step_number, step_dir, [], "MLFF_TRAIN", "mlff_train")
 
+    def process_step_with_parent_allocation(
+        self,
+        step_number: int,
+        operation: str,
+        step_dir: str,
+        output_files: list[str],
+        last_ids: list[str],
+        sample_method: str,
+        parameters: dict,
+    ):
+        """
+        Handle per-parent child allocation and filtering for ensemble steps
+        (GOAT, PES, DOCKER, SOLVATOR) or multi-XYZ step1 cases.
+
+        Returns
+        -------
+        tuple[list, list, list, list]
+            filtered_coordinates, filtered_ids, energies, forces
+        """
+        logging.info(
+            f"Per-parent allocation enabled for {operation} at step {step_number}."
+        )
+
+        all_coords, all_ids, all_energies, all_forces = [], [], [], []
+
+        for parent_id, out_file in zip(last_ids, output_files):
+            coords_i, energies_i, forces_i = self.orca.parse_output(
+                [out_file], operation, dir=step_dir
+            )
+            if not coords_i or not energies_i:
+                logging.warning(f"Skipping {out_file}: no coords/energies parsed.")
+                continue
+
+            # Allocate children as hierarchical IDs
+            child_ids_i = [f"{parent_id}-{k}" for k in range(len(coords_i))]
+
+            # Filter within this parent's group
+            f_coords_i, f_ids_i = self.refiner.filter(
+                coords_i,
+                energies_i,
+                child_ids_i,
+                sample_method,
+                parameters,
+                by_parent=False,
+            )
+
+            keep_set = set(f_ids_i)
+            for idx, cid in enumerate(child_ids_i):
+                if cid in keep_set:
+                    all_coords.append(coords_i[idx])
+                    all_ids.append(cid)
+                    all_energies.append(energies_i[idx])
+                    all_forces.append(forces_i[idx] if forces_i else None)
+
+        return all_coords, all_ids, all_energies, all_forces
+
     def run(self):
         """
         Main pipeline execution function for ChemRefine.
@@ -856,12 +912,9 @@ class ChemRefiner:
                     f"Must be one of {valid_engines}."
                 )
 
-            # MLFF config (only relevant when engine == 'mlff' in compute steps)
-            # MLFF/MLIP config (engine-dependent)
+            # MLFF/MLIP config
             if engine in {"mlff", "mlip"}:
-                ml_config = step.get(
-                    engine, {}
-                )  # pulls "mlff:" or "mlip:" block from YAML
+                ml_config = step.get(engine, {})
                 model = ml_config.get("model_name", "medium")
                 task = ml_config.get("task_name", "mace_off")
                 bind_address = ml_config.get("bind", "127.0.0.1:8888")
@@ -881,14 +934,14 @@ class ChemRefiner:
             sample_method = st.get("method") if st else None
             parameters = st.get("parameters", {}) if st else {}
 
-            # === Special: MLFF_TRAIN consumes the previous step results and writes datasets ===
-            if operation == "MLFF_TRAIN" or operation == "MLIP_TRAIN":
+            # === Training-only steps ===
+            if operation in {"MLFF_TRAIN", "MLIP_TRAIN"}:
                 self.run_mlff_train(
                     step_number, step, last_coords, last_ids, last_energies, last_forces
                 )
                 continue
 
-            # === Non-training steps (compute / parsing / filtering) ===
+            # === Non-training steps ===
             charge = step.get("charge", self.charge)
             multiplicity = step.get("multiplicity", self.multiplicity)
 
@@ -931,7 +984,7 @@ class ChemRefiner:
                     )
                     last_ids = seeds_ids
                 else:
-                    # Validate IDs for compute steps (not for training)
+                    # Validate IDs for compute steps
                     validate_structure_ids_or_raise(last_ids, step_number)
                     step_dir, input_files, output_files = (
                         self.prepare_subsequent_step_directory(
@@ -966,7 +1019,7 @@ class ChemRefiner:
                     device=device,
                 )
 
-                # Parse outputs (must return coords, energies, forces)
+                # Parse outputs
                 filtered_coordinates, energies, forces = self.orca.parse_output(
                     output_files, operation, dir=step_dir
                 )
@@ -974,36 +1027,46 @@ class ChemRefiner:
                 # Update manifest with output files
                 update_step_manifest_outputs(step_dir, step_number, output_files)
 
-                # CORE CHANGE: persistent ID resolution
-                num_out = len(filtered_coordinates)
-                filtered_ids, self.next_id = resolve_persistent_ids(
-                    step_number=step_number,
-                    last_ids=last_ids,  # parents for this step
-                    coords_count=num_out,  # children produced this step
-                    output_files=output_files,
-                    operation=operation,
-                    next_id=self.next_id,  # fresh-ID counter
-                    file_map_fn=map_outputs_to_ids,  # used only when 1:1 cases
-                    step_dir=step_dir,
+                # === CORE CHANGE: ID resolution ===
+                ensemble_ops = {"GOAT", "PES", "DOCKER", "SOLVATOR"}
+                needs_per_parent = operation in ensemble_ops or (
+                    step_number == 1 and last_ids is not None and len(last_ids) > 1
                 )
-                # Apply filtering if configured
-                if operation in {"GOAT", "PES", "DOCKER", "SOLVATOR"}:
-                    filtered_coordinates, filtered_ids = self.refiner.filter(
-                        filtered_coordinates,
-                        energies,
-                        filtered_ids,
-                        sample_method,
-                        parameters,
-                        by_parent=True,  # NEW: refine within each ensemble group
+
+                if needs_per_parent:
+                    filtered_coordinates, filtered_ids, energies, forces = (
+                        self.process_step_with_parent_allocation(
+                            step_number,
+                            operation,
+                            step_dir,
+                            output_files,
+                            last_ids,
+                            sample_method,
+                            parameters,
+                        )
                     )
                 else:
+                    # Default path (OPT+SP etc.)
+                    num_out = len(filtered_coordinates)
+                    filtered_ids, self.next_id = resolve_persistent_ids(
+                        step_number=step_number,
+                        last_ids=last_ids,
+                        coords_count=num_out,
+                        output_files=output_files,
+                        operation=operation,
+                        next_id=self.next_id,
+                        file_map_fn=map_outputs_to_ids,
+                        step_dir=step_dir,
+                    )
+
+                    # Filtering for non-ensemble ops
                     filtered_coordinates, filtered_ids = self.refiner.filter(
                         filtered_coordinates,
                         energies,
                         filtered_ids,
                         sample_method,
                         parameters,
-                        by_parent=False,  # default global filtering
+                        by_parent=False,
                     )
 
                 if filtered_coordinates is None or filtered_ids is None:
@@ -1014,11 +1077,9 @@ class ChemRefiner:
 
             else:
                 step_dir = os.path.join(self.output_dir, f"step{step_number}")
-                logging.info(
-                    f"Skipping step {step_number} using existing outputs."
-                )  # Even for skipped steps, carry forward filtered results
+                logging.info(f"Skipping step {step_number} using existing outputs.")
 
-            # Optional: normal mode sampling (may mutate coordinates/ids)
+            # Optional: normal mode sampling
             if step.get("normal_mode_sampling", False):
                 nms_params = step.get("normal_mode_sampling_parameters", {})
                 calc_type = nms_params.get("calc_type", "rm_imag")
@@ -1067,7 +1128,7 @@ class ChemRefiner:
                         num_random_modes=nms_random_displacements,
                     )
 
-            # Commit this step's results for potential consumption by next step (e.g., MLFF_TRAIN)
+            # Commit this step's results for next step
             last_coords, last_ids = filtered_coordinates, filtered_ids
             last_energies, last_forces = energies, forces
 
