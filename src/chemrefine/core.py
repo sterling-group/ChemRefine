@@ -18,6 +18,7 @@ from chemrefine.utils import (
     write_synthetic_manifest_for_ensemble,
     validate_structure_ids_or_raise,
     resolve_persistent_ids,
+    smiles_to_xyz,  # your planned utility
 )
 
 
@@ -81,7 +82,8 @@ class ChemRefiner:
     ):
         """
         Prepare the directory for the first step by copying one or more initial XYZ files,
-        generating input/output files, and assigning seed IDs (one per XYZ).
+        or generating XYZ files from a CSV of SMILES strings. Produces input/output files
+        and assigns seed IDs (one per XYZ).
         """
         if charge is None:
             charge = self.charge
@@ -91,10 +93,11 @@ class ChemRefiner:
         step_dir = os.path.join(self.output_dir, f"step{step_number}")
         os.makedirs(step_dir, exist_ok=True)
 
-        # --- Discover initial xyz files ---
+        # --- Discover/generate initial xyz files ---
         if initial_xyz is None:
             # Default: look for "step1.xyz" in template_dir
             src_xyz_files = [os.path.join(self.template_dir, "step1.xyz")]
+
         elif os.path.isdir(initial_xyz):
             # User provided a directory → take all *.xyz inside
             src_xyz_files = sorted(
@@ -106,17 +109,25 @@ class ChemRefiner:
                 raise FileNotFoundError(
                     f"No .xyz files found in directory '{initial_xyz}'."
                 )
+
+        elif initial_xyz.endswith(".csv"):
+            # User provided a CSV with SMILES strings → convert them into XYZs
+            src_xyz_files = smiles_to_xyz(initial_xyz, step_dir)
+            if not src_xyz_files:
+                raise ValueError(f"No SMILES could be converted from '{initial_xyz}'.")
+
         else:
-            # User provided a single file
+            # User provided a single XYZ file
             src_xyz_files = [initial_xyz]
 
-        # --- Copy them into step_dir with canonical names ---
+        # --- Copy/normalize names into step_dir ---
         xyz_filenames = []
         for idx, src in enumerate(src_xyz_files):
             if not os.path.exists(src):
                 raise FileNotFoundError(f"Initial XYZ file '{src}' not found.")
             dst = os.path.join(step_dir, f"step{step_number}_structure_{idx}.xyz")
-            shutil.copyfile(src, dst)
+            if src != dst:  # avoid redundant copy
+                shutil.copyfile(src, dst)
             xyz_filenames.append(dst)
 
         # --- Input template ---
