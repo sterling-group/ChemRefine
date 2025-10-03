@@ -42,6 +42,7 @@ dependencies = [
     "requests",
     "flask",
     "torch<=2.5.1",
+    "rdkit",
     "fairchem-core @ git+https://github.com/sterling-group/fairchem-patched.git@main#subdirectory=packages/fairchem-core"
 
 ]
