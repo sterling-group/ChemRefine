@@ -533,7 +533,7 @@ class ChemRefiner:
             step_dir, step_number, output_files, operation
         )
 
-        if all(i < 0 for i in structure_ids):
+        if all((isinstance(i, int) and i < 0) for i in structure_ids):
 
             if op == "SOLVATOR":
                 logging.info(
