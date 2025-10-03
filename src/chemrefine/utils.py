@@ -12,6 +12,8 @@ import json
 from typing import List, Dict
 from ase.io import write
 from collections.abc import Sequence
+from rdkit import Chem
+from rdkit.Chem import AllChem
 
 STRIDE = 1000  # number of IDs per parent block
 
@@ -709,3 +711,65 @@ def resolve_persistent_ids(
             child_ids.append(f"{parent}-{i}")
 
     return child_ids, next_id + len(child_ids)
+
+
+def smiles_to_xyz(csv_file, output_dir, smiles_column="smiles", max_attempts=10):
+    """
+    Convert SMILES strings in a CSV file into XYZ files.
+
+    Parameters
+    ----------
+    csv_file : str
+        Path to the CSV file containing SMILES strings.
+    output_dir : str
+        Directory where generated XYZ files will be saved.
+    smiles_column : str, optional
+        Name of the column in the CSV containing SMILES strings (default "smiles").
+    max_attempts : int, optional
+        Maximum number of embedding attempts for 3D conformer generation.
+
+    Returns
+    -------
+    list of str
+        List of paths to the generated XYZ files.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    df = pd.read_csv(csv_file)
+    if smiles_column not in df.columns:
+        raise ValueError(f"Column '{smiles_column}' not found in {csv_file}")
+
+    xyz_files = []
+    for idx, smi in enumerate(df[smiles_column]):
+        if not isinstance(smi, str) or not smi.strip():
+            continue
+
+        mol = Chem.MolFromSmiles(smi)
+        if mol is None:
+            print(f"[WARN] Skipping invalid SMILES at row {idx}: {smi}")
+            continue
+
+        mol = Chem.AddHs(mol)
+        success = AllChem.EmbedMolecule(mol, maxAttempts=max_attempts)
+        if success != 0:
+            print(f"[WARN] Failed 3D embedding for SMILES: {smi}")
+            continue
+
+        AllChem.UFFOptimizeMolecule(mol)
+
+        conf = mol.GetConformer()
+        natoms = mol.GetNumAtoms()
+        lines = [str(natoms), f"SMILES: {smi}"]
+
+        for atom_idx in range(natoms):
+            atom = mol.GetAtomWithIdx(atom_idx)
+            pos = conf.GetAtomPosition(atom_idx)
+            lines.append(f"{atom.GetSymbol():2s} {pos.x:.6f} {pos.y:.6f} {pos.z:.6f}")
+
+        xyz_path = os.path.join(output_dir, f"structure_{idx}.xyz")
+        with open(xyz_path, "w") as f:
+            f.write("\n".join(lines))
+
+        xyz_files.append(xyz_path)
+
+    return xyz_files
