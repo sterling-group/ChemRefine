@@ -120,6 +120,7 @@ class OrcaJobSubmitter:
             )
 
             job_id = self.utility.submit_job(slurm_script)
+            time.sleep(3)
             logging.info(
                 f"Submitted ORCA job with ID: {job_id} for input: {input_path.name}"
             )
