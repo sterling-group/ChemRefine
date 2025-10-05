@@ -49,10 +49,7 @@ class StructureRefiner:
         groups = defaultdict(lambda: {"coords": [], "energies": [], "ids": []})
 
         for coord, e, sid in zip(coordinates, energies, ids):
-            if isinstance(sid, int):
-                # old block allocation scheme
-                parent = sid // 1000
-            elif isinstance(sid, str):
+            if isinstance(sid, str):
                 # new hyphen scheme: parent is everything before the last "-"
                 parent = sid.rsplit("-", 1)[0] if "-" in sid else sid
             else:
