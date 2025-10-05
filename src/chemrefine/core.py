@@ -6,19 +6,23 @@ from .refine import StructureRefiner
 from .utils import Utility
 from .orca_interface import OrcaInterface, OrcaJobSubmitter
 import shutil
-import re
 import sys
 import glob
 from .mlff import MLFFTrainer
 from chemrefine.utils import (
     update_step_manifest_outputs,
     map_outputs_to_ids,
-    extract_structure_id_from_any_name,
     write_step_manifest,
-    write_synthetic_manifest_for_ensemble,
     validate_structure_ids_or_raise,
     resolve_persistent_ids,
-    smiles_to_xyz,  # your planned utility
+    smiles_to_xyz,
+)
+from chemrefine.cache_utils import (
+    CACHE_VERSION,
+    StepCache,
+    save_step_cache,
+    load_step_cache,
+    build_step_fingerprint,
 )
 
 
@@ -37,6 +41,7 @@ class ChemRefiner:
         self.input_yaml = self.args.input_yaml
         self.max_cores = self.args.maxcores
         self.skip_steps = self.args.skip
+        self.rebuild_cache = self.args.rebuild_cache
 
         # === Load the YAML configuration ===
         with open(self.input_yaml, "r") as file:
@@ -227,431 +232,6 @@ class ChemRefiner:
         )
 
         return step_dir, input_files, output_files
-
-    def handle_skip_step(
-        self, step_number, operation, engine, sample_method, parameters
-    ):
-        """
-        Decide whether to skip a step by validating that expected outputs already exist.
-        Preserves persistent structure IDs via the per-step manifest when available.
-        If a manifest is missing (legacy runs), reconstruct IDs from filenames or synthesize
-        them for ensemble-like outputs (GOAT, SOLVATOR). Also persists a manifest so
-        subsequent runs can skip cleanly.
-
-        Parameters
-        ----------
-        step_number : int
-            Current step index.
-        operation : str
-            Operation ("OPT+SP", "GOAT", "PES", "DOCKER", "SOLVATOR", "MLFF_TRAIN").
-        engine : str
-            Calculation engine ("dft" or "mlff").
-        sample_method : str
-            Refiner filtering method.
-        parameters : dict
-            Parameters for the filtering method.
-
-        Returns
-        -------
-        tuple[list|None, list|None, list|None, list|None]
-            (filtered_coordinates, filtered_ids, energies, forces)
-            when outputs are reusable; otherwise (None, None, None, None).
-        """
-        step_dir = os.path.join(self.output_dir, f"step{step_number}")
-        if not os.path.exists(step_dir):
-            logging.info(
-                f"Step directory {step_dir} does not exist. Will run this step."
-            )
-            return None, None, None, None
-
-        op = operation.strip().upper()
-
-        # === Special case: MLFF_TRAIN ===
-        if op == "MLFF_TRAIN":
-            prev_step = step_number - 1
-            logging.info(
-                f"MLFF_TRAIN step {step_number}: reusing results from step {prev_step}."
-            )
-
-            prev_cfg = self.config["steps"][prev_step - 1]  # YAML steps are 1-indexed
-            return self.handle_skip_step(
-                prev_step,
-                prev_cfg["operation"],
-                prev_cfg.get("engine", "dft"),
-                sample_method,
-                parameters,
-            )
-
-        def _ensure_solvator_ids(
-            step_dir, step_number, engine, output_files, energies, structure_ids
-        ):
-            n_structs = len(energies)
-            if n_structs == 0:
-                return structure_ids
-            if len(structure_ids) == n_structs:
-                return structure_ids
-            solv_base = os.path.basename(output_files[0])
-            write_synthetic_manifest_for_ensemble(
-                step_number=step_number,
-                step_dir=step_dir,
-                n_structures=n_structs,
-                operation="SOLVATOR",
-                engine=engine,
-                output_basename=solv_base,
-            )
-            return list(range(n_structs))
-
-        def _skip_pes(step_dir, step_number, engine, sample_method, parameters):
-            """
-            Reuse PES outputs in a skip-run. Builds persistent IDs from the number
-            of parsed frames (not from filenames), writes a synthetic manifest, and
-            applies filtering.
-            """
-            op = "PES"
-            logging.info(f"Attempting to skip PES step {step_number} in {step_dir}.")
-            # discover the single PES .out; adjust pattern if you also allow plain 'stepN.out'
-            candidates = [
-                os.path.join(step_dir, f)
-                for f in os.listdir(step_dir)
-                if f.endswith(".out") and f.startswith(f"step{step_number}")
-            ]
-            if not candidates:
-                logging.warning(
-                    f"No PES outputs found in {step_dir}. Will rerun this step."
-                )
-                return None, None, None, None
-
-            outpath = candidates[0]
-            coordinates, energies, forces = self.orca.parse_output(
-                [outpath], op, dir=step_dir
-            )
-            if not coordinates or not energies or len(coordinates) != len(energies):
-                logging.warning(
-                    f"PES parse failed for {outpath}. Will rerun step {step_number}."
-                )
-                return None, None, None, None
-
-            # IDs must come from the number of frames (NOT from output files)
-            n = len(energies)
-            structure_ids = list(range(n))
-
-            # Persist a manifest for future skips
-            write_synthetic_manifest_for_ensemble(
-                step_number=step_number,
-                step_dir=step_dir,
-                n_structures=n,
-                operation=op,
-                engine=engine,
-                output_basename=os.path.basename(outpath),
-            )
-            update_step_manifest_outputs(step_dir, step_number, [outpath])
-
-            # Apply filter
-            filtered_coordinates, filtered_ids = self.refiner.filter(
-                coordinates, energies, structure_ids, sample_method, parameters
-            )
-            logging.info(
-                f"After filtering PES step {step_number}: kept {len(filtered_coordinates)} structures."
-            )
-
-            # Forces are typically unavailable for PES; keep as list of None
-            if not forces or len(forces) != len(coordinates):
-                forces = [None] * len(coordinates)
-
-            return filtered_coordinates, filtered_ids, energies, forces
-
-        # ---------- GOAT special case ----------
-        if op == "GOAT":
-            output_files = [
-                os.path.join(step_dir, f)
-                for f in os.listdir(step_dir)
-                if f.endswith("finalensemble.xyz")
-            ]
-            if not output_files:
-                logging.warning(
-                    f"No GOAT ensemble files in {step_dir}. Will rerun this step."
-                )
-                return None, None, None, None
-
-            goat_file = output_files[0]
-            logging.info(f"Found GOAT ensemble file: {goat_file}")
-
-            coords, ens = self.orca.parse_goat_finalensemble(goat_file)
-            if not coords or not ens:
-                logging.warning(
-                    f"GOAT parse failed at {goat_file}. Will rerun step {step_number}."
-                )
-                return None, None, None, None
-
-            # Placeholder IDs just to run filter
-            tmp_ids = list(range(len(ens)))
-            forces = [None] * len(coords)
-
-            filtered_coordinates, _ = self.refiner.filter(
-                coords, ens, tmp_ids, sample_method, parameters
-            )
-
-            # Rebuild IDs after filtering
-            final_n = len(filtered_coordinates)
-            ensemble_base = os.path.basename(goat_file)
-            write_synthetic_manifest_for_ensemble(
-                step_number=step_number,
-                step_dir=step_dir,
-                n_structures=final_n,
-                operation=op,
-                engine=engine,
-                output_basename=ensemble_base,
-            )
-            structure_ids = list(range(final_n))
-
-            logging.info(
-                f"After filtering GOAT step {step_number}: kept {final_n} structures."
-            )
-            return filtered_coordinates, structure_ids, ens, forces
-
-        elif op == "PES":
-            return _skip_pes(step_dir, step_number, engine, sample_method, parameters)
-
-        elif op == "DOCKER":
-            output_files = [
-                os.path.join(step_dir, f)
-                for f in os.listdir(step_dir)
-                if f.endswith("struc1.allopt.xyz")
-            ]
-            if not output_files:
-                logging.warning(
-                    f"No DOCKER outputs found in {step_dir}. Will rerun this step."
-                )
-                return None, None, None, None
-
-            logging.info(
-                f"Found {len(output_files)} DOCKER output file(s) in {step_dir}. Reusing existing outputs."
-            )
-
-            coordinates, energies, forces = self.orca.parse_output(
-                output_files, op, dir=step_dir
-            )
-            if not coordinates or not energies or len(coordinates) != len(energies):
-                logging.warning(
-                    f"DOCKER parse failed for {output_files[0]}. Will rerun step {step_number}."
-                )
-                return None, None, None, None
-
-            # --- DOCKER structures have no IDs; synthesize sequential ones ---
-            structure_ids = list(range(len(energies)))
-            docker_base = os.path.basename(output_files[0])
-            write_synthetic_manifest_for_ensemble(
-                step_number=step_number,
-                step_dir=step_dir,
-                n_structures=len(energies),
-                operation=op,
-                engine=engine,
-                output_basename=docker_base,
-            )
-            update_step_manifest_outputs(step_dir, step_number, output_files)
-
-            # Run filter
-            filtered_coordinates, filtered_ids = self.refiner.filter(
-                coordinates, energies, structure_ids, sample_method, parameters
-            )
-            logging.info(
-                f"After filtering DOCKER step {step_number}: kept {len(filtered_coordinates)} structures."
-            )
-
-            return filtered_coordinates, filtered_ids, energies, forces
-
-        elif op == "SOLVATOR":
-            xyz_candidates = [
-                os.path.join(step_dir, f)
-                for f in os.listdir(step_dir)
-                if f.endswith("solvator.solventbuild.xyz")
-            ]
-            if xyz_candidates:
-                output_files = xyz_candidates[:1]
-            else:
-                output_files = [
-                    os.path.join(step_dir, f)
-                    for f in os.listdir(step_dir)
-                    if f.endswith(".out")
-                    and not f.startswith("slurm")
-                    and not f.startswith("atom")
-                ][:1]
-            missing_msg = "No SOLVATOR outputs (.solvator.xyz or .out) found"
-            found_msg = f"Found {len(output_files)} SOLVATOR output file(s)"
-
-        else:
-            # --- Replace the generic discovery block with this ---
-            struct_pat = re.compile(
-                rf"^step{step_number}_structure_-?\d+\.out$", re.IGNORECASE
-            )
-            plain_pat = re.compile(rf"^step{step_number}\.out$", re.IGNORECASE)
-
-            all_outs = [
-                os.path.join(step_dir, f)
-                for f in os.listdir(step_dir)
-                if f.endswith(".out")
-                and not f.startswith("slurm")
-                and not f.startswith("atom")
-            ]
-
-            # Prefer per-structure outputs; ignore the plain aggregator if structure files exist.
-            struct_outs = [p for p in all_outs if struct_pat.match(os.path.basename(p))]
-            if struct_outs:
-                output_files = sorted(struct_outs)
-                missing_msg = "No per-structure ORCA .out files found"
-                found_msg = f"Found {len(output_files)} per-structure .out file(s)"
-            else:
-                # fallback to single aggregator only if no per-structure files exist
-                output_files = [
-                    p for p in all_outs if plain_pat.match(os.path.basename(p))
-                ]
-                missing_msg = "No ORCA .out files found"
-                found_msg = f"Found {len(output_files)} .out file(s)"
-
-        if not output_files:
-            logging.warning(f"{missing_msg} in {step_dir}. Will rerun this step.")
-            return None, None, None, None
-
-        logging.info(f"{found_msg} in {step_dir}. Reusing existing outputs.")
-
-        # Update manifest
-        update_step_manifest_outputs(step_dir, step_number, output_files)
-
-        # ---------- Parse outputs ----------
-        coordinates, energies, forces = self.orca.parse_output(
-            output_files, op, dir=step_dir
-        )
-        if not coordinates or not energies or len(coordinates) != len(energies):
-            logging.warning(
-                f"Parsed outputs are incomplete or inconsistent for step {step_number} "
-                f"(coords={len(coordinates)}, energies={len(energies)}). Will rerun this step."
-            )
-            return None, None, None, None
-
-        # ---------- Resolve IDs ----------
-        structure_ids = map_outputs_to_ids(
-            step_dir, step_number, output_files, operation
-        )
-
-        if all((isinstance(i, int) and i < 0) for i in structure_ids):
-
-            if op == "SOLVATOR":
-                logging.info(
-                    f"No usable manifest for SOLVATOR step {step_number}; synthesizing IDs."
-                )
-                solv_base = os.path.basename(output_files[0])
-                n_structs = len(energies)
-                if n_structs <= 0:
-                    logging.warning(
-                        f"SOLVATOR parsed no structures for step {step_number}; rerunning."
-                    )
-                    return None, None, None, None
-                write_synthetic_manifest_for_ensemble(
-                    step_number=step_number,
-                    step_dir=step_dir,
-                    n_structures=n_structs,
-                    operation=op,
-                    engine=engine,
-                    output_basename=solv_base,
-                )
-                structure_ids = list(range(n_structs))
-
-            else:
-                logging.info(
-                    f"No manifest for step {step_number}; reconstructing IDs from filenames."
-                )
-                if len(output_files) == 1 and len(energies) == 1:
-                    logging.info(
-                        f"Step {step_number}: single-output scalar case; assigning ID 0 and writing manifest."
-                    )
-                    structure_ids = [0]
-                    candidate_inp = os.path.join(
-                        step_dir, f"step{step_number}_structure_0.inp"
-                    )
-                    input_list = (
-                        [candidate_inp]
-                        if os.path.exists(candidate_inp)
-                        else [f"step{step_number}_structure_0.inp"]
-                    )
-                    write_step_manifest(step_number, step_dir, input_list, op, engine)
-                    update_step_manifest_outputs(step_dir, step_number, output_files)
-                else:
-                    pat = re.compile(
-                        rf"^step{step_number}_structure_(\d+)(?:_|$)", re.IGNORECASE
-                    )
-                    recovered_ids = []
-                    recovered_inps = []
-                    for outp in output_files:
-                        stem = os.path.splitext(os.path.basename(outp))[0]
-                        m = pat.match(stem)
-                        if m:
-                            sid = int(m.group(1))
-                        else:
-                            truncated = stem.rsplit("_", 1)[0] if "_" in stem else stem
-                            candidate_inp = os.path.join(step_dir, truncated + ".inp")
-                            sid = extract_structure_id_from_any_name(candidate_inp)
-                        if sid is None:
-                            logging.warning(
-                                f"Could not resolve ID for {outp}; rerunning step."
-                            )
-                            return None, None, None, None
-                        recovered_ids.append(sid)
-                        candidate_inp2 = os.path.join(
-                            step_dir, f"step{step_number}_structure_{sid}.inp"
-                        )
-                        if os.path.exists(candidate_inp2):
-                            recovered_inps.append(candidate_inp2)
-                    structure_ids = recovered_ids
-                    if recovered_inps:
-                        write_step_manifest(
-                            step_number, step_dir, recovered_inps, op, engine
-                        )
-                        update_step_manifest_outputs(
-                            step_dir, step_number, output_files
-                        )
-
-        # ---------- Expand SOLVATOR IDs if needed ----------
-        if op == "SOLVATOR" and len(structure_ids) != len(energies):
-            structure_ids = _ensure_solvator_ids(
-                step_dir=step_dir,
-                step_number=step_number,
-                engine=engine,
-                output_files=output_files,
-                energies=energies,
-                structure_ids=structure_ids,
-            )
-
-        if len(structure_ids) != len(energies) or len(coordinates) != len(energies):
-            logging.error(
-                f"Step {step_number} ({op}): length mismatch before filtering: "
-                f"coords={len(coordinates)}, energies={len(energies)}, ids={len(structure_ids)}."
-            )
-            return None, None, None, None
-
-        # ---------- Filter ----------
-        filtered_coordinates, filtered_ids = self.refiner.filter(
-            coordinates, energies, structure_ids, sample_method, parameters
-        )
-        logging.info(
-            f"After filtering step {step_number}: kept {len(filtered_coordinates)} structures."
-        )
-
-        # If any unresolved IDs slipped through, rebuild them
-        if not structure_ids or any(
-            isinstance(i, int) and i < 0 for i in structure_ids
-        ):
-            logging.info(f"Step {step_number}: repairing invalid IDs.")
-            structure_ids = list(range(len(energies)))
-            write_synthetic_manifest_for_ensemble(
-                step_number=step_number,
-                step_dir=step_dir,
-                n_structures=len(energies),
-                operation=op,
-                engine=engine,
-                output_basename=os.path.basename(output_files[0]),
-            )
-
-        return filtered_coordinates, filtered_ids, energies, forces
 
     def parse_and_filter_outputs(
         self,
@@ -864,16 +444,219 @@ class ChemRefiner:
 
         return all_coords, all_ids, all_energies, all_forces
 
+    def rebuild_step_cache_and_exit(self):
+        """
+        Rebuild the cache for a target step (settings.rebuild_target_step) or, if not set,
+        the last step folder under outputs/. No job submission; we only parse outputs,
+        re-run the same ID allocation + filtering used during a normal run,
+        then write the StepCache and exit.
+        """
+        import os
+        import logging
+        from chemrefine.cache_utils import (
+            StepCache,
+            save_step_cache,
+            load_step_cache,
+            build_step_fingerprint,
+            CACHE_VERSION,
+        )
+
+        # --- Pick target step directory ---
+        if not os.path.isdir(self.output_dir):
+            logging.error("[rebuild_cache] Output directory does not exist.")
+            return
+
+        step_dirs = sorted(
+            [
+                (int(name.replace("step", "")), os.path.join(self.output_dir, name))
+                for name in os.listdir(self.output_dir)
+                if name.startswith("step")
+                and os.path.isdir(os.path.join(self.output_dir, name))
+            ],
+            key=lambda x: x[0],
+        )
+        if not step_dirs:
+            logging.error("[rebuild_cache] No step directories under outputs/.")
+            return
+
+        target = getattr(self, "rebuild_target_step", None)
+        if target is not None:
+            step_number = int(target)
+            step_dir = os.path.join(self.output_dir, f"step{step_number}")
+            if not os.path.isdir(step_dir):
+                logging.error(f"[rebuild_cache] step{step_number} not found.")
+                return
+        else:
+            step_number, step_dir = step_dirs[-1]
+
+        # --- Load this step's YAML config ---
+        step_cfg = next(
+            (
+                s
+                for s in self.config.get("steps", [])
+                if int(s.get("step")) == step_number
+            ),
+            None,
+        )
+        if not step_cfg:
+            logging.error(f"[rebuild_cache] No YAML config for step {step_number}.")
+            return
+
+        operation = step_cfg["operation"].upper()
+        engine = step_cfg.get("engine", "dft").lower()
+
+        # Parents (needed for allocation; None for step 1)
+        last_ids = None
+        if step_number > 1:
+            prev_cache_path = os.path.join(self.output_dir, f"step{step_number-1}")
+            prev = load_step_cache(prev_cache_path)
+            if not prev or not prev.ids:
+                logging.error(
+                    f"[rebuild_cache] Previous step cache (step{step_number-1}) not found or empty."
+                )
+                return
+            last_ids = list(prev.ids)
+
+        # Gather OUTPUT files to parse
+        try:
+            output_files = sorted(
+                [
+                    os.path.join(step_dir, f)
+                    for f in os.listdir(step_dir)
+                    if f.endswith(".out") and not f.startswith("slurm")
+                ]
+            )
+        except FileNotFoundError:
+            logging.error(f"[rebuild_cache] Step directory missing: {step_dir}")
+            return
+
+        if not output_files:
+            logging.error(f"[rebuild_cache] No .out files in {step_dir}.")
+            return
+
+        # Fingerprint consistent with normal skip logic
+        st = step_cfg.get("sample_type")
+        sample_method = (st or {}).get("method")
+        parameters = (st or {}).get("parameters", {})
+        fp_now = build_step_fingerprint(
+            step_cfg,
+            (last_ids if step_number > 1 else None),
+            parameters,
+            step_number,
+        )
+
+        # --- Parse outputs (always pass OUTPUT files) ---
+        logging.info(
+            f"[rebuild_cache] Parsing {len(output_files)} outputs for step {step_number} ({operation})."
+        )
+        filtered_coordinates, energies, forces = self.orca.parse_output(
+            output_files, operation, dir=step_dir
+        )
+
+        # === ID allocation + filtering: EXACTLY your normal block ===
+        ensemble_ops = {"GOAT", "PES", "DOCKER", "SOLVATOR"}
+        needs_per_parent = operation in ensemble_ops or (
+            step_number == 1 and last_ids is not None and len(last_ids) > 1
+        )
+
+        if needs_per_parent:
+            # Ensemble: allocate children by parent using your function
+            result = self.process_step_with_parent_allocation(
+                step_number,
+                operation,
+                step_dir,
+                output_files,
+                last_ids,
+                sample_method,
+                parameters,
+            )
+            # Back-compat if function returns 5-tuple (includes by_parent)
+            if isinstance(result, tuple) and len(result) == 5:
+                filtered_coordinates, filtered_ids, energies, forces, _by_parent = (
+                    result
+                )
+            else:
+                filtered_coordinates, filtered_ids, energies, forces = result
+        else:
+            # 1:1 (OPT+SP) default path
+            if (
+                (step_number != 1)
+                and (last_ids is not None)
+                and (len(last_ids) == len(output_files))
+                and operation in {"OPT+SP"}
+            ):
+                logging.info(
+                    "[rebuild_cache] 1:1 propagation detected (rebuild), reusing parent IDs."
+                )
+                filtered_ids = last_ids[:]
+            else:
+                num_out = len(filtered_coordinates)
+                filtered_ids, self.next_id = resolve_persistent_ids(
+                    step_number=step_number,
+                    last_ids=last_ids,
+                    coords_count=num_out,
+                    output_files=output_files,
+                    operation=operation,
+                    next_id=self.next_id,
+                    file_map_fn=map_outputs_to_ids,
+                    step_dir=step_dir,
+                )
+
+            # Filtering for non-ensemble ops
+            filtered_coordinates, filtered_ids = self.refiner.filter(
+                filtered_coordinates,
+                energies,
+                filtered_ids,
+                sample_method,
+                parameters,
+                by_parent=False,
+            )
+
+        if filtered_coordinates is None or filtered_ids is None:
+            logging.error(
+                f"[rebuild_cache] Filtering/ID step failed while rebuilding step {step_number}."
+            )
+            return
+
+        # --- Write StepCache (same as normal end-of-step) ---
+        try:
+            step_cache = StepCache(
+                version=CACHE_VERSION,
+                step=step_number,
+                operation=operation,
+                engine=engine,
+                fingerprint=fp_now,
+                parent_ids=(last_ids if step_number > 1 else None),
+                ids=filtered_ids,
+                n_outputs=len(filtered_ids),
+                by_parent=None,
+                coords=filtered_coordinates,
+                energies=energies,
+                forces=forces,
+                extras={"rebuild": True},
+            )
+            save_step_cache(step_dir, step_cache)
+            logging.info(
+                f"[rebuild_cache] Wrote step{step_number} cache with {len(filtered_ids)} items."
+            )
+            print(
+                f"[rebuild_cache] ✅ step {step_number} cache rebuilt. Now run with --skip to continue."
+            )
+        except Exception as e:
+            logging.error(f"[rebuild_cache] Failed to write cache: {e}")
+
     def run(self):
         """
         Main pipeline execution function for ChemRefine.
 
-        Dynamically loops over all steps defined in the YAML input. Supports skip-step
-        logic with ID/energy/force persistence. When encountering an MLFF_TRAIN step,
-        it consumes the results (coordinates, energies, forces, IDs) from the
-        immediately preceding step and only prepares training datasets (XYZ).
         """
-        logging.info("Starting ChemRefine pipeline.")
+        if getattr(self, "rebuild_cache", False):
+            self.rebuild_step_cache_and_exit()
+            return
+
+        logging.info(
+            "Starting ChemRefine pipeline with robust caching (step-level only)."
+        )
 
         # Results from the last completed (or skipped) step; used by MLFF_TRAIN.
         last_coords = None
@@ -952,22 +735,47 @@ class ChemRefiner:
             energies = None
             forces = None
 
-            # Try to reuse outputs via skip
+            # Paths & fingerprint
+            step_dir = os.path.join(self.output_dir, f"step{step_number}")
+            os.makedirs(os.path.join(step_dir, "_cache"), exist_ok=True)
+            parent_ids_for_fp = last_ids if step_number > 1 else None
+            fp_now = build_step_fingerprint(
+                step, parent_ids_for_fp, parameters, step_number
+            )
+
+            # ---------- Fast skip via step-level cache ----------
+            output_files = []  # set later as needed
             if self.skip_steps:
-                filtered_coordinates, filtered_ids, energies, forces = (
-                    self.handle_skip_step(
-                        step_number, operation, engine, sample_method, parameters
+                cached = load_step_cache(step_dir)
+                if (
+                    cached
+                    and cached.fingerprint == fp_now
+                    and cached.operation == operation
+                    and cached.engine == engine
+                ):
+                    filtered_coordinates = cached.coords
+                    filtered_ids = cached.ids
+                    energies = cached.energies
+                    forces = cached.forces
+                    logging.info(
+                        f"[step {step_number}] Step-level cache hit: {len(filtered_ids)} items restored."
                     )
-                )
-                if filtered_coordinates is not None and filtered_ids is not None:
-                    last_coords, last_ids = filtered_coordinates, filtered_ids
-                    last_energies, last_forces = energies, forces
+                else:
+                    if cached:
+                        logging.info(
+                            f"[step {step_number}] Step-level cache present but fingerprint/op/engine mismatch; recomputing."
+                        )
+                    else:
+                        logging.info(
+                            f"[step {step_number}] No step-level cache; computing."
+                        )
 
             if filtered_coordinates is None or filtered_ids is None:
                 logging.info(
-                    f"No valid skip outputs for step {step_number}. Proceeding with normal execution."
+                    f"No valid step cache for step {step_number}. Proceeding with normal execution."
                 )
 
+                # --- Prepare inputs ---
                 if step_number == 1:
                     initial_xyz = self.config.get("initial_xyz", None)
                     step_dir, input_files, output_files, seeds_ids = (
@@ -986,7 +794,6 @@ class ChemRefiner:
                     )
                     last_ids = seeds_ids
                 else:
-                    # Validate IDs for compute steps
                     validate_structure_ids_or_raise(last_ids, step_number)
                     step_dir, input_files, output_files = (
                         self.prepare_subsequent_step_directory(
@@ -1004,21 +811,12 @@ class ChemRefiner:
                         )
                     )
 
-                    # If this is a 1:1 propagation case (OPT+SP or similar), just reuse last_ids
-                    if len(last_ids) == len(output_files) and operation in {"OPT+SP"}:
-                        logging.info(
-                            f"[step {step_number}] 1:1 propagation detected, reusing parent IDs."
-                        )
-                        filtered_ids = last_ids[:]
-                    else:
-                        filtered_ids = None  # let the ID allocation run later
-
                 # Save manifest with input structure IDs
                 write_step_manifest(
                     step_number, step_dir, input_files, operation, engine
                 )
 
-                # Submit jobs
+                # Submit jobs (ALWAYS submit all for this step in the simplified model)
                 self.submit_orca_jobs(
                     input_files=input_files,
                     max_cores=self.max_cores,
@@ -1030,45 +828,65 @@ class ChemRefiner:
                     device=device,
                 )
 
-                # Parse outputs
+                # --- Parse outputs (ALWAYS pass OUTPUT files) ---
                 filtered_coordinates, energies, forces = self.orca.parse_output(
                     output_files, operation, dir=step_dir
                 )
 
-                # Update manifest with output files
+                # Update manifest with output files (full list for this step)
                 update_step_manifest_outputs(step_dir, step_number, output_files)
 
-                # === CORE CHANGE: ID resolution ===
+                # === ID resolution ===
                 ensemble_ops = {"GOAT", "PES", "DOCKER", "SOLVATOR"}
                 needs_per_parent = operation in ensemble_ops or (
                     step_number == 1 and last_ids is not None and len(last_ids) > 1
                 )
 
                 if needs_per_parent:
-                    filtered_coordinates, filtered_ids, energies, forces = (
-                        self.process_step_with_parent_allocation(
-                            step_number,
-                            operation,
-                            step_dir,
-                            output_files,
-                            last_ids,
-                            sample_method,
-                            parameters,
-                        )
+                    # Ensemble: allocate children by parent
+                    result = self.process_step_with_parent_allocation(
+                        step_number,
+                        operation,
+                        step_dir,
+                        output_files,
+                        last_ids,
+                        sample_method,
+                        parameters,
                     )
+                    # Backward compatibility if function returns 5-tuple (with by_parent)
+                    if isinstance(result, tuple) and len(result) == 5:
+                        (
+                            filtered_coordinates,
+                            filtered_ids,
+                            energies,
+                            forces,
+                            _by_parent,
+                        ) = result
+                    else:
+                        filtered_coordinates, filtered_ids, energies, forces = result
                 else:
-                    # Default path (OPT+SP etc.)
-                    num_out = len(filtered_coordinates)
-                    filtered_ids, self.next_id = resolve_persistent_ids(
-                        step_number=step_number,
-                        last_ids=last_ids,
-                        coords_count=num_out,
-                        output_files=output_files,
-                        operation=operation,
-                        next_id=self.next_id,
-                        file_map_fn=map_outputs_to_ids,
-                        step_dir=step_dir,
-                    )
+                    # 1:1 (OPT+SP) default path
+                    if (
+                        (step_number != 1)
+                        and (len(last_ids) == len(output_files))
+                        and operation in {"OPT+SP"}
+                    ):
+                        logging.info(
+                            f"[step {step_number}] 1:1 propagation detected, reusing parent IDs."
+                        )
+                        filtered_ids = last_ids[:]
+                    else:
+                        num_out = len(filtered_coordinates)
+                        filtered_ids, self.next_id = resolve_persistent_ids(
+                            step_number=step_number,
+                            last_ids=last_ids,
+                            coords_count=num_out,
+                            output_files=output_files,
+                            operation=operation,
+                            next_id=self.next_id,
+                            file_map_fn=map_outputs_to_ids,
+                            step_dir=step_dir,
+                        )
 
                     # Filtering for non-ensemble ops
                     filtered_coordinates, filtered_ids = self.refiner.filter(
@@ -1086,18 +904,43 @@ class ChemRefiner:
                     )
                     return
 
-            else:
-                step_dir = os.path.join(self.output_dir, f"step{step_number}")
-                logging.info(f"Skipping step {step_number} using existing outputs.")
+                # --- Write step-level cache immediately after successful processing ---
+                try:
+                    step_cache = StepCache(
+                        version=CACHE_VERSION,
+                        step=step_number,
+                        operation=operation,
+                        engine=engine,
+                        fingerprint=fp_now,
+                        parent_ids=(last_ids if step_number > 1 else None),
+                        ids=filtered_ids,
+                        n_outputs=len(filtered_ids),
+                        by_parent=None,
+                        coords=filtered_coordinates,
+                        energies=energies,
+                        forces=forces,
+                        extras=None,
+                    )
+                    save_step_cache(step_dir, step_cache)
+                    logging.info(
+                        f"[step {step_number}] Wrote step cache ({len(filtered_ids)} items)."
+                    )
+                except Exception as e:
+                    logging.warning(f"[step {step_number}] Cache write failed: {e}")
 
-            # Optional: normal mode sampling
+            else:
+                logging.info(
+                    f"Skipping heavy work for step {step_number} (step-level cache restored)."
+                )
+
+            # ---------- Optional: Normal Mode Sampling ----------
             if step.get("normal_mode_sampling", False):
                 nms_params = step.get("normal_mode_sampling_parameters", {})
                 calc_type = nms_params.get("calc_type", "rm_imag")
                 displacement_vector = nms_params.get("displacement_vector", 1.0)
                 nms_random_displacements = nms_params.get("num_random_displacements", 1)
 
-                if "output_files" not in locals() or not output_files:
+                if not output_files:
                     output_files = [
                         os.path.join(step_dir, f)
                         for f in os.listdir(step_dir)
@@ -1139,11 +982,38 @@ class ChemRefiner:
                         num_random_modes=nms_random_displacements,
                     )
 
-            # Commit this step's results for next step
+                    # After NMS, refresh step-level cache to reflect the final outputs
+                    try:
+                        step_cache = StepCache(
+                            version=CACHE_VERSION,
+                            step=step_number,
+                            operation=operation,
+                            engine=engine,
+                            fingerprint=fp_now,
+                            parent_ids=(last_ids if step_number > 1 else None),
+                            ids=filtered_ids,
+                            n_outputs=len(filtered_ids),
+                            by_parent=None,
+                            coords=filtered_coordinates,
+                            energies=energies,
+                            forces=forces,
+                            extras=None,
+                        )
+                        save_step_cache(step_dir, step_cache)
+                        logging.info(
+                            f"[step {step_number}] Updated step cache after NMS ({len(filtered_ids)} items)."
+                        )
+                    except Exception as e:
+                        logging.warning(
+                            f"[step {step_number}] Cache write (post-NMS) failed: {e}"
+                        )
+
+            # ---------- Commit this step's results ----------
             last_coords, last_ids = filtered_coordinates, filtered_ids
             last_energies, last_forces = energies, forces
             print(f"Step {step_number} completed: {len(last_coords)} structures ready.")
             print(f"Your ID's for this step are: {last_ids}")
+
         logging.info("ChemRefine pipeline completed.")
 
 
