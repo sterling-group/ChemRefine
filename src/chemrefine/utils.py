@@ -109,6 +109,10 @@ class Utility:
         list[str]
             Paths to written XYZ files.
         """
+        import os
+        import logging
+        from ase.io import write
+
         logging.info(
             f"Writing Ensemble XYZ files to {output_dir} for step {step_number}"
         )
@@ -125,6 +129,7 @@ class Utility:
                 # Case 1: ASE Atoms object
                 if isinstance(structure, Atoms):
                     write(file_path, structure, format="xyz")
+
                 # Case 2: plain tuple/list of (element, x, y, z)
                 elif isinstance(structure, (list, tuple)) and all(
                     isinstance(a, (list, tuple)) and len(a) == 4 for a in structure
@@ -132,11 +137,22 @@ class Utility:
                     with open(file_path, "w") as f:
                         f.write(f"{len(structure)}\n\n")
                         for elem, x, y, z in structure:
+                            try:
+                                # Safely cast to float (in case they are strings)
+                                x, y, z = map(float, (x, y, z))
+                            except Exception:
+                                logging.warning(
+                                    f"[write_xyz] Non-numeric coordinates in {sid}: "
+                                    f"{x}, {y}, {z} — coercing to 0.0"
+                                )
+                                x = y = z = 0.0
                             f.write(f"{elem} {x:.6f} {y:.6f} {z:.6f}\n")
+
                 else:
                     raise TypeError(
                         f"Unsupported structure type for {sid}: {type(structure)}"
                     )
+
             except Exception as e:
                 logging.error(f"Failed to write {os.path.basename(file_path)}: {e}")
 
