@@ -11,6 +11,7 @@ import numpy as np
 import json
 from typing import List, Dict
 from ase.io import write
+from ase import Atoms
 from collections.abc import Sequence
 from rdkit import Chem
 from rdkit.Chem import AllChem
@@ -89,36 +90,55 @@ class Utility:
 
     def write_xyz(self, structures, step_number, structure_ids, output_dir="."):
         """
-        Writes XYZ files for each structure in the step directory.
+        Writes XYZ files for each structure in the step directory, supporting both ASE Atoms objects
+        and tuple-style coordinate data.
 
-        Parameters:
-        - structures (list of lists or arrays): Coordinates and element data.
-        - step_number (int): The step number.
-        - structure_ids (list): List of structure IDs.
-        - output_dir (str): Output directory path.
+        Parameters
+        ----------
+        structures : list
+            List of ASE Atoms objects or lists of tuples (element, x, y, z).
+        step_number : int
+            Step number for naming.
+        structure_ids : list[str]
+            Persistent hierarchical IDs (e.g., ['0', '1-0', '1-1']).
+        output_dir : str
+            Directory where XYZ files will be written.
 
-        Returns:
-        - List of XYZ filenames written.
+        Returns
+        -------
+        list[str]
+            Paths to written XYZ files.
         """
-
         logging.info(
             f"Writing Ensemble XYZ files to {output_dir} for step {step_number}"
         )
+        os.makedirs(output_dir, exist_ok=True)
+
         base_name = f"step{step_number}"
         xyz_filenames = []
 
-        os.makedirs(output_dir, exist_ok=True)
+        for structure, sid in zip(structures, structure_ids):
+            file_path = os.path.join(output_dir, f"{base_name}_structure_{sid}.xyz")
+            xyz_filenames.append(file_path)
 
-        for structure, structure_id in zip(structures, structure_ids):
-            output_file = os.path.join(
-                output_dir, f"{base_name}_structure_{structure_id}.xyz"
-            )
-            xyz_filenames.append(output_file)
-            with open(output_file, "w") as file:
-                file.write(f"{len(structure)}\n\n")
-                for atom in structure:
-                    element, x, y, z = atom  # Unpack atom data
-                    file.write(f"{element} {x} {y} {z}\n")
+            try:
+                # Case 1: ASE Atoms object
+                if isinstance(structure, Atoms):
+                    write(file_path, structure, format="xyz")
+                # Case 2: plain tuple/list of (element, x, y, z)
+                elif isinstance(structure, (list, tuple)) and all(
+                    isinstance(a, (list, tuple)) and len(a) == 4 for a in structure
+                ):
+                    with open(file_path, "w") as f:
+                        f.write(f"{len(structure)}\n\n")
+                        for elem, x, y, z in structure:
+                            f.write(f"{elem} {x:.6f} {y:.6f} {z:.6f}\n")
+                else:
+                    raise TypeError(
+                        f"Unsupported structure type for {sid}: {type(structure)}"
+                    )
+            except Exception as e:
+                logging.error(f"Failed to write {os.path.basename(file_path)}: {e}")
 
         return xyz_filenames
 
