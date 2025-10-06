@@ -672,6 +672,61 @@ class ChemRefiner:
                 output_files, operation, dir=step_dir
             )
 
+            # --- Special case: Normal Mode Sampling (stepN/normal_mode_sampling/*.xyz) ---
+            nms_dir = os.path.join(step_dir, "normal_mode_sampling")
+            if os.path.isdir(nms_dir):
+                xyz_files = sorted(
+                    [
+                        os.path.join(nms_dir, f)
+                        for f in os.listdir(nms_dir)
+                        if f.endswith(".xyz")
+                    ]
+                )
+                if xyz_files:
+                    from ase.io import read
+
+                    coords, ids = [], []
+                    for fpath in xyz_files:
+                        try:
+                            atoms = read(fpath)
+                            coords.append(atoms)
+                            sid = os.path.splitext(os.path.basename(fpath))[0]
+                            # remove "stepN_structure_" prefix for clarity
+                            sid = sid.replace(f"step{step_number}_structure_", "")
+                            ids.append(sid)
+                        except Exception as e:
+                            logging.warning(
+                                f"[rebuild_cache] Failed to parse {fpath}: {e}"
+                            )
+
+                    if coords:
+                        logging.info(
+                            f"[rebuild_cache] Detected Normal Mode Sampling step ({len(coords)} structures)."
+                        )
+                        step_cache = StepCache(
+                            version=CACHE_VERSION,
+                            step=step_number,
+                            operation="NMS",
+                            engine=engine,
+                            fingerprint=None,
+                            parent_ids=(last_ids if step_number > 1 else None),
+                            ids=ids,
+                            n_outputs=len(coords),
+                            by_parent=None,
+                            coords=coords,
+                            energies=[None] * len(coords),
+                            forces=[None] * len(coords),
+                            extras={"nms_generation": True, "rebuild": True},
+                        )
+                        save_step_cache(step_dir, step_cache)
+                        logging.info(
+                            f"[rebuild_cache] Rebuilt NMS cache with {len(coords)} structures."
+                        )
+                        print(
+                            f"[rebuild_cache] ✅ step {step_number} NMS cache rebuilt. Now run with --skip to continue."
+                        )
+                        return
+
             ensemble_ops = {"GOAT", "PES", "DOCKER", "SOLVATOR"}
             needs_per_parent = operation in ensemble_ops or (
                 step_number == 1 and last_ids is not None and len(last_ids) > 1
