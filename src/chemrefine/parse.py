@@ -26,6 +26,12 @@ class ArgumentParser:
             default=False,
             help="Rebuild cache from a failed run.",
         )
+        self.parser.add_argument(
+            "--rebuild_nms",
+            action="store_true",
+            default=False,
+            help="Rebuild NMS cache from a failed run.",
+        )
 
     def parse(self):
         return self.parser.parse_known_args()
