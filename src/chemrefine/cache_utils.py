@@ -74,7 +74,7 @@ def save_step_cache(step_dir: str, cache: StepCache) -> None:
         "fingerprint": cache.fingerprint,
         "n_outputs": cache.n_outputs,
         "has_by_parent": bool(cache.by_parent),
-        "ids_head": list(cache.ids[:5]) if cache.ids else [],
+        "ids_head": list(cache.ids) if cache.ids else [],
     }
     atomic_write_bytes(json_path, json.dumps(sidecar, indent=2).encode())
 
