@@ -1137,16 +1137,17 @@ class ChemRefiner:
                             step=step_number,
                             operation=operation,
                             engine=engine,
-                            fingerprint=fp_now,
+                            fingerprint=None,  # optional, to disable matching
                             parent_ids=(last_ids if step_number > 1 else None),
                             ids=filtered_ids,
                             n_outputs=len(filtered_ids),
                             by_parent=None,
                             coords=filtered_coordinates,
-                            energies=energies,
-                            forces=forces,
-                            extras=None,
+                            energies=[None] * len(filtered_ids),  # placeholder
+                            forces=[None] * len(filtered_ids),  # placeholder
+                            extras={"nms_generation": True},
                         )
+
                         save_step_cache(step_dir, step_cache)
                         logging.info(
                             f"[step {step_number}] Updated step cache after NMS ({len(filtered_ids)} items)."
