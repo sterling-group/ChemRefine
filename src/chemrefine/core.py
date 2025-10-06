@@ -42,7 +42,7 @@ class ChemRefiner:
         self.max_cores = self.args.maxcores
         self.skip_steps = self.args.skip
         self.rebuild_cache = self.args.rebuild_cache
-
+        self.rebuild_nms = self.args.rebuild_nms
         # === Load the YAML configuration ===
         with open(self.input_yaml, "r") as file:
             self.config = yaml.safe_load(file)
@@ -851,6 +851,118 @@ class ChemRefiner:
         except Exception as e:
             logging.error(f"[rebuild_cache] Failed to write cache: {e}")
 
+    def rebuild_nms_cache_and_exit(self):
+        """
+        Rebuild the Normal Mode Sampling (NMS) displacements and write a new StepCache.
+        This allows skipping directly to the next step without rerunning the parent step.
+        """
+        import os
+        import logging
+
+        # --- Determine which step to rebuild ---
+        step_number = int(getattr(self, "rebuild_target_step", 2))
+        step_dir = os.path.join(self.output_dir, f"step{step_number}")
+        if not os.path.isdir(step_dir):
+            logging.error(f"[rebuild_nms] Step directory not found: {step_dir}")
+            return
+
+        # --- Load YAML config ---
+        step_cfg = next(
+            (
+                s
+                for s in self.config.get("steps", [])
+                if int(s.get("step")) == step_number
+            ),
+            None,
+        )
+        if not step_cfg:
+            logging.error(f"[rebuild_nms] No YAML config found for step {step_number}.")
+            return
+
+        operation = step_cfg["operation"].upper()
+        engine = step_cfg.get("engine", "dft").lower()
+        nms_params = step_cfg.get("normal_mode_sampling_parameters", {})
+        calc_type = nms_params.get("calc_type", "random")
+        displacement_value = nms_params.get("displacement_vector", 1.0)
+        num_random_modes = nms_params.get("num_random_displacements", 1)
+
+        # --- Gather .out files ---
+        output_files = sorted(
+            [
+                os.path.join(step_dir, f)
+                for f in os.listdir(step_dir)
+                if f.endswith(".out") and not f.startswith("slurm")
+            ]
+        )
+        if not output_files:
+            logging.error(f"[rebuild_nms] No .out files found in {step_dir}.")
+            return
+
+        logging.info(
+            f"[rebuild_nms] Rebuilding normal mode sampling from {len(output_files)} .out files."
+        )
+
+        # --- Load structure IDs (from cache if exists) ---
+        prev_cache = load_step_cache(step_dir)
+        structure_ids = getattr(
+            prev_cache, "ids", [str(i) for i in range(len(output_files))]
+        )
+
+        input_template = os.path.join(self.template_dir, f"step{step_number}.inp")
+        slurm_template = self.template_dir
+
+        # --- Run the normal mode sampling ---
+        logging.info(f"[rebuild_nms] Starting NMS ({calc_type}) for step {step_number}")
+        displaced_coords, displaced_ids = self.orca.normal_mode_sampling(
+            file_paths=output_files,
+            calc_type=calc_type,
+            input_template=input_template,
+            slurm_template=slurm_template,
+            charge=step_cfg.get("charge", self.charge),
+            multiplicity=step_cfg.get("multiplicity", self.multiplicity),
+            output_dir=self.output_dir,
+            operation=operation,
+            engine=engine,
+            model_name=step_cfg.get("model_name", None),
+            step_number=step_number,
+            structure_ids=structure_ids,
+            num_random_modes=num_random_modes,
+            displacement_value=displacement_value,
+            device=self.device,
+            bind=self.bind_address,
+            orca_executable=self.orca_executable,
+            scratch_dir=self.scratch_dir,
+        )
+
+        # --- Build new StepCache for the displaced structures ---
+        from chemrefine.utils import build_step_fingerprint, StepCache, save_step_cache
+
+        fp_now = build_step_fingerprint(step_cfg, structure_ids, {}, step_number)
+        step_cache = StepCache(
+            version="1.0",
+            step=step_number,
+            operation=operation,
+            engine=engine,
+            fingerprint=fp_now,
+            parent_ids=structure_ids,
+            ids=displaced_ids,
+            n_outputs=len(displaced_ids),
+            by_parent=None,
+            coords=displaced_coords,
+            energies=None,
+            forces=None,
+            extras={"rebuild_nms": True},
+        )
+
+        save_step_cache(step_dir, step_cache)
+
+        logging.info(
+            f"[rebuild_nms] ✅ Wrote rebuilt NMS cache with {len(displaced_ids)} items for step{step_number}."
+        )
+        print(
+            f"[rebuild_nms] Done. You can now run with --skip to continue from step {step_number + 1}."
+        )
+
     ###____RUN____###
 
     def run(self):
@@ -860,6 +972,10 @@ class ChemRefiner:
         """
         if getattr(self, "rebuild_cache", False):
             self.rebuild_step_cache_and_exit()
+            return
+
+        if getattr(self, "rebuild_nms", False):
+            self.rebuild_nms_cache_and_exit()
             return
 
         logging.info(
