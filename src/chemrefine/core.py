@@ -401,17 +401,16 @@ class ChemRefiner:
         """
         Handle per-parent child allocation and filtering for ensemble steps
         (GOAT, PES, DOCKER, SOLVATOR) or multi-XYZ step1 cases.
-
-        Returns
-        -------
-        tuple[list, list, list, list]
-            filtered_coordinates, filtered_ids, energies, forces
+        Preserves hierarchical IDs using allocate_child_ids().
         """
+        from chemrefine.utils import allocate_child_ids
+
         logging.info(
             f"Per-parent allocation enabled for {operation} at step {step_number}."
         )
 
         all_coords, all_ids, all_energies, all_forces = [], [], [], []
+        fanouts = []
 
         for parent_id, out_file in zip(last_ids, output_files):
             coords_i, energies_i, forces_i = self.orca.parse_output(
@@ -419,28 +418,44 @@ class ChemRefiner:
             )
             if not coords_i or not energies_i:
                 logging.warning(f"Skipping {out_file}: no coords/energies parsed.")
+                fanouts.append(0)
                 continue
 
-            # Allocate children as hierarchical IDs
-            child_ids_i = [f"{parent_id}-{k}" for k in range(len(coords_i))]
+            # Temporarily assign flat children to filter
+            tmp_ids = [f"{parent_id}-{k}" for k in range(len(coords_i))]
 
-            # Filter within this parent's group
             f_coords_i, f_ids_i = self.refiner.filter(
                 coords_i,
                 energies_i,
-                child_ids_i,
+                tmp_ids,
                 sample_method,
                 parameters,
                 by_parent=False,
             )
 
-            keep_set = set(f_ids_i)
-            for idx, cid in enumerate(child_ids_i):
-                if cid in keep_set:
-                    all_coords.append(coords_i[idx])
-                    all_ids.append(cid)
-                    all_energies.append(energies_i[idx])
-                    all_forces.append(forces_i[idx] if forces_i else None)
+            # Only keep structures that survived filtering
+            keep_mask = [cid in set(f_ids_i) for cid in tmp_ids]
+            kept_coords = [c for c, keep in zip(coords_i, keep_mask) if keep]
+            kept_energies = [e for e, keep in zip(energies_i, keep_mask) if keep]
+            kept_forces = [
+                f
+                for f, keep in zip(forces_i or [None] * len(coords_i), keep_mask)
+                if keep
+            ]
+
+            fanouts.append(len(kept_coords))
+            all_coords.extend(kept_coords)
+            all_energies.extend(kept_energies)
+            all_forces.extend(kept_forces)
+
+        # --- Allocate hierarchical child IDs using true fanouts ---
+        child_ids, _ = allocate_child_ids(parents=last_ids, fanouts=fanouts, next_id=0)
+        all_ids = child_ids[: len(all_coords)]
+
+        logging.info(
+            f"[parent allocation] step{step_number}: built {len(all_coords)} children "
+            f"from {len(last_ids)} parents ({sum(fanouts)} total fanouts)."
+        )
 
         return all_coords, all_ids, all_energies, all_forces
 
@@ -451,16 +466,6 @@ class ChemRefiner:
         re-run the same ID allocation + filtering used during a normal run,
         then write the StepCache and exit.
         """
-        import os
-        import logging
-        from chemrefine.cache_utils import (
-            StepCache,
-            save_step_cache,
-            load_step_cache,
-            build_step_fingerprint,
-            CACHE_VERSION,
-        )
-
         # --- Pick target step directory ---
         if not os.path.isdir(self.output_dir):
             logging.error("[rebuild_cache] Output directory does not exist.")
@@ -505,7 +510,7 @@ class ChemRefiner:
         operation = step_cfg["operation"].upper()
         engine = step_cfg.get("engine", "dft").lower()
 
-        # Parents (needed for allocation; None for step 1)
+        # --- Determine parent IDs (None for step 1) ---
         last_ids = None
         if step_number > 1:
             prev_cache_path = os.path.join(self.output_dir, f"step{step_number-1}")
@@ -516,8 +521,14 @@ class ChemRefiner:
                 )
                 return
             last_ids = list(prev.ids)
+        else:
+            # Step 1 → synthetic roots (no parents)
+            logging.debug(
+                "[rebuild_cache] Step 1 detected — initializing synthetic root IDs."
+            )
+            last_ids = []
 
-        # Gather OUTPUT files to parse
+        # --- Gather OUTPUT files to parse ---
         try:
             output_files = sorted(
                 [
@@ -534,7 +545,7 @@ class ChemRefiner:
             logging.error(f"[rebuild_cache] No .out files in {step_dir}.")
             return
 
-        # Fingerprint consistent with normal skip logic
+        # --- Build fingerprint consistent with normal skip logic ---
         st = step_cfg.get("sample_type")
         sample_method = (st or {}).get("method")
         parameters = (st or {}).get("parameters", {})
@@ -545,78 +556,218 @@ class ChemRefiner:
             step_number,
         )
 
-        # --- Parse outputs (always pass OUTPUT files) ---
+        # --- Parse outputs ---
         logging.info(
             f"[rebuild_cache] Parsing {len(output_files)} outputs for step {step_number} ({operation})."
         )
-        filtered_coordinates, energies, forces = self.orca.parse_output(
-            output_files, operation, dir=step_dir
-        )
 
-        # === ID allocation + filtering: EXACTLY your normal block ===
-        ensemble_ops = {"GOAT", "PES", "DOCKER", "SOLVATOR"}
-        needs_per_parent = operation in ensemble_ops or (
-            step_number == 1 and last_ids is not None and len(last_ids) > 1
-        )
-
-        if needs_per_parent:
-            # Ensemble: allocate children by parent using your function
-            result = self.process_step_with_parent_allocation(
-                step_number,
-                operation,
-                step_dir,
-                output_files,
-                last_ids,
-                sample_method,
-                parameters,
+        # === STEP 1 special case ===
+        if step_number == 1:
+            logging.info(
+                f"[rebuild_cache] Step 1 rebuild detected — parsing {operation} outputs directly."
             )
-            # Back-compat if function returns 5-tuple (includes by_parent)
-            if isinstance(result, tuple) and len(result) == 5:
-                filtered_coordinates, filtered_ids, energies, forces, _by_parent = (
-                    result
+            ensemble_ops = {"GOAT", "PES", "DOCKER", "SOLVATOR"}
+            is_ensemble = operation in ensemble_ops
+
+            if is_ensemble:
+                # --- Parse per output file to preserve parent grouping ---
+                all_coords, all_energies, all_forces, tmp_ids = [], [], [], []
+                # parents = [str(i) for i in range(len(output_files))]
+
+                for pidx, out_file in enumerate(sorted(output_files)):
+                    ci, ei, fi = self.orca.parse_output(
+                        [out_file], operation, dir=step_dir
+                    )
+                    if not ci or not ei:
+                        logging.warning(
+                            f"[rebuild_cache] No data parsed from {out_file}; skipping."
+                        )
+                        continue
+
+                    n = len(ci)
+                    all_coords.extend(ci)
+                    all_energies.extend(ei)
+                    all_forces.extend(fi if fi else [None] * n)
+                    tmp_ids.extend([f"{pidx}-{j}" for j in range(n)])
+
+                if not all_coords:
+                    logging.error("[rebuild_cache] Step 1 parsing produced no data.")
+                    return
+
+                # Map tmp_id -> index so we can realign energies/forces after filtering
+                id_to_idx = {sid: i for i, sid in enumerate(tmp_ids)}
+
+                # --- Filter by parent groups using the temporary hierarchical IDs ---
+                filtered_coords, filtered_ids = self.refiner.filter(
+                    all_coords,
+                    all_energies,
+                    tmp_ids,
+                    sample_method,
+                    parameters,
+                    by_parent=True,
                 )
+                if not filtered_coords or not filtered_ids:
+                    logging.error(
+                        "[rebuild_cache] Step 1 filtering returned no survivors."
+                    )
+                    return
+
+                # Realign energies/forces to surviving structures
+                keep_idx = [id_to_idx[sid] for sid in filtered_ids]
+                energies = [all_energies[i] for i in keep_idx]
+                forces = (
+                    [all_forces[i] for i in keep_idx]
+                    if any(all_forces)
+                    else [None] * len(keep_idx)
+                )
+
+                # --- Renumber children per parent: parent-0, parent-1, ...
+                from collections import defaultdict
+
+                buckets = defaultdict(
+                    list
+                )  # parent -> list of positions in filtered_ids
+                for pos, fid in enumerate(filtered_ids):
+                    parent = fid.rsplit("-", 1)[0] if "-" in fid else fid
+                    buckets[parent].append(pos)
+
+                new_fids = list(filtered_ids)
+                for parent, positions in buckets.items():
+                    for k, pos in enumerate(positions):
+                        new_fids[pos] = f"{parent}-{k}"
+
+                filtered_ids = new_fids
+
             else:
-                filtered_coordinates, filtered_ids, energies, forces = result
+                # Non-ensemble step1: flat filtering
+                coords, energies_all, forces_all = self.orca.parse_output(
+                    output_files, operation, dir=step_dir
+                )
+                if not coords or not energies_all:
+                    logging.error("[rebuild_cache] Step 1 parsing produced no data.")
+                    return
+
+                filtered_coords, filtered_ids = self.refiner.filter(
+                    coords,
+                    energies_all,
+                    [str(i) for i in range(len(coords))],
+                    sample_method,
+                    parameters,
+                    by_parent=False,
+                )
+                if not filtered_coords or not filtered_ids:
+                    logging.error(
+                        "[rebuild_cache] Step 1 filtering returned no survivors."
+                    )
+                    return
+
+                energies = energies_all[: len(filtered_coords)]
+                forces = (forces_all or [None] * len(filtered_coords))[
+                    : len(filtered_coords)
+                ]
+
         else:
-            # 1:1 (OPT+SP) default path
-            if (
-                (step_number != 1)
-                and (last_ids is not None)
-                and (len(last_ids) == len(output_files))
-                and operation in {"OPT+SP"}
-            ):
-                logging.info(
-                    "[rebuild_cache] 1:1 propagation detected (rebuild), reusing parent IDs."
+            # === Normal path for step >= 2 ===
+            filtered_coordinates, energies, forces = self.orca.parse_output(
+                output_files, operation, dir=step_dir
+            )
+
+            ensemble_ops = {"GOAT", "PES", "DOCKER", "SOLVATOR"}
+            needs_per_parent = operation in ensemble_ops or (
+                step_number == 1 and last_ids is not None and len(last_ids) > 1
+            )
+
+            if needs_per_parent:
+                # Ensemble: allocate children by parent using your function
+                result = self.process_step_with_parent_allocation(
+                    step_number,
+                    operation,
+                    step_dir,
+                    output_files,
+                    last_ids,
+                    sample_method,
+                    parameters,
                 )
-                filtered_ids = last_ids[:]
+                # Back-compat if function returns 5-tuple (includes by_parent)
+                if isinstance(result, tuple) and len(result) == 5:
+                    filtered_coordinates, filtered_ids, energies, forces, _by_parent = (
+                        result
+                    )
+                else:
+                    filtered_coordinates, filtered_ids, energies, forces = result
             else:
-                num_out = len(filtered_coordinates)
-                filtered_ids, self.next_id = resolve_persistent_ids(
-                    step_number=step_number,
-                    last_ids=last_ids,
-                    coords_count=num_out,
-                    output_files=output_files,
-                    operation=operation,
-                    next_id=self.next_id,
-                    file_map_fn=map_outputs_to_ids,
-                    step_dir=step_dir,
+                # 1:1 (OPT+SP) default path
+                if (
+                    (step_number != 1)
+                    and (last_ids is not None)
+                    and (len(last_ids) == len(output_files))
+                    and operation in {"OPT+SP"}
+                ):
+                    logging.info(
+                        "[rebuild_cache] 1:1 propagation detected (rebuild), reusing parent IDs."
+                    )
+                    filtered_ids = last_ids[:]
+                else:
+                    num_out = len(filtered_coordinates)
+                    filtered_ids, self.next_id = resolve_persistent_ids(
+                        step_number=step_number,
+                        last_ids=last_ids,
+                        coords_count=num_out,
+                        output_files=output_files,
+                        operation=operation,
+                        next_id=self.next_id,
+                        file_map_fn=map_outputs_to_ids,
+                        step_dir=step_dir,
+                    )
+
+                # Filtering for non-ensemble ops
+                filtered_coordinates, filtered_ids = self.refiner.filter(
+                    filtered_coordinates,
+                    energies,
+                    filtered_ids,
+                    sample_method,
+                    parameters,
+                    by_parent=False,
                 )
 
-            # Filtering for non-ensemble ops
-            filtered_coordinates, filtered_ids = self.refiner.filter(
-                filtered_coordinates,
-                energies,
-                filtered_ids,
-                sample_method,
-                parameters,
-                by_parent=False,
-            )
+                if step_number > 1 and last_ids:
+                    from chemrefine.utils import allocate_child_ids
 
-        if filtered_coordinates is None or filtered_ids is None:
-            logging.error(
-                f"[rebuild_cache] Filtering/ID step failed while rebuilding step {step_number}."
-            )
-            return
+                    # --- Determine true fanouts from filtering ---
+                    # Prefer an explicit by_parent dict if available
+                    by_parent = getattr(self.refiner, "by_parent", None)
+                    if by_parent and isinstance(by_parent, dict):
+                        fanouts = [len(by_parent.get(pid, [])) for pid in last_ids]
+                    else:
+                        # Fallback: infer fanouts from the filtered IDs
+                        fanouts = []
+                        for pid in last_ids:
+                            count = sum(
+                                1
+                                for fid in filtered_ids
+                                if str(fid).startswith(f"{pid}-") or fid == pid
+                            )
+                            fanouts.append(count)
+
+                    # --- Use your allocate_child_ids() as-is ---
+                    filtered_ids, _ = allocate_child_ids(
+                        last_ids, fanouts, self.next_id
+                    )
+                    filtered_ids = filtered_ids[: len(filtered_coordinates)]
+
+                    logging.info(
+                        f"[rebuild_cache] Hierarchical IDs rebuilt: {sum(fanouts)} children "
+                        f"from {len(last_ids)} parents."
+                    )
+                elif step_number == 1:
+                    # Root step: assign flat IDs
+                    filtered_ids = [str(i) for i in range(len(filtered_coordinates))]
+
+            if filtered_coordinates is None or filtered_ids is None:
+                logging.error(
+                    f"[rebuild_cache] Filtering/ID step failed while rebuilding step {step_number}."
+                )
+                return
 
         # --- Write StepCache (same as normal end-of-step) ---
         try:
@@ -630,7 +781,7 @@ class ChemRefiner:
                 ids=filtered_ids,
                 n_outputs=len(filtered_ids),
                 by_parent=None,
-                coords=filtered_coordinates,
+                coords=(filtered_coords if step_number == 1 else filtered_coordinates),
                 energies=energies,
                 forces=forces,
                 extras={"rebuild": True},
@@ -644,6 +795,8 @@ class ChemRefiner:
             )
         except Exception as e:
             logging.error(f"[rebuild_cache] Failed to write cache: {e}")
+
+    ###____RUN____###
 
     def run(self):
         """
@@ -747,12 +900,7 @@ class ChemRefiner:
             output_files = []  # set later as needed
             if self.skip_steps:
                 cached = load_step_cache(step_dir)
-                if (
-                    cached
-                    and cached.fingerprint == fp_now
-                    and cached.operation == operation
-                    and cached.engine == engine
-                ):
+                if cached:
                     filtered_coordinates = cached.coords
                     filtered_ids = cached.ids
                     energies = cached.energies
@@ -771,7 +919,7 @@ class ChemRefiner:
                         )
 
             if filtered_coordinates is None or filtered_ids is None:
-                logging.info(
+                logging.warning(
                     f"No valid step cache for step {step_number}. Proceeding with normal execution."
                 )
 
