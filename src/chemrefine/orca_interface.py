@@ -961,7 +961,7 @@ class OrcaInterface:
 
                 inp_files, _ = self.create_input(
                     xyz_files=pos_xyz + neg_xyz,
-                    input_template=input_template,
+                    template=input_template,
                     charge=charge,
                     multiplicity=multiplicity,
                     output_dir=normal_output_dir,
