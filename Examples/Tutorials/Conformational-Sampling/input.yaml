@@ -13,15 +13,17 @@ initial_xyz: ./step1.xyz
 
 steps:
   - step: 1
-    calculation_type: "GOAT"
+    operation: "GOAT"
+    engine: "DFT"
     sample_type:
-      method: "integer"  
+      method: "integer"
       parameters:
        num_structures: 15  #This energy is in Hartrees.
 
   # Step 1: Using MLFF to refine the calculation
   - step: 2
-    calculation_type: "MLFF"
+    operation: "OPT+SP"
+    engine: "MLFF"
     mlff:
       model_name: "uma-s-1"
       task_name: "omol"
@@ -29,30 +31,26 @@ steps:
     sample_type:
       method: "integer"
       parameters:
-       num_structures: 15 
-              
-  - step: 3
-    calculation_type: "DFT"
-    sample_type:
-      method: "integer"
-      parameters:
-        num_strucures: 15      
+       num_structures: 15
 
-  - step: 4
-    calculation_type: "DFT"
+  - step: 3
+    operation: "OPT+SP"
+    engine: "DFT"
     sample_type:
       method: "integer"
       parameters:
         num_strucures: 15
-    
-  - step: 5
-    calculation_type: "DFT"
+
+  - step: 4
+    operation: "OPT+SP"
+    engine: "DFT"
     sample_type:
       method: "integer"
       parameters:
-        num_structures: 15
- 
-  - step: 6
+        num_strucures: 15
+
+
+  - step: 5
     operation: "OPT+SP"
     engine: "DFT"
     sample_type:
