@@ -1,3 +1,10 @@
+[![GitHub release](https://img.shields.io/github/v/release/sterling-group/ChemRefine.svg)](https://github.com/sterling-group/ChemRefine/releases/)
+[![Paper](https://img.shields.io/badge/Paper-ChemRefine-blue)](https://doi.org/10.26434/chemrxiv-2025-cvg1x) 
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![GitHub issues](https://img.shields.io/github/issues/sterling-group/ChemRefine.svg)](https://github.com/sterling-group/ChemRefine/issues/)
+[![Documentation Status](https://img.shields.io/badge/docs-latest-brightgreen.svg)](https://sterling-group.github.io/ChemRefine/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17187169.svg)](https://doi.org/10.5281/zenodo.17187169)
+
 ![chemrefinelogo](https://github.com/user-attachments/assets/ae7b1ad5-0d90-445c-be83-ddcb76fa85c3)
 
 # **Automated Workflow for Conformer Sampling and Refinement.**
