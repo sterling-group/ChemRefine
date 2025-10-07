@@ -44,8 +44,7 @@ steps:
       method: "integer"
       parameters:
         num_strucures: 15
-
-        
+    
   - step: 5
     calculation_type: "DFT"
     sample_type:
@@ -53,3 +52,10 @@ steps:
       parameters:
         num_structures: 15
  
+  - step: 6
+    operation: "OPT+SP"
+    engine: "DFT"
+    sample_type:
+      method: "integer"
+      parameters:
+        num_structures: 15
