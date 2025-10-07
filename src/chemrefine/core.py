@@ -43,6 +43,7 @@ class ChemRefiner:
         self.skip_steps = self.args.skip
         self.rebuild_cache = self.args.rebuild_cache
         self.rebuild_nms = self.args.rebuild_nms
+        self.rerrun_errors = self.args.rerun_errors
         # === Load the YAML configuration ===
         with open(self.input_yaml, "r") as file:
             self.config = yaml.safe_load(file)
@@ -458,6 +459,119 @@ class ChemRefiner:
         )
 
         return all_coords, all_ids, all_energies, all_forces
+
+    def rerun_errors(self, target_step: int | None = None):
+        """
+        Rerun failed ORCA/MLFF jobs recorded in _cache/failed_jobs.json
+        for the given step, using the same settings stored in its manifest.
+        """
+        import json
+        import logging
+        from pathlib import Path
+
+        base_dir = Path(self.output_dir)
+        step_dirs = sorted(
+            [d for d in base_dir.glob("step*") if d.is_dir()],
+            key=lambda p: int(p.name.replace("step", "")),
+        )
+        if not step_dirs:
+            logging.error("No step directories found under outputs/.")
+            return
+
+        # --- Resolve target step ---
+        if target_step is None:
+            step_dir = step_dirs[-1]
+            step_number = int(step_dir.name.replace("step", ""))
+            logging.info(f"No target provided. Using latest step: {step_number}")
+        else:
+            step_dir = base_dir / f"step{target_step}"
+            step_number = target_step
+            if not step_dir.exists():
+                logging.error(f"Step directory {step_dir} does not exist.")
+                return
+
+        cache_file = step_dir / "_cache" / "failed_jobs.json"
+        manifest_file = step_dir / f"step{step_number}_manifest.json"
+
+        if not cache_file.exists():
+            logging.info(
+                f"No failed_jobs.json found for step {step_number}. Nothing to rerun."
+            )
+            return
+
+        try:
+            with open(cache_file) as f:
+                failed_jobs = json.load(f)
+        except json.JSONDecodeError:
+            logging.error(f"Corrupted failed_jobs.json at {cache_file}.")
+            return
+
+        if not failed_jobs:
+            logging.info(f"No failed entries found in {cache_file}.")
+            return
+
+        # --- Read manifest for metadata ---
+        if manifest_file.exists():
+            with open(manifest_file) as f:
+                manifest = json.load(f)
+            operation = manifest.get("operation", "OPT+SP")
+            engine = manifest.get("engine", "dft")
+        else:
+            operation, engine = "OPT+SP", "dft"
+
+        logging.info(
+            f"[rerun_errors] Found {len(failed_jobs)} failed jobs to rerun in step {step_number}."
+        )
+
+        # --- Build list of input files for failed jobs ---
+        input_files = []
+        for job in failed_jobs:
+            structure_id = job.get("structure_id")
+            reason = job.get("reason", "Unknown")
+            input_file = step_dir / f"{structure_id.replace('.out', '.inp')}"
+            if not input_file.exists():
+                logging.warning(f"Input file not found for {structure_id}. Skipping.")
+                continue
+            logging.info(f"Resubmitting {structure_id} (Reason: {reason})")
+            input_files.append(str(input_file))
+
+        if not input_files:
+            logging.warning(
+                f"No valid input files found for rerun in step {step_number}."
+            )
+            return
+
+        # --- Retrieve model/task/device from config (if present) ---
+        step_cfg = next(
+            (s for s in self.config.get("steps", []) if s["step"] == step_number), None
+        )
+        if step_cfg:
+            engine_cfg = step_cfg.get(engine, {})
+            model = engine_cfg.get("model_name", "medium")
+            task = engine_cfg.get("task_name", "mace_off")
+            device = engine_cfg.get("device", "cuda")
+        else:
+            model, task, device = None, None, "cpu"
+
+        # --- Resubmit failed jobs ---
+        try:
+            self.submit_orca_jobs(
+                input_files=input_files,
+                max_cores=self.max_cores,
+                step_dir=str(step_dir),
+                operation=operation,
+                engine=engine,
+                model_name=model,
+                task_name=task,
+                device=device,
+            )
+            logging.info(
+                f"[rerun_errors] Successfully re-submitted {len(input_files)} jobs for step {step_number}."
+            )
+        except Exception as e:
+            logging.error(
+                f"[rerun_errors] Failed submitting reruns for step {step_number}: {e}"
+            )
 
     def rebuild_step_cache_and_exit(self):
         """
@@ -992,6 +1106,15 @@ class ChemRefiner:
                 self.rebuild_nms_cache_and_exit()
                 return
 
+            if getattr(args, "rerun_errors", False):
+                target = (
+                    args.rerun_errors if isinstance(args.rerun_errors, int) else None
+                )
+                if target is not None:
+                    self.rebuild_target_step = target
+                self.rerun_errors(target_step=target)
+                return
+
         logging.info("Starting ChemRefine pipeline.")
 
         # Results from the last completed (or skipped) step; used by MLFF_TRAIN.
@@ -1344,6 +1467,13 @@ class ChemRefiner:
             last_coords, last_ids = filtered_coordinates, filtered_ids
             last_energies, last_forces = energies, forces
             print(f"Step {step_number} completed: {len(last_coords)} structures ready.")
+
+            self.utils.save_step_csv(
+                energies=last_energies,
+                ids=last_ids,
+                step=step_number,
+                output_dir=self.output_dir,
+            )
             print(f"Your ID's for this step are: {last_ids}")
 
         logging.info("ChemRefine pipeline completed.")

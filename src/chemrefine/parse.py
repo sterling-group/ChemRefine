@@ -38,5 +38,15 @@ class ArgumentParser:
             help="Rebuild normal mode sampling (NMS) displacements and cache. Optionally specify a step number (e.g. --rebuild_nms 2).",
         )
 
+        self.parser.add_argument(
+            "--rerun_errors",
+            nargs="?",
+            const=True,
+            type=int,
+            default=False,
+            help="Rerun failed jobs from a specific step (e.g., --rerun_errors 3). "
+            "If no step is given, reruns the most recent step.",
+        )
+
     def parse(self):
         return self.parser.parse_known_args()

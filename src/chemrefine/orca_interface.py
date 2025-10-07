@@ -393,23 +393,11 @@ class OrcaInterface:
 
     def parse_output(self, file_paths, operation, dir: str = "./"):
         """
-        Dispatch parser depending on the operation type.
-
-        Parameters
-        ----------
-        file_paths : list
-            List of ORCA output files to parse.
-        operation : str
-            Operation type (goat, pes, docker, solvator, dft).
-        dir : str, optional
-            Directory containing the output files. Default is current directory.
-
-        Returns
-        -------
-        tuple
-            (coordinates, energies, forces), each a list
+        Dispatch parser depending on the operation type and record failed jobs.
+        Raises if any file fails, so that filtering never receives invalid data.
         """
         coordinates, energies, forces = [], [], []
+        failed = []
 
         logging.info(f"Parsing calculation type: {operation.upper()}")
         logging.info(f"Looking for output files in directory: {dir}")
@@ -419,76 +407,165 @@ class OrcaInterface:
             logging.info(f"Checking output file: {path}")
 
             if not os.path.exists(path):
-                logging.warning(f"Output file not found: {path}")
+                msg = f"Output file not found: {path}"
+                logging.warning(msg)
+                self.record_failed_job(
+                    step_dir=dir, structure_id=os.path.basename(path), reason=msg
+                )
+                failed.append(path)
                 continue
 
             op = operation.lower()
+            parsed_ok = False
 
-            if op == "goat":
-                if path.endswith(".finalensemble.xyz"):
-                    # Already the ensemble file, no transformation needed
-                    finalensemble_file = path
-                else:
-                    # Turn step1.out -> step1_opt.finalensemble.xyz
-                    finalensemble_file = path.replace(".out", "_opt.finalensemble.xyz")
+            try:
+                if op == "goat":
+                    if path.endswith(".finalensemble.xyz"):
+                        finalensemble_file = path
+                    else:
+                        finalensemble_file = path.replace(
+                            ".out", "_opt.finalensemble.xyz"
+                        )
 
-                logging.info(f"Looking for GOAT ensemble file: {finalensemble_file}")
-                if os.path.exists(finalensemble_file):
+                    if not os.path.exists(finalensemble_file):
+                        raise FileNotFoundError(
+                            f"GOAT ensemble not found: {finalensemble_file}"
+                        )
+
                     coords, ens = self.parse_goat_finalensemble(finalensemble_file)
+                    if not ens or None in ens:
+                        raise ValueError("No valid energies in GOAT ensemble.")
                     coordinates.extend(coords)
                     energies.extend(ens)
                     forces.extend([None] * len(coords))
-                else:
-                    logging.error(
-                        f"GOAT ensemble file not found for: {finalensemble_file}"
-                    )
-                continue
+                    parsed_ok = True
 
-            if op == "pes":
-                coords, ens = self.parse_pes_output(path)
-                coordinates.extend(coords)
-                energies.extend(ens)
-                forces.extend([None] * len(coords))  # dummy
-                continue
+                elif op == "pes":
+                    coords, ens = self.parse_pes_output(path)
+                    if not ens or None in ens:
+                        raise ValueError("No valid energies in PES output.")
+                    coordinates.extend(coords)
+                    energies.extend(ens)
+                    forces.extend([None] * len(coords))
+                    parsed_ok = True
 
-            if op == "docker":
-                docker_xyz_file = path.replace(".out", ".struc1.allopt.xyz")
-                logging.info(f"Looking for Docker structure file: {docker_xyz_file}")
-                if os.path.exists(docker_xyz_file):
+                elif op == "docker":
+                    docker_xyz_file = path.replace(".out", ".struc1.allopt.xyz")
+                    if not os.path.exists(docker_xyz_file):
+                        raise FileNotFoundError(
+                            f"Docker xyz not found: {docker_xyz_file}"
+                        )
+
                     coords, ens = self.parse_docker_xyz(docker_xyz_file)
+                    if not ens or None in ens:
+                        raise ValueError("No valid energies in Docker output.")
                     coordinates.extend(coords)
                     energies.extend(ens)
-                    forces.extend([None] * len(coords))  # dummy
-                else:
-                    logging.error(f"Docker structure file not found for: {path}")
-                continue
+                    forces.extend([None] * len(coords))
+                    parsed_ok = True
 
-            if op == "solvator":
-                solvator_xyz_file = path.replace(".out", ".solventbuild.xyz")
-                logging.info(
-                    f"Looking for Solvator structure file: {solvator_xyz_file}"
-                )
-                if os.path.exists(solvator_xyz_file):
+                elif op == "solvator":
+                    solvator_xyz_file = path.replace(".out", ".solventbuild.xyz")
+                    if not os.path.exists(solvator_xyz_file):
+                        raise FileNotFoundError(
+                            f"Solvator xyz not found: {solvator_xyz_file}"
+                        )
+
                     coords, ens = self.parse_solvator_ensemble(solvator_xyz_file)
+                    if not ens or None in ens:
+                        raise ValueError("No valid energies in Solvator output.")
                     coordinates.extend(coords)
                     energies.extend(ens)
-                    forces.extend([None] * len(coords))  # dummy
-                else:
-                    logging.error(f"Solvator structure file not found for: {path}")
+                    forces.extend([None] * len(coords))
+                    parsed_ok = True
+
+                else:  # default DFT
+                    coords, ens, frc = self.parse_dft_output(path)
+                    if not ens or None in ens:
+                        raise ValueError("No valid energies in DFT output.")
+                    coordinates.extend(coords)
+                    energies.extend(ens)
+                    forces.extend(frc)
+                    parsed_ok = True
+
+            except Exception as e:
+                logging.error(f"[parse_output] Failed to parse {path}: {e}")
+                self.record_failed_job(
+                    step_dir=dir, structure_id=os.path.basename(path), reason=str(e)
+                )
+                failed.append(path)
+
+            # Safety: if parsing ran but returned empty data
+            if not parsed_ok:
                 continue
 
-            # Default: standard DFT parsing (energies + forces)
-            coords, ens, frc = self.parse_dft_output(path)
-            coordinates.extend(coords)
-            energies.extend(ens)
-            forces.extend(frc)
-
-        if not coordinates or not energies or not forces:
+        # ---------- Validation ----------
+        if not coordinates or not energies:
             raise RuntimeError(
                 f"parse_output: No valid data found in {dir} for {operation}"
             )
 
+        if failed:
+            msg = (
+                f"{len(failed)} file(s) failed during parsing in {dir}. "
+                f"Recorded to _cache/failed_jobs.json. Aborting to prevent invalid data."
+            )
+            logging.error(msg)
+            raise RuntimeError(msg)
+
         return coordinates, energies, forces
+
+    def record_failed_job(
+        self, step_dir: str, structure_id: str, reason: str = "Unknown error"
+    ):
+        """
+        Record a failed job into _cache/failed_jobs.json under the given step directory.
+
+        Parameters
+        ----------
+        step_dir : str
+            Path to the step directory containing the failed calculation.
+        structure_id : str
+            Identifier for the structure or output file (e.g., step3_structure_5.out).
+        reason : str, optional
+            Description of why the job failed.
+        """
+        import os
+        import json
+        import logging
+
+        cache_dir = os.path.join(step_dir, "_cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        failed_file = os.path.join(cache_dir, "failed_jobs.json")
+
+        # Entry format
+        entry = {
+            "step": os.path.basename(step_dir.rstrip("/")),
+            "structure_id": structure_id,
+            "reason": reason,
+        }
+
+        # Load existing list if available
+        if os.path.exists(failed_file):
+            try:
+                with open(failed_file, "r") as f:
+                    data = json.load(f)
+            except Exception:
+                data = []
+        else:
+            data = []
+
+        # Avoid duplicates
+        if not any(d["structure_id"] == structure_id for d in data):
+            data.append(entry)
+
+        # Save back
+        with open(failed_file, "w") as f:
+            json.dump(data, f, indent=2)
+
+        logging.warning(
+            f"[record_failed_job] Step {entry['step']} - {structure_id} recorded as failed ({reason})."
+        )
 
     def parse_dft_output(self, path):
         """
