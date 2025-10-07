@@ -1,11 +1,12 @@
 import argparse
 from .constants import DEFAULT_CORES
+from chemrefine import __version__
 
 
 class ArgumentParser:
     def __init__(self):
         self.parser = argparse.ArgumentParser(
-            description="Automated conformer searching with ORCA and refinement."
+            description="An automated and interoperable manager for computational chemistry workflows."
         )
         self.parser.add_argument("input_yaml", help="YAML input for workflow.")
         self.parser.add_argument(
@@ -46,6 +47,12 @@ class ArgumentParser:
             default=False,
             help="Rerun failed jobs from a specific step (e.g., --rerun_errors 3). "
             "If no step is given, reruns the most recent step.",
+        )
+        self.parser.add_argument(
+            "--version",
+            action="version",
+            version=f"ChemRefine {__version__}",
+            help="Show ChemRefine version and exit.",
         )
 
     def parse(self):
