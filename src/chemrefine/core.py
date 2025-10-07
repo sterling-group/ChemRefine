@@ -466,6 +466,7 @@ class ChemRefiner:
         re-run the same ID allocation + filtering used during a normal run,
         then write the StepCache and exit.
         """
+        logging.info("[rebuild_cache] Starting cache rebuild process.")
         # --- Pick target step directory ---
         if not os.path.isdir(self.output_dir):
             logging.error("[rebuild_cache] Output directory does not exist.")
@@ -856,7 +857,7 @@ class ChemRefiner:
         Rebuild the Normal Mode Sampling (NMS) displacements and write a new StepCache.
         Allows skipping directly to the next step without rerunning the parent step.
         """
-
+        logging.info("[rebuild_nms] Starting NMS rebuild process.")
         # --- Fallback defaults ---
         device = getattr(self, "device", "cpu")
         bind_address = getattr(self, "bind_address", "127.0.0.1:8888")
@@ -969,17 +970,29 @@ class ChemRefiner:
         Main pipeline execution function for ChemRefine.
 
         """
-        if getattr(self, "rebuild_cache", False):
-            self.rebuild_step_cache_and_exit()
-            return
+        # --- Handle rebuild modes early ---
+        args = getattr(self, "args", None)
 
-        if getattr(self, "rebuild_nms", False):
-            self.rebuild_nms_cache_and_exit()
-            return
+        if args is not None:
+            # Handle --rebuild_cache (optionally with step number)
+            if getattr(args, "rebuild_cache", False):
+                target = (
+                    args.rebuild_cache if isinstance(args.rebuild_cache, int) else None
+                )
+                if target is not None:
+                    self.rebuild_target_step = target
+                self.rebuild_step_cache_and_exit()
+                return
 
-        logging.info(
-            "Starting ChemRefine pipeline with robust caching (step-level only)."
-        )
+            # Handle --rebuild_nms (optionally with step number)
+            if getattr(args, "rebuild_nms", False):
+                target = args.rebuild_nms if isinstance(args.rebuild_nms, int) else None
+                if target is not None:
+                    self.rebuild_target_step = target
+                self.rebuild_nms_cache_and_exit()
+                return
+
+        logging.info("Starting ChemRefine pipeline.")
 
         # Results from the last completed (or skipped) step; used by MLFF_TRAIN.
         last_coords = None
