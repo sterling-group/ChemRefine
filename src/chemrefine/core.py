@@ -464,6 +464,7 @@ class ChemRefiner:
         """
         Rerun failed ORCA/MLFF jobs recorded in _cache/failed_jobs.json
         for the given step, using the same settings stored in its manifest.
+        Successfully re-submitted entries are removed from the cache.
         """
         import json
         import logging
@@ -523,24 +524,6 @@ class ChemRefiner:
             f"[rerun_errors] Found {len(failed_jobs)} failed jobs to rerun in step {step_number}."
         )
 
-        # --- Build list of input files for failed jobs ---
-        input_files = []
-        for job in failed_jobs:
-            structure_id = job.get("structure_id")
-            reason = job.get("reason", "Unknown")
-            input_file = step_dir / f"{structure_id.replace('.out', '.inp')}"
-            if not input_file.exists():
-                logging.warning(f"Input file not found for {structure_id}. Skipping.")
-                continue
-            logging.info(f"Resubmitting {structure_id} (Reason: {reason})")
-            input_files.append(str(input_file))
-
-        if not input_files:
-            logging.warning(
-                f"No valid input files found for rerun in step {step_number}."
-            )
-            return
-
         # --- Retrieve model/task/device from config (if present) ---
         step_cfg = next(
             (s for s in self.config.get("steps", []) if s["step"] == step_number), None
@@ -553,25 +536,64 @@ class ChemRefiner:
         else:
             model, task, device = None, None, "cpu"
 
-        # --- Resubmit failed jobs ---
-        try:
-            self.submit_orca_jobs(
-                input_files=input_files,
-                max_cores=self.max_cores,
-                step_dir=str(step_dir),
-                operation=operation,
-                engine=engine,
-                model_name=model,
-                task_name=task,
-                device=device,
-            )
+        updated_entries = []
+        corrected_entries = []
+
+        # --- Build list of input files and resubmit ---
+        for job in failed_jobs:
+            structure_id = job.get("structure_id")
+            reason = job.get("reason", "Unknown")
+            input_file = step_dir / f"{structure_id.replace('.out', '.inp')}"
+
+            if not input_file.exists():
+                logging.warning(f"Input file not found for {structure_id}. Skipping.")
+                job["status"] = "missing_input"
+                updated_entries.append(job)
+                continue
+
+            logging.info(f"Resubmitting {structure_id} (Reason: {reason})")
+
+            try:
+                self.submit_orca_jobs(
+                    input_files=[str(input_file)],
+                    max_cores=self.max_cores,
+                    step_dir=str(step_dir),
+                    operation=operation,
+                    engine=engine,
+                    model_name=model,
+                    task_name=task,
+                    device=device,
+                )
+                job["status"] = "corrected"
+                corrected_entries.append(job)
+                logging.info(
+                    f"[rerun_errors] Re-submitted {structure_id} successfully."
+                )
+            except Exception as e:
+                job["status"] = f"resubmit_failed: {e}"
+                updated_entries.append(job)
+                logging.error(f"[rerun_errors] Failed to resubmit {structure_id}: {e}")
+
+        # --- Keep only unresolved entries ---
+        remaining = [
+            j
+            for j in updated_entries
+            if not j.get("status", "").startswith("corrected")
+        ]
+
+        if remaining:
+            with open(cache_file, "w") as f:
+                json.dump(remaining, f, indent=2)
             logging.info(
-                f"[rerun_errors] Successfully re-submitted {len(input_files)} jobs for step {step_number}."
+                f"[rerun_errors] Updated {cache_file}: {len(remaining)} unresolved entries remain."
             )
-        except Exception as e:
-            logging.error(
-                f"[rerun_errors] Failed submitting reruns for step {step_number}: {e}"
+        else:
+            cache_file.unlink(missing_ok=True)
+            logging.info(
+                f"[rerun_errors] All failed jobs for step {step_number} were corrected. Cache cleared."
             )
+
+        logging.info(f"[rerun_errors] Step {step_number} rerun procedure completed.")
 
     def rebuild_step_cache_and_exit(self):
         """
