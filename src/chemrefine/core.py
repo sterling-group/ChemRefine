@@ -43,6 +43,7 @@ class ChemRefiner:
         self.skip_steps = self.args.skip
         self.rebuild_cache = self.args.rebuild_cache
         self.rebuild_nms = self.args.rebuild_nms
+        self.rerrun_errors = self.args.rerun_errors
         # === Load the YAML configuration ===
         with open(self.input_yaml, "r") as file:
             self.config = yaml.safe_load(file)
@@ -458,6 +459,88 @@ class ChemRefiner:
         )
 
         return all_coords, all_ids, all_energies, all_forces
+
+    def rerun_errors(self, target_step: int | None = None):
+        """
+        Rerun failed jobs from _cache/failed_jobs.json for a given step
+        (or the latest step if not specified).
+
+        Parameters
+        ----------
+        target_step : int or None
+            The step number to rerun. If None, uses the most recent step folder.
+        """
+        import json
+        import logging
+        from pathlib import Path
+
+        base_dir = Path(self.output_dir)
+        step_dirs = sorted(
+            [d for d in base_dir.glob("step*") if d.is_dir()],
+            key=lambda p: int(p.name.replace("step", "")),
+        )
+
+        if not step_dirs:
+            logging.error("No step directories found under outputs/.")
+            return
+
+        # --- Determine target step directory ---
+        if target_step is None:
+            step_dir = step_dirs[-1]
+            step_number = int(step_dir.name.replace("step", ""))
+            logging.info(f"No target step provided. Using latest step: {step_number}")
+        else:
+            step_dir = base_dir / f"step{target_step}"
+            step_number = target_step
+            if not step_dir.exists():
+                logging.error(f"Step directory {step_dir} does not exist.")
+                return
+
+        cache_file = step_dir / "_cache" / "failed_jobs.json"
+        if not cache_file.exists():
+            logging.info(
+                f"No failed_jobs.json found for step {step_number}. Nothing to rerun."
+            )
+            return
+
+        with open(cache_file, "r") as f:
+            try:
+                failed_jobs = json.load(f)
+            except json.JSONDecodeError:
+                logging.error(f"Corrupted failed_jobs.json at {cache_file}.")
+                return
+
+        if not failed_jobs:
+            logging.info(f"No failed job entries found in {cache_file}.")
+            return
+
+        logging.info(
+            f"[rerun_errors] Found {len(failed_jobs)} failed jobs to rerun in step {step_number}."
+        )
+
+        # --- Rerun each failed job ---
+        for job in failed_jobs:
+            structure_id = job.get("structure_id")
+            reason = job.get("reason", "Unknown error")
+            slurm_candidates = list(
+                step_dir.glob(f"*{structure_id.replace('.out', '')}.slurm")
+            )
+
+            if not slurm_candidates:
+                logging.warning(
+                    f"No .slurm file found for {structure_id} in step{step_number}."
+                )
+                continue
+
+            slurm_file = slurm_candidates[0]
+            logging.info(f"Resubmitting {structure_id} (Reason: {reason})")
+            try:
+                self.submit_structure_job(slurm_file, cwd=step_dir)
+            except Exception as e:
+                logging.error(f"Failed to resubmit {structure_id}: {e}")
+                continue
+
+        logging.info(f"[rerun_errors] Step {step_number} re-submission complete.")
 
     def rebuild_step_cache_and_exit(self):
         """
@@ -992,6 +1075,15 @@ class ChemRefiner:
                 self.rebuild_nms_cache_and_exit()
                 return
 
+            if getattr(args, "rerun_errors", False):
+                target = (
+                    args.rerun_errors if isinstance(args.rerun_errors, int) else None
+                )
+                if target is not None:
+                    self.rebuild_target_step = target
+                self.rerun_errors(target_step=target)
+                return
+
         logging.info("Starting ChemRefine pipeline.")
 
         # Results from the last completed (or skipped) step; used by MLFF_TRAIN.
@@ -1344,6 +1436,13 @@ class ChemRefiner:
             last_coords, last_ids = filtered_coordinates, filtered_ids
             last_energies, last_forces = energies, forces
             print(f"Step {step_number} completed: {len(last_coords)} structures ready.")
+
+            self.utils.save_step_csv(
+                energies=last_energies,
+                ids=last_ids,
+                step=step_number,
+                output_dir=self.output_dir,
+            )
             print(f"Your ID's for this step are: {last_ids}")
 
         logging.info("ChemRefine pipeline completed.")
