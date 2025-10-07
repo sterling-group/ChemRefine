@@ -22,15 +22,20 @@ class ArgumentParser:
         )
         self.parser.add_argument(
             "--rebuild_cache",
-            action="store_true",
+            nargs="?",
+            const=True,
+            type=int,
             default=False,
-            help="Rebuild cache from a failed run.",
+            help="Rebuild cache from a failed run. Optionally specify a step number (e.g. --rebuild_cache 3).",
         )
+
         self.parser.add_argument(
             "--rebuild_nms",
-            action="store_true",
+            nargs="?",
+            const=True,
+            type=int,
             default=False,
-            help="Rebuild NMS cache from a failed run.",
+            help="Rebuild normal mode sampling (NMS) displacements and cache. Optionally specify a step number (e.g. --rebuild_nms 2).",
         )
 
     def parse(self):
