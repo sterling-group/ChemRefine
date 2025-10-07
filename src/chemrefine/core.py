@@ -854,10 +854,12 @@ class ChemRefiner:
     def rebuild_nms_cache_and_exit(self):
         """
         Rebuild the Normal Mode Sampling (NMS) displacements and write a new StepCache.
-        This allows skipping directly to the next step without rerunning the parent step.
+        Allows skipping directly to the next step without rerunning the parent step.
         """
-        import os
-        import logging
+
+        # --- Fallback defaults ---
+        device = getattr(self, "device", "cpu")
+        bind_address = getattr(self, "bind_address", "127.0.0.1:8888")
 
         # --- Determine which step to rebuild ---
         step_number = int(getattr(self, "rebuild_target_step", 2))
@@ -928,14 +930,11 @@ class ChemRefiner:
             structure_ids=structure_ids,
             num_random_modes=num_random_modes,
             displacement_value=displacement_value,
-            device=self.device,
-            bind=self.bind_address,
+            device=device,
+            bind=bind_address,
             orca_executable=self.orca_executable,
             scratch_dir=self.scratch_dir,
         )
-
-        # --- Build new StepCache for the displaced structures ---
-        from chemrefine.utils import build_step_fingerprint, StepCache, save_step_cache
 
         fp_now = build_step_fingerprint(step_cfg, structure_ids, {}, step_number)
         step_cache = StepCache(
