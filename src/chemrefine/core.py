@@ -1468,12 +1468,19 @@ class ChemRefiner:
             last_energies, last_forces = energies, forces
             print(f"Step {step_number} completed: {len(last_coords)} structures ready.")
 
-            self.utils.save_step_csv(
-                energies=last_energies,
-                ids=last_ids,
-                step=step_number,
-                output_dir=self.output_dir,
-            )
+            # Only write energies if present and aligned
+            if last_energies is not None and len(last_energies) == len(last_ids):
+                self.utils.save_step_csv(
+                    energies=last_energies,
+                    ids=last_ids,
+                    step=step_number,
+                    output_dir=self.output_dir,
+                )
+            else:
+                logging.info(
+                    f"[step {step_number}] Skipping CSV export (energy/ID mismatch or missing energies)."
+                )
+
             print(f"Your ID's for this step are: {last_ids}")
 
         logging.info("ChemRefine pipeline completed.")
