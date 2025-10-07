@@ -549,7 +549,7 @@ class ChemRefiner:
             engine_cfg = step_cfg.get(engine, {})
             model = engine_cfg.get("model_name", "medium")
             task = engine_cfg.get("task_name", "mace_off")
-            device = engine_cfg.get("device", "cuda")
+            device = engine_cfg.get("device", "cpu")
         else:
             model, task, device = None, None, "cpu"
 
