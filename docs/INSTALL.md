@@ -1,28 +1,34 @@
 # Installation and Setup Guide
 
-## Package Installation
 
-### Installation (Recommended)
 ```bash
-git clone --recursive https://github.com/sterling-research-group/ChemRefine.git
+
+#Pip install[Recommended]
+
+pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git@main"
+
+# Installing from Source
+git clone  https://github.com/sterling-group/ChemRefine.git
 cd ChemRefine
 
 # Install in development mode
 pip install -e .
-
-# Verify installation
-chemrefine --help
-
-# Clone repository
-git clone https://github.com/sterling-research-group/ChemRefine.git
-cd ChemRefine
-
-# Install package6
-pip install .
 ```
 
-# Install package
-pip install .
+### **Requirements**
+Everything is managed through the pip installation. 
+- **Python 3.6+ or < 3.13** with the following dependencies:
+  - `numpy` - Numerical computations
+  - `pyyaml` - YAML configuration parsing  
+  - `pandas` - Data analysis and CSV handling
+  - `ase` - Geometry handling and optimisation
+  - `mace-torch` - Machine learning force fields
+  - `torch == 2.5.1` - Machine Learning (if you use later version of Pytorch it might not work with UMA models)
+
+- **ORCA 6.0+** - Quantum chemistry calculations
+- **SLURM** - Job scheduling system
+- **MLIP Engines** - MACE, FAIRChem, Sevenn, Orb
+---
 
 
 ## Dependencies
@@ -40,6 +46,7 @@ pip install .
 - **MACE-torch** - MLIP platform for MACE architecture
 - **FAIRChem** - MLIP platform for UMA and esen models
 
+
 ## Verification
 
 After installation, verify everything works:
@@ -47,6 +54,10 @@ After installation, verify everything works:
 ```bash
 # Test command-line interface
 chemrefine --help
+
+#Test version
+
+chemrefine --version
 
 # Test with example files
 cd Examples/
