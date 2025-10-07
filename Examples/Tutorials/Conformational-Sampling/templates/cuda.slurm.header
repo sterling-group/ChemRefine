@@ -1,4 +1,4 @@
-#SBATCH --partition=gpu-preempt         # Partition name
+#SBATCH --partition=<your_gpu_partition>       # Partition name
 #SBATCH --nodes=1                       # Number of nodes
 #SBATCH --ntasks=1                      # Number of tasks (processes)
 #SBATCH --gres=gpu                    # Number of GPUs per node
