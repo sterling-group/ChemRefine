@@ -44,18 +44,19 @@ class Utility:
     ):
         """
         Appends filtered structures for a step to a cumulative CSV, sorted by energy.
-
-        Parameters:
-            energies (list): Filtered energies in Hartrees.
-            ids (list): Persistent IDs of the filtered structures.
-            step (int): Step number.
-            filename (str): Cumulative CSV file.
-            T (float): Temperature in Kelvin for Boltzmann weighting.
-            output_dir (str): Output directory.
         """
+        import pandas as pd
+        import os
+        import logging
 
         df = pd.DataFrame({"Conformer": ids, "Energy (Hartrees)": energies})
         df["Energy (kcal/mol)"] = df["Energy (Hartrees)"] * HARTREE_TO_KCAL_MOL
+
+        # ✅ Ensure numeric
+        df["Energy (kcal/mol)"] = pd.to_numeric(
+            df["Energy (kcal/mol)"], errors="coerce"
+        )
+        df = df.dropna(subset=["Energy (kcal/mol)"])
 
         # ✅ Sort table by energy (kcal/mol)
         df = df.sort_values(by="Energy (kcal/mol)", ascending=True).reset_index(
@@ -63,12 +64,17 @@ class Utility:
         )
 
         # Boltzmann statistics
-        df["dE (kcal/mol)"] = df["Energy (kcal/mol)"] - df["Energy (kcal/mol)"].min()
-        dE_RT = df["dE (kcal/mol)"] / (R_KCAL_MOL_K * T)
-        df["Boltzmann Weight"] = np.exp(-dE_RT)
-        df["Boltzmann Weight"] /= df["Boltzmann Weight"].sum()
-        df["% Total"] = df["Boltzmann Weight"] * 100
-        df["% Cumulative"] = df["% Total"].cumsum()
+        dE = df["Energy (kcal/mol)"] - df["Energy (kcal/mol)"].min()
+        dE_RT = np.array(dE, dtype=float) / float(R_KCAL_MOL_K * T)
+
+        # ✅ np.exp now always receives a proper ndarray
+        boltz = np.exp(-dE_RT)
+        boltz /= boltz.sum()
+
+        df["dE (kcal/mol)"] = dE
+        df["Boltzmann Weight"] = boltz
+        df["% Total"] = boltz * 100.0
+        df["% Cumulative"] = np.cumsum(df["% Total"])
 
         df.insert(0, "Step", step)
         df = df.round(
