@@ -10,7 +10,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
-CACHE_VERSION = "1.0"
+# Import the main ChemRefine version dynamically
+try:
+    from chemrefine import __version__ as CACHE_VERSION
+except ImportError:
+    CACHE_VERSION = "0.0.0-dev"  # fallback if imported standalone
 
 
 @dataclass
