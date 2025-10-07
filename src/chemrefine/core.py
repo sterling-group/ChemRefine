@@ -462,13 +462,8 @@ class ChemRefiner:
 
     def rerun_errors(self, target_step: int | None = None):
         """
-        Rerun failed jobs from _cache/failed_jobs.json for a given step
-        (or the latest step if not specified).
-
-        Parameters
-        ----------
-        target_step : int or None
-            The step number to rerun. If None, uses the most recent step folder.
+        Rerun failed ORCA/MLFF jobs recorded in _cache/failed_jobs.json
+        for the given step, using the same settings stored in its manifest.
         """
         import json
         import logging
@@ -479,16 +474,15 @@ class ChemRefiner:
             [d for d in base_dir.glob("step*") if d.is_dir()],
             key=lambda p: int(p.name.replace("step", "")),
         )
-
         if not step_dirs:
             logging.error("No step directories found under outputs/.")
             return
 
-        # --- Determine target step directory ---
+        # --- Resolve target step ---
         if target_step is None:
             step_dir = step_dirs[-1]
             step_number = int(step_dir.name.replace("step", ""))
-            logging.info(f"No target step provided. Using latest step: {step_number}")
+            logging.info(f"No target provided. Using latest step: {step_number}")
         else:
             step_dir = base_dir / f"step{target_step}"
             step_number = target_step
@@ -497,50 +491,87 @@ class ChemRefiner:
                 return
 
         cache_file = step_dir / "_cache" / "failed_jobs.json"
+        manifest_file = step_dir / f"step{step_number}_manifest.json"
+
         if not cache_file.exists():
             logging.info(
                 f"No failed_jobs.json found for step {step_number}. Nothing to rerun."
             )
             return
 
-        with open(cache_file, "r") as f:
-            try:
+        try:
+            with open(cache_file) as f:
                 failed_jobs = json.load(f)
-            except json.JSONDecodeError:
-                logging.error(f"Corrupted failed_jobs.json at {cache_file}.")
-                return
+        except json.JSONDecodeError:
+            logging.error(f"Corrupted failed_jobs.json at {cache_file}.")
+            return
 
         if not failed_jobs:
-            logging.info(f"No failed job entries found in {cache_file}.")
+            logging.info(f"No failed entries found in {cache_file}.")
             return
+
+        # --- Read manifest for metadata ---
+        if manifest_file.exists():
+            with open(manifest_file) as f:
+                manifest = json.load(f)
+            operation = manifest.get("operation", "OPT+SP")
+            engine = manifest.get("engine", "dft")
+        else:
+            operation, engine = "OPT+SP", "dft"
 
         logging.info(
             f"[rerun_errors] Found {len(failed_jobs)} failed jobs to rerun in step {step_number}."
         )
 
-        # --- Rerun each failed job ---
+        # --- Build list of input files for failed jobs ---
+        input_files = []
         for job in failed_jobs:
             structure_id = job.get("structure_id")
-            reason = job.get("reason", "Unknown error")
-            slurm_candidates = list(
-                step_dir.glob(f"*{structure_id.replace('.out', '')}.slurm")
-            )
-
-            if not slurm_candidates:
-                logging.warning(
-                    f"No .slurm file found for {structure_id} in step{step_number}."
-                )
+            reason = job.get("reason", "Unknown")
+            input_file = step_dir / f"{structure_id.replace('.out', '.inp')}"
+            if not input_file.exists():
+                logging.warning(f"Input file not found for {structure_id}. Skipping.")
                 continue
-
-            slurm_file = slurm_candidates[0]
             logging.info(f"Resubmitting {structure_id} (Reason: {reason})")
-            try:
-                self.submit_structure_job(slurm_file, cwd=step_dir)
-            except Exception as e:
-                logging.error(f"Failed to resubmit {structure_id}: {e}")
-                continue
+            input_files.append(str(input_file))
 
-        logging.info(f"[rerun_errors] Step {step_number} re-submission complete.")
+        if not input_files:
+            logging.warning(
+                f"No valid input files found for rerun in step {step_number}."
+            )
+            return
+
+        # --- Retrieve model/task/device from config (if present) ---
+        step_cfg = next(
+            (s for s in self.config.get("steps", []) if s["step"] == step_number), None
+        )
+        if step_cfg:
+            engine_cfg = step_cfg.get(engine, {})
+            model = engine_cfg.get("model_name", "medium")
+            task = engine_cfg.get("task_name", "mace_off")
+            device = engine_cfg.get("device", "cuda")
+        else:
+            model, task, device = None, None, "cpu"
+
+        # --- Resubmit failed jobs ---
+        try:
+            self.submit_orca_jobs(
+                input_files=input_files,
+                max_cores=self.max_cores,
+                step_dir=str(step_dir),
+                operation=operation,
+                engine=engine,
+                model_name=model,
+                task_name=task,
+                device=device,
+            )
+            logging.info(
+                f"[rerun_errors] Successfully re-submitted {len(input_files)} jobs for step {step_number}."
+            )
+        except Exception as e:
+            logging.error(
+                f"[rerun_errors] Failed submitting reruns for step {step_number}: {e}"
+            )
 
     def rebuild_step_cache_and_exit(self):
         """
