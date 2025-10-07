@@ -23,8 +23,8 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-__version__ = "0.3.0"
-__author__ = "Sterling Research Group"
+__version__ = "1.2.1"
+__author__ = "Sterling Group"
 __email__ = "dal950773@utdallas.edu"
 
 from .core import ChemRefiner
