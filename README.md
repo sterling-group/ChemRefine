@@ -302,7 +302,7 @@ The tool supports complex multi-step refinement protocols:
 
 ## **Project Structure**
 ```
-auto-conformer-goat/
+chemrefine/
 ├── src/chemrefine          # Main package code
 ├── Examples/               # Example input files and SLURM scripts
 ├── README.md               # This file
@@ -324,7 +324,7 @@ We welcome contributions! Please:
 
 ## **Citation**
 
-If you use Auto-Conformer-GOAT in your research, please cite:
+If you use ChemRefine in your research, please cite:
 
 ```bibtex
 @software{ChemRefine,
