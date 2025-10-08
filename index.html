@@ -321,6 +321,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#error-correction" class="md-nav__link">
+    <span class="md-ellipsis">
+      Error Correction
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#3-monitor-progress" class="md-nav__link">
     <span class="md-ellipsis">
       3. Monitor Progress
@@ -676,6 +685,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#error-correction" class="md-nav__link">
+    <span class="md-ellipsis">
+      Error Correction
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#3-monitor-progress" class="md-nav__link">
     <span class="md-ellipsis">
       3. Monitor Progress
@@ -723,7 +741,12 @@
 <hr />
 <h2 id="installation"><strong>Installation</strong></h2>
 <h3 id="development-installation"><strong>Development Installation</strong></h3>
-<pre><code class="language-bash"># Clone the repository
+<pre><code class="language-bash">
+#Pip install[Recommended]
+
+pip install &quot;chemrefine @ git+https://github.com/sterling-group/ChemRefine.git@main&quot;
+
+# Installing from Source
 git clone  https://github.com/sterling-group/ChemRefine.git
 cd ChemRefine
 
@@ -731,21 +754,22 @@ cd ChemRefine
 pip install -e .
 </code></pre>
 <h3 id="requirements"><strong>Requirements</strong></h3>
+<p>Everything is managed through the pip installation. 
+- <strong>Python 3.6+ or &lt; 3.13</strong> with the following dependencies:
+  - <code>numpy</code> - Numerical computations
+  - <code>pyyaml</code> - YAML configuration parsing<br />
+  - <code>pandas</code> - Data analysis and CSV handling
+  - <code>ase</code> - Geometry handling and optimisation
+  - <code>mace-torch</code> - Machine learning force fields
+  - <code>torch == 2.5.1</code> - Machine Learning (if you use later version of Pytorch it might not work with UMA models)</p>
 <ul>
-<li><strong>Python 3.6+</strong> with the following dependencies:</li>
-<li><code>numpy</code> - Numerical computations</li>
-<li><code>pyyaml</code> - YAML configuration parsing  </li>
-<li><code>pandas</code> - Data analysis and CSV handling</li>
-<li><code>ase</code> - Geometry handling and optimisation</li>
-<li><code>mace-torch</code> - Machine learning force fields</li>
-<li><code>torch == 2.5.1</code> - Machine Learning (if you use later version of Pytorch it might not work with UMA models)</li>
 <li><strong>ORCA 6.0+</strong> - Quantum chemistry calculations</li>
-<li><strong>SLURM</strong> - Job scheduling system
--<strong>MACE-torch</strong> - </li>
+<li><strong>SLURM</strong> - Job scheduling system</li>
+<li><strong>MLIP Engines</strong> - MACE, FAIRChem, Sevenn, Orb</li>
 </ul>
 <hr />
 <h2 id="tutorial"><strong>Tutorial</strong></h2>
-<p>You can find examples for running multiple calculations that were in our publication in our <a href="https://sterling-group.github.io/ChemRefine/">Tutorial</a></p>
+<p>You can find examples for running multiple calculations that were in our publication in our <a href="https://sterling-group.github.io/ChemRefine/tutorials/">Tutorial</a></p>
 <h2 id="quick-start"><strong>Quick Start</strong></h2>
 <h3 id="1-prepare-input-files"><strong>1. Prepare Input Files</strong></h3>
 <p>Create the required input files in your working directory:</p>
@@ -754,12 +778,11 @@ pip install -e .
 <li><strong>Initial XYZ</strong> (<code>step1.xyz</code>): Starting molecular geometry  </li>
 <li><strong>ORCA Templates</strong> (<code>step1.inp</code>, <code>step2.inp</code>, <code>step3.inp</code>... <code>orca.slurm.header</code>, <code>mlff.slurm.header</code>): Calculation templates for each step</li>
 </ul>
-<p>You must provide <strong>one ORCA input file</strong> (e.g., <code>step1.inp</code>, <code>step2.inp</code>, etc.) for <strong>each step</strong> defined in your <code>input.yaml</code> configuration file, otherwise you must define a MLFF step. For example, if your <code>input.yaml</code> specifies three ORCA steps, then you need three corresponding ORCA input files in your templates directory.</p>
+<p>You must provide <strong>one ORCA input file</strong> (e.g., <code>step1.inp</code>, <code>step2.inp</code>, etc.) for <strong>each step</strong> defined in your <code>input.yaml</code> configuration file, these must be found where you defined your <code>template</code> directory . For example, if your <code>input.yaml</code> specifies three ORCA steps, then you need three corresponding ORCA input files in your templates directory.</p>
 <p>ChemRefine provides seamless MLIP integration through the use of the tool ExtOpt in Orca, which uses the ORCA optimization codes paired with ASE, you can use any optimization function of ORCA with MLIPS. For more <a href="https://github.com/faccts/orca-external-tools">information</a>.</p>
 <p>In addition to these input files, you must include one of each:
 - <strong><code>cpu.slurm.header</code></strong>: A SLURM submission script header with your cluster-specific job settings (e.g., partition, time limit, memory).
 - <strong><code>cuda.slurm.header</code></strong>: Required for MLFF jobs. Include your GPU node configuration here so MLFF calculations run under SLURM.</p>
-<p>Make sure to specify the path to your <strong>ORCA 6.0+</strong> executable in the <code>ORCA_EXEC</code> line of your header file(s). Adjust any other parameters (such as modules or memory) to fit your cluster environment.</p>
 <h3 id="2-run-the-workflow"><strong>2. Run the Workflow</strong></h3>
 <pre><code class="language-bash"># Basic usage
 chemrefine input.yaml
@@ -772,6 +795,20 @@ nohup chemrefine input.yaml --maxcores 128 &amp;
 
 # Skip any step (if already completed)
 chemrefine input.yaml --skip
+</code></pre>
+<h3 id="error-correction"><strong>Error Correction</strong></h3>
+<p>Often times DFT or MLIP calculations tend to fail, making the workflow not work as seamlessly. ChemRefine uses a caching system that saves a json and a pickle with all of the variables for that step in <code>_cache</code> directory inside the step folder. This allows ChemRefine to continue to the next step if the workflow gets interrupted. If calculations die, we have added features to correct this: </p>
+<pre><code class="language-bash"># 1st: Re-run failed calculations (may require adjusting their parameters)
+
+chemrefine input.yaml --rerun_errors
+
+#2nd: Rebuild the cache
+
+chemrefine input.yaml --rebuild_cache
+
+#Optional if re-running normal mode sampling and don't want to run current step
+
+chemrefine input.yaml --rebuild_nms
 </code></pre>
 <h3 id="3-monitor-progress"><strong>3. Monitor Progress</strong></h3>
 <p>The tool provides detailed logging and creates organized output directories for each step:</p>

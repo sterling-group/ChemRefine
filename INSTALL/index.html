@@ -266,19 +266,88 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#package-installation" class="md-nav__link">
+  <a href="#requirements" class="md-nav__link">
     <span class="md-ellipsis">
-      Package Installation
+      Requirements
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Package Installation">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      Dependencies
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Dependencies">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#installation-recommended" class="md-nav__link">
+  <a href="#external-requirements" class="md-nav__link">
     <span class="md-ellipsis">
-      Installation (Recommended)
+      External Requirements
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      Verification
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#development-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      Development Setup
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#license-information" class="md-nav__link">
+    <span class="md-ellipsis">
+      License Information
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      Troubleshooting
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#common-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      Common Issues
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#getting-help" class="md-nav__link">
+    <span class="md-ellipsis">
+      Getting Help
     </span>
   </a>
   
@@ -530,19 +599,88 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#package-installation" class="md-nav__link">
+  <a href="#requirements" class="md-nav__link">
     <span class="md-ellipsis">
-      Package Installation
+      Requirements
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Package Installation">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      Dependencies
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Dependencies">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#installation-recommended" class="md-nav__link">
+  <a href="#external-requirements" class="md-nav__link">
     <span class="md-ellipsis">
-      Installation (Recommended)
+      External Requirements
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      Verification
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#development-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      Development Setup
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#license-information" class="md-nav__link">
+    <span class="md-ellipsis">
+      License Information
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      Troubleshooting
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#common-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      Common Issues
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#getting-help" class="md-nav__link">
+    <span class="md-ellipsis">
+      Getting Help
     </span>
   </a>
   
@@ -570,26 +708,33 @@
 
 
 <h1 id="installation-and-setup-guide">Installation and Setup Guide</h1>
-<h2 id="package-installation">Package Installation</h2>
-<h3 id="installation-recommended">Installation (Recommended)</h3>
-<pre><code class="language-bash">git clone --recursive https://github.com/sterling-research-group/ChemRefine.git
+<pre><code class="language-bash">
+#Pip install[Recommended]
+
+pip install &quot;chemrefine @ git+https://github.com/sterling-group/ChemRefine.git@main&quot;
+
+# Installing from Source
+git clone  https://github.com/sterling-group/ChemRefine.git
 cd ChemRefine
 
 # Install in development mode
 pip install -e .
-
-# Verify installation
-chemrefine --help
-
-# Clone repository
-git clone https://github.com/sterling-research-group/ChemRefine.git
-cd ChemRefine
-
-# Install package6
-pip install .
 </code></pre>
-<h1 id="install-package">Install package</h1>
-<p>pip install .</p>
+<h3 id="requirements"><strong>Requirements</strong></h3>
+<p>Everything is managed through the pip installation. 
+- <strong>Python 3.6+ or &lt; 3.13</strong> with the following dependencies:
+  - <code>numpy</code> - Numerical computations
+  - <code>pyyaml</code> - YAML configuration parsing<br />
+  - <code>pandas</code> - Data analysis and CSV handling
+  - <code>ase</code> - Geometry handling and optimisation
+  - <code>mace-torch</code> - Machine learning force fields
+  - <code>torch == 2.5.1</code> - Machine Learning (if you use later version of Pytorch it might not work with UMA models)</p>
+<ul>
+<li><strong>ORCA 6.0+</strong> - Quantum chemistry calculations</li>
+<li><strong>SLURM</strong> - Job scheduling system</li>
+<li><strong>MLIP Engines</strong> - MACE, FAIRChem, Sevenn, Orb</li>
+</ul>
+<hr />
 <h2 id="dependencies">Dependencies</h2>
 <ul>
 <li><strong>Python 3.6+</strong> with the following dependencies:</li>
@@ -611,6 +756,10 @@ pip install .
 <p>After installation, verify everything works:</p>
 <pre><code class="language-bash"># Test command-line interface
 chemrefine --help
+
+#Test version
+
+chemrefine --version
 
 # Test with example files
 cd Examples/
