@@ -332,7 +332,7 @@ If you use ChemRefine in your research, please cite:
 
 ## **License**
 
-This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU AFFERO GENERAL PUBLIC LICENSE- see the [LICENSE](LICENSE) file for details.
 
 ---
 
