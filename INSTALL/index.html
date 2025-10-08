@@ -305,14 +305,20 @@
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#development-setup" class="md-nav__link">
+    <nav class="md-nav" aria-label="Verification">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#instantiate-fairchem-models" class="md-nav__link">
     <span class="md-ellipsis">
-      Development Setup
+      Instantiate FAIRChem models.
     </span>
   </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -323,16 +329,7 @@
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#troubleshooting" class="md-nav__link">
-    <span class="md-ellipsis">
-      Troubleshooting
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Troubleshooting">
+    <nav class="md-nav" aria-label="License Information">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -638,14 +635,20 @@
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#development-setup" class="md-nav__link">
+    <nav class="md-nav" aria-label="Verification">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#instantiate-fairchem-models" class="md-nav__link">
     <span class="md-ellipsis">
-      Development Setup
+      Instantiate FAIRChem models.
     </span>
   </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -656,16 +659,7 @@
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#troubleshooting" class="md-nav__link">
-    <span class="md-ellipsis">
-      Troubleshooting
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Troubleshooting">
+    <nav class="md-nav" aria-label="License Information">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -711,7 +705,7 @@
 <pre><code class="language-bash">
 #Pip install[Recommended]
 
-pip install &quot;chemrefine @ git+https://github.com/sterling-group/ChemRefine.git@main&quot;
+pip install &quot;chemrefine @ git+https://github.com/sterling-group/ChemRefine.git&quot;
 
 # Installing from Source
 git clone  https://github.com/sterling-group/ChemRefine.git
@@ -765,27 +759,26 @@ chemrefine --version
 cd Examples/
 chemrefine input.yaml --maxcores 32
 </code></pre>
-<h2 id="development-setup">Development Setup</h2>
-<p>For developers who want to contribute:</p>
-<pre><code class="language-bash"># Install with development dependencies
-pip install -e &quot;.&quot;
-
-# Run tests
-pytest
+<h3 id="instantiate-fairchem-models">Instantiate FAIRChem models.</h3>
+<p>Make sure you have a Hugging Face account, have already applied for model access to the
+<a href="https://huggingface.co/facebook/UMA">UMA model repository</a>, and for <a href="https://huggingface.co/facebook/OMol25">OMol25 model repository</a> and have logged in to Hugging Face using an access token. Make sure to do these before runnining any of the models as the permission process may take ~10+ minutes to be processed. You can create a token by going into your profile avatar in the the top right corner and clicking on access token or by clicking <a href="https://huggingface.co/settings/tokens">here</a>.
+You can use the following to save an auth token,</p>
+<pre><code class="language-bash">huggingface-cli login
 </code></pre>
 <h2 id="license-information">License Information</h2>
-<p>This software is licensed under the GNU General Public License v3.0. By installing and using this software, you agree to the terms of the GPL-3.0 license. See the <a href="LICENSE">LICENSE</a> file for complete terms.</p>
-<h2 id="troubleshooting">Troubleshooting</h2>
+<p>This software is licensed under the GNU AFFERO GENERAL PUBLIC LICENSE By installing and using this software, you agree to the terms of the AGPL v3 license. See the <a href="LICENSE">LICENSE</a> file for complete terms.</p>
 <h3 id="common-issues">Common Issues</h3>
 <ol>
 <li><strong>QORCA not found</strong>: Ensure submodules are initialized</li>
 <li><strong>ORCA not accessible</strong>: Check ORCA installation and PATH</li>
 <li><strong>SLURM errors</strong>: Verify SLURM configuration for your cluster</li>
 <li><strong>Permission errors</strong>: Check file permissions in working directory</li>
+<li><strong>Server Connection Refused</strong>: For MLIPS a local server is created to not have a constant overhead of transferring model to GPU. Sometimes when the MLIP fails with this error the true error is not the server not connecting but the one found in the slurm_step*.out generated. Make sure if using FairChem models you have activated HuggingFace. </li>
 </ol>
 <h3 id="getting-help">Getting Help</h3>
 <ul>
 <li>Check the main <a href="../README.md">README.md</a> for usage examples</li>
+<li>Check <a href="https://github.com/sterling-group/ChemRefine/issues">Issues</a> if a similar issue has been encountered. </li>
 <li>Review <a href="Examples/">Examples/</a> directory for sample inputs</li>
 <li>Open an issue on GitHub for bugs or feature requests</li>
 </ul>
