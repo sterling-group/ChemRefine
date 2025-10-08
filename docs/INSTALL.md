@@ -63,23 +63,19 @@ chemrefine --version
 cd Examples/
 chemrefine input.yaml --maxcores 32
 ```
-## Development Setup
-
-For developers who want to contribute:
-
+### Instantiate FAIRChem models. 
+Make sure you have a Hugging Face account, have already applied for model access to the
+[UMA model repository](https://huggingface.co/facebook/UMA), and for [OMol25 model repository](https://huggingface.co/facebook/OMol25) and have logged in to Hugging Face using an access token. Make sure to do these before runnining any of the models as the permission process may take ~10+ minutes to be processed. You can create a token by going into your profile avatar in the the top right corner and clicking on access token or by clicking [here](https://huggingface.co/settings/tokens).
+You can use the following to save an auth token,
 ```bash
-# Install with development dependencies
-pip install -e "."
-
-# Run tests
-pytest
+huggingface-cli login
 ```
 
 ## License Information
 
-This software is licensed under the GNU General Public License v3.0. By installing and using this software, you agree to the terms of the GPL-3.0 license. See the [LICENSE](LICENSE) file for complete terms.
+This software is licensed under the GNU AFFERO GENERAL PUBLIC LICENSE By installing and using this software, you agree to the terms of the AGPL v3 license. See the [LICENSE](LICENSE) file for complete terms.
 
-## Troubleshooting
+
 
 ### Common Issues
 
@@ -87,9 +83,11 @@ This software is licensed under the GNU General Public License v3.0. By installi
 2. **ORCA not accessible**: Check ORCA installation and PATH
 3. **SLURM errors**: Verify SLURM configuration for your cluster
 4. **Permission errors**: Check file permissions in working directory
+5. **Server Connection Refused**: For MLIPS a local server is created to not have a constant overhead of transferring model to GPU. Sometimes when the MLIP fails with this error the true error is not the server not connecting but the one found in the slurm_step*.out generated. Make sure if using FairChem models you have activated HuggingFace. 
 
 ### Getting Help
 
 - Check the main [README.md](../README.md) for usage examples
+- Check [Issues](https://github.com/sterling-group/ChemRefine/issues) if a similar issue has been encountered. 
 - Review [Examples/](Examples/) directory for sample inputs
 - Open an issue on GitHub for bugs or feature requests
