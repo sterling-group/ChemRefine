@@ -329,8 +329,8 @@ If you use Auto-Conformer-GOAT in your research, please cite:
 ```bibtex
 @software{ChemRefine,
   title={ChemRefine},
-  author={Sterling Research Group},
-  url={https://github.com/sterling-group/ChemRefine},
+  author={Ignacio Migliaro,Markus G.S. Weiss,Alistair J. Sterling},
+  url={https://doi.org/10.26434/chemrxiv-2025-cvg1x},
   year={2025}
 }
 ```
@@ -339,7 +339,8 @@ If you use Auto-Conformer-GOAT in your research, please cite:
 
 ## **License**
 
-This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU AFFERO GENERAL PUBLIC LICENSE- see the [LICENSE](LICENSE) file for details.
+
 
 ---
 
