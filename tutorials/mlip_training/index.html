@@ -444,7 +444,16 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Input Files">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#orca-input-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Orca Input Files
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Orca Input Files">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -616,7 +625,16 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Input Files">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#orca-input-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Orca Input Files
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Orca Input Files">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -729,9 +747,11 @@ ChemRefine automates this multi-step process:</p>
 <h2 id="input-files">Input Files</h2>
 <p>We start with an initial structure located in the templates folder:</p>
 <ul>
+<li>📄 <a href="https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/MLIPTraining/input.yaml">View input.yaml</a>  </li>
 <li>📄 <a href="https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/MLIP-Training/step1.xyz">View step1.xyz</a>  </li>
-<li>📥 <a href="https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/MLIP-Training/step1.xyz">Download step1.xyz</a></li>
 </ul>
+<h2 id="orca-input-files">Orca Input Files</h2>
+<p>You can find the ORCA input files <a href="https://github.com/sterling-group/ChemRefine/tree/mkdocs/Examples/Tutorials/MLIPTraining/templates">here</a></p>
 <hr />
 <h3 id="interactive-3d-viewer">Interactive 3D Viewer</h3>
 <div id="viewer" style="width: 100%; height: 400px; position: relative;"></div>
@@ -828,9 +848,8 @@ steps:
 <p>On HPC systems with SLURM, submit the training workflow as a batch script:</p>
 <p>➡️ <a href="https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Templates/chemrefine.slurm">Example ChemRefine SLURM script</a></p>
 <pre><code class="language-bash">#!/bin/bash
-#SBATCH --partition=gpu
-#SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=8
+#SBATCH --partition=cpu
+#SBATCH --cpus-per-task=1
 #SBATCH --mem=32G
 #SBATCH --time=72:00:00
 #SBATCH --job-name=mlip_training
