@@ -26,13 +26,15 @@ ChemRefine automates spin exploration with the following workflow:
 
 ## Input Files
 
-For this tutorial, we will use the provided **spin input file**.
+We start with an initial structure located in the templates folder:
 
-- 📄 [View spin_input.yaml](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Spin/spin_input.yaml)  
-- 📥 [Download spin_input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Spin/input.yaml)  
+- 📄 [View spin_input.yaml](http://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Spin/heme_catalyst/input.yaml)  
+- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Spin/heme_catalyst/templates/step1.xyz)  
 
-- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Spin/heme.xyz)  
-- 📥 [Download step1.xyz](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Spin/heme.xyz)  
+
+  ## Orca Input Files
+
+You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/mkdocs/Examples/Tutorials/Spin/heme_catalyst/templates)
 
 ### Interactive 3D Viewer
 

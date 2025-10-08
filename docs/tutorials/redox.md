@@ -27,10 +27,13 @@ ChemRefine automates redox workflows by allowing you to:
 
 ## Input Files
 
-For this tutorial, we will use the provided **redox input file**.
+We start with an initial structure located in the templates folder:
 
-- 📄 [View redox_input.yaml](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Redox/redox_input.yaml)  
-- 📥 [Download redox_input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Redox/redox_input.yaml)  
+- 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Redox/input.yaml)  
+- 📄 [View Input XYZ](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Redox/step1.xyz)  
+## Orca Input Files
+
+You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/mkdocs/Examples/Tutorials/Redox/templates)
 
 ### Interactive 3D Viewer
 
@@ -55,7 +58,7 @@ For this tutorial, we will use the provided **redox input file**.
 
 ## YAML Configuration
 
-➡️ [Examples/Tutorials/Redox/redox_input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Redox/redox_input.yaml)
+➡️ [Examples/Tutorials/Redox/redox_input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Redox/input.yaml)
 
 Example content (excerpt):
 

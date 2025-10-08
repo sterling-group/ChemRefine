@@ -28,10 +28,14 @@ We will start with an initial structure (`step1.xyz`) and progressively refine d
 
 ## Input Files
 
-For this tutorial, we will use the following files.
+We start with an initial structure located in the templates folder:
 
+- 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Host-Guest/input.yaml)  
 - 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Host-Guest/step1.xyz)  
-- 📥 [Download step1.xyz](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Host-Guest/step1.xyz)
+
+## Orca Input Files
+
+You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/mkdocs/Examples/Tutorials/Host-Guest/templates)
 
 ---
 

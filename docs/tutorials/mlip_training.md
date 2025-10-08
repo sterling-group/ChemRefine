@@ -36,8 +36,12 @@ ChemRefine automates this multi-step process:
 
 We start with an initial structure located in the templates folder:
 
+- 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/MLIPTraining/input.yaml)  
 - 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/MLIP-Training/step1.xyz)  
-- 📥 [Download step1.xyz](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/MLIP-Training/step1.xyz)
+
+## Orca Input Files
+
+You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/mkdocs/Examples/Tutorials/MLIPTraining/templates)
 
 ---
 
@@ -157,9 +161,8 @@ On HPC systems with SLURM, submit the training workflow as a batch script:
 
 ```bash
 #!/bin/bash
-#SBATCH --partition=gpu
-#SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=8
+#SBATCH --partition=cpu
+#SBATCH --cpus-per-task=1
 #SBATCH --mem=32G
 #SBATCH --time=72:00:00
 #SBATCH --job-name=mlip_training

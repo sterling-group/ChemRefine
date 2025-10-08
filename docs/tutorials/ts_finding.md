@@ -28,13 +28,14 @@ ChemRefine automates TS exploration with the following workflow:
 
 ## Input Files
 
-For this tutorial, we will use the provided **transition state input file**.
+We start with an initial structure located in the templates folder:
 
-- 📄 [View ts_input.yaml](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Transition-State/ts_input.yaml)  
-- 📥 [Download ts_input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Transition-State/ts_input.yaml)  
-
+- 📄 [View ts_input.yaml](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Transition-State/input.yaml)  
 - 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Transition-State/step1.xyz)  
-- 📥 [Download step1.xyz](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Transition-State/step1.xyz)  
+
+ ## Orca Input Files
+
+You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/mkdocs/Examples/Tutorials/Transition-State/templates)
 
 ### Interactive 3D Viewer
 
@@ -59,7 +60,7 @@ For this tutorial, we will use the provided **transition state input file**.
 
 ## YAML Configuration
 
-➡️ [Examples/Tutorials/Transition-State/ts_input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Transition-State/ts_input.yaml)
+➡️ [Examples/Tutorials/Transition-State/ts_input.yaml](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Transition-State/input.yaml)
 
 Example content (excerpt):
 

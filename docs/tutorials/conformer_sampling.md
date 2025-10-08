@@ -33,7 +33,9 @@ For this tutorial, we will use **Pd(PPh₃)₄**.
 - 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz)  
 - 📥 [Download step1.xyz](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz)
 
+## Orca Input Files
 
+You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/mkdocs/Examples/Tutorials/Conformational-Sampling/templates)
 
 ### Interactive 3D Viewer
 
