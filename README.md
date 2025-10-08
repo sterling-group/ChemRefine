@@ -30,7 +30,12 @@ This repository contains a streamlined Python code for automated ORCA workflow f
 
 ### **Development Installation**
 ```bash
-# Clone the repository
+
+#Pip install[Recommended]
+
+pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git@main"
+
+# Installing from Source
 git clone  https://github.com/sterling-group/ChemRefine.git
 cd ChemRefine
 
@@ -39,20 +44,22 @@ pip install -e .
 ```
 
 ### **Requirements**
-- **Python 3.6+** with the following dependencies:
+Everything is managed through the pip installation. 
+- **Python 3.6+ or < 3.13** with the following dependencies:
   - `numpy` - Numerical computations
   - `pyyaml` - YAML configuration parsing  
   - `pandas` - Data analysis and CSV handling
   - `ase` - Geometry handling and optimisation
   - `mace-torch` - Machine learning force fields
   - `torch == 2.5.1` - Machine Learning (if you use later version of Pytorch it might not work with UMA models)
+
 - **ORCA 6.0+** - Quantum chemistry calculations
 - **SLURM** - Job scheduling system
--**MACE-torch** - 
+- **MLIP Engines** - MACE, FAIRChem, Sevenn, Orb
 ---
 ## **Tutorial** 
 
-You can find examples for running multiple calculations that were in our publication in our [Tutorial](https://sterling-group.github.io/ChemRefine/)
+You can find examples for running multiple calculations that were in our publication in our [Tutorial](https://sterling-group.github.io/ChemRefine/tutorials/)
 
 ## **Quick Start**
  
@@ -64,15 +71,13 @@ Create the required input files in your working directory:
 - **Initial XYZ** (`step1.xyz`): Starting molecular geometry  
 - **ORCA Templates** (`step1.inp`, `step2.inp`, `step3.inp`... `orca.slurm.header`, `mlff.slurm.header`): Calculation templates for each step
 
-You must provide **one ORCA input file** (e.g., `step1.inp`, `step2.inp`, etc.) for **each step** defined in your `input.yaml` configuration file, otherwise you must define a MLFF step. For example, if your `input.yaml` specifies three ORCA steps, then you need three corresponding ORCA input files in your templates directory.
+You must provide **one ORCA input file** (e.g., `step1.inp`, `step2.inp`, etc.) for **each step** defined in your `input.yaml` configuration file, these must be found where you defined your `template` directory . For example, if your `input.yaml` specifies three ORCA steps, then you need three corresponding ORCA input files in your templates directory.
 
 ChemRefine provides seamless MLIP integration through the use of the tool ExtOpt in Orca, which uses the ORCA optimization codes paired with ASE, you can use any optimization function of ORCA with MLIPS. For more [information](https://github.com/faccts/orca-external-tools).
 
 In addition to these input files, you must include one of each:
 - **`cpu.slurm.header`**: A SLURM submission script header with your cluster-specific job settings (e.g., partition, time limit, memory).
 - **`cuda.slurm.header`**: Required for MLFF jobs. Include your GPU node configuration here so MLFF calculations run under SLURM.
-
-Make sure to specify the path to your **ORCA 6.0+** executable in the `ORCA_EXEC` line of your header file(s). Adjust any other parameters (such as modules or memory) to fit your cluster environment.
 
 
 ### **2. Run the Workflow**
@@ -89,6 +94,25 @@ nohup chemrefine input.yaml --maxcores 128 &
 
 # Skip any step (if already completed)
 chemrefine input.yaml --skip
+```
+
+### **Error Correction**
+
+Often times DFT or MLIP calculations tend to fail, making the workflow not work as seamlessly. ChemRefine uses a caching system that saves a json and a pickle with all of the variables for that step in `_cache` directory inside the step folder. This allows ChemRefine to continue to the next step if the workflow gets interrupted. If calculations die, we have added features to correct this: 
+
+
+```bash
+# 1st: Re-run failed calculations (may require adjusting their parameters)
+
+chemrefine input.yaml --rerun_errors
+
+#2nd: Rebuild the cache
+
+chemrefine input.yaml --rebuild_cache
+
+#Optional if re-running normal mode sampling and don't want to run current step
+
+chemrefine input.yaml --rebuild_nms
 ```
 
 ### **3. Monitor Progress**
@@ -278,7 +302,7 @@ The tool supports complex multi-step refinement protocols:
 
 ## **Project Structure**
 ```
-auto-conformer-goat/
+chemrefine/
 ├── src/chemrefine          # Main package code
 ├── Examples/               # Example input files and SLURM scripts
 ├── README.md               # This file
@@ -300,13 +324,13 @@ We welcome contributions! Please:
 
 ## **Citation**
 
-If you use Auto-Conformer-GOAT in your research, please cite:
+If you use ChemRefine in your research, please cite:
 
 ```bibtex
 @software{ChemRefine,
   title={ChemRefine},
-  author={Sterling Research Group},
-  url={https://github.com/sterling-group/ChemRefine},
+  author={Ignacio Migliaro,Markus G.S. Weiss,Alistair J. Sterling},
+  url={https://doi.org/10.26434/chemrxiv-2025-cvg1x},
   year={2025}
 }
 ```
@@ -315,7 +339,8 @@ If you use Auto-Conformer-GOAT in your research, please cite:
 
 ## **License**
 
-This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU AFFERO GENERAL PUBLIC LICENSE- see the [LICENSE](LICENSE) file for details.
+
 
 ---
 

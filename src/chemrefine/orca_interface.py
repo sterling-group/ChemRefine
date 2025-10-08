@@ -120,6 +120,7 @@ class OrcaJobSubmitter:
             )
 
             job_id = self.utility.submit_job(slurm_script)
+            time.sleep(3)
             logging.info(
                 f"Submitted ORCA job with ID: {job_id} for input: {input_path.name}"
             )
@@ -392,23 +393,11 @@ class OrcaInterface:
 
     def parse_output(self, file_paths, operation, dir: str = "./"):
         """
-        Dispatch parser depending on the operation type.
-
-        Parameters
-        ----------
-        file_paths : list
-            List of ORCA output files to parse.
-        operation : str
-            Operation type (goat, pes, docker, solvator, dft).
-        dir : str, optional
-            Directory containing the output files. Default is current directory.
-
-        Returns
-        -------
-        tuple
-            (coordinates, energies, forces), each a list
+        Dispatch parser depending on the operation type and record failed jobs.
+        Raises if any file fails, so that filtering never receives invalid data.
         """
         coordinates, energies, forces = [], [], []
+        failed = []
 
         logging.info(f"Parsing calculation type: {operation.upper()}")
         logging.info(f"Looking for output files in directory: {dir}")
@@ -418,76 +407,165 @@ class OrcaInterface:
             logging.info(f"Checking output file: {path}")
 
             if not os.path.exists(path):
-                logging.warning(f"Output file not found: {path}")
+                msg = f"Output file not found: {path}"
+                logging.warning(msg)
+                self.record_failed_job(
+                    step_dir=dir, structure_id=os.path.basename(path), reason=msg
+                )
+                failed.append(path)
                 continue
 
             op = operation.lower()
+            parsed_ok = False
 
-            if op == "goat":
-                if path.endswith(".finalensemble.xyz"):
-                    # Already the ensemble file, no transformation needed
-                    finalensemble_file = path
-                else:
-                    # Turn step1.out -> step1_opt.finalensemble.xyz
-                    finalensemble_file = path.replace(".out", "_opt.finalensemble.xyz")
+            try:
+                if op == "goat":
+                    if path.endswith(".finalensemble.xyz"):
+                        finalensemble_file = path
+                    else:
+                        finalensemble_file = path.replace(
+                            ".out", "_opt.finalensemble.xyz"
+                        )
 
-                logging.info(f"Looking for GOAT ensemble file: {finalensemble_file}")
-                if os.path.exists(finalensemble_file):
+                    if not os.path.exists(finalensemble_file):
+                        raise FileNotFoundError(
+                            f"GOAT ensemble not found: {finalensemble_file}"
+                        )
+
                     coords, ens = self.parse_goat_finalensemble(finalensemble_file)
+                    if not ens or None in ens:
+                        raise ValueError("No valid energies in GOAT ensemble.")
                     coordinates.extend(coords)
                     energies.extend(ens)
                     forces.extend([None] * len(coords))
-                else:
-                    logging.error(
-                        f"GOAT ensemble file not found for: {finalensemble_file}"
-                    )
-                continue
+                    parsed_ok = True
 
-            if op == "pes":
-                coords, ens = self.parse_pes_output(path)
-                coordinates.extend(coords)
-                energies.extend(ens)
-                forces.extend([None] * len(coords))  # dummy
-                continue
+                elif op == "pes":
+                    coords, ens = self.parse_pes_output(path)
+                    if not ens or None in ens:
+                        raise ValueError("No valid energies in PES output.")
+                    coordinates.extend(coords)
+                    energies.extend(ens)
+                    forces.extend([None] * len(coords))
+                    parsed_ok = True
 
-            if op == "docker":
-                docker_xyz_file = path.replace(".out", ".struc1.allopt.xyz")
-                logging.info(f"Looking for Docker structure file: {docker_xyz_file}")
-                if os.path.exists(docker_xyz_file):
+                elif op == "docker":
+                    docker_xyz_file = path.replace(".out", ".struc1.allopt.xyz")
+                    if not os.path.exists(docker_xyz_file):
+                        raise FileNotFoundError(
+                            f"Docker xyz not found: {docker_xyz_file}"
+                        )
+
                     coords, ens = self.parse_docker_xyz(docker_xyz_file)
+                    if not ens or None in ens:
+                        raise ValueError("No valid energies in Docker output.")
                     coordinates.extend(coords)
                     energies.extend(ens)
-                    forces.extend([None] * len(coords))  # dummy
-                else:
-                    logging.error(f"Docker structure file not found for: {path}")
-                continue
+                    forces.extend([None] * len(coords))
+                    parsed_ok = True
 
-            if op == "solvator":
-                solvator_xyz_file = path.replace(".out", ".solventbuild.xyz")
-                logging.info(
-                    f"Looking for Solvator structure file: {solvator_xyz_file}"
-                )
-                if os.path.exists(solvator_xyz_file):
+                elif op == "solvator":
+                    solvator_xyz_file = path.replace(".out", ".solventbuild.xyz")
+                    if not os.path.exists(solvator_xyz_file):
+                        raise FileNotFoundError(
+                            f"Solvator xyz not found: {solvator_xyz_file}"
+                        )
+
                     coords, ens = self.parse_solvator_ensemble(solvator_xyz_file)
+                    if not ens or None in ens:
+                        raise ValueError("No valid energies in Solvator output.")
                     coordinates.extend(coords)
                     energies.extend(ens)
-                    forces.extend([None] * len(coords))  # dummy
-                else:
-                    logging.error(f"Solvator structure file not found for: {path}")
+                    forces.extend([None] * len(coords))
+                    parsed_ok = True
+
+                else:  # default DFT
+                    coords, ens, frc = self.parse_dft_output(path)
+                    if not ens or None in ens:
+                        raise ValueError("No valid energies in DFT output.")
+                    coordinates.extend(coords)
+                    energies.extend(ens)
+                    forces.extend(frc)
+                    parsed_ok = True
+
+            except Exception as e:
+                logging.error(f"[parse_output] Failed to parse {path}: {e}")
+                self.record_failed_job(
+                    step_dir=dir, structure_id=os.path.basename(path), reason=str(e)
+                )
+                failed.append(path)
+
+            # Safety: if parsing ran but returned empty data
+            if not parsed_ok:
                 continue
 
-            # Default: standard DFT parsing (energies + forces)
-            coords, ens, frc = self.parse_dft_output(path)
-            coordinates.extend(coords)
-            energies.extend(ens)
-            forces.extend(frc)
-
-        if not coordinates or not energies or not forces:
+        # ---------- Validation ----------
+        if not coordinates or not energies:
             raise RuntimeError(
                 f"parse_output: No valid data found in {dir} for {operation}"
             )
 
+        if failed:
+            msg = (
+                f"{len(failed)} file(s) failed during parsing in {dir}. "
+                f"Recorded to _cache/failed_jobs.json. Aborting to prevent invalid data."
+            )
+            logging.error(msg)
+            raise RuntimeError(msg)
+
         return coordinates, energies, forces
+
+    def record_failed_job(
+        self, step_dir: str, structure_id: str, reason: str = "Unknown error"
+    ):
+        """
+        Record a failed job into _cache/failed_jobs.json under the given step directory.
+
+        Parameters
+        ----------
+        step_dir : str
+            Path to the step directory containing the failed calculation.
+        structure_id : str
+            Identifier for the structure or output file (e.g., step3_structure_5.out).
+        reason : str, optional
+            Description of why the job failed.
+        """
+        import os
+        import json
+        import logging
+
+        cache_dir = os.path.join(step_dir, "_cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        failed_file = os.path.join(cache_dir, "failed_jobs.json")
+
+        # Entry format
+        entry = {
+            "step": os.path.basename(step_dir.rstrip("/")),
+            "structure_id": structure_id,
+            "reason": reason,
+        }
+
+        # Load existing list if available
+        if os.path.exists(failed_file):
+            try:
+                with open(failed_file, "r") as f:
+                    data = json.load(f)
+            except Exception:
+                data = []
+        else:
+            data = []
+
+        # Avoid duplicates
+        if not any(d["structure_id"] == structure_id for d in data):
+            data.append(entry)
+
+        # Save back
+        with open(failed_file, "w") as f:
+            json.dump(data, f, indent=2)
+
+        logging.warning(
+            f"[record_failed_job] Step {entry['step']} - {structure_id} recorded as failed ({reason})."
+        )
 
     def parse_dft_output(self, path):
         """
@@ -867,59 +945,10 @@ class OrcaInterface:
         scratch_dir=None,
     ):
         """
-        Perform normal-mode sampling. For 'random', only generate coords/IDs and defer
-        all calculations to the next step. For 'rm_imag', prepare inputs and submit.
+        Perform normal-mode sampling.
 
-        Parameters
-        ----------
-        file_paths : list[str]
-            ORCA output files (one per structure) to read modes/coordinates from.
-        calc_type : str
-            'rm_imag' for least-imaginary-mode displacement; 'random' for random mode sampling.
-        input_template : str
-            ORCA input template path.
-        slurm_template : str
-            SLURM header/template directory used by OrcaJobSubmitter.submit_files.
-        charge : int
-            Molecular charge.
-        multiplicity : int
-            Spin multiplicity.
-        output_dir : str
-            BASE outputs directory; XYZs go under step{n}/normal_mode_sampling.
-        operation : str
-            Operation label ('OPT', 'SP', 'OPT+SP', ...).
-        engine : str
-            'dft' or 'mlff'.
-        model_name : str
-            MLFF model name when `engine='mlff'`.
-        step_number : int
-            Current step index (1-based).
-        structure_ids : list[str]
-            IDs aligned with `file_paths`.
-        max_cores : int, optional
-            Max total cores across submissions (rm_imag only).
-        task_name : str, optional
-            MLFF task variant (if applicable).
-        mlff_model : str, optional
-            Deprecated alias for `model_name`; if provided, overrides at submission.
-        displacement_value : float, optional
-            Displacement magnitude (Å).
-        num_random_modes : int, optional
-            Random modes to sample per structure when `calc_type='random'`.
-        device : str, optional
-            'cpu' or 'cuda' (for MLFF engine).
-        bind : str, optional
-            MLFF server bind address (passed through to input generation).
-        orca_executable : str, optional
-            ORCA executable path/name used by OrcaJobSubmitter.
-        scratch_dir : str, optional
-            Scratch directory used by OrcaJobSubmitter.
-
-        Returns
-        -------
-        tuple[list, list]
-            For 'rm_imag': (filtered_coords, original_ids).
-            For 'random' : (all_displaced_coords, displaced_ids), with no submissions.
+        For 'random', only generate coords/IDs and defer calculations to the next step.
+        For 'rm_imag', prepare displaced inputs and immediately submit ORCA jobs.
         """
         import os
         import re
@@ -946,8 +975,7 @@ class OrcaInterface:
         )
 
         # Accumulators
-        all_pos_coords, all_neg_coords = [], []
-        all_pos_ids, all_neg_ids = [], []
+        all_coords, all_ids = [], []
         rm_imag_inp_files = []
 
         # Directories
@@ -969,8 +997,8 @@ class OrcaInterface:
                 imag_freq_dict = self.parse_imaginary_frequency(
                     file_path, imag=imag_flag
                 )
-
                 coordinates, energies, forces = self.parse_dft_output(file_path)
+
                 if not coordinates:
                     logging.warning(
                         f"Skipping ID {sid}: no coordinates parsed from {file_path}."
@@ -982,6 +1010,7 @@ class OrcaInterface:
                 normal_mode_tensor = self.parse_normal_modes_tensor(
                     file_path, num_atoms=num_atoms
                 )
+
             except Exception as e:
                 logging.warning(
                     f"Skipping ID {sid}: failed to parse modes from {file_path} ({e})."
@@ -990,6 +1019,7 @@ class OrcaInterface:
                 continue
 
             if calc_type == "rm_imag":
+                # Displace along least-imaginary mode and immediately create inputs
                 pos_coords, neg_coords = self.displace_normal_modes(
                     filepath=file_path,
                     imag_freq_dict=imag_freq_dict,
@@ -1008,7 +1038,7 @@ class OrcaInterface:
 
                 inp_files, _ = self.create_input(
                     xyz_files=pos_xyz + neg_xyz,
-                    input_template=input_template,
+                    template=input_template,
                     charge=charge,
                     multiplicity=multiplicity,
                     output_dir=normal_output_dir,
@@ -1020,42 +1050,36 @@ class OrcaInterface:
                     bind=bind,
                 )
 
-                all_pos_coords.append(pos_coords[0])
-                all_neg_coords.append(neg_coords[0])
-                all_pos_ids.append(f"{sid}_pos")
-                all_neg_ids.append(f"{sid}_neg")
                 rm_imag_inp_files.extend(inp_files)
+                all_coords.extend([pos_coords[0], neg_coords[0]])
+                all_ids.extend([f"{sid}_pos", f"{sid}_neg"])
 
             elif calc_type == "random":
-                # Pass-through behavior: only generate coords/IDs; do NOT create inputs or submit.
-                pos_coords, neg_coords, pos_ids, neg_ids, _ = (
-                    self.generate_random_displacements(
-                        sid=sid,
-                        file_path=file_path,
-                        normal_mode_tensor=normal_mode_tensor,
-                        coordinates=coordinates,
-                        num_random_modes=num_random_modes,
-                        displacement_value=displacement_value,
-                        step_number=step_number,
-                        input_template=input_template,
-                        charge=charge,
-                        multiplicity=multiplicity,
-                        output_dir=output_dir,  # BASE for XYZ writer
-                        engine=engine,
-                        model_name=model_name,
-                        task_name=task_name,
-                        device=device,
-                        bind=bind,
-                        normal_output_dir=normal_output_dir,  # ignored when create_inp=False
-                        operation=operation,
-                        create_inp=False,
-                    )
+                # Random mode sampling: only generate coordinates + IDs, no job submission
+                displaced_coords, displaced_ids, _ = self.generate_random_displacements(
+                    sid=sid,
+                    file_path=file_path,
+                    normal_mode_tensor=normal_mode_tensor,
+                    coordinates=coordinates,
+                    num_random_modes=num_random_modes,
+                    displacement_value=displacement_value,
+                    step_number=step_number,
+                    input_template=input_template,
+                    charge=charge,
+                    multiplicity=multiplicity,
+                    output_dir=output_dir,  # BASE for XYZ writer
+                    engine=engine,
+                    model_name=model_name,
+                    task_name=task_name,
+                    device=device,
+                    bind=bind,
+                    normal_output_dir=normal_output_dir,  # ignored when create_inp=False
+                    operation=operation,
+                    create_inp=False,
                 )
 
-                all_pos_coords.extend(pos_coords)
-                all_neg_coords.extend(neg_coords)
-                all_pos_ids.extend(pos_ids)
-                all_neg_ids.extend(neg_ids)
+                all_coords.extend(displaced_coords)
+                all_ids.extend(displaced_ids)
 
             else:
                 raise ValueError("calc_type must be 'rm_imag' or 'random'.")
@@ -1065,11 +1089,12 @@ class OrcaInterface:
                 f"Normal-mode sampling: skipped {skipped} file(s) without usable frequency data."
             )
 
-        # ---- SUBMISSION: only for rm_imag branch ----
+        # ---- Submission (only for rm_imag) ----
         if calc_type == "rm_imag":
             logging.info(
                 f"Total rm_imag input files prepared: {len(rm_imag_inp_files)}"
             )
+
             if rm_imag_inp_files:
                 abs_inp_files = [
                     (
@@ -1080,6 +1105,7 @@ class OrcaInterface:
                     for p in rm_imag_inp_files
                 ]
                 abs_inp_files = [p for p in abs_inp_files if os.path.isfile(p)]
+
                 if not abs_inp_files:
                     logging.error(
                         "Prepared 0 valid INP files after existence check; submission skipped."
@@ -1091,7 +1117,6 @@ class OrcaInterface:
                             f"Switching to working directory for submission: {normal_output_dir}"
                         )
                         os.chdir(normal_output_dir)
-
                         submitter = OrcaJobSubmitter(
                             scratch_dir=scratch_dir,
                             orca_executable=orca_executable,
@@ -1128,14 +1153,14 @@ class OrcaInterface:
         if calc_type == "rm_imag":
             filtered_coords, filtered_tmp_ids = self.select_lowest_imaginary_structures(
                 step_number=step_number,
-                pos_ids=all_pos_ids,
-                neg_ids=all_neg_ids,
+                pos_ids=[i for i in all_ids if i.endswith("_pos")],
+                neg_ids=[i for i in all_ids if i.endswith("_neg")],
                 directory=output_dir,
             )
             original_ids = [tid.rsplit("_", 1)[0] for tid in filtered_tmp_ids]
             return filtered_coords, original_ids
         else:
-            return all_pos_coords + all_neg_coords, all_pos_ids + all_neg_ids
+            return all_coords, all_ids
 
     def parse_imaginary_frequency(self, file_paths, imag=True):
         """
@@ -1356,15 +1381,25 @@ class OrcaInterface:
             nested_dir = os.path.join(
                 output_dir, f"step{step_number}", "normal_mode_sampling"
             )
-            os.makedirs(nested_dir, exist_ok=True)  # <-- ensure parent exists
+            os.makedirs(nested_dir, exist_ok=True)
             output_file = os.path.join(nested_dir, f"{base_name}_structure_{sid}.xyz")
 
-            with open(output_file, "w") as f:
-                f.write(f"{len(atom_list)}\n{comment}\n")
-                for element, x, y, z in atom_list:
-                    f.write(f"{element} {x} {y} {z}\n")
-
-            written.append(os.path.abspath(output_file))
+            try:
+                with open(output_file, "w") as f:
+                    f.write(f"{len(atom_list)}\n{comment}\n")
+                    for atom in atom_list:
+                        element, x, y, z = atom
+                        try:
+                            x, y, z = map(float, (x, y, z))
+                        except Exception:
+                            logging.warning(
+                                f"[write_xyz] Non-numeric coords in {sid}: {x}, {y}, {z}. Coercing to 0.0"
+                            )
+                            x = y = z = 0.0
+                        f.write(f"{element} {x:.6f} {y:.6f} {z:.6f}\n")
+                written.append(os.path.abspath(output_file))
+            except Exception as e:
+                logging.error(f"Failed to write {output_file}: {e}")
 
         return written
 
@@ -1466,13 +1501,16 @@ class OrcaInterface:
         create_inp=False,
     ):
         """
-        Generate multiple random mode displacements for a given structure.
-        [docstring unchanged]
-        """
-        all_pos_coords, all_neg_coords = [], []
-        all_pos_ids, all_neg_ids = [], []
+        Generate random mode displacements for a structure.
 
-        # Parse all frequencies (imag=False) for use in random_mode=True
+        Returns
+        -------
+        tuple[list, list, list]
+            displaced_coords, displaced_ids, input_files
+        """
+        all_coords, all_ids = [], []
+        input_files = []
+
         imag_freq_dict = self.parse_imaginary_frequency(file_path, imag=False)
 
         for i in range(num_random_modes):
@@ -1485,29 +1523,24 @@ class OrcaInterface:
                 random_mode=True,
             )
 
-            all_pos_coords.append(pos_coords[0])
-            all_neg_coords.append(neg_coords[0])
-            all_pos_ids.append(f"{sid}_rand{i}_pos")
-            all_neg_ids.append(f"{sid}_rand{i}_neg")
+            # Sequential child IDs
+            for coords_variant in (pos_coords[0], neg_coords[0]):
+                child_id = f"{sid}-{len(all_ids)}"
+                all_coords.append(coords_variant)
+                all_ids.append(child_id)
 
-            logging.info(f"Generated random mode displacement {i} for {sid}")
+            logging.info(f"Generated random mode displacements for parent {sid}")
 
-        # Write all XYZ files at once
-        logging.info(
-            f"Writing {len(all_pos_coords)} positive and {len(all_neg_coords)} negative XYZ files for random modes."
+        # --- Write XYZ files ---
+        logging.info(f"Writing {len(all_coords)} XYZ files for random displacements.")
+        xyz_files = self.write_displaced_xyz(
+            all_coords, step_number, all_ids, output_dir
         )
-        pos_xyz = self.write_displaced_xyz(
-            all_pos_coords, step_number, all_pos_ids, output_dir
-        )
-        neg_xyz = self.write_displaced_xyz(
-            all_neg_coords, step_number, all_neg_ids, output_dir
-        )
-        xyz_files = pos_xyz + neg_xyz
 
-        # Generate ORCA input files
+        # --- Optionally create ORCA inputs ---
         if create_inp:
             logging.info(
-                f"Creating ORCA input files for {len(xyz_files)} random mode displacements."
+                f"Creating ORCA input files for {len(xyz_files)} displacements."
             )
             input_files, _ = self.create_input(
                 xyz_files,
@@ -1523,24 +1556,7 @@ class OrcaInterface:
                 bind=bind,
             )
 
-            return all_pos_coords, all_neg_coords, all_pos_ids, all_neg_ids, input_files
-        return all_pos_coords, all_neg_coords, all_pos_ids, all_neg_ids, []
-
-    def has_normal_modes(self, filepath: str) -> bool:
-        """
-        Fast check: does this ORCA output include a normal-mode table?
-        Returns True if a 'VIBRATIONAL FREQUENCIES' section and any normal-mode
-        column header are present.
-        """
-        hdr_seen = False
-        with open(filepath, "r") as f:
-            for line in f:
-                if "VIBRATIONAL FREQUENCIES" in line:
-                    hdr_seen = True
-                # column header like: "   1    2    3"
-                if hdr_seen and re.match(r"^\s*(\d+\s+)+\d+\s*$", line):
-                    return True
-        return False
+        return all_coords, all_ids, input_files
 
 
 def _orca_parse_all_gradients(content: str, to_ev_per_A: bool = False):

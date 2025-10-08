@@ -1,3 +1,4 @@
-!WB97X-D4 ma-Def2-tzvpp rijcosx def2/j smd(benzene)
-%pal nprocs 32 end
+! B2PLYP D4 def2-TZVP def2/J def2-TZVP/C RIJCOSX TightSCF
 
+%pal nprocs 32 end          # adjust to your node
+%maxcore 7000               # per rank (MB); DHs are modest on memory

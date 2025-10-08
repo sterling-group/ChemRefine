@@ -4,14 +4,19 @@ from .constants import HARTREE_TO_KCAL_MOL, R_KCAL_MOL_K, CSV_PRECISION
 from pathlib import Path
 import subprocess
 import getpass
-from typing import Optional
+from typing import Optional, Union
 import os
 import pandas as pd
 import numpy as np
 import json
 from typing import List, Dict
 from ase.io import write
+from ase import Atoms
 from collections.abc import Sequence
+from rdkit import Chem
+from rdkit.Chem import AllChem
+
+STRIDE = 1000  # number of IDs per parent block
 
 
 logging.basicConfig(
@@ -39,18 +44,19 @@ class Utility:
     ):
         """
         Appends filtered structures for a step to a cumulative CSV, sorted by energy.
-
-        Parameters:
-            energies (list): Filtered energies in Hartrees.
-            ids (list): Persistent IDs of the filtered structures.
-            step (int): Step number.
-            filename (str): Cumulative CSV file.
-            T (float): Temperature in Kelvin for Boltzmann weighting.
-            output_dir (str): Output directory.
         """
+        import pandas as pd
+        import os
+        import logging
 
         df = pd.DataFrame({"Conformer": ids, "Energy (Hartrees)": energies})
         df["Energy (kcal/mol)"] = df["Energy (Hartrees)"] * HARTREE_TO_KCAL_MOL
+
+        # ✅ Ensure numeric
+        df["Energy (kcal/mol)"] = pd.to_numeric(
+            df["Energy (kcal/mol)"], errors="coerce"
+        )
+        df = df.dropna(subset=["Energy (kcal/mol)"])
 
         # ✅ Sort table by energy (kcal/mol)
         df = df.sort_values(by="Energy (kcal/mol)", ascending=True).reset_index(
@@ -58,12 +64,17 @@ class Utility:
         )
 
         # Boltzmann statistics
-        df["dE (kcal/mol)"] = df["Energy (kcal/mol)"] - df["Energy (kcal/mol)"].min()
-        dE_RT = df["dE (kcal/mol)"] / (R_KCAL_MOL_K * T)
-        df["Boltzmann Weight"] = np.exp(-dE_RT)
-        df["Boltzmann Weight"] /= df["Boltzmann Weight"].sum()
-        df["% Total"] = df["Boltzmann Weight"] * 100
-        df["% Cumulative"] = df["% Total"].cumsum()
+        dE = df["Energy (kcal/mol)"] - df["Energy (kcal/mol)"].min()
+        dE_RT = np.array(dE, dtype=float) / float(R_KCAL_MOL_K * T)
+
+        # ✅ np.exp now always receives a proper ndarray
+        boltz = np.exp(-dE_RT)
+        boltz /= boltz.sum()
+
+        df["dE (kcal/mol)"] = dE
+        df["Boltzmann Weight"] = boltz
+        df["% Total"] = boltz * 100.0
+        df["% Cumulative"] = np.cumsum(df["% Total"])
 
         df.insert(0, "Step", step)
         df = df.round(
@@ -85,36 +96,71 @@ class Utility:
 
     def write_xyz(self, structures, step_number, structure_ids, output_dir="."):
         """
-        Writes XYZ files for each structure in the step directory.
+        Writes XYZ files for each structure in the step directory, supporting both ASE Atoms objects
+        and tuple-style coordinate data.
 
-        Parameters:
-        - structures (list of lists or arrays): Coordinates and element data.
-        - step_number (int): The step number.
-        - structure_ids (list): List of structure IDs.
-        - output_dir (str): Output directory path.
+        Parameters
+        ----------
+        structures : list
+            List of ASE Atoms objects or lists of tuples (element, x, y, z).
+        step_number : int
+            Step number for naming.
+        structure_ids : list[str]
+            Persistent hierarchical IDs (e.g., ['0', '1-0', '1-1']).
+        output_dir : str
+            Directory where XYZ files will be written.
 
-        Returns:
-        - List of XYZ filenames written.
+        Returns
+        -------
+        list[str]
+            Paths to written XYZ files.
         """
+        import os
+        import logging
+        from ase.io import write
 
         logging.info(
             f"Writing Ensemble XYZ files to {output_dir} for step {step_number}"
         )
+        os.makedirs(output_dir, exist_ok=True)
+
         base_name = f"step{step_number}"
         xyz_filenames = []
 
-        os.makedirs(output_dir, exist_ok=True)
+        for structure, sid in zip(structures, structure_ids):
+            file_path = os.path.join(output_dir, f"{base_name}_structure_{sid}.xyz")
+            xyz_filenames.append(file_path)
 
-        for structure, structure_id in zip(structures, structure_ids):
-            output_file = os.path.join(
-                output_dir, f"{base_name}_structure_{structure_id}.xyz"
-            )
-            xyz_filenames.append(output_file)
-            with open(output_file, "w") as file:
-                file.write(f"{len(structure)}\n\n")
-                for atom in structure:
-                    element, x, y, z = atom  # Unpack atom data
-                    file.write(f"{element} {x} {y} {z}\n")
+            try:
+                # Case 1: ASE Atoms object
+                if isinstance(structure, Atoms):
+                    write(file_path, structure, format="xyz")
+
+                # Case 2: plain tuple/list of (element, x, y, z)
+                elif isinstance(structure, (list, tuple)) and all(
+                    isinstance(a, (list, tuple)) and len(a) == 4 for a in structure
+                ):
+                    with open(file_path, "w") as f:
+                        f.write(f"{len(structure)}\n\n")
+                        for elem, x, y, z in structure:
+                            try:
+                                # Safely cast to float (in case they are strings)
+                                x, y, z = map(float, (x, y, z))
+                            except Exception:
+                                logging.warning(
+                                    f"[write_xyz] Non-numeric coordinates in {sid}: "
+                                    f"{x}, {y}, {z} — coercing to 0.0"
+                                )
+                                x = y = z = 0.0
+                            f.write(f"{elem} {x:.6f} {y:.6f} {z:.6f}\n")
+
+                else:
+                    raise TypeError(
+                        f"Unsupported structure type for {sid}: {type(structure)}"
+                    )
+
+            except Exception as e:
+                logging.error(f"Failed to write {os.path.basename(file_path)}: {e}")
 
         return xyz_filenames
 
@@ -205,29 +251,44 @@ class Utility:
     # --- Append below your existing imports in chemrefine/utils.py ---
 
 
+# Accept either pure digits ("12") or hierarchical hyphen IDs ("0-1-2")
 _ID_PATTERN = re.compile(
-    r"^step(?P<step>\d+)_structure_(?P<id>\d+)\.inp$", re.IGNORECASE
+    r"^step(?P<step>\d+)_structure_(?P<id>\d+(?:-\d+)*)\.inp$",
+    re.IGNORECASE,
+)
+
+_ID_ANYWHERE_RE = re.compile(
+    r"step(?P<step>\d+)_structure_(?P<id>\d+(?:-\d+)*)(?:_|\.|$)",
+    re.IGNORECASE,
 )
 
 
-def extract_structure_id(inp_filename: str) -> Optional[int]:
+def _coerce_id(id_text: str) -> Union[int, str]:
+    """Return int for plain digits, else the original hyphenated string."""
+    return int(id_text) if id_text.isdigit() else id_text
+
+
+def extract_structure_id(inp_filename: str) -> Optional[Union[int, str]]:
     """
-    Extract the integer structure ID from an input filename of the form
-    'step{N}_structure_{ID}.inp'.
+    Extract the structure ID from 'step{N}_structure_{ID}.inp'.
+    Supports hierarchical IDs like '0-1-2'.
 
-    Parameters
-    ----------
-    inp_filename : str
-        Basename or path to the .inp file.
-
-    Returns
-    -------
-    int | None
-        Parsed ID if pattern matches; otherwise None.
+    Returns int for plain numeric IDs, or str for hyphenated IDs.
     """
     name = os.path.basename(inp_filename)
     m = _ID_PATTERN.match(name)
-    return int(m.group("id")) if m else None
+    return _coerce_id(m.group("id")) if m else None
+
+
+def extract_structure_id_from_any_name(name: str) -> Optional[Union[int, str]]:
+    """
+    Extract a structure ID from any basename/stem containing
+    'step{N}_structure_{ID}[...]'. Supports hierarchical IDs.
+    """
+    base = os.path.basename(name)
+    stem = os.path.splitext(base)[0]
+    m = _ID_ANYWHERE_RE.search(stem)
+    return _coerce_id(m.group("id")) if m else None
 
 
 def step_manifest_path(step_dir: str, step_number: int) -> str:
@@ -350,32 +411,34 @@ def update_step_manifest_outputs(
 
 def map_outputs_to_ids(
     step_dir: str, step_number: int, output_files: List[str], operation: str
-) -> List[int]:
+) -> List[str]:
     """
     Resolve structure IDs for outputs using the manifest; fall back to robust parsing
     from output filenames (handles suffixes like '_atom46', '_trj', etc.) and prefix matching.
 
     Returns
     -------
-    list[int]
-        Structure IDs aligned with output_files order. Unresolved IDs are -1.
+    list[str]
+        Structure IDs aligned with output_files order. Unresolved IDs are '-1'.
     """
     # Special handling for first step
     if step_number == 1:
-        # For OPT+SP, just one structure → [0]
+        # For OPT+SP, just one structure → ["0"]
         if operation.upper() == "OPT+SP":
-            return [0 for _ in output_files]
+            return ["0" for _ in output_files]
 
     # For PES, GOAT, DOCKER → let normal parsing run
     manifest = read_step_manifest(step_dir, step_number)
-    ids: List[int] = []
+    ids: List[str] = []
 
     # Build indices from manifest
-    by_input_stem: Dict[str, Optional[int]] = {}
+    by_input_stem: Dict[str, Optional[str]] = {}
     if manifest and "records" in manifest:
         for r in manifest["records"]:
             stem = os.path.splitext(r["input_file"])[0]  # e.g., 'step3_structure_0'
-            by_input_stem[stem] = r.get("structure_id")
+            sid = r.get("structure_id")
+            if sid is not None:
+                by_input_stem[stem] = str(sid)
 
     input_stems = list(by_input_stem.keys())
 
@@ -383,61 +446,44 @@ def map_outputs_to_ids(
         out_base = os.path.basename(outp)
         out_stem, _ = os.path.splitext(out_base)
 
-        # 1) Exact stem match via manifest (when outputs share stem with inputs)
+        # 1) Exact stem match via manifest
         if out_stem in by_input_stem and by_input_stem[out_stem] is not None:
-            ids.append(int(by_input_stem[out_stem]))
+            ids.append(by_input_stem[out_stem])
             continue
 
-        # 2) Prefix match: output stem starts with input stem (handles '_atom46', '_trj', etc.)
+        # 2) Prefix match (handles suffixes like '_atom46', '_trj')
         pref = [s for s in input_stems if out_stem.startswith(s)]
         if len(pref) == 1 and by_input_stem[pref[0]] is not None:
-            ids.append(int(by_input_stem[pref[0]]))
+            ids.append(by_input_stem[pref[0]])
             continue
 
-        # 3) Regex extraction from the output name itself
+        # 3) Regex extraction from filename
         sid = extract_structure_id_from_any_name(out_base)
         if sid is not None:
-            ids.append(sid)
+            ids.append(str(sid))
             continue
 
-        # 4) Try a corresponding .inp with truncated suffix (common case)
-        #    e.g., 'step3_structure_0_atom46' -> try 'step3_structure_0.inp'
+        # 4) Try corresponding .inp file
         if "_" in out_stem:
             truncated = out_stem.rsplit("_", 1)[0]
             candidate_inp = os.path.join(step_dir, truncated + ".inp")
             sid2 = extract_structure_id(candidate_inp)
             if sid2 is not None:
-                ids.append(sid2)
+                ids.append(str(sid2))
                 continue
 
-        # 5) Last resort: -1 (caller should fail fast before creating inputs)
-        ids.append(-1)
+        # 5) Last resort
+        ids.append("-1")
 
     return ids
 
 
 def validate_structure_ids_or_raise(structure_ids, step_id):
     """
-    Validate structure IDs coming from previous steps.
-
-    Accepts integers (must be >= 0) and/or strings (must be non-empty after strip()).
-    Mixed lists are allowed. Raises a descriptive error on invalid input.
-
-    Parameters
-    ----------
-    structure_ids : Sequence[Union[int, str]]
-        List/tuple of IDs to validate.
-    step_id : int
-        Current step number, only used for error messaging.
-
-    Raises
-    ------
-    TypeError
-        If structure_ids is not a sequence or contains unsupported types.
-    ValueError
-        If any ID is invalid (negative int or empty string).
+    Validate structure IDs and normalize to strings.
+    IDs can be int (>=0) or str (non-empty, not '-1').
+    Always returns a list of strings.
     """
-
     if structure_ids is None:
         raise ValueError(f"[step {step_id}] structure_ids is None")
 
@@ -449,22 +495,27 @@ def validate_structure_ids_or_raise(structure_ids, step_id):
     if len(structure_ids) == 0:
         raise ValueError(f"[step {step_id}] structure_ids is empty")
 
+    normalized = []
     for idx, i in enumerate(structure_ids):
         if isinstance(i, int):
             if i < 0:
                 raise ValueError(
                     f"[step {step_id}] structure_ids[{idx}] is negative: {i}"
                 )
+            normalized.append(str(i))
         elif isinstance(i, str):
-            if not i.strip():
+            if not i.strip() or i.strip() == "-1":
                 raise ValueError(
-                    f"[step {step_id}] structure_ids[{idx}] is an empty/blank string"
+                    f"[step {step_id}] structure_ids[{idx}] is invalid: '{i}'"
                 )
+            normalized.append(i.strip())
         else:
             raise TypeError(
                 f"[step {step_id}] structure_ids[{idx}] has unsupported type {type(i).__name__}; "
                 "only int or str are allowed"
             )
+
+    return normalized
 
 
 def registry_path(output_root: str) -> str:
@@ -599,72 +650,39 @@ _ID_ANYWHERE_RE = re.compile(
 )
 
 
-def extract_structure_id_from_any_name(name: str) -> Optional[int]:
+def allocate_child_ids(parents: list[str], fanouts: list[int], next_id: int):
     """
-    Extract a structure ID from any filename or stem containing the pattern
-    'step{N}_structure_{ID}[...optional suffixes...]'.
-
-    Examples
-    --------
-    'step3_structure_0_atom46.out' → 0
-    'step4_structure_12_trj.xyz'   → 12
-    'step2_structure_5.out'        → 5
-
-    Parameters
-    ----------
-    name : str
-        A basename, full path, or stem.
+    Allocate persistent IDs for children given parent IDs and fanout counts.
+    - If fanout == 1 → reuse parent ID unchanged
+    - If fanout > 1 → append -childIndex (e.g., '0-0', '0-1', ...)
 
     Returns
     -------
-    int | None
-        Parsed ID if found, else None.
+    tuple[list[str], int]
+        child_ids : list of allocated child IDs
+        next_id   : updated counter (unused here, just monotonic)
     """
-    base = os.path.basename(name)
-    stem = os.path.splitext(base)[0]
-    m = _ID_ANYWHERE_RE.search(stem)
-    return int(m.group("id")) if m else None
+    child_ids = []
 
-
-def allocate_child_ids(parent_ids, fanouts, next_id_start):
-    """
-    Allocate persistent structure IDs for children spawned from parents.
-
-    Rules
-    -----
-    - If a parent yields exactly one child, that child keeps the parent's ID.
-    - If a parent yields more than one child, the first child keeps the parent's ID
-    and remaining children receive fresh IDs from a monotonically increasing counter.
-
-    Parameters
-    ----------
-    parent_ids : list[int]
-        IDs of parent structures in input order.
-    fanouts : list[int]
-        Number of children per parent, aligned with `parent_ids`.
-    next_id_start : int
-        Next fresh ID to assign for newly created children.
-
-    Returns
-    -------
-    tuple[list[int], int]
-        The assigned child IDs (in output order) and the updated `next_id_start`.
-    """
-    out, nxt = [], next_id_start
-    for pid, m in zip(parent_ids, fanouts):
-        if m <= 0:
+    for parent, fanout in zip(parents, fanouts):
+        if fanout == 0:
             continue
-        out.append(pid)
-        for _ in range(m - 1):
-            out.append(nxt)
-            nxt += 1
-    return out, nxt
+        elif fanout == 1:
+            # carry forward parent ID
+            child_ids.append(str(parent))
+        else:
+            # branch children
+            for i in range(fanout):
+                child_ids.append(f"{parent}-{i}")
+
+    # keep next_id monotonic (for compatibility)
+    return child_ids, next_id + len(child_ids)
 
 
 def resolve_persistent_ids(
     *,
     step_number: int,
-    last_ids: list[int] | None,
+    last_ids: list[str] | None,
     coords_count: int,
     output_files: list[str],
     operation: str,
@@ -677,61 +695,35 @@ def resolve_persistent_ids(
 
     Strategy
     --------
-    - Step 1: one implicit parent (ID 0); allocate `coords_count` children (PES/GOAT/DOCKER supported).
+    - Step 1: implicit parent 0 → allocate children.
     - General case:
-        * If `coords_count == len(last_ids)`, prefer 1:1 persistence; optionally use `file_map_fn`
-          for provenance mapping (must return fully-resolved, non-negative IDs).
-        * Otherwise infer fan-outs:
-            - Single parent: all outputs belong to that parent.
-            - Multiple parents:
-                · If `coords_count <= len(last_ids)`: first `coords_count` parents yield one child, others zero.
-                · If `coords_count > len(last_ids)`: first parent yields the extra, others yield one.
-
-    Parameters
-    ----------
-    step_number : int
-        Current step number (1-based).
-    last_ids : list[int] | None
-        Parent IDs from previous step; None for the first step.
-    coords_count : int
-        Number of coordinate sets returned by the parser.
-    output_files : list[str]
-        Output filenames produced in this step.
-    operation : str
-        Operation name (e.g., 'OPT+SP', 'PES', 'GOAT', 'DOCKER').
-    next_id : int
-        Next fresh ID to assign for newly created children.
-    file_map_fn : callable | None
-        Optional mapper `(step_dir, step_number, output_files) -> list[int]`.
-        Used only when `coords_count == len(last_ids)`.
-    step_dir : str | None
-        Step directory; required if `file_map_fn` is used.
-
-    Returns
-    -------
-    tuple[list[int], int]
-        The resolved IDs (length `coords_count`) and the updated `next_id`.
+        * If coords_count == len(last_ids): 1:1 persistence, keep IDs.
+        * If fan-out: generate child IDs using hyphen ancestry notation.
     """
+
     # Step 1 bootstrap
     if step_number == 1:
-        return allocate_child_ids([0], [coords_count], next_id)
+        return [str(i) for i in range(coords_count)], next_id + coords_count
 
-    # No parents: assign fresh IDs
+    # Defensive: no parents
     if not last_ids:
-        return list(range(next_id, next_id + coords_count)), next_id + coords_count
+        return [str(i) for i in range(coords_count)], next_id + coords_count
 
-    # 1:1 case (optionally use filename mapping)
+    # 1:1 case (reuse parent IDs directly)
     if coords_count == len(last_ids):
         if file_map_fn and step_dir is not None:
             mapped = file_map_fn(step_dir, step_number, output_files, operation)
-            if mapped and len(mapped) == coords_count and all(i >= 0 for i in mapped):
-                return mapped, next_id
+            if mapped and len(mapped) == coords_count and all(i != -1 for i in mapped):
+                return [str(m) for m in mapped], next_id
         return last_ids[:], next_id
 
     # Fan-out inference
     p = len(last_ids)
     if p == 1:
         fanouts = [coords_count]
+    elif coords_count % p == 0:
+        per_parent = coords_count // p
+        fanouts = [per_parent] * p
     else:
         if coords_count <= p:
             fanouts = [1] * coords_count + [0] * (p - coords_count)
@@ -739,4 +731,75 @@ def resolve_persistent_ids(
             extra = coords_count - (p - 1)
             fanouts = [extra] + [1] * (p - 1)
 
-    return allocate_child_ids(last_ids, fanouts, next_id)
+    # Allocate child IDs with ancestry strings
+    child_ids = []
+    for parent, fanout in zip(last_ids, fanouts):
+        if fanout == 0:
+            continue
+        for i in range(fanout):
+            # attach child index with hyphen
+            child_ids.append(f"{parent}-{i}")
+
+    return child_ids, next_id + len(child_ids)
+
+
+def smiles_to_xyz(csv_file, output_dir, smiles_column="smiles", max_attempts=10):
+    """
+    Convert SMILES strings in a CSV file into XYZ files.
+
+    Parameters
+    ----------
+    csv_file : str
+        Path to the CSV file containing SMILES strings.
+    output_dir : str
+        Directory where generated XYZ files will be saved.
+    smiles_column : str, optional
+        Name of the column in the CSV containing SMILES strings (default "smiles").
+    max_attempts : int, optional
+        Maximum number of embedding attempts for 3D conformer generation.
+
+    Returns
+    -------
+    list of str
+        List of paths to the generated XYZ files.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    df = pd.read_csv(csv_file)
+    if smiles_column not in df.columns:
+        raise ValueError(f"Column '{smiles_column}' not found in {csv_file}")
+
+    xyz_files = []
+    for idx, smi in enumerate(df[smiles_column]):
+        if not isinstance(smi, str) or not smi.strip():
+            continue
+
+        mol = Chem.MolFromSmiles(smi)
+        if mol is None:
+            print(f"[WARN] Skipping invalid SMILES at row {idx}: {smi}")
+            continue
+
+        mol = Chem.AddHs(mol)
+        success = AllChem.EmbedMolecule(mol, maxAttempts=max_attempts)
+        if success != 0:
+            print(f"[WARN] Failed 3D embedding for SMILES: {smi}")
+            continue
+
+        AllChem.UFFOptimizeMolecule(mol)
+
+        conf = mol.GetConformer()
+        natoms = mol.GetNumAtoms()
+        lines = [str(natoms), f"SMILES: {smi}"]
+
+        for atom_idx in range(natoms):
+            atom = mol.GetAtomWithIdx(atom_idx)
+            pos = conf.GetAtomPosition(atom_idx)
+            lines.append(f"{atom.GetSymbol():2s} {pos.x:.6f} {pos.y:.6f} {pos.z:.6f}")
+
+        xyz_path = os.path.join(output_dir, f"structure_{idx}.xyz")
+        with open(xyz_path, "w") as f:
+            f.write("\n".join(lines))
+
+        xyz_files.append(xyz_path)
+
+    return xyz_files
