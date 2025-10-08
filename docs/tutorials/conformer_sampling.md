@@ -34,6 +34,7 @@ For this tutorial, we will use **Pd(PPh₃)₄**.
 - 📥 [Download step1.xyz](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz)
 
 
+
 ### Interactive 3D Viewer
 
 <div id="viewer" style="width: 100%; height: 400px; position: relative;"></div>
@@ -62,7 +63,7 @@ For this tutorial, we will use **Pd(PPh₃)₄**.
 
 The YAML input for conformer sampling is also included in the tutorial folder:
 
-➡️ [Examples/Tutorials/Conformational Sampling/input.yaml](https://raw.githubusercontent.com/sterling-research-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz)
+➡️ [Examples/Tutorials/Conformational Sampling/input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/input.yaml)
 
 
 

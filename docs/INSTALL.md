@@ -5,7 +5,7 @@
 
 #Pip install[Recommended]
 
-pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git@main"
+pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git"
 
 # Installing from Source
 git clone  https://github.com/sterling-group/ChemRefine.git
