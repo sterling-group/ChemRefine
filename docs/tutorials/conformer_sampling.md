@@ -166,7 +166,7 @@ A ready-to-use SLURM script template is available at:
 #SBATCH --time=72:00:00
 #SBATCH --exclude=g-07-02
 #SBATCH --job-name=conformer_search
-#SBATCH --output=%x.out   # Saves output to auto_goat_JOBID.out
+#SBATCH --output=%x.out   
 #SBATCH --error=%x.err    # Saves error log
 
 # Ensure the script allows for shared node usage
