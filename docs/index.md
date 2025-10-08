@@ -317,13 +317,13 @@ We welcome contributions! Please:
 
 ## **Citation**
 
-If you use Auto-Conformer-GOAT in your research, please cite:
+If you use ChemRefine in your research, please cite:
 
 ```bibtex
 @software{ChemRefine,
   title={ChemRefine},
-  author={Sterling Research Group},
-  url={https://github.com/sterling-group/ChemRefine},
+  author={Ignacio Migliaro,Markus G.S. Weiss,Alistair J. Sterling},
+  url={https://doi.org/10.26434/chemrxiv-2025-cvg1x},
   year={2025}
 }
 ```
