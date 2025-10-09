@@ -734,8 +734,8 @@ ChemRefine automates this process by running a <strong>global optimization</stro
 <h2 id="input-files">Input Files</h2>
 <p>For this tutorial, we will use <strong>Pd(PPh₃)₄</strong>.</p>
 <ul>
-<li>📄 <a href="https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz">View step1.xyz</a>  </li>
-<li>📥 <a href="https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz">Download step1.xyz</a></li>
+<li>📄 <a href="https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Conformational-Sampling/input.yaml">View Input YAML</a>  </li>
+<li>📄 <a href="https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Host-Guest/step1.xyz">View step1.xyz</a>  </li>
 </ul>
 <h2 id="orca-input-files">Orca Input Files</h2>
 <p>You can find the ORCA input files <a href="https://github.com/sterling-group/ChemRefine/tree/mkdocs/Examples/Tutorials/Conformational-Sampling/templates">here</a></p>
@@ -846,7 +846,7 @@ A ready-to-use SLURM script template is available at:</p>
 #SBATCH --time=72:00:00
 #SBATCH --exclude=g-07-02
 #SBATCH --job-name=conformer_search
-#SBATCH --output=%x.out   # Saves output to auto_goat_JOBID.out
+#SBATCH --output=%x.out   
 #SBATCH --error=%x.err    # Saves error log
 
 # Ensure the script allows for shared node usage
