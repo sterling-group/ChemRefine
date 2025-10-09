@@ -450,7 +450,9 @@ class OrcaInterface:
                     parsed_ok = True
 
                 elif op == "docker":
-                    docker_xyz_file = path.replace(".out", ".struc1.allopt.xyz")
+                    docker_xyz_file = path.replace(
+                        ".out", "_opt.docker.struc1.all.optimized.xyz"
+                    )
                     if not os.path.exists(docker_xyz_file):
                         raise FileNotFoundError(
                             f"Docker xyz not found: {docker_xyz_file}"
