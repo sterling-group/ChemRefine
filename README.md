@@ -69,6 +69,7 @@ Create the required input files in your working directory:
 
 - **YAML Configuration** (`input.yaml`): Defines the workflow steps
 - **Initial XYZ** (`step1.xyz`): Starting molecular geometry  
+As of 1.3.1, we have added the ability to start with multiple xyz files. You can either point to a singular xyz file or a directory full of XYZ files. We have also added the ability to read a CSV file with smiles strings as input structure. 
 - **ORCA Templates** (`step1.inp`, `step2.inp`, `step3.inp`... `orca.slurm.header`, `mlff.slurm.header`): Calculation templates for each step
 
 You must provide **one ORCA input file** (e.g., `step1.inp`, `step2.inp`, etc.) for **each step** defined in your `input.yaml` configuration file, these must be found where you defined your `template` directory . For example, if your `input.yaml` specifies three ORCA steps, then you need three corresponding ORCA input files in your templates directory.
