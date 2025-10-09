@@ -1,0 +1,106 @@
+template_dir: ./templates
+scratch_dir: /scratch/
+output_dir: ./outputs3
+orca_executable: /orca
+# Sequential ORCA Input Configuration File
+# Define each step with its specific parameters.
+#This workflow reflects using GOAT and refining methods to improve the accuracy
+charge: 0
+multiplicity: 1
+
+# Optional: Override default initial structure (default is /template_dir/step1.xyz)
+initial_xyz: ./templates/oxidation_smiles.csv
+
+steps:
+  - step: 1
+    operation: "OPT+SP"
+    engine: "DFT"
+    sample_type:
+      method: "boltzmann"
+      parameters:
+       weight: 99  
+
+  # Step 1: Using MLFF to refine the calculation
+  - step: 2
+    operation: "OPT+SP"
+    engine: "MLFF"
+    mlff:
+      model_name: "uma-s-1"
+      task_name: "omol"
+      device: "cuda"
+    sample_type:
+      method: "integer"
+      parameters:
+        num_structures: 0
+
+  - step: 3
+    operation: "OPT+SP"
+    engine: "MLFF"
+    charge: -1
+    multiplicity: 2
+    mlff:
+      model_name: "uma-s-1"
+      task_name: "omol"
+      device: "cuda"
+    sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 0  
+
+  - step: 4
+    operation: "OPT+SP"
+    engine: "MLFF"
+    charge: 0
+    multiplicity: 1
+    mlff:
+      model_name: "uma-s-1"
+      task_name: "omol"
+      device: "cuda"
+    sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 0   
+  - step: 5
+    operation: "OPT+SP"
+    engine: "DFT"
+    charge: -1
+    multiplicity: 2
+    sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 0  
+
+  -  step: 6
+     operation: "OPT+SP"
+     engine: "DFT"
+     charge: 0
+     multiplicity: 1
+     sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 0  
+  -  step: 7
+     operation: "OPT+SP"
+     engine: "DFT"
+     charge: 1
+     multiplicity: 2
+     sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 0 
+
+  - step: 8
+    operation: "OPT+SP"
+    engine: "MLFF"
+    charge: 1
+    multiplicity: 2
+    mlff:
+      model_name: "uma-s-1"
+      task_name: "omol"
+      device: "cuda"
+    sample_type:
+      method: "integer"
+      parameters:
+       num_structures: 0   
+
+
