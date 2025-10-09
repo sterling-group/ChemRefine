@@ -30,8 +30,8 @@ The workflow:
 
 For this tutorial, we will use **Pd(PPh₃)₄**.
 
-- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz)  
-- 📥 [Download step1.xyz](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Conformational-Sampling/step1.xyz)
+- 📄 [View Input YAML](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Conformational-Sampling/input.yaml)  
+- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Host-Guest/step1.xyz)  
 
 ## Orca Input Files
 

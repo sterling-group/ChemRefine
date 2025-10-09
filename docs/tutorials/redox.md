@@ -29,8 +29,8 @@ ChemRefine automates redox workflows by allowing you to:
 
 We start with an initial structure located in the templates folder:
 
-- 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Redox/input.yaml)  
-- 📄 [View Input XYZ](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Redox/step1.xyz)  
+- 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Redox/dimethylaniline/input.yaml)  
+- 📄 [View Input XYZ](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Redox/dimethylaniline/step1.xyz)  
 ## Orca Input Files
 
 You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/mkdocs/Examples/Tutorials/Redox/templates)
