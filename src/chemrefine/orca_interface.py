@@ -461,6 +461,16 @@ class OrcaInterface:
                     coords, ens = self.parse_docker_xyz(docker_xyz_file)
                     if not ens or None in ens:
                         raise ValueError("No valid energies in Docker output.")
+
+                    # Exclude the last structure (non-sensible)
+                    if len(coords) > 1:
+                        coords = coords[:-1]
+                        ens = ens[:-1]
+                    else:
+                        raise ValueError(
+                            "Docker output only has one structure — cannot skip last."
+                        )
+
                     coordinates.extend(coords)
                     energies.extend(ens)
                     forces.extend([None] * len(coords))
