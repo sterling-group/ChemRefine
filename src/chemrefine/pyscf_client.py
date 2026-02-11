@@ -13,23 +13,25 @@ from chemrefine import utils_extopt as common
 
 
 def parse_extended_args(arglist):
-    p = argparse.ArgumentParser()
-    p.add_argument("--bind", type=str, default="127.0.0.1:8888")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--bind", type=str, default="127.0.0.1:8888")
 
-    # PySCF knobs (server can also be started with these; client passes them per-call)
-    p.add_argument("--method", type=str, default="dft", choices=["dft", "hf"],
-                   help="Electronic structure method (default: dft)")
-    p.add_argument("--xc", type=str, default="pbe",
-                   help="DFT functional if method=dft (default: pbe)")
-    p.add_argument("--basis", type=str, default="def2-svp",
-                   help="Basis set (default: def2-svp)")
-    p.add_argument("--df", action="store_true",
-                   help="Use density fitting / RI if available (default: off)")
-    p.add_argument("--gpu", action="store_true",
-                   help="Attempt GPU acceleration via gpu4pyscf (if installed)")
+    # level of theory / basis
+    parser.add_argument("--method", type=str, default="dft", choices=["dft", "hf"])
+    parser.add_argument("--xc", type=str, default="pbe")
+    parser.add_argument("--basis", type=str, default="def2-svp")
+    parser.add_argument("--df", action="store_true", help="Use density fitting / RI")
 
-    p.add_argument("inputfile")
-    return p.parse_args(arglist)
+    # GPU toggle
+    parser.add_argument("--gpu", action="store_true", help="Attempt gpu4pyscf (if installed)")
+
+    # optional tag to make server logs readable (otherwise basename is used)
+    parser.add_argument("--tag", type=str, default=None, help="Tag for server log (default: xyz basename)")
+
+    parser.add_argument("inputfile")
+    return parser.parse_args(arglist)
+
+
 
 
 def submit_pyscf(
@@ -41,6 +43,7 @@ def submit_pyscf(
     dograd: bool,
     nthreads: int,
     settings: dict,
+    tag: str | None = None,
 ) -> tuple[float, list[float]]:
     payload = {
         "atom_types": atom_types,
@@ -50,6 +53,7 @@ def submit_pyscf(
         "dograd": dograd,
         "nthreads": nthreads,
         "settings": settings,
+        "tag": tag,
     }
 
     try:
@@ -100,13 +104,13 @@ def run(arglist: list[str]):
     natoms = len(atom_types)
 
     settings = {
-        "method": args.method,
-        "xc": args.xc,
-        "basis": args.basis,
-        "df": bool(args.df),
-        "gpu": bool(args.gpu),
-    }
-
+    "method": args.method,
+    "xc": args.xc,
+    "basis": args.basis,
+    "df": bool(args.df),
+    "gpu": bool(args.gpu),
+}
+    tag = args.tag or basename
     energy, gradient = submit_pyscf(
         server_url=args.bind,
         atom_types=atom_types,
@@ -116,6 +120,7 @@ def run(arglist: list[str]):
         dograd=dograd,
         nthreads=ncores,
         settings=settings,
+        tag=tag,
     )
 
     common.write_engrad(orca_engrad, natoms, energy, dograd, gradient)

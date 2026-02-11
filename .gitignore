@@ -118,3 +118,7 @@ cython_debug/
 .DS_Store
 
 __pycache__/
+src/chemrefine/debug.txt
+src/chemrefine/input.generated.yaml
+
+/tests
