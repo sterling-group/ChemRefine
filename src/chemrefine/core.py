@@ -1,4 +1,5 @@
 import os
+from attr import dataclass,field
 import yaml
 import logging
 from .parse import ArgumentParser
@@ -8,6 +9,7 @@ from .orca_interface import OrcaInterface, OrcaJobSubmitter
 import shutil
 import sys
 import glob
+from typing import Any, Dict, List, Optional
 from .mlff import MLFFTrainer
 from chemrefine.utils import (
     update_step_manifest_outputs,
@@ -24,6 +26,57 @@ from chemrefine.cache_utils import (
     load_step_cache,
     build_step_fingerprint,
 )
+
+@dataclass
+class PipelineState:
+    """
+    Holds the running "memory" of the pipeline between steps.
+    """
+    last_coords: Any = None
+    last_ids: Optional[List[int]] = None
+    last_energies: Any = None
+    last_forces: Any = None
+    next_id: int = 1
+
+    # Optional: keep lightweight records for debugging / future agent behavior
+    history: List[Dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class StepResult:
+    """
+    The output of a completed step (either computed or restored from cache).
+    """
+    step_number: int
+    operation: str
+    engine: str
+    step_dir: str
+
+    coords: Any
+    ids: List[int]
+    energies: Any
+    forces: Any
+
+    # Used for NMS fallback discovery and debugging
+    output_files: List[str] = field(default_factory=list)
+
+    # Flags
+    from_cache: bool = False
+    nms_ran: bool = False
+
+class Controller:
+    """
+    Minimal deterministic controller.
+    Later this can be replaced by an LLM-based controller.
+    """
+
+    def decide(self, chemrefine, step, state, fp_now, step_dir):
+        # If skip_steps is enabled and a cache exists, restore it
+        if chemrefine.skip_steps:
+                return {"action": "restore_cache"}
+
+        # Otherwise run the step normally
+        return {"action": "run_step"}
 
 
 class ChemRefiner:
@@ -1099,411 +1152,423 @@ class ChemRefiner:
             f"[rebuild_nms] Done. You can now run with --skip to continue from step {step_number + 1}."
         )
 
-    ###____RUN____###
-
-    def run(self):
+    def _handle_rebuild_modes_or_exit(self) -> bool:
         """
-        Main pipeline execution function for ChemRefine.
+        Handle CLI flags that should execute a special mode and exit early.
 
+        Returns:
+            True  -> a rebuild/rerun mode was executed and the caller should stop.
+            False -> normal pipeline should continue.
         """
-        # --- Handle rebuild modes early ---
         args = getattr(self, "args", None)
+        if args is None:
+            return False
 
-        if args is not None:
-            # Handle --rebuild_cache (optionally with step number)
-            if getattr(args, "rebuild_cache", False):
-                target = (
-                    args.rebuild_cache if isinstance(args.rebuild_cache, int) else None
-                )
-                if target is not None:
-                    self.rebuild_target_step = target
-                self.rebuild_step_cache_and_exit()
-                return
+        # ---- --rebuild_cache [step] ----
+        rebuild_cache = getattr(args, "rebuild_cache", False)
+        if rebuild_cache:
+            target = rebuild_cache if isinstance(rebuild_cache, int) else None
+            if target is not None:
+                self.rebuild_target_step = target
+            self.rebuild_step_cache_and_exit()
+            return True
 
-            # Handle --rebuild_nms (optionally with step number)
-            if getattr(args, "rebuild_nms", False):
-                target = args.rebuild_nms if isinstance(args.rebuild_nms, int) else None
-                if target is not None:
-                    self.rebuild_target_step = target
-                self.rebuild_nms_cache_and_exit()
-                return
+        # ---- --rebuild_nms [step] ----
+        rebuild_nms = getattr(args, "rebuild_nms", False)
+        if rebuild_nms:
+            target = rebuild_nms if isinstance(rebuild_nms, int) else None
+            if target is not None:
+                self.rebuild_target_step = target
+            self.rebuild_nms_cache_and_exit()
+            return True
 
-            if getattr(args, "rerun_errors", False):
-                target = (
-                    args.rerun_errors if isinstance(args.rerun_errors, int) else None
-                )
-                if target is not None:
-                    self.rebuild_target_step = target
-                self.rerun_errors(target_step=target)
-                return
+        # ---- --rerun_errors [step] ----
+        rerun_errors = getattr(args, "rerun_errors", False)
+        if rerun_errors:
+            target = rerun_errors if isinstance(rerun_errors, int) else None
+            if target is not None:
+                self.rebuild_target_step = target
+            self.rerun_errors(target_step=target)
+            return True
 
-        logging.info("Starting ChemRefine pipeline.")
+        return False
 
-        # Results from the last completed (or skipped) step; used by MLFF_TRAIN.
-        last_coords = None
-        last_ids = None
-        last_energies = None
-        last_forces = None
+    def _restore_from_step_cache(
+    self,
+    step_number: int,
+    operation: str,
+    engine: str,
+    step_dir: str,
+) -> Optional[StepResult]:
+        cached = load_step_cache(step_dir)
+        if not cached or cached.coords is None or cached.ids is None:
+            return None
 
-        valid_operations = {
-            "OPT+SP",
-            "GOAT",
-            "PES",
-            "DOCKER",
-            "SOLVATOR",
-            "MLFF_TRAIN",
-            "MLIP_TRAIN",
-        }
-        valid_engines = {"dft", "mlff", "mlip"}
+        logging.info(f"[step {step_number}] Step-level cache hit: {len(cached.ids)} items restored.")
+        return StepResult(
+            step_number=step_number,
+            operation=operation,
+            engine=engine,
+            step_dir=step_dir,
+            coords=cached.coords,
+            ids=cached.ids,
+            energies=cached.energies,
+            forces=cached.forces,
+            output_files=[],
+            from_cache=True,
+        )
+          
+    def _execute_non_training_step(
+        self,
+        step: dict,
+        state: PipelineState,
+        fp_now: str,
+    ) -> StepResult:
+        step_number = step["step"]
+        operation = step["operation"].upper()
+        engine = step.get("engine", "dft").lower()
 
-        steps = self.config.get("steps", [])
-
-        for step in steps:
-            step_number = step["step"]
-            operation = step["operation"].upper()
-            engine = step.get("engine", "dft").lower()
-
+        # MLFF/MLIP config
+        if engine in {"mlff", "mlip"}:
+            ml_config = step.get(engine, {})
+            model = ml_config.get("model_name", "medium")
+            task = ml_config.get("task_name", "mace_off")
+            bind_address = ml_config.get("bind", "127.0.0.1:8888")
+            device = ml_config.get("device", "cuda")
             logging.info(
-                f"Processing step {step_number}: operation '{operation}', engine '{engine}'."
+                f"Using {engine.upper()} model '{model}' with task '{task}' for step {step_number}."
             )
+        else:
+            model = task = bind_address = device = None
 
-            if operation not in valid_operations:
-                raise ValueError(
-                    f"Invalid operation '{operation}' at step {step_number}. "
-                    f"Must be one of {valid_operations}."
-                )
-            if engine not in valid_engines:
-                raise ValueError(
-                    f"Invalid engine '{engine}' at step {step_number}. "
-                    f"Must be one of {valid_engines}."
-                )
+        # Sampling
+        st = step.get("sample_type")
+        sample_method = st.get("method") if st else None
+        parameters = st.get("parameters", {}) if st else {}
 
-            # MLFF/MLIP config
-            if engine in {"mlff", "mlip"}:
-                ml_config = step.get(engine, {})
-                model = ml_config.get("model_name", "medium")
-                task = ml_config.get("task_name", "mace_off")
-                bind_address = ml_config.get("bind", "127.0.0.1:8888")
-                device = ml_config.get("device", "cuda")
+        charge = step.get("charge", self.charge)
+        multiplicity = step.get("multiplicity", self.multiplicity)
 
-                logging.info(
-                    f"Using {engine.upper()} model '{model}' with task '{task}' for step {step_number}."
-                )
+        step_dir = os.path.join(self.output_dir, f"step{step_number}")
+        os.makedirs(os.path.join(step_dir, "_cache"), exist_ok=True)
+
+        output_files: List[str] = []
+        ids: Optional[List[int]] = None  # ensure defined
+
+        # --- Prepare inputs ---
+        if step_number == 1:
+            initial_xyz = self.config.get("initial_xyz", None)
+            step_dir, input_files, output_files, seeds_ids = self.prepare_step1_directory(
+                step_number=step_number,
+                initial_xyz=initial_xyz,
+                charge=charge,
+                multiplicity=multiplicity,
+                operation=operation,
+                engine=engine,
+                model_name=model,
+                task_name=task,
+                device=device,
+                bind=bind_address,
+            )
+            parent_ids_for_step = seeds_ids  # use as "parents" for step-1 outputs
+        else:
+            validate_structure_ids_or_raise(state.last_ids, step_number)
+            step_dir, input_files, output_files = self.prepare_subsequent_step_directory(
+                step_number=step_number,
+                filtered_coordinates=state.last_coords,
+                filtered_ids=state.last_ids,
+                charge=charge,
+                multiplicity=multiplicity,
+                operation=operation,
+                engine=engine,
+                model_name=model,
+                task_name=task,
+                device=device,
+                bind=bind_address,
+            )
+            parent_ids_for_step = state.last_ids
+
+        write_step_manifest(step_number, step_dir, input_files, operation, engine)
+
+        # Submit jobs
+        self.submit_orca_jobs(
+            input_files=input_files,
+            max_cores=self.max_cores,
+            step_dir=step_dir,
+            operation=operation,
+            engine=engine,
+            model_name=model,
+            task_name=task,
+            device=device,
+        )
+
+        # Parse outputs
+        coords, energies, forces = self.orca.parse_output(output_files, operation, dir=step_dir)
+        update_step_manifest_outputs(step_dir, step_number, output_files)
+
+        # === ID resolution + filtering ===
+        ensemble_ops = {"GOAT", "PES", "DOCKER", "SOLVATOR"}
+        needs_per_parent = operation in ensemble_ops or (
+            step_number == 1 and parent_ids_for_step is not None and len(parent_ids_for_step) > 1
+        )
+
+        if needs_per_parent:
+            result = self.process_step_with_parent_allocation(
+                step_number,
+                operation,
+                step_dir,
+                output_files,
+                parent_ids_for_step,
+                sample_method,
+                parameters,
+            )
+            if isinstance(result, tuple) and len(result) == 5:
+                coords, ids, energies, forces, _by_parent = result
             else:
-                model = None
-                task = None
-                bind_address = None
-                device = None
-
-            # Sampling (optional)
-            st = step.get("sample_type")
-            sample_method = st.get("method") if st else None
-            parameters = st.get("parameters", {}) if st else {}
-
-            # === Training-only steps ===
-            if operation in {"MLFF_TRAIN", "MLIP_TRAIN"}:
-                self.run_mlff_train(
-                    step_number, step, last_coords, last_ids, last_energies, last_forces
+                coords, ids, energies, forces = result
+        else:
+            # 1:1 propagation for OPT+SP
+            if (
+                step_number != 1
+                and parent_ids_for_step is not None
+                and len(parent_ids_for_step) == len(output_files)
+                and operation in {"OPT+SP"}
+            ):
+                logging.info(f"[step {step_number}] 1:1 propagation detected, reusing parent IDs.")
+                ids = parent_ids_for_step[:]
+            else:
+                num_out = len(coords)
+                ids, state.next_id = resolve_persistent_ids(
+                    step_number=step_number,
+                    last_ids=parent_ids_for_step,
+                    coords_count=num_out,
+                    output_files=output_files,
+                    operation=operation,
+                    next_id=state.next_id,
+                    file_map_fn=map_outputs_to_ids,
+                    step_dir=step_dir,
                 )
-                continue
 
-            # === Non-training steps ===
-            charge = step.get("charge", self.charge)
-            multiplicity = step.get("multiplicity", self.multiplicity)
-
-            filtered_coordinates = None
-            filtered_ids = None
-            energies = None
-            forces = None
-
-            # Paths & fingerprint
-            step_dir = os.path.join(self.output_dir, f"step{step_number}")
-            os.makedirs(os.path.join(step_dir, "_cache"), exist_ok=True)
-            parent_ids_for_fp = last_ids if step_number > 1 else None
-            fp_now = build_step_fingerprint(
-                step, parent_ids_for_fp, parameters, step_number
+            coords, ids = self.refiner.filter(
+                coords,
+                energies,
+                ids,
+                sample_method,
+                parameters,
+                by_parent=False,
             )
 
-            # ---------- Fast skip via step-level cache ----------
-            output_files = []  # set later as needed
-            if self.skip_steps:
-                cached = load_step_cache(step_dir)
-                if cached:
-                    filtered_coordinates = cached.coords
-                    filtered_ids = cached.ids
-                    energies = cached.energies
-                    forces = cached.forces
-                    logging.info(
-                        f"[step {step_number}] Step-level cache hit: {len(filtered_ids)} items restored."
-                    )
-                else:
-                    if cached:
-                        logging.info(
-                            f"[step {step_number}] Step-level cache present but fingerprint/op/engine mismatch; recomputing."
-                        )
-                    else:
-                        logging.info(
-                            f"[step {step_number}] No step-level cache; computing."
-                        )
+        if coords is None or ids is None:
+            raise RuntimeError(f"Filtering failed at step {step_number}.")
 
-            if filtered_coordinates is None or filtered_ids is None:
-                logging.warning(
-                    f"No valid step cache for step {step_number}. Proceeding with normal execution."
-                )
+        # --- Write step cache ---
+        try:
+            step_cache = StepCache(
+                version=CACHE_VERSION,
+                step=step_number,
+                operation=operation,
+                engine=engine,
+                fingerprint=fp_now,
+                parent_ids=(parent_ids_for_step if step_number > 1 else None),
+                ids=ids,
+                n_outputs=len(ids),
+                by_parent=None,
+                coords=coords,
+                energies=energies,
+                forces=forces,
+                extras=None,
+            )
+            save_step_cache(step_dir, step_cache)
+            logging.info(f"[step {step_number}] Wrote step cache ({len(ids)} items).")
+        except Exception as e:
+            logging.warning(f"[step {step_number}] Cache write failed: {e}")
 
-                # --- Prepare inputs ---
-                if step_number == 1:
-                    initial_xyz = self.config.get("initial_xyz", None)
-                    step_dir, input_files, output_files, seeds_ids = (
-                        self.prepare_step1_directory(
-                            step_number=step_number,
-                            initial_xyz=initial_xyz,
-                            charge=charge,
-                            multiplicity=multiplicity,
-                            operation=operation,
-                            engine=engine,
-                            model_name=model,
-                            task_name=task,
-                            device=device,
-                            bind=bind_address,
-                        )
-                    )
-                    last_ids = seeds_ids
-                else:
-                    validate_structure_ids_or_raise(last_ids, step_number)
-                    step_dir, input_files, output_files = (
-                        self.prepare_subsequent_step_directory(
-                            step_number=step_number,
-                            filtered_coordinates=last_coords,
-                            filtered_ids=last_ids,
-                            charge=charge,
-                            multiplicity=multiplicity,
-                            operation=operation,
-                            engine=engine,
-                            model_name=model,
-                            task_name=task,
-                            device=device,
-                            bind=bind_address,
-                        )
-                    )
+        # Optional NMS
+        nms_ran = False
+        if step.get("normal_mode_sampling", False):
+            nms_params = step.get("normal_mode_sampling_parameters", {})
+            calc_type = nms_params.get("calc_type", "rm_imag")
+            displacement_vector = nms_params.get("displacement_vector", 1.0)
+            nms_random_displacements = nms_params.get("num_random_displacements", 1)
 
-                # Save manifest with input structure IDs
-                write_step_manifest(
-                    step_number, step_dir, input_files, operation, engine
-                )
+            if not output_files:
+                output_files = [
+                    os.path.join(step_dir, f)
+                    for f in os.listdir(step_dir)
+                    if f.endswith(".out") and not f.startswith("slurm")
+                ]
 
-                # Submit jobs (ALWAYS submit all for this step in the simplified model)
-                self.submit_orca_jobs(
-                    input_files=input_files,
-                    max_cores=self.max_cores,
-                    step_dir=step_dir,
+            if output_files:
+                input_template_path = os.path.join(self.template_dir, f"step{step_number}.inp")
+                coords, ids = self.orca.normal_mode_sampling(
+                    file_paths=output_files,
+                    calc_type=calc_type,
+                    input_template=input_template_path,
+                    slurm_template=self.template_dir,
+                    charge=charge,
+                    multiplicity=multiplicity,
+                    output_dir=self.output_dir,
                     operation=operation,
                     engine=engine,
                     model_name=model,
+                    step_number=step_number,
+                    structure_ids=ids,
+                    max_cores=self.max_cores,
                     task_name=task,
+                    mlff_model=model,
+                    displacement_value=displacement_vector,
                     device=device,
+                    bind=bind_address,
+                    orca_executable=self.orca_executable,
+                    scratch_dir=self.scratch_dir,
+                    num_random_modes=nms_random_displacements,
                 )
+                nms_ran = True
 
-                # --- Parse outputs (ALWAYS pass OUTPUT files) ---
-                filtered_coordinates, energies, forces = self.orca.parse_output(
-                    output_files, operation, dir=step_dir
-                )
+                # energies/forces no longer aligned after NMS; keep it simple
+                energies = None
+                forces = None
 
-                # Update manifest with output files (full list for this step)
-                update_step_manifest_outputs(step_dir, step_number, output_files)
-
-                # === ID resolution ===
-                ensemble_ops = {"GOAT", "PES", "DOCKER", "SOLVATOR"}
-                needs_per_parent = operation in ensemble_ops or (
-                    step_number == 1 and last_ids is not None and len(last_ids) > 1
-                )
-
-                if needs_per_parent:
-                    # Ensemble: allocate children by parent
-                    result = self.process_step_with_parent_allocation(
-                        step_number,
-                        operation,
-                        step_dir,
-                        output_files,
-                        last_ids,
-                        sample_method,
-                        parameters,
-                    )
-                    # Backward compatibility if function returns 5-tuple (with by_parent)
-                    if isinstance(result, tuple) and len(result) == 5:
-                        (
-                            filtered_coordinates,
-                            filtered_ids,
-                            energies,
-                            forces,
-                            _by_parent,
-                        ) = result
-                    else:
-                        filtered_coordinates, filtered_ids, energies, forces = result
-                else:
-                    # 1:1 (OPT+SP) default path
-                    if (
-                        (step_number != 1)
-                        and (len(last_ids) == len(output_files))
-                        and operation in {"OPT+SP"}
-                    ):
-                        logging.info(
-                            f"[step {step_number}] 1:1 propagation detected, reusing parent IDs."
-                        )
-                        filtered_ids = last_ids[:]
-                    else:
-                        num_out = len(filtered_coordinates)
-                        filtered_ids, self.next_id = resolve_persistent_ids(
-                            step_number=step_number,
-                            last_ids=last_ids,
-                            coords_count=num_out,
-                            output_files=output_files,
-                            operation=operation,
-                            next_id=self.next_id,
-                            file_map_fn=map_outputs_to_ids,
-                            step_dir=step_dir,
-                        )
-
-                    # Filtering for non-ensemble ops
-                    filtered_coordinates, filtered_ids = self.refiner.filter(
-                        filtered_coordinates,
-                        energies,
-                        filtered_ids,
-                        sample_method,
-                        parameters,
-                        by_parent=False,
-                    )
-
-                if filtered_coordinates is None or filtered_ids is None:
-                    logging.error(
-                        f"Filtering failed at step {step_number}. Exiting pipeline."
-                    )
-                    return
-
-                # --- Write step-level cache immediately after successful processing ---
                 try:
                     step_cache = StepCache(
                         version=CACHE_VERSION,
                         step=step_number,
                         operation=operation,
                         engine=engine,
-                        fingerprint=fp_now,
-                        parent_ids=(last_ids if step_number > 1 else None),
-                        ids=filtered_ids,
-                        n_outputs=len(filtered_ids),
+                        fingerprint=None,
+                        parent_ids=(parent_ids_for_step if step_number > 1 else None),
+                        ids=ids,
+                        n_outputs=len(ids),
                         by_parent=None,
-                        coords=filtered_coordinates,
-                        energies=energies,
-                        forces=forces,
-                        extras=None,
+                        coords=coords,
+                        energies=[None] * len(ids),
+                        forces=[None] * len(ids),
+                        extras={"nms_generation": True},
                     )
                     save_step_cache(step_dir, step_cache)
-                    logging.info(
-                        f"[step {step_number}] Wrote step cache ({len(filtered_ids)} items)."
-                    )
+                    logging.info(f"[step {step_number}] Updated step cache after NMS ({len(ids)} items).")
                 except Exception as e:
-                    logging.warning(f"[step {step_number}] Cache write failed: {e}")
-
+                    logging.warning(f"[step {step_number}] Cache write (post-NMS) failed: {e}")
             else:
-                logging.info(
-                    f"Skipping heavy work for step {step_number} (step-level cache restored)."
+                logging.warning(f"No valid .out files found for NMS in step {step_number}. Skipping NMS.")
+
+        return StepResult(
+            step_number=step_number,
+            operation=operation,
+            engine=engine,
+            step_dir=step_dir,
+            coords=coords,
+            ids=ids,
+            energies=energies,
+            forces=forces,
+            output_files=output_files,
+            from_cache=False,
+            nms_ran=nms_ran,
+        )
+
+    def _restore_from_step_cache(
+    self,
+    step_number: int,
+    step_dir: str,
+    operation: str,
+    engine: str,
+) -> Optional[StepResult]:
+        cached = load_step_cache(step_dir)
+        if not cached:
+            return None
+        if cached.coords is None or cached.ids is None:
+            return None
+
+        logging.info(
+            f"[step {step_number}] Step-level cache hit: {len(cached.ids)} items restored."
+        )
+
+        return StepResult(
+            step_number=step_number,
+            operation=operation,
+            engine=engine,
+            step_dir=step_dir,
+            coords=cached.coords,
+            ids=cached.ids,
+            energies=cached.energies,
+            forces=cached.forces,
+            output_files=[],
+            from_cache=True,
+        )
+
+    def _commit_step_result(self, state: PipelineState, result: StepResult) -> None:
+        state.last_coords = result.coords
+        state.last_ids = result.ids
+        state.last_energies = result.energies
+        state.last_forces = result.forces
+
+        print(f"Step {result.step_number} completed: {len(state.last_coords)} structures ready.")
+
+        if state.last_energies is not None and len(state.last_energies) == len(state.last_ids):
+            self.utils.save_step_csv(
+                energies=state.last_energies,
+                ids=state.last_ids,
+                step=result.step_number,
+                output_dir=self.output_dir,
+            )
+        else:
+            logging.info(f"[step {result.step_number}] Skipping CSV export (energy/ID mismatch or missing energies).")
+
+        print(f"Your ID's for this step are: {state.last_ids}")
+   
+    ###NEW____RUN____###
+
+    def run(self):
+        if self._handle_rebuild_modes_or_exit():
+            return
+
+        logging.info("Starting ChemRefine pipeline.")
+
+        controller = Controller()
+        state = PipelineState(next_id=getattr(self, "next_id", 1))
+
+        for step in self.config.get("steps", []):
+            op = step["operation"].upper()
+
+            if op in {"MLFF_TRAIN", "MLIP_TRAIN"}:
+                self.run_mlff_train(
+                    step["step"], step, state.last_coords, state.last_ids, state.last_energies, state.last_forces
                 )
+                continue
 
-            # ---------- Optional: Normal Mode Sampling ----------
-            if step.get("normal_mode_sampling", False):
-                nms_params = step.get("normal_mode_sampling_parameters", {})
-                calc_type = nms_params.get("calc_type", "rm_imag")
-                displacement_vector = nms_params.get("displacement_vector", 1.0)
-                nms_random_displacements = nms_params.get("num_random_displacements", 1)
+            step_number = step["step"]
+            step_dir = os.path.join(self.output_dir, f"step{step_number}")
+            os.makedirs(os.path.join(step_dir, "_cache"), exist_ok=True)
 
-                if not output_files:
-                    output_files = [
-                        os.path.join(step_dir, f)
-                        for f in os.listdir(step_dir)
-                        if f.endswith(".out") and not f.startswith("slurm")
-                    ]
+            # fingerprint computed as before (even if you don't enforce it yet)
+            st = step.get("sample_type")
+            parameters = st.get("parameters", {}) if st else {}
+            fp_now = build_step_fingerprint(
+                step,
+                state.last_ids if step_number > 1 else None,
+                parameters,
+                step_number,
+            )
 
-                if not output_files:
+            decision = controller.decide(self, step, state, fp_now, step_dir)
+
+            if decision["action"] == "restore_cache":
+                result = self._restore_from_step_cache(
+                    step_number=step_number,
+                    step_dir=step_dir,
+                    operation=op,
+                    engine=step.get("engine", "dft").lower(),
+                )
+                if result is None:
                     logging.warning(
-                        f"No valid .out files found for normal mode sampling in step {step_number}. Skipping NMS."
+                        f"No valid step cache for step {step_number}. Proceeding with normal execution."
                     )
-                else:
-                    logging.info(
-                        f"Normal mode sampling requested for step {step_number}."
-                    )
-                    input_template_path = os.path.join(
-                        self.template_dir, f"step{step_number}.inp"
-                    )
-                    filtered_coordinates, filtered_ids = self.orca.normal_mode_sampling(
-                        file_paths=output_files,
-                        calc_type=calc_type,
-                        input_template=input_template_path,
-                        slurm_template=self.template_dir,
-                        charge=step.get("charge", self.charge),
-                        multiplicity=step.get("multiplicity", self.multiplicity),
-                        output_dir=self.output_dir,
-                        operation=operation,
-                        engine=engine,
-                        model_name=model,
-                        step_number=step_number,
-                        structure_ids=filtered_ids,
-                        max_cores=self.max_cores,
-                        task_name=task,
-                        mlff_model=model,
-                        displacement_value=displacement_vector,
-                        device=device,
-                        bind=bind_address,
-                        orca_executable=self.orca_executable,
-                        scratch_dir=self.scratch_dir,
-                        num_random_modes=nms_random_displacements,
-                    )
-
-                    # After NMS, refresh step-level cache to reflect the final outputs
-                    try:
-                        step_cache = StepCache(
-                            version=CACHE_VERSION,
-                            step=step_number,
-                            operation=operation,
-                            engine=engine,
-                            fingerprint=None,  # optional, to disable matching
-                            parent_ids=(last_ids if step_number > 1 else None),
-                            ids=filtered_ids,
-                            n_outputs=len(filtered_ids),
-                            by_parent=None,
-                            coords=filtered_coordinates,
-                            energies=[None] * len(filtered_ids),  # placeholder
-                            forces=[None] * len(filtered_ids),  # placeholder
-                            extras={"nms_generation": True},
-                        )
-
-                        save_step_cache(step_dir, step_cache)
-                        logging.info(
-                            f"[step {step_number}] Updated step cache after NMS ({len(filtered_ids)} items)."
-                        )
-                    except Exception as e:
-                        logging.warning(
-                            f"[step {step_number}] Cache write (post-NMS) failed: {e}"
-                        )
-
-            # ---------- Commit this step's results ----------
-            last_coords, last_ids = filtered_coordinates, filtered_ids
-            last_energies, last_forces = energies, forces
-            print(f"Step {step_number} completed: {len(last_coords)} structures ready.")
-
-            # Only write energies if present and aligned
-            if last_energies is not None and len(last_energies) == len(last_ids):
-                self.utils.save_step_csv(
-                    energies=last_energies,
-                    ids=last_ids,
-                    step=step_number,
-                    output_dir=self.output_dir,
-                )
+                    result = self._execute_non_training_step(step, state, fp_now)
             else:
-                logging.info(
-                    f"[step {step_number}] Skipping CSV export (energy/ID mismatch or missing energies)."
-                )
+                result = self._execute_non_training_step(step, state, fp_now)
 
-            print(f"Your ID's for this step are: {last_ids}")
+            self._commit_step_result(state, result)
+            self.next_id = state.next_id
 
         logging.info("ChemRefine pipeline completed.")
 

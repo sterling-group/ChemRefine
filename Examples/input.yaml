@@ -14,7 +14,6 @@ multiplicity: 1
 
 # === Step-by-step workflow ===
 
-orca_executable: <your_orca_executable_path>
 # Sequential ORCA Input Configuration File
 # Define each step with its specific parameters.
 #This workflow reflects using GOAT and refining methods to improve the accuracy
