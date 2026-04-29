@@ -3,14 +3,16 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from typing import Any, Dict, Tuple
 
+import numpy as np
 import waitress
 from flask import Flask, request, jsonify
 
-from pyscf import gto, scf, dft, lib
+from pyscf import ao2mo, dft, gto, lib, scf
 
 BOHR_PER_ANG = 1.0 / 0.529177210903  # Å -> Bohr
 
@@ -43,6 +45,64 @@ DEFAULTS: Dict[str, Any] = {
 }
 
 logger = logging.getLogger("pyscfserver")
+
+
+def get_active_space_tensors(mol, mf, localized: bool = False):
+    """
+    Extract one- and two-electron tensors in the current MO basis.
+
+    When ``localized`` is True, apply Boys localization separately to occupied
+    and virtual orbitals before integral transformation.
+    """
+    nuc = mol.energy_nuc()
+    ao_kin = mol.intor("int1e_kin")
+    ao_nuc = mol.intor("int1e_nuc")
+    ao_obi = ao_kin + ao_nuc
+    ao_eri = mol.intor("int2e")
+    coeff = mf.mo_coeff
+
+    if localized:
+        from pyscf import lo
+
+        nocc = int((mf.mo_occ > 0).sum())
+        occ_idx = np.arange(0, nocc)
+        vir_idx = np.arange(nocc, coeff.shape[1])
+
+        coeff_occ = coeff[:, occ_idx]
+        coeff_vir = coeff[:, vir_idx]
+
+        loc_occ = lo.Boys(mol, coeff_occ).kernel(verbose=4)
+        loc_vir = lo.Boys(mol, coeff_vir).kernel(verbose=4)
+        mo_coeff_final = np.column_stack((loc_occ, loc_vir))
+    else:
+        mo_coeff_final = coeff
+
+    h1_spatial = mo_coeff_final.T @ ao_obi @ mo_coeff_final
+    h2_spatial = ao2mo.incore.full(ao_eri, mo_coeff_final)
+    return nuc, h1_spatial, h2_spatial
+
+
+def save_tensors(b: float, h0, h1, h2, folder: str = "tensors") -> str:
+    """Save tensor tuple to a compressed ``npz`` file and return the path."""
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+
+    filename = os.path.join(folder, f"{b:2.1f}_tensors.npz")
+    np.savez_compressed(filename, hc=h0, h1e=h1, h2e=h2)
+    print(f"Tensors saved to {filename}")
+    return filename
+
+
+def print_tensors_file(npz_file: str) -> None:
+    """Pretty-print the tensors stored in a ``save_tensors`` file."""
+    data = np.load(npz_file)
+    print(f"File: {npz_file}")
+    print("hc (scalar):")
+    print(data["hc"])
+    print("h1e (one-electron tensor):")
+    print(data["h1e"])
+    print("h2e (two-electron tensor):")
+    print(data["h2e"])
 
 
 def _gpu_dft_classes():
