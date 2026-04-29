@@ -1219,6 +1219,14 @@ class ChemRefiner:
                 raise ValueError(f"[step {ctx.step_number}] pyscf engine requires 'pyscf: functional' (or 'xc').")
             if ctx.engine_cfg.device not in {"cpu", "cuda"}:
                 raise ValueError(f"[step {ctx.step_number}] pyscf device must be 'cpu' or 'cuda'.")
+            extras = ctx.engine_cfg.extras or {}
+            if not isinstance(extras.get("save_tensors", False), bool):
+                raise ValueError(f"[step {ctx.step_number}] pyscf.save_tensors must be true/false.")
+            if not isinstance(extras.get("localized", False), bool):
+                raise ValueError(f"[step {ctx.step_number}] pyscf.localized must be true/false.")
+            tensor_folder = extras.get("tensor_folder", "tensors")
+            if not isinstance(tensor_folder, str) or not tensor_folder.strip():
+                raise ValueError(f"[step {ctx.step_number}] pyscf.tensor_folder must be a non-empty string.")
             ###____RUN____###
 
     def _extract_engine_config(self, step: dict, engine: str) -> EngineConfig:
@@ -1252,13 +1260,18 @@ class ChemRefiner:
             if device is None:
                 device = "cuda" if cfg.get("gpu", False) else "cpu"
 
+            extras = dict(cfg)
+            extras["save_tensors"] = bool(cfg.get("save_tensors", False))
+            extras["localized"] = bool(cfg.get("localized", False))
+            extras["tensor_folder"] = cfg.get("tensor_folder", "tensors")
+
             return EngineConfig(
                 engine="pyscf",
                 device=device,
                 bind=cfg.get("bind", default_bind),
                 basis=cfg.get("basis", step.get("basis")),               # allow top-level fallback if you want
                 functional=cfg.get("functional", cfg.get("xc", "pbe")),   # support xc alias; default pbe
-                extras=dict(cfg),
+                extras=extras,
             )
 
         # ----------------
