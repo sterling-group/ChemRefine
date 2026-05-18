@@ -1,4 +1,4 @@
-"""PySCF engine — registers ``PyscfEngine`` on import.
+"""PySCF engine — importing this module registers ``pyscf`` and ``pyscf-direct``.
 
 Two engines ship in this package:
 
@@ -12,5 +12,7 @@ Both engines are ported from the unmerged ``origin/pyscf`` PR
 internals carry TODO placeholders until a real-run regression is set up.
 """
 
-from chemrefine.engines.pyscf.direct import PyscfDirectEngine  # noqa: F401
-from chemrefine.engines.pyscf.engine import PyscfEngine  # noqa: F401
+from chemrefine.engines.pyscf.direct import PyscfDirectEngine
+from chemrefine.engines.pyscf.engine import PyscfEngine
+
+__all__ = ["PyscfDirectEngine", "PyscfEngine"]

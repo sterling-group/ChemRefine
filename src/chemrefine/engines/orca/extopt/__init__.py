@@ -12,8 +12,10 @@ straightforward but rely on the exact byte-for-byte layout that ORCA
 expects; needs a real run to verify.
 """
 
-from chemrefine.engines.orca.extopt.protocol import (  # noqa: F401
+from chemrefine.engines.orca.extopt.protocol import (
     read_extinp,
     write_engrad,
     write_wrapper_script,
 )
+
+__all__ = ["read_extinp", "write_engrad", "write_wrapper_script"]

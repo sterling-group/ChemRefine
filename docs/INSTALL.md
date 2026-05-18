@@ -73,7 +73,11 @@ huggingface-cli login
 
 ## License Information
 
-This software is licensed under the GNU AFFERO GENERAL PUBLIC LICENSE By installing and using this software, you agree to the terms of the AGPL v3 license. See the [LICENSE](LICENSE) file for complete terms.
+This software is licensed under the GNU AFFERO GENERAL PUBLIC LICENSE.
+By installing and using this software, you agree to the terms of the
+AGPL v3 license. See the
+[LICENSE](https://github.com/sterling-group/ChemRefine/blob/main/LICENSE)
+file in the repository for complete terms.
 
 
 
@@ -89,5 +93,5 @@ This software is licensed under the GNU AFFERO GENERAL PUBLIC LICENSE By install
 
 - See the project [README](https://github.com/sterling-group/ChemRefine#readme) for usage examples
 - Check [Issues](https://github.com/sterling-group/ChemRefine/issues) if a similar issue has been encountered. 
-- Review [Examples/](Examples/) directory for sample inputs
+- Review the [Examples/](https://github.com/sterling-group/ChemRefine/tree/main/Examples) directory for sample inputs
 - Open an issue on GitHub for bugs or feature requests

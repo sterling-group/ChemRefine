@@ -1,3 +1,5 @@
-"""ORCA engine — registers ``OrcaEngine`` on import."""
+"""ORCA engine — importing this module registers it in the ENGINES registry."""
 
-from chemrefine.engines.orca.engine import OrcaEngine  # noqa: F401
+from chemrefine.engines.orca.engine import OrcaEngine
+
+__all__ = ["OrcaEngine"]

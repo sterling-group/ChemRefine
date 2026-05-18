@@ -29,7 +29,7 @@ def test_build_input_appends_xyzfile_directive(tmp_path: Path):
     text = out.read_text()
     assert "! B3LYP def2-SVP" in text
     assert "%pal" in text
-    assert f'%base "step1_structure_0"' in text  # noqa: F541
+    assert '%base "step1_structure_0"' in text
     assert f"* xyzfile 0 1 {xyz}" in text
 
 

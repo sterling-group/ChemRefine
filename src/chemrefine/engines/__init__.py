@@ -5,13 +5,11 @@ Importing this package self-registers every bundled engine into
 :mod:`chemrefine.engines` once and then looks up engines by name from
 that dict — it never imports a concrete engine module directly.
 
-New engines join the registry by importing their package here (the
-side-effect ``register`` decorator does the actual binding).
+New engines join the registry by listing their package below; each
+engine's own ``__init__`` registers it via the
+:func:`~chemrefine.engines.base.register` decorator at import time.
 """
 
-from chemrefine.engines import (
-    _fake,  # noqa: F401 - side-effect: registers "fake"
-    mlff,  # noqa: F401 - side-effect: registers "mlff" and "mlff-direct"
-    orca,  # noqa: F401 - side-effect: registers "orca"
-    pyscf,  # noqa: F401 - side-effect: registers "pyscf" and "pyscf-direct"
-)
+from chemrefine.engines import _fake, mlff, orca, pyscf
+
+__all__ = ["_fake", "mlff", "orca", "pyscf"]

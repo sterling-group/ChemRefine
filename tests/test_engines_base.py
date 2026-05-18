@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-import chemrefine.engines  # noqa: F401 - side-effect: populate ENGINES
+# Importing from ``chemrefine.engines.base`` triggers the parent package's
+# ``__init__``, which self-registers every bundled engine into ``ENGINES``.
 from chemrefine.engines.base import (
     ENGINES,
     CalculationEngine,

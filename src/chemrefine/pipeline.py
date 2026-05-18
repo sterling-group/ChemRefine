@@ -21,11 +21,14 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import chemrefine.engines  # noqa: F401 - side-effect: populate ENGINES
 from chemrefine import io
 from chemrefine.config import Config
 from chemrefine.errors import ConfigError
 from chemrefine.state import PipelineState, Structure
+
+# Importing :mod:`chemrefine.step` pulls in :mod:`chemrefine.engines.base`,
+# which runs :mod:`chemrefine.engines`'s ``__init__`` and self-registers every
+# bundled engine. No explicit ``import chemrefine.engines`` needed.
 from chemrefine.step import StepOutcome, run_step
 
 logger = logging.getLogger(__name__)

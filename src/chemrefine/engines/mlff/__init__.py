@@ -1,4 +1,4 @@
-"""MLFF engine — registers ``MlffEngine`` on import.
+"""MLFF engine — importing this module registers ``mlff`` and ``mlff-direct``.
 
 Two engines ship in this package:
 
@@ -8,5 +8,7 @@ Two engines ship in this package:
   inference in-process, no ORCA, for fast pre-screening.
 """
 
-from chemrefine.engines.mlff.direct import MlffDirectEngine  # noqa: F401
-from chemrefine.engines.mlff.engine import MlffEngine  # noqa: F401
+from chemrefine.engines.mlff.direct import MlffDirectEngine
+from chemrefine.engines.mlff.engine import MlffEngine
+
+__all__ = ["MlffDirectEngine", "MlffEngine"]
