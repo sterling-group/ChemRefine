@@ -88,10 +88,10 @@ class IntegerSample(_SampleBase):
 
 
 class HighEnergySample(_SampleBase):
-    """Discard structures more than ``cutoff_kcal`` above the lowest-energy one."""
+    """Keep the ``count`` highest-energy structures (e.g. for PES sampling)."""
 
     method: Literal["high_energy"]
-    cutoff_kcal: float = Field(..., gt=0)
+    count: int = Field(..., ge=1)
 
 
 SampleConfig: TypeAlias = Annotated[
