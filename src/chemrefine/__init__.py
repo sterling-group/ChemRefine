@@ -1,15 +1,8 @@
-#!/usr/bin/env python3
+"""ChemRefine: automated computational-chemistry workflow manager."""
 
-"""
-ChemRefine: Automated conformer sampling and refinement using ORCA.
+from importlib.metadata import PackageNotFoundError, version
 
-An automated and interoperable manager for computational chemistry workflows.
-"""
-
-__version__ = "1.3.1"
-__author__ = "Sterling Group"
-__email__ = "dal950773@utdallas.edu"
-
-from .core import ChemRefiner
-
-__all__ = ["ChemRefiner", "run_mlff_calculation", "MLFFJobSubmitter"]
+try:
+    __version__ = version("ChemRefine")
+except PackageNotFoundError:
+    __version__ = "0.0.0+unknown"
