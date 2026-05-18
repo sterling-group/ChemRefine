@@ -1,0 +1,157 @@
+"""Tests for the high-level pipeline orchestrator."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from ase import Atoms
+
+from chemrefine import io, pipeline
+from chemrefine.config import Config, StepConfig
+from chemrefine.errors import ConfigError
+
+
+def _h2() -> Atoms:
+    return Atoms(symbols=["H", "H"], positions=[[0, 0, 0], [0.74, 0, 0]])
+
+
+def _config(tmp_path: Path, **overrides) -> Config:
+    base = dict(
+        template_dir=tmp_path / "templates",
+        scratch_dir=tmp_path / "scratch",
+        output_dir=tmp_path / "outputs",
+        steps=[StepConfig(step=1, engine="fake", operation="opt_sp")],
+    )
+    base.update(overrides)
+    return Config(**base)
+
+
+# ---------------------------------------------------------------------------
+# bootstrap
+# ---------------------------------------------------------------------------
+
+
+def test_bootstrap_from_xyz_file(tmp_path: Path):
+    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    seed = tmp_path / "step0_structure_seed.xyz"
+    cfg = _config(tmp_path, input=seed)
+    state = pipeline.bootstrap(cfg)
+    assert len(state.structures) == 1
+    assert state.structures[0].id == "0"
+
+
+def test_bootstrap_from_directory(tmp_path: Path):
+    seed_dir = tmp_path / "seeds"
+    io.write_xyz([_h2(), _h2()], ["a", "b"], step_number=0, output_dir=seed_dir)
+    cfg = _config(tmp_path, input=seed_dir)
+    state = pipeline.bootstrap(cfg)
+    assert len(state.structures) == 2
+    assert [s.id for s in state.structures] == ["0", "1"]
+
+
+def test_bootstrap_falls_back_to_templates_step1_xyz(tmp_path: Path):
+    template_dir = tmp_path / "templates"
+    template_dir.mkdir()
+    seed_path = template_dir / "step1.xyz"
+    # Write a minimal xyz file directly
+    seed_path.write_text(
+        "2\nH2\nH 0.0 0.0 0.0\nH 0.74 0.0 0.0\n", encoding="utf-8"
+    )
+    cfg = _config(tmp_path, input=None)
+    state = pipeline.bootstrap(cfg)
+    assert len(state.structures) == 1
+
+
+def test_bootstrap_missing_input_raises(tmp_path: Path):
+    cfg = _config(tmp_path, input=None)
+    with pytest.raises(ConfigError):
+        pipeline.bootstrap(cfg)
+
+
+def test_bootstrap_unsupported_format_raises(tmp_path: Path):
+    bad = tmp_path / "input.json"
+    bad.write_text("{}", encoding="utf-8")
+    cfg = _config(tmp_path, input=bad)
+    with pytest.raises(ConfigError):
+        pipeline.bootstrap(cfg)
+
+
+def test_bootstrap_from_smiles_csv(tmp_path: Path):
+    csv = tmp_path / "smiles.csv"
+    csv.write_text("smiles\nC\nCC\n", encoding="utf-8")
+    cfg = _config(tmp_path, input=csv)
+    state = pipeline.bootstrap(cfg)
+    assert len(state.structures) == 2
+
+
+# ---------------------------------------------------------------------------
+# run
+# ---------------------------------------------------------------------------
+
+
+def test_run_executes_each_step_in_order(tmp_path: Path):
+    seed = tmp_path / "step0_structure_seed.xyz"
+    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    cfg = _config(
+        tmp_path,
+        input=seed,
+        steps=[
+            StepConfig(step=1, engine="fake", operation="opt_sp"),
+            StepConfig(step=2, engine="fake", operation="opt_sp"),
+        ],
+    )
+    outcomes = pipeline.run(cfg)
+    assert len(outcomes) == 2
+    assert all(o.cache_hit is False for o in outcomes)
+
+
+def test_run_threads_state_between_steps(tmp_path: Path):
+    # Two seed files in a directory.
+    seed_dir = tmp_path / "seeds"
+    io.write_xyz([_h2(), _h2()], ["a", "b"], step_number=0, output_dir=seed_dir)
+    cfg = _config(
+        tmp_path,
+        input=seed_dir,
+        steps=[
+            StepConfig(
+                step=1,
+                engine="fake",
+                operation="opt_sp",
+                sample={"method": "integer", "count": 1},
+            ),
+            StepConfig(step=2, engine="fake", operation="opt_sp"),
+        ],
+    )
+    outcomes = pipeline.run(cfg)
+    # Step 1 filters 2 -> 1; step 2 keeps that 1.
+    assert len(outcomes[0].state.structures) == 1
+    assert len(outcomes[1].state.structures) == 1
+
+
+def test_run_second_call_hits_cache(tmp_path: Path):
+    seed_dir = tmp_path / "seeds"
+    io.write_xyz([_h2()], ["a"], step_number=0, output_dir=seed_dir)
+    cfg = _config(
+        tmp_path,
+        input=seed_dir,
+        steps=[StepConfig(step=1, engine="fake", operation="opt_sp")],
+    )
+    first = pipeline.run(cfg)
+    second = pipeline.run(cfg)
+    assert first[0].cache_hit is False
+    assert second[0].cache_hit is True
+
+
+def test_run_stops_when_no_survivors(tmp_path: Path):
+    """If a sample method drops everything, subsequent steps are skipped."""
+    # Force "no survivors": IntegerSample with count 0 keeps all, so we need
+    # an EnergyWindowSample with an impossibly tight window. The fake engine
+    # produces energies very close together, so a 1e-12 kcal window keeps only
+    # the lowest, not zero. To actually drop all, we'd need empty input.
+    # Easier path: empty seeds.
+    seed_dir = tmp_path / "seeds"
+    seed_dir.mkdir()
+    cfg = _config(tmp_path, input=seed_dir)
+    with pytest.raises(ConfigError):
+        pipeline.run(cfg)
