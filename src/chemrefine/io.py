@@ -19,10 +19,10 @@ import pandas as pd
 from ase import Atoms
 from ase.io import read as ase_read
 
-from chemrefine.units import (
+from chemrefine.constants import (
     DEFAULT_TEMPERATURE_K,
-    HARTREE_TO_KCAL_MOL,
-    R_KCAL_MOL_K,
+    HARTREE_TO_KCALMOL,
+    R_KCALMOL_K,
 )
 
 _CSV_PRECISION = 8
@@ -198,13 +198,13 @@ def save_step_csv(
         }
     )
     df["Energy (kcal/mol)"] = pd.to_numeric(
-        df["Energy (Hartree)"] * HARTREE_TO_KCAL_MOL, errors="coerce"
+        df["Energy (Hartree)"] * HARTREE_TO_KCALMOL, errors="coerce"
     )
     df = df.dropna(subset=["Energy (kcal/mol)"])
     df = df.sort_values("Energy (kcal/mol)").reset_index(drop=True)
 
     dE = (df["Energy (kcal/mol)"] - df["Energy (kcal/mol)"].min()).to_numpy(dtype=float)
-    boltz = np.exp(-dE / (R_KCAL_MOL_K * temperature_k))
+    boltz = np.exp(-dE / (R_KCALMOL_K * temperature_k))
     total = boltz.sum()
     if total > 0:
         boltz = boltz / total

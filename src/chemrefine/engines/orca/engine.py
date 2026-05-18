@@ -85,8 +85,11 @@ class OrcaEngine:
         return template
 
     def _extra_blocks(self, ctx: StepContext) -> str:
-        """Subclass hook for engines that need extra ORCA blocks (e.g. MLFF ``%method``)."""
-        _ = ctx
+        """Subclass hook for engines that need extra ORCA blocks (e.g. MLFF ``%method``).
+
+        The base ORCA engine has nothing extra to add; MLFF and PySCF
+        override this to inject their ``%method ProgExt …`` block.
+        """
         return ""
 
     # -- submit / wait -----------------------------------------------------
@@ -130,8 +133,10 @@ class OrcaEngine:
         )
 
     def wait(self, batch: JobBatch) -> None:
-        """No-op: :meth:`submit` already blocked until every job finished."""
-        _ = batch
+        """No-op: :meth:`submit` already blocked until every job finished.
+
+        The parameter is kept for ``CalculationEngine`` Protocol parity.
+        """
         return None
 
     # -- parse -------------------------------------------------------------

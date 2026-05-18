@@ -94,7 +94,6 @@ def run_calc(
     Verifying needs PySCF + (optionally) gpu4pyscf installed; left as
     a placeholder so the rest of the module can ship verified.
     """
-    _ = payload, defaults
     raise NotImplementedError(
         "PySCF server run_calc not yet ported — see TODO in engines/pyscf/server.py"
     )

@@ -1,30 +1,72 @@
-"""Tests for energy-unit conversions and Boltzmann weights."""
+"""Tests for unit conversions and Boltzmann weights."""
 
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from chemrefine.units import (
+from chemrefine.constants import (
     DEFAULT_TEMPERATURE_K,
-    HARTREE_TO_KCAL_MOL,
-    R_KCAL_MOL_K,
-    boltzmann_weights,
-    hartree_to_kcal,
-    kcal_to_hartree,
+    HARTREE_TO_KCALMOL,
+    R_KCALMOL_K,
 )
+from chemrefine.units import boltzmann_weights, convert
 
 
-def test_hartree_kcal_constants_match_reference():
-    # 1 Hartree = 627.5095 kcal/mol to 4 sig fig
-    assert abs(HARTREE_TO_KCAL_MOL - 627.5094740631) < 1e-3
-    # R in kcal/(mol K) = 1.9872e-3
-    assert abs(R_KCAL_MOL_K - 1.9872041e-3) < 1e-7
+def test_constants_use_codata_values():
+    # 1 Ha ≈ 627.509 kcal/mol; allow loose float tolerance for derivation chain.
+    assert abs(HARTREE_TO_KCALMOL - 627.5094740631) < 1e-3
+    # R ~= 1.9872041e-3 kcal/(mol*K)
+    assert abs(R_KCALMOL_K - 1.98720425e-3) < 1e-7
 
 
-def test_hartree_to_kcal_roundtrip():
-    energies = np.array([0.0, -1.5, 0.25])
-    rt = kcal_to_hartree(hartree_to_kcal(energies))
-    np.testing.assert_allclose(rt, energies, rtol=1e-12)
+def test_convert_scalar_hartree_to_kcalmol():
+    assert abs(convert(1.0, "hartree", "kcal/mol") - HARTREE_TO_KCALMOL) < 1e-9
+
+
+def test_convert_round_trips_through_kcalmol():
+    rt = convert(convert(0.5, "hartree", "kcal/mol"), "kcal/mol", "hartree")
+    assert abs(rt - 0.5) < 1e-12
+
+
+def test_convert_array_input_returns_ndarray():
+    out = convert(np.array([1.0, 2.0]), "hartree", "kcal/mol")
+    assert isinstance(out, np.ndarray)
+    np.testing.assert_allclose(out, [HARTREE_TO_KCALMOL, 2.0 * HARTREE_TO_KCALMOL])
+
+
+def test_convert_same_unit_is_identity():
+    assert convert(3.14, "hartree", "hartree") == 3.14
+
+
+def test_convert_recognises_aliases():
+    assert convert(1.0, "Ha", "kcal") == HARTREE_TO_KCALMOL
+    assert abs(convert(1.0, "Å", "bohr") - 1.0 / 0.529177210903) < 1e-9
+
+
+def test_convert_unknown_pair_raises():
+    with pytest.raises(ValueError):
+        convert(1.0, "ergs", "joules")
+
+
+def test_convert_length_pair():
+    from chemrefine.constants import BOHR_TO_ANGSTROM
+
+    assert abs(convert(1.0, "bohr", "angstrom") - BOHR_TO_ANGSTROM) < 1e-12
+
+
+def test_convert_gradient_pair():
+    from chemrefine.constants import HARTREE_PER_BOHR_TO_EV_PER_A
+
+    assert (
+        abs(convert(1.0, "hartree/bohr", "ev/angstrom") - HARTREE_PER_BOHR_TO_EV_PER_A)
+        < 1e-9
+    )
+
+
+# ---------------------------------------------------------------------------
+# Boltzmann
+# ---------------------------------------------------------------------------
 
 
 def test_boltzmann_weights_sum_to_one():

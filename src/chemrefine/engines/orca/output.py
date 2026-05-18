@@ -26,12 +26,8 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
+from chemrefine.constants import HARTREE_PER_BOHR_TO_EV_PER_A
 from chemrefine.errors import OutputParseError
-
-# Physical constants (CODATA 2018).
-_EV_PER_HARTREE = 27.211386245988
-_BOHR_TO_ANGSTROM = 0.529177210903
-_HARTREE_PER_BOHR_TO_EV_PER_A = _EV_PER_HARTREE / _BOHR_TO_ANGSTROM
 
 # Last block, since geometry optimisation re-prints these as it iterates.
 _COORD_BLOCK_RE = re.compile(
@@ -118,8 +114,9 @@ def parse_forces(text: str, *, to_ev_per_A: bool = True) -> NDArray[np.float64] 
         dz = float(m.group(4).replace("D", "E"))
         fx, fy, fz = -dx, -dy, -dz
         if to_ev_per_A:
-            scale = _HARTREE_PER_BOHR_TO_EV_PER_A
-            fx, fy, fz = fx * scale, fy * scale, fz * scale
+            fx *= HARTREE_PER_BOHR_TO_EV_PER_A
+            fy *= HARTREE_PER_BOHR_TO_EV_PER_A
+            fz *= HARTREE_PER_BOHR_TO_EV_PER_A
         rows.append([fx, fy, fz])
     if not rows:
         return None

@@ -44,6 +44,7 @@ from pydantic import (
     model_validator,
 )
 
+from chemrefine.constants import DEFAULT_TEMPERATURE_K
 from chemrefine.errors import ConfigError
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -62,7 +63,7 @@ class _SampleBase(BaseModel):
     by_parent: bool = False
     """Apply the filter within each parent-ID group instead of globally."""
 
-    temperature_k: float = Field(298.15, gt=0)
+    temperature_k: float = Field(DEFAULT_TEMPERATURE_K, gt=0)
     """Temperature used by Boltzmann-style filters (K)."""
 
 

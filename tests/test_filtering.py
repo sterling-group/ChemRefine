@@ -11,9 +11,9 @@ from chemrefine.config import (
     HighEnergySample,
     IntegerSample,
 )
+from chemrefine.constants import HARTREE_TO_KCALMOL
 from chemrefine.filtering import apply
 from chemrefine.state import StepResults, Structure
-from chemrefine.units import HARTREE_TO_KCAL_MOL
 
 
 def _results(*pairs: tuple[str, float]) -> StepResults:
@@ -103,7 +103,7 @@ def test_boltzmann_single_structure_kept():
 
 def test_boltzmann_drops_high_energy_tail():
     # Two structures, one dominant (lowest energy)
-    r = _results(("low", -1.0), ("high", -1.0 + 10.0 / HARTREE_TO_KCAL_MOL))
+    r = _results(("low", -1.0), ("high", -1.0 + 10.0 / HARTREE_TO_KCALMOL))
     state = apply(
         r, BoltzmannSample(method="boltzmann", percent_cumulative=99.0, temperature_k=298.15)
     )

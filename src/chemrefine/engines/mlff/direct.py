@@ -18,8 +18,8 @@ from __future__ import annotations
 import logging
 
 import numpy as np
-from ase import Atoms
 
+from chemrefine.constants import HARTREE_TO_EV
 from chemrefine.engines.base import register
 from chemrefine.engines.mlff.calculator import MlffCalculator
 from chemrefine.state import (
@@ -29,12 +29,11 @@ from chemrefine.state import (
     StepResults,
     Structure,
 )
-from chemrefine.units import HARTREE_TO_KCAL_MOL
 
 logger = logging.getLogger(__name__)
 
-# Conversion factors: MLFF backends return energy in eV; we store Hartree.
-_EV_TO_HARTREE = 1.0 / 27.211386245988
+# MLFF backends report energy in eV; ChemRefine stores Hartree internally.
+_EV_TO_HARTREE: float = 1.0 / HARTREE_TO_EV
 
 
 @register("mlff-direct")
@@ -66,7 +65,7 @@ class MlffDirectEngine:
     def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
         """Score every structure in-process; write a tiny JSON output per structure."""
         calc = self._get_calculator(ctx)
-        for inp, out, sid in inputs.files:
+        for _inp, out, sid in inputs.files:
             atoms = self._find_structure(ctx, sid).atoms.copy()
             energy_ev, _gradient = calc.single_point(atoms)
             energy_hartree = energy_ev * _EV_TO_HARTREE
@@ -74,12 +73,12 @@ class MlffDirectEngine:
                 f'{{"id": "{sid}", "energy_hartree": {energy_hartree}}}\n',
                 encoding="utf-8",
             )
-            _ = inp  # unused but kept for clarity
-        return JobBatch(jobs={inp: f"direct-{i}" for i, (inp, *_rest) in enumerate(inputs.files)})
+        return JobBatch(
+            jobs={inp: f"direct-{i}" for i, (inp, *_rest) in enumerate(inputs.files)}
+        )
 
     def wait(self, batch: JobBatch) -> None:
         """No-op — :meth:`submit` ran inline."""
-        _ = batch
         return None
 
     def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
@@ -103,7 +102,6 @@ class MlffDirectEngine:
 
     def normal_mode_sample(self, results: StepResults, ctx: StepContext) -> StepResults:
         """Not supported."""
-        _ = ctx
         raise NotImplementedError("mlff-direct does not support NMS")
 
     # -- helpers -----------------------------------------------------------
@@ -128,6 +126,3 @@ class MlffDirectEngine:
         raise KeyError(f"unknown structure id {sid!r}")
 
 
-# Suppress unused-import warning for kcal/mol conversion factor (used by tests/CSV).
-_ = HARTREE_TO_KCAL_MOL
-_ = Atoms

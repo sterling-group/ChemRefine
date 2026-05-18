@@ -28,7 +28,6 @@ def run_training(results: StepResults, ctx: StepContext) -> StepResults:
 
     Placeholder — see module docstring for the port plan.
     """
-    _ = results, ctx
     raise NotImplementedError(
         "MLFF training pipeline not yet ported — see TODO in engines/mlff/trainer.py"
     )

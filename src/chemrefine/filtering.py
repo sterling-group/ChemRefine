@@ -34,9 +34,9 @@ from chemrefine.config import (
     IntegerSample,
     SampleConfig,
 )
+from chemrefine.constants import HARTREE_TO_KCALMOL, R_KCALMOL_K
 from chemrefine.ids import parent_of
 from chemrefine.state import PipelineState, StepResults, Structure
-from chemrefine.units import HARTREE_TO_KCAL_MOL, R_KCAL_MOL_K
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +113,7 @@ def _filter_energy_window(
 ) -> list[Structure]:
     """Keep structures within ``window_kcal`` of the lowest-energy structure."""
     min_e = sorted_structures[0].energy_hartree
-    window_h = window_kcal / HARTREE_TO_KCAL_MOL
+    window_h = window_kcal / HARTREE_TO_KCALMOL
     return [s for s in sorted_structures if s.energy_hartree <= min_e + window_h]
 
 
@@ -125,9 +125,11 @@ def _filter_boltzmann(
     """Keep structures until cumulative Boltzmann weight reaches ``percent_cumulative``."""
     if len(sorted_structures) <= 1:
         return list(sorted_structures)
-    energies_kcal = np.array([s.energy_hartree for s in sorted_structures]) * HARTREE_TO_KCAL_MOL
+    energies_kcal = (
+        np.array([s.energy_hartree for s in sorted_structures]) * HARTREE_TO_KCALMOL
+    )
     delta = energies_kcal - energies_kcal.min()
-    weights = np.exp(-delta / (R_KCAL_MOL_K * temperature_k))
+    weights = np.exp(-delta / (R_KCALMOL_K * temperature_k))
     weights /= weights.sum()
     cumulative = np.cumsum(weights * 100.0)
     survivors: list[Structure] = []

@@ -27,31 +27,26 @@ class PyscfDirectEngine:
 
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Placeholder — see module docstring."""
-        _ = ctx
         raise NotImplementedError(
             "pyscf-direct not yet ported — see TODO in engines/pyscf/direct.py"
         )
 
     def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
         """Placeholder — see module docstring."""
-        _ = inputs, ctx
         raise NotImplementedError(
             "pyscf-direct not yet ported — see TODO in engines/pyscf/direct.py"
         )
 
     def wait(self, batch: JobBatch) -> None:
         """No-op — submit is in-process when this engine ships."""
-        _ = batch
         return None
 
     def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
         """Placeholder — see module docstring."""
-        _ = inputs, ctx
         raise NotImplementedError(
             "pyscf-direct not yet ported — see TODO in engines/pyscf/direct.py"
         )
 
     def normal_mode_sample(self, results: StepResults, ctx: StepContext) -> StepResults:
         """Not supported."""
-        _ = results, ctx
         raise NotImplementedError("pyscf-direct does not support NMS")
