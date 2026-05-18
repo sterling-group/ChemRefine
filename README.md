@@ -44,18 +44,13 @@ pip install -e .
 ```
 
 ### **Requirements**
-Everything is managed through the pip installation. 
-- **Python 3.6+ or < 3.13** with the following dependencies:
-  - `numpy` - Numerical computations
-  - `pyyaml` - YAML configuration parsing  
-  - `pandas` - Data analysis and CSV handling
-  - `ase` - Geometry handling and optimisation
-  - `mace-torch` - Machine learning force fields
-  - `torch == 2.5.1` - Machine Learning (if you use later version of Pytorch it might not work with UMA models)
-
-- **ORCA 6.0+** - Quantum chemistry calculations
-- **SLURM** - Job scheduling system
-- **MLIP Engines** - MACE, FAIRChem, Sevenn, Orb
+- **Python 3.11+ and < 3.14** with the following dependencies:
+  - `numpy`, `pyyaml`, `pandas`, `ase`, `rdkit`, `scikit-learn`
+  - `pydantic >= 2` — typed config validation
+  - `typer >= 0.12` — CLI framework
+- Optional `[mlff]` extras (for MLFF engines): `torch >= 2.8`, `mace-torch`, `fairchem-core`, `flask`, `waitress`, `requests`
+- **ORCA 6.0+** — quantum chemistry calculations
+- **SLURM** — HPC job scheduling
 ---
 ## **Tutorial** 
 
@@ -84,36 +79,39 @@ In addition to these input files, you must include one of each:
 ### **2. Run the Workflow**
 
 ```bash
-# Basic usage
-chemrefine input.yaml
+# Full pipeline from step 1
+chemrefine run input.yaml
 
-# With custom core count
-chemrefine input.yaml --maxcores 128
+# Resume from cached steps (skip work already completed)
+chemrefine resume input.yaml
 
-# Background execution (recommended for HPC)
-nohup chemrefine input.yaml --maxcores 128 &
+# Override the YAML's max_cores
+chemrefine run input.yaml --maxcores 128
 
-# Skip any step (if already completed)
-chemrefine input.yaml --skip
+# Validate config without launching anything
+chemrefine run input.yaml --dry-run
+
+# Background execution (recommended for long HPC runs)
+nohup chemrefine run input.yaml --maxcores 128 &
 ```
 
 ### **Error Correction**
 
-Often times DFT or MLIP calculations tend to fail, making the workflow not work as seamlessly. ChemRefine uses a caching system that saves a json and a pickle with all of the variables for that step in `_cache` directory inside the step folder. This allows ChemRefine to continue to the next step if the workflow gets interrupted. If calculations die, we have added features to correct this: 
-
+ChemRefine writes a fingerprint-keyed cache to `<step_dir>/_cache/step.pkl`
+plus a JSON sidecar. Steps whose YAML config + parent IDs haven't changed
+are skipped on the next `resume`. Targeted re-execution:
 
 ```bash
-# 1st: Re-run failed calculations (may require adjusting their parameters)
+# Re-execute the latest step (or a named one)
+chemrefine rerun input.yaml             # latest step
+chemrefine rerun input.yaml refine      # step named "refine"
+chemrefine rerun input.yaml 3           # step number 3
 
-chemrefine input.yaml --rerun_errors
+# Rebuild a step's parsed cache without re-submitting jobs
+chemrefine rebuild-cache input.yaml 2
 
-#2nd: Rebuild the cache
-
-chemrefine input.yaml --rebuild_cache
-
-#Optional if re-running normal mode sampling and don't want to run current step
-
-chemrefine input.yaml --rebuild_nms
+# Re-run normal-mode sampling for a step
+chemrefine rebuild-nms input.yaml 4
 ```
 
 ### **3. Monitor Progress**
@@ -178,67 +176,67 @@ steps.csv       # Summary of energies and structures
 ## **Input Files Description**
 
 ### **YAML Configuration File**
+
+ChemRefine v4 uses a flat top-level schema with a `steps:` list. Each step's
+numeric `step:` is the canonical identifier; the optional `name:` is a
+human-readable label that appears in logs, CSV headers, and output
+directory names (`step1_screen/`, `step2_refine/`, ...). Engine-specific
+knobs live under `options:`; the sampling block is a discriminated union
+keyed on `method:`.
+
 ```yaml
-template_dir: <location of template_files>
-scratch_dir:  <location of your scratch directory>
-output_dir: <location of your output directory>
-orca_executable: <location of your ORCA executable> 
+template_dir: ./templates
+scratch_dir:  ./scratch
+output_dir:   ./outputs
+input:        ./step1.xyz       # xyz file, dir of xyz files, or csv of SMILES
 charge: 0
 multiplicity: 1
+max_cores: 64
+slurm_template: cpu.slurm.header
+orca_executable: orca
+
 steps:
   - step: 1
-    template: "step1.inp"
-    operation: "GOAT"
-    engine: "DFT"
-    sampling:
-      method: "integer"
-      parameters:
-        count: 10
+    name: screen                 # optional, drives the directory name (step1_screen/)
+    engine: mlff
+    operation: opt_sp
+    options:
+      model_name: medium
+      task_name: mace_off
+      device: cuda
+      bind: 127.0.0.1:8888
+    sample:
+      method: boltzmann
+      percent_cumulative: 99
+
   - step: 2
-    operation: "OPT+SP"
-    engine: "DFT"
-    charge: -1                  # <--- Step-specific override
-    multiplicity: 2            # <--- Step-specific override
-    sampling:
-      method: "energy_window"
-      parameters:
-        window: 0.5
+    name: refine
+    engine: orca
+    operation: opt_sp
+    template: dft_opt.inp        # optional: defaults to stepN.inp
+    sample:
+      method: energy_window
+      window_kcal: 3.0
+
   - step: 3
-    operation: "OPT+SP"
-    engine: "MLFF"
-    mlff:
-      model_name: "medium"  # For MACE: small,medium,large for FAIRCHEM "uma-s-1"
-      task_name: "mace_off" # For MACE: "mace_off" or "mace_mp", for FairChem: oc20, omat, omol, odac, omc
-      bind: '127.0.0.1:8888'    # ChemRefine uses a local server to avoid initializing the model multiple times, only adjust this if you know what you're doing.
-    sample_type:
-      method: "integer"
-      parameters:
-       num_structures: 15 
-      method: "energy_window"  
-      parameters:
-        energy: 1  
-        unit: kcal/mol  
-  - step: 3
-    operation: "SOLVATOR"
-    engine: "MLFF"
-    model_name: "uma-s-1"
-    task_name:  "omol"
-    sampling:
-      method: "integer"
-      parameters:
-        num_structures: 1
+    name: high_level
+    engine: orca
+    operation: opt_sp
+    charge: -1                   # per-step override
+    multiplicity: 2
+    sample:
+      method: integer
+      count: 5
+    nms: true                    # opt in to normal-mode sampling
 ```
 
+**Sample methods**: `boltzmann` (cumulative %), `energy_window`
+(kcal/mol window from the lowest), `integer` (N lowest by energy),
+`high_energy` (N highest, e.g. for PES sampling). Any of them accepts
+`by_parent: true` to apply the filter within each parent-ID group.
 
-The optional MLFF step uses a pretrained model from `mace` or `FairChem`. By default the
-``mace-off`` backend with the ``"medium"`` model is used, but you can select
-different backends and models via ``model_name`` and ``task_type``. With task_type you can select on what training data the model was trained on. 
-If a CUDA-capable GPU is detected, the MLFF optimisation runs on the GPU; otherwise it falls back to the CPU automatically.
-The optional MLFF step uses a pretrained model from `mace`. By default the
-``mace-off`` backend with the ``"medium"`` model is used, but you can select
-different backends and models via ``foundation_model`` and ``model_name``.
-If a CUDA-capable GPU is detected, the MLFF optimisation runs on the GPU; otherwise it falls back to the CPU automatically.
-To avoid downloading the model each time, set the environment variable `CHEMREFINE_MLFF_CHECKPOINT` to the path of a locally downloaded checkpoint **or** place the file as `chemrefine/models/<model>.model` within this repository.
+**Engines**: `orca`, `mlff`, `mlff-direct`, `pyscf`, `pyscf-direct`, plus
+the `fake` engine used by the test suite.
 
 
 ### **ORCA Template Files**

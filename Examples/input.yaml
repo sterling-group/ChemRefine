@@ -1,80 +1,50 @@
-# This is an example input file for a sequential ORCA workflow.
-# Replace <your_template_directory>, <your_scratch_directory>, and <your_output_directory>
-template_dir: <your_template_directory>
-scratch_dir: <your_scratch_directory>
-output_dir: <your_output_directory>
+# ChemRefine v4 example workflow
+# Replace the path placeholders with paths on your system.
+template_dir: ./templates
+scratch_dir:  ./scratch
+output_dir:   ./outputs
+orca_executable: orca
 
-orca_excutable: <path_to_your_orca_executable>
-# Optional: Override default initial structure (default is /template_dir/step1.xyz)
-initial_xyz: /path/to/your/custom_initial_structure.xyz
+# Initial seed: either an .xyz, a directory of .xyz files, or a CSV of SMILES.
+input: ./templates/step1.xyz
 
-# === Global configuration ===
 charge: 0
-multiplicity: 1 
-
-# === Step-by-step workflow ===
-
-orca_executable: <your_orca_executable_path>
-# Sequential ORCA Input Configuration File
-# Define each step with its specific parameters.
-#This workflow reflects using GOAT and refining methods to improve the accuracy
-charge: 0
-multiplicity: 1 
-
-# Optional: Override default initial structure (default is /template_dir/step1.xyz)
-initial_xyz: ./templates/step1.xyz
-
+multiplicity: 1
+max_cores: 64
+slurm_template: cpu.slurm.header
 
 steps:
-  # Step 1: Using GOAT
+  # Step 1 — cheap conformer generation with an MLFF surrogate.
   - step: 1
-    operation: "GOAT"    # Options are "GOAT","OPT+SP","PES","Docker","Solvator"
-    engine: "dft"        #Options are "DFT", "MLFF"
-    operation: "GOAT"           # Options: GOAT, DOCKER, PES, SOLVATOR, 
-    engine: "DFT"       # Options: DFT, MLFF
-    sample_type:
-      method: "integer"         # Options are "integer", "boltzmann", "energy_window", "high_energy"
-      parameters: 
-        num_structures: 0
+    name: screen
+    engine: mlff
+    operation: opt_sp
+    options:
+      model_name: medium
+      task_name: mace_off
+      device: cuda
+      bind: 127.0.0.1:8888
+    sample:
+      method: boltzmann
+      percent_cumulative: 99
 
-  # Step 2: MLFF with Boltzmann sampling
+  # Step 2 — refine survivors with DFT.
   - step: 2
-    operation: "OPT+SP"    # Options are "GOAT","OPT+SP","PES","Docker","Solvator"
-    engine: "MLFF"         # Options are "DFT", "MLFF"
-    mlff:
-      model_name: "medium"      # For MACE: small,medium,large for FAIRCHEM "uma-s-1"
-      task_name: "mace_off"     # For MACE: "mace_off" or "mace_mp", for FairChem:oc20, omat, omol, odac, omc
-      bind: '127.0.0.1:8888'    # ChemRefine uses a local server to avoid initializing the model multiple times, only adjust this if you know what you're doing.
-    sample_type:
-      method: "boltzmann"
-      parameters:
-        weight: 99.99
+    name: dft_refine
+    engine: orca
+    operation: opt_sp
+    template: dft_opt.inp
+    sample:
+      method: energy_window
+      window_kcal: 3.0
 
-  # Step 3: DFT refinement with overridden charge and multiplicity
+  # Step 3 — high-precision DFT on the survivors of step 2.
   - step: 3
-    operation: "OPT+SP"    # Options are "GOAT","OPT+SP","PES","Docker","Solvator"
-    engine: "DFT"          # Options are "DFT", "MLFF"
-    charge: -1                  # <--- Step-specific override
-    multiplicity: 2            # <--- Step-specific override
-    sample_type:
-      method: "energy_window"
-
-
-  # Step 4: Final high-precision DFT
-  - step: 4
-    operation: "OPT+SP"    # Options are "GOAT","OPT+SP","PES","Docker","Solvator
-    engine: "DFT"          # Options are "DFT", "MLFF"
-    sample_type:
-      method: "integer"
-      parameters: 
-        num_structures: 0
-
-
-  - step: 5
-    operation: "MLFF_TRAIN"    # Options are "GOAT","OPT+SP","PES","Docker","Solvator
-    trainer: 
-      model_name: "medium"      # For MACE: small,medium,large for FAIRCHEM "uma-s-1
-
-  
- 
-
+    name: high_level
+    engine: orca
+    operation: opt_sp
+    template: dft_high.inp
+    sample:
+      method: integer
+      count: 5
+    nms: true
