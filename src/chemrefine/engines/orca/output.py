@@ -1,12 +1,20 @@
 """Parsing for ORCA-produced output files.
 
-The only operation with a verified regex set is the standard DFT
-``opt_sp`` flavour — those patterns are tested against the real
-``tests/data/orca.out`` fixture. The remaining operations (``goat``,
-``pes``, ``docker``, ``solvator``) ship as placeholders until a real
-example is captured for each one. Each placeholder raises
-:class:`NotImplementedError` so callers fail loudly rather than silently
-returning empty data.
+Verified against real fixtures under ``tests/data/``:
+
+* ``opt_sp`` — final geometry + energy from the main ``.out``
+  (``orca.out`` fixture)
+* ``goat`` — multi-frame ensemble (``goat_finalensemble.xyz`` fixture)
+* ``docker`` — multi-frame docked structures
+  (``docker_allopt.xyz`` fixture)
+* ``solvator`` — solvent-build ensemble
+  (``solvator_solventbuild.xyz`` fixture)
+
+The remaining operations (``pes``, ``mlff_train``, and ExtOpt
+``.extinp.tmp``/``.engrad`` files) ship as placeholders until a real
+example is captured for each; each placeholder raises
+:class:`NotImplementedError` so callers fail loudly rather than
+silently returning empty data.
 """
 
 from __future__ import annotations
@@ -30,6 +38,9 @@ _COORD_BLOCK_RE = re.compile(
     r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n",
     re.DOTALL,
 )
+_GOAT_HEADER_RE = re.compile(r"^\s*(-?\d+\.\d+)")
+_DOCKER_HEADER_RE = re.compile(r"Eopt\s*=\s*(-?\d+\.\d+)\s*\(Eh\)", re.IGNORECASE)
+_SOLVATOR_HEADER_RE = re.compile(r"Energy\s+(-?\d+\.\d+)", re.IGNORECASE)
 _GRAD_BLOCK_RE = re.compile(
     r"CARTESIAN GRADIENT\s*\n-+\n((?:.*?\n)+?)-+\n",
     re.DOTALL,
@@ -129,20 +140,120 @@ def _parse_coord_block(block: str) -> tuple[tuple[str, ...], NDArray[np.float64]
 
 
 # ---------------------------------------------------------------------------
-# Placeholders — implement with a real fixture in hand
+# Multi-frame XYZ ensembles (GOAT / Docker / Solvator)
 # ---------------------------------------------------------------------------
 
 
-def parse_goat_ensemble(path: str | Path) -> list[ParsedStructure]:
-    """Parse a GOAT ``.finalensemble.xyz`` file into one ParsedStructure per frame.
+def _parse_xyz_ensemble(
+    path: str | Path,
+    header_re: re.Pattern[str],
+    *,
+    fmt_name: str,
+) -> list[ParsedStructure]:
+    """Walk a multi-frame XYZ file, extracting one structure per frame.
 
-    TODO: implement once a real GOAT ``.finalensemble.xyz`` sample is
-    available. The v3 parser in :file:`src/chemrefine/orca_interface.py`
-    on ``main`` (``parse_goat_finalensemble``) is the reference.
+    Each frame is shaped as::
+
+        <n_atoms>
+        <header containing an energy float>
+        <symbol> <x> <y> <z>     # n_atoms rows
+
+    ``header_re`` must capture the per-frame Hartree energy in group 1.
+    Frames whose header doesn't match are skipped with a warning rather
+    than aborting — some ORCA writers occasionally emit a stray blank
+    frame at the end of an ensemble.
     """
-    raise NotImplementedError(
-        "GOAT output parser not yet ported — see TODO in engines/orca/output.py"
-    )
+    lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+
+    structures: list[ParsedStructure] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line.isdigit():
+            i += 1
+            continue
+        n_atoms = int(line)
+        if i + 1 + n_atoms >= len(lines):
+            break
+        header = lines[i + 1]
+        m = header_re.search(header)
+        if m is None:
+            i += 2 + n_atoms
+            continue
+        try:
+            energy = float(m.group(1))
+        except (TypeError, ValueError):
+            i += 2 + n_atoms
+            continue
+
+        symbols: list[str] = []
+        positions: list[list[float]] = []
+        ok = True
+        for offset in range(n_atoms):
+            parts = lines[i + 2 + offset].split()
+            if len(parts) < 4:
+                ok = False
+                break
+            symbols.append(parts[0])
+            positions.append([float(parts[1]), float(parts[2]), float(parts[3])])
+        if not ok:
+            i += 2 + n_atoms
+            continue
+
+        structures.append(
+            ParsedStructure(
+                symbols=tuple(symbols),
+                positions=np.array(positions, dtype=np.float64),
+                energy_hartree=energy,
+                forces_eV_per_A=None,
+            )
+        )
+        i += 2 + n_atoms
+
+    if not structures:
+        raise OutputParseError(f"no {fmt_name} frames found in {path}")
+    return structures
+
+
+def parse_goat_ensemble(path: str | Path) -> list[ParsedStructure]:
+    """Parse a GOAT ``.finalensemble.xyz`` file.
+
+    Header layout: ``<energy_hartree> converged=<bool>``. Returns one
+    :class:`ParsedStructure` per frame. Forces are not available in
+    this format (set to ``None``).
+    """
+    return _parse_xyz_ensemble(path, _GOAT_HEADER_RE, fmt_name="GOAT")
+
+
+def parse_docker(path: str | Path) -> list[ParsedStructure]:
+    """Parse an ORCA Docker ``.docker.struc1.allopt.xyz`` ensemble.
+
+    Header layout: ``<idx> Eopt=<energy_hartree> (Eh) Einter=<inter> (kcal/mol)``.
+    Returns one :class:`ParsedStructure` per frame, **dropping the
+    final frame** to match v3 behaviour — the upstream tool's last
+    structure is flagged as non-sensible there.
+    """
+    structures = _parse_xyz_ensemble(path, _DOCKER_HEADER_RE, fmt_name="Docker")
+    if len(structures) <= 1:
+        raise OutputParseError(
+            f"Docker output {path} has {len(structures)} frame(s); "
+            "expected at least 2 (the last is dropped as non-sensible)"
+        )
+    return structures[:-1]
+
+
+def parse_solvator(path: str | Path) -> list[ParsedStructure]:
+    """Parse an ORCA Solvator ``.solventbuild.xyz`` ensemble.
+
+    Header layout: ``Energy <energy_hartree>``. Returns one
+    :class:`ParsedStructure` per frame.
+    """
+    return _parse_xyz_ensemble(path, _SOLVATOR_HEADER_RE, fmt_name="Solvator")
+
+
+# ---------------------------------------------------------------------------
+# Placeholders — implement with a real fixture in hand
+# ---------------------------------------------------------------------------
 
 
 def parse_pes(path: str | Path) -> list[ParsedStructure]:
@@ -155,30 +266,6 @@ def parse_pes(path: str | Path) -> list[ParsedStructure]:
     """
     raise NotImplementedError(
         "PES output parser not yet ported — see TODO in engines/orca/output.py"
-    )
-
-
-def parse_docker(path: str | Path) -> list[ParsedStructure]:
-    """Parse an ORCA Docker ``.docker.struc1.all.optimized.xyz`` file.
-
-    TODO: implement once a real Docker output is available. The v3
-    parser is :func:`parse_docker_xyz` in ``orca_interface.py``. Note
-    that the v3 code drops the last structure (deemed non-sensible by
-    upstream) — preserve that behaviour.
-    """
-    raise NotImplementedError(
-        "Docker output parser not yet ported — see TODO in engines/orca/output.py"
-    )
-
-
-def parse_solvator(path: str | Path) -> list[ParsedStructure]:
-    """Parse an ORCA Solvator ``.solventbuild.xyz`` file.
-
-    TODO: implement once a real Solvator output is available. The v3
-    parser is :func:`parse_solvator_ensemble` in ``orca_interface.py``.
-    """
-    raise NotImplementedError(
-        "Solvator output parser not yet ported — see TODO in engines/orca/output.py"
     )
 
 

@@ -18,7 +18,11 @@ from chemrefine.engines.orca.output import (
 )
 from chemrefine.errors import OutputParseError
 
-FIXTURE = Path(__file__).parent / "data" / "orca.out"
+DATA = Path(__file__).parent / "data"
+FIXTURE = DATA / "orca.out"
+GOAT_FIXTURE = DATA / "goat_finalensemble.xyz"
+DOCKER_FIXTURE = DATA / "docker_allopt.xyz"
+SOLVATOR_FIXTURE = DATA / "solvator_solventbuild.xyz"
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +150,108 @@ def test_parse_forces_handles_synthetic_block():
 
 
 # ---------------------------------------------------------------------------
-# Dispatcher + placeholders
+# GOAT ensemble (verified against the real fixture)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_goat_ensemble_returns_one_per_frame():
+    parsed = parse_goat_ensemble(GOAT_FIXTURE)
+    # Fixture contains 47 ``converged=`` lines, so we expect 47 frames.
+    assert len(parsed) == 47
+
+
+def test_parse_goat_ensemble_first_energy_matches_fixture():
+    parsed = parse_goat_ensemble(GOAT_FIXTURE)
+    # The fixture's first frame header is ``-199.4369175187 converged=true``.
+    assert abs(parsed[0].energy_hartree - (-199.4369175187)) < 1e-9
+
+
+def test_parse_goat_ensemble_atom_count_consistent():
+    parsed = parse_goat_ensemble(GOAT_FIXTURE)
+    expected = parsed[0].positions.shape[0]
+    assert expected == 137  # from the fixture header
+    assert all(p.positions.shape == (expected, 3) for p in parsed)
+
+
+def test_parse_goat_ensemble_symbols_include_pd_and_p():
+    parsed = parse_goat_ensemble(GOAT_FIXTURE)
+    # Pd/P-containing complex; both atoms appear in every frame's symbol set.
+    assert "Pd" in parsed[0].symbols
+    assert "P" in parsed[0].symbols
+
+
+def test_parse_goat_ensemble_forces_are_none():
+    """GOAT ensemble files don't carry gradient info."""
+    parsed = parse_goat_ensemble(GOAT_FIXTURE)
+    assert all(p.forces_eV_per_A is None for p in parsed)
+
+
+def test_parse_goat_ensemble_missing_raises(tmp_path: Path):
+    empty = tmp_path / "empty.xyz"
+    empty.write_text("", encoding="utf-8")
+    with pytest.raises(OutputParseError):
+        parse_goat_ensemble(empty)
+
+
+# ---------------------------------------------------------------------------
+# Docker ensemble (verified against the real fixture)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_docker_drops_last_frame():
+    """v3 behaviour: the trailing structure is dropped as non-sensible."""
+    parsed = parse_docker(DOCKER_FIXTURE)
+    # The fixture has 6 ``Eopt=`` headers; we keep all but the last → 5.
+    assert len(parsed) == 5
+
+
+def test_parse_docker_first_energy_matches_fixture():
+    parsed = parse_docker(DOCKER_FIXTURE)
+    # First header in the fixture: ``3 Eopt=-137.1176174850 (Eh) Einter=...``
+    assert abs(parsed[0].energy_hartree - (-137.1176174850)) < 1e-9
+
+
+def test_parse_docker_atom_count_is_46():
+    parsed = parse_docker(DOCKER_FIXTURE)
+    for p in parsed:
+        assert p.positions.shape == (46, 3)
+
+
+def test_parse_docker_too_few_frames_raises(tmp_path: Path):
+    """A single-frame docker output is unusable (last is always dropped)."""
+    f = tmp_path / "tiny.xyz"
+    f.write_text("1\n0 Eopt=-1.0 (Eh)\nH 0.0 0.0 0.0\n", encoding="utf-8")
+    with pytest.raises(OutputParseError):
+        parse_docker(f)
+
+
+# ---------------------------------------------------------------------------
+# Solvator ensemble (verified against the real fixture)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_solvator_returns_all_frames():
+    parsed = parse_solvator(SOLVATOR_FIXTURE)
+    # The fixture has 30 ``Energy `` headers.
+    assert len(parsed) == 30
+
+
+def test_parse_solvator_first_energy_matches_fixture():
+    parsed = parse_solvator(SOLVATOR_FIXTURE)
+    # First header in the fixture: ``Energy -141.854985``.
+    assert abs(parsed[0].energy_hartree - (-141.854985)) < 1e-6
+
+
+def test_parse_solvator_atom_count_consistent():
+    parsed = parse_solvator(SOLVATOR_FIXTURE)
+    # Solvent box grows by frame so atom counts vary; just confirm each is sane.
+    for p in parsed:
+        assert p.positions.shape[0] >= 49
+        assert p.positions.shape[1] == 3
+
+
+# ---------------------------------------------------------------------------
+# Dispatcher + remaining placeholder
 # ---------------------------------------------------------------------------
 
 
@@ -160,16 +265,27 @@ def test_parse_output_accepts_opt_plus_sp_alias():
     assert len(parsed) == 1
 
 
+def test_parse_output_dispatches_goat():
+    parsed = parse_output(GOAT_FIXTURE, "goat")
+    assert len(parsed) == 47
+
+
+def test_parse_output_dispatches_docker():
+    parsed = parse_output(DOCKER_FIXTURE, "docker")
+    assert len(parsed) == 5
+
+
+def test_parse_output_dispatches_solvator():
+    parsed = parse_output(SOLVATOR_FIXTURE, "solvator")
+    assert len(parsed) == 30
+
+
 def test_parse_output_unknown_operation_raises():
     with pytest.raises(OutputParseError):
         parse_output(FIXTURE, "weather_forecast")
 
 
-@pytest.mark.parametrize(
-    "func",
-    [parse_goat_ensemble, parse_pes, parse_docker, parse_solvator],
-)
-def test_placeholder_parsers_raise_with_todo(tmp_path: Path, func):
-    """Placeholders raise NotImplementedError until a real fixture exists."""
+def test_pes_parser_still_placeholder(tmp_path: Path):
+    """PES parser is the only XYZ-output placeholder still waiting on a fixture."""
     with pytest.raises(NotImplementedError):
-        func(tmp_path / "missing.out")
+        parse_pes(tmp_path / "missing.out")

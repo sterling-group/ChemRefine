@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from ase import Atoms
@@ -135,24 +136,153 @@ def test_pyscf_direct_prepare_raises_with_todo():
         engine.prepare(ctx=None)  # type: ignore[arg-type]
 
 
-def test_pyscf_server_main_placeholder_raises():
+def test_pyscf_server_main_still_placeholder():
+    """Only the model-loading + ``waitress.serve`` glue stays a TODO."""
     from chemrefine.engines.pyscf.server import main as server_main
 
     with pytest.raises(NotImplementedError):
         server_main()
 
 
-def test_pyscf_client_submit_placeholder_raises():
-    from chemrefine.engines.pyscf.client import submit_calculation
+def test_pyscf_client_main_still_placeholder():
+    """The ExtOpt wrapper that reads ``.extinp.tmp`` is the remaining TODO."""
+    from chemrefine.engines.pyscf.client import main as client_main
 
     with pytest.raises(NotImplementedError):
-        submit_calculation(
-            server_url="x",
-            atom_types=[],
-            coordinates=[],
+        client_main()
+
+
+# ---------------------------------------------------------------------------
+# Client CLI + HTTP RPC — verified
+# ---------------------------------------------------------------------------
+
+
+def test_pyscf_client_parse_args_defaults():
+    from chemrefine.engines.pyscf.client import parse_args
+
+    args = parse_args(["job.extinp.tmp"])
+    assert args.bind == "127.0.0.1:8889"
+    assert args.method == "dft"
+    assert args.xc == "pbe"
+    assert args.basis == "def2-svp"
+    assert args.df is False
+    assert args.gpu is False
+    assert args.inputfile == "job.extinp.tmp"
+
+
+def test_pyscf_client_settings_from_args_round_trip():
+    from chemrefine.engines.pyscf.client import parse_args, settings_from_args
+
+    args = parse_args(
+        ["--method", "hf", "--basis", "cc-pvdz", "--xc", "b3lyp", "--df", "--gpu", "f"]
+    )
+    settings = settings_from_args(args)
+    assert settings == {
+        "method": "hf",
+        "xc": "b3lyp",
+        "basis": "cc-pvdz",
+        "df": True,
+        "gpu": True,
+    }
+
+
+def test_pyscf_client_submit_calculation_round_trip():
+    from io import BytesIO
+
+    from chemrefine.engines.pyscf import client
+
+    expected = b'{"energy": -2.5, "gradient": [[0.1, 0.2, 0.3]]}'
+    with patch.object(client, "urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value = BytesIO(expected)
+        energy, gradient = client.submit_calculation(
+            server_url="127.0.0.1:8889",
+            atom_types=["H"],
+            coordinates=[[0.0, 0.0, 0.0]],
             charge=0,
             mult=1,
-            dograd=False,
+            dograd=True,
             nthreads=1,
-            settings={},
+            settings={"method": "dft", "xc": "pbe", "basis": "def2-svp", "df": False, "gpu": False},
         )
+    assert energy == -2.5
+    assert gradient == [[0.1, 0.2, 0.3]]
+
+
+def test_pyscf_client_submit_calculation_url_error_becomes_jobfailure():
+    from urllib.error import URLError
+
+    from chemrefine.engines.pyscf import client
+    from chemrefine.errors import JobFailureError
+
+    with (
+        patch.object(client, "urlopen", side_effect=URLError("connection refused")),
+        pytest.raises(JobFailureError, match="unreachable"),
+    ):
+        client.submit_calculation(
+                server_url="x",
+                atom_types=["H"],
+                coordinates=[[0.0, 0.0, 0.0]],
+                charge=0,
+                mult=1,
+                dograd=False,
+                nthreads=1,
+                settings={},
+            )
+
+
+# ---------------------------------------------------------------------------
+# Server CLI + Flask app factory — verified
+# ---------------------------------------------------------------------------
+
+
+def test_pyscf_server_parse_args_defaults():
+    from chemrefine.engines.pyscf.server import parse_args
+
+    args = parse_args([])
+    assert args.bind == "127.0.0.1:8889"
+    assert args.method == "dft"
+    assert args.xc == "pbe"
+    assert args.basis == "def2-svp"
+    assert args.df is False
+    assert args.gpu is False
+
+
+def test_pyscf_server_defaults_from_args_round_trip():
+    from chemrefine.engines.pyscf.server import defaults_from_args, parse_args
+
+    args = parse_args(["--default-method", "hf", "--default-basis", "cc-pvdz", "--default-gpu"])
+    defaults = defaults_from_args(args)
+    assert defaults["method"] == "hf"
+    assert defaults["basis"] == "cc-pvdz"
+    assert defaults["gpu"] is True
+
+
+def test_pyscf_server_create_app_registers_calculate_route():
+    from chemrefine.engines.pyscf.server import create_app
+
+    app = create_app({"method": "dft", "xc": "pbe", "basis": "def2-svp", "df": False, "gpu": False})
+    rules = {r.rule for r in app.url_map.iter_rules()}
+    assert "/calculate" in rules
+
+
+def test_pyscf_server_calculate_route_surfaces_run_calc_failure():
+    """Until ``run_calc`` is ported, the route should return a 501 with a TODO-pointing error."""
+    from chemrefine.engines.pyscf import server
+
+    app = server.create_app(
+        {"method": "dft", "xc": "pbe", "basis": "def2-svp", "df": False, "gpu": False}
+    )
+    client_ = app.test_client()
+    resp = client_.post(
+        "/calculate",
+        json={
+            "atom_types": ["H"],
+            "coordinates": [[0.0, 0.0, 0.0]],
+            "charge": 0,
+            "mult": 1,
+            "nthreads": 1,
+            "settings": {},
+        },
+    )
+    assert resp.status_code == 501
+    assert "not yet ported" in resp.get_json()["error"]
