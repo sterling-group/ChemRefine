@@ -9,4 +9,7 @@ New engines join the registry by importing their package here (the
 side-effect ``register`` decorator does the actual binding).
 """
 
-from chemrefine.engines import _fake  # noqa: F401 - side-effect: registers "fake"
+from chemrefine.engines import (
+    _fake,  # noqa: F401 - side-effect: registers "fake"
+    orca,  # noqa: F401 - side-effect: registers "orca"
+)
