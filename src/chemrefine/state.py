@@ -71,6 +71,9 @@ class StepContext:
     prev_state: PipelineState
     charge: int
     multiplicity: int
+    max_cores: int
+    slurm_template: str
+    orca_executable: str
 
 
 @dataclass(frozen=True)
