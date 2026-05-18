@@ -13,4 +13,5 @@ from chemrefine.engines import (
     _fake,  # noqa: F401 - side-effect: registers "fake"
     mlff,  # noqa: F401 - side-effect: registers "mlff" and "mlff-direct"
     orca,  # noqa: F401 - side-effect: registers "orca"
+    pyscf,  # noqa: F401 - side-effect: registers "pyscf" and "pyscf-direct"
 )
