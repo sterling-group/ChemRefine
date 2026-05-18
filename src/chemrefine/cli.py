@@ -50,6 +50,7 @@ app = typer.Typer(
 
 
 def _version_callback(value: bool) -> None:
+    """Eager Typer callback for ``--version`` — print and exit."""
     if value:
         typer.echo(f"ChemRefine {__version__}")
         raise typer.Exit()

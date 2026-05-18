@@ -69,11 +69,13 @@ def bootstrap(config: Config) -> PipelineState:
 
 
 def _seed_from_xyz(path: Path) -> PipelineState:
+    """Seed the pipeline from a single XYZ file (one structure, ID ``"0"``)."""
     atoms = io.read_xyz(path)
     return PipelineState(structures=(Structure(id="0", atoms=atoms),))
 
 
 def _seed_from_directory(directory: Path) -> PipelineState:
+    """Seed the pipeline from every ``*.xyz`` under ``directory``, sorted naturally."""
     xyz_files = io.gather_output_files(directory, "*.xyz")
     if not xyz_files:
         raise ConfigError(f"no .xyz files found under {directory}")
@@ -84,6 +86,7 @@ def _seed_from_directory(directory: Path) -> PipelineState:
 
 
 def _seed_from_smiles_csv(csv_path: Path, out_dir: Path) -> PipelineState:
+    """Seed the pipeline by converting each SMILES row in a CSV to a 3D XYZ structure."""
     xyz_files = io.smiles_to_xyz(csv_path, out_dir)
     if not xyz_files:
         raise ConfigError(f"no SMILES in {csv_path} converted to 3D structures")
