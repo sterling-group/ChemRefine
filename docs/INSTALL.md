@@ -1,97 +1,72 @@
-# Installation and Setup Guide
+# Installation
 
+## Pip (recommended)
 
 ```bash
-
-#Pip install[Recommended]
-
 pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git"
 
-# Installing from Source
-git clone  https://github.com/sterling-group/ChemRefine.git
-cd ChemRefine
-
-# Install in development mode
-pip install -e .
+# With the MLFF backends (torch, mace-torch, fairchem, flask):
+pip install "chemrefine[mlff] @ git+https://github.com/sterling-group/ChemRefine.git"
 ```
 
-### **Requirements**
-Everything is managed through the pip installation. 
-- **Python 3.6+ or < 3.13** with the following dependencies:
-  - `numpy` - Numerical computations
-  - `pyyaml` - YAML configuration parsing  
-  - `pandas` - Data analysis and CSV handling
-  - `ase` - Geometry handling and optimisation
-  - `mace-torch` - Machine learning force fields
-  - `torch == 2.5.1` - Machine Learning (if you use later version of Pytorch it might not work with UMA models)
+## From source
 
-- **ORCA 6.0+** - Quantum chemistry calculations
-- **SLURM** - Job scheduling system
-- **MLIP Engines** - MACE, FAIRChem, Sevenn, Orb
----
+```bash
+git clone https://github.com/sterling-group/ChemRefine.git
+cd ChemRefine
+pip install -e .[dev,test,docs,mlff]
+pre-commit install   # optional: run ruff + interrogate on every commit
+```
 
+## Requirements
 
-## Dependencies
-- **Python 3.6+** with the following dependencies:
-  - `numpy` - Numerical computations
-  - `pyyaml` - YAML configuration parsing  
-  - `pandas` - Data analysis and CSV handling
-  - `ase` - Geometry handling and optimisation
-  - `mace-torch` - Machine learning force fields
-  - `torch == 2.5.1` - Machine Learning (if you use later version of Pytorch it might not work with UMA models)
-### External Requirements
+- **Python 3.11–3.13**
+- **ORCA 6.0+** — quantum-chemistry calculations
+- **SLURM** — HPC job scheduler (optional for local runs; the same
+  `.slurm` script can be executed with `bash` directly)
 
-- **ORCA 6.0+** - Quantum chemistry calculations
-- **SLURM** - Job scheduling system for HPC
-- **MACE-torch** - MLIP platform for MACE architecture
-- **FAIRChem** - MLIP platform for UMA and esen models
-
+The base install pulls `numpy`, `pyyaml`, `pandas`, `ase`, `rdkit`,
+`scikit-learn`, `pydantic >= 2`, and `typer >= 0.12`. The `[mlff]`
+extra adds `torch >= 2.8, < 2.9`, `mace-torch >= 0.3.16`,
+`e3nn == 0.4.4`, `fairchem-core` (Sterling Group's patched fork),
+plus `flask`, `waitress`, and `requests` for the gradient server.
 
 ## Verification
 
-After installation, verify everything works:
-
 ```bash
-# Test command-line interface
-chemrefine --help
-
-#Test version
-
 chemrefine --version
-
-# Test with example files
-cd Examples/
-chemrefine input.yaml --maxcores 32
+chemrefine --help
+chemrefine run Examples/input.yaml --dry-run    # validates the YAML, no jobs run
 ```
-### Instantiate FAIRChem models. 
-Make sure you have a Hugging Face account, have already applied for model access to the
-[UMA model repository](https://huggingface.co/facebook/UMA), and for [OMol25 model repository](https://huggingface.co/facebook/OMol25) and have logged in to Hugging Face using an access token. Make sure to do these before runnining any of the models as the permission process may take ~10+ minutes to be processed. You can create a token by going into your profile avatar in the the top right corner and clicking on access token or by clicking [here](https://huggingface.co/settings/tokens).
-You can use the following to save an auth token,
+
+## FAIRChem model access
+
+The UMA / OMol models on Hugging Face require manual access approval
+(allow ~10 minutes). Apply at the
+[UMA repository](https://huggingface.co/facebook/UMA) and the
+[OMol25 repository](https://huggingface.co/facebook/OMol25), then
+authenticate locally:
+
 ```bash
 huggingface-cli login
 ```
 
-## License Information
+## Troubleshooting
 
-This software is licensed under the GNU AFFERO GENERAL PUBLIC LICENSE.
-By installing and using this software, you agree to the terms of the
-AGPL v3 license. See the
-[LICENSE](https://github.com/sterling-group/ChemRefine/blob/main/LICENSE)
-file in the repository for complete terms.
+| Symptom | Likely cause |
+|---------|--------------|
+| `chemrefine: command not found` | Activate the env where you installed ChemRefine (`pip show chemrefine` to confirm). |
+| `ORCA not accessible` | Set `orca_executable` in the YAML to an absolute path, or put ORCA on `$PATH`. |
+| `sbatch: command not found` | Either SLURM isn't installed locally — run the generated `.slurm` script with `bash` instead — or activate the cluster's SLURM module. |
+| `Server crashed during startup` (MLFF) | Check the per-job `server_${SLURM_JOB_ID}.log`; common causes are out-of-memory at model load or a missing HuggingFace token for FAIRChem. |
+| `PackageNotFoundError: ChemRefine` at runtime | `pip install -e .` again — the editable install was removed. |
 
+## License
 
+ChemRefine is released under [AGPL v3](https://github.com/sterling-group/ChemRefine/blob/main/LICENSE).
 
-### Common Issues
+## Getting help
 
-1. **QORCA not found**: Ensure submodules are initialized
-2. **ORCA not accessible**: Check ORCA installation and PATH
-3. **SLURM errors**: Verify SLURM configuration for your cluster
-4. **Permission errors**: Check file permissions in working directory
-5. **Server Connection Refused**: For MLIPS a local server is created to not have a constant overhead of transferring model to GPU. Sometimes when the MLIP fails with this error the true error is not the server not connecting but the one found in the slurm_step*.out generated. Make sure if using FairChem models you have activated HuggingFace. 
-
-### Getting Help
-
-- See the project [README](https://github.com/sterling-group/ChemRefine#readme) for usage examples
-- Check [Issues](https://github.com/sterling-group/ChemRefine/issues) if a similar issue has been encountered. 
-- Review the [Examples/](https://github.com/sterling-group/ChemRefine/tree/main/Examples) directory for sample inputs
-- Open an issue on GitHub for bugs or feature requests
+- [Project issues](https://github.com/sterling-group/ChemRefine/issues) — search before opening a new one
+- [Example tutorials](tutorials/index.md)
+- [Project README](https://github.com/sterling-group/ChemRefine#readme) for the elevator pitch

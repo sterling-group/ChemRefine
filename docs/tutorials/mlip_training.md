@@ -1,5 +1,9 @@
 # MLIP Training Tutorial
 
+!!! note "Schema note"
+    The YAML excerpts on this page are abbreviated for illustration and use idioms from the v3 schema. For the authoritative v4 schema reference (sample:, input:, options: blocks, etc.) see the [main schema page](../index.md) and the up-to-date example in [Examples/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/input.yaml).
+
+
 This tutorial demonstrates how to use **ChemRefine** to train a **Machine Learning Interatomic Potential (MLIP)** using DFT data generated during the workflow.
 
 ## Overview

@@ -24,7 +24,9 @@ pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git@m
 pip install "chemrefine[mlff] @ git+https://github.com/sterling-group/ChemRefine.git@main"
 ```
 
-Requires Python 3.11–3.13, ORCA 6+, and SLURM. See the
+Requires Python 3.11–3.13 and ORCA 6+. SLURM is the usual scheduler
+but is optional — the generated `.slurm` script runs unchanged under
+`bash` for local execution. See the
 [install guide](https://sterling-group.github.io/ChemRefine/INSTALL/) for
 GPU / FairChem / MACE setup notes.
 
