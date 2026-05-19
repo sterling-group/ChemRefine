@@ -112,6 +112,9 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+# Add `tests/` to sys.path so test files can `from synthetic import …`
+# without making the tests directory a package.
+pythonpath = ["tests"]
 markers = [
     "slow: tests that take longer than 1 second",
     "gpu: tests that require CUDA",

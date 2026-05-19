@@ -47,11 +47,26 @@ def test_parse_dft_returns_single_structure():
 
 
 def test_parse_dft_final_energy_matches_fixture():
-    """The last FINAL SINGLE POINT ENERGY in the fixture is -6044.555... Hartree."""
+    """The last FINAL SINGLE POINT ENERGY in the fixture is -6044.555726221861 Hartree.
+
+    The fixture deliberately contains TWO FINAL SP ENERGY lines with different
+    values; this test locks in the 'last instance wins' contract by asserting
+    the *exact* last value (not the first).
+    """
     parsed = parse_dft(FIXTURE)
-    assert parsed[0].energy_hartree < 0
-    # Lock in the magnitude order; small drift between ORCA versions is OK.
-    assert abs(parsed[0].energy_hartree + 6044.555) < 1e-2
+    assert abs(parsed[0].energy_hartree - (-6044.555726221861)) < 1e-9
+
+
+def test_parse_dft_picks_last_coord_block_not_first():
+    """The fixture's two coord blocks have different positions for atom 0;
+    the parser must return the LAST one.
+    """
+    parsed = parse_dft(FIXTURE)
+    # The cycle-1 first-atom x-coord differs from the stationary first-atom x-coord.
+    # Cycle-1 block has C at x ≈ -0.1539; the stationary block at x ≈ -0.1556.
+    first_atom_x = parsed[0].positions[0][0]
+    assert abs(first_atom_x - (-0.155603)) < 1e-4
+    assert abs(first_atom_x - (-0.153892)) > 1e-4
 
 
 def test_parse_dft_coordinates_have_expected_atom_count():
@@ -82,20 +97,10 @@ def test_parse_dft_forces_optional_for_opt_outputs():
 # ---------------------------------------------------------------------------
 
 
-def _synth_dft_output(energies: list[float], coords: list[tuple[str, float, float, float]]) -> str:
-    """Build a minimal ORCA-shaped output snippet for unit testing."""
-    coord_lines = "\n".join(
-        f"  {sym:2s}  {x:.6f}  {y:.6f}  {z:.6f}" for sym, x, y, z in coords
-    )
-    head = "CARTESIAN COORDINATES (ANGSTROEM)\n---------------------------------\n"
-    tail = "\n---------------------------------\n"
-    body = head + coord_lines + tail
-    body += "\n".join(f"FINAL SINGLE POINT ENERGY     {e}" for e in energies) + "\n"
-    return body
-
-
 def test_parse_dft_picks_last_energy_when_multiple_appear(tmp_path: Path):
-    text = _synth_dft_output(
+    from synthetic import synthetic_dft_output
+
+    text = synthetic_dft_output(
         [-1.0, -2.0, -3.0],
         [("H", 0.0, 0.0, 0.0), ("H", 0.74, 0.0, 0.0)],
     )
@@ -156,8 +161,8 @@ def test_parse_forces_handles_synthetic_block():
 
 def test_parse_goat_ensemble_returns_one_per_frame():
     parsed = parse_goat_ensemble(GOAT_FIXTURE)
-    # Fixture contains 47 ``converged=`` lines, so we expect 47 frames.
-    assert len(parsed) == 47
+    # Trimmed fixture: 3 frames.
+    assert len(parsed) == 3
 
 
 def test_parse_goat_ensemble_first_energy_matches_fixture():
@@ -201,8 +206,8 @@ def test_parse_goat_ensemble_missing_raises(tmp_path: Path):
 def test_parse_docker_drops_last_frame():
     """v3 behaviour: the trailing structure is dropped as non-sensible."""
     parsed = parse_docker(DOCKER_FIXTURE)
-    # The fixture has 6 ``Eopt=`` headers; we keep all but the last → 5.
-    assert len(parsed) == 5
+    # Trimmed fixture: 4 frames, parser drops the last → 3.
+    assert len(parsed) == 3
 
 
 def test_parse_docker_first_energy_matches_fixture():
@@ -232,8 +237,8 @@ def test_parse_docker_too_few_frames_raises(tmp_path: Path):
 
 def test_parse_solvator_returns_all_frames():
     parsed = parse_solvator(SOLVATOR_FIXTURE)
-    # The fixture has 30 ``Energy `` headers.
-    assert len(parsed) == 30
+    # Trimmed fixture: 3 frames.
+    assert len(parsed) == 3
 
 
 def test_parse_solvator_first_energy_matches_fixture():
@@ -267,17 +272,17 @@ def test_parse_output_accepts_opt_plus_sp_alias():
 
 def test_parse_output_dispatches_goat():
     parsed = parse_output(GOAT_FIXTURE, "goat")
-    assert len(parsed) == 47
+    assert len(parsed) == 3
 
 
 def test_parse_output_dispatches_docker():
     parsed = parse_output(DOCKER_FIXTURE, "docker")
-    assert len(parsed) == 5
+    assert len(parsed) == 3   # 4 frames - 1 (last dropped)
 
 
 def test_parse_output_dispatches_solvator():
     parsed = parse_output(SOLVATOR_FIXTURE, "solvator")
-    assert len(parsed) == 30
+    assert len(parsed) == 3
 
 
 def test_parse_output_dispatches_pes_to_placeholder(tmp_path: Path):

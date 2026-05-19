@@ -4,36 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from synthetic import FREQUENCY_BLOCK as _SYNTH_BLOCK
+
 from chemrefine.engines.orca.frequencies import (
     parse_frequencies,
     parse_imaginary_frequencies,
 )
-
-# The frequency block ORCA prints — synthetic but byte-identical in shape to
-# the real ``VIBRATIONAL FREQUENCIES`` section in
-# ``Conformational-Sampling/outputs/step4/step4_structure_0.out``.
-_SYNTH_BLOCK = """
-some preamble
------------------------
-VIBRATIONAL FREQUENCIES
------------------------
-
-Scaling factor for frequencies =  1.000000000  (already applied!)
-
-     0:       0.00 cm**-1
-     1:       0.00 cm**-1
-     2:       0.00 cm**-1
-     3:       0.00 cm**-1
-     4:       0.00 cm**-1
-     5:       0.00 cm**-1
-     6:      15.11 cm**-1
-     7:      17.30 cm**-1
-    37:   -118.27 cm**-1  ***imaginary mode***
-    38:    -42.10 cm**-1  ***imaginary mode***
-    39:     45.50 cm**-1
-
-trailing text
-"""
 
 
 def _write(tmp_path: Path, text: str) -> Path:
