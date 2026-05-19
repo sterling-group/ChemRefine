@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from chemrefine.errors import CacheError
 from chemrefine.manifest import load, manifest_path, save
 from chemrefine.state import StepInputs
 
@@ -45,3 +48,20 @@ def test_save_records_operation_and_engine(tmp_path: Path):
     data = json.loads(path.read_text())
     assert data["operation"] == "goat"
     assert data["engine"] == "orca"
+
+
+def test_load_corrupt_json_raises_cache_error(tmp_path: Path):
+    path = manifest_path(tmp_path / "step1")
+    path.parent.mkdir(parents=True)
+    path.write_text("not valid json {", encoding="utf-8")
+    with pytest.raises(CacheError):
+        load(tmp_path / "step1")
+
+
+def test_load_missing_files_key_raises_cache_error(tmp_path: Path):
+    """A manifest written by an older format / different tool must surface as CacheError, not bare KeyError."""
+    path = manifest_path(tmp_path / "step1")
+    path.parent.mkdir(parents=True)
+    path.write_text('{"operation": "opt_sp", "engine": "orca"}', encoding="utf-8")
+    with pytest.raises(CacheError):
+        load(tmp_path / "step1")

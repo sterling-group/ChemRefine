@@ -135,11 +135,10 @@ def resolve_persistent_ids(
     if step_number <= 1 or not parent_ids:
         return [str(i) for i in range(child_count)]
 
-    parents = list(parent_ids)
-    if child_count == len(parents):
-        return parents
+    if child_count == len(parent_ids):
+        return list(parent_ids)  # defensive copy on return
 
-    p = len(parents)
+    p = len(parent_ids)
     if p == 1:
         fanouts: list[int] = [child_count]
     elif child_count % p == 0:
@@ -149,7 +148,7 @@ def resolve_persistent_ids(
     else:
         extra = child_count - (p - 1)
         fanouts = [extra] + [1] * (p - 1)
-    return allocate_child_ids(parents, fanouts)
+    return allocate_child_ids(parent_ids, fanouts)
 
 
 def parent_of(structure_id: str) -> str:

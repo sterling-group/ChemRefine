@@ -184,3 +184,13 @@ def test_unknown_sample_type_raises():
     r = _results(("a", -1.0))
     with pytest.raises(TypeError):
         apply(r, BogusSample())  # type: ignore[arg-type]
+
+
+def test_all_sample_variants_have_a_dispatcher():
+    """Catches the "added a new SampleConfig variant but forgot to register it" bug."""
+    from chemrefine.filtering import _DISPATCHERS
+
+    assert IntegerSample in _DISPATCHERS
+    assert EnergyWindowSample in _DISPATCHERS
+    assert BoltzmannSample in _DISPATCHERS
+    assert HighEnergySample in _DISPATCHERS

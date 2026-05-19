@@ -23,7 +23,9 @@ method independently within each parent-ID group instead of globally.
 from __future__ import annotations
 
 import logging
+import operator
 from collections import defaultdict
+from collections.abc import Callable
 
 import numpy as np
 
@@ -59,7 +61,9 @@ def apply(results: StepResults, sample: SampleConfig | None) -> PipelineState:
     if sample.by_parent:
         survivors = _filter_by_parent(structures, sample)
     else:
-        survivors = _dispatch(sorted(structures, key=_energy), sample)
+        survivors = _dispatch(
+            sorted(structures, key=operator.attrgetter("energy_hartree")), sample
+        )
     return PipelineState(structures=tuple(survivors))
 
 
@@ -73,9 +77,10 @@ def _filter_by_parent(structures: list[Structure], sample: SampleConfig) -> list
     groups: dict[str, list[Structure]] = defaultdict(list)
     for struct in structures:
         groups[parent_of(struct.id)].append(struct)
+    sort_key = operator.attrgetter("energy_hartree")
     survivors: list[Structure] = []
     for parent, group in groups.items():
-        kept = _dispatch(sorted(group, key=_energy), sample)
+        kept = _dispatch(sorted(group, key=sort_key), sample)
         logger.debug("parent %s: %d structures -> %d survivors", parent, len(group), len(kept))
         survivors.extend(kept)
     return survivors
@@ -86,19 +91,22 @@ def _filter_by_parent(structures: list[Structure], sample: SampleConfig) -> list
 # ---------------------------------------------------------------------------
 
 
+_DISPATCHERS: dict[type, Callable[[list[Structure], SampleConfig], list[Structure]]] = {
+    IntegerSample: lambda s, c: _filter_integer(s, c.count),
+    EnergyWindowSample: lambda s, c: _filter_energy_window(s, c.window_kcal),
+    BoltzmannSample: lambda s, c: _filter_boltzmann(
+        s, c.percent_cumulative, c.temperature_k
+    ),
+    HighEnergySample: lambda s, c: _filter_high_energy(s, c.count),
+}
+
+
 def _dispatch(sorted_structures: list[Structure], sample: SampleConfig) -> list[Structure]:
     """Pick the per-method filter implementation for ``sample``."""
-    if isinstance(sample, IntegerSample):
-        return _filter_integer(sorted_structures, sample.count)
-    if isinstance(sample, EnergyWindowSample):
-        return _filter_energy_window(sorted_structures, sample.window_kcal)
-    if isinstance(sample, BoltzmannSample):
-        return _filter_boltzmann(
-            sorted_structures, sample.percent_cumulative, sample.temperature_k
-        )
-    if isinstance(sample, HighEnergySample):
-        return _filter_high_energy(sorted_structures, sample.count)
-    raise TypeError(f"unsupported sample config: {type(sample).__name__}")
+    handler = _DISPATCHERS.get(type(sample))
+    if handler is None:
+        raise TypeError(f"unsupported sample config: {type(sample).__name__}")
+    return handler(sorted_structures, sample)
 
 
 def _filter_integer(sorted_structures: list[Structure], count: int) -> list[Structure]:
@@ -149,12 +157,3 @@ def _filter_high_energy(
     return list(reversed(sorted_structures))[:count]
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _energy(struct: Structure) -> float:
-    """Sort key — ``energy_hartree`` is guaranteed non-None by :func:`apply`."""
-    assert struct.energy_hartree is not None
-    return struct.energy_hartree

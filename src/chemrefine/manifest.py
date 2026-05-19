@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from chemrefine.errors import CacheError
 from chemrefine.state import StepInputs
 
 
@@ -46,12 +47,21 @@ def save(
 
 
 def load(step_dir: Path) -> StepInputs | None:
-    """Rehydrate :class:`StepInputs` from the persisted manifest, or ``None``."""
+    """Rehydrate :class:`StepInputs` from the persisted manifest, or ``None``.
+
+    Raises :class:`CacheError` if the JSON is malformed or is missing
+    the expected ``files`` field — callers should treat a corrupt
+    manifest as fatal rather than silently re-parsing an empty batch.
+    """
     path = manifest_path(step_dir)
     if not path.is_file():
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))
-    files = tuple(
-        (Path(rec["input"]), Path(rec["output"]), rec["id"]) for rec in data["files"]
-    )
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        files = tuple(
+            (Path(rec["input"]), Path(rec["output"]), rec["id"])
+            for rec in data["files"]
+        )
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        raise CacheError(f"corrupt manifest at {path}: {e}") from e
     return StepInputs(files=files)

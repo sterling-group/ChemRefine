@@ -53,15 +53,6 @@ def natural_key(name: str | os.PathLike) -> list[object]:
 CoordList = Sequence[tuple[str, float, float, float]]
 
 
-def _to_atoms(geometry: Atoms | CoordList) -> Atoms:
-    """Coerce either an ASE ``Atoms`` or a list of ``(sym, x, y, z)`` tuples to ``Atoms``."""
-    if isinstance(geometry, Atoms):
-        return geometry
-    symbols = [row[0] for row in geometry]
-    positions = np.array([[row[1], row[2], row[3]] for row in geometry], dtype=float)
-    return Atoms(symbols=symbols, positions=positions)
-
-
 def write_xyz(
     structures: Sequence[Atoms | CoordList],
     structure_ids: Sequence[str],
@@ -70,9 +61,11 @@ def write_xyz(
 ) -> list[Path]:
     """Write each structure to ``output_dir/step{N}_structure_{ID}.xyz``.
 
-    Returns the list of written paths in input order. Raises
-    :class:`ValueError` if the lengths of ``structures`` and
-    ``structure_ids`` differ.
+    Each ``structures`` entry may be an :class:`ase.Atoms` or a list of
+    ``(symbol, x, y, z)`` tuples — the loop coerces tuple form on the
+    fly. Returns the list of written paths in input order. Raises
+    :class:`ValueError` if ``structures`` and ``structure_ids`` differ
+    in length.
     """
     if len(structures) != len(structure_ids):
         raise ValueError(
@@ -84,7 +77,15 @@ def write_xyz(
 
     written: list[Path] = []
     for geometry, sid in zip(structures, structure_ids, strict=True):
-        atoms = _to_atoms(geometry)
+        if isinstance(geometry, Atoms):
+            atoms = geometry
+        else:
+            atoms = Atoms(
+                symbols=[row[0] for row in geometry],
+                positions=np.array(
+                    [[row[1], row[2], row[3]] for row in geometry], dtype=float
+                ),
+            )
         path = out / f"step{step_number}_structure_{sid}.xyz"
         lines = [str(len(atoms)), f"step {step_number} structure {sid}"]
         for symbol, (x, y, z) in zip(
