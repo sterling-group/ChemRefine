@@ -236,6 +236,79 @@ def test_mlff_direct_round_trip_with_mocked_calculator(tmp_path: Path):
     assert all(s.energy_hartree is not None and s.energy_hartree < 0 for s in results.structures)
 
 
+def test_mlff_direct_writes_runlog_per_structure(tmp_path: Path):
+    """Each structure scored in-process should produce a ``.runlog`` with header + footer."""
+    engine = get_engine("mlff-direct")
+    step_cfg = StepConfig(
+        step=1,
+        name="screen",
+        engine="mlff-direct",
+        operation="opt_sp",
+        options={"model_name": "uma-s-1", "task_name": "omol"},
+    )
+    seed = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
+    ctx = StepContext(
+        step_cfg=step_cfg,
+        step_dir=tmp_path / "outputs" / "step1_screen",
+        template_dir=tmp_path,
+        scratch_dir=None,
+        prev_state=PipelineState(structures=(seed,)),
+        charge=0,
+        multiplicity=1,
+        max_cores=1,
+        slurm_template="cpu.slurm.header",
+        orca_executable="orca",
+    )
+    with (
+        patch.object(MlffCalculator, "_build", return_value=None),
+        patch.object(MlffCalculator, "single_point", return_value=(-1.5, [])),
+    ):
+        inputs = engine.prepare(ctx)
+        engine.submit(inputs, ctx)
+    runlog = ctx.step_dir / "step1_structure_0.runlog"
+    text = runlog.read_text(encoding="utf-8")
+    assert "ChemRefine mlff-direct step1_screen starting" in text
+    assert "ChemRefine mlff-direct step1_screen finished" in text
+    assert "mode=direct" in text
+    assert "exit_code=0" in text
+
+
+def test_mlff_direct_runlog_records_failure(tmp_path: Path):
+    """A raised exception should land ``exit_code=1`` in the runlog and re-raise."""
+    engine = get_engine("mlff-direct")
+    step_cfg = StepConfig(
+        step=1,
+        engine="mlff-direct",
+        operation="opt_sp",
+        options={"model_name": "uma-s-1", "task_name": "omol"},
+    )
+    seed = Structure(id="0", atoms=Atoms("H"))
+    ctx = StepContext(
+        step_cfg=step_cfg,
+        step_dir=tmp_path / "outputs" / "step1",
+        template_dir=tmp_path,
+        scratch_dir=None,
+        prev_state=PipelineState(structures=(seed,)),
+        charge=0,
+        multiplicity=1,
+        max_cores=1,
+        slurm_template="cpu.slurm.header",
+        orca_executable="orca",
+    )
+    with (
+        patch.object(MlffCalculator, "_build", return_value=None),
+        patch.object(MlffCalculator, "single_point", side_effect=RuntimeError("boom")),
+    ):
+        inputs = engine.prepare(ctx)
+        with pytest.raises(RuntimeError, match="boom"):
+            engine.submit(inputs, ctx)
+    runlog = ctx.step_dir / "step1_structure_0.runlog"
+    text = runlog.read_text(encoding="utf-8")
+    assert "starting" in text
+    assert "finished" in text
+    assert "exit_code=1" in text
+
+
 def test_mlff_direct_does_not_support_nms(tmp_path: Path):
     engine = get_engine("mlff-direct")
     from chemrefine.state import StepResults

@@ -36,7 +36,7 @@ def build_context(
         step_cfg=step_cfg,
         step_dir=(config.output_dir / step_cfg.dir_name()).resolve(),
         template_dir=config.template_dir.resolve(),
-        scratch_dir=config.scratch_dir.resolve(),
+        scratch_dir=config.scratch_dir.resolve() if config.scratch_dir is not None else None,
         prev_state=prev_state,
         charge=step_cfg.charge if step_cfg.charge is not None else config.charge,
         multiplicity=(

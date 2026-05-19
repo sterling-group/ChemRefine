@@ -175,7 +175,15 @@ class Config(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     template_dir: Path = Path("./templates")
-    scratch_dir: Path = Path("./scratch")
+    scratch_dir: Path | None = None
+    """Fast-storage base for per-calculation working directories.
+
+    Leave unset (``None``) and ChemRefine will auto-derive a
+    ``_work_<jobid>_<ts>_<rand>`` subdirectory under ``output_dir`` for
+    each calculation — fine for laptop / local development. Set to a
+    fast filesystem on the compute node (e.g. ``/scratch/$USER``) for
+    HPC runs.
+    """
     output_dir: Path = Path("./outputs")
     input: Path | None = None
     """Initial structure source: ``.xyz`` file, ``.csv`` of SMILES, or directory of xyz."""
@@ -186,6 +194,16 @@ class Config(BaseModel):
     slurm_template: str = "cpu.slurm.header"
     orca_executable: str = "orca"
     steps: list[StepConfig]
+
+    @model_validator(mode="after")
+    def _reject_scratch_equal_output(self) -> Config:
+        """``scratch_dir == output_dir`` is ambiguous; require ``None`` instead."""
+        if self.scratch_dir is not None and self.scratch_dir == self.output_dir:
+            raise ValueError(
+                "scratch_dir must differ from output_dir; "
+                "omit scratch_dir to get per-calculation work dirs under output_dir"
+            )
+        return self
 
     @field_validator("steps")
     @classmethod

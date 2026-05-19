@@ -19,6 +19,7 @@ import logging
 
 import numpy as np
 
+from chemrefine import job_log
 from chemrefine.constants import HARTREE_TO_EV
 from chemrefine.engines.base import register
 from chemrefine.engines.mlff.calculator import MlffCalculator
@@ -63,15 +64,48 @@ class MlffDirectEngine:
         return StepInputs(files=tuple(files))
 
     def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
-        """Score every structure in-process; write a tiny JSON output per structure."""
+        """Score every structure in-process; emit one ``.runlog`` per structure."""
         calc = self._get_calculator(ctx)
+        step_label = ctx.step_cfg.dir_name()
+        engine_name = ctx.step_cfg.engine
         for _inp, out, sid in inputs.files:
-            atoms = self._find_structure(ctx, sid).atoms.copy()
-            energy_ev, _gradient = calc.single_point(atoms)
-            energy_hartree = energy_ev * _EV_TO_HARTREE
-            out.write_text(
-                f'{{"id": "{sid}", "energy_hartree": {energy_hartree}}}\n',
-                encoding="utf-8",
+            log_path = ctx.step_dir / f"step{ctx.step_cfg.step}_structure_{sid}.runlog"
+            job_log.python_header(
+                engine=engine_name,
+                operation=ctx.step_cfg.operation,
+                step=ctx.step_cfg.step,
+                structure_id=sid,
+                step_label=step_label,
+                step_dir=ctx.step_dir,
+                log_path=log_path,
+            )
+            start = job_log.monotonic_seconds()
+            exit_code = 0
+            try:
+                atoms = self._find_structure(ctx, sid).atoms.copy()
+                energy_ev, _gradient = calc.single_point(atoms)
+                energy_hartree = energy_ev * _EV_TO_HARTREE
+                out.write_text(
+                    f'{{"id": "{sid}", "energy_hartree": {energy_hartree}}}\n',
+                    encoding="utf-8",
+                )
+            except Exception:
+                exit_code = 1
+                job_log.python_footer(
+                    engine=engine_name,
+                    step_label=step_label,
+                    log_path=log_path,
+                    exit_code=exit_code,
+                    elapsed_seconds=job_log.monotonic_seconds() - start,
+                )
+                raise
+            job_log.python_footer(
+                engine=engine_name,
+                step_label=step_label,
+                log_path=log_path,
+                exit_code=exit_code,
+                elapsed_seconds=job_log.monotonic_seconds() - start,
+                files_copied=1,
             )
         return JobBatch(
             jobs={inp: f"direct-{i}" for i, (inp, *_rest) in enumerate(inputs.files)}

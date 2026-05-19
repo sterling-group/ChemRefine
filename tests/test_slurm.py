@@ -53,17 +53,35 @@ def _write_header(tmp_path: Path) -> Path:
     return header
 
 
+def _build_kwargs(tmp_path: Path, **overrides):
+    """Default kwargs for ``slurm.build_script`` tests."""
+    base = {
+        "job_name": "step1_structure_0",
+        "pal": 1,
+        "template_path": _write_header(tmp_path),
+        "script_path": tmp_path / "out" / "step1_structure_0.slurm",
+        "input_path": tmp_path / "in" / "step1_structure_0.inp",
+        "output_dir": tmp_path / "out",
+        "scratch_dir": tmp_path / "scratch",
+        "run_block": "echo hi",
+        "engine": "orca",
+        "operation": "opt_sp",
+        "step": 1,
+        "structure_id": "0",
+        "step_label": "step1_refine",
+        "orca_executable": "orca",
+    }
+    base.update(overrides)
+    return base
+
+
 def test_build_script_overrides_ntasks_and_writes_script(tmp_path: Path):
-    header = _write_header(tmp_path)
     script = slurm.build_script(
-        job_name="step1_structure_0",
-        pal=12,
-        template_path=header,
-        script_path=tmp_path / "out" / "step1_structure_0.slurm",
-        input_path=tmp_path / "in" / "step1_structure_0.inp",
-        output_dir=tmp_path / "out",
-        scratch_dir=tmp_path / "scratch",
-        run_block='$ORCA step1_structure_0.inp > $OUTPUT_DIR/step1_structure_0.out',
+        **_build_kwargs(
+            tmp_path,
+            pal=12,
+            run_block='$ORCA step1_structure_0.inp > $OUTPUT_DIR/step1_structure_0.out',
+        )
     )
     assert script.exists()
     text = script.read_text()
@@ -76,51 +94,72 @@ def test_build_script_overrides_ntasks_and_writes_script(tmp_path: Path):
     assert "module load orca/6.0" in text
 
 
-def test_build_script_includes_run_block(tmp_path: Path):
-    header = _write_header(tmp_path)
+def test_build_script_emits_absolute_runlog_output_directives(tmp_path: Path):
+    """``#SBATCH --output`` / ``--error`` must point at absolute paths in the step dir."""
+    out = (tmp_path / "out").resolve()
+    script = slurm.build_script(**_build_kwargs(tmp_path, output_dir=out))
+    text = script.read_text()
+    assert f"#SBATCH --output={out}/step1_structure_0.runlog" in text
+    assert f"#SBATCH --error={out}/step1_structure_0.err" in text
+
+
+def test_build_script_includes_runlog_header_and_footer_fields(tmp_path: Path):
+    """The generated script must wrap the run_block with job_log header + footer."""
     script = slurm.build_script(
-        job_name="job",
-        pal=1,
-        template_path=header,
-        script_path=tmp_path / "j.slurm",
-        input_path=tmp_path / "j.inp",
-        output_dir=tmp_path / "out",
-        scratch_dir=tmp_path / "scratch",
-        run_block="echo CUSTOM_RUN_BLOCK_HERE",
+        **_build_kwargs(
+            tmp_path,
+            engine="mlff",
+            operation="opt_sp",
+            step=2,
+            structure_id="0",
+            step_label="step2_refine",
+        )
     )
+    text = script.read_text()
+    assert "engine=mlff" in text
+    assert "operation=opt_sp" in text
+    assert "step=2" in text
+    assert "structure_id=0" in text
+    assert "ChemRefine mlff step2_refine starting" in text
+    assert "ChemRefine mlff step2_refine finished" in text
+
+
+def test_build_script_includes_run_block(tmp_path: Path):
+    script = slurm.build_script(**_build_kwargs(tmp_path, run_block="echo CUSTOM_RUN_BLOCK_HERE"))
     assert "echo CUSTOM_RUN_BLOCK_HERE" in script.read_text()
 
 
-def test_build_script_save_scratch_keeps_dir(tmp_path: Path):
-    header = _write_header(tmp_path)
-    script = slurm.build_script(
-        job_name="job",
-        pal=1,
-        template_path=header,
-        script_path=tmp_path / "j.slurm",
-        input_path=tmp_path / "j.inp",
-        output_dir=tmp_path / "out",
-        scratch_dir=tmp_path / "scratch",
-        run_block="echo hi",
-        save_scratch=True,
-    )
+def test_build_script_auto_scratch_under_output_dir_when_none(tmp_path: Path):
+    """Omitting scratch_dir makes WORK_DIR a sibling of step output."""
+    out = (tmp_path / "out").resolve()
+    script = slurm.build_script(**_build_kwargs(tmp_path, scratch_dir=None, output_dir=out))
     text = script.read_text()
-    assert "rm -rf $SCRATCH_DIR" not in text
-    assert "scratch dir kept" in text
+    assert f"export WORK_DIR={out}/_work_" in text
+
+
+def test_build_script_explicit_scratch_uses_chemrefine_subdir(tmp_path: Path):
+    scratch = (tmp_path / "scratch").resolve()
+    script = slurm.build_script(**_build_kwargs(tmp_path, scratch_dir=scratch))
+    assert f"export WORK_DIR={scratch}/ChemRefine_" in script.read_text()
+
+
+def test_build_script_save_scratch_keeps_dir(tmp_path: Path):
+    script = slurm.build_script(**_build_kwargs(tmp_path, save_scratch=True))
+    text = script.read_text()
+    assert "rm -rf $WORK_DIR" not in text
+    assert "scratch_kept=true" in text
+
+
+def test_build_script_emits_exit_trap(tmp_path: Path):
+    """The footer must be wired through a trap so it fires on failure too."""
+    script = slurm.build_script(**_build_kwargs(tmp_path))
+    text = script.read_text()
+    assert "trap _on_exit EXIT" in text
 
 
 def test_build_script_missing_template_raises(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
-        slurm.build_script(
-            job_name="job",
-            pal=1,
-            template_path=tmp_path / "missing.header",
-            script_path=tmp_path / "j.slurm",
-            input_path=tmp_path / "j.inp",
-            output_dir=tmp_path / "out",
-            scratch_dir=tmp_path / "scratch",
-            run_block="echo hi",
-        )
+        slurm.build_script(**_build_kwargs(tmp_path, template_path=tmp_path / "missing.header"))
 
 
 # ---------------------------------------------------------------------------

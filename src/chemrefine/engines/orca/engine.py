@@ -101,8 +101,9 @@ class OrcaEngine:
         if not header_path.is_file():
             raise FileNotFoundError(f"SLURM header template not found: {header_path}")
 
+        step_label = ctx.step_cfg.dir_name()
         jobs: dict[Path, str] = {}
-        for inp, out, _sid in inputs.files:
+        for inp, out, sid in inputs.files:
             pal = min(slurm.parse_pal(inp), ctx.max_cores)
             throttler.wait_for_room(pal, is_finished=slurm.is_finished)
             script_path = inp.with_suffix(".slurm")
@@ -116,6 +117,12 @@ class OrcaEngine:
                 output_dir=out.parent,
                 scratch_dir=ctx.scratch_dir,
                 run_block=run_block,
+                engine=ctx.step_cfg.engine,
+                operation=ctx.step_cfg.operation,
+                step=ctx.step_cfg.step,
+                structure_id=sid,
+                step_label=step_label,
+                orca_executable=ctx.orca_executable,
             )
             job_id = slurm.submit(script_path)
             throttler.register(job_id, pal)

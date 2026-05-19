@@ -67,7 +67,8 @@ class StepContext:
     step_cfg: StepConfig
     step_dir: Path
     template_dir: Path
-    scratch_dir: Path
+    scratch_dir: Path | None
+    """``None`` means the SLURM script auto-derives a per-calc work dir under ``step_dir``."""
     prev_state: PipelineState
     charge: int
     multiplicity: int

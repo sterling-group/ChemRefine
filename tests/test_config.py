@@ -293,3 +293,27 @@ def test_step_unknown_field_rejected(tmp_path: Path):
     )
     with pytest.raises(ConfigError):
         load_config(_write_yaml(tmp_path, data))
+
+
+# ---------------------------------------------------------------------------
+# scratch_dir: optional + auto-derived per-calc work dir
+# ---------------------------------------------------------------------------
+
+
+def test_scratch_dir_defaults_to_none(tmp_path: Path):
+    """Omitting ``scratch_dir`` lets the SLURM script auto-derive a per-calc work dir."""
+    cfg = load_config(_write_yaml(tmp_path, _minimal_config()))
+    assert cfg.scratch_dir is None
+
+
+def test_scratch_dir_explicit_path_round_trips(tmp_path: Path):
+    data = _minimal_config(scratch_dir="/scratch/user")
+    cfg = load_config(_write_yaml(tmp_path, data))
+    assert cfg.scratch_dir == Path("/scratch/user")
+
+
+def test_scratch_dir_equal_output_dir_rejected(tmp_path: Path):
+    """``scratch_dir == output_dir`` is ambiguous; require ``None`` instead."""
+    data = _minimal_config(scratch_dir="./outputs", output_dir="./outputs")
+    with pytest.raises(ConfigError):
+        load_config(_write_yaml(tmp_path, data))
