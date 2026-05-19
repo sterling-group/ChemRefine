@@ -85,6 +85,64 @@ def test_bootstrap_from_smiles_csv(tmp_path: Path):
     assert len(state.structures) == 2
 
 
+def test_bootstrap_from_smiles_csv_empty_raises(tmp_path: Path):
+    """A CSV with only the header (no SMILES rows) must surface as ConfigError."""
+    csv = tmp_path / "smiles.csv"
+    csv.write_text("smiles\n", encoding="utf-8")
+    cfg = _config(tmp_path, input=csv)
+    with pytest.raises(ConfigError):
+        pipeline.bootstrap(cfg)
+
+
+def test_run_stops_early_when_a_step_produces_no_survivors(tmp_path: Path):
+    """A step whose sample method filters every survivor must halt the pipeline."""
+    from chemrefine.engines.base import ENGINES, register
+    from chemrefine.state import PipelineState, StepResults
+
+    @register("empty-fake")
+    class _EmptyEngine:
+        name = "empty-fake"
+        supports_nms = False
+
+        def prepare(self, ctx):
+            ctx.step_dir.mkdir(parents=True, exist_ok=True)
+            from chemrefine.state import StepInputs
+
+            return StepInputs(files=())
+
+        def submit(self, inputs, ctx):
+            from chemrefine.state import JobBatch
+
+            return JobBatch(jobs={})
+
+        def wait(self, batch):
+            return None
+
+        def parse(self, inputs, ctx):
+            return StepResults(structures=())   # no survivors
+
+        def normal_mode_sample(self, results, ctx):
+            return results
+
+    try:
+        seed_dir = tmp_path / "seeds"
+        io.write_xyz([_h2()], ["a"], step_number=0, output_dir=seed_dir)
+        cfg = _config(
+            tmp_path,
+            input=seed_dir,
+            steps=[
+                StepConfig(step=1, engine="empty-fake", operation="opt_sp"),
+                StepConfig(step=2, engine="empty-fake", operation="opt_sp"),
+            ],
+        )
+        outcomes = pipeline.run(cfg)
+        # Step 1 produced no survivors → pipeline stops at length 1.
+        assert len(outcomes) == 1
+        _ = PipelineState  # silence unused import
+    finally:
+        ENGINES.pop("empty-fake", None)
+
+
 # ---------------------------------------------------------------------------
 # run
 # ---------------------------------------------------------------------------

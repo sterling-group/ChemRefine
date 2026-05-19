@@ -71,6 +71,17 @@ def test_validate_structure_ids_rejects_unsupported_type():
         validate_structure_ids([3.14], step_id=1)
 
 
+def test_validate_structure_ids_rejects_bare_string():
+    """A bare string isn't a sequence of IDs — it's a single ID; must reject."""
+    with pytest.raises(TypeError):
+        validate_structure_ids("not-a-sequence", step_id=1)  # type: ignore[arg-type]
+
+
+def test_validate_structure_ids_rejects_bytes():
+    with pytest.raises(TypeError):
+        validate_structure_ids(b"also-not-a-sequence", step_id=1)  # type: ignore[arg-type]
+
+
 # ---------------------------------------------------------------------------
 # allocate_child_ids
 # ---------------------------------------------------------------------------

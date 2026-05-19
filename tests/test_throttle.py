@@ -96,6 +96,17 @@ def test_wait_for_room_blocks_until_jobs_finish():
     assert t.active_jobs == ("b",)
 
 
+def test_reap_logs_freed_cores(caplog):
+    """The reap log line announcing freed cores must fire when a job completes."""
+    import logging as _logging
+
+    t = Throttler(max_cores=32)
+    t.register("done", 8)
+    with caplog.at_level(_logging.INFO, logger="chemrefine.throttle"):
+        t._reap(lambda _: True)
+    assert any("freed 8 cores" in record.message for record in caplog.records)
+
+
 def test_wait_for_room_rejects_request_above_budget():
     t = Throttler(max_cores=16)
     with pytest.raises(ValueError):
@@ -122,3 +133,19 @@ def test_wait_all_returns_immediately_when_no_jobs():
     with patch("time.sleep") as sleeper:
         t.wait_all(is_finished=_never_finished)
     sleeper.assert_not_called()
+
+
+def test_wait_all_sleeps_until_jobs_finish():
+    """wait_all must sleep at least once when an active job is still running."""
+    t = Throttler(max_cores=64, poll_interval=0)
+    t.register("running", 8)
+    state = {"calls": 0}
+
+    def is_finished(_jid: str) -> bool:
+        state["calls"] += 1
+        return state["calls"] >= 2  # finishes on the second poll
+
+    with patch("time.sleep") as sleeper:
+        t.wait_all(is_finished=is_finished)
+    assert t.active_jobs == ()
+    sleeper.assert_called()

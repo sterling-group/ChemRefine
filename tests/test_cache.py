@@ -131,6 +131,18 @@ def test_load_rejects_old_cache_format(tmp_path: Path):
         load(step_dir)
 
 
+def test_load_rejects_pickle_that_is_not_step_cache(tmp_path: Path):
+    """A pickle whose payload isn't a StepCache must surface as CacheError."""
+    import pickle
+
+    step_dir = tmp_path / "step1"
+    cache_file = step_dir / "_cache" / "step.pkl"
+    cache_file.parent.mkdir(parents=True)
+    cache_file.write_bytes(pickle.dumps({"i": "am not a StepCache"}))
+    with pytest.raises(CacheError):
+        load(step_dir)
+
+
 # ---------------------------------------------------------------------------
 # is_valid
 # ---------------------------------------------------------------------------

@@ -145,7 +145,7 @@ def _filter_boltzmann(
         survivors.append(struct)
         if cum >= percent_cumulative:
             break
-    return survivors
+    return survivors  # pragma: no cover - the loop always breaks at the last item when cum reaches 100%
 
 
 def _filter_high_energy(

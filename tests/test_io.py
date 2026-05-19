@@ -113,3 +113,30 @@ def test_save_step_csv_sorts_by_energy(tmp_path: Path):
     rows = path.read_text().strip().splitlines()[1:]  # drop header
     conformers = [row.split(",")[1] for row in rows]
     assert conformers == ["b", "a", "c"]  # ascending by absolute energy
+
+
+# ---------------------------------------------------------------------------
+# smiles_to_xyz error paths
+# ---------------------------------------------------------------------------
+
+
+def test_smiles_to_xyz_missing_column_raises(tmp_path: Path):
+    from chemrefine.io import smiles_to_xyz
+
+    csv = tmp_path / "no_smiles.csv"
+    csv.write_text("other_column\nC\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="smiles"):
+        smiles_to_xyz(csv, tmp_path / "out")
+
+
+def test_smiles_to_xyz_skips_blank_and_invalid_smiles(tmp_path: Path):
+    """Empty / non-string / unparseable SMILES are warned and skipped, never abort the loop."""
+    from chemrefine.io import smiles_to_xyz
+
+    csv = tmp_path / "mixed.csv"
+    # Row 0: blank string  → skipped (line 144 branch)
+    # Row 1: invalid SMILES → skipped (line 147-148 branch)
+    # Row 2: valid SMILES   → produces a file
+    csv.write_text("smiles\n\n!!!nonsense!!!\nC\n", encoding="utf-8")
+    written = smiles_to_xyz(csv, tmp_path / "out")
+    assert len(written) == 1  # only the valid one

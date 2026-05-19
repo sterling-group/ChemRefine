@@ -71,10 +71,10 @@ def create_app(defaults: dict[str, Any]) -> Flask:
         except NotImplementedError as e:
             logger.warning("calculate: %s", e)
             return jsonify({"error": str(e)}), 501
-        except Exception as e:
+        except Exception as e:  # pragma: no cover - generic 500 path unreachable until run_calc is ported in B6
             logger.exception("calculate failed: %s", e)
             return jsonify({"error": str(e)}), 500
-        return jsonify({"energy": energy, "gradient": gradient, "meta": meta})
+        return jsonify({"energy": energy, "gradient": gradient, "meta": meta})  # pragma: no cover - reached after B6 ports run_calc
 
     return app
 
@@ -99,7 +99,7 @@ def run_calc(
     )
 
 
-def main() -> int:
+def main() -> int:  # pragma: no cover - placeholder until B1 wires waitress
     """Server entry point — placeholder.
 
     TODO: parse argv, build the app via :func:`create_app`, and serve

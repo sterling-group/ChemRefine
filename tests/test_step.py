@@ -175,3 +175,41 @@ def test_cache_load_after_run_returns_results(tmp_path: Path):
     cached = cache.load(cfg.output_dir.resolve() / "step1")
     assert cached is not None
     assert [s.id for s in cached.results.structures] == ["0"]
+
+
+def test_run_step_nms_branch_runs_when_engine_supports_it(tmp_path: Path):
+    """The NMS branch in run_step fires when both step_cfg.nms and engine.supports_nms are true."""
+    from chemrefine.engines.base import ENGINES, register
+    from chemrefine.state import JobBatch, StepInputs, StepResults
+
+    nms_calls: list[int] = []
+
+    @register("fake-nms")
+    class _NmsEngine:
+        name = "fake-nms"
+        supports_nms = True
+
+        def prepare(self, ctx):
+            ctx.step_dir.mkdir(parents=True, exist_ok=True)
+            return StepInputs(files=())
+
+        def submit(self, inputs, ctx):
+            return JobBatch(jobs={})
+
+        def wait(self, batch):
+            return None
+
+        def parse(self, inputs, ctx):
+            return StepResults(structures=tuple(ctx.prev_state.structures))
+
+        def normal_mode_sample(self, results, ctx):
+            nms_calls.append(1)
+            return results
+
+    try:
+        cfg = _config(tmp_path, engine="fake-nms", nms=True)
+        engine = ENGINES["fake-nms"]()
+        run_step(cfg, cfg.steps[0], _seed_state(["0"]), engine=engine)
+        assert nms_calls == [1]
+    finally:
+        ENGINES.pop("fake-nms", None)

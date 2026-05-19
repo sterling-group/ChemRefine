@@ -118,6 +118,27 @@ markers = [
     "integration: tests that invoke real ORCA / SLURM / external services",
 ]
 
+[tool.coverage.run]
+source = ["chemrefine"]
+omit = [
+    # Pure-placeholder modules — bodies land in Phase B; coverage gate
+    # comes back online for these as each placeholder is ported.
+    "src/chemrefine/engines/orca/extopt/*",   # B1: ExtOpt protocol port
+    "src/chemrefine/engines/mlff/trainer.py",  # B5: MLFF trainer port
+    "src/chemrefine/engines/pyscf/direct.py",  # B7: PySCF direct port
+]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    'if __name__ == "__main__":',
+    "\\.\\.\\.",                  # Protocol method bodies (`...`)
+]
+
 [tool.interrogate]
 ignore-init-module = true
 ignore-init-method = true

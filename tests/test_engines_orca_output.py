@@ -280,6 +280,12 @@ def test_parse_output_dispatches_solvator():
     assert len(parsed) == 30
 
 
+def test_parse_output_dispatches_pes_to_placeholder(tmp_path: Path):
+    """`parse_output(..., 'pes')` should reach `parse_pes`, which is still a placeholder."""
+    with pytest.raises(NotImplementedError):
+        parse_output(tmp_path / "missing.out", "pes")
+
+
 def test_parse_output_unknown_operation_raises():
     with pytest.raises(OutputParseError):
         parse_output(FIXTURE, "weather_forecast")
@@ -289,3 +295,67 @@ def test_pes_parser_still_placeholder(tmp_path: Path):
     """PES parser is the only XYZ-output placeholder still waiting on a fixture."""
     with pytest.raises(NotImplementedError):
         parse_pes(tmp_path / "missing.out")
+
+
+# ---------------------------------------------------------------------------
+# Ensemble parser skip branches (synthetic malformed frames)
+# ---------------------------------------------------------------------------
+
+
+def test_xyz_ensemble_skips_frames_with_unparseable_headers(tmp_path: Path):
+    """A frame whose header doesn't match the regex must be silently skipped."""
+    p = tmp_path / "mixed.xyz"
+    p.write_text(
+        "2\nnot a header at all\nH 0 0 0\nH 0 0 1\n"
+        "2\n-1.5 converged=true\nH 0 0 0\nH 0 0 1\n",
+        encoding="utf-8",
+    )
+    parsed = parse_goat_ensemble(p)
+    assert len(parsed) == 1
+    assert parsed[0].energy_hartree == -1.5
+
+
+def test_xyz_ensemble_skips_frames_with_malformed_atom_rows(tmp_path: Path):
+    """An atom line with fewer than 4 whitespace-separated parts kills the frame."""
+    p = tmp_path / "badrow.xyz"
+    p.write_text(
+        "2\n-1.0 converged=true\nH 0 0\nH 0 0 1\n"
+        "2\n-2.0 converged=true\nH 0 0 0\nH 0 0 1\n",
+        encoding="utf-8",
+    )
+    parsed = parse_goat_ensemble(p)
+    assert len(parsed) == 1
+    assert parsed[0].energy_hartree == -2.0
+
+
+def test_xyz_ensemble_skips_non_digit_lines(tmp_path: Path):
+    """Stray text between frames advances past the line without consuming a frame."""
+    p = tmp_path / "stray.xyz"
+    p.write_text(
+        "garbage line at the top\n"
+        "more garbage\n"
+        "2\n-2.0 converged=true\nH 0 0 0\nH 0 0 1\n",
+        encoding="utf-8",
+    )
+    parsed = parse_goat_ensemble(p)
+    assert len(parsed) == 1
+
+
+def test_parse_forces_returns_none_when_block_has_no_valid_rows(tmp_path: Path):
+    """Gradient block with no parseable rows must yield None."""
+    text = (
+        "CARTESIAN GRADIENT\n"
+        "------------------\n"
+        "nothing parseable here at all\n"
+        "------------------\n"
+    )
+    assert parse_forces(text) is None
+
+
+def test_xyz_ensemble_breaks_on_truncated_file(tmp_path: Path):
+    """A frame whose header claims more atoms than the file provides triggers break."""
+    p = tmp_path / "truncated.xyz"
+    # Says 100 atoms but only 1 line follows — should break out cleanly with no frames.
+    p.write_text("100\n-1.0 converged=true\nH 0 0 0\n", encoding="utf-8")
+    with pytest.raises(OutputParseError):
+        parse_goat_ensemble(p)

@@ -115,6 +115,23 @@ def test_pyscf_run_block_emits_gpu_flag_when_set(tmp_path: Path):
     assert "--default-gpu" in run_block
 
 
+def test_pyscf_run_block_omits_optional_flags_when_unset(tmp_path: Path):
+    """Each optional `--default-*` flag is gated on its option being set."""
+    engine = get_engine("pyscf")
+    # method, xc, basis explicitly cleared; df/gpu absent
+    ctx = _pyscf_ctx(tmp_path, method="", xc=None, basis=None, df=False, gpu=False)
+    run_block = engine._run_block(
+        ctx,
+        inp_path=ctx.step_dir / "step1_structure_0.inp",
+        out_path=ctx.step_dir / "step1_structure_0.out",
+    )
+    assert "--default-method" not in run_block
+    assert "--default-xc" not in run_block
+    assert "--default-basis" not in run_block
+    assert "--default-df" not in run_block
+    assert "--default-gpu" not in run_block
+
+
 def test_pyscf_prepare_writes_inp_with_method_block(tmp_path: Path):
     engine = get_engine("pyscf")
     ctx = _pyscf_ctx(tmp_path)
@@ -219,6 +236,92 @@ def test_pyscf_client_submit_calculation_url_error_becomes_jobfailure():
         pytest.raises(JobFailureError, match="unreachable"),
     ):
         client.submit_calculation(
+                server_url="x",
+                atom_types=["H"],
+                coordinates=[[0.0, 0.0, 0.0]],
+                charge=0,
+                mult=1,
+                dograd=False,
+                nthreads=1,
+                settings={},
+            )
+
+
+def test_pyscf_client_http_error_becomes_jobfailure():
+    from urllib.error import HTTPError
+
+    from chemrefine.engines.pyscf import client
+    from chemrefine.errors import JobFailureError
+
+    err = HTTPError("http://x/calculate", 500, "internal error", {}, None)
+    with (
+        patch.object(client, "urlopen", side_effect=err),
+        pytest.raises(JobFailureError, match="HTTP 500"),
+    ):
+        client.submit_calculation(
+            server_url="x",
+            atom_types=["H"],
+            coordinates=[[0.0, 0.0, 0.0]],
+            charge=0,
+            mult=1,
+            dograd=False,
+            nthreads=1,
+            settings={},
+        )
+
+
+def test_pyscf_client_non_json_response_becomes_jobfailure():
+    from io import BytesIO
+
+    from chemrefine.engines.pyscf import client
+    from chemrefine.errors import JobFailureError
+
+    with patch.object(client, "urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value = BytesIO(b"<html>")
+        with pytest.raises(JobFailureError, match="non-JSON"):
+            client.submit_calculation(
+                server_url="x",
+                atom_types=["H"],
+                coordinates=[[0.0, 0.0, 0.0]],
+                charge=0,
+                mult=1,
+                dograd=False,
+                nthreads=1,
+                settings={},
+            )
+
+
+def test_pyscf_client_server_error_field_becomes_jobfailure():
+    from io import BytesIO
+
+    from chemrefine.engines.pyscf import client
+    from chemrefine.errors import JobFailureError
+
+    with patch.object(client, "urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value = BytesIO(b'{"error": "no pyscf"}')
+        with pytest.raises(JobFailureError, match="no pyscf"):
+            client.submit_calculation(
+                server_url="x",
+                atom_types=["H"],
+                coordinates=[[0.0, 0.0, 0.0]],
+                charge=0,
+                mult=1,
+                dograd=False,
+                nthreads=1,
+                settings={},
+            )
+
+
+def test_pyscf_client_missing_fields_becomes_jobfailure():
+    from io import BytesIO
+
+    from chemrefine.engines.pyscf import client
+    from chemrefine.errors import JobFailureError
+
+    with patch.object(client, "urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value = BytesIO(b'{"foo": 1}')
+        with pytest.raises(JobFailureError, match="missing fields"):
+            client.submit_calculation(
                 server_url="x",
                 atom_types=["H"],
                 coordinates=[[0.0, 0.0, 0.0]],

@@ -123,6 +123,8 @@ def test_boltzmann_keeps_more_when_threshold_high():
     assert len(state.structures) >= 4
 
 
+
+
 # ---------------------------------------------------------------------------
 # high_energy
 # ---------------------------------------------------------------------------
@@ -140,6 +142,13 @@ def test_high_energy_count_one_keeps_max():
     r = _results(("a", -1.0), ("b", -2.0), ("c", -0.5))
     state = apply(r, HighEnergySample(method="high_energy", count=1))
     assert [s.id for s in state.structures] == ["c"]
+
+
+def test_high_energy_empty_input_returns_empty():
+    """``_filter_high_energy`` short-circuits on an empty input list."""
+    from chemrefine.filtering import _filter_high_energy
+
+    assert _filter_high_energy([], 5) == []
 
 
 # ---------------------------------------------------------------------------

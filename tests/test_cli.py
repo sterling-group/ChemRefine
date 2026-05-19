@@ -97,6 +97,15 @@ def test_dry_run_does_not_create_outputs(tmp_path: Path):
     assert not (tmp_path / "outputs" / "step1_screen").exists()
 
 
+def test_dry_run_with_target_step_prints_target(tmp_path: Path):
+    config_path = _write_config(tmp_path)
+    result = runner.invoke(
+        app, ["rebuild-cache", str(config_path), "refine", "--dry-run"]
+    )
+    assert result.exit_code == 0
+    assert "target step: refine" in result.stdout
+
+
 # ---------------------------------------------------------------------------
 # rebuild-cache / rerun / rebuild-nms
 # ---------------------------------------------------------------------------

@@ -42,7 +42,7 @@ jobs:
         run: pip install -e ".[test]"
 
       - name: Run tests with coverage
-        run: pytest --cov=chemrefine --cov-report=term-missing -q
+        run: pytest --cov=chemrefine --cov-report=term-missing --cov-fail-under=100 -q
 
   docs-check:
     runs-on: ubuntu-latest

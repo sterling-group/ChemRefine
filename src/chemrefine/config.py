@@ -148,9 +148,7 @@ class StepConfig(BaseModel):
         if v is None:
             return v
         if not _NAME_RE.match(v):
-            raise ValueError(
-                "step name must contain only letters, digits, underscores, and hyphens"
-            )
+            raise ValueError("step name must contain only letters, digits, underscores, and hyphens")
         return v
 
     def dir_name(self) -> str:

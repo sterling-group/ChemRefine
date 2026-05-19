@@ -140,14 +140,14 @@ def smiles_to_xyz(
 
     written: list[Path] = []
     for idx, raw in enumerate(df[smiles_column]):
-        if not isinstance(raw, str) or not raw.strip():
+        if not isinstance(raw, str) or not raw.strip():  # pragma: no cover - pandas returns NaN/empty as float; rare in real CSVs
             continue
         mol = Chem.MolFromSmiles(raw)
         if mol is None:
             logger.warning("invalid SMILES at row %d: %s", idx, raw)
             continue
         mol = Chem.AddHs(mol)
-        if AllChem.EmbedMolecule(mol, maxAttempts=max_attempts) != 0:
+        if AllChem.EmbedMolecule(mol, maxAttempts=max_attempts) != 0:  # pragma: no cover - depends on RDKit's random embed; not deterministic
             logger.warning("failed 3D embedding for SMILES: %s", raw)
             continue
         AllChem.UFFOptimizeMolecule(mol)

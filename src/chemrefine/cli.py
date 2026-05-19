@@ -194,7 +194,7 @@ def rerun(
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
+def main() -> None:  # pragma: no cover - re-export for legacy entry-point imports
     """Backstop entry point for environments that import ``chemrefine.cli:main``."""
     app()
 

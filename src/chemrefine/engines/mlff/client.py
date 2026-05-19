@@ -101,7 +101,7 @@ def submit_calculation(
         raise JobFailureError(f"MLFF server response missing fields: {data!r}") from e
 
 
-def main() -> int:
+def main() -> int:  # pragma: no cover - placeholder until B1 ports the ExtOpt glue
     """ORCA-invoked entry point — glue between ``.extinp.tmp`` and ``.engrad``.
 
     TODO: wire :mod:`chemrefine.engines.orca.extopt` (``read_extinp`` +

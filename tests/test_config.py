@@ -121,6 +121,12 @@ def test_step_name_rejects_path_separator(tmp_path: Path):
         load_config(_write_yaml(tmp_path, data))
 
 
+def test_step_name_validator_accepts_explicit_none():
+    """Explicit `name=None` must pass the validator's early-return branch."""
+    sc = StepConfig(step=1, name=None, engine="fake", operation="opt_sp")
+    assert sc.name is None
+
+
 def test_empty_steps_list_rejected(tmp_path: Path):
     data = _minimal_config(steps=[])
     with pytest.raises(ConfigError):

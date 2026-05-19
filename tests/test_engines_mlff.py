@@ -81,6 +81,12 @@ def test_mlff_calculator_dispatches_sevenn_by_model_name():
     mock.assert_called_once()
 
 
+def test_mlff_calculator_dispatches_chgnet_for_chgnet_task():
+    with patch.object(MlffCalculator, "_build_chgnet", return_value="CHGNET_CALC") as mock:
+        MlffCalculator(model_name="ignored", task_name="chgnet")
+    mock.assert_called_once()
+
+
 def test_mlff_calculator_dispatches_orb_by_model_name():
     with patch.object(MlffCalculator, "_build_orb", return_value="ORB_CALC") as mock:
         MlffCalculator(model_name="orb-d3", task_name="custom")
@@ -238,6 +244,43 @@ def test_mlff_direct_does_not_support_nms(tmp_path: Path):
         engine.normal_mode_sample(StepResults(structures=()), ctx=None)  # type: ignore[arg-type]
 
 
+def test_mlff_direct_wait_is_noop():
+    from chemrefine.state import JobBatch
+
+    engine = get_engine("mlff-direct")
+    engine.wait(JobBatch(jobs={}))  # must not raise
+
+
+def test_mlff_direct_get_calculator_is_cached(tmp_path: Path):
+    """``_get_calculator`` builds once, then returns the cached instance."""
+    from chemrefine.engines.mlff.direct import MlffDirectEngine
+
+    step_cfg = StepConfig(
+        step=1,
+        engine="mlff-direct",
+        operation="opt_sp",
+        options={"model_name": "uma-s-1", "task_name": "omol"},
+    )
+    seed = Structure(id="0", atoms=Atoms("H"))
+    ctx = StepContext(
+        step_cfg=step_cfg,
+        step_dir=tmp_path,
+        template_dir=tmp_path,
+        scratch_dir=tmp_path,
+        prev_state=PipelineState(structures=(seed,)),
+        charge=0,
+        multiplicity=1,
+        max_cores=1,
+        slurm_template="cpu.slurm.header",
+        orca_executable="orca",
+    )
+    engine = MlffDirectEngine()
+    with patch.object(MlffCalculator, "_build", return_value=None):
+        a = engine._get_calculator(ctx)
+        b = engine._get_calculator(ctx)
+    assert a is b
+
+
 # ---------------------------------------------------------------------------
 # Placeholders — trainer / server / client
 # ---------------------------------------------------------------------------
@@ -355,6 +398,92 @@ def test_mlff_client_submit_calculation_server_returns_error_field():
                 dograd=False,
                 nthreads=1,
             )
+
+
+def test_mlff_client_submit_calculation_url_error_becomes_jobfailure():
+    from urllib.error import URLError
+
+    from chemrefine.engines.mlff import client
+    from chemrefine.errors import JobFailureError
+
+    with (
+        patch.object(client, "urlopen", side_effect=URLError("connection refused")),
+        pytest.raises(JobFailureError, match="unreachable"),
+    ):
+        client.submit_calculation(
+            server_url="x",
+            atom_types=["H"],
+            coordinates=[[0.0, 0.0, 0.0]],
+            charge=0,
+            mult=1,
+            dograd=False,
+            nthreads=1,
+        )
+
+
+def test_mlff_client_submit_calculation_non_json_response_becomes_jobfailure():
+    from io import BytesIO
+
+    from chemrefine.engines.mlff import client
+    from chemrefine.errors import JobFailureError
+
+    with patch.object(client, "urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value = BytesIO(b"not json at all")
+        with pytest.raises(JobFailureError, match="non-JSON"):
+            client.submit_calculation(
+                server_url="x",
+                atom_types=["H"],
+                coordinates=[[0.0, 0.0, 0.0]],
+                charge=0,
+                mult=1,
+                dograd=False,
+                nthreads=1,
+            )
+
+
+def test_mlff_client_submit_calculation_missing_fields_becomes_jobfailure():
+    from io import BytesIO
+
+    from chemrefine.engines.mlff import client
+    from chemrefine.errors import JobFailureError
+
+    with patch.object(client, "urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value = BytesIO(b'{"foo": 1}')
+        with pytest.raises(JobFailureError, match="missing fields"):
+            client.submit_calculation(
+                server_url="x",
+                atom_types=["H"],
+                coordinates=[[0.0, 0.0, 0.0]],
+                charge=0,
+                mult=1,
+                dograd=False,
+                nthreads=1,
+            )
+
+
+def test_mlff_server_calculate_route_handles_calculator_errors():
+    """Server should turn an exception in single_point into a 500 with error body."""
+    from chemrefine.engines.mlff import calculator as calc_mod
+    from chemrefine.engines.mlff.server import create_app
+
+    with (
+        patch.object(calc_mod.MlffCalculator, "_build", return_value=None),
+        patch.object(calc_mod.MlffCalculator, "single_point", side_effect=RuntimeError("boom")),
+    ):
+        app = create_app(model_name="x", task_name="mace_off", device="cpu")
+        client_ = app.test_client()
+        resp = client_.post(
+            "/calculate",
+            json={
+                "atom_types": ["H"],
+                "coordinates": [[0.0, 0.0, 0.0]],
+                "charge": 0,
+                "mult": 1,
+                "nthreads": 1,
+            },
+        )
+    assert resp.status_code == 500
+    assert "boom" in resp.get_json()["error"]
 
 
 # ---------------------------------------------------------------------------

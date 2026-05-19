@@ -89,3 +89,9 @@ def test_boltzmann_weights_uses_default_temperature():
     w1 = boltzmann_weights([0.0, 1.0])
     w2 = boltzmann_weights([0.0, 1.0], temperature_k=DEFAULT_TEMPERATURE_K)
     np.testing.assert_allclose(w1, w2)
+
+
+def test_boltzmann_weights_returns_zeros_when_all_underflow():
+    """At absurdly high relative energies all exponentials underflow to 0."""
+    weights = boltzmann_weights([1e9, 1e9, 1e9])
+    np.testing.assert_array_equal(weights, [0.0, 0.0, 0.0])
