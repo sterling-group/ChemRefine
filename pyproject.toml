@@ -60,6 +60,9 @@ mlff = [
     "e3nn==0.4.4",
     "mace-torch>=0.3.16",
     "fairchem-core @ git+https://github.com/sterling-group/fairchem-patched.git@main#subdirectory=packages/fairchem-core",
+    # Swap in once mace-torch lifts its `e3nn==0.4.4` pin and the
+    # fork above is no longer needed:
+    # "fairchem-core>=2.9",
     "flask>=3.0",
     "waitress>=3.0",
 ]
