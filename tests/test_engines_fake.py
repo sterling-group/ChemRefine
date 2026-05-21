@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 from ase import Atoms
 
 from chemrefine.config import StepConfig
@@ -84,6 +85,10 @@ def test_fake_engine_energy_is_deterministic(tmp_path: Path):
 def test_fake_engine_does_not_support_nms(tmp_path: Path):
     engine = get_engine("fake")
     assert engine.supports_nms is False
+    from chemrefine.state import StepResults
+
+    with pytest.raises(NotImplementedError, match="does not support"):
+        engine.normal_mode_sample(StepResults(structures=()), ctx=None)  # type: ignore[arg-type]
 
 
 def test_fake_engine_round_trip_preserves_ids(tmp_path: Path):

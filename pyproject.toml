@@ -128,8 +128,6 @@ source = ["chemrefine"]
 fail_under = 100
 show_missing = true
 exclude_lines = [
-    "pragma: no cover",
-    "raise NotImplementedError",
     "if TYPE_CHECKING:",
     'if __name__ == "__main__":',
     "\\.\\.\\.",                  # Protocol method bodies (`...`)
