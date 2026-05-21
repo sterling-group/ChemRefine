@@ -1,10 +1,13 @@
-"""Tests for ``chemrefine/__init__.py`` — version resolution."""
+"""Tests for ``chemrefine/__init__.py`` and ``chemrefine/__main__.py``."""
 
 from __future__ import annotations
 
 import importlib
+import runpy
 from importlib.metadata import PackageNotFoundError
 from unittest.mock import patch
+
+import pytest
 
 
 def test_version_falls_back_when_uninstalled():
@@ -26,3 +29,16 @@ def test_version_reads_from_metadata_when_installed():
 
     assert isinstance(chemrefine.__version__, str)
     assert chemrefine.__version__
+
+
+def test_python_dash_m_runs_the_cli():
+    """``python -m chemrefine --help`` executes via ``__main__.py``.
+
+    ``runpy.run_module`` runs the module exactly the way the python
+    ``-m`` flag would, so ``__main__.py``'s import + ``app()`` call are
+    real coverage hits. Typer exits with code 0 on ``--help``; we catch
+    the SystemExit and assert it.
+    """
+    with patch("sys.argv", ["chemrefine", "--help"]), pytest.raises(SystemExit) as excinfo:
+        runpy.run_module("chemrefine", run_name="__main__")
+    assert excinfo.value.code == 0
