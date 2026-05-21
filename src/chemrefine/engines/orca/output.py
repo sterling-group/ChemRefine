@@ -176,11 +176,7 @@ def _parse_xyz_ensemble(
         if m is None:
             i += 2 + n_atoms
             continue
-        try:
-            energy = float(m.group(1))
-        except (TypeError, ValueError):  # pragma: no cover - defensive; the header regex only captures float-shaped substrings
-            i += 2 + n_atoms
-            continue
+        energy = float(m.group(1))
 
         symbols: list[str] = []
         positions: list[list[float]] = []

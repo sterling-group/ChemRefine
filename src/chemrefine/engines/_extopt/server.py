@@ -122,7 +122,7 @@ def _payload_to_data(payload: dict[str, Any]) -> CalculationData:
     )
 
 
-def main() -> int:  # pragma: no cover - production glue exercised only on real runs
+def main() -> int:  # pragma: no cover - production glue: waitress.serve blocks; parse_args/create_app/write_server_url have dedicated tests
     """Server entry point: bind, write sidecar, serve.
 
     Resolves the kernel-assigned port via ``socket.getsockname()`` after
