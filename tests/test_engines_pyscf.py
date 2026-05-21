@@ -153,28 +153,8 @@ def test_pyscf_prepare_writes_inp_with_method_block(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# PyscfExtOptCalculator — placeholder until B6
+# PyscfExtOptCalculator — full coverage lives in tests/test_engines_pyscf_extopt_calc.py
 # ---------------------------------------------------------------------------
-
-
-def test_pyscf_extopt_calculator_calc_raises_with_todo():
-    import numpy as np
-
-    from chemrefine.engines._extopt.base import CalculationData
-    from chemrefine.engines.pyscf.extopt_calc import PyscfExtOptCalculator
-
-    calc = PyscfExtOptCalculator()
-    data = CalculationData(
-        symbols=("H",),
-        positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
-        charge=0,
-        multiplicity=1,
-        nthreads=1,
-        dograd=True,
-        settings={},
-    )
-    with pytest.raises(NotImplementedError, match="not yet ported"):
-        calc.calc(data)
 
 
 def test_pyscf_extopt_calculator_from_args_round_trips():
