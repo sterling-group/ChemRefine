@@ -1,33 +1,194 @@
 """MLFF training pipeline.
 
-TODO: port the v3 ``MLFFTrainer`` from
-:file:`src/chemrefine/mlff.py` on ``main``. The pieces to bring over:
+Trains a MACE-style MLFF on the structures + energies + forces
+collected by a previous pipeline step. The training itself runs as a
+single SLURM job (one ``mace_run_train`` invocation against a YAML
+config); ChemRefine only writes the inputs, submits the job, and
+returns the seed structures unchanged so downstream steps can keep
+using them.
 
-* ``prepare_inputs`` — splits the collected ``(coords, energies,
-  forces)`` arrays into train/test ``extxyz`` files (90/10 by default),
-  converting Hartree → eV and Hartree/Bohr → eV/Å on the way.
-* ``write_training_config`` — fills in a template ``mace_train.yaml``
-  with the per-step dataset paths.
-* ``write_slurm_script`` — generates the training-job SLURM script
-  (GPU-aware, separate from the optimisation header).
-* ``submit_training`` — submits and waits.
+Ported from v3's ``MLFFTrainer`` in ``src/chemrefine/mlff.py``. The
+shape is intentionally narrower than v3: there's no command-line
+``runner`` instance, no in-process model loading, and no global
+state — every helper takes its inputs explicitly so it can be
+unit-tested with a ``tmp_path`` fixture.
 
-Verifying these end-to-end needs a real MACE training run, which is
-heavy and depends on a working CUDA stack. The placeholder
-:func:`run_training` below raises :class:`NotImplementedError` so any
-``operation: mlff_train`` step fails loudly until the port lands.
+The actual MACE training command (``mace_run_train``) is exercised
+only in the integration suite that runs against a real CUDA stack.
 """
 
 from __future__ import annotations
 
+import logging
+import time
+from pathlib import Path
+
+import numpy as np
+import yaml
+from ase import Atoms
+from ase.io import write as ase_write
+from sklearn.model_selection import train_test_split
+
+from chemrefine import slurm
+from chemrefine.constants import HARTREE_TO_EV
 from chemrefine.state import StepContext, StepResults
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Data prep
+# ---------------------------------------------------------------------------
+
+
+def prepare_inputs(results: StepResults, ctx: StepContext) -> tuple[Path, Path]:
+    """Write train / test ``extxyz`` files from ``results`` and return their paths.
+
+    Energy is taken from ``Structure.energy_hartree`` (Hartree → eV on
+    write); forces are taken from ``Structure.forces_eV_per_A`` if set,
+    otherwise from a Hartree/Bohr ``forces_hartree_per_bohr`` info
+    attribute the ORCA parser would have stored. The 90/10 split (and
+    the seed) come from ``step.options.valid_fraction`` and
+    ``step.options.seed`` respectively.
+
+    Raises :class:`ValueError` when any structure is missing an energy
+    or forces — MLFF training needs both.
+    """
+    options = ctx.step_cfg.options or {}
+    valid_fraction = float(options.get("valid_fraction", 0.1))
+    seed = int(options.get("seed", 42))
+
+    atoms_list: list[Atoms] = []
+    for struct in results.structures:
+        if struct.energy_hartree is None:
+            raise ValueError(f"structure {struct.id} has no energy — cannot train")
+        if struct.forces_eV_per_A is None:
+            raise ValueError(f"structure {struct.id} has no forces — cannot train")
+        atoms = struct.atoms.copy()
+        atoms.info["DFT_energy"] = struct.energy_hartree * HARTREE_TO_EV
+        # Forces are already in eV/Å in the v4 state (Hartree/Bohr → eV/Å
+        # was applied by the ORCA parser via HARTREE_PER_BOHR_TO_EV_PER_A).
+        atoms.arrays["DFT_Forces"] = np.asarray(struct.forces_eV_per_A, dtype=float)
+        atoms_list.append(atoms)
+
+    if not atoms_list:
+        raise ValueError("no usable structures for MLFF training")
+
+    if len(atoms_list) < 2:
+        # train_test_split needs at least one of each — fall back to "all train".
+        train_set, test_set = atoms_list, []
+    else:
+        train_set, test_set = train_test_split(
+            atoms_list,
+            test_size=valid_fraction,
+            random_state=seed,
+            shuffle=True,
+        )
+
+    ctx.step_dir.mkdir(parents=True, exist_ok=True)
+    train_path = ctx.step_dir / "mace_train.xyz"
+    test_path = ctx.step_dir / "mace_test.xyz"
+    ase_write(str(train_path), train_set, format="extxyz")
+    ase_write(str(test_path), test_set, format="extxyz")
+    logger.info(
+        "MLFF training: wrote %d train / %d test structures",
+        len(train_set), len(test_set),
+    )
+    return train_path, test_path
+
+
+# ---------------------------------------------------------------------------
+# Config + SLURM
+# ---------------------------------------------------------------------------
+
+
+def write_training_config(
+    *, train_path: Path, test_path: Path, ctx: StepContext
+) -> Path:
+    """Render a MACE training YAML from the per-step template.
+
+    The template is ``<template_dir>/step{N}.inp`` (a YAML body). We
+    patch the dataset paths and three output directories so MACE writes
+    inside the step dir, then write the resolved config to
+    ``<step_dir>/input.yaml``.
+    """
+    template_path = ctx.template_dir / f"step{ctx.step_cfg.step}.inp"
+    raw = template_path.read_text(encoding="utf-8")
+    config = yaml.safe_load(raw) or {}
+    config["train_file"] = str(train_path)
+    config["test_file"] = str(test_path)
+    for key in ("log_dir", "checkpoints_dir", "results_dir"):
+        config[key] = str(ctx.step_dir / key)
+
+    config_path = ctx.step_dir / "input.yaml"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    return config_path
+
+
+def write_training_slurm(*, ctx: StepContext, config_path: Path) -> Path:
+    """Generate the MACE training SLURM script.
+
+    Picks ``cuda.slurm.header`` or ``cpu.slurm.header`` from
+    ``ctx.template_dir`` based on ``step.options.device`` (default
+    ``"cuda"``), appends ``--job-name`` / ``--output`` / ``--error``,
+    and writes a single ``mace_run_train --config <input.yaml>``
+    command at the end.
+    """
+    options = ctx.step_cfg.options or {}
+    device = options.get("device", "cuda")
+    header_name = "cuda.slurm.header" if device == "cuda" else "cpu.slurm.header"
+    header_path = ctx.template_dir / header_name
+    if not header_path.is_file():
+        raise FileNotFoundError(f"SLURM header template not found: {header_path}")
+
+    job_name = options.get("job_name", "mlff_train")
+    script_path = ctx.step_dir / "train.slurm"
+    header_text = header_path.read_text(encoding="utf-8").rstrip()
+    body = (
+        f"{header_text}\n"
+        f"#SBATCH --job-name={job_name}\n"
+        f"#SBATCH --output={ctx.step_dir / 'slurm-%j.out'}\n"
+        f"#SBATCH --error={ctx.step_dir / 'slurm-%j.err'}\n"
+        "\n"
+        "export MKL_THREADING_LAYER=GNU\n"
+        f"mace_run_train --config {config_path}\n"
+    )
+    script_path.write_text(body, encoding="utf-8")
+    return script_path
+
+
+# ---------------------------------------------------------------------------
+# Submit + wait
+# ---------------------------------------------------------------------------
+
+
+def submit_training(*, script_path: Path, poll_seconds: float = 30.0) -> str:
+    """Submit the MLFF training SLURM job and block until it finishes."""
+    job_id = slurm.submit(script_path)
+    logger.info("MLFF training submitted as job %s", job_id)
+    while not slurm.is_finished(job_id):
+        time.sleep(poll_seconds)
+    logger.info("MLFF training job %s finished", job_id)
+    return job_id
+
+
+# ---------------------------------------------------------------------------
+# Top-level orchestrator
+# ---------------------------------------------------------------------------
 
 
 def run_training(results: StepResults, ctx: StepContext) -> StepResults:
-    """Train an MLFF model on ``results`` and return it unchanged.
+    """Train an MLFF on ``results`` and return the seed structures unchanged.
 
-    Placeholder — see module docstring for the port plan.
+    The pipeline writes the training inputs + config + SLURM script
+    into ``ctx.step_dir`` and submits one MACE training job. Downstream
+    steps reuse the same seed structures as if the training step were a
+    no-op.
     """
-    raise NotImplementedError(
-        "MLFF training pipeline not yet ported — see TODO in engines/mlff/trainer.py"
+    train_path, test_path = prepare_inputs(results, ctx)
+    config_path = write_training_config(
+        train_path=train_path, test_path=test_path, ctx=ctx
     )
+    script_path = write_training_slurm(ctx=ctx, config_path=config_path)
+    submit_training(script_path=script_path)
+    return results

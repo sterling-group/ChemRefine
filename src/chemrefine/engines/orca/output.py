@@ -331,6 +331,7 @@ def _parse_last_pes_coord_block(segment: str) -> list[tuple[str, float, float, f
 
 
 def _parse_last_pes_energy(segment: str) -> float | None:
+    """Return the last ``FINAL SINGLE POINT ENERGY`` in ``segment``, or ``None``."""
     matches = _FINAL_ENERGY_RE.findall(segment)
     return float(matches[-1]) if matches else None
 

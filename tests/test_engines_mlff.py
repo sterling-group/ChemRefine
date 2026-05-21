@@ -414,14 +414,4 @@ def test_mlff_direct_get_calculator_is_cached(tmp_path: Path):
     assert a is b
 
 
-# ---------------------------------------------------------------------------
-# Trainer placeholder — body lands in B5
-# ---------------------------------------------------------------------------
-
-
-def test_trainer_placeholder_raises_with_todo():
-    from chemrefine.engines.mlff.trainer import run_training
-    from chemrefine.state import StepResults
-
-    with pytest.raises(NotImplementedError):
-        run_training(StepResults(structures=()), ctx=None)  # type: ignore[arg-type]
+# Trainer body lives in ``tests/test_engines_mlff_trainer.py`` after B5.
