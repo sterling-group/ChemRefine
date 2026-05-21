@@ -384,6 +384,29 @@ def test_mlff_direct_wait_is_noop():
     engine.wait(JobBatch(jobs={}))  # must not raise
 
 
+def test_mlff_direct_find_structure_raises_on_unknown_sid(tmp_path: Path):
+    """``_find_structure`` raises ``KeyError`` if the SID isn't among seeds."""
+    from chemrefine.engines.mlff.direct import MlffDirectEngine
+
+    step_cfg = StepConfig(step=1, engine="mlff-direct", operation="opt_sp")
+    seed = Structure(id="0", atoms=Atoms("H"))
+    ctx = StepContext(
+        step_cfg=step_cfg,
+        step_dir=tmp_path,
+        template_dir=tmp_path,
+        scratch_dir=None,
+        prev_state=PipelineState(structures=(seed,)),
+        charge=0,
+        multiplicity=1,
+        max_cores=1,
+        slurm_template="cpu.slurm.header",
+        orca_executable="orca",
+    )
+    engine = MlffDirectEngine()
+    with pytest.raises(KeyError, match="ghost"):
+        engine._find_structure(ctx, "ghost")
+
+
 def test_mlff_direct_get_calculator_is_cached(tmp_path: Path):
     """``_get_calculator`` builds once, then returns the cached instance."""
     from chemrefine.engines.mlff.direct import MlffDirectEngine

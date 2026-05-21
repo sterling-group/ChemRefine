@@ -185,6 +185,16 @@ def test_normal_mode_sample_not_supported(tmp_path: Path):
         engine.normal_mode_sample(StepResults(structures=()), _ctx(tmp_path, ()))
 
 
+def test_pyscf_direct_find_structure_raises_on_unknown_sid(tmp_path: Path):
+    """``_find_structure`` raises ``KeyError`` if the SID isn't among seeds."""
+    from chemrefine.engines.pyscf.direct import PyscfDirectEngine
+
+    ctx = _ctx(tmp_path, structures=(_seed("0"),))
+    engine = PyscfDirectEngine()
+    with pytest.raises(KeyError, match="ghost"):
+        engine._find_structure(ctx, "ghost")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

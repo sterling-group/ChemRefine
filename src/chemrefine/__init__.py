@@ -4,5 +4,5 @@ from importlib.metadata import PackageNotFoundError, version
 
 try:
     __version__ = version("ChemRefine")
-except PackageNotFoundError:  # pragma: no cover - only triggers when run from a non-installed checkout
+except PackageNotFoundError:
     __version__ = "0.0.0+unknown"

@@ -147,7 +147,7 @@ class PyscfDirectEngine:
         for struct in ctx.prev_state.structures:
             if struct.id == sid:
                 return struct
-        raise KeyError(f"unknown structure id {sid!r}")  # pragma: no cover - prepare keeps SIDs in sync
+        raise KeyError(f"unknown structure id {sid!r}")
 
 
 # ---------------------------------------------------------------------------

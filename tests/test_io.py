@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -140,3 +141,35 @@ def test_smiles_to_xyz_skips_blank_and_invalid_smiles(tmp_path: Path):
     csv.write_text("smiles\n\n!!!nonsense!!!\nC\n", encoding="utf-8")
     written = smiles_to_xyz(csv, tmp_path / "out")
     assert len(written) == 1  # only the valid one
+
+
+def test_smiles_to_xyz_skips_nan_and_whitespace_rows(tmp_path: Path):
+    """NaN cells (pandas turns empty cells into float('nan')) and whitespace-only
+    strings hit the ``not isinstance(raw, str) or not raw.strip()`` skip branch.
+
+    We construct the dataframe via :mod:`pandas` directly to make the NaN row
+    explicit — relying on CSV-parsing heuristics for "empty cell" is fragile
+    across pandas versions.
+    """
+    import pandas as pd
+
+    from chemrefine import io as io_mod
+    from chemrefine.io import smiles_to_xyz
+
+    df = pd.DataFrame({"smiles": [float("nan"), "   ", "C"]})
+    with patch.object(io_mod.pd, "read_csv", return_value=df):
+        written = smiles_to_xyz(tmp_path / "ignored.csv", tmp_path / "out")
+    assert len(written) == 1
+
+
+def test_smiles_to_xyz_logs_when_embed_fails(tmp_path: Path):
+    """A non-zero return from ``AllChem.EmbedMolecule`` triggers a warning + skip."""
+    from rdkit.Chem import AllChem
+
+    from chemrefine.io import smiles_to_xyz
+
+    csv = tmp_path / "one.csv"
+    csv.write_text("smiles\nC\n", encoding="utf-8")
+    with patch.object(AllChem, "EmbedMolecule", return_value=1):
+        written = smiles_to_xyz(csv, tmp_path / "out")
+    assert written == []
