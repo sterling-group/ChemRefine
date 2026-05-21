@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from ase import Atoms
 
 from chemrefine.config import StepConfig
@@ -173,12 +172,4 @@ def test_pyscf_extopt_calculator_from_args_round_trips():
     assert calc.gpu is True
 
 
-# ---------------------------------------------------------------------------
-# Direct engine — placeholder for B7
-# ---------------------------------------------------------------------------
-
-
-def test_pyscf_direct_prepare_raises_with_todo():
-    engine = get_engine("pyscf-direct")
-    with pytest.raises(NotImplementedError):
-        engine.prepare(ctx=None)  # type: ignore[arg-type]
+# Direct engine body lives in ``tests/test_engines_pyscf_direct.py`` after B7.

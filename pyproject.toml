@@ -123,11 +123,7 @@ markers = [
 
 [tool.coverage.run]
 source = ["chemrefine"]
-omit = [
-    # Pure-placeholder modules — bodies land in Phase B; coverage gate
-    # comes back online for these as each placeholder is ported.
-    "src/chemrefine/engines/pyscf/direct.py",  # B7: PySCF direct port
-]
+omit = []
 
 [tool.coverage.report]
 fail_under = 100
