@@ -64,7 +64,7 @@ class MlffCalculator:
             f"model_name={self.model_name!r}"
         )
 
-    def _build_mace(self):  # pragma: no cover - requires mace-torch + real model
+    def _build_mace(self):
         """Load a pre-trained MACE model (mace_off / mace_mp / mace_omol)."""
         if self.task_name == "mace_off":
             from mace.calculators import mace_off
@@ -84,13 +84,13 @@ class MlffCalculator:
         """Load a user-supplied MACE model file."""
         if self.model_path is None or not self.model_path.is_file():
             raise FileNotFoundError(f"custom MACE model not found: {self.model_path}")
-        from mace.calculators import MACECalculator  # pragma: no cover - real mace
+        from mace.calculators import MACECalculator
 
-        return MACECalculator(  # pragma: no cover - real mace
+        return MACECalculator(
             model_path=str(self.model_path), device=self.device
         )
 
-    def _build_fairchem(self):  # pragma: no cover - requires fairchem-core + real model
+    def _build_fairchem(self):
         """Load a FAIRChem / UMA pretrained predictor."""
         from fairchem.core import FAIRChemCalculator, pretrained_mlip
 
@@ -99,7 +99,7 @@ class MlffCalculator:
         )
         return FAIRChemCalculator(predictor, task_name=self.task_name)
 
-    def _build_chgnet(self):  # pragma: no cover - requires chgnet + real model
+    def _build_chgnet(self):
         """Load a CHGNet model."""
         from chgnet.calculators import CHGNetCalculator
         from chgnet.model import CHGNet
@@ -107,19 +107,19 @@ class MlffCalculator:
         model = CHGNet.load(str(self.model_path)) if self.model_path else CHGNet.load()
         return CHGNetCalculator(model=model)
 
-    def _build_sevenn(self):  # pragma: no cover - requires sevenn + real model
+    def _build_sevenn(self):
         """Load a SevenN model."""
         from sevenn.calculator import SevenNetCalculator
 
         return SevenNetCalculator(model=self.task_name, device=self.device)
 
-    def _build_orb(self):  # pragma: no cover - alias of _build_sevenn (also needs real model)
+    def _build_orb(self):
         """Load an ORB model — routes through the SevenN entry point."""
         return self._build_sevenn()
 
     # -- inference ---------------------------------------------------------
 
-    def single_point(  # pragma: no cover - requires a real backend calculator
+    def single_point(
         self, atoms: Atoms
     ) -> tuple[float, list[list[float]]]:
         """Return ``(energy_eV, gradient_eV_per_A)`` for one geometry.
@@ -133,7 +133,7 @@ class MlffCalculator:
         gradient = (-forces).tolist()
         return energy, gradient
 
-    def optimize(  # pragma: no cover - requires a real backend calculator
+    def optimize(
         self, atoms: Atoms, *, fmax: float = 0.03, steps: int = 200
     ) -> Atoms:
         """In-process LBFGS optimisation; returns the relaxed ``atoms``."""
