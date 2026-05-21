@@ -122,7 +122,9 @@ def test_write_engrad_emits_full_format(tmp_path: Path):
     assert "2\n" in text
     # Six gradient components on six lines (two atoms by three components) plus one energy line.
     numeric_lines = [
-        line for line in text.splitlines() if line and not line.startswith("#") and "atoms" not in line
+        line
+        for line in text.splitlines()
+        if line and not line.startswith("#") and "atoms" not in line
     ]
     # numeric_lines now: n_atoms ('2'), energy, then 6 gradient values
     assert len(numeric_lines) == 8

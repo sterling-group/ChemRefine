@@ -23,10 +23,11 @@ from chemrefine.state import StepResults, Structure
 
 
 def _results() -> StepResults:
+    zero_force = np.zeros((1, 3))
     return StepResults(
         structures=(
-            Structure(id="0", atoms=Atoms("H"), energy_hartree=-1.0, forces_eV_per_A=np.zeros((1, 3))),
-            Structure(id="1", atoms=Atoms("H"), energy_hartree=-1.5, forces_eV_per_A=np.zeros((1, 3))),
+            Structure(id="0", atoms=Atoms("H"), energy_hartree=-1.0, forces_eV_per_A=zero_force),
+            Structure(id="1", atoms=Atoms("H"), energy_hartree=-1.5, forces_eV_per_A=zero_force),
         )
     )
 

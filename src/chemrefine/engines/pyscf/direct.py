@@ -79,7 +79,10 @@ class PyscfDirectEngine:
             try:
                 struct = self._find_structure(ctx, sid)
                 energy_hartree, gradient = _score_one(
-                    struct=struct, options=options, charge=ctx.charge, multiplicity=ctx.multiplicity,
+                    struct=struct,
+                    options=options,
+                    charge=ctx.charge,
+                    multiplicity=ctx.multiplicity,
                 )
                 out.write_text(
                     json.dumps(

@@ -22,7 +22,11 @@ FIXTURE = Path(__file__).parent / "data" / "orca.out"
 # ---------------------------------------------------------------------------
 
 
-def _ctx(tmp_path: Path, structures: tuple[Structure, ...], step_cfg: StepConfig | None = None) -> StepContext:
+def _ctx(
+    tmp_path: Path,
+    structures: tuple[Structure, ...],
+    step_cfg: StepConfig | None = None,
+) -> StepContext:
     """Build a StepContext with a usable template + SLURM header on disk."""
     template_dir = tmp_path / "templates"
     template_dir.mkdir(parents=True, exist_ok=True)
@@ -119,7 +123,9 @@ def test_prepare_uses_step_specific_template_when_given(tmp_path: Path):
 
 @patch.object(slurm, "is_finished", return_value=True)
 @patch.object(slurm, "submit")
-def test_submit_creates_script_per_input_and_returns_batch(submit_mock, _is_finished, tmp_path: Path):
+def test_submit_creates_script_per_input_and_returns_batch(
+    submit_mock, _is_finished, tmp_path: Path
+):
     submit_mock.side_effect = ["1001", "1002"]
     engine = get_engine("orca")
     ctx = _ctx(tmp_path, structures=(_seed_structure("0"), _seed_structure("1")))

@@ -59,7 +59,7 @@ def test_load_corrupt_json_raises_cache_error(tmp_path: Path):
 
 
 def test_load_missing_files_key_raises_cache_error(tmp_path: Path):
-    """A manifest written by an older format / different tool must surface as CacheError, not bare KeyError."""
+    """A manifest with no ``files`` key must surface as a ``CacheError``."""
     path = manifest_path(tmp_path / "step1")
     path.parent.mkdir(parents=True)
     path.write_text('{"operation": "opt_sp", "engine": "orca"}', encoding="utf-8")

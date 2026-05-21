@@ -161,7 +161,10 @@ def load(step_dir: Path) -> StepCache | None:
     if not isinstance(obj, StepCache):
         raise CacheError(f"cache at {pkl_path} is not a StepCache (got {type(obj).__name__})")
     if obj.cache_format != CACHE_FORMAT_VERSION:
-        raise CacheError(f"cache at {pkl_path} has format {obj.cache_format}; expected {CACHE_FORMAT_VERSION}")
+        raise CacheError(
+            f"cache at {pkl_path} has format {obj.cache_format}; "
+            f"expected {CACHE_FORMAT_VERSION}"
+        )
     return obj
 
 

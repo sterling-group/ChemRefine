@@ -50,8 +50,9 @@ class MlffDirectEngine:
         ctx.step_dir.mkdir(parents=True, exist_ok=True)
         files: list[tuple] = []
         for struct in ctx.prev_state.structures:
-            placeholder_inp = ctx.step_dir / f"step{ctx.step_cfg.step}_structure_{struct.id}.json"
-            placeholder_out = ctx.step_dir / f"step{ctx.step_cfg.step}_structure_{struct.id}.json.out"
+            stem = f"step{ctx.step_cfg.step}_structure_{struct.id}"
+            placeholder_inp = ctx.step_dir / f"{stem}.json"
+            placeholder_out = ctx.step_dir / f"{stem}.json.out"
             placeholder_inp.write_text(
                 f'{{"id": "{struct.id}", "engine": "mlff-direct"}}\n',
                 encoding="utf-8",

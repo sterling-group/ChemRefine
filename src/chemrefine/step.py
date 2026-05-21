@@ -91,7 +91,11 @@ def run_step(
     ):
         cached = cache.load(ctx.step_dir)
         assert cached is not None  # is_valid guarantees this
-        logger.info("step %d: cache hit, reusing %d structures", step_cfg.step, len(cached.results.structures))
+        logger.info(
+            "step %d: cache hit, reusing %d structures",
+            step_cfg.step,
+            len(cached.results.structures),
+        )
         return StepOutcome(
             state=filtering.apply(cached.results, step_cfg.sample),
             cache_hit=True,

@@ -123,7 +123,11 @@ MaxCoresOpt = Annotated[
     typer.Option("--maxcores", help="Override max_cores from the YAML."),
 ]
 DryRunOpt = Annotated[
-    bool, typer.Option("--dry-run", help="Validate the config and describe actions; do not execute.")
+    bool,
+    typer.Option(
+        "--dry-run",
+        help="Validate the config and describe actions; do not execute.",
+    ),
 ]
 TargetArg = Annotated[
     str | None,
