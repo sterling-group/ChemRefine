@@ -147,25 +147,26 @@ fan-out step.
 | `mlff`          | SLURM + ORCA + server | MLFF gradient server via ORCA `%method`  |
 | `mlff-direct`   | in-process            | MACE / FairChem / SevenN / ORB direct    |
 | `pyscf`         | SLURM + ORCA + server | PySCF / gpu4pyscf via ORCA `%method`     |
-| `pyscf-direct`  | in-process            | PySCF in-process (placeholder)           |
+| `pyscf-direct`  | in-process            | PySCF in-process                         |
 | `fake`          | in-process            | Test stub used by the pipeline tests     |
 
 ## Operations
 
 Engines decide which operations they support. The current ORCA mapping:
 
-| Operation     | Description                                                        |
-|---------------|--------------------------------------------------------------------|
-| `opt_sp`      | Geometry optimisation + single point (verified)                    |
-| `goat`        | GOAT conformer ensemble — output parser is a placeholder           |
-| `pes`         | PES scan — output parser is a placeholder                          |
-| `docker`      | Host–guest docking — output parser is a placeholder                |
-| `solvator`    | Explicit solvation — output parser is a placeholder                |
-| `mlff_train`  | MLFF model training — placeholder until a real fixture is captured |
+| Operation     | Description                                                  |
+|---------------|--------------------------------------------------------------|
+| `opt_sp`      | Geometry optimisation + single point                         |
+| `goat`        | GOAT conformer ensemble                                      |
+| `pes`         | PES scan (one frame per converged scan point)                |
+| `docker`      | Host–guest docking ensemble                                  |
+| `solvator`    | Explicit solvation ensemble                                  |
+| `mlff_train`  | MLFF model training (writes inputs + submits training job)   |
 
-Placeholders raise `NotImplementedError` with a TODO pointer rather
-than silently returning empty data; they will be ported as real-world
-examples land.
+Engines that don't know how to handle a given operation raise
+`OutputParseError` (or, for engines that can't perform an operation,
+`NotImplementedError`) so the pipeline fails loudly instead of
+returning empty data.
 
 ## Caching & resumability
 

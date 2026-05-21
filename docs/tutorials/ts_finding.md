@@ -1,7 +1,7 @@
 # Transition State (TS) Finding Tutorial
 
 !!! note "Schema note"
-    The YAML excerpts on this page are abbreviated for illustration and use idioms from the v3 schema. For the authoritative v4 schema reference (sample:, input:, options: blocks, etc.) see the [main schema page](../index.md) and the up-to-date example in [Examples/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/input.yaml).
+    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [Examples/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/input.yaml).
 
 
 This tutorial demonstrates how to use **ChemRefine** to locate and validate **transition states (TS)** using a stepwise pipeline that combines **PES scans, optimizations, frequency analysis, and final single-point energy evaluation**.
