@@ -18,10 +18,6 @@ The ``VIBRATIONAL FREQUENCIES`` table in an ORCA output looks like::
 We parse the mode-index → frequency mapping and let the caller decide
 which subset they want (imaginary modes for NMS, all modes for
 spectrum extraction, etc.).
-
-Verified against the v3 :func:`OrcaInterface.parse_imaginary_frequency`
-behaviour from ``orca_interface.py`` on ``main`` plus the real
-frequency tables in ``Conformational-Sampling/outputs/step4/*.out``.
 """
 
 from __future__ import annotations
@@ -60,7 +56,7 @@ def parse_frequencies(
         Number of low-index translational / rotational modes to drop
         when ``only_imaginary`` is ``False``. ORCA always prints six
         zero modes (five for linear molecules); the default drops the
-        first 5 to match v3 behaviour.
+        first five.
     """
     in_block = False
     after_scaling = False
@@ -121,8 +117,6 @@ def parse_normal_modes_tensor(
     the mode indices, then ``3 N`` rows). We collect each block as a
     matrix and ``hstack`` them to recover the full ``(3N, n_modes)``
     matrix before reshaping.
-
-    Ported verbatim from v3's ``OrcaInterface.parse_normal_modes_tensor``.
     """
     text = Path(path).read_text(encoding="utf-8", errors="replace")
 

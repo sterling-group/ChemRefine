@@ -25,7 +25,7 @@ from chemrefine.engines._extopt.registry import CALCULATORS
 from chemrefine.errors import JobFailureError
 
 DEFAULT_TIMEOUT: float = 600.0
-"""Seconds before a single ``/calculate`` request times out (matches v3)."""
+"""Seconds before a single ``/calculate`` request times out."""
 
 logger = logging.getLogger(__name__)
 

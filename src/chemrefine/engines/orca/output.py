@@ -9,8 +9,8 @@ Verified against real fixtures under ``tests/data/``:
   (``docker_allopt.xyz`` fixture)
 * ``solvator`` — solvent-build ensemble
   (``solvator_solventbuild.xyz`` fixture)
-* ``pes`` — PES-scan segments (synthetic test fixtures + real-format
-  parsing logic ported from v3 :func:`OrcaInterface.parse_pes_output`).
+* ``pes`` — one frame per converged scan point, split on
+  ``*** OPTIMIZATION RUN DONE ***`` markers.
 
 ExtOpt ``.extinp.tmp`` / ``.engrad`` round-trip helpers live in
 :mod:`chemrefine.engines._extopt.protocol`.
@@ -226,8 +226,8 @@ def parse_docker(path: str | Path) -> list[ParsedStructure]:
 
     Header layout: ``<idx> Eopt=<energy_hartree> (Eh) Einter=<inter> (kcal/mol)``.
     Returns one :class:`ParsedStructure` per frame, **dropping the
-    final frame** to match v3 behaviour — the upstream tool's last
-    structure is flagged as non-sensible there.
+    final frame** because the upstream tool's last structure is
+    flagged as non-sensible there.
     """
     structures = _parse_xyz_ensemble(path, _DOCKER_HEADER_RE, fmt_name="Docker")
     if len(structures) <= 1:
@@ -248,7 +248,7 @@ def parse_solvator(path: str | Path) -> list[ParsedStructure]:
 
 
 # ---------------------------------------------------------------------------
-# Placeholders — implement with a real fixture in hand
+# PES scan
 # ---------------------------------------------------------------------------
 
 
@@ -266,8 +266,6 @@ def parse_pes(path: str | Path) -> list[ParsedStructure]:
     completed segment the parser takes the **last** coordinate block and
     the **last** ``FINAL SINGLE POINT ENERGY`` line — that's the
     converged geometry for that scan point.
-
-    Ported from v3's ``OrcaInterface.parse_pes_output``.
     """
     text = Path(path).read_text(encoding="utf-8", errors="replace")
     segments = _PES_SEGMENT_RE.split(text)[:-1]  # last fragment has no DONE marker

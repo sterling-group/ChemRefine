@@ -6,9 +6,7 @@ server can serve PySCF gradients via the same
 tensor extraction is gated on the per-call ``settings['save_tensors']``
 flag (which the wrapper-script CLI flips on with ``--save-tensors``).
 
-Ported from
-``origin/codex/add-function-to-save-tensor-integrals:src/chemrefine/pyscf_server.py``.
-The actual SCF + gradient body needs PySCF + (optionally) gpu4pyscf
+The SCF + gradient body needs PySCF + (optionally) gpu4pyscf
 installed; tests under :file:`tests/test_engines_pyscf_extopt_calc.py`
 mock those imports so the call graph can be exercised in CI.
 """

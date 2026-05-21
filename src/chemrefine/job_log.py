@@ -1,4 +1,4 @@
-"""Per-job operational logs (stream #2 of the B0 log taxonomy).
+"""Per-job operational logs (one file per structure per step).
 
 A *runlog* is one file per structure per step at
 ``<step_dir>/step{N}_structure_{ID}.runlog``. Both bash (SLURM) and

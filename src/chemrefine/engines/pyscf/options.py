@@ -1,10 +1,10 @@
 """Pydantic validator for PySCF engine YAML options.
 
-In v4 ``step.options`` is a free-form ``dict[str, Any]`` so the
-orchestrator stays engine-agnostic; backend-specific validation lives
-here. :class:`PyscfOptions` covers both the SCF knobs (method, xc,
-basis, df, gpu) and the active-space tensor-extraction additions from
-``origin/codex/add-function-to-save-tensor-integrals``.
+``step.options`` is a free-form ``dict[str, Any]`` so the orchestrator
+stays engine-agnostic; backend-specific validation lives here.
+:class:`PyscfOptions` covers both the SCF knobs (method, xc, basis,
+df, gpu) and the active-space tensor-extraction knobs (save_tensors,
+localized, tensor_folder).
 """
 
 from __future__ import annotations

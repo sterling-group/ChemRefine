@@ -130,7 +130,7 @@ def resolve_persistent_ids(
     * **Even fan-out** — ``child_count % len(parent_ids) == 0``. Each
       parent fans out evenly.
     * **Uneven fan-out** — falls back to giving the extras to parent 0
-      and 1:1 to the rest, mirroring the v3 behavior.
+      and 1:1 to the rest.
     """
     if step_number <= 1 or not parent_ids:
         return [str(i) for i in range(child_count)]

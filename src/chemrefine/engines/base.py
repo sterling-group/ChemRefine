@@ -7,8 +7,8 @@ populates the registry as a side effect.
 
 The orchestrator only ever sees the :class:`CalculationEngine` Protocol
 plus the :data:`ENGINES` dict. ORCA-specific imports, MLFF imports, etc.
-never reach :mod:`chemrefine.pipeline` — that's how we kept the v3 god
-class from coming back.
+never reach :mod:`chemrefine.pipeline` — that's how the orchestrator
+stays engine-agnostic.
 """
 
 from __future__ import annotations

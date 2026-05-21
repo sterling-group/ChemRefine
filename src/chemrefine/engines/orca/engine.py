@@ -9,12 +9,12 @@ composing the smaller modules in this package:
 * :mod:`engines.orca.output` parses the resulting ``.out`` files into
   :class:`~chemrefine.state.Structure` instances.
 * :mod:`engines.orca.nms` runs normal-mode sampling for steps that
-  request it (placeholder until a real freq calc is captured).
+  request it.
 
 Submit and wait are intentionally collapsed: :meth:`submit` registers
 every job with the throttler and blocks until every job finishes, so
-:meth:`wait` is a no-op. That matches the v3 ``OrcaJobSubmitter.submit_files``
-semantics and keeps state out of the engine instance.
+:meth:`wait` is a no-op. The engine instance therefore carries no
+state between steps.
 """
 
 from __future__ import annotations
@@ -172,5 +172,5 @@ class OrcaEngine:
     # -- nms ---------------------------------------------------------------
 
     def normal_mode_sample(self, results: StepResults, ctx: StepContext) -> StepResults:
-        """Delegate to :mod:`engines.orca.nms` (placeholder until ported)."""
+        """Delegate to :mod:`engines.orca.nms`."""
         return nms.normal_mode_sample(results, ctx)

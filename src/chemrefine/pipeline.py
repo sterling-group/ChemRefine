@@ -1,7 +1,6 @@
 """High-level pipeline orchestrator — iterate steps, thread immutable state.
 
-This is what replaces the v3 ``ChemRefiner`` god class. Two functions
-are enough:
+Two functions are enough:
 
 * :func:`bootstrap` turns ``config.input`` (an ``.xyz`` file, a ``.csv``
   of SMILES, a directory of ``.xyz`` files, or — for backwards

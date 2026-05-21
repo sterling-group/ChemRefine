@@ -7,10 +7,11 @@ mode in ±directions; the next pipeline step re-optimises both
 displaced copies and keeps whichever survives with one imaginary
 frequency removed.
 
-Ported from v3 :class:`OrcaInterface.normal_mode_sampling`, but the
-v4 shape is a single :func:`normal_mode_sample` that takes the
-already-parsed :class:`StepResults` and expands it. SLURM submission
-of the displaced inputs happens in the next step, not here.
+:func:`normal_mode_sample` is the single entry point: it takes the
+already-parsed :class:`StepResults` for the frequency step and
+returns an expanded :class:`StepResults` with ``{id}_pos`` and
+``{id}_neg`` variants per surviving structure. SLURM submission of
+the displaced inputs happens in the next step, not here.
 """
 
 from __future__ import annotations

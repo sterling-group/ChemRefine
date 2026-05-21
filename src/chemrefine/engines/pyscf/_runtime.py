@@ -1,13 +1,11 @@
-"""Shared PySCF compute helpers (used by both extopt and direct engines).
+"""Shared PySCF compute helpers used by both extopt and direct engines.
 
-Ported from
-``origin/codex/add-function-to-save-tensor-integrals:src/chemrefine/pyscf_server.py``.
-The codex branch is ``origin/pyscf`` + two commits adding active-space
-tensor extraction and the YAML knobs that gate it.
-
-All PySCF imports are lazy (inside the helper bodies) so this module
-imports cleanly when ``pyscf`` isn't installed — the integration suite
-patches them out under mocked CPU backends.
+Exposes :func:`build_mol`, :func:`run_dft`,
+:func:`get_active_space_tensors`, :func:`save_tensors`, and
+:func:`print_tensors_file`. All PySCF imports are lazy (inside the
+helper bodies) so this module imports cleanly when ``pyscf`` isn't
+installed — the integration suite patches them out under mocked CPU
+backends.
 """
 
 from __future__ import annotations
@@ -146,7 +144,7 @@ def run_dft(
 
 
 # ---------------------------------------------------------------------------
-# Active-space tensor extraction (codex branch addition)
+# Active-space tensor extraction
 # ---------------------------------------------------------------------------
 
 
@@ -194,9 +192,9 @@ def save_tensors(
 ) -> Path:
     """Write ``nuc / h1 / h2`` to a single compressed ``.npz`` and return its path.
 
-    The file carries keys ``hc`` (scalar nuclear-repulsion energy), ``h1e``,
-    and ``h2e`` — same names the v3 codex branch used so downstream
-    inspection scripts keep working.
+    Keys (``hc`` for the nuclear-repulsion scalar, ``h1e`` for the
+    one-electron tensor, ``h2e`` for the two-electron tensor) match
+    the format the downstream inspection helpers expect.
     """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)

@@ -10,8 +10,7 @@ optimization step. The wrapper:
 4. Writes the returned energy + gradient to ``.engrad`` so ORCA can
    take its next step.
 
-Ported byte-for-byte from the v3 ``utils_extopt.py`` on ``main``. Unit
-conversions go through :mod:`chemrefine.constants` so the values
+Unit conversions go through :mod:`chemrefine.constants` so the values
 match the rest of ChemRefine.
 """
 

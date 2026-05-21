@@ -10,8 +10,7 @@ Two engines ship in this package:
   in-process, no ORCA, for quick single-point evaluations.
 
 Both engines route through :mod:`._runtime` (``build_mol`` + ``run_dft``
-+ optional active-space tensor extraction), ported from
-``origin/codex/add-function-to-save-tensor-integrals``.
++ optional active-space tensor extraction).
 """
 
 from chemrefine.engines.pyscf.direct import PyscfDirectEngine

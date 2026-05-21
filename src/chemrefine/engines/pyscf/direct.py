@@ -2,10 +2,9 @@
 
 Mirrors :class:`~chemrefine.engines.mlff.direct.MlffDirectEngine`:
 evaluates PySCF on each seed structure in the same Python process and
-emits a per-structure ``.runlog`` matching the B0 log taxonomy. The
-actual SCF + gradient call goes through
-:mod:`chemrefine.engines.pyscf._runtime` so direct mode and ExtOpt
-mode share one PySCF integration.
+emits a per-structure ``.runlog``. The SCF + gradient call routes
+through :mod:`chemrefine.engines.pyscf._runtime` so direct mode and
+ExtOpt mode share one PySCF integration.
 
 PySCF imports happen lazily inside the runtime helpers, so importing
 this module is safe even when PySCF isn't installed — only an actual

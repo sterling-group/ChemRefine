@@ -2,8 +2,8 @@
 
 Mirrors :class:`MlffEngine` — same shared ExtOpt server, different
 backend choice (``--backend pyscf``) and a different per-step CLI
-that selects method / xc / basis / df / gpu. The actual PySCF SCF +
-gradient lands in B6 inside :class:`PyscfExtOptCalculator.calc`.
+that selects method / xc / basis / df / gpu. The actual SCF +
+gradient is computed by :class:`PyscfExtOptCalculator`.
 """
 
 from __future__ import annotations

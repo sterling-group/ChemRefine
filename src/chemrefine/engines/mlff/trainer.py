@@ -7,14 +7,10 @@ config); ChemRefine only writes the inputs, submits the job, and
 returns the seed structures unchanged so downstream steps can keep
 using them.
 
-Ported from v3's ``MLFFTrainer`` in ``src/chemrefine/mlff.py``. The
-shape is intentionally narrower than v3: there's no command-line
-``runner`` instance, no in-process model loading, and no global
-state — every helper takes its inputs explicitly so it can be
-unit-tested with a ``tmp_path`` fixture.
-
-The actual MACE training command (``mace_run_train``) is exercised
-only in the integration suite that runs against a real CUDA stack.
+Every helper takes its inputs explicitly (no shared module state) so
+it can be unit-tested with a ``tmp_path`` fixture. The actual MACE
+training command (``mace_run_train``) is exercised only in the
+integration suite that runs against a real CUDA stack.
 """
 
 from __future__ import annotations
@@ -66,8 +62,8 @@ def prepare_inputs(results: StepResults, ctx: StepContext) -> tuple[Path, Path]:
             raise ValueError(f"structure {struct.id} has no forces — cannot train")
         atoms = struct.atoms.copy()
         atoms.info["DFT_energy"] = struct.energy_hartree * HARTREE_TO_EV
-        # Forces are already in eV/Å in the v4 state (Hartree/Bohr → eV/Å
-        # was applied by the ORCA parser via HARTREE_PER_BOHR_TO_EV_PER_A).
+        # Forces are stored in eV/Å (already converted from Hartree/Bohr
+        # by the ORCA parser).
         atoms.arrays["DFT_Forces"] = np.asarray(struct.forces_eV_per_A, dtype=float)
         atoms_list.append(atoms)
 

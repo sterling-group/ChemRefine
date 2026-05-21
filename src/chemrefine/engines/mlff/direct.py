@@ -1,16 +1,12 @@
 """Direct in-process MLFF engine — no ORCA, no SLURM.
 
 This engine evaluates the MLFF calculator on each seed structure in
-the same Python process and returns the result immediately. Useful for
-fast pre-screening before the expensive ORCA refinement stage.
+the same Python process and writes a per-structure ``.runlog`` plus a
+tiny JSON output. Useful for fast pre-screening before the expensive
+ORCA refinement stage.
 
-TODO: the full prepare → submit → parse round-trip needs to write the
-per-structure JSON settings file and run an out-of-process worker so
-the GPU model can be reused across SLURM allocations. Today the
-implementation only supports the simplest case (in-process scoring with
-a singleton calculator). Extend by porting
-:file:`src/chemrefine/mlff_runner.py` from main (it doesn't exist yet
-in v4) once a real direct-mode tutorial is available.
+The calculator is built once per engine instance and cached so the
+GPU model load cost is paid only once per pipeline run.
 """
 
 from __future__ import annotations

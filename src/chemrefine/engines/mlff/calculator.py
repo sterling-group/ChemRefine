@@ -114,7 +114,7 @@ class MlffCalculator:
         return SevenNetCalculator(model=self.task_name, device=self.device)
 
     def _build_orb(self):  # pragma: no cover - alias of _build_sevenn (also needs real model)
-        """Load an ORB model — uses the SevenN-style entry point in v3."""
+        """Load an ORB model — routes through the SevenN entry point."""
         return self._build_sevenn()
 
     # -- inference ---------------------------------------------------------
