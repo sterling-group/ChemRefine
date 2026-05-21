@@ -187,7 +187,3 @@ def rerun(
     """Re-execute one step (default: latest), resubmitting jobs as needed."""
     cfg = _load(config_path, maxcores=maxcores)
     raise typer.Exit(_dispatch(Action.RERUN, cfg, target=target, dry_run=dry_run))
-
-
-if __name__ == "__main__":
-    app()

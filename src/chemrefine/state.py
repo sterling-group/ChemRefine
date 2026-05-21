@@ -13,14 +13,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import numpy as np
 from ase import Atoms
 from numpy.typing import NDArray
 
-if TYPE_CHECKING:
-    from chemrefine.config import StepConfig
+from chemrefine.config import StepConfig
 
 
 @dataclass(frozen=True)
