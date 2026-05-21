@@ -140,12 +140,10 @@ def _filter_boltzmann(
     weights = np.exp(-delta / (R_KCALMOL_K * temperature_k))
     weights /= weights.sum()
     cumulative = np.cumsum(weights * 100.0)
-    survivors: list[Structure] = []
-    for struct, cum in zip(sorted_structures, cumulative, strict=True):
-        survivors.append(struct)
-        if cum >= percent_cumulative:
-            break
-    return survivors  # pragma: no cover - unreachable: Pydantic constrains percent_cumulative <= 100 so the loop always breaks
+    # Keep every structure whose cumulative weight is still below the
+    # threshold, plus the one that crosses it.
+    n_below = int(np.sum(cumulative < percent_cumulative))
+    return list(sorted_structures[: n_below + 1])
 
 
 def _filter_high_energy(
