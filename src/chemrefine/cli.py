@@ -189,15 +189,5 @@ def rerun(
     raise typer.Exit(_dispatch(Action.RERUN, cfg, target=target, dry_run=dry_run))
 
 
-# ---------------------------------------------------------------------------
-# pyproject ``[project.scripts]`` entry point
-# ---------------------------------------------------------------------------
-
-
-def main() -> None:  # pragma: no cover - re-export for legacy entry-point imports
-    """Backstop entry point for environments that import ``chemrefine.cli:main``."""
-    app()
-
-
 if __name__ == "__main__":
     app()

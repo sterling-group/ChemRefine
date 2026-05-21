@@ -19,7 +19,7 @@ import numpy as np
 from ase import Atoms
 from numpy.typing import NDArray
 
-if TYPE_CHECKING:  # pragma: no cover - typing only
+if TYPE_CHECKING:
     from chemrefine.config import StepConfig
 
 

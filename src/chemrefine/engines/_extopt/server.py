@@ -27,7 +27,7 @@ from chemrefine.engines._extopt.base import (
 )
 from chemrefine.engines._extopt.registry import CALCULATORS, load_calculator
 
-if TYPE_CHECKING:  # pragma: no cover - typing only
+if TYPE_CHECKING:
     from flask import Flask
 
 logger = logging.getLogger(__name__)
