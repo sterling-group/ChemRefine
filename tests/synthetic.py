@@ -74,3 +74,23 @@ def synthetic_gradient_block(
         for idx, sym, dx, dy, dz in rows
     )
     return f"CARTESIAN GRADIENT\n------------------\n{lines}\n------------------\n"
+
+
+# Synthetic ``NORMAL MODES`` block for a 2-atom system.
+# 2 atoms by 3 axes = 6 displacement rows per column block. ORCA prints
+# 6 modes per column block; for 6 total modes a single block suffices.
+# Modes 0-4 are zero (translational/rotational); mode 5 carries
+# distinct ``0.1, 0.2, 0.3`` on atom 0 and ``-0.1, -0.2, -0.3`` on
+# atom 1 so the parser's reshape can be verified by index.
+NORMAL_MODES_BLOCK_2_ATOMS = """\
+NORMAL MODES
+-----------------------------------------
+                  0          1          2          3          4          5
+      0       0.000000   0.000000   0.000000   0.000000   0.000000   0.100000
+      1       0.000000   0.000000   0.000000   0.000000   0.000000   0.200000
+      2       0.000000   0.000000   0.000000   0.000000   0.000000   0.300000
+      3       0.000000   0.000000   0.000000   0.000000   0.000000  -0.100000
+      4       0.000000   0.000000   0.000000   0.000000   0.000000  -0.200000
+      5       0.000000   0.000000   0.000000   0.000000   0.000000  -0.300000
+-----------------------------------------
+"""

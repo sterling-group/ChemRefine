@@ -29,10 +29,15 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import numpy as np
+from numpy.typing import NDArray
+
 _FREQ_LINE_RE = re.compile(
     r"^\s*(?P<index>\d+):\s+(?P<value>-?\d+\.\d+)\s*cm\*\*-1(?P<rest>.*)$"
 )
 _IMAG_TAG_RE = re.compile(r"imaginary mode", re.IGNORECASE)
+_MODE_COL_HEADER_RE = re.compile(r"^\s*(\d+\s+)+\d+\s*$")
+_MODE_ROW_RE = re.compile(r"^\s*\d+\s+[-\d.Ee\s]+$")
 
 
 def parse_frequencies(
@@ -96,3 +101,65 @@ def parse_frequencies(
 def parse_imaginary_frequencies(path: str | Path) -> dict[int, float]:
     """Convenience wrapper — return only the imaginary modes."""
     return parse_frequencies(path, only_imaginary=True)
+
+
+# ---------------------------------------------------------------------------
+# Normal-mode displacement tensor
+# ---------------------------------------------------------------------------
+
+
+def parse_normal_modes_tensor(
+    path: str | Path, *, num_atoms: int
+) -> NDArray[np.float64]:
+    """Return the per-mode displacement tensor for an ORCA frequency output.
+
+    The returned array has shape ``(num_atoms, 3, n_modes)`` — each
+    ``[atom, axis, mode]`` slice gives one Cartesian-displacement
+    component for one normal mode.
+
+    ORCA prints the tensor in column-major blocks (header line with
+    the mode indices, then ``3 N`` rows). We collect each block as a
+    matrix and ``hstack`` them to recover the full ``(3N, n_modes)``
+    matrix before reshaping.
+
+    Ported verbatim from v3's ``OrcaInterface.parse_normal_modes_tensor``.
+    """
+    text = Path(path).read_text(encoding="utf-8", errors="replace")
+
+    collecting = False
+    block_rows: list[list[float]] = []
+    blocks: list[NDArray[np.float64]] = []
+    for line in text.splitlines():
+        if _MODE_COL_HEADER_RE.match(line):
+            collecting = True
+            if block_rows:
+                blocks.append(np.asarray(block_rows, dtype=float))
+                block_rows = []
+            continue
+        if not collecting:
+            continue
+        if _MODE_ROW_RE.match(line):
+            parts = line.split()
+            # First column is the row index; the rest are mode components.
+            block_rows.append([float(x) for x in parts[1:]])
+            continue
+        # Block ends on a separator / next section header.
+        if "IR SPECTRUM" in line or line.startswith("-"):
+            if block_rows:
+                blocks.append(np.asarray(block_rows, dtype=float))
+                block_rows = []
+            break
+
+    if not blocks:
+        raise ValueError(
+            f"no normal-mode blocks found in {path!s}; "
+            "is this a frequency-calculation output?"
+        )
+
+    full = np.hstack(blocks)
+    if full.shape[0] != 3 * num_atoms:
+        raise ValueError(
+            f"malformed normal-mode block: got {full.shape[0]} rows, "
+            f"expected {3 * num_atoms} (3 axes by {num_atoms} atoms)"
+        )
+    return full.reshape(num_atoms, 3, -1)

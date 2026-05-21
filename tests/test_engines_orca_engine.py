@@ -209,10 +209,11 @@ def test_orca_engine_supports_nms_flag_is_true():
     assert get_engine("orca").supports_nms is True
 
 
-def test_orca_engine_nms_raises_until_ported(tmp_path: Path):
-    """NMS is a placeholder; the engine should propagate NotImplementedError."""
+def test_orca_engine_nms_returns_empty_on_no_freq_output(tmp_path: Path):
+    """With no freq output on disk, NMS skips every structure cleanly."""
     engine = get_engine("orca")
     ctx = _ctx(tmp_path, structures=(_seed_structure(),))
     from chemrefine.state import StepResults
-    with pytest.raises(NotImplementedError):
-        engine.normal_mode_sample(StepResults(structures=()), ctx)
+
+    expanded = engine.normal_mode_sample(StepResults(structures=()), ctx)
+    assert expanded.structures == ()
