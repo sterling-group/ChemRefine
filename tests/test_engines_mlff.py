@@ -9,8 +9,10 @@ What we verify:
   loading a model — that path is exercised in the ``mlff`` extra's
   integration tests).
 * ``MlffEngine`` produces the right ``%method`` block and SLURM
-  ``run_block`` content.
-* Placeholder modules raise ``NotImplementedError`` with a TODO hint.
+  ``run_block`` content (dynamic port + readiness loop + trap).
+* ``MlffExtOptCalculator`` adapts the ASE calculator to the shared
+  ExtOpt server's ``BaseExtOptCalculator`` contract.
+* ``MlffDirectEngine`` writes a per-structure ``.runlog``.
 """
 
 from __future__ import annotations
@@ -116,7 +118,7 @@ def test_mlff_calculator_custom_model_path_missing_raises(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# MlffEngine — ORCA-driven mode
+# MlffEngine — ORCA-driven mode (ExtOpt server lifecycle)
 # ---------------------------------------------------------------------------
 
 
@@ -158,17 +160,10 @@ def test_mlff_extra_blocks_contains_progext_pointing_to_wrapper(tmp_path: Path):
     assert "%method" in extra
     assert "ProgExt" in extra
     assert "mlff_extopt.sh" in extra
-    assert "Ext_Params" in extra
-    assert "127.0.0.1:8888" in extra
 
 
-def test_mlff_custom_bind_address_round_trips(tmp_path: Path):
-    engine = get_engine("mlff")
-    ctx = _mlff_ctx(tmp_path, bind="10.0.0.5:5000")
-    assert "10.0.0.5:5000" in engine._extra_blocks(ctx)
-
-
-def test_mlff_run_block_starts_and_stops_server(tmp_path: Path):
+def test_mlff_run_block_starts_shared_extopt_server(tmp_path: Path):
+    """The MLFF engine should invoke the shared ``_extopt.server`` with ``--backend mlff``."""
     engine = get_engine("mlff")
     ctx = _mlff_ctx(tmp_path)
     run_block = engine._run_block(
@@ -176,12 +171,27 @@ def test_mlff_run_block_starts_and_stops_server(tmp_path: Path):
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
     )
-    assert "python -m chemrefine.engines.mlff.server" in run_block
+    assert "python -m chemrefine.engines._extopt.server" in run_block
+    assert "--backend mlff" in run_block
+    assert "--bind 127.0.0.1:0" in run_block
     assert "--model" in run_block
-    assert "--bind" in run_block
-    assert "SERVER_PID=$!" in run_block
-    assert "kill $SERVER_PID" in run_block
     assert ctx.orca_executable in run_block
+
+
+def test_mlff_run_block_includes_readiness_loop_and_trap(tmp_path: Path):
+    """The new run_block replaces ``sleep 10`` with a readiness probe + trap."""
+    engine = get_engine("mlff")
+    ctx = _mlff_ctx(tmp_path)
+    run_block = engine._run_block(
+        ctx,
+        inp_path=ctx.step_dir / "step1_structure_0.inp",
+        out_path=ctx.step_dir / "step1_structure_0.out",
+    )
+    assert "sleep 10" not in run_block
+    assert "/healthz" in run_block
+    assert "ps -p" in run_block
+    assert "trap _on_extopt_exit EXIT INT TERM" in run_block
+    assert "kill -TERM" in run_block
 
 
 def test_mlff_prepare_writes_inp_with_method_block(tmp_path: Path):
@@ -191,6 +201,56 @@ def test_mlff_prepare_writes_inp_with_method_block(tmp_path: Path):
     inp_text = inputs.files[0][0].read_text()
     assert "%method" in inp_text
     assert "ProgExt" in inp_text
+
+
+# ---------------------------------------------------------------------------
+# MlffExtOptCalculator — ExtOpt-side adapter
+# ---------------------------------------------------------------------------
+
+
+def test_mlff_extopt_calculator_from_args_builds_instance(tmp_path: Path):
+    """``from_args`` should consume the shared server CLI namespace."""
+    from chemrefine.engines._extopt.server import parse_args
+    from chemrefine.engines.mlff.extopt_calc import MlffExtOptCalculator
+
+    args = parse_args(["--backend", "mlff", "--model", "medium", "--task-name", "mace_off"])
+    with patch.object(MlffCalculator, "_build_mace", return_value="MACE_CALC"):
+        calc = MlffExtOptCalculator.from_args(args)
+    assert calc.name == "mlff"
+
+
+def test_mlff_extopt_calculator_calc_converts_units():
+    """``calc`` should return Hartree / Hartree-per-Bohr regardless of ASE eV units."""
+    import numpy as np
+
+    from chemrefine.constants import BOHR_TO_ANGSTROM, HARTREE_TO_EV
+    from chemrefine.engines._extopt.base import CalculationData
+    from chemrefine.engines.mlff.extopt_calc import MlffExtOptCalculator
+
+    with (
+        patch.object(MlffCalculator, "_build", return_value=None),
+        # 1 eV potential energy, 1 eV/Å on x for one atom
+        patch.object(
+            MlffCalculator,
+            "single_point",
+            return_value=(HARTREE_TO_EV, [[1.0, 0.0, 0.0]]),
+        ),
+    ):
+        calc = MlffExtOptCalculator(
+            model_name="medium", task_name="mace_off", device="cpu"
+        )
+        data = CalculationData(
+            symbols=("H",),
+            positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
+            charge=0,
+            multiplicity=1,
+            nthreads=1,
+            dograd=True,
+            settings={},
+        )
+        energy_h, gradient = calc.calc(data)
+    assert energy_h == pytest.approx(1.0, rel=1e-12)
+    assert gradient[0][0] == pytest.approx(BOHR_TO_ANGSTROM / HARTREE_TO_EV, rel=1e-12)
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +415,7 @@ def test_mlff_direct_get_calculator_is_cached(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Placeholders — trainer / server / client
+# Trainer placeholder — body lands in B5
 # ---------------------------------------------------------------------------
 
 
@@ -365,262 +425,3 @@ def test_trainer_placeholder_raises_with_todo():
 
     with pytest.raises(NotImplementedError):
         run_training(StepResults(structures=()), ctx=None)  # type: ignore[arg-type]
-
-
-def test_server_main_still_placeholder():
-    """Only the model-loading + ``waitress.serve`` glue stays a TODO."""
-    from chemrefine.engines.mlff.server import main as server_main
-
-    with pytest.raises(NotImplementedError):
-        server_main()
-
-
-def test_client_main_still_placeholder():
-    """The ExtOpt wrapper that reads ``.extinp.tmp`` is the remaining TODO."""
-    from chemrefine.engines.mlff.client import main as client_main
-
-    with pytest.raises(NotImplementedError):
-        client_main()
-
-
-# ---------------------------------------------------------------------------
-# Client CLI + HTTP RPC — verified
-# ---------------------------------------------------------------------------
-
-
-def test_mlff_client_parse_args_defaults():
-    from chemrefine.engines.mlff.client import parse_args
-
-    args = parse_args(["job.extinp.tmp"])
-    assert args.bind == "127.0.0.1:8888"
-    assert args.model_name == "uma-s-1"
-    assert args.task_name == "omol"
-    assert args.device == "cuda"
-    assert args.inputfile == "job.extinp.tmp"
-
-
-def test_mlff_client_parse_args_overrides():
-    from chemrefine.engines.mlff.client import parse_args
-
-    args = parse_args(
-        ["--bind", "10.0.0.5:9000", "--model_name", "medium", "--device", "cpu", "f.extinp.tmp"]
-    )
-    assert args.bind == "10.0.0.5:9000"
-    assert args.model_name == "medium"
-    assert args.device == "cpu"
-
-
-def test_mlff_client_submit_calculation_round_trip():
-    from io import BytesIO
-
-    from chemrefine.engines.mlff import client
-
-    expected = b'{"energy": -1.5, "gradient": [[0.0, 0.0, 0.0]]}'
-    with patch.object(client, "urlopen") as mock_open:
-        mock_open.return_value.__enter__.return_value = BytesIO(expected)
-        energy, gradient = client.submit_calculation(
-            server_url="127.0.0.1:8888",
-            atom_types=["H"],
-            coordinates=[[0.0, 0.0, 0.0]],
-            charge=0,
-            mult=1,
-            dograd=True,
-            nthreads=1,
-        )
-    assert energy == -1.5
-    assert gradient == [[0.0, 0.0, 0.0]]
-
-
-def test_mlff_client_submit_calculation_http_error_becomes_jobfailure():
-    from urllib.error import HTTPError
-
-    from chemrefine.engines.mlff import client
-    from chemrefine.errors import JobFailureError
-
-    err = HTTPError("http://x/calculate", 500, "internal error", {}, None)
-    with (
-        patch.object(client, "urlopen", side_effect=err),
-        pytest.raises(JobFailureError, match="HTTP 500"),
-    ):
-        client.submit_calculation(
-                server_url="x",
-                atom_types=["H"],
-                coordinates=[[0.0, 0.0, 0.0]],
-                charge=0,
-                mult=1,
-                dograd=False,
-                nthreads=1,
-            )
-
-
-def test_mlff_client_submit_calculation_server_returns_error_field():
-    from io import BytesIO
-
-    from chemrefine.engines.mlff import client
-    from chemrefine.errors import JobFailureError
-
-    with patch.object(client, "urlopen") as mock_open:
-        mock_open.return_value.__enter__.return_value = BytesIO(b'{"error": "no cuda"}')
-        with pytest.raises(JobFailureError, match="no cuda"):
-            client.submit_calculation(
-                server_url="x",
-                atom_types=["H"],
-                coordinates=[[0.0, 0.0, 0.0]],
-                charge=0,
-                mult=1,
-                dograd=False,
-                nthreads=1,
-            )
-
-
-def test_mlff_client_submit_calculation_url_error_becomes_jobfailure():
-    from urllib.error import URLError
-
-    from chemrefine.engines.mlff import client
-    from chemrefine.errors import JobFailureError
-
-    with (
-        patch.object(client, "urlopen", side_effect=URLError("connection refused")),
-        pytest.raises(JobFailureError, match="unreachable"),
-    ):
-        client.submit_calculation(
-            server_url="x",
-            atom_types=["H"],
-            coordinates=[[0.0, 0.0, 0.0]],
-            charge=0,
-            mult=1,
-            dograd=False,
-            nthreads=1,
-        )
-
-
-def test_mlff_client_submit_calculation_non_json_response_becomes_jobfailure():
-    from io import BytesIO
-
-    from chemrefine.engines.mlff import client
-    from chemrefine.errors import JobFailureError
-
-    with patch.object(client, "urlopen") as mock_open:
-        mock_open.return_value.__enter__.return_value = BytesIO(b"not json at all")
-        with pytest.raises(JobFailureError, match="non-JSON"):
-            client.submit_calculation(
-                server_url="x",
-                atom_types=["H"],
-                coordinates=[[0.0, 0.0, 0.0]],
-                charge=0,
-                mult=1,
-                dograd=False,
-                nthreads=1,
-            )
-
-
-def test_mlff_client_submit_calculation_missing_fields_becomes_jobfailure():
-    from io import BytesIO
-
-    from chemrefine.engines.mlff import client
-    from chemrefine.errors import JobFailureError
-
-    with patch.object(client, "urlopen") as mock_open:
-        mock_open.return_value.__enter__.return_value = BytesIO(b'{"foo": 1}')
-        with pytest.raises(JobFailureError, match="missing fields"):
-            client.submit_calculation(
-                server_url="x",
-                atom_types=["H"],
-                coordinates=[[0.0, 0.0, 0.0]],
-                charge=0,
-                mult=1,
-                dograd=False,
-                nthreads=1,
-            )
-
-
-def test_mlff_server_calculate_route_handles_calculator_errors():
-    """Server should turn an exception in single_point into a 500 with error body."""
-    from chemrefine.engines.mlff import calculator as calc_mod
-    from chemrefine.engines.mlff.server import create_app
-
-    with (
-        patch.object(calc_mod.MlffCalculator, "_build", return_value=None),
-        patch.object(calc_mod.MlffCalculator, "single_point", side_effect=RuntimeError("boom")),
-    ):
-        app = create_app(model_name="x", task_name="mace_off", device="cpu")
-        client_ = app.test_client()
-        resp = client_.post(
-            "/calculate",
-            json={
-                "atom_types": ["H"],
-                "coordinates": [[0.0, 0.0, 0.0]],
-                "charge": 0,
-                "mult": 1,
-                "nthreads": 1,
-            },
-        )
-    assert resp.status_code == 500
-    assert "boom" in resp.get_json()["error"]
-
-
-# ---------------------------------------------------------------------------
-# Server CLI + Flask app factory — verified
-# ---------------------------------------------------------------------------
-
-
-def test_mlff_server_parse_args_requires_a_model():
-    """At least one of ``--model`` or ``--model-path`` must be given."""
-    from chemrefine.engines.mlff.server import parse_args
-
-    with pytest.raises(SystemExit):
-        parse_args([])
-
-
-def test_mlff_server_parse_args_accepts_model_only():
-    from chemrefine.engines.mlff.server import parse_args
-
-    args = parse_args(["--model", "medium"])
-    assert args.model == "medium"
-    assert args.task_name == "omol"
-    assert args.bind == "127.0.0.1:8888"
-
-
-def test_mlff_server_parse_args_accepts_model_path_only(tmp_path: Path):
-    from chemrefine.engines.mlff.server import parse_args
-
-    args = parse_args(["--model-path", str(tmp_path / "fake.model")])
-    assert args.model is None
-    assert args.model_path is not None
-
-
-def test_mlff_server_create_app_registers_calculate_route():
-    from chemrefine.engines.mlff.server import create_app
-
-    app = create_app(
-        model_name="medium", task_name="mace_off", device="cpu", model_path=None
-    )
-    # The route should be visible in the Flask URL map.
-    rules = {r.rule for r in app.url_map.iter_rules()}
-    assert "/calculate" in rules
-
-
-def test_mlff_server_calculate_route_returns_json_with_mocked_calculator():
-    from chemrefine.engines.mlff import calculator as calc_mod
-    from chemrefine.engines.mlff.server import create_app
-
-    with (
-        patch.object(calc_mod.MlffCalculator, "_build", return_value=None),
-        patch.object(calc_mod.MlffCalculator, "single_point", return_value=(-1.0, [[0.0, 0.0, 0.0]])),
-    ):
-        app = create_app(model_name="medium", task_name="mace_off", device="cpu")
-        client_ = app.test_client()
-        resp = client_.post(
-            "/calculate",
-            json={
-                "atom_types": ["H"],
-                "coordinates": [[0.0, 0.0, 0.0]],
-                "charge": 0,
-                "mult": 1,
-                "nthreads": 1,
-            },
-        )
-    assert resp.status_code == 200
-    data = resp.get_json()
-    assert data["energy"] == -1.0
-    assert data["gradient"] == [[0.0, 0.0, 0.0]]

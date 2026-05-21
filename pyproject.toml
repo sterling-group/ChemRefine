@@ -126,7 +126,6 @@ source = ["chemrefine"]
 omit = [
     # Pure-placeholder modules — bodies land in Phase B; coverage gate
     # comes back online for these as each placeholder is ported.
-    "src/chemrefine/engines/orca/extopt/*",   # B1: ExtOpt protocol port
     "src/chemrefine/engines/mlff/trainer.py",  # B5: MLFF trainer port
     "src/chemrefine/engines/pyscf/direct.py",  # B7: PySCF direct port
 ]

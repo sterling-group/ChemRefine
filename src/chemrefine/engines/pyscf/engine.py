@@ -1,23 +1,21 @@
 """ORCA-driven PySCF engine.
 
-Subclasses :class:`OrcaEngine` exactly the way :class:`MlffEngine` does
-— the only differences are the ``%method`` block contents (points at a
-PySCF wrapper script + ``--method/--xc/--basis`` flags) and the SLURM
-``run_block`` (starts ``chemrefine.engines.pyscf.server`` instead of
-the MLFF one).
-
-Method, basis, exchange-correlation functional, and the
-density-fitting / GPU toggles are read from the step's
-``options:`` block in the YAML.
+Mirrors :class:`MlffEngine` — same shared ExtOpt server, different
+backend choice (``--backend pyscf``) and a different per-step CLI
+that selects method / xc / basis / df / gpu. The actual PySCF SCF +
+gradient lands in B6 inside :class:`PyscfExtOptCalculator.calc`.
 """
 
 from __future__ import annotations
 
 import logging
-import shlex
 from pathlib import Path
 
 from chemrefine.engines.base import register
+from chemrefine.engines.mlff.engine import (
+    _build_extopt_run_block,
+    _server_command,
+)
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.state import StepContext
 
@@ -34,10 +32,9 @@ class PyscfEngine(OrcaEngine):
     # -- ORCA input customisation -----------------------------------------
 
     def _extra_blocks(self, ctx: StepContext) -> str:
-        """Emit a ``%method ProgExt "<wrapper>"`` block pointing to the PySCF wrapper."""
+        """Emit a ``%method ProgExt "<wrapper>"`` block + per-call settings."""
         wrapper = self._wrapper_path(ctx)
-        bind = self._bind_address(ctx)
-        ext_params = self._ext_params(ctx, bind)
+        ext_params = self._ext_params(ctx)
         return (
             "%method\n"
             f'  ProgExt "{wrapper}"\n'
@@ -48,62 +45,54 @@ class PyscfEngine(OrcaEngine):
     # -- SLURM customisation ----------------------------------------------
 
     def _run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
-        """Spin up the PySCF server, run ORCA, then tear the server down."""
+        """Spin up the ExtOpt server (pyscf backend), run ORCA, clean up."""
         options = ctx.step_cfg.options or {}
-        bind = self._bind_address(ctx)
-        log_file = options.get("server_log", "pyscf_server.log")
-
-        cmd = (
-            "python -m chemrefine.engines.pyscf.server"
-            f" --bind {shlex.quote(str(bind))}"
-            f" --log-file {shlex.quote(str(log_file))}"
-        )
-        method = options.get("method", "dft")
+        extra: list[tuple[str, str]] = []
+        method = options.get("method")
         if method:
-            cmd += f" --default-method {shlex.quote(str(method))}"
+            extra.append(("--method", str(method)))
         xc = options.get("xc")
         if xc:
-            cmd += f" --default-xc {shlex.quote(str(xc))}"
+            extra.append(("--xc", str(xc)))
         basis = options.get("basis")
         if basis:
-            cmd += f" --default-basis {shlex.quote(str(basis))}"
-        if options.get("df"):
-            cmd += " --default-df"
-        if options.get("gpu"):
-            cmd += " --default-gpu"
+            extra.append(("--basis", str(basis)))
+        # Boolean flags rendered as bare ``--df`` / ``--gpu``
+        bool_flags = [
+            f"--{flag}" for flag in ("df", "gpu") if options.get(flag)
+        ]
 
-        return (
-            "# Start PySCF server in background\n"
-            f"{cmd} > $OUTPUT_DIR/pyscf_server.log 2>&1 &\n"
-            "SERVER_PID=$!\n"
-            "trap 'kill $SERVER_PID 2>/dev/null' EXIT\n"
-            "sleep 10\n"
-            "export OMP_NUM_THREADS=1\n"
-            f"{ctx.orca_executable} {inp_path.name} > $OUTPUT_DIR/{out_path.name}\n"
-            "kill $SERVER_PID 2>/dev/null || true"
+        server_cmd = _server_command(backend="pyscf", extra_flags=extra)
+        if bool_flags:
+            server_cmd = f"{server_cmd} {' '.join(bool_flags)}"
+
+        return _build_extopt_run_block(
+            server_cmd=server_cmd,
+            orca_executable=ctx.orca_executable,
+            inp_name=inp_path.name,
+            out_name=out_path.name,
         )
 
     # -- Helpers -----------------------------------------------------------
 
     def _wrapper_path(self, ctx: StepContext) -> Path:
-        """Path to the ExtOpt wrapper script for the PySCF server."""
+        """Path of the per-step ``ProgExt`` wrapper script."""
         return (ctx.step_dir / "pyscf_extopt.sh").resolve()
 
-    def _bind_address(self, ctx: StepContext) -> str:
-        """Resolve the ``host:port`` the PySCF server will bind to."""
-        options = ctx.step_cfg.options or {}
-        return options.get("bind", "127.0.0.1:8889")
+    def _ext_params(self, ctx: StepContext) -> str:
+        """Build the ``Ext_Params`` string passed to the wrapper script.
 
-    def _ext_params(self, ctx: StepContext, bind: str) -> str:
-        """Build the ``Ext_Params`` string passed to the wrapper script."""
+        These flags reach the shared client (``_extopt.client``) which
+        forwards them as the ``settings`` block in each ``/calculate``
+        POST so per-call overrides work without restarting the server.
+        """
         options = ctx.step_cfg.options or {}
-        parts = [f"--bind {bind}"]
+        parts: list[str] = []
         for flag in ("method", "xc", "basis"):
             value = options.get(flag)
             if value is not None:
                 parts.append(f"--{flag} {value}")
-        if options.get("df"):
-            parts.append("--df")
-        if options.get("gpu"):
-            parts.append("--gpu")
+        for flag in ("df", "gpu"):
+            if options.get(flag):
+                parts.append(f"--{flag}")
         return " ".join(parts)
