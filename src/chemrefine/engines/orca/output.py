@@ -253,17 +253,96 @@ def parse_solvator(path: str | Path) -> list[ParsedStructure]:
 # ---------------------------------------------------------------------------
 
 
+_PES_SEGMENT_RE = re.compile(r"\*{3}\s*OPTIMIZATION RUN DONE\s*\*{3}")
+_PES_COORD_HEADER_RE = re.compile(
+    r"^\s*CARTESIAN COORDINATES\s*\(ANGSTROEM\)\s*$", re.MULTILINE
+)
+_PES_DASH_RE = re.compile(r"^\s*-{3,}\s*$")
+
+
 def parse_pes(path: str | Path) -> list[ParsedStructure]:
     """Parse an ORCA PES-scan output (one frame per converged scan point).
 
-    TODO: implement once a real PES scan output is available. The v3
-    parser is :func:`parse_pes_output` in ``orca_interface.py`` on
-    ``main`` — it splits on ``"*** OPTIMIZATION RUN DONE ***"`` and
-    extracts one geometry + energy per fragment.
+    The file is split on ``*** OPTIMIZATION RUN DONE ***``. For each
+    completed segment the parser takes the **last** coordinate block and
+    the **last** ``FINAL SINGLE POINT ENERGY`` line — that's the
+    converged geometry for that scan point.
+
+    Ported from v3's ``OrcaInterface.parse_pes_output``.
     """
-    raise NotImplementedError(
-        "PES output parser not yet ported — see TODO in engines/orca/output.py"
-    )
+    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    segments = _PES_SEGMENT_RE.split(text)[:-1]  # last fragment has no DONE marker
+
+    structures: list[ParsedStructure] = []
+    for seg in segments:
+        atoms = _parse_last_pes_coord_block(seg)
+        if not atoms:
+            continue
+        energy = _parse_last_pes_energy(seg)
+        if energy is None:
+            continue
+        symbols = tuple(sym for sym, *_ in atoms)
+        positions = np.array([[x, y, z] for _, x, y, z in atoms], dtype=np.float64)
+        structures.append(
+            ParsedStructure(
+                symbols=symbols,
+                positions=positions,
+                energy_hartree=energy,
+                forces_eV_per_A=None,
+            )
+        )
+    if not structures:
+        raise OutputParseError(f"no PES scan frames found in {path}")
+    return structures
+
+
+def _parse_last_pes_coord_block(segment: str) -> list[tuple[str, float, float, float]]:
+    """Return ``(symbol, x, y, z)`` rows from the last coord block in ``segment``."""
+    matches = list(_PES_COORD_HEADER_RE.finditer(segment))
+    if not matches:
+        return []
+    # Skip ahead past the header line itself, then past any dashed
+    # separator and / or blank lines, then read atom rows until a blank
+    # line ends the block.
+    lines = segment.splitlines()
+    start_line = segment.count("\n", 0, matches[-1].end()) + 1
+    idx = start_line
+    while idx < len(lines) and (
+        not lines[idx].strip() or _PES_DASH_RE.match(lines[idx])
+    ):
+        idx += 1
+    atoms: list[tuple[str, float, float, float]] = []
+    while idx < len(lines):
+        ln = lines[idx]
+        if not ln.strip():
+            break
+        parts = ln.split()
+        # ORCA prints either "C  x y z" (4 tokens) or "1  C  x y z" (5 tokens).
+        if len(parts) == 4 and _is_float_triplet(parts[1:]):
+            sym = parts[0]
+            x, y, z = (float(p) for p in parts[1:])
+            atoms.append((sym, x, y, z))
+        elif len(parts) == 5 and _is_float_triplet(parts[2:]):
+            sym = parts[1]
+            x, y, z = (float(p) for p in parts[2:])
+            atoms.append((sym, x, y, z))
+        idx += 1
+    return atoms
+
+
+def _parse_last_pes_energy(segment: str) -> float | None:
+    matches = _FINAL_ENERGY_RE.findall(segment)
+    return float(matches[-1]) if matches else None
+
+
+def _is_float_triplet(tokens: list[str]) -> bool:
+    """Return ``True`` if every token in a 3-element list parses as a float."""
+    try:
+        for tok in tokens:
+            float(tok)
+    except ValueError:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------

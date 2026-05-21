@@ -285,21 +285,169 @@ def test_parse_output_dispatches_solvator():
     assert len(parsed) == 3
 
 
-def test_parse_output_dispatches_pes_to_placeholder(tmp_path: Path):
-    """`parse_output(..., 'pes')` should reach `parse_pes`, which is still a placeholder."""
-    with pytest.raises(NotImplementedError):
-        parse_output(tmp_path / "missing.out", "pes")
-
-
 def test_parse_output_unknown_operation_raises():
     with pytest.raises(OutputParseError):
         parse_output(FIXTURE, "weather_forecast")
 
 
-def test_pes_parser_still_placeholder(tmp_path: Path):
-    """PES parser is the only XYZ-output placeholder still waiting on a fixture."""
-    with pytest.raises(NotImplementedError):
-        parse_pes(tmp_path / "missing.out")
+# ---------------------------------------------------------------------------
+# parse_pes — synthetic PES scan segments
+# ---------------------------------------------------------------------------
+
+
+def test_parse_pes_returns_one_structure_per_completed_segment(tmp_path: Path):
+    from synthetic import synthetic_pes_segment
+
+    text = (
+        synthetic_pes_segment(
+            coords=[("H", 0.0, 0.0, 0.0), ("H", 0.74, 0.0, 0.0)],
+            energy=-1.10,
+        )
+        + synthetic_pes_segment(
+            coords=[("H", 0.0, 0.0, 0.0), ("H", 0.80, 0.0, 0.0)],
+            energy=-1.05,
+        )
+    )
+    out = tmp_path / "pes.out"
+    out.write_text(text, encoding="utf-8")
+    parsed = parse_pes(out)
+    assert len(parsed) == 2
+    assert parsed[0].energy_hartree == -1.10
+    assert parsed[1].energy_hartree == -1.05
+    assert parsed[0].symbols == ("H", "H")
+    assert parsed[0].positions.shape == (2, 3)
+
+
+def test_parse_pes_takes_last_coord_block_and_energy_per_segment(tmp_path: Path):
+    """Each segment's *last* coord block and *last* FINAL SP ENERGY must win."""
+    from synthetic import synthetic_pes_segment
+
+    text = synthetic_pes_segment(
+        coords=[("H", 0.0, 0.0, 0.0), ("H", 0.74, 0.0, 0.0)],
+        energy=-1.10,
+        intermediate_energies=[-1.50, -1.30],  # earlier optimisation cycles
+    )
+    out = tmp_path / "pes.out"
+    out.write_text(text, encoding="utf-8")
+    parsed = parse_pes(out)
+    assert len(parsed) == 1
+    assert parsed[0].energy_hartree == -1.10
+    # The intermediates shifted positions by +99 Å so we'd see them if the parser
+    # picked the wrong block; assert the final positions match the converged frame.
+    assert parsed[0].positions[1, 0] == 0.74
+
+
+def test_parse_pes_skips_incomplete_trailing_segment(tmp_path: Path):
+    """A trailing segment without the DONE marker is discarded."""
+    from synthetic import synthetic_pes_segment
+
+    text = synthetic_pes_segment(
+        coords=[("H", 0.0, 0.0, 0.0), ("H", 0.74, 0.0, 0.0)],
+        energy=-1.10,
+    )
+    # Append an unfinished segment.
+    text += (
+        "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "---------------------------------\n"
+        "H 9.999 9.999 9.999\nH 9.999 9.999 9.999\n\n"
+        "FINAL SINGLE POINT ENERGY     -9.99\n"
+    )
+    out = tmp_path / "pes.out"
+    out.write_text(text, encoding="utf-8")
+    parsed = parse_pes(out)
+    assert len(parsed) == 1
+    assert parsed[0].energy_hartree == -1.10
+
+
+def test_parse_pes_handles_indexed_coord_format(tmp_path: Path):
+    """ORCA also prints coords as '1 C x y z' (5 tokens). Parse that too."""
+    body = (
+        "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "  1   H   0.000000  0.000000  0.000000\n"
+        "  2   H   0.740000  0.000000  0.000000\n"
+        "\n"
+        "FINAL SINGLE POINT ENERGY     -1.10\n"
+        "*** OPTIMIZATION RUN DONE ***\n"
+    )
+    out = tmp_path / "pes.out"
+    out.write_text(body, encoding="utf-8")
+    parsed = parse_pes(out)
+    assert len(parsed) == 1
+    assert parsed[0].symbols == ("H", "H")
+    assert parsed[0].positions[1, 0] == 0.74
+
+
+def test_parse_pes_raises_when_no_segments(tmp_path: Path):
+    out = tmp_path / "empty.out"
+    out.write_text("no PES content here\n", encoding="utf-8")
+    with pytest.raises(OutputParseError, match="no PES scan frames"):
+        parse_pes(out)
+
+
+def test_parse_pes_skips_segment_without_energy(tmp_path: Path):
+    """A segment with coords but no FINAL SP ENERGY is silently dropped."""
+    text = (
+        "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "  H   0.0  0.0  0.0\n  H   0.74 0.0 0.0\n\n"
+        "*** OPTIMIZATION RUN DONE ***\n"
+        + "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "  H   0.0  0.0  0.0\n  H   0.80 0.0 0.0\n\n"
+        "FINAL SINGLE POINT ENERGY     -1.05\n"
+        "*** OPTIMIZATION RUN DONE ***\n"
+    )
+    out = tmp_path / "pes.out"
+    out.write_text(text, encoding="utf-8")
+    parsed = parse_pes(out)
+    assert len(parsed) == 1
+    assert parsed[0].energy_hartree == -1.05
+
+
+def test_parse_pes_skips_non_atom_lines_inside_coord_block(tmp_path: Path):
+    """A 4-token line that isn't ``sym x y z`` (e.g. has non-numeric tokens) is skipped."""
+    body = (
+        "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "  H   0.0    0.0    0.0\n"
+        "  C   not    a      number\n"        # 4 tokens but two are non-numeric
+        "  H   0.74   0.0    0.0\n"
+        "\n"
+        "FINAL SINGLE POINT ENERGY     -1.10\n"
+        "*** OPTIMIZATION RUN DONE ***\n"
+    )
+    out = tmp_path / "pes.out"
+    out.write_text(body, encoding="utf-8")
+    parsed = parse_pes(out)
+    assert parsed[0].symbols == ("H", "H")
+
+
+def test_parse_pes_skips_segment_without_coords(tmp_path: Path):
+    """A segment with FINAL SP ENERGY but no coord block is silently dropped."""
+    text = (
+        "FINAL SINGLE POINT ENERGY     -1.10\n"
+        "*** OPTIMIZATION RUN DONE ***\n"
+        + "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "  H 0.0 0.0 0.0\n  H 0.80 0.0 0.0\n\n"
+        "FINAL SINGLE POINT ENERGY     -1.05\n"
+        "*** OPTIMIZATION RUN DONE ***\n"
+    )
+    out = tmp_path / "pes.out"
+    out.write_text(text, encoding="utf-8")
+    parsed = parse_pes(out)
+    assert len(parsed) == 1
+    assert parsed[0].energy_hartree == -1.05
+
+
+def test_parse_output_dispatches_pes(tmp_path: Path):
+    """``parse_output(..., 'pes')`` should reach :func:`parse_pes`."""
+    from synthetic import synthetic_pes_segment
+
+    text = synthetic_pes_segment(
+        coords=[("H", 0.0, 0.0, 0.0), ("H", 0.74, 0.0, 0.0)],
+        energy=-1.10,
+    )
+    out = tmp_path / "pes.out"
+    out.write_text(text, encoding="utf-8")
+    parsed = parse_output(out, "pes")
+    assert len(parsed) == 1
 
 
 # ---------------------------------------------------------------------------

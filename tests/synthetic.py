@@ -94,3 +94,38 @@ NORMAL MODES
       5       0.000000   0.000000   0.000000   0.000000   0.000000  -0.300000
 -----------------------------------------
 """
+
+
+def synthetic_pes_segment(
+    *,
+    coords: list[tuple[str, float, float, float]],
+    energy: float,
+    intermediate_energies: list[float] | None = None,
+) -> str:
+    """Build one PES segment.
+
+    A PES segment contains potentially multiple coordinate blocks (the
+    optimization-cycle intermediates) plus one or more
+    ``FINAL SINGLE POINT ENERGY`` lines. The last of each is the
+    converged geometry / energy. The segment ends with the
+    ``*** OPTIMIZATION RUN DONE ***`` marker the splitter looks for.
+    """
+    parts: list[str] = []
+    intermediates = intermediate_energies or []
+    # An optional intermediate cycle so parse_pes can prove "last wins"
+    for inter_energy in intermediates:
+        parts.append("CARTESIAN COORDINATES (ANGSTROEM)")
+        parts.append("---------------------------------")
+        for sym, x, y, z in coords:
+            parts.append(f"  {sym:2s}  {x + 99:.6f}  {y + 99:.6f}  {z + 99:.6f}")
+        parts.append("")
+        parts.append(f"FINAL SINGLE POINT ENERGY     {inter_energy}")
+    parts.append("CARTESIAN COORDINATES (ANGSTROEM)")
+    parts.append("---------------------------------")
+    for sym, x, y, z in coords:
+        parts.append(f"  {sym:2s}  {x:.6f}  {y:.6f}  {z:.6f}")
+    parts.append("")
+    parts.append(f"FINAL SINGLE POINT ENERGY     {energy}")
+    parts.append("*** OPTIMIZATION RUN DONE ***")
+    parts.append("")
+    return "\n".join(parts)
