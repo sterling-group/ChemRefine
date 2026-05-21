@@ -9,12 +9,11 @@ Verified against real fixtures under ``tests/data/``:
   (``docker_allopt.xyz`` fixture)
 * ``solvator`` — solvent-build ensemble
   (``solvator_solventbuild.xyz`` fixture)
+* ``pes`` — PES-scan segments (synthetic test fixtures + real-format
+  parsing logic ported from v3 :func:`OrcaInterface.parse_pes_output`).
 
-The remaining operations (``pes``, ``mlff_train``, and ExtOpt
-``.extinp.tmp``/``.engrad`` files) ship as placeholders until a real
-example is captured for each; each placeholder raises
-:class:`NotImplementedError` so callers fail loudly rather than
-silently returning empty data.
+ExtOpt ``.extinp.tmp`` / ``.engrad`` round-trip helpers live in
+:mod:`chemrefine.engines._extopt.protocol`.
 """
 
 from __future__ import annotations

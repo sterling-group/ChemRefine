@@ -9,11 +9,9 @@ Two engines ship in this package:
 * ``PyscfDirectEngine`` (registered as ``"pyscf-direct"``) — runs PySCF
   in-process, no ORCA, for quick single-point evaluations.
 
-The actual SCF / gradient body in :class:`PyscfExtOptCalculator.calc`
-lands in B6 (ported from
-``origin/codex/add-function-to-save-tensor-integrals``); until then it
-raises :class:`NotImplementedError` so a misconfigured ``engine: pyscf``
-step fails loudly rather than silently.
+Both engines route through :mod:`._runtime` (``build_mol`` + ``run_dft``
++ optional active-space tensor extraction), ported from
+``origin/codex/add-function-to-save-tensor-integrals``.
 """
 
 from chemrefine.engines.pyscf.direct import PyscfDirectEngine
