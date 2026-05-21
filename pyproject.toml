@@ -42,7 +42,7 @@ dependencies = [
     "numpy>=1.26",
     "pyyaml>=6.0.2",
     "pandas>=2.2.3",
-    "ase>=3.25.0",
+    "ase>=3.26.0",
     "rdkit>=2024.9",
     "scikit-learn>=1.5.2",
     "pydantic>=2.5",
@@ -50,6 +50,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# `mace-torch` pins `e3nn==0.4.4` exactly while every PyPI release of
+# `fairchem-core` requires `e3nn>=0.5`. The two are mutually
+# unsatisfiable, so we install fairchem from a patched fork that
+# relaxes the e3nn floor. The fork can be swapped for the upstream
+# PyPI release once either side gives ground.
 mlff = [
     "torch>=2.8.0,<2.9.0",
     "e3nn==0.4.4",
