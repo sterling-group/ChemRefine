@@ -35,12 +35,16 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    # Each floor is the lowest version with wheels for every Python in
+    # `requires-python` (3.11, 3.12, 3.13). On Python 3.13 pip will
+    # always resolve numpy to 2.x — pandas 2.2.3 (and later) supports
+    # both numpy 1.26 and 2.x, so the matrix is internally consistent.
     "numpy>=1.26",
-    "pyyaml>=6.0",
-    "pandas>=2.0",
+    "pyyaml>=6.0.2",
+    "pandas>=2.2.3",
     "ase>=3.25.0",
-    "rdkit>=2024.3",
-    "scikit-learn>=1.5",
+    "rdkit>=2024.9",
+    "scikit-learn>=1.5.2",
     "pydantic>=2.5",
     "typer>=0.12",
 ]
