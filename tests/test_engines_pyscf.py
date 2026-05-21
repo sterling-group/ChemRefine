@@ -1,10 +1,8 @@
 """Tests for the PySCF engine package.
 
-After B1 the per-engine server / client modules are gone — the only
-PySCF-side surface is :class:`PyscfEngine` (which now uses the shared
-``_extopt.server``) and :class:`PyscfExtOptCalculator` (placeholder
-until B6 ports the SCF + gradient body from
-``origin/codex/add-function-to-save-tensor-integrals``).
+The PySCF-side surface is :class:`PyscfEngine` (which uses the shared
+``_extopt.server``) and :class:`PyscfExtOptCalculator` (which wraps
+:mod:`chemrefine.engines.pyscf._runtime` for the SCF + gradient call).
 """
 
 from __future__ import annotations
@@ -172,4 +170,4 @@ def test_pyscf_extopt_calculator_from_args_round_trips():
     assert calc.gpu is True
 
 
-# Direct engine body lives in ``tests/test_engines_pyscf_direct.py`` after B7.
+# Direct engine body coverage lives in ``tests/test_engines_pyscf_direct.py``.

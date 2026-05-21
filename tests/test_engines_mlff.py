@@ -414,4 +414,4 @@ def test_mlff_direct_get_calculator_is_cached(tmp_path: Path):
     assert a is b
 
 
-# Trainer body lives in ``tests/test_engines_mlff_trainer.py`` after B5.
+# Trainer body coverage lives in ``tests/test_engines_mlff_trainer.py``.

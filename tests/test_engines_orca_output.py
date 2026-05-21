@@ -204,7 +204,7 @@ def test_parse_goat_ensemble_missing_raises(tmp_path: Path):
 
 
 def test_parse_docker_drops_last_frame():
-    """v3 behaviour: the trailing structure is dropped as non-sensible."""
+    """The trailing structure is dropped as non-sensible."""
     parsed = parse_docker(DOCKER_FIXTURE)
     # Trimmed fixture: 4 frames, parser drops the last → 3.
     assert len(parsed) == 3

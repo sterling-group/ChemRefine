@@ -27,7 +27,7 @@ def _write(tmp_path: Path, text: str) -> Path:
 
 
 def test_parse_frequencies_skips_first_five_real_modes_by_default(tmp_path: Path):
-    """Indices 0..5 are translational/rotational; v3 default drops them."""
+    """Indices 0..5 are translational/rotational; the parser drops them by default."""
     freqs = parse_frequencies(_write(tmp_path, _SYNTH_BLOCK))
     assert 6 in freqs
     assert 7 in freqs
