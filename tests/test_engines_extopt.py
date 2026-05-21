@@ -532,3 +532,59 @@ def test_client_main_writes_engrad(tmp_path: Path, monkeypatch):
     text = engrad.read_text(encoding="utf-8")
     assert "Total energy [Eh]" in text
     assert "Gradient [Eh/Bohr]" in text
+
+
+# ---------------------------------------------------------------------------
+# Server main — end-to-end with fake waitress + mace
+# ---------------------------------------------------------------------------
+
+
+def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
+    """``main()`` parses argv, binds via create_server, writes the
+    sidecar URL, then calls ``waitress.serve(server)``."""
+    import sys
+    import types
+    from unittest.mock import MagicMock
+
+    # Fake mace.calculators so MlffExtOptCalculator.from_args succeeds without
+    # pulling a real backend in.
+    mace_factory = MagicMock(return_value="MACE_OFF_CALC")
+    mace_mod = types.ModuleType("mace.calculators")
+    mace_mod.mace_off = mace_factory
+    mace_parent = types.ModuleType("mace")
+    mace_parent.calculators = mace_mod
+    monkeypatch.setitem(sys.modules, "mace", mace_parent)
+    monkeypatch.setitem(sys.modules, "mace.calculators", mace_mod)
+
+    # Fake waitress + waitress.server.
+    fake_server = MagicMock()
+    fake_server.adj.listen = [("127.0.0.1", 54321)]
+    create_server_mock = MagicMock(return_value=fake_server)
+    serve_mock = MagicMock()
+    waitress_mod = types.ModuleType("waitress")
+    waitress_mod.serve = serve_mock
+    waitress_server_mod = types.ModuleType("waitress.server")
+    waitress_server_mod.create_server = create_server_mock
+    waitress_mod.server = waitress_server_mod
+    monkeypatch.setitem(sys.modules, "waitress", waitress_mod)
+    monkeypatch.setitem(sys.modules, "waitress.server", waitress_server_mod)
+
+    url_file = tmp_path / "server.url"
+    monkeypatch.setattr(
+        sys, "argv",
+        [
+            "extopt-server",
+            "--backend", "mlff",
+            "--bind", "127.0.0.1:0",
+            "--url-file", str(url_file),
+            "--model", "medium",
+            "--task-name", "mace_off",
+            "--device", "cpu",
+        ],
+    )
+
+    rc = server.main()
+    assert rc == 0
+    create_server_mock.assert_called_once()
+    serve_mock.assert_called_once_with(fake_server)
+    assert url_file.read_text(encoding="utf-8") == "127.0.0.1:54321"
