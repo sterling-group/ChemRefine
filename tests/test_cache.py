@@ -173,6 +173,15 @@ def test_is_valid_false_when_config_changes(tmp_path: Path):
     assert not is_valid(step_cfg=_cfg(charge=-1), parent_ids=("0",), step_dir=step_dir)
 
 
+def test_is_valid_false_when_cache_is_corrupt(tmp_path: Path):
+    """A corrupt pickle should make ``is_valid`` return False, not raise."""
+    step_dir = tmp_path / "step1"
+    cache_dir = step_dir / "_cache"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "step.pkl").write_bytes(b"not a real pickle")
+    assert not is_valid(step_cfg=_cfg(), parent_ids=("0",), step_dir=step_dir)
+
+
 def test_is_valid_false_when_parents_change(tmp_path: Path):
     step_dir = tmp_path / "step1"
     cfg = _cfg()

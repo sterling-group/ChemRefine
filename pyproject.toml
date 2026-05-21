@@ -127,10 +127,6 @@ source = ["chemrefine"]
 [tool.coverage.report]
 fail_under = 100
 show_missing = true
-exclude_lines = [
-    "if TYPE_CHECKING:",
-    "\\.\\.\\.",                  # Protocol method bodies (`...`)
-]
 
 [tool.interrogate]
 ignore-init-module = true

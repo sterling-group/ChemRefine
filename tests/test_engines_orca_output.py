@@ -110,6 +110,25 @@ def test_parse_dft_picks_last_energy_when_multiple_appear(tmp_path: Path):
     assert parsed[0].energy_hartree == -3.0
 
 
+def test_parse_dft_skips_short_lines_in_coord_block(tmp_path: Path):
+    """Lines inside a coord block that don't have at least 4 whitespace-separated
+    tokens (e.g. continuation markers, blank lines that survive ``strip``) are skipped."""
+    text = (
+        "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "---------------------------------\n"
+        "  H   0.000000   0.000000   0.000000\n"
+        "  ...continuation\n"               # only 1 token, len(parts) < 4
+        "  H   0.740000   0.000000   0.000000\n"
+        "---------------------------------\n"
+        "FINAL SINGLE POINT ENERGY     -1.10\n"
+    )
+    path = tmp_path / "short.out"
+    path.write_text(text, encoding="utf-8")
+    parsed = parse_dft(path)
+    # Two valid atom rows survive; the short continuation row is dropped.
+    assert parsed[0].symbols == ("H", "H")
+
+
 def test_parse_dft_missing_energy_raises(tmp_path: Path):
     path = tmp_path / "no-energy.out"
     path.write_text(
