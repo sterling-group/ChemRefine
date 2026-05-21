@@ -329,10 +329,6 @@ def test_create_app_calculate_route_returns_500_on_calculator_error():
     class _Boom:
         name = "boom"
 
-        @classmethod
-        def from_args(cls, args):  # pragma: no cover - unused
-            return cls()
-
         def calc(self, data):
             raise RuntimeError("backend exploded")
 
