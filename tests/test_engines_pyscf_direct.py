@@ -31,24 +31,14 @@ from chemrefine.state import JobBatch, PipelineState, StepContext, StepResults, 
 _FAKE_TEMPLATE = """\
 '''Fake PySCF template used by the direct-engine tests.
 
-Reads no XYZ, calls no PySCF; just dumps a fixed energy + gradient
-to $OUTPUT_JSON so the surrounding ChemRefine plumbing can be
-exercised without a real PySCF install.
+The user template only declares the result variables; the appended
+ChemRefine output footer writes the JSON. No PySCF imports — these
+tests don't need a real backend.
 '''
-import json
-
 charge = $CHARGE
 mult = $MULTIPLICITY
 energy_hartree = -1.234 + 0.01 * charge
-
-with open("$OUTPUT_JSON", "w") as fh:
-    json.dump(
-        {
-            "energy_hartree": energy_hartree,
-            "gradient_hartree_per_bohr": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.1]],
-        },
-        fh,
-    )
+gradient_hartree_per_bohr = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.1]]
 """
 
 
@@ -122,13 +112,13 @@ def test_prepare_renders_one_py_and_xyz_per_structure(tmp_path: Path):
         assert output_json.name == f"step1_structure_{sid}.json"
         assert script_path.with_suffix(".xyz").is_file()
         rendered = script_path.read_text()
-        # Placeholders should all be substituted.
+        # Geometry placeholders should all be substituted.
         assert "$XYZ_PATH" not in rendered
         assert "$CHARGE" not in rendered
         assert "$MULTIPLICITY" not in rendered
-        assert "$OUTPUT_JSON" not in rendered
-        # The output path the template should write to.
-        assert str(output_json) in rendered
+        # The appended footer writes to the BASENAME (relative to cwd =
+        # scratch); SLURM's *.json glob then copies it back to step_dir.
+        assert f"with open('{output_json.name}', \"w\")" in rendered
 
 
 def test_prepare_missing_template_raises(tmp_path: Path):
@@ -185,6 +175,26 @@ def test_submit_runs_template_locally_when_no_sbatch(tmp_path: Path):
     assert output_json.is_file()
     data = json.loads(output_json.read_text())
     assert "energy_hartree" in data
+
+
+def test_submit_fails_when_template_lacks_energy_hartree(tmp_path: Path):
+    """A template that doesn't assign energy_hartree → footer raises NameError → submit fails."""
+    from chemrefine.errors import JobSubmissionError
+
+    ctx = _ctx(tmp_path, structures=(_seed(),))
+    # Build the context first (which writes the good fake template), then
+    # overwrite step1.py with a broken one before prepare() reads it.
+    (ctx.template_dir / "step1.py").write_text(
+        "x = 1  # forgot to assign energy_hartree\n",
+        encoding="utf-8",
+    )
+    engine = get_engine("pyscf-direct")
+    inputs = engine.prepare(ctx)
+    with (
+        patch("chemrefine.slurm.shutil.which", return_value=None),
+        pytest.raises(JobSubmissionError, match="energy_hartree"),
+    ):
+        engine.submit(inputs, ctx)
 
 
 def test_submit_missing_slurm_header_raises(tmp_path: Path):
