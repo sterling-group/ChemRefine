@@ -104,7 +104,7 @@ class OrcaEngine:
         step_label = ctx.step_cfg.dir_name()
         jobs: dict[Path, str] = {}
         for inp, out, sid in inputs.files:
-            pal = min(slurm.parse_pal(inp), ctx.max_cores)
+            pal = min(orca_input.parse_pal(inp), ctx.max_cores)
             throttler.wait_for_room(pal, is_finished=slurm.is_finished)
             script_path = inp.with_suffix(".slurm")
             run_block = self._run_block(ctx, inp, out)
@@ -122,7 +122,8 @@ class OrcaEngine:
                 step=ctx.step_cfg.step,
                 structure_id=sid,
                 step_label=step_label,
-                orca_executable=ctx.orca_executable,
+                output_globs=("*.out", "*.xyz", "*.gbw", "*.hess"),
+                extra_header_fields=(("orca_executable", ctx.orca_executable),),
             )
             job_id = slurm.submit(script_path)
             throttler.register(job_id, pal)

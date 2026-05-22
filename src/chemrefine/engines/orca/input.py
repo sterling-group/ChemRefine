@@ -10,6 +10,11 @@ seed geometries.
 Engines that drive ORCA from an external program (MLFF, PySCF) pass
 their own ``extra_blocks`` argument — typically a ``%method ... end``
 block that points to the external server wrapper.
+
+The :func:`parse_pal` helper also lives here so PAL-budget extraction is
+co-located with the rest of the ORCA input vocabulary — generic SLURM
+machinery is engine-agnostic and must not parse ORCA's ``%pal``
+directive itself.
 """
 
 from __future__ import annotations
@@ -18,6 +23,26 @@ import re
 from pathlib import Path
 
 _XYZFILE_DIRECTIVE_RE = re.compile(r"^\s*\*\s+xyzfile.*$", re.MULTILINE)
+
+_PAL_PATTERNS = (
+    re.compile(r"nprocs\s+(\d+)", re.IGNORECASE),
+    re.compile(r"\bPAL(\d+)\b", re.IGNORECASE),
+    re.compile(r"^\s*PAL\s+(\d+)\b", re.IGNORECASE | re.MULTILINE),
+)
+
+
+def parse_pal(input_file: str | Path) -> int:
+    """Return the PAL / ``nprocs`` value declared in an ORCA input file.
+
+    Falls back to ``1`` when no PAL directive is found, matching ORCA's
+    own default for serial runs.
+    """
+    text = Path(input_file).read_text(encoding="utf-8")
+    for pattern in _PAL_PATTERNS:
+        m = pattern.search(text)
+        if m:
+            return int(m.group(1))
+    return 1
 
 
 def build_input(

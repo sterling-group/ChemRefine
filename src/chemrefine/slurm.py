@@ -18,6 +18,7 @@ import getpass
 import logging
 import re
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 
 from chemrefine import job_log
@@ -29,33 +30,8 @@ logger = logging.getLogger(__name__)
 # doesn't re-query ``getpass`` per ``is_finished`` call.
 _CURRENT_USER: str = getpass.getuser()
 
-_PAL_PATTERNS = (
-    re.compile(r"nprocs\s+(\d+)", re.IGNORECASE),
-    re.compile(r"\bPAL(\d+)\b", re.IGNORECASE),
-    re.compile(r"^\s*PAL\s+(\d+)\b", re.IGNORECASE | re.MULTILINE),
-)
 _SBATCH_OVERRIDES = ("--ntasks", "--cpus-per-task", "--job-name", "--output", "--error")
 _JOB_ID_RE = re.compile(r"\b(\d+)\b")
-
-
-
-# ---------------------------------------------------------------------------
-# PAL parsing
-# ---------------------------------------------------------------------------
-
-
-def parse_pal(input_file: str | Path) -> int:
-    """Return the PAL / ``nprocs`` value declared in an ORCA input file.
-
-    Falls back to ``1`` when no PAL directive is found, matching ORCA's
-    own default for serial runs.
-    """
-    text = Path(input_file).read_text(encoding="utf-8")
-    for pattern in _PAL_PATTERNS:
-        m = pattern.search(text)
-        if m:
-            return int(m.group(1))
-    return 1
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +54,8 @@ def build_script(
     step: int,
     structure_id: str,
     step_label: str,
-    orca_executable: str,
+    output_globs: Sequence[str],
+    extra_header_fields: Sequence[tuple[str, object]] = (),
     save_scratch: bool = False,
 ) -> Path:
     """Assemble a SLURM script at ``script_path`` and return its path.
@@ -113,9 +90,19 @@ def build_script(
         Engine-specific bash that actually invokes the calculation. It
         runs after ``cd $WORK_DIR``; it can reference ``$OUTPUT_DIR``,
         ``$WORK_DIR``, and the basename of the input file.
-    engine, operation, step, structure_id, step_label, orca_executable:
+    engine, operation, step, structure_id, step_label:
         Forwarded to :mod:`chemrefine.job_log` so the runlog header /
         footer carry the same fields direct-mode engines emit.
+    output_globs:
+        Shell globs of result files to copy back to ``output_dir`` once
+        the calculation finishes. Engines declare what they produce
+        (e.g. ORCA: ``("*.out", "*.xyz", "*.gbw", "*.hess")``); the
+        SLURM layer never assumes a specific engine's file set.
+    extra_header_fields:
+        Engine-specific ``(key, value)`` rows appended after the
+        generic runlog header fields. ORCA uses this for
+        ``orca_executable``; other engines pass whatever identifies the
+        binary they shelled out to.
     """
     if not template_path.is_file():
         raise FileNotFoundError(f"SLURM header template {template_path} not found")
@@ -159,9 +146,11 @@ def build_script(
         step_label=step_label,
         step_dir=output_dir,
         cores=pal,
-        orca_executable=orca_executable,
+        extra_fields=extra_header_fields,
     )
     footer = job_log.bash_footer(engine=engine, step_label=step_label)
+
+    globs_expr = " ".join(output_globs)
 
     script_lines = [
         "#!/bin/bash",
@@ -190,8 +179,8 @@ def build_script(
         "_on_exit() {",
         "  exit_code=$?",
         "  set +e",
-        "  files_copied=$(ls *.out *.xyz *.gbw *.hess 2>/dev/null | wc -l)",
-        '  cp *.out *.xyz *.gbw *.hess "$OUTPUT_DIR/" 2>/dev/null || true',
+        f"  files_copied=$(ls {globs_expr} 2>/dev/null | wc -l)",
+        f'  cp {globs_expr} "$OUTPUT_DIR/" 2>/dev/null || true',
         f"  {cleanup}",
         footer,
         "}",

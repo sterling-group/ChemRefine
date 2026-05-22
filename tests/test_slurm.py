@@ -12,29 +12,6 @@ from chemrefine import slurm
 from chemrefine.errors import JobSubmissionError
 
 # ---------------------------------------------------------------------------
-# parse_pal
-# ---------------------------------------------------------------------------
-
-
-def test_parse_pal_reads_nprocs(tmp_path: Path):
-    inp = tmp_path / "step1.inp"
-    inp.write_text("! B3LYP def2-SVP\n%pal\n  nprocs 8\nend\n", encoding="utf-8")
-    assert slurm.parse_pal(inp) == 8
-
-
-def test_parse_pal_reads_inline_directive(tmp_path: Path):
-    inp = tmp_path / "step1.inp"
-    inp.write_text("! B3LYP PAL4\n", encoding="utf-8")
-    assert slurm.parse_pal(inp) == 4
-
-
-def test_parse_pal_defaults_to_one(tmp_path: Path):
-    inp = tmp_path / "step1.inp"
-    inp.write_text("! B3LYP def2-SVP\n", encoding="utf-8")
-    assert slurm.parse_pal(inp) == 1
-
-
-# ---------------------------------------------------------------------------
 # build_script
 # ---------------------------------------------------------------------------
 
@@ -69,7 +46,7 @@ def _build_kwargs(tmp_path: Path, **overrides):
         "step": 1,
         "structure_id": "0",
         "step_label": "step1_refine",
-        "orca_executable": "orca",
+        "output_globs": ("*.out", "*.xyz", "*.gbw", "*.hess"),
     }
     base.update(overrides)
     return base
@@ -160,6 +137,36 @@ def test_build_script_emits_exit_trap(tmp_path: Path):
 def test_build_script_missing_template_raises(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
         slurm.build_script(**_build_kwargs(tmp_path, template_path=tmp_path / "missing.header"))
+
+
+def test_build_script_uses_caller_supplied_output_globs(tmp_path: Path):
+    """The back-copy line must reflect the engine's declared file extensions."""
+    script = slurm.build_script(
+        **_build_kwargs(tmp_path, output_globs=("*.json", "*.npz"))
+    )
+    text = script.read_text()
+    assert 'cp *.json *.npz "$OUTPUT_DIR/"' in text
+    assert "files_copied=$(ls *.json *.npz 2>/dev/null | wc -l)" in text
+    # Engine-specific ORCA globs must not leak in.
+    assert "*.gbw" not in text
+
+
+def test_build_script_appends_extra_header_fields(tmp_path: Path):
+    """Engine-specific runlog fields must appear after the fixed skeleton."""
+    script = slurm.build_script(
+        **_build_kwargs(
+            tmp_path,
+            extra_header_fields=(("orca_executable", "/opt/orca/orca"),),
+        )
+    )
+    text = script.read_text()
+    assert "orca_executable=/opt/orca/orca" in text
+
+
+def test_build_script_without_extra_header_fields_is_engine_neutral(tmp_path: Path):
+    """Default (no extra fields) emits no engine-specific rows."""
+    script = slurm.build_script(**_build_kwargs(tmp_path))
+    assert "orca_executable=" not in script.read_text()
 
 
 # ---------------------------------------------------------------------------

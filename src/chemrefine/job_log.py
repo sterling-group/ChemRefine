@@ -5,13 +5,17 @@ A *runlog* is one file per structure per step at
 direct (in-process) engines emit the same skeleton:
 
 * A start header with host, job_id, mode, engine, operation, step,
-  structure_id, scratch path, output path, cores, and orca_executable.
+  structure_id, scratch path, output path, and cores. Engines append
+  their own ``(key, value)`` rows via ``extra_fields`` (e.g. ORCA adds
+  ``orca_executable``).
 * The execution phase content (engine-specific stdout interleaved).
 * A finish footer with exit_code, elapsed_seconds, files_copied,
   scratch_kept.
 
-The same fields appear in both modes so a maintainer grepping
-``outputs/step*/step*_structure_*.runlog`` sees a uniform corpus.
+The fixed fields appear in both modes so a maintainer grepping
+``outputs/step*/step*_structure_*.runlog`` sees a uniform corpus;
+engine-specific rows extend the header without disturbing that
+shape.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from __future__ import annotations
 import os
 import socket
 import time
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -33,7 +38,6 @@ _HEADER_KEYS = (
     "scratch",
     "output",
     "cores",
-    "orca_executable",
 )
 _FOOTER_KEYS = (
     "exit_code",
@@ -67,14 +71,16 @@ def bash_header(
     step_label: str,
     step_dir: Path,
     cores: int,
-    orca_executable: str,
+    extra_fields: Sequence[tuple[str, object]] = (),
 ) -> str:
     """Return a bash snippet that prints the job-start header to stdout.
 
     The snippet relies on ``$WORK_DIR`` being set in the surrounding bash
     scope (the generated SLURM script does this immediately above the
     snippet). It also leaves ``start_time`` set so :func:`bash_footer`
-    can compute the elapsed seconds.
+    can compute the elapsed seconds. Engines can append their own
+    ``(key, value)`` rows via ``extra_fields`` — they render after the
+    fixed runlog skeleton.
     """
     fields = [
         ("host", "$(hostname)"),
@@ -87,7 +93,7 @@ def bash_header(
         ("scratch", "$WORK_DIR"),
         ("output", step_dir),
         ("cores", cores),
-        ("orca_executable", orca_executable),
+        *extra_fields,
     ]
     field_lines = "\n".join(_format_field(k, v) for k, v in fields)
     return (
@@ -140,13 +146,13 @@ def python_header(
     step_dir: Path,
     log_path: Path,
     cores: int = 1,
-    orca_executable: str = "—",
+    extra_fields: Sequence[tuple[str, object]] = (),
 ) -> Path:
     """Write the job-start header to ``log_path`` and return that path.
 
-    ``orca_executable`` defaults to an em-dash because direct engines do
-    not shell out to ORCA. ``cores`` defaults to ``1`` for the same
-    reason — in-process scoring is single-threaded by convention.
+    ``cores`` defaults to ``1`` because in-process scoring is
+    single-threaded by convention. Engine-specific identifiers (the
+    ORCA binary path, an MLFF model name, …) belong in ``extra_fields``.
     """
     fields = [
         ("host", socket.gethostname()),
@@ -159,7 +165,7 @@ def python_header(
         ("scratch", step_dir),
         ("output", step_dir),
         ("cores", cores),
-        ("orca_executable", orca_executable),
+        *extra_fields,
     ]
     lines = [
         f"[{_now_iso()}] ChemRefine {engine} {step_label} starting",

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from chemrefine.engines.orca.input import build_input
+from chemrefine.engines.orca.input import build_input, parse_pal
 
 
 def _template(tmp_path: Path, body: str) -> Path:
@@ -95,3 +95,26 @@ def test_build_input_missing_template_raises(tmp_path: Path):
             charge=0,
             multiplicity=1,
         )
+
+
+# ---------------------------------------------------------------------------
+# parse_pal
+# ---------------------------------------------------------------------------
+
+
+def test_parse_pal_reads_nprocs(tmp_path: Path):
+    inp = tmp_path / "step1.inp"
+    inp.write_text("! B3LYP def2-SVP\n%pal\n  nprocs 8\nend\n", encoding="utf-8")
+    assert parse_pal(inp) == 8
+
+
+def test_parse_pal_reads_inline_directive(tmp_path: Path):
+    inp = tmp_path / "step1.inp"
+    inp.write_text("! B3LYP PAL4\n", encoding="utf-8")
+    assert parse_pal(inp) == 4
+
+
+def test_parse_pal_defaults_to_one(tmp_path: Path):
+    inp = tmp_path / "step1.inp"
+    inp.write_text("! B3LYP def2-SVP\n", encoding="utf-8")
+    assert parse_pal(inp) == 1
