@@ -19,6 +19,7 @@ from chemrefine import job_log
 from chemrefine.constants import HARTREE_TO_EV
 from chemrefine.engines.base import register
 from chemrefine.engines.mlff.calculator import MlffCalculator
+from chemrefine.ids import structure_artifact_path
 from chemrefine.state import (
     JobBatch,
     StepContext,
@@ -49,10 +50,12 @@ class MlffDirectEngine:
         """No input files needed — record paths so cache + manifest still work."""
         ctx.step_dir.mkdir(parents=True, exist_ok=True)
         files: list[tuple] = []
+        step = ctx.step_cfg.step
         for struct in ctx.prev_state.structures:
-            stem = f"step{ctx.step_cfg.step}_structure_{struct.id}"
-            placeholder_inp = ctx.step_dir / f"{stem}.json"
-            placeholder_out = ctx.step_dir / f"{stem}.json.out"
+            placeholder_inp = structure_artifact_path(ctx.step_dir, step, struct.id, "json")
+            placeholder_out = structure_artifact_path(
+                ctx.step_dir, step, struct.id, "json.out"
+            )
             placeholder_inp.write_text(
                 f'{{"id": "{struct.id}", "engine": "mlff-direct"}}\n',
                 encoding="utf-8",
@@ -66,7 +69,9 @@ class MlffDirectEngine:
         step_label = ctx.step_cfg.dir_name()
         engine_name = ctx.step_cfg.engine
         for _inp, out, sid in inputs.files:
-            log_path = ctx.step_dir / f"step{ctx.step_cfg.step}_structure_{sid}.runlog"
+            log_path = structure_artifact_path(
+                ctx.step_dir, ctx.step_cfg.step, sid, "runlog"
+            )
             job_log.python_header(
                 engine=engine_name,
                 operation=ctx.step_cfg.operation,

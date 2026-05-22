@@ -28,6 +28,7 @@ from chemrefine import slurm, throttle
 from chemrefine.engines.base import register
 from chemrefine.engines.orca import input as orca_input
 from chemrefine.engines.orca import nms, output
+from chemrefine.ids import structure_artifact_path
 from chemrefine.io import write_xyz
 from chemrefine.state import (
     JobBatch,
@@ -63,8 +64,9 @@ class OrcaEngine:
                 output_dir=ctx.step_dir,
             )
             xyz_path = xyz_paths[0]
-            inp_path = ctx.step_dir / f"step{ctx.step_cfg.step}_structure_{struct.id}.inp"
-            out_path = ctx.step_dir / f"step{ctx.step_cfg.step}_structure_{struct.id}.out"
+            step = ctx.step_cfg.step
+            inp_path = structure_artifact_path(ctx.step_dir, step, struct.id, "inp")
+            out_path = structure_artifact_path(ctx.step_dir, step, struct.id, "out")
             orca_input.build_input(
                 xyz_path=xyz_path,
                 template_path=template,

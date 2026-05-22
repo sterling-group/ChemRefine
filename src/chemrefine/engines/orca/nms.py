@@ -23,6 +23,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from chemrefine.engines.orca import frequencies
+from chemrefine.ids import structure_artifact_path
 from chemrefine.state import StepContext, StepResults, Structure
 
 logger = logging.getLogger(__name__)
@@ -69,9 +70,8 @@ def normal_mode_sample(results: StepResults, ctx: StepContext) -> StepResults:
     displacement = float(options.get("displacement_value", 1.0))
     expanded: list[Structure] = []
     for struct in results.structures:
-        out_path = (
-            ctx.step_dir
-            / f"step{ctx.step_cfg.step}_structure_{struct.id}.out"
+        out_path = structure_artifact_path(
+            ctx.step_dir, ctx.step_cfg.step, struct.id, "out"
         )
         pair = _expand_one(struct, out_path, displacement=displacement)
         if pair is None:

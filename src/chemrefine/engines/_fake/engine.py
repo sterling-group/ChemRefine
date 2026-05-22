@@ -17,6 +17,7 @@ import numpy as np
 from ase import Atoms
 
 from chemrefine.engines.base import register
+from chemrefine.ids import structure_artifact_path
 from chemrefine.state import (
     JobBatch,
     StepContext,
@@ -49,9 +50,10 @@ class FakeEngine:
         """Write one trivial ``.inp`` per seed structure."""
         ctx.step_dir.mkdir(parents=True, exist_ok=True)
         files: list[tuple] = []
+        step = ctx.step_cfg.step
         for struct in ctx.prev_state.structures:
-            inp = ctx.step_dir / f"step{ctx.step_cfg.step}_structure_{struct.id}.inp"
-            out = ctx.step_dir / f"step{ctx.step_cfg.step}_structure_{struct.id}.out"
+            inp = structure_artifact_path(ctx.step_dir, step, struct.id, "inp")
+            out = structure_artifact_path(ctx.step_dir, step, struct.id, "out")
             inp.write_text(f"# fake input for {struct.id}\n", encoding="utf-8")
             files.append((inp, out, struct.id))
         return StepInputs(files=tuple(files))

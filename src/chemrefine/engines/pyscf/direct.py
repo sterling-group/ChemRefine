@@ -23,6 +23,7 @@ from chemrefine import job_log
 from chemrefine.engines.base import register
 from chemrefine.engines.pyscf import _runtime
 from chemrefine.engines.pyscf.options import PyscfOptions
+from chemrefine.ids import structure_artifact_path
 from chemrefine.state import (
     JobBatch,
     StepContext,
@@ -47,9 +48,10 @@ class PyscfDirectEngine:
         """Write a tiny per-structure settings JSON so cache + manifest work."""
         ctx.step_dir.mkdir(parents=True, exist_ok=True)
         files: list[tuple] = []
+        step = ctx.step_cfg.step
         for struct in ctx.prev_state.structures:
-            inp = ctx.step_dir / f"step{ctx.step_cfg.step}_structure_{struct.id}.json"
-            out = ctx.step_dir / f"step{ctx.step_cfg.step}_structure_{struct.id}.json.out"
+            inp = structure_artifact_path(ctx.step_dir, step, struct.id, "json")
+            out = structure_artifact_path(ctx.step_dir, step, struct.id, "json.out")
             inp.write_text(
                 json.dumps({"id": struct.id, "engine": "pyscf-direct"}) + "\n",
                 encoding="utf-8",
@@ -64,7 +66,9 @@ class PyscfDirectEngine:
         engine_name = ctx.step_cfg.engine
 
         for _inp, out, sid in inputs.files:
-            log_path = ctx.step_dir / f"step{ctx.step_cfg.step}_structure_{sid}.runlog"
+            log_path = structure_artifact_path(
+                ctx.step_dir, ctx.step_cfg.step, sid, "runlog"
+            )
             job_log.python_header(
                 engine=engine_name,
                 operation=ctx.step_cfg.operation,

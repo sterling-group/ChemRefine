@@ -7,7 +7,7 @@ multiple children (e.g. a GOAT ensemble), the children inherit a
 hyphen-suffixed ID: ``"0-1"`` means "child 1 of parent 0",
 ``"0-1-2"`` means "child 2 of that branch", and so on.
 
-The functions here own three concerns:
+The functions here own four concerns:
 
 1. Allocate IDs for new children (:func:`allocate_child_ids`).
 2. Resolve IDs after a step that may either preserve a 1:1 mapping
@@ -16,6 +16,9 @@ The functions here own three concerns:
    (:func:`resolve_persistent_ids`).
 3. Extract a structure ID from an engine input/output filename
    (:func:`extract_structure_id`).
+4. Build the canonical per-structure artifact path
+   (:func:`structure_artifact_path`) — the forward-construction side
+   of the same naming convention :data:`_ID_PATTERN` parses.
 """
 
 from __future__ import annotations
@@ -155,3 +158,16 @@ def resolve_persistent_ids(
 def parent_of(structure_id: str) -> str:
     """Return the parent ID (everything before the last ``"-"``), or the ID itself."""
     return structure_id.rsplit("-", 1)[0] if "-" in structure_id else structure_id
+
+
+def structure_artifact_path(
+    step_dir: Path, step: int, structure_id: str, ext: str
+) -> Path:
+    """Canonical per-structure artifact path.
+
+    Returns ``step_dir/step{step}_structure_{structure_id}.{ext}``.
+    This is the forward-construction side of :data:`_ID_PATTERN`;
+    keeping both halves of the naming convention here means a future
+    layout change only touches one file.
+    """
+    return step_dir / f"step{step}_structure_{structure_id}.{ext}"

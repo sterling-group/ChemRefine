@@ -22,6 +22,7 @@ from chemrefine.constants import (
     DEFAULT_TEMPERATURE_K,
     HARTREE_TO_KCALMOL,
 )
+from chemrefine.ids import structure_artifact_path
 from chemrefine.units import boltzmann_weights
 
 _CSV_PRECISION = 8
@@ -82,7 +83,7 @@ def write_xyz(
                 symbols=[row[0] for row in geometry],
                 positions=np.array([row[1:] for row in geometry], dtype=float),
             )
-        path = out / f"step{step_number}_structure_{sid}.xyz"
+        path = structure_artifact_path(out, step_number, sid, "xyz")
         lines = [str(len(atoms)), f"step {step_number} structure {sid}"]
         for symbol, (x, y, z) in zip(
             atoms.get_chemical_symbols(), atoms.get_positions(), strict=True
