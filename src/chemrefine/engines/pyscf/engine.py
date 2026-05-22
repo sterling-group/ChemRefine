@@ -9,25 +9,21 @@ gradient is computed by :class:`PyscfExtOptCalculator`.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
+from chemrefine.engines._extopt import run_block
+from chemrefine.engines._extopt.orca_engine import ExtOptOrcaEngine
 from chemrefine.engines.base import register
-from chemrefine.engines.mlff.engine import (
-    _build_extopt_run_block,
-    _server_command,
-)
-from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.state import StepContext
 
 logger = logging.getLogger(__name__)
 
 
 @register("pyscf")
-class PyscfEngine(OrcaEngine):
+class PyscfEngine(ExtOptOrcaEngine):
     """ORCA optimisation backed by a PySCF gradient server."""
 
     name = "pyscf"
-    supports_nms = False
+    wrapper_filename = "pyscf_extopt.sh"
 
     # -- ORCA input customisation -----------------------------------------
 
@@ -44,8 +40,8 @@ class PyscfEngine(OrcaEngine):
 
     # -- SLURM customisation ----------------------------------------------
 
-    def _run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
-        """Spin up the ExtOpt server (pyscf backend), run ORCA, clean up."""
+    def _server_cmd(self, ctx: StepContext) -> str:
+        """Build the ``python -m ..._extopt.server --backend pyscf ...`` command."""
         options = ctx.step_cfg.options or {}
         extra: list[tuple[str, str]] = []
         method = options.get("method")
@@ -62,22 +58,12 @@ class PyscfEngine(OrcaEngine):
             f"--{flag}" for flag in ("df", "gpu") if options.get(flag)
         ]
 
-        server_cmd = _server_command(backend="pyscf", extra_flags=extra)
+        server_cmd = run_block._server_command(backend="pyscf", extra_flags=extra)
         if bool_flags:
             server_cmd = f"{server_cmd} {' '.join(bool_flags)}"
-
-        return _build_extopt_run_block(
-            server_cmd=server_cmd,
-            orca_executable=ctx.orca_executable,
-            inp_name=inp_path.name,
-            out_name=out_path.name,
-        )
+        return server_cmd
 
     # -- Helpers -----------------------------------------------------------
-
-    def _wrapper_path(self, ctx: StepContext) -> Path:
-        """Path of the per-step ``ProgExt`` wrapper script."""
-        return (ctx.step_dir / "pyscf_extopt.sh").resolve()
 
     def _ext_params(self, ctx: StepContext) -> str:
         """Build the ``Ext_Params`` string passed to the wrapper script.
