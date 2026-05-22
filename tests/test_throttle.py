@@ -162,9 +162,11 @@ def test_wait_for_room_raises_on_timeout():
 
     t = Throttler(max_cores=8, poll_interval=0)
     t.register("blocker", 8)
-    with patch("time.monotonic", side_effect=[0.0, 0.0, 99.0]):
-        with pytest.raises(ThrottleTimeoutError):
-            t.wait_for_room(4, is_finished=_never_finished, max_wait_seconds=5.0)
+    with (
+        patch("time.monotonic", side_effect=[0.0, 0.0, 99.0]),
+        pytest.raises(ThrottleTimeoutError),
+    ):
+        t.wait_for_room(4, is_finished=_never_finished, max_wait_seconds=5.0)
 
 
 def test_wait_all_raises_on_timeout():
@@ -173,6 +175,8 @@ def test_wait_all_raises_on_timeout():
 
     t = Throttler(max_cores=8, poll_interval=0)
     t.register("blocker", 8)
-    with patch("time.monotonic", side_effect=[0.0, 0.0, 99.0]):
-        with pytest.raises(ThrottleTimeoutError):
-            t.wait_all(is_finished=_never_finished, max_wait_seconds=5.0)
+    with (
+        patch("time.monotonic", side_effect=[0.0, 0.0, 99.0]),
+        pytest.raises(ThrottleTimeoutError),
+    ):
+        t.wait_all(is_finished=_never_finished, max_wait_seconds=5.0)

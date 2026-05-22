@@ -159,10 +159,9 @@ def _filter_high_energy(
     """Keep the ``count`` highest-energy structures (PES-style sampling).
 
     Precondition: ``sorted_structures`` must be sorted ascending by
-    ``energy_hartree``.
+    ``energy_hartree``. ``apply()`` short-circuits on empty input, so
+    every internal caller passes a non-empty list.
     """
-    if not sorted_structures:
-        return []
     return list(reversed(sorted_structures))[:count]
 
 
