@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import socket
 from typing import TYPE_CHECKING, Any
 
 from chemrefine.engines._extopt.base import (
@@ -148,13 +149,12 @@ def main() -> int:
     calculator = backend_cls.from_args(args)
     app = create_app(calculator)
 
-    import socket as _socket
-
     host, port_str = args.bind.rsplit(":", 1)
-    # Bind to a real OS socket first so getsockname() reveals the
-    # kernel-assigned port without touching waitress internals.
-    sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-    sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    # Bind a real OS socket first so getsockname() reveals the
+    # kernel-assigned ephemeral port (when port=0). waitress's
+    # documented ``sockets=`` parameter then accepts the pre-bound
+    # socket directly.
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind((host, int(port_str)))
     actual_host, actual_port = sock.getsockname()
     actual_url = f"{actual_host}:{actual_port}"
