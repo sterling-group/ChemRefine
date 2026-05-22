@@ -28,6 +28,18 @@ def test_pipeline_state_bool_reflects_emptiness():
     assert PipelineState(structures=(Structure(id="0", atoms=Atoms("H")),))
 
 
+def test_structure_parent_id_defaults_to_none():
+    """Seed structures don't pass parent_id; the default is None."""
+    seed = Structure(id="0", atoms=Atoms("H"))
+    assert seed.parent_id is None
+
+
+def test_structure_parent_id_carries_through_when_set():
+    """Derived structures carry their input's lineage explicitly."""
+    child = Structure(id="0-1", atoms=Atoms("H"), parent_id="0")
+    assert child.parent_id == "0"
+
+
 def test_step_inputs_accessors_return_aligned_tuples():
     """``input_paths`` / ``output_paths`` / ``structure_ids`` split the
     ordered (inp, out, sid) triples into their three component tuples."""

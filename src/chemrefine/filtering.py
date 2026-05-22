@@ -37,7 +37,6 @@ from chemrefine.config import (
     SampleConfig,
 )
 from chemrefine.constants import HARTREE_TO_KCALMOL
-from chemrefine.ids import parent_of
 from chemrefine.state import PipelineState, StepResults, Structure
 from chemrefine.units import boltzmann_weights
 
@@ -77,7 +76,10 @@ def _filter_by_parent(structures: list[Structure], sample: SampleConfig) -> list
     """Group by parent ID, filter each group, return concatenated survivors."""
     groups: dict[str, list[Structure]] = defaultdict(list)
     for struct in structures:
-        groups[parent_of(struct.id)].append(struct)
+        # Seed structures (parent_id=None) form their own singleton groups
+        # by falling back to their own id, matching the historical behaviour
+        # of ``parent_of`` on flat IDs.
+        groups[struct.parent_id or struct.id].append(struct)
     sort_key = operator.attrgetter("energy_hartree")
     survivors: list[Structure] = []
     for parent, group in groups.items():

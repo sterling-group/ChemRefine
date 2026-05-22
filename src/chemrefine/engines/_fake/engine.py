@@ -81,11 +81,13 @@ class FakeEngine:
         for _inp, out, sid in inputs.files:
             text = out.read_text()
             energy = float(text.split("FINAL ENERGY:")[1].strip())
-            atoms = seeds[sid].atoms if sid in seeds else Atoms("H")
+            seed = seeds.get(sid)
+            atoms = seed.atoms if seed is not None else Atoms("H")
             out_structures.append(
                 Structure(
                     id=sid,
                     atoms=atoms,
+                    parent_id=seed.parent_id if seed is not None else None,
                     energy_hartree=energy,
                     forces_ev_per_a=np.zeros((len(atoms), 3)),
                 )

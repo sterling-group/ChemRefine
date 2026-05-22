@@ -224,4 +224,4 @@ def test_invalidate_missing_is_noop(tmp_path: Path):
 
 def test_cache_format_version_constant():
     """Bumping CACHE_FORMAT_VERSION is a public ABI break we want to notice."""
-    assert CACHE_FORMAT_VERSION == "v4.0"
+    assert CACHE_FORMAT_VERSION == "v4.1"

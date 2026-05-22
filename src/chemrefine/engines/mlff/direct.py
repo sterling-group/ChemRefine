@@ -130,6 +130,7 @@ class MlffDirectEngine:
                 Structure(
                     id=sid,
                     atoms=seed.atoms.copy(),
+                    parent_id=seed.parent_id,
                     energy_hartree=float(data["energy_hartree"]),
                     forces_ev_per_a=np.zeros((len(seed.atoms), 3)),
                 )

@@ -29,6 +29,11 @@ class Structure:
     ``None`` values mean the field has not been populated yet — e.g. a
     seed structure before its first calculation.
 
+    ``parent_id`` is the ID of the previous-step structure this one was
+    derived from — ``None`` for seed structures. Filtering by parent
+    reads this field directly instead of parsing a hyphen-encoded
+    lineage out of ``id``.
+
     ``forces_ev_per_a`` is a numpy array, which the ``frozen=True``
     contract cannot enforce as immutable. Callers must treat it as
     read-only — the array is shared by reference across the pipeline.
@@ -36,6 +41,7 @@ class Structure:
 
     id: str
     atoms: Atoms
+    parent_id: str | None = None
     energy_hartree: float | None = None
     forces_ev_per_a: NDArray[np.float64] | None = None
 

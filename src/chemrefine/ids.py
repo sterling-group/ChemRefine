@@ -5,9 +5,12 @@ that records its lineage. The seed structures of step 1 get plain integer
 IDs (``"0"``, ``"1"``, ...). Whenever a step expands one parent into
 multiple children (e.g. a GOAT ensemble), the children inherit a
 hyphen-suffixed ID: ``"0-1"`` means "child 1 of parent 0",
-``"0-1-2"`` means "child 2 of that branch", and so on.
+``"0-1-2"`` means "child 2 of that branch", and so on. The lineage
+itself is carried by :attr:`chemrefine.state.Structure.parent_id`; the
+hyphenated form here is just the display convention used for filenames
+and grep-friendliness.
 
-The functions here own four concerns:
+The functions here own three concerns:
 
 1. Allocate IDs for new children (:func:`allocate_child_ids`).
 2. Resolve IDs after a step that may either preserve a 1:1 mapping
@@ -15,10 +18,9 @@ The functions here own four concerns:
    inferring the fan-out from the parsed structure count
    (:func:`resolve_persistent_ids`).
 3. Extract a structure ID from an engine input/output filename
-   (:func:`extract_structure_id`).
-4. Build the canonical per-structure artifact path
-   (:func:`structure_artifact_path`) — the forward-construction side
-   of the same naming convention :data:`_ID_PATTERN` parses.
+   (:func:`extract_structure_id`) and build the canonical per-structure
+   artifact path (:func:`structure_artifact_path`) — the inverse +
+   forward sides of the same naming convention.
 """
 
 from __future__ import annotations
@@ -141,11 +143,6 @@ def resolve_persistent_ids(
         primary_extra = child_count - (p - 1)
         fanouts = [primary_extra] + [1] * (p - 1)
     return allocate_child_ids(parent_ids, fanouts)
-
-
-def parent_of(structure_id: str) -> str:
-    """Return the parent ID (everything before the last ``"-"``), or the ID itself."""
-    return structure_id.rsplit("-", 1)[0] if "-" in structure_id else structure_id
 
 
 def structure_artifact_path(

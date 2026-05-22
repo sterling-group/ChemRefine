@@ -7,7 +7,6 @@ import pytest
 from chemrefine.ids import (
     allocate_child_ids,
     extract_structure_id,
-    parent_of,
     resolve_persistent_ids,
     validate_structure_ids,
 )
@@ -156,18 +155,3 @@ def test_resolve_persistent_ids_uneven_extra_goes_to_first_parent():
     assert resolve_persistent_ids(
         step_number=2, parent_ids=["0", "1"], child_count=3
     ) == ["0-0", "0-1", "1"]
-
-
-# ---------------------------------------------------------------------------
-# parent_of
-# ---------------------------------------------------------------------------
-
-
-def test_parent_of_flat():
-    assert parent_of("0") == "0"
-    assert parent_of("42") == "42"
-
-
-def test_parent_of_hierarchical():
-    assert parent_of("0-1") == "0"
-    assert parent_of("0-1-2") == "0-1"

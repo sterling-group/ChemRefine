@@ -160,18 +160,25 @@ class OrcaEngine:
     def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
         """Read each output file and build :class:`Structure` instances."""
         operation = ctx.step_cfg.operation
+        prev_by_id = {s.id: s for s in ctx.prev_state.structures}
         out_structures: list[Structure] = []
         for _inp, out_path, sid in inputs.files:
             parsed = output.parse_output(out_path, operation)
+            input_struct = prev_by_id.get(sid)
+            is_fanout = len(parsed) > 1
             for index, ps in enumerate(parsed):
-                # If one input produces multiple structures (GOAT/PES), assign
-                # hyphen-suffixed child IDs; single structures keep the parent ID.
-                child_id = sid if len(parsed) == 1 else f"{sid}-{index}"
+                # Fan-out: parent is the input that fanned out.
+                # 1:1: child inherits the input's parent lineage unchanged.
+                child_id = f"{sid}-{index}" if is_fanout else sid
+                child_parent = sid if is_fanout else (
+                    input_struct.parent_id if input_struct is not None else None
+                )
                 atoms = Atoms(symbols=list(ps.symbols), positions=ps.positions)
                 out_structures.append(
                     Structure(
                         id=child_id,
                         atoms=atoms,
+                        parent_id=child_parent,
                         energy_hartree=ps.energy_hartree,
                         forces_ev_per_a=ps.forces_ev_per_a,
                     )

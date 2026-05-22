@@ -16,9 +16,16 @@ from chemrefine.filtering import apply
 from chemrefine.state import StepResults, Structure
 
 
-def _results(*pairs: tuple[str, float]) -> StepResults:
+def _results(*pairs: tuple) -> StepResults:
+    """Build a ``StepResults`` from ``(id, energy)`` or ``(id, energy, parent_id)`` tuples."""
     structures = tuple(
-        Structure(id=sid, atoms=Atoms("H"), energy_hartree=energy) for sid, energy in pairs
+        Structure(
+            id=pair[0],
+            atoms=Atoms("H"),
+            parent_id=pair[2] if len(pair) > 2 else None,
+            energy_hartree=pair[1],
+        )
+        for pair in pairs
     )
     return StepResults(structures=structures)
 
@@ -157,11 +164,11 @@ def test_high_energy_empty_input_returns_empty():
 
 def test_by_parent_groups_by_lineage():
     r = _results(
-        ("0-0", -1.0),
-        ("0-1", -2.0),
-        ("0-2", -0.5),
-        ("1-0", -1.0),
-        ("1-1", -0.5),
+        ("0-0", -1.0, "0"),
+        ("0-1", -2.0, "0"),
+        ("0-2", -0.5, "0"),
+        ("1-0", -1.0, "1"),
+        ("1-1", -0.5, "1"),
     )
     sample = IntegerSample(method="integer", count=1, by_parent=True)
     state = apply(r, sample)
@@ -174,7 +181,7 @@ def test_by_parent_handles_flat_ids():
     r = _results(("0", -1.0), ("1", -2.0))
     sample = IntegerSample(method="integer", count=1, by_parent=True)
     state = apply(r, sample)
-    # Flat IDs have themselves as their own parent
+    # Seed IDs (parent_id=None) form their own singleton groups
     assert {s.id for s in state.structures} == {"0", "1"}
 
 

@@ -27,7 +27,13 @@ from chemrefine.config import StepConfig
 from chemrefine.errors import CacheError
 from chemrefine.state import StepResults
 
-CACHE_FORMAT_VERSION = "v4.0"
+CACHE_FORMAT_VERSION = "v4.1"
+"""Bump whenever ``Structure`` / ``StepResults`` gain or change a field
+in a way that would silently misread an older pickle. The current
+bump (v4.0 → v4.1) marks the addition of ``Structure.parent_id``;
+caches written before that field exists deserialize without it,
+falling back to the class default of ``None`` and silently breaking
+``by_parent`` grouping until rebuilt."""
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +147,7 @@ def save(
         "engine": step_cfg.engine,
         "operation": step_cfg.operation,
         "structure_ids": [s.id for s in results.structures],
+        "parent_ids": [s.parent_id for s in results.structures],
         "energies_hartree": [s.energy_hartree for s in results.structures],
     }
     _atomic_write(json_path, json.dumps(sidecar, indent=2).encode())
@@ -155,8 +162,16 @@ def load(step_dir: Path) -> StepCache | None:
     try:
         with pkl_path.open("rb") as fh:
             obj = pickle.load(fh)
+        if isinstance(obj, StepCache):
+            # Schema probe: a pickle written before a Structure field was added
+            # would deserialize "successfully" but blow up later when the
+            # pipeline touches the missing attribute. Touching every required
+            # field here makes that AttributeError surface inside this try
+            # block, so the orchestrator transparently rebuilds the cache.
+            for s in obj.results.structures:
+                _ = (s.id, s.parent_id, s.atoms, s.energy_hartree, s.forces_ev_per_a)
     except (pickle.UnpicklingError, EOFError, AttributeError) as e:
-        raise CacheError(f"corrupt cache at {pkl_path}: {e}") from e
+        raise CacheError(f"stale or corrupt cache at {pkl_path}: {e}") from e
     if not isinstance(obj, StepCache):
         raise CacheError(f"cache at {pkl_path} is not a StepCache (got {type(obj).__name__})")
     if obj.cache_format != CACHE_FORMAT_VERSION:

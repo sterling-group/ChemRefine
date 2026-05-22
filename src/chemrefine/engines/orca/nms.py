@@ -121,6 +121,6 @@ def _expand_one(
     neg_atoms = struct.atoms.copy()
     neg_atoms.set_positions(neg_xyz)
     return (
-        Structure(id=f"{struct.id}_pos", atoms=pos_atoms),
-        Structure(id=f"{struct.id}_neg", atoms=neg_atoms),
+        Structure(id=f"{struct.id}_pos", atoms=pos_atoms, parent_id=struct.id),
+        Structure(id=f"{struct.id}_neg", atoms=neg_atoms, parent_id=struct.id),
     )
