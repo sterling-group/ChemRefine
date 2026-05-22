@@ -32,10 +32,13 @@ _PAL_PATTERNS = (
 
 
 def parse_pal(input_file: str | Path) -> int:
-    """Return the PAL / ``nprocs`` value declared in an ORCA input file.
+    """Return the PAL / ``nprocs`` value declared in an ORCA input or template.
 
-    Falls back to ``1`` when no PAL directive is found, matching ORCA's
-    own default for serial runs.
+    Per-structure ``.inp`` files inherit their ``%pal`` block from the
+    step template, so callers typically pass the template path once
+    per step rather than re-reading every generated copy. Falls back
+    to ``1`` when no PAL directive is found, matching ORCA's own
+    default for serial runs.
     """
     text = Path(input_file).read_text(encoding="utf-8")
     for pattern in _PAL_PATTERNS:

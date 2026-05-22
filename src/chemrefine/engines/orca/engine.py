@@ -103,10 +103,16 @@ class OrcaEngine:
         if not header_path.is_file():
             raise FileNotFoundError(f"SLURM header template not found: {header_path}")
 
+        # PAL is a property of the template, not of any individual structure:
+        # ORCA copies the same %pal block into every generated .inp. Read it
+        # once from the template instead of re-reading the per-structure copy
+        # N times.
+        template = self._resolve_template(ctx)
+        pal = min(orca_input.parse_pal(template), ctx.max_cores)
+
         step_label = ctx.step_cfg.dir_name()
         jobs: dict[Path, str] = {}
         for inp, out, sid in inputs.files:
-            pal = min(orca_input.parse_pal(inp), ctx.max_cores)
             throttler.wait_for_room(pal, is_finished=slurm.is_finished)
             script_path = inp.with_suffix(".slurm")
             run_block = self._run_block(ctx, inp, out)
