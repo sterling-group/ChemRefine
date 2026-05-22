@@ -79,6 +79,10 @@ docs = [
     "mkdocs-material>=9.5",
     "interrogate>=1.7",
 ]
+# Convenience superset for contributors: linting + the test and docs
+# extras' tools (interrogate, pytest, pytest-cov). The duplication with
+# `test` / `docs` is intentional so `pip install -e ".[dev]"` is one
+# command that gives a contributor everything they need.
 dev = [
     "ruff>=0.5",
     "pre-commit>=3.5",
