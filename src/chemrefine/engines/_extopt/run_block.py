@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import shlex
 
-from chemrefine.engines._extopt.base import SERVER_URL_FILENAME
+from chemrefine.engines._extopt.base import DEFAULT_BIND_HOST, SERVER_URL_FILENAME
 
 _SERVER_READY_TIMEOUT_SECONDS: int = 120
 
@@ -25,7 +25,7 @@ def _server_command(
     parts = [
         "python -m chemrefine.engines._extopt.server",
         f"--backend {shlex.quote(backend)}",
-        '--bind 127.0.0.1:0',
+        f"--bind {DEFAULT_BIND_HOST}:0",
         '--url-file "$URL_FILE"',
         '--log-file "$LOG_FILE"',
         "--log-level INFO",

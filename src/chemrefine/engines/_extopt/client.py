@@ -21,6 +21,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from chemrefine.engines._extopt import protocol
+from chemrefine.engines._extopt.base import SERVER_URL_FILENAME
 from chemrefine.engines._extopt.registry import CALCULATORS
 from chemrefine.errors import JobFailureError
 
@@ -43,7 +44,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--url-file", default=None,
-        help="sidecar URL file (default: $WORK_DIR/server.url)",
+        help=f"sidecar URL file (default: $WORK_DIR/{SERVER_URL_FILENAME})",
     )
     parser.add_argument("--tag", default=None, help="optional correlation tag for server log")
     # PySCF settings (no-op for MLFF — server ignores unknown settings keys)
@@ -128,7 +129,7 @@ def resolve_server_url(args: argparse.Namespace) -> str:
     import os
 
     default_dir = Path(os.environ.get("WORK_DIR", "."))
-    url_file = args.url_file or str(default_dir / "server.url")
+    url_file = args.url_file or str(default_dir / SERVER_URL_FILENAME)
     return protocol.read_server_url(url_file)
 
 
