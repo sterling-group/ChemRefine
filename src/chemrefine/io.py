@@ -9,7 +9,6 @@ back-compatibility with parsers that produce raw coordinate lists.
 from __future__ import annotations
 
 import logging
-import os
 import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -36,13 +35,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def natural_key(name: str | os.PathLike) -> list[object]:
+def natural_key(name: str | Path) -> list[object]:
     """Return a list suitable for ``sorted(..., key=natural_key)`` natural ordering.
 
     ``"step10.out"`` sorts after ``"step2.out"`` instead of before it.
     """
-    s = os.fspath(name)
-    return [int(p) if p.isdigit() else p.lower() for p in _NATURAL_PART.split(s)]
+    return [int(p) if p.isdigit() else p.lower() for p in _NATURAL_PART.split(str(name))]
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +95,7 @@ def write_xyz(
 
 def read_xyz(path: str | Path) -> Atoms:
     """Read a single-frame XYZ file into an ASE ``Atoms`` object."""
-    return ase_read(os.fspath(path), format="xyz")
+    return ase_read(str(path), format="xyz")
 
 
 def gather_output_files(directory: str | Path, pattern: str) -> list[Path]:

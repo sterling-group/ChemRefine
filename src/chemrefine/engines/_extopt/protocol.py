@@ -16,7 +16,6 @@ match the rest of ChemRefine.
 
 from __future__ import annotations
 
-import os
 import tempfile
 from pathlib import Path
 
@@ -170,11 +169,11 @@ def write_server_url(url_file: str | Path, url: str) -> Path:
     """Atomically write ``host:port`` to ``url_file`` (tempfile + rename)."""
     target = Path(url_file)
     target.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=".url.", dir=str(target.parent))
+    fd, tmp_name = tempfile.mkstemp(prefix=".url.", dir=target.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        with open(fd, "w", encoding="utf-8") as fh:
             fh.write(url)
-        os.replace(tmp_name, target)
+        Path(tmp_name).replace(target)
     except Exception:
         Path(tmp_name).unlink(missing_ok=True)
         raise

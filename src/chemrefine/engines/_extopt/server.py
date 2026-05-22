@@ -132,6 +132,7 @@ def main() -> int:
     """
     import os
     import sys
+    from pathlib import Path
 
     import waitress
     from waitress.server import create_server
@@ -159,9 +160,8 @@ def main() -> int:
     actual_host, actual_port = sock.getsockname()
     actual_url = f"{actual_host}:{actual_port}"
 
-    url_file = args.url_file or os.path.join(
-        os.environ.get("WORK_DIR", "."), SERVER_URL_FILENAME
-    )
+    default_dir = Path(os.environ.get("WORK_DIR", "."))
+    url_file = args.url_file or str(default_dir / SERVER_URL_FILENAME)
     protocol.write_server_url(url_file, actual_url)
     logger.info("ExtOpt server (%s) bound at %s, sidecar=%s", args.backend, actual_url, url_file)
     server = create_server(app, sockets=[sock], threads=args.nthreads)

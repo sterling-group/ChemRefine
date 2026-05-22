@@ -127,9 +127,8 @@ def resolve_server_url(args: argparse.Namespace) -> str:
         return args.bind
     import os
 
-    url_file = args.url_file or os.path.join(
-        os.environ.get("WORK_DIR", "."), "server.url"
-    )
+    default_dir = Path(os.environ.get("WORK_DIR", "."))
+    url_file = args.url_file or str(default_dir / "server.url")
     return protocol.read_server_url(url_file)
 
 
