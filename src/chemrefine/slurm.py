@@ -25,6 +25,10 @@ from chemrefine.errors import JobSubmissionError
 
 logger = logging.getLogger(__name__)
 
+# Resolved once at import time so the polling loop in :class:`Throttler`
+# doesn't re-query ``getpass`` per ``is_finished`` call.
+_CURRENT_USER: str = getpass.getuser()
+
 _PAL_PATTERNS = (
     re.compile(r"nprocs\s+(\d+)", re.IGNORECASE),
     re.compile(r"\bPAL(\d+)\b", re.IGNORECASE),
@@ -32,6 +36,7 @@ _PAL_PATTERNS = (
 )
 _SBATCH_OVERRIDES = ("--ntasks", "--cpus-per-task", "--job-name", "--output", "--error")
 _JOB_ID_RE = re.compile(r"\b(\d+)\b")
+
 
 
 # ---------------------------------------------------------------------------
@@ -130,8 +135,8 @@ def build_script(
     err_path = output_dir / f"{job_name}.err"
 
     sbatch_lines.append(f"#SBATCH --job-name={job_name}")
-    sbatch_lines.append(f"#SBATCH --output={runlog_path}")
-    sbatch_lines.append(f"#SBATCH --error={err_path}")
+    sbatch_lines.append(f'#SBATCH --output="{runlog_path}"')
+    sbatch_lines.append(f'#SBATCH --error="{err_path}"')
     sbatch_lines.append(f"#SBATCH --ntasks={pal}")
     sbatch_lines.append("#SBATCH --cpus-per-task=1")
 
@@ -143,7 +148,7 @@ def build_script(
     cleanup = (
         'scratch_kept=true; echo "scratch kept at $WORK_DIR"'
         if save_scratch
-        else "scratch_kept=false; cd $OUTPUT_DIR && rm -rf $WORK_DIR"
+        else 'scratch_kept=false; cd "$OUTPUT_DIR" && rm -rf "$WORK_DIR"'
     )
 
     header = job_log.bash_header(
@@ -169,11 +174,11 @@ def build_script(
         "set -euo pipefail",
         'ts=$(date +%Y%m%d%H%M%S)',
         'rand=$(tr -dc a-z0-9 </dev/urandom | head -c 8)',
-        f"export WORK_DIR={work_dir_expr}",
-        f"export OUTPUT_DIR={output_dir}",
-        "mkdir -p $WORK_DIR",
-        f"cp {input_path} $WORK_DIR/",
-        "cd $WORK_DIR",
+        f'export WORK_DIR="{work_dir_expr}"',
+        f'export OUTPUT_DIR="{output_dir}"',
+        'mkdir -p "$WORK_DIR"',
+        f'cp "{input_path}" "$WORK_DIR/"',
+        'cd "$WORK_DIR"',
         "",
         header,
         "",
@@ -186,7 +191,7 @@ def build_script(
         "  exit_code=$?",
         "  set +e",
         "  files_copied=$(ls *.out *.xyz *.gbw *.hess 2>/dev/null | wc -l)",
-        '  cp *.out *.xyz *.gbw *.hess $OUTPUT_DIR/ 2>/dev/null || true',
+        '  cp *.out *.xyz *.gbw *.hess "$OUTPUT_DIR/" 2>/dev/null || true',
         f"  {cleanup}",
         footer,
         "}",
@@ -233,10 +238,9 @@ def submit(script_path: str | Path, *, sbatch_cmd: str = "sbatch") -> str:
 
 def is_finished(job_id: str, *, squeue_cmd: str = "squeue") -> bool:
     """Return True if ``job_id`` is no longer in the current user's ``squeue``."""
-    user = getpass.getuser()
     try:
         result = subprocess.run(
-            [squeue_cmd, "-u", user, "-o", "%i"],
+            [squeue_cmd, "-u", _CURRENT_USER, "-o", "%i"],
             capture_output=True,
             text=True,
             check=True,

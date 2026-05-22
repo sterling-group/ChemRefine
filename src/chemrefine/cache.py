@@ -116,7 +116,7 @@ def save(
     results: StepResults,
     step_dir: Path,
     chemrefine_version: str,
-) -> StepCache:
+) -> None:
     """Persist ``results`` for ``step_cfg`` to ``step_dir/_cache/``."""
     fp = fingerprint(step_cfg, parent_ids)
     cache = StepCache(
@@ -145,7 +145,6 @@ def save(
     }
     _atomic_write(json_path, json.dumps(sidecar, indent=2).encode())
     logger.info("saved step %d cache (fingerprint %s)", step_cfg.step, fp)
-    return cache
 
 
 def load(step_dir: Path) -> StepCache | None:
