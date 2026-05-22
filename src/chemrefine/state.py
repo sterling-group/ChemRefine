@@ -28,6 +28,10 @@ class Structure:
     Energy is in Hartree (engine-native); forces are in eV/Å (ASE-native).
     ``None`` values mean the field has not been populated yet — e.g. a
     seed structure before its first calculation.
+
+    ``forces_ev_per_a`` is a numpy array, which the ``frozen=True``
+    contract cannot enforce as immutable. Callers must treat it as
+    read-only — the array is shared by reference across the pipeline.
     """
 
     id: str

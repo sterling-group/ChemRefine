@@ -169,6 +169,21 @@ def smiles_to_xyz(
 # ---------------------------------------------------------------------------
 
 
+def _boltzmann_columns(
+    energy_kcal: np.ndarray, temperature_k: float
+) -> dict[str, np.ndarray]:
+    """Return the four Boltzmann-derived report columns for a sorted energy array."""
+    dE = energy_kcal - energy_kcal.min()
+    weights = boltzmann_weights(dE, temperature_k)
+    pct_total = weights * 100.0
+    return {
+        "dE (kcal/mol)": dE,
+        "Boltzmann Weight": weights,
+        "% Total": pct_total,
+        "% Cumulative": np.cumsum(pct_total),
+    }
+
+
 def save_step_csv(
     energies_hartree: Iterable[float],
     structure_ids: Iterable[str],
@@ -202,13 +217,10 @@ def save_step_csv(
     df = df.dropna(subset=["Energy (kcal/mol)"])
     df = df.sort_values("Energy (kcal/mol)").reset_index(drop=True)
 
-    dE = (df["Energy (kcal/mol)"] - df["Energy (kcal/mol)"].min()).to_numpy(dtype=float)
-    boltz = boltzmann_weights(dE, temperature_k)
-
-    df["dE (kcal/mol)"] = dE
-    df["Boltzmann Weight"] = boltz
-    df["% Total"] = boltz * 100.0
-    df["% Cumulative"] = np.cumsum(df["% Total"])
+    for column, values in _boltzmann_columns(
+        df["Energy (kcal/mol)"].to_numpy(dtype=float), temperature_k
+    ).items():
+        df[column] = values
     df = df.round(
         {
             "Energy (kcal/mol)": _CSV_PRECISION,

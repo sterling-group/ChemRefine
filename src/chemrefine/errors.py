@@ -4,6 +4,22 @@ Every exception carries a non-zero ``exit_code`` so the CLI can translate
 the failure mode into a deterministic process exit code. The root class is
 :class:`ChemRefineError` — all package exceptions inherit from it so the
 CLI can catch one type and dispatch on the code.
+
+Currently allocated exit codes (assign the next free integer when adding
+a new exception class):
+
+============  ============================================
+Exit code     Meaning
+============  ============================================
+``1``         :class:`ChemRefineError` — generic / catch-all
+``2``         :class:`ConfigError` — YAML config invalid
+``3``         :class:`EngineNotFoundError` — unknown engine
+``4``         :class:`JobSubmissionError` — sbatch refused the job
+``5``         :class:`JobFailureError` — job ran but indicated failure
+``6``         :class:`OutputParseError` — could not parse engine output
+``7``         :class:`CacheError` — step cache corrupt / unwritable
+``8``         :class:`ThrottleTimeoutError` — wait deadline expired
+============  ============================================
 """
 
 from __future__ import annotations
