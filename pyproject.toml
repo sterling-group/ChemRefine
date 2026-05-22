@@ -79,16 +79,14 @@ docs = [
     "mkdocs-material>=9.5",
     "interrogate>=1.7",
 ]
-# Convenience superset for contributors: linting + the test and docs
-# extras' tools (interrogate, pytest, pytest-cov). The duplication with
-# `test` / `docs` is intentional so `pip install -e ".[dev]"` is one
-# command that gives a contributor everything they need.
+# Convenience superset for contributors: cross-references `[test]` and
+# `[docs]` so their pinned tools (pytest, interrogate, ...) only need
+# one source of truth, plus the linting tools that have no separate
+# extra of their own.
 dev = [
+    "chemrefine[test,docs]",
     "ruff>=0.5",
     "pre-commit>=3.5",
-    "interrogate>=1.7",
-    "pytest>=8.0",
-    "pytest-cov>=5.0",
 ]
 
 [tool.hatch.metadata]
