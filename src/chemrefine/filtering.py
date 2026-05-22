@@ -36,9 +36,8 @@ from chemrefine.config import (
     IntegerSample,
     SampleConfig,
 )
-from chemrefine.constants import HARTREE_TO_KCALMOL
+from chemrefine.quantities import HARTREE_TO_KCALMOL, boltzmann_weights
 from chemrefine.state import PipelineState, StepResults, Structure
-from chemrefine.units import boltzmann_weights
 
 logger = logging.getLogger(__name__)
 

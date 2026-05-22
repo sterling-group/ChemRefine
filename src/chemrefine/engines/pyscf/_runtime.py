@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from chemrefine.constants import BOHR_TO_ANGSTROM
+from chemrefine.quantities import BOHR_TO_ANGSTROM
 
 logger = logging.getLogger(__name__)
 

@@ -44,8 +44,8 @@ from pydantic import (
     model_validator,
 )
 
-from chemrefine.constants import DEFAULT_TEMPERATURE_K
 from chemrefine.errors import ConfigError
+from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 

@@ -10,7 +10,7 @@ optimization step. The wrapper:
 4. Writes the returned energy + gradient to ``.engrad`` so ORCA can
    take its next step.
 
-Unit conversions go through :mod:`chemrefine.constants` so the values
+Unit conversions go through :mod:`chemrefine.quantities` so the values
 match the rest of ChemRefine.
 """
 
@@ -19,8 +19,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from chemrefine.constants import BOHR_TO_ANGSTROM, HARTREE_TO_EV
 from chemrefine.engines._extopt.base import CalculationData
+from chemrefine.quantities import BOHR_TO_ANGSTROM, HARTREE_TO_EV
 
 
 def read_extinp(

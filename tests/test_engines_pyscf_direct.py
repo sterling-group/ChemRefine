@@ -216,7 +216,7 @@ def test_score_one_routes_through_runtime(monkeypatch):
 
 def test_gradient_to_forces_converts_units():
     """Gradient (Hartree/Bohr) flipped to force (eV/A) via HARTREE_PER_BOHR_TO_EV_PER_A."""
-    from chemrefine.constants import HARTREE_PER_BOHR_TO_EV_PER_A
+    from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
 
     gradient = [[1.0, 0.0, 0.0]]
     forces = direct._gradient_to_forces(gradient)

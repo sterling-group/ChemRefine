@@ -223,9 +223,9 @@ def test_mlff_extopt_calculator_calc_converts_units():
     """``calc`` should return Hartree / Hartree-per-Bohr regardless of ASE eV units."""
     import numpy as np
 
-    from chemrefine.constants import BOHR_TO_ANGSTROM, HARTREE_TO_EV
     from chemrefine.engines._extopt.base import CalculationData
     from chemrefine.engines.mlff.extopt_calc import MlffExtOptCalculator
+    from chemrefine.quantities import BOHR_TO_ANGSTROM, HARTREE_TO_EV
 
     with (
         patch.object(MlffCalculator, "_build", return_value=None),

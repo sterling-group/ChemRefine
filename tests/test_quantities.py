@@ -1,16 +1,17 @@
-"""Tests for unit conversions and Boltzmann weights."""
+"""Tests for ``chemrefine.quantities`` — physical constants + unit helpers."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from chemrefine.constants import (
+from chemrefine.quantities import (
     DEFAULT_TEMPERATURE_K,
     HARTREE_TO_KCALMOL,
     R_KCALMOL_K,
+    boltzmann_weights,
+    convert,
 )
-from chemrefine.units import boltzmann_weights, convert
 
 
 def test_constants_use_codata_values():
@@ -50,13 +51,13 @@ def test_convert_unknown_pair_raises():
 
 
 def test_convert_length_pair():
-    from chemrefine.constants import BOHR_TO_ANGSTROM
+    from chemrefine.quantities import BOHR_TO_ANGSTROM
 
     assert abs(convert(1.0, "bohr", "angstrom") - BOHR_TO_ANGSTROM) < 1e-12
 
 
 def test_convert_gradient_pair():
-    from chemrefine.constants import HARTREE_PER_BOHR_TO_EV_PER_A
+    from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
 
     assert (
         abs(convert(1.0, "hartree/bohr", "ev/angstrom") - HARTREE_PER_BOHR_TO_EV_PER_A)

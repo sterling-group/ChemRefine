@@ -11,8 +11,8 @@ from chemrefine.config import (
     HighEnergySample,
     IntegerSample,
 )
-from chemrefine.constants import HARTREE_TO_KCALMOL
 from chemrefine.filtering import apply
+from chemrefine.quantities import HARTREE_TO_KCALMOL
 from chemrefine.state import StepResults, Structure
 
 

@@ -7,7 +7,7 @@ caching, and JSON marshalling around that single contract.
 
 This module also owns the package-local networking defaults
 (``DEFAULT_BIND_HOST``, ``SERVER_URL_FILENAME``). They live here —
-not in :mod:`chemrefine.constants` — because that module is reserved
+not in :mod:`chemrefine.quantities` — because that module is reserved
 for physical constants. Networking defaults are configuration, not
 chemistry.
 """

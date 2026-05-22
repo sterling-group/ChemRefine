@@ -17,8 +17,8 @@ import yaml
 from ase import Atoms
 
 from chemrefine.config import StepConfig
-from chemrefine.constants import HARTREE_TO_EV
 from chemrefine.engines.mlff import trainer
+from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import PipelineState, StepContext, StepResults, Structure
 
 

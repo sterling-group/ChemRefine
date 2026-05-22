@@ -25,8 +25,8 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
-from chemrefine.constants import HARTREE_PER_BOHR_TO_EV_PER_A
 from chemrefine.errors import OutputParseError
+from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
 
 # Last block, since geometry optimisation re-prints these as it iterates.
 _COORD_BLOCK_RE = re.compile(

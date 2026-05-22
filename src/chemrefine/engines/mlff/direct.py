@@ -16,10 +16,10 @@ import logging
 import numpy as np
 
 from chemrefine import job_log
-from chemrefine.constants import HARTREE_TO_EV
 from chemrefine.engines.base import register
 from chemrefine.engines.mlff.calculator import MlffCalculator
 from chemrefine.ids import structure_artifact_path
+from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import (
     JobBatch,
     StepContext,

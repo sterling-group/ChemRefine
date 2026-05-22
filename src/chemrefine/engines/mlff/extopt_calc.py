@@ -12,12 +12,12 @@ import argparse
 
 from ase import Atoms
 
-from chemrefine.constants import BOHR_TO_ANGSTROM, HARTREE_TO_EV
 from chemrefine.engines._extopt.base import (
     BaseExtOptCalculator,
     CalculationData,
 )
 from chemrefine.engines.mlff.calculator import MlffCalculator
+from chemrefine.quantities import BOHR_TO_ANGSTROM, HARTREE_TO_EV
 
 
 class MlffExtOptCalculator(BaseExtOptCalculator):

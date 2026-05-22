@@ -195,7 +195,7 @@ def _gradient_to_forces(
     gradient: list[list[float]] | None,
 ) -> np.ndarray | None:
     """Convert ``∂E/∂x`` Hartree/Bohr → ``F`` eV/Å for the v4 ``Structure`` field."""
-    from chemrefine.constants import HARTREE_PER_BOHR_TO_EV_PER_A
+    from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
 
     if not gradient:
         return None

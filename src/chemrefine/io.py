@@ -17,12 +17,12 @@ import numpy as np
 import pandas as pd
 from ase import Atoms
 
-from chemrefine.constants import (
+from chemrefine.ids import structure_artifact_path
+from chemrefine.quantities import (
     DEFAULT_TEMPERATURE_K,
     HARTREE_TO_KCALMOL,
+    boltzmann_weights,
 )
-from chemrefine.ids import structure_artifact_path
-from chemrefine.units import boltzmann_weights
 
 _CSV_PRECISION = 8
 _NATURAL_PART = re.compile(r"(\d+)")

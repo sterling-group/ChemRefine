@@ -26,7 +26,7 @@ from ase.io import write as ase_write
 from sklearn.model_selection import train_test_split
 
 from chemrefine import slurm
-from chemrefine.constants import HARTREE_TO_EV
+from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import StepContext, StepResults
 
 logger = logging.getLogger(__name__)
