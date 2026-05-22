@@ -34,6 +34,20 @@ _SBATCH_OVERRIDES = ("--ntasks", "--cpus-per-task", "--job-name", "--output", "-
 _JOB_ID_RE = re.compile(r"\b(\d+)\b")
 
 
+def _compute_work_dir_expr(output_dir: Path, scratch_dir: Path | None) -> str:
+    """Return the bash expression for ``$WORK_DIR``.
+
+    With no ``scratch_dir``, the per-calc work dir is a sibling under
+    ``output_dir``; otherwise it lives under the shared scratch root.
+    Both forms append a SLURM-job + timestamp + random suffix so
+    concurrent jobs on the same node never collide.
+    """
+    suffix = "${SLURM_JOB_ID:-$$}_${ts}_${rand}"
+    if scratch_dir is None:
+        return f"{output_dir}/_work_{suffix}"
+    return f"{scratch_dir}/ChemRefine_{suffix}"
+
+
 # ---------------------------------------------------------------------------
 # Script assembly
 # ---------------------------------------------------------------------------
@@ -127,10 +141,7 @@ def build_script(
     sbatch_lines.append(f"#SBATCH --ntasks={pal}")
     sbatch_lines.append("#SBATCH --cpus-per-task=1")
 
-    if scratch_dir is None:
-        work_dir_expr = f"{output_dir}/_work_${{SLURM_JOB_ID:-$$}}_${{ts}}_${{rand}}"
-    else:
-        work_dir_expr = f"{scratch_dir}/ChemRefine_${{SLURM_JOB_ID:-$$}}_${{ts}}_${{rand}}"
+    work_dir_expr = _compute_work_dir_expr(output_dir, scratch_dir)
 
     cleanup = (
         'scratch_kept=true; echo "scratch kept at $WORK_DIR"'

@@ -10,6 +10,7 @@ is given) and then resume.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from enum import StrEnum
 
 from chemrefine import cache, pipeline
@@ -47,28 +48,44 @@ def invalidate_step(config: Config, step_cfg: StepConfig) -> None:
     logger.info("invalidated cache for %s", step_cfg.dir_name())
 
 
+def _action_run(config: Config, _target: str | int | None) -> None:
+    """Invalidate every step's cache, then run from scratch."""
+    for step_cfg in config.steps:
+        invalidate_step(config, step_cfg)
+    pipeline.run(config, use_cache=False)
+
+
+def _action_resume(config: Config, _target: str | int | None) -> None:
+    """Run the pipeline honoring whatever caches are on disk."""
+    pipeline.run(config, use_cache=True)
+
+
+def _action_invalidate_one(config: Config, target: str | int | None) -> None:
+    """Invalidate one step (latest if ``target`` is None) then resume."""
+    target_step = (
+        config.steps[-1] if target is None else resolve_target(config, target)
+    )
+    invalidate_step(config, target_step)
+    pipeline.run(config, use_cache=True)
+
+
+_HANDLERS: dict[Action, Callable[[Config, str | int | None], None]] = {
+    Action.RUN: _action_run,
+    Action.RESUME: _action_resume,
+    Action.REBUILD_CACHE: _action_invalidate_one,
+    Action.RERUN: _action_invalidate_one,
+    Action.REBUILD_NMS: _action_invalidate_one,
+}
+
+
 def execute(
     config: Config,
     action: Action,
     target: str | int | None = None,
 ) -> int:
     """Dispatch ``action`` for ``config`` and return a process exit code."""
-    if action is Action.RUN:
-        for step_cfg in config.steps:
-            invalidate_step(config, step_cfg)
-        pipeline.run(config, use_cache=False)
-        return 0
-
-    if action is Action.RESUME:
-        pipeline.run(config, use_cache=True)
-        return 0
-
-    if action in (Action.REBUILD_CACHE, Action.RERUN, Action.REBUILD_NMS):
-        target_step = (
-            config.steps[-1] if target is None else resolve_target(config, target)
-        )
-        invalidate_step(config, target_step)
-        pipeline.run(config, use_cache=True)
-        return 0
-
-    raise ChemRefineError(f"unknown action: {action!r}")
+    handler = _HANDLERS.get(action)
+    if handler is None:
+        raise ChemRefineError(f"unknown action: {action!r}")
+    handler(config, target)
+    return 0
