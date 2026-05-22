@@ -15,8 +15,10 @@ cluster.
 from __future__ import annotations
 
 import getpass
+import itertools
 import logging
 import re
+import shutil
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
@@ -32,6 +34,15 @@ _CURRENT_USER: str = getpass.getuser()
 
 _SBATCH_OVERRIDES = ("--ntasks", "--cpus-per-task", "--job-name", "--output", "--error")
 _JOB_ID_RE = re.compile(r"\b(\d+)\b")
+
+_LOCAL_JOB_PREFIX = "local-"
+"""Synthetic job-ID prefix used by :func:`_submit_local`.
+
+:func:`is_finished` treats any ID starting with this prefix as
+already-completed because the local fallback runs synchronously
+inside :func:`submit`.
+"""
+_LOCAL_JOB_COUNTER = itertools.count(1)
 
 
 def _compute_work_dir_expr(output_dir: Path, scratch_dir: Path | None) -> str:
@@ -214,9 +225,19 @@ def build_script(
 def submit(script_path: str | Path, *, sbatch_cmd: str = "sbatch") -> str:
     """Submit a SLURM script and return the assigned job ID.
 
+    Falls back to running the generated script directly via ``bash``
+    when ``sbatch_cmd`` is not on ``PATH``, so a user can run
+    ChemRefine on a laptop without SLURM the same way it runs on an
+    HPC node. The local fallback executes synchronously and returns a
+    synthetic ``"local-N"`` job ID; :func:`is_finished` treats that
+    prefix as already-complete.
+
     Raises :class:`~chemrefine.errors.JobSubmissionError` if ``sbatch``
-    exits non-zero or its output does not contain a numeric job ID.
+    exits non-zero, its output lacks a numeric job ID, or the local
+    fallback script exits non-zero.
     """
+    if shutil.which(sbatch_cmd) is None:
+        return _submit_local(script_path)
     try:
         result = subprocess.run(
             [sbatch_cmd, str(script_path)],
@@ -236,8 +257,38 @@ def submit(script_path: str | Path, *, sbatch_cmd: str = "sbatch") -> str:
     return job_id
 
 
+def _submit_local(script_path: str | Path) -> str:
+    """Run a generated SLURM script directly via ``bash``; return a synthetic job ID.
+
+    The script's ``#SBATCH`` directives are no-ops to bash, but the
+    embedded ``job_log.bash_header`` / ``bash_footer`` snippets still
+    write the canonical runlog so the on-disk artifacts match the
+    SLURM path.
+    """
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise JobSubmissionError(
+            f"local execution of {script_path} failed "
+            f"(exit {result.returncode}): {result.stderr.strip()[:500]}"
+        )
+    job_id = f"{_LOCAL_JOB_PREFIX}{next(_LOCAL_JOB_COUNTER)}"
+    logger.info("ran %s locally as job %s", script_path, job_id)
+    return job_id
+
+
 def is_finished(job_id: str, *, squeue_cmd: str = "squeue") -> bool:
-    """Return True if ``job_id`` is no longer in the current user's ``squeue``."""
+    """Return True if ``job_id`` is no longer in the current user's ``squeue``.
+
+    Synthetic ``"local-N"`` IDs are reported finished immediately —
+    those scripts already ran to completion inside :func:`submit`.
+    """
+    if job_id.startswith(_LOCAL_JOB_PREFIX):
+        return True
     try:
         result = subprocess.run(
             [squeue_cmd, "-u", _CURRENT_USER, "-o", "%i"],

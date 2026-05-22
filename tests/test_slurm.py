@@ -170,25 +170,65 @@ def test_build_script_without_extra_header_fields_is_engine_neutral(tmp_path: Pa
 
 
 # ---------------------------------------------------------------------------
-# submit
+# submit (sbatch path)
 # ---------------------------------------------------------------------------
 
 
 def test_submit_parses_job_id_from_sbatch_output():
     fake = MagicMock(returncode=0, stdout="Submitted batch job 12345\n", stderr="")
-    with patch.object(subprocess, "run", return_value=fake):
+    with (
+        patch("chemrefine.slurm.shutil.which", return_value="/usr/bin/sbatch"),
+        patch.object(subprocess, "run", return_value=fake),
+    ):
         assert slurm.submit("script.slurm") == "12345"
 
 
 def test_submit_raises_on_sbatch_failure():
     err = subprocess.CalledProcessError(1, ["sbatch"], stderr="permission denied")
-    with patch.object(subprocess, "run", side_effect=err), pytest.raises(JobSubmissionError):
+    with (
+        patch("chemrefine.slurm.shutil.which", return_value="/usr/bin/sbatch"),
+        patch.object(subprocess, "run", side_effect=err),
+        pytest.raises(JobSubmissionError),
+    ):
         slurm.submit("script.slurm")
 
 
 def test_submit_raises_when_output_lacks_job_id():
     fake = MagicMock(returncode=0, stdout="weird output\n", stderr="")
-    with patch.object(subprocess, "run", return_value=fake), pytest.raises(JobSubmissionError):
+    with (
+        patch("chemrefine.slurm.shutil.which", return_value="/usr/bin/sbatch"),
+        patch.object(subprocess, "run", return_value=fake),
+        pytest.raises(JobSubmissionError),
+    ):
+        slurm.submit("script.slurm")
+
+
+# ---------------------------------------------------------------------------
+# submit (local fallback)
+# ---------------------------------------------------------------------------
+
+
+def test_submit_falls_back_to_local_when_sbatch_missing():
+    """No sbatch on PATH → run via bash, return a local-N synthetic job ID."""
+    fake = MagicMock(returncode=0, stdout="", stderr="")
+    with (
+        patch("chemrefine.slurm.shutil.which", return_value=None),
+        patch.object(subprocess, "run", return_value=fake) as run,
+    ):
+        job_id = slurm.submit("script.slurm")
+    assert job_id.startswith("local-")
+    # The script should have been bash-executed.
+    assert run.call_args.args[0][0] == "bash"
+
+
+def test_submit_local_failure_raises():
+    """Local fallback surfaces non-zero exit as JobSubmissionError."""
+    fake = MagicMock(returncode=2, stdout="", stderr="boom")
+    with (
+        patch("chemrefine.slurm.shutil.which", return_value=None),
+        patch.object(subprocess, "run", return_value=fake),
+        pytest.raises(JobSubmissionError),
+    ):
         slurm.submit("script.slurm")
 
 
@@ -213,3 +253,10 @@ def test_is_finished_treats_squeue_failure_as_not_finished():
     err = subprocess.CalledProcessError(1, ["squeue"])
     with patch.object(subprocess, "run", side_effect=err):
         assert slurm.is_finished("12345") is False
+
+
+def test_is_finished_true_for_local_job_id():
+    """Local fallback IDs are reported finished without touching squeue."""
+    with patch.object(subprocess, "run") as run:
+        assert slurm.is_finished("local-7") is True
+    run.assert_not_called()
