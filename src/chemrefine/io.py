@@ -16,7 +16,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from ase import Atoms
-from ase.io import read as ase_read
 
 from chemrefine.constants import (
     DEFAULT_TEMPERATURE_K,
@@ -92,11 +91,6 @@ def write_xyz(
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         written.append(path)
     return written
-
-
-def read_xyz(path: str | Path) -> Atoms:
-    """Read a single-frame XYZ file into an ASE ``Atoms`` object."""
-    return ase_read(str(path), format="xyz")
 
 
 def gather_output_files(directory: str | Path, pattern: str) -> list[Path]:

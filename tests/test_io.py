@@ -8,11 +8,11 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 from ase import Atoms
+from ase.io import read as ase_read
 
 from chemrefine.io import (
     gather_output_files,
     natural_key,
-    read_xyz,
     save_step_csv,
     write_xyz,
 )
@@ -32,7 +32,7 @@ def test_natural_key_handles_paths():
 
 
 # ---------------------------------------------------------------------------
-# write_xyz / read_xyz round-trip
+# write_xyz round-trip
 # ---------------------------------------------------------------------------
 
 
@@ -54,7 +54,7 @@ def test_write_xyz_writes_one_file_per_structure(tmp_path: Path):
 def test_write_xyz_roundtrips(tmp_path: Path):
     original = _h2o()
     [path] = write_xyz([original], ["0"], step_number=1, output_dir=tmp_path)
-    back = read_xyz(path)
+    back = ase_read(str(path), format="xyz")
     assert list(back.get_chemical_symbols()) == ["O", "H", "H"]
     np.testing.assert_allclose(back.get_positions(), original.get_positions(), atol=1e-6)
 
@@ -62,7 +62,7 @@ def test_write_xyz_roundtrips(tmp_path: Path):
 def test_write_xyz_accepts_tuple_form(tmp_path: Path):
     tuples = [("H", 0.0, 0.0, 0.0), ("H", 0.74, 0.0, 0.0)]
     [path] = write_xyz([tuples], ["0"], step_number=1, output_dir=tmp_path)
-    atoms = read_xyz(path)
+    atoms = ase_read(str(path), format="xyz")
     assert list(atoms.get_chemical_symbols()) == ["H", "H"]
 
 

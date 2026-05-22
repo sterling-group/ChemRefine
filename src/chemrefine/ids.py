@@ -34,22 +34,10 @@ _ID_PATTERN = re.compile(
 )
 """Matches the canonical ``step{N}_structure_{ID}.{ext}`` filename shape."""
 
-_ID_ANYWHERE_RE = re.compile(
-    r"step(?P<step>\d+)_structure_(?P<id>[0-9\-]+)(?:_|\.|$)",
-    re.IGNORECASE,
-)
-"""Matches the ID even when the filename has a trailing suffix (``_trj``, ``_atom46`` ...)."""
-
 
 def extract_structure_id(filename: str | PathLike) -> str | None:
     """Return the structure ID encoded in a ``step{N}_structure_{ID}.ext`` filename, or ``None``."""
     m = _ID_PATTERN.match(Path(filename).name)
-    return m.group("id") if m else None
-
-
-def extract_structure_id_any(filename: str | PathLike) -> str | None:
-    """Return the structure ID from a filename that may carry trailing suffixes."""
-    m = _ID_ANYWHERE_RE.search(Path(filename).stem)
     return m.group("id") if m else None
 
 

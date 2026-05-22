@@ -7,7 +7,6 @@ import pytest
 from chemrefine.ids import (
     allocate_child_ids,
     extract_structure_id,
-    extract_structure_id_any,
     parent_of,
     resolve_persistent_ids,
     validate_structure_ids,
@@ -30,11 +29,6 @@ def test_extract_structure_id_hierarchical():
 
 def test_extract_structure_id_unrecognized_returns_none():
     assert extract_structure_id("random.txt") is None
-
-
-def test_extract_structure_id_any_with_suffix():
-    assert extract_structure_id_any("step3_structure_5_atom46.out") == "5"
-    assert extract_structure_id_any("step3_structure_0-1_trj.xyz") == "0-1"
 
 
 # ---------------------------------------------------------------------------

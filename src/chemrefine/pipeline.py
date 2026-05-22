@@ -20,6 +20,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from ase.io import read as ase_read
+
 from chemrefine import io
 from chemrefine.config import Config
 from chemrefine.errors import ConfigError
@@ -72,7 +74,7 @@ def bootstrap(config: Config) -> PipelineState:
 
 def _seed_from_xyz(path: Path) -> PipelineState:
     """Seed the pipeline from a single XYZ file (one structure, ID ``"0"``)."""
-    atoms = io.read_xyz(path)
+    atoms = ase_read(str(path), format="xyz")
     return PipelineState(structures=(Structure(id="0", atoms=atoms),))
 
 
@@ -82,7 +84,8 @@ def _seed_from_directory(directory: Path) -> PipelineState:
     if not xyz_files:
         raise ConfigError(f"no .xyz files found under {directory}")
     structures = tuple(
-        Structure(id=str(i), atoms=io.read_xyz(f)) for i, f in enumerate(xyz_files)
+        Structure(id=str(i), atoms=ase_read(str(f), format="xyz"))
+        for i, f in enumerate(xyz_files)
     )
     return PipelineState(structures=structures)
 
@@ -93,7 +96,8 @@ def _seed_from_smiles_csv(csv_path: Path, out_dir: Path) -> PipelineState:
     if not xyz_files:
         raise ConfigError(f"no SMILES in {csv_path} converted to 3D structures")
     structures = tuple(
-        Structure(id=str(i), atoms=io.read_xyz(f)) for i, f in enumerate(xyz_files)
+        Structure(id=str(i), atoms=ase_read(str(f), format="xyz"))
+        for i, f in enumerate(xyz_files)
     )
     return PipelineState(structures=structures)
 
