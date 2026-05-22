@@ -92,13 +92,14 @@ def _expand_one(
     if not out_path.is_file():
         logger.warning("NMS skip %s: frequency output not found at %s", struct.id, out_path)
         return None
-    imag = frequencies.parse_imaginary_frequencies(out_path)
+    text = out_path.read_text(encoding="utf-8", errors="replace")
+    imag = frequencies.parse_imaginary_frequencies_from_text(text)
     if not imag:
         logger.warning("NMS skip %s: no imaginary modes in %s", struct.id, out_path)
         return None
     try:
-        tensor = frequencies.parse_normal_modes_tensor(
-            out_path, num_atoms=len(struct.atoms)
+        tensor = frequencies.parse_normal_modes_tensor_from_text(
+            text, num_atoms=len(struct.atoms)
         )
     except ValueError as e:
         logger.warning("NMS skip %s: %s", struct.id, e)

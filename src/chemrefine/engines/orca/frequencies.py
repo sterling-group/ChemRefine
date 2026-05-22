@@ -58,45 +58,69 @@ def parse_frequencies(
         zero modes (five for linear molecules); the default drops the
         first five.
     """
+    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    return parse_frequencies_from_text(
+        text, only_imaginary=only_imaginary, skip_first_real=skip_first_real
+    )
+
+
+def parse_frequencies_from_text(
+    text: str,
+    *,
+    only_imaginary: bool = False,
+    skip_first_real: int = 5,
+) -> dict[int, float]:
+    """Parse a frequency table from already-read ORCA output text.
+
+    Same contract as :func:`parse_frequencies`, but accepts the file
+    contents directly so callers (e.g. NMS) that need to parse
+    multiple sections of the same output avoid re-reading.
+    """
     in_block = False
     after_scaling = False
     out: dict[int, float] = {}
 
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            if "VIBRATIONAL FREQUENCIES" in line:
-                in_block = True
-                continue
-            if not in_block:
-                continue
-            if "Scaling factor for frequencies" in line:
-                after_scaling = True
-                continue
-            if not after_scaling:
-                continue
+    for line in text.splitlines():
+        if "VIBRATIONAL FREQUENCIES" in line:
+            in_block = True
+            continue
+        if not in_block:
+            continue
+        if "Scaling factor for frequencies" in line:
+            after_scaling = True
+            continue
+        if not after_scaling:
+            continue
 
-            m = _FREQ_LINE_RE.match(line)
-            if m is None:
-                # End of the block: a blank line or new section header.
-                if line.strip() == "" and out:
-                    break
-                continue
+        m = _FREQ_LINE_RE.match(line)
+        if m is None:
+            # End of the block: a blank line or new section header.
+            if line.strip() == "" and out:
+                break
+            continue
 
-            index = int(m.group("index"))
-            value = float(m.group("value"))
-            is_imaginary = bool(_IMAG_TAG_RE.search(m.group("rest")))
+        index = int(m.group("index"))
+        value = float(m.group("value"))
+        is_imaginary = bool(_IMAG_TAG_RE.search(m.group("rest")))
 
-            if only_imaginary:
-                if is_imaginary:
-                    out[index] = value
-            elif index > skip_first_real:
+        if only_imaginary:
+            if is_imaginary:
                 out[index] = value
+        elif index > skip_first_real:
+            out[index] = value
     return out
 
 
 def parse_imaginary_frequencies(path: str | Path) -> dict[int, float]:
     """Convenience wrapper — return only the imaginary modes."""
-    return parse_frequencies(path, only_imaginary=True)
+    return parse_imaginary_frequencies_from_text(
+        Path(path).read_text(encoding="utf-8", errors="replace")
+    )
+
+
+def parse_imaginary_frequencies_from_text(text: str) -> dict[int, float]:
+    """Imaginary-modes subset, operating on already-read output text."""
+    return parse_frequencies_from_text(text, only_imaginary=True)
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +143,13 @@ def parse_normal_modes_tensor(
     matrix before reshaping.
     """
     text = Path(path).read_text(encoding="utf-8", errors="replace")
+    return parse_normal_modes_tensor_from_text(text, num_atoms=num_atoms)
 
+
+def parse_normal_modes_tensor_from_text(
+    text: str, *, num_atoms: int
+) -> NDArray[np.float64]:
+    """Same contract as :func:`parse_normal_modes_tensor` but on already-read text."""
     collecting = False
     block_rows: list[list[float]] = []
     blocks: list[NDArray[np.float64]] = []
@@ -146,8 +176,7 @@ def parse_normal_modes_tensor(
 
     if not blocks:
         raise ValueError(
-            f"no normal-mode blocks found in {path!s}; "
-            "is this a frequency-calculation output?"
+            "no normal-mode blocks found; is this a frequency-calculation output?"
         )
 
     full = np.hstack(blocks)
