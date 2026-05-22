@@ -538,11 +538,11 @@ def test_client_main_writes_engrad(tmp_path: Path, monkeypatch):
 
 
 def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
-    """``main()`` parses argv, binds via create_server, writes the
-    sidecar URL, then calls ``waitress.serve(server)``."""
+    """``main()`` parses argv, binds a real socket for port discovery,
+    writes the sidecar URL, then calls ``waitress.serve(server)``."""
     import sys
     import types
-    from unittest.mock import MagicMock
+    from unittest.mock import MagicMock, patch
 
     # Fake mace.calculators so MlffExtOptCalculator.from_args succeeds without
     # pulling a real backend in.
@@ -556,7 +556,6 @@ def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
 
     # Fake waitress + waitress.server.
     fake_server = MagicMock()
-    fake_server.adj.listen = [("127.0.0.1", 54321)]
     create_server_mock = MagicMock(return_value=fake_server)
     serve_mock = MagicMock()
     waitress_mod = types.ModuleType("waitress")
@@ -566,6 +565,10 @@ def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
     waitress_mod.server = waitress_server_mod
     monkeypatch.setitem(sys.modules, "waitress", waitress_mod)
     monkeypatch.setitem(sys.modules, "waitress.server", waitress_server_mod)
+
+    # Fake socket so we don't actually bind an OS socket.
+    fake_sock = MagicMock()
+    fake_sock.getsockname.return_value = ("127.0.0.1", 54321)
 
     url_file = tmp_path / "server.url"
     monkeypatch.setattr(
@@ -581,7 +584,8 @@ def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
         ],
     )
 
-    rc = server.main()
+    with patch("socket.socket", return_value=fake_sock):
+        rc = server.main()
     assert rc == 0
     create_server_mock.assert_called_once()
     serve_mock.assert_called_once_with(fake_server)

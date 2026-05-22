@@ -169,8 +169,8 @@ def test_parse_returns_structures_with_energy_and_forces(tmp_path: Path, monkeyp
     s = results.structures[0]
     assert s.id == "0"
     assert s.energy_hartree == -1.0
-    assert s.forces_eV_per_A is not None
-    assert s.forces_eV_per_A.shape == (2, 3)
+    assert s.forces_ev_per_a is not None
+    assert s.forces_ev_per_a.shape == (2, 3)
 
 
 def test_wait_is_noop():

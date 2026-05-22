@@ -36,6 +36,6 @@ def test_step_inputs_accessors_return_aligned_tuples():
         (Path("b.inp"), Path("b.out"), "1"),
     )
     inputs = StepInputs(files=files)
-    assert inputs.input_paths() == (Path("a.inp"), Path("b.inp"))
-    assert inputs.output_paths() == (Path("a.out"), Path("b.out"))
-    assert inputs.structure_ids() == ("0", "1")
+    assert inputs.input_paths == (Path("a.inp"), Path("b.inp"))
+    assert inputs.output_paths == (Path("a.out"), Path("b.out"))
+    assert inputs.structure_ids == ("0", "1")

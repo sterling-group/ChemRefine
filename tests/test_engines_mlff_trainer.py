@@ -63,7 +63,7 @@ def _struct(sid: str, energy_hartree: float = -1.0) -> Structure:
         id=sid,
         atoms=atoms,
         energy_hartree=energy_hartree,
-        forces_eV_per_A=np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]),
+        forces_ev_per_a=np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]),
     )
 
 
@@ -101,14 +101,14 @@ def test_prepare_inputs_converts_energy_to_ev(tmp_path: Path):
 
 def test_prepare_inputs_rejects_structure_without_energy(tmp_path: Path):
     ctx = _ctx(tmp_path)
-    bad = Structure(id="0", atoms=Atoms("H"), energy_hartree=None, forces_eV_per_A=np.zeros((1, 3)))
+    bad = Structure(id="0", atoms=Atoms("H"), energy_hartree=None, forces_ev_per_a=np.zeros((1, 3)))
     with pytest.raises(ValueError, match="no energy"):
         trainer.prepare_inputs(StepResults(structures=(bad,)), ctx)
 
 
 def test_prepare_inputs_rejects_structure_without_forces(tmp_path: Path):
     ctx = _ctx(tmp_path)
-    bad = Structure(id="0", atoms=Atoms("H"), energy_hartree=-1.0, forces_eV_per_A=None)
+    bad = Structure(id="0", atoms=Atoms("H"), energy_hartree=-1.0, forces_ev_per_a=None)
     with pytest.raises(ValueError, match="no forces"):
         trainer.prepare_inputs(StepResults(structures=(bad,)), ctx)
 

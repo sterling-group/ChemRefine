@@ -62,8 +62,8 @@ def test_fake_engine_parse_returns_structures_with_energy(tmp_path: Path):
     for struct in results.structures:
         assert struct.energy_hartree is not None
         assert struct.energy_hartree < 0  # fake energies are negative
-        assert struct.forces_eV_per_A is not None
-        np.testing.assert_array_equal(struct.forces_eV_per_A, 0)
+        assert struct.forces_ev_per_a is not None
+        np.testing.assert_array_equal(struct.forces_ev_per_a, 0)
 
 
 def test_fake_engine_energy_is_deterministic(tmp_path: Path):

@@ -134,7 +134,7 @@ class PyscfDirectEngine:
                     id=sid,
                     atoms=seed.atoms.copy(),
                     energy_hartree=float(data["energy_hartree"]),
-                    forces_eV_per_A=forces,
+                    forces_ev_per_a=forces,
                 )
             )
         return StepResults(structures=tuple(results))

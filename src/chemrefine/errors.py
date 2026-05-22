@@ -49,3 +49,9 @@ class CacheError(ChemRefineError):
     """A step cache is corrupt, version-mismatched, or unwritable."""
 
     exit_code = 7
+
+
+class ThrottleTimeoutError(ChemRefineError):
+    """A job did not finish within the configured wait deadline."""
+
+    exit_code = 8

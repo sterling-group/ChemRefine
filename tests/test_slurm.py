@@ -99,8 +99,8 @@ def test_build_script_emits_absolute_runlog_output_directives(tmp_path: Path):
     out = (tmp_path / "out").resolve()
     script = slurm.build_script(**_build_kwargs(tmp_path, output_dir=out))
     text = script.read_text()
-    assert f"#SBATCH --output={out}/step1_structure_0.runlog" in text
-    assert f"#SBATCH --error={out}/step1_structure_0.err" in text
+    assert f'#SBATCH --output="{out}/step1_structure_0.runlog"' in text
+    assert f'#SBATCH --error="{out}/step1_structure_0.err"' in text
 
 
 def test_build_script_includes_runlog_header_and_footer_fields(tmp_path: Path):
@@ -134,13 +134,13 @@ def test_build_script_auto_scratch_under_output_dir_when_none(tmp_path: Path):
     out = (tmp_path / "out").resolve()
     script = slurm.build_script(**_build_kwargs(tmp_path, scratch_dir=None, output_dir=out))
     text = script.read_text()
-    assert f"export WORK_DIR={out}/_work_" in text
+    assert f'export WORK_DIR="{out}/_work_' in text
 
 
 def test_build_script_explicit_scratch_uses_chemrefine_subdir(tmp_path: Path):
     scratch = (tmp_path / "scratch").resolve()
     script = slurm.build_script(**_build_kwargs(tmp_path, scratch_dir=scratch))
-    assert f"export WORK_DIR={scratch}/ChemRefine_" in script.read_text()
+    assert f'export WORK_DIR="{scratch}/ChemRefine_' in script.read_text()
 
 
 def test_build_script_save_scratch_keeps_dir(tmp_path: Path):

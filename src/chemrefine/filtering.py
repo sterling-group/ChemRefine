@@ -36,9 +36,10 @@ from chemrefine.config import (
     IntegerSample,
     SampleConfig,
 )
-from chemrefine.constants import HARTREE_TO_KCALMOL, R_KCALMOL_K
+from chemrefine.constants import HARTREE_TO_KCALMOL
 from chemrefine.ids import parent_of
 from chemrefine.state import PipelineState, StepResults, Structure
+from chemrefine.units import boltzmann_weights
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,11 @@ def _filter_integer(sorted_structures: list[Structure], count: int) -> list[Stru
 def _filter_energy_window(
     sorted_structures: list[Structure], window_kcal: float
 ) -> list[Structure]:
-    """Keep structures within ``window_kcal`` of the lowest-energy structure."""
+    """Keep structures within ``window_kcal`` of the lowest-energy structure.
+
+    Precondition: ``sorted_structures`` must be sorted ascending by
+    ``energy_hartree``.
+    """
     min_e = sorted_structures[0].energy_hartree
     window_h = window_kcal / HARTREE_TO_KCALMOL
     return [s for s in sorted_structures if s.energy_hartree <= min_e + window_h]
@@ -130,15 +135,17 @@ def _filter_boltzmann(
     percent_cumulative: float,
     temperature_k: float,
 ) -> list[Structure]:
-    """Keep structures until cumulative Boltzmann weight reaches ``percent_cumulative``."""
+    """Keep structures until cumulative Boltzmann weight reaches ``percent_cumulative``.
+
+    Precondition: ``sorted_structures`` must be sorted ascending by
+    ``energy_hartree`` — callers are responsible for sorting before dispatch.
+    """
     if len(sorted_structures) <= 1:
         return list(sorted_structures)
     energies_kcal = (
         np.array([s.energy_hartree for s in sorted_structures]) * HARTREE_TO_KCALMOL
     )
-    delta = energies_kcal - energies_kcal.min()
-    weights = np.exp(-delta / (R_KCALMOL_K * temperature_k))
-    weights /= weights.sum()
+    weights = boltzmann_weights(energies_kcal - energies_kcal.min(), temperature_k)
     cumulative = np.cumsum(weights * 100.0)
     # Keep every structure whose cumulative weight is still below the
     # threshold, plus the one that crosses it.
@@ -149,7 +156,11 @@ def _filter_boltzmann(
 def _filter_high_energy(
     sorted_structures: list[Structure], count: int
 ) -> list[Structure]:
-    """Keep the ``count`` highest-energy structures (PES-style sampling)."""
+    """Keep the ``count`` highest-energy structures (PES-style sampling).
+
+    Precondition: ``sorted_structures`` must be sorted ascending by
+    ``energy_hartree``.
+    """
     if not sorted_structures:
         return []
     return list(reversed(sorted_structures))[:count]

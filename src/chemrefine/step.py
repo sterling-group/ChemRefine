@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from chemrefine import cache, filtering, manifest
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.base import CalculationEngine, get_engine
+from chemrefine.errors import CacheError
 from chemrefine.state import PipelineState, StepContext
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,9 @@ def run_step(
     * Otherwise the engine's full lifecycle runs and the resulting
       :class:`~chemrefine.state.StepResults` is cached for next time.
     """
+    # Deferred import: chemrefine.__init__ imports chemrefine.engines, which
+    # imports this module (step.py) to register engines — a circular chain.
+    # Deferring to function scope breaks the cycle cleanly.
     from chemrefine import __version__
 
     ctx = build_context(config, step_cfg, prev_state)
@@ -90,7 +94,8 @@ def run_step(
         step_cfg=step_cfg, parent_ids=parent_ids, step_dir=ctx.step_dir
     ):
         cached = cache.load(ctx.step_dir)
-        assert cached is not None  # is_valid guarantees this
+        if cached is None:  # pragma: no cover
+            raise CacheError("is_valid returned True but load returned None")
         logger.info(
             "step %d: cache hit, reusing %d structures",
             step_cfg.step,

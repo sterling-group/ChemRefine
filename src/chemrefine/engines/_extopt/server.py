@@ -148,9 +148,15 @@ def main() -> int:
     calculator = backend_cls.from_args(args)
     app = create_app(calculator)
 
+    import socket as _socket
+
     host, port_str = args.bind.rsplit(":", 1)
-    server = create_server(app, host=host, port=int(port_str), threads=args.nthreads)
-    actual_host, actual_port = server.adj.listen[0]
+    # Bind to a real OS socket first so getsockname() reveals the
+    # kernel-assigned port without touching waitress internals.
+    sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    sock.bind((host, int(port_str)))
+    actual_host, actual_port = sock.getsockname()
     actual_url = f"{actual_host}:{actual_port}"
 
     url_file = args.url_file or os.path.join(
@@ -158,5 +164,6 @@ def main() -> int:
     )
     protocol.write_server_url(url_file, actual_url)
     logger.info("ExtOpt server (%s) bound at %s, sidecar=%s", args.backend, actual_url, url_file)
+    server = create_server(app, sockets=[sock], threads=args.nthreads)
     waitress.serve(server)
     return 0

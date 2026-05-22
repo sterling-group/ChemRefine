@@ -145,10 +145,9 @@ def test_high_energy_count_one_keeps_max():
 
 
 def test_high_energy_empty_input_returns_empty():
-    """``_filter_high_energy`` short-circuits on an empty input list."""
-    from chemrefine.filtering import _filter_high_energy
-
-    assert _filter_high_energy([], 5) == []
+    """apply with HighEnergySample short-circuits on an empty StepResults."""
+    state = apply(StepResults(structures=()), HighEnergySample(method="high_energy", count=5))
+    assert state.structures == ()
 
 
 # ---------------------------------------------------------------------------

@@ -88,8 +88,8 @@ def test_parse_dft_forces_optional_for_opt_outputs():
     """The fixture is a geometry-opt converged run; gradient may or may not be present."""
     parsed = parse_dft(FIXTURE)
     # Force shape, if present, matches the coord block.
-    if parsed[0].forces_eV_per_A is not None:
-        assert parsed[0].forces_eV_per_A.shape == parsed[0].positions.shape
+    if parsed[0].forces_ev_per_a is not None:
+        assert parsed[0].forces_ev_per_a.shape == parsed[0].positions.shape
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +207,7 @@ def test_parse_goat_ensemble_symbols_include_pd_and_p():
 def test_parse_goat_ensemble_forces_are_none():
     """GOAT ensemble files don't carry gradient info."""
     parsed = parse_goat_ensemble(GOAT_FIXTURE)
-    assert all(p.forces_eV_per_A is None for p in parsed)
+    assert all(p.forces_ev_per_a is None for p in parsed)
 
 
 def test_parse_goat_ensemble_missing_raises(tmp_path: Path):

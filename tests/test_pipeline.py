@@ -202,12 +202,9 @@ def test_run_second_call_hits_cache(tmp_path: Path):
 
 
 def test_run_stops_when_no_survivors(tmp_path: Path):
-    """If a sample method drops everything, subsequent steps are skipped."""
-    # Force "no survivors": IntegerSample with count 0 keeps all, so we need
-    # an EnergyWindowSample with an impossibly tight window. The fake engine
-    # produces energies very close together, so a 1e-12 kcal window keeps only
-    # the lowest, not zero. To actually drop all, we'd need empty input.
-    # Easier path: empty seeds.
+    """pipeline.run raises ConfigError when the seed directory is empty."""
+    # Force an empty seed directory — the pipeline has no structures to
+    # process and raises ConfigError immediately rather than skipping steps.
     seed_dir = tmp_path / "seeds"
     seed_dir.mkdir()
     cfg = _config(tmp_path, input=seed_dir)

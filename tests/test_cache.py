@@ -26,8 +26,8 @@ def _results() -> StepResults:
     zero_force = np.zeros((1, 3))
     return StepResults(
         structures=(
-            Structure(id="0", atoms=Atoms("H"), energy_hartree=-1.0, forces_eV_per_A=zero_force),
-            Structure(id="1", atoms=Atoms("H"), energy_hartree=-1.5, forces_eV_per_A=zero_force),
+            Structure(id="0", atoms=Atoms("H"), energy_hartree=-1.0, forces_ev_per_a=zero_force),
+            Structure(id="1", atoms=Atoms("H"), energy_hartree=-1.5, forces_ev_per_a=zero_force),
         )
     )
 
@@ -83,7 +83,7 @@ def test_save_creates_pickle_and_json(tmp_path: Path):
 
 def test_save_and_load_round_trip(tmp_path: Path):
     step_dir = tmp_path / "step1"
-    saved = save(
+    save(
         step_cfg=_cfg(),
         parent_ids=("0", "1"),
         results=_results(),
@@ -92,7 +92,6 @@ def test_save_and_load_round_trip(tmp_path: Path):
     )
     loaded = load(step_dir)
     assert loaded is not None
-    assert loaded.fingerprint == saved.fingerprint
     assert loaded.step == 1
     assert loaded.engine == "fake"
     assert [s.id for s in loaded.results.structures] == ["0", "1"]

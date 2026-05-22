@@ -33,7 +33,7 @@ class Structure:
     id: str
     atoms: Atoms
     energy_hartree: float | None = None
-    forces_eV_per_A: NDArray[np.float64] | None = None
+    forces_ev_per_a: NDArray[np.float64] | None = None
 
 
 @dataclass(frozen=True)
@@ -86,14 +86,17 @@ class StepInputs:
 
     files: tuple[tuple[Path, Path, str], ...]
 
+    @property
     def input_paths(self) -> tuple[Path, ...]:
         """Return just the input file paths in order."""
         return tuple(t[0] for t in self.files)
 
+    @property
     def output_paths(self) -> tuple[Path, ...]:
         """Return just the output file paths in order."""
         return tuple(t[1] for t in self.files)
 
+    @property
     def structure_ids(self) -> tuple[str, ...]:
         """Return the structure IDs in order."""
         return tuple(t[2] for t in self.files)

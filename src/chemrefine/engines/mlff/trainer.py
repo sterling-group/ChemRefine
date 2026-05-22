@@ -41,7 +41,7 @@ def prepare_inputs(results: StepResults, ctx: StepContext) -> tuple[Path, Path]:
     """Write train / test ``extxyz`` files from ``results`` and return their paths.
 
     Energy is taken from ``Structure.energy_hartree`` (Hartree → eV on
-    write); forces are taken from ``Structure.forces_eV_per_A`` if set,
+    write); forces are taken from ``Structure.forces_ev_per_a`` if set,
     otherwise from a Hartree/Bohr ``forces_hartree_per_bohr`` info
     attribute the ORCA parser would have stored. The 90/10 split (and
     the seed) come from ``step.options.valid_fraction`` and
@@ -58,13 +58,13 @@ def prepare_inputs(results: StepResults, ctx: StepContext) -> tuple[Path, Path]:
     for struct in results.structures:
         if struct.energy_hartree is None:
             raise ValueError(f"structure {struct.id} has no energy — cannot train")
-        if struct.forces_eV_per_A is None:
+        if struct.forces_ev_per_a is None:
             raise ValueError(f"structure {struct.id} has no forces — cannot train")
         atoms = struct.atoms.copy()
         atoms.info["DFT_energy"] = struct.energy_hartree * HARTREE_TO_EV
         # Forces are stored in eV/Å (already converted from Hartree/Bohr
         # by the ORCA parser).
-        atoms.arrays["DFT_Forces"] = np.asarray(struct.forces_eV_per_A, dtype=float)
+        atoms.arrays["DFT_Forces"] = np.asarray(struct.forces_ev_per_a, dtype=float)
         atoms_list.append(atoms)
 
     if not atoms_list:

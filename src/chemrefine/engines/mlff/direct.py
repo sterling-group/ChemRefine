@@ -126,7 +126,7 @@ class MlffDirectEngine:
                     id=sid,
                     atoms=seed.atoms.copy(),
                     energy_hartree=float(data["energy_hartree"]),
-                    forces_eV_per_A=np.zeros((len(seed.atoms), 3)),
+                    forces_ev_per_a=np.zeros((len(seed.atoms), 3)),
                 )
             )
         return StepResults(structures=tuple(results))

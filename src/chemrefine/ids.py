@@ -146,6 +146,11 @@ def resolve_persistent_ids(
     elif child_count <= p:
         fanouts = [1] * child_count + [0] * (p - child_count)
     else:
+        # child_count > p and not evenly divisible.
+        # Each parent gets at least 1 child (giving p - 1 children to parents
+        # 1…p-1).  The leftover is child_count − (p − 1), which all goes to
+        # parent 0, keeping the most-important/lowest-energy structure's
+        # branch largest while every other parent still gets exactly one child.
         extra = child_count - (p - 1)
         fanouts = [extra] + [1] * (p - 1)
     return allocate_child_ids(parent_ids, fanouts)

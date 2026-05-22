@@ -149,3 +149,30 @@ def test_wait_all_sleeps_until_jobs_finish():
         t.wait_all(is_finished=is_finished)
     assert t.active_jobs == ()
     sleeper.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# timeout support
+# ---------------------------------------------------------------------------
+
+
+def test_wait_for_room_raises_on_timeout():
+    """wait_for_room raises ThrottleTimeoutError when deadline expires."""
+    from chemrefine.errors import ThrottleTimeoutError
+
+    t = Throttler(max_cores=8, poll_interval=0)
+    t.register("blocker", 8)
+    with patch("time.monotonic", side_effect=[0.0, 0.0, 99.0]):
+        with pytest.raises(ThrottleTimeoutError):
+            t.wait_for_room(4, is_finished=_never_finished, max_wait_seconds=5.0)
+
+
+def test_wait_all_raises_on_timeout():
+    """wait_all raises ThrottleTimeoutError when deadline expires."""
+    from chemrefine.errors import ThrottleTimeoutError
+
+    t = Throttler(max_cores=8, poll_interval=0)
+    t.register("blocker", 8)
+    with patch("time.monotonic", side_effect=[0.0, 0.0, 99.0]):
+        with pytest.raises(ThrottleTimeoutError):
+            t.wait_all(is_finished=_never_finished, max_wait_seconds=5.0)

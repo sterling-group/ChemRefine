@@ -58,7 +58,7 @@ class ParsedStructure:
     symbols: tuple[str, ...]
     positions: NDArray[np.float64]
     energy_hartree: float
-    forces_eV_per_A: NDArray[np.float64] | None
+    forces_ev_per_a: NDArray[np.float64] | None
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +88,7 @@ def parse_dft(path: str | Path) -> list[ParsedStructure]:
             symbols=symbols,
             positions=positions,
             energy_hartree=float(energy_matches[-1]),
-            forces_eV_per_A=parse_forces(text),
+            forces_ev_per_a=parse_forces(text),
         )
     ]
 
@@ -197,7 +197,7 @@ def _parse_xyz_ensemble(
                 symbols=tuple(symbols),
                 positions=np.array(positions, dtype=np.float64),
                 energy_hartree=energy,
-                forces_eV_per_A=None,
+                forces_ev_per_a=None,
             )
         )
         i += 2 + n_atoms
@@ -281,7 +281,7 @@ def parse_pes(path: str | Path) -> list[ParsedStructure]:
                 symbols=symbols,
                 positions=positions,
                 energy_hartree=energy,
-                forces_eV_per_A=None,
+                forces_ev_per_a=None,
             )
         )
     if not structures:

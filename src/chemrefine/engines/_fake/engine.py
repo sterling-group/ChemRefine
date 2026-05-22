@@ -85,7 +85,7 @@ class FakeEngine:
                     id=sid,
                     atoms=atoms,
                     energy_hartree=energy,
-                    forces_eV_per_A=np.zeros((len(atoms), 3)),
+                    forces_ev_per_a=np.zeros((len(atoms), 3)),
                 )
             )
         return StepResults(structures=tuple(out_structures))

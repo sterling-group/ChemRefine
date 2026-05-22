@@ -13,6 +13,8 @@ import logging
 import time
 from collections.abc import Callable
 
+from chemrefine.errors import ThrottleTimeoutError
+
 logger = logging.getLogger(__name__)
 
 IsFinishedFn = Callable[[str], bool]
@@ -50,22 +52,41 @@ class Throttler:
 
     # -- waiting -----------------------------------------------------------
 
-    def wait_for_room(self, pal_needed: int, *, is_finished: IsFinishedFn) -> None:
+    def wait_for_room(
+        self,
+        pal_needed: int,
+        *,
+        is_finished: IsFinishedFn,
+        max_wait_seconds: float | None = None,
+    ) -> None:
         """Block until ``pal_needed`` cores can be allocated.
 
         Calls ``is_finished`` once per loop iteration to reap completed
         jobs; sleeps ``poll_interval`` seconds before re-checking when
         room is still insufficient. Returns as soon as the budget
         allows the request.
+
+        Parameters
+        ----------
+        max_wait_seconds:
+            Optional deadline in seconds. Raises
+            :class:`~chemrefine.errors.ThrottleTimeoutError` if the
+            budget has not freed up within this many seconds. ``None``
+            (default) waits indefinitely.
         """
         if pal_needed > self.max_cores:
             raise ValueError(
                 f"requested {pal_needed} cores exceeds the total budget {self.max_cores}"
             )
+        deadline = time.monotonic() + max_wait_seconds if max_wait_seconds is not None else None
         while True:
             self._reap(is_finished)
             if self.cores_in_use + pal_needed <= self.max_cores:
                 return
+            if deadline is not None and time.monotonic() >= deadline:
+                raise ThrottleTimeoutError(
+                    f"timed out after {max_wait_seconds}s waiting for {pal_needed} cores"
+                )
             logger.debug(
                 "waiting on cores: %d in use + %d needed > %d budget",
                 self.cores_in_use,
@@ -74,12 +95,31 @@ class Throttler:
             )
             time.sleep(self.poll_interval)
 
-    def wait_all(self, *, is_finished: IsFinishedFn) -> None:
-        """Block until every active job has finished."""
+    def wait_all(
+        self,
+        *,
+        is_finished: IsFinishedFn,
+        max_wait_seconds: float | None = None,
+    ) -> None:
+        """Block until every active job has finished.
+
+        Parameters
+        ----------
+        max_wait_seconds:
+            Optional deadline. Raises
+            :class:`~chemrefine.errors.ThrottleTimeoutError` if any jobs
+            are still active when the deadline expires.
+        """
+        deadline = time.monotonic() + max_wait_seconds if max_wait_seconds is not None else None
         while self._active:
             self._reap(is_finished)
-            if self._active:
-                time.sleep(self.poll_interval)
+            if not self._active:
+                return
+            if deadline is not None and time.monotonic() >= deadline:
+                raise ThrottleTimeoutError(
+                    f"timed out after {max_wait_seconds}s waiting for all jobs to finish"
+                )
+            time.sleep(self.poll_interval)
 
     # -- internals ---------------------------------------------------------
 

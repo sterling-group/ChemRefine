@@ -164,7 +164,7 @@ class OrcaEngine:
                         id=child_id,
                         atoms=atoms,
                         energy_hartree=ps.energy_hartree,
-                        forces_eV_per_A=ps.forces_eV_per_A,
+                        forces_ev_per_a=ps.forces_ev_per_a,
                     )
                 )
         return StepResults(structures=tuple(out_structures))

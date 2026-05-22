@@ -22,8 +22,8 @@ from ase.io import read as ase_read
 from chemrefine.constants import (
     DEFAULT_TEMPERATURE_K,
     HARTREE_TO_KCALMOL,
-    R_KCALMOL_K,
 )
+from chemrefine.units import boltzmann_weights
 
 _CSV_PRECISION = 8
 _NATURAL_PART = re.compile(r"(\d+)")
@@ -82,9 +82,7 @@ def write_xyz(
         else:
             atoms = Atoms(
                 symbols=[row[0] for row in geometry],
-                positions=np.array(
-                    [[row[1], row[2], row[3]] for row in geometry], dtype=float
-                ),
+                positions=np.array([row[1:] for row in geometry], dtype=float),
             )
         path = out / f"step{step_number}_structure_{sid}.xyz"
         lines = [str(len(atoms)), f"step {step_number} structure {sid}"]
@@ -205,10 +203,7 @@ def save_step_csv(
     df = df.sort_values("Energy (kcal/mol)").reset_index(drop=True)
 
     dE = (df["Energy (kcal/mol)"] - df["Energy (kcal/mol)"].min()).to_numpy(dtype=float)
-    boltz = np.exp(-dE / (R_KCALMOL_K * temperature_k))
-    total = boltz.sum()
-    if total > 0:
-        boltz = boltz / total
+    boltz = boltzmann_weights(dE, temperature_k)
 
     df["dE (kcal/mol)"] = dE
     df["Boltzmann Weight"] = boltz
