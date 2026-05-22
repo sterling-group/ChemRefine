@@ -20,9 +20,10 @@ The functions here own three concerns:
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Sequence
+from os import PathLike
+from pathlib import Path
 
 _ID_PATTERN = re.compile(
     r"step(?P<step>\d+)_structure_(?P<id>[0-9\-]+)\.(?:inp|out|xyz)",
@@ -37,17 +38,15 @@ _ID_ANYWHERE_RE = re.compile(
 """Matches the ID even when the filename has a trailing suffix (``_trj``, ``_atom46`` ...)."""
 
 
-def extract_structure_id(filename: str | os.PathLike) -> str | None:
+def extract_structure_id(filename: str | PathLike) -> str | None:
     """Return the structure ID encoded in a ``step{N}_structure_{ID}.ext`` filename, or ``None``."""
-    name = os.path.basename(os.fspath(filename))
-    m = _ID_PATTERN.match(name)
+    m = _ID_PATTERN.match(Path(filename).name)
     return m.group("id") if m else None
 
 
-def extract_structure_id_any(filename: str | os.PathLike) -> str | None:
+def extract_structure_id_any(filename: str | PathLike) -> str | None:
     """Return the structure ID from a filename that may carry trailing suffixes."""
-    stem = os.path.splitext(os.path.basename(os.fspath(filename)))[0]
-    m = _ID_ANYWHERE_RE.search(stem)
+    m = _ID_ANYWHERE_RE.search(Path(filename).stem)
     return m.group("id") if m else None
 
 
