@@ -1,20 +1,19 @@
-"""PySCF engine — importing this module registers ``pyscf`` and ``pyscf-direct``.
+"""PySCF engine — importing this module registers ``pyscf`` and ``pyscf-extopt``.
 
 Two engines ship in this package:
 
-* ``PyscfEngine`` (registered as ``"pyscf"``) — drives ORCA's external
-  optimizer protocol with a PySCF (or gpu4pyscf) gradient server. The
-  HTTP / ExtOpt plumbing lives in :mod:`chemrefine.engines._extopt`;
-  only the SCF + gradient adapter lives here as :mod:`.extopt_calc`.
-* ``PyscfDirectEngine`` (registered as ``"pyscf-direct"``) — runs PySCF
-  in-process, no ORCA, for quick single-point evaluations.
-
-Both engines route through :mod:`._runtime` (``build_mol`` + ``run_dft``
-+ optional active-space tensor extraction).
+* ``PyscfEngine`` (registered as ``"pyscf"``) — template-driven direct
+  PySCF. The user supplies ``step{N}.py``; ChemRefine renders one per
+  structure and runs it via SLURM (auto-falls back to local bash).
+* ``PyscfExtOptEngine`` (registered as ``"pyscf-extopt"``) — drives ORCA's
+  external optimizer protocol with a PySCF (or gpu4pyscf) gradient
+  server. The HTTP / ExtOpt plumbing lives in
+  :mod:`chemrefine.engines._extopt`; only the SCF + gradient adapter
+  lives here as :mod:`.extopt_calc`.
 """
 
-from chemrefine.engines.pyscf.direct import PyscfDirectEngine
 from chemrefine.engines.pyscf.engine import PyscfEngine
 from chemrefine.engines.pyscf.extopt_calc import PyscfExtOptCalculator
+from chemrefine.engines.pyscf.extopt_engine import PyscfExtOptEngine
 
-__all__ = ["PyscfDirectEngine", "PyscfEngine", "PyscfExtOptCalculator"]
+__all__ = ["PyscfEngine", "PyscfExtOptCalculator", "PyscfExtOptEngine"]

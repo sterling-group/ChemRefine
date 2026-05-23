@@ -12,7 +12,7 @@ What we verify:
   ``run_block`` content (dynamic port + readiness loop + trap).
 * ``MlffExtOptCalculator`` adapts the ASE calculator to the shared
   ExtOpt server's ``BaseExtOptCalculator`` contract.
-* ``MlffDirectEngine`` writes a per-structure ``.runlog``.
+* ``MlffEngine`` writes a per-structure ``.runlog``.
 """
 
 from __future__ import annotations
@@ -35,15 +35,15 @@ from chemrefine.state import PipelineState, StepContext, Structure
 
 def test_mlff_engines_are_registered():
     assert "mlff" in ENGINES
-    assert "mlff-direct" in ENGINES
+    assert "mlff-extopt" in ENGINES
 
 
 def test_mlff_engine_supports_nms_is_false():
     assert get_engine("mlff").supports_nms is False
 
 
-def test_mlff_direct_engine_supports_nms_is_false():
-    assert get_engine("mlff-direct").supports_nms is False
+def test_mlff_extopt_engine_supports_nms_is_false():
+    assert get_engine("mlff-extopt").supports_nms is False
 
 
 # ---------------------------------------------------------------------------
@@ -118,11 +118,11 @@ def test_mlff_calculator_custom_model_path_missing_raises(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# MlffEngine — ORCA-driven mode (ExtOpt server lifecycle)
+# MlffExtOptEngine — ORCA-driven mode (ExtOpt server lifecycle)
 # ---------------------------------------------------------------------------
 
 
-def _mlff_ctx(tmp_path: Path, **option_overrides) -> StepContext:
+def _mlff_extopt_ctx(tmp_path: Path, **option_overrides) -> StepContext:
     template_dir = tmp_path / "templates"
     template_dir.mkdir(parents=True, exist_ok=True)
     (template_dir / "step1.inp").write_text("! B3LYP def2-SVP\n", encoding="utf-8")
@@ -134,7 +134,7 @@ def _mlff_ctx(tmp_path: Path, **option_overrides) -> StepContext:
     options.update(option_overrides)
     step_cfg = StepConfig(
         step=1,
-        engine="mlff",
+        engine="mlff-extopt",
         operation="opt_sp",
         options=options,
     )
@@ -153,19 +153,19 @@ def _mlff_ctx(tmp_path: Path, **option_overrides) -> StepContext:
     )
 
 
-def test_mlff_extra_blocks_contains_progext_pointing_to_wrapper(tmp_path: Path):
-    engine = get_engine("mlff")
-    ctx = _mlff_ctx(tmp_path)
+def test_mlff_extopt_extra_blocks_contains_progext_pointing_to_wrapper(tmp_path: Path):
+    engine = get_engine("mlff-extopt")
+    ctx = _mlff_extopt_ctx(tmp_path)
     extra = engine._extra_blocks(ctx)
     assert "%method" in extra
     assert "ProgExt" in extra
     assert "mlff_extopt.sh" in extra
 
 
-def test_mlff_run_block_starts_shared_extopt_server(tmp_path: Path):
-    """The MLFF engine should invoke the shared ``_extopt.server`` with ``--backend mlff``."""
-    engine = get_engine("mlff")
-    ctx = _mlff_ctx(tmp_path)
+def test_mlff_extopt_run_block_starts_shared_extopt_server(tmp_path: Path):
+    """The MLFF ExtOpt engine should invoke the shared server with ``--backend mlff``."""
+    engine = get_engine("mlff-extopt")
+    ctx = _mlff_extopt_ctx(tmp_path)
     run_block = engine._run_block(
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
@@ -178,10 +178,10 @@ def test_mlff_run_block_starts_shared_extopt_server(tmp_path: Path):
     assert ctx.orca_executable in run_block
 
 
-def test_mlff_run_block_includes_readiness_loop_and_trap(tmp_path: Path):
+def test_mlff_extopt_run_block_includes_readiness_loop_and_trap(tmp_path: Path):
     """The new run_block replaces ``sleep 10`` with a readiness probe + trap."""
-    engine = get_engine("mlff")
-    ctx = _mlff_ctx(tmp_path)
+    engine = get_engine("mlff-extopt")
+    ctx = _mlff_extopt_ctx(tmp_path)
     run_block = engine._run_block(
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
@@ -194,9 +194,9 @@ def test_mlff_run_block_includes_readiness_loop_and_trap(tmp_path: Path):
     assert "kill -TERM" in run_block
 
 
-def test_mlff_prepare_writes_inp_with_method_block(tmp_path: Path):
-    engine = get_engine("mlff")
-    ctx = _mlff_ctx(tmp_path)
+def test_mlff_extopt_prepare_writes_inp_with_method_block(tmp_path: Path):
+    engine = get_engine("mlff-extopt")
+    ctx = _mlff_extopt_ctx(tmp_path)
     inputs = engine.prepare(ctx)
     inp_text = inputs.files[0][0].read_text()
     assert "%method" in inp_text
@@ -254,17 +254,17 @@ def test_mlff_extopt_calculator_calc_converts_units():
 
 
 # ---------------------------------------------------------------------------
-# MlffDirectEngine — in-process scoring
+# MlffEngine — in-process scoring
 # ---------------------------------------------------------------------------
 
 
 def test_mlff_direct_round_trip_with_mocked_calculator(tmp_path: Path):
-    engine = get_engine("mlff-direct")
+    engine = get_engine("mlff")
     template_dir = tmp_path / "templates"
     template_dir.mkdir(parents=True, exist_ok=True)
     step_cfg = StepConfig(
         step=1,
-        engine="mlff-direct",
+        engine="mlff",
         operation="opt_sp",
         options={"model_name": "uma-s-1", "task_name": "omol"},
     )
@@ -298,11 +298,11 @@ def test_mlff_direct_round_trip_with_mocked_calculator(tmp_path: Path):
 
 def test_mlff_direct_writes_runlog_per_structure(tmp_path: Path):
     """Each structure scored in-process should produce a ``.runlog`` with header + footer."""
-    engine = get_engine("mlff-direct")
+    engine = get_engine("mlff")
     step_cfg = StepConfig(
         step=1,
         name="screen",
-        engine="mlff-direct",
+        engine="mlff",
         operation="opt_sp",
         options={"model_name": "uma-s-1", "task_name": "omol"},
     )
@@ -327,18 +327,18 @@ def test_mlff_direct_writes_runlog_per_structure(tmp_path: Path):
         engine.submit(inputs, ctx)
     runlog = ctx.step_dir / "step1_structure_0.runlog"
     text = runlog.read_text(encoding="utf-8")
-    assert "ChemRefine mlff-direct step1_screen starting" in text
-    assert "ChemRefine mlff-direct step1_screen finished" in text
+    assert "ChemRefine mlff step1_screen starting" in text
+    assert "ChemRefine mlff step1_screen finished" in text
     assert "mode=direct" in text
     assert "exit_code=0" in text
 
 
 def test_mlff_direct_runlog_records_failure(tmp_path: Path):
     """A raised exception should land ``exit_code=1`` in the runlog and re-raise."""
-    engine = get_engine("mlff-direct")
+    engine = get_engine("mlff")
     step_cfg = StepConfig(
         step=1,
-        engine="mlff-direct",
+        engine="mlff",
         operation="opt_sp",
         options={"model_name": "uma-s-1", "task_name": "omol"},
     )
@@ -370,7 +370,7 @@ def test_mlff_direct_runlog_records_failure(tmp_path: Path):
 
 
 def test_mlff_direct_does_not_support_nms(tmp_path: Path):
-    engine = get_engine("mlff-direct")
+    engine = get_engine("mlff")
     from chemrefine.state import StepResults
 
     with pytest.raises(NotImplementedError):
@@ -380,15 +380,15 @@ def test_mlff_direct_does_not_support_nms(tmp_path: Path):
 def test_mlff_direct_wait_is_noop():
     from chemrefine.state import JobBatch
 
-    engine = get_engine("mlff-direct")
+    engine = get_engine("mlff")
     engine.wait(JobBatch(jobs={}))  # must not raise
 
 
 def test_mlff_direct_find_structure_raises_on_unknown_sid(tmp_path: Path):
     """``_find_structure`` raises ``KeyError`` if the SID isn't among seeds."""
-    from chemrefine.engines.mlff.direct import MlffDirectEngine
+    from chemrefine.engines.mlff.engine import MlffEngine
 
-    step_cfg = StepConfig(step=1, engine="mlff-direct", operation="opt_sp")
+    step_cfg = StepConfig(step=1, engine="mlff", operation="opt_sp")
     seed = Structure(id="0", atoms=Atoms("H"))
     ctx = StepContext(
         step_cfg=step_cfg,
@@ -402,18 +402,18 @@ def test_mlff_direct_find_structure_raises_on_unknown_sid(tmp_path: Path):
         slurm_template="cpu.slurm.header",
         orca_executable="orca",
     )
-    engine = MlffDirectEngine()
+    engine = MlffEngine()
     with pytest.raises(KeyError, match="ghost"):
         engine._find_structure(ctx, "ghost")
 
 
 def test_mlff_direct_get_calculator_is_cached(tmp_path: Path):
     """``_get_calculator`` builds once, then returns the cached instance."""
-    from chemrefine.engines.mlff.direct import MlffDirectEngine
+    from chemrefine.engines.mlff.engine import MlffEngine
 
     step_cfg = StepConfig(
         step=1,
-        engine="mlff-direct",
+        engine="mlff",
         operation="opt_sp",
         options={"model_name": "uma-s-1", "task_name": "omol"},
     )
@@ -430,7 +430,7 @@ def test_mlff_direct_get_calculator_is_cached(tmp_path: Path):
         slurm_template="cpu.slurm.header",
         orca_executable="orca",
     )
-    engine = MlffDirectEngine()
+    engine = MlffEngine()
     with patch.object(MlffCalculator, "_build", return_value=None):
         a = engine._get_calculator(ctx)
         b = engine._get_calculator(ctx)
