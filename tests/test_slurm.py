@@ -208,28 +208,56 @@ def test_submit_raises_when_output_lacks_job_id():
 # ---------------------------------------------------------------------------
 
 
-def test_submit_falls_back_to_local_when_sbatch_missing():
+def test_submit_falls_back_to_local_when_sbatch_missing(tmp_path: Path):
     """No sbatch on PATH → run via bash, return a local-N synthetic job ID."""
+    script = tmp_path / "script.slurm"
+    script.touch()
     fake = MagicMock(returncode=0, stdout="", stderr="")
     with (
         patch("chemrefine.slurm.shutil.which", return_value=None),
         patch.object(subprocess, "run", return_value=fake) as run,
     ):
-        job_id = slurm.submit("script.slurm")
+        job_id = slurm.submit(script)
     assert job_id.startswith("local-")
     # The script should have been bash-executed.
     assert run.call_args.args[0][0] == "bash"
 
 
-def test_submit_local_failure_raises():
+def test_submit_local_writes_runlog_and_err_alongside_script(tmp_path: Path):
+    """``_submit_local`` writes captured stdout/stderr to the SBATCH paths."""
+    script = tmp_path / "step1_structure_0.slurm"
+    script.touch()
+    fake = MagicMock(
+        returncode=0,
+        stdout="hello from the template\n",
+        stderr="warning: backend X loaded\n",
+    )
+    with (
+        patch("chemrefine.slurm.shutil.which", return_value=None),
+        patch.object(subprocess, "run", return_value=fake),
+    ):
+        slurm.submit(script)
+    runlog = script.with_suffix(".runlog")
+    err = script.with_suffix(".err")
+    assert runlog.read_text(encoding="utf-8") == "hello from the template\n"
+    assert err.read_text(encoding="utf-8") == "warning: backend X loaded\n"
+
+
+def test_submit_local_failure_raises(tmp_path: Path):
     """Local fallback surfaces non-zero exit as JobSubmissionError."""
-    fake = MagicMock(returncode=2, stdout="", stderr="boom")
+    script = tmp_path / "script.slurm"
+    script.touch()
+    fake = MagicMock(returncode=2, stdout="partial stdout\n", stderr="boom")
     with (
         patch("chemrefine.slurm.shutil.which", return_value=None),
         patch.object(subprocess, "run", return_value=fake),
         pytest.raises(JobSubmissionError),
     ):
-        slurm.submit("script.slurm")
+        slurm.submit(script)
+    # Even on failure, runlog + err must land on disk so the user
+    # can inspect what happened.
+    assert script.with_suffix(".runlog").read_text(encoding="utf-8") == "partial stdout\n"
+    assert script.with_suffix(".err").read_text(encoding="utf-8") == "boom"
 
 
 # ---------------------------------------------------------------------------

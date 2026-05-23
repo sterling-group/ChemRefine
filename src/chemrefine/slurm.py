@@ -262,17 +262,22 @@ def submit(script_path: str | Path, *, sbatch_cmd: str = "sbatch") -> str:
 def _submit_local(script_path: str | Path) -> str:
     """Run a generated SLURM script directly via ``bash``; return a synthetic job ID.
 
-    The script's ``#SBATCH`` directives are no-ops to bash, but the
-    embedded ``job_log.bash_header`` / ``bash_footer`` snippets still
-    write the canonical runlog so the on-disk artifacts match the
-    SLURM path.
+    The script's ``#SBATCH`` directives are no-ops to bash, so the
+    ``--output`` / ``--error`` redirection SLURM normally provides
+    doesn't fire. We capture both streams instead and write them to
+    the same ``script.runlog`` / ``script.err`` paths the SBATCH
+    directives point at, so users see the same on-disk artifacts in
+    local mode as they do under SLURM.
     """
+    script_path = Path(script_path)
     result = subprocess.run(
         ["bash", str(script_path)],
         capture_output=True,
         text=True,
         check=False,
     )
+    script_path.with_suffix(".runlog").write_text(result.stdout, encoding="utf-8")
+    script_path.with_suffix(".err").write_text(result.stderr, encoding="utf-8")
     if result.returncode != 0:
         raise JobSubmissionError(
             f"local execution of {script_path} failed "
