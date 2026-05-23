@@ -20,7 +20,6 @@ from ase import Atoms
 
 from chemrefine.config import StepConfig
 from chemrefine.engines.base import get_engine
-from chemrefine.engines.pyscf import engine as direct
 from chemrefine.errors import OutputParseError
 from chemrefine.state import JobBatch, PipelineState, StepContext, StepResults, Structure
 
@@ -310,35 +309,3 @@ def test_normal_mode_sample_not_supported(tmp_path: Path):
     engine = get_engine("pyscf")
     with pytest.raises(NotImplementedError, match="does not support normal-mode"):
         engine.normal_mode_sample(StepResults(structures=()), _ctx(tmp_path, ()))
-
-
-# ---------------------------------------------------------------------------
-# Helper coverage
-# ---------------------------------------------------------------------------
-
-
-def test_atoms_from_output_falls_back_to_seed_atoms():
-    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
-    atoms = direct._atoms_from_output({"energy_hartree": -1.0}, fallback=seed)
-    np.testing.assert_allclose(atoms.get_positions(), seed.get_positions())
-
-
-def test_atoms_from_output_raises_when_no_fallback_and_no_positions():
-    with pytest.raises(OutputParseError, match="positions_angstrom"):
-        direct._atoms_from_output({"energy_hartree": -1.0}, fallback=None)
-
-
-def test_forces_from_gradient_converts_units():
-    from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
-
-    forces = direct._forces_from_gradient([[1.0, 0.0, 0.0]])
-    assert forces is not None
-    np.testing.assert_allclose(forces[0], [-HARTREE_PER_BOHR_TO_EV_PER_A, 0.0, 0.0])
-
-
-def test_forces_from_gradient_handles_none():
-    assert direct._forces_from_gradient(None) is None
-
-
-def test_forces_from_gradient_handles_empty():
-    assert direct._forces_from_gradient([]) is None

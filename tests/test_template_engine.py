@@ -1,12 +1,31 @@
-"""Tests for the PySCF Python-script template renderer."""
+"""Tests for the shared template renderer + ``TemplateScriptEngine`` helpers.
+
+The per-engine ``test_engines_pyscf.py`` and ``test_engines_mlff.py``
+exercise the lifecycle end-to-end with their backend labels. The
+tests here exercise the *shared* surface area — the renderer
+(``_template.build_input``) and the top-level output-parsing
+helpers (``_atoms_from_output`` / ``_forces_from_gradient``) — once,
+not twice.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
+from ase import Atoms
 
-from chemrefine.engines.pyscf.input import build_input
+from chemrefine.engines import _template
+from chemrefine.engines._template_engine import (
+    _atoms_from_output,
+    _forces_from_gradient,
+)
+from chemrefine.errors import OutputParseError
+
+# ---------------------------------------------------------------------------
+# _template.build_input — renderer
+# ---------------------------------------------------------------------------
 
 
 def test_build_input_substitutes_geometry_placeholders(tmp_path: Path):
@@ -16,7 +35,7 @@ def test_build_input_substitutes_geometry_placeholders(tmp_path: Path):
         encoding="utf-8",
     )
     out = tmp_path / "rendered.py"
-    build_input(
+    _template.build_input(
         xyz_path=tmp_path / "frame.xyz",
         template_path=template,
         output_path=out,
@@ -35,7 +54,7 @@ def test_build_input_appends_output_footer(tmp_path: Path):
     template = tmp_path / "step1.py"
     template.write_text("energy_hartree = -1.0\n", encoding="utf-8")
     out = tmp_path / "rendered.py"
-    build_input(
+    _template.build_input(
         xyz_path=tmp_path / "frame.xyz",
         template_path=template,
         output_path=out,
@@ -44,34 +63,23 @@ def test_build_input_appends_output_footer(tmp_path: Path):
         multiplicity=1,
     )
     text = out.read_text(encoding="utf-8")
-    # The user's body survives.
     assert "energy_hartree = -1.0" in text
-    # Footer markers.
     assert "# --- ChemRefine output footer (generated; do not edit) ---" in text
     assert "_chemrefine_result" in text
-    # Writes to the BASENAME (relative), so the file lands in $WORK_DIR.
+    # Writes to the BASENAME so it lands in $WORK_DIR.
     assert "with open('step1_structure_0.json', \"w\")" in text
-    # No leftover $OUTPUT_JSON placeholder anywhere.
     assert "$OUTPUT_JSON" not in text
 
 
-def test_build_input_no_longer_substitutes_output_json(tmp_path: Path):
-    """``$OUTPUT_JSON`` is no longer documented; if the user types it, it stays.
-
-    safe_substitute leaves unknown placeholders alone, so a legacy
-    template that still references ``$OUTPUT_JSON`` ships its
-    placeholder through to runtime where it becomes an obvious shell
-    string. The user gets the canonical JSON via the appended footer
-    regardless.
-    """
+def test_build_input_leaves_legacy_output_json_placeholder_alone(tmp_path: Path):
+    """``$OUTPUT_JSON`` is not a known placeholder; ``safe_substitute`` leaves it intact."""
     template = tmp_path / "step1.py"
     template.write_text(
-        'energy_hartree = -1.0\n'
-        "# legacy: $OUTPUT_JSON\n",
+        "energy_hartree = -1.0\n# legacy: $OUTPUT_JSON\n",
         encoding="utf-8",
     )
     out = tmp_path / "rendered.py"
-    build_input(
+    _template.build_input(
         xyz_path=tmp_path / "frame.xyz",
         template_path=template,
         output_path=out,
@@ -80,15 +88,14 @@ def test_build_input_no_longer_substitutes_output_json(tmp_path: Path):
         multiplicity=1,
     )
     text = out.read_text(encoding="utf-8")
-    # Legacy reference unchanged (safe_substitute).
     assert "# legacy: $OUTPUT_JSON" in text
-    # Canonical write still happens via the appended footer.
     assert "with open('step1_structure_0.json', \"w\")" in text
 
 
-def test_build_input_missing_template_raises(tmp_path: Path):
-    with pytest.raises(FileNotFoundError, match="PySCF template not found"):
-        build_input(
+def test_build_input_missing_template_raises_generic(tmp_path: Path):
+    """Direct call (no engine layer above it) surfaces the generic message."""
+    with pytest.raises(FileNotFoundError, match="template not found"):
+        _template.build_input(
             xyz_path=tmp_path / "x.xyz",
             template_path=tmp_path / "missing.py",
             output_path=tmp_path / "out.py",
@@ -99,17 +106,17 @@ def test_build_input_missing_template_raises(tmp_path: Path):
 
 
 def test_build_input_preserves_python_braces(tmp_path: Path):
-    """A real PySCF script uses Python ``{ ... }`` everywhere; those must survive intact."""
+    """A real script uses Python ``{ ... }`` everywhere; those must survive intact."""
     template = tmp_path / "step1.py"
     template.write_text(
         'payload = {"key": float(mf.e_tot)}\n'
-        'gradient = [(i, x) for i, x in enumerate(grad)]\n'
+        "gradient = [(i, x) for i, x in enumerate(grad)]\n"
         'f = f"step{step}_done"\n'
-        'energy_hartree = -1.0\n',
+        "energy_hartree = -1.0\n",
         encoding="utf-8",
     )
     out = tmp_path / "rendered.py"
-    build_input(
+    _template.build_input(
         xyz_path=tmp_path / "x.xyz",
         template_path=template,
         output_path=out,
@@ -118,7 +125,6 @@ def test_build_input_preserves_python_braces(tmp_path: Path):
         multiplicity=1,
     )
     text = out.read_text()
-    # Python dict / list / f-string braces survive unchanged.
     assert 'payload = {"key": float(mf.e_tot)}' in text
     assert "gradient = [(i, x) for i, x in enumerate(grad)]" in text
     assert 'f = f"step{step}_done"' in text
@@ -132,7 +138,7 @@ def test_build_input_leaves_unknown_placeholders_intact(tmp_path: Path):
         encoding="utf-8",
     )
     out = tmp_path / "rendered.py"
-    build_input(
+    _template.build_input(
         xyz_path=tmp_path / "x.xyz",
         template_path=template,
         output_path=out,
@@ -140,5 +146,47 @@ def test_build_input_leaves_unknown_placeholders_intact(tmp_path: Path):
         charge=0,
         multiplicity=1,
     )
-    text = out.read_text()
-    assert "$VIRTUAL_ENV" in text  # unknown placeholder preserved
+    assert "$VIRTUAL_ENV" in out.read_text()
+
+
+# ---------------------------------------------------------------------------
+# _atoms_from_output / _forces_from_gradient — shared helpers
+# ---------------------------------------------------------------------------
+
+
+def test_atoms_from_output_falls_back_to_seed_atoms():
+    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    atoms = _atoms_from_output({"energy_hartree": -1.0}, fallback=seed)
+    np.testing.assert_allclose(atoms.get_positions(), seed.get_positions())
+
+
+def test_atoms_from_output_uses_positions_when_present():
+    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    atoms = _atoms_from_output(
+        {"energy_hartree": -1.0, "positions_angstrom": [[0.0, 0.0, 0.0], [0.0, 0.0, 1.5]]},
+        fallback=seed,
+    )
+    np.testing.assert_allclose(
+        atoms.get_positions(), [[0.0, 0.0, 0.0], [0.0, 0.0, 1.5]]
+    )
+
+
+def test_atoms_from_output_raises_without_fallback_and_no_positions():
+    with pytest.raises(OutputParseError, match="positions_angstrom"):
+        _atoms_from_output({"energy_hartree": -1.0}, fallback=None)
+
+
+def test_forces_from_gradient_converts_units():
+    from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
+
+    forces = _forces_from_gradient([[1.0, 0.0, 0.0]])
+    assert forces is not None
+    np.testing.assert_allclose(forces[0], [-HARTREE_PER_BOHR_TO_EV_PER_A, 0.0, 0.0])
+
+
+def test_forces_from_gradient_handles_none():
+    assert _forces_from_gradient(None) is None
+
+
+def test_forces_from_gradient_handles_empty():
+    assert _forces_from_gradient([]) is None

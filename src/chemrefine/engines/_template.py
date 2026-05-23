@@ -78,7 +78,6 @@ def build_input(
     output_json_path: Path,
     charge: int,
     multiplicity: int,
-    not_found_message: str = "template not found",
 ) -> Path:
     """Render ``template_path`` into ``output_path`` and return the rendered path.
 
@@ -94,13 +93,14 @@ def build_input(
     them to ``output_json_path.name`` (a *basename*, so the file
     lands in ``$WORK_DIR`` / scratch).
 
-    ``not_found_message`` is included in the ``FileNotFoundError`` so
-    backend wrappers can surface a backend-specific error message
-    (e.g. ``"PySCF template not found"`` vs ``"MLFF template not
-    found"``).
+    Engines call this through
+    :class:`chemrefine.engines._template_engine.TemplateScriptEngine`,
+    which already raises a backend-specific ``FileNotFoundError`` for
+    a missing template; the same check is kept here as a defensive
+    guard for any direct caller.
     """
     if not template_path.is_file():
-        raise FileNotFoundError(f"{not_found_message}: {template_path}")
+        raise FileNotFoundError(f"template not found: {template_path}")
     text = template_path.read_text(encoding="utf-8")
     rendered = Template(text).safe_substitute(
         XYZ_PATH=str(xyz_path),
