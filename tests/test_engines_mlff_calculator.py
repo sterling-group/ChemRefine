@@ -1,12 +1,10 @@
-"""Tests for the MLFF backend dispatcher in
-:mod:`chemrefine.engines.mlff.calculator`.
+"""Tests for the MLFF backend registry in :mod:`chemrefine.engines.mlff.calculator`.
 
 The real ML backends (mace-torch, fairchem-core, chgnet, sevenn) aren't
 installed in the dev / CI environment, so each test installs a *fake*
 module under the right ``sys.modules`` key before instantiating
-:class:`MlffCalculator`. That lets us exercise the real
-``_build_mace``/``_build_fairchem``/``_build_chgnet``/``_build_sevenn``/
-``_build_orb`` / ``_build_custom_mace`` bodies and the
+:class:`MlffCalculator` (or calling :func:`build_calculator`). That
+lets us exercise the real built-in builder bodies and the
 ``single_point`` / ``optimize`` paths without pulling in a multi-GB
 ML stack.
 """
@@ -22,10 +20,10 @@ import numpy as np
 import pytest
 from ase import Atoms
 
-from chemrefine.engines.mlff.calculator import MlffCalculator
+from chemrefine.engines.mlff.calculator import MlffCalculator, build_calculator
 
 # ---------------------------------------------------------------------------
-# MACE — mace_off / mace_mp / mace_omol dispatch + custom MACE
+# MACE — mace_off / mace_mp / mace_omol + custom MACE
 # ---------------------------------------------------------------------------
 
 
@@ -68,15 +66,15 @@ def test_build_mace_routes_mace_omol_to_factory(monkeypatch):
     assert calc.calculator == "OMOL_CALC"
 
 
-def test_build_mace_unsupported_task_raises(monkeypatch):
-    """An unknown ``mace_*`` task_name should raise ``ValueError``."""
+def test_build_calculator_unknown_task_raises(monkeypatch):
+    """An unregistered ``task_name`` should raise ``ValueError`` from the dispatcher."""
     _install_fake_mace(monkeypatch)
-    with pytest.raises(ValueError, match="unsupported MACE task"):
-        MlffCalculator(model_name="x", task_name="mace_weird", device="cpu")
+    with pytest.raises(ValueError, match="unsupported MLFF backend"):
+        build_calculator(task_name="mace_weird", model_name="x", device="cpu")
 
 
 def test_build_custom_mace_constructs_with_fake_module(monkeypatch, tmp_path: Path):
-    """``_build_custom_mace`` instantiates the fake ``MACECalculator``."""
+    """``model_path`` short-circuits to the ``custom_mace`` builder."""
     factories = _install_fake_mace(monkeypatch)
     model_file = tmp_path / "fake.model"
     model_file.touch()
@@ -92,13 +90,22 @@ def test_build_custom_mace_constructs_with_fake_module(monkeypatch, tmp_path: Pa
     assert calc.calculator == "CUSTOM_CALC"
 
 
+def test_build_custom_mace_missing_file_raises(tmp_path: Path):
+    """The ``custom_mace`` builder validates that the model file exists."""
+    missing = tmp_path / "does_not_exist.model"
+    with pytest.raises(FileNotFoundError, match="custom MACE model not found"):
+        MlffCalculator(
+            model_name="ignored", task_name="mace_off", model_path=str(missing)
+        )
+
+
 # ---------------------------------------------------------------------------
 # FAIRChem
 # ---------------------------------------------------------------------------
 
 
 def test_build_fairchem_routes_through_predictor(monkeypatch):
-    """``_build_fairchem`` calls ``pretrained_mlip.get_predict_unit`` then
+    """The FAIRChem builder calls ``pretrained_mlip.get_predict_unit`` then
     constructs a ``FAIRChemCalculator`` from the result."""
     predict = MagicMock()
     predict.get_predict_unit = MagicMock(return_value="PREDICTOR")
@@ -124,8 +131,8 @@ def test_build_fairchem_routes_through_predictor(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_build_chgnet_uses_default_when_no_model_path(monkeypatch):
-    """Without ``model_path`` the CHGNet builder calls ``CHGNet.load()``."""
+def _install_fake_chgnet(monkeypatch) -> tuple[MagicMock, MagicMock]:
+    """Install a fake CHGNet module tree; return ``(loader, calc_class)``."""
     loader = MagicMock(return_value="CHGNET_MODEL")
     chgnet_mod = types.ModuleType("chgnet.model")
     chgnet_mod.CHGNet = MagicMock()  # type: ignore[attr-defined]
@@ -139,42 +146,15 @@ def test_build_chgnet_uses_default_when_no_model_path(monkeypatch):
     monkeypatch.setitem(sys.modules, "chgnet", parent)
     monkeypatch.setitem(sys.modules, "chgnet.model", chgnet_mod)
     monkeypatch.setitem(sys.modules, "chgnet.calculators", chgnet_calculators_mod)
+    return loader, calc_class
 
+
+def test_build_chgnet_uses_default_when_no_model_path(monkeypatch):
+    loader, calc_class = _install_fake_chgnet(monkeypatch)
     calc = MlffCalculator(model_name="ignored", task_name="chgnet", device="cpu")
     loader.assert_called_once_with()
     calc_class.assert_called_once_with(model="CHGNET_MODEL")
     assert calc.calculator == "CHGNET_CALC"
-
-
-def test_build_chgnet_uses_model_path_when_given(monkeypatch, tmp_path: Path):
-    """With ``model_path`` the CHGNet builder calls ``CHGNet.load(<path>)``."""
-    loader = MagicMock(return_value="CHGNET_MODEL")
-    chgnet_mod = types.ModuleType("chgnet.model")
-    chgnet_mod.CHGNet = MagicMock()  # type: ignore[attr-defined]
-    chgnet_mod.CHGNet.load = loader
-    calc_class = MagicMock(return_value="CHGNET_CALC")
-    chgnet_calculators_mod = types.ModuleType("chgnet.calculators")
-    chgnet_calculators_mod.CHGNetCalculator = calc_class  # type: ignore[attr-defined]
-    parent = types.ModuleType("chgnet")
-    parent.model = chgnet_mod  # type: ignore[attr-defined]
-    parent.calculators = chgnet_calculators_mod  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "chgnet", parent)
-    monkeypatch.setitem(sys.modules, "chgnet.model", chgnet_mod)
-    monkeypatch.setitem(sys.modules, "chgnet.calculators", chgnet_calculators_mod)
-
-    # The chgnet branch reads model_path, but task_name="chgnet" routes here
-    # before the ``_build_custom_mace`` short-circuit. Drop a real file so
-    # ``Path.is_file()`` returns True.
-    model_file = tmp_path / "chgnet.ckpt"
-    model_file.touch()
-    # Bypass the custom-MACE branch by using a chgnet-shaped task name.
-    # ``MlffCalculator.__init__`` only picks the custom branch when
-    # ``model_path`` is given AND task_name doesn't already route via
-    # the task-name dispatch — but the current dispatch order routes by
-    # ``model_path`` *first*. To exercise the CHGNet load path we
-    # construct an instance with no model_path and rely on the default.
-    MlffCalculator(model_name="ignored", task_name="chgnet", device="cpu")
-    loader.assert_called_with()
 
 
 # ---------------------------------------------------------------------------
@@ -194,37 +174,26 @@ def _install_fake_sevenn(monkeypatch) -> MagicMock:
 
 
 def test_build_sevenn_constructs_calculator(monkeypatch):
+    """SevenN routes by ``model_name`` prefix → uses ``model_name`` as the SevenNet model."""
     factory = _install_fake_sevenn(monkeypatch)
     calc = MlffCalculator(
         model_name="sevenn-tiny", task_name="custom_task", device="cpu"
     )
-    factory.assert_called_once_with(model="custom_task", device="cpu")
+    factory.assert_called_once_with(model="sevenn-tiny", device="cpu")
     assert calc.calculator == "SEVENN_CALC"
 
 
 def test_build_orb_routes_through_sevenn(monkeypatch):
-    """``_build_orb`` delegates to ``_build_sevenn``; the SevenN factory
-    receives the same args."""
+    """ORB routes through the SevenN entrypoint; uses ``model_name`` as the model."""
     factory = _install_fake_sevenn(monkeypatch)
-    calc = MlffCalculator(model_name="orb-d3", task_name="orb_task", device="cpu")
-    factory.assert_called_once_with(model="orb_task", device="cpu")
+    calc = MlffCalculator(model_name="orb-d3", task_name="custom_task", device="cpu")
+    factory.assert_called_once_with(model="orb-d3", device="cpu")
     assert calc.calculator == "SEVENN_CALC"
 
 
 # ---------------------------------------------------------------------------
 # single_point + optimize — duck-typed fake ASE calculator
 # ---------------------------------------------------------------------------
-
-
-class _FakeAseCalculator:
-    """Stand-in for an ASE-shaped calculator that returns canned values."""
-
-    def __init__(self, energy: float, forces: np.ndarray) -> None:
-        self._energy = energy
-        self._forces = forces
-
-    def calculate(self, *args, **kwargs):  # ASE may call this internally
-        return None
 
 
 def _calc_with_fake(monkeypatch) -> MlffCalculator:

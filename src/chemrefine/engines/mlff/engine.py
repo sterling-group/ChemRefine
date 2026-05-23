@@ -1,28 +1,49 @@
-"""Direct in-process MLFF engine (no ORCA, no SLURM).
+"""Template-driven direct MLFF engine — runs the user's MLFF script per structure.
 
-Scores each seed structure with the chosen MLFF backend in the same
-Python process and emits a per-structure ``.runlog`` plus a small
-JSON output. Useful for fast pre-screening before an expensive ORCA
-refinement stage — the calculator is built once per engine instance
-and cached so the GPU model load is paid once per pipeline run.
+Mirror of :class:`chemrefine.engines.pyscf.engine.PyscfEngine` — the
+user provides a ``step{N}.py`` MLFF template (any ASE-compatible MLFF
+library is fine), ChemRefine substitutes the geometry placeholders,
+and runs each rendered script through the same SLURM-or-local
+submission machinery the ORCA engine uses.
 
-The ORCA-driven sibling engine lives in
-:mod:`chemrefine.engines.mlff.extopt_engine` and registers as
-``mlff-extopt``.
+Adding a new MLFF library is a single template the user writes —
+ChemRefine doesn't have to know about each backend. For the built-in
+factory (:func:`chemrefine.engines.mlff.calculator.build_calculator`),
+adding a backend is *one function + one decorator line*; see
+:mod:`engines.mlff.calculator` for the registry.
+
+Lifecycle (mirrors PySCF):
+
+* :meth:`prepare` writes one ``.xyz`` per structure plus a rendered
+  per-structure ``.py`` (via :mod:`engines.mlff.input`).
+* :meth:`submit` builds a SLURM script whose ``run_block`` is
+  ``python <rendered.py>``, submits via :func:`chemrefine.slurm.submit`
+  (which auto-falls-back to local bash execution when ``sbatch``
+  isn't installed), and waits for every job via the shared throttler.
+* :meth:`parse` reads the JSON the appended footer wrote at the
+  canonical per-structure path and builds a :class:`Structure`.
+
+The ORCA-driven sibling engine (``engine: mlff-extopt``) lives in
+:mod:`chemrefine.engines.mlff.extopt_engine` and is unchanged.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 
 import numpy as np
+from ase import Atoms
 
-from chemrefine import job_log
+from chemrefine import slurm, throttle
 from chemrefine.engines.base import register
-from chemrefine.engines.mlff.calculator import MlffCalculator
+from chemrefine.engines.mlff import input as mlff_input
 from chemrefine.engines.mlff.options import MlffOptions
+from chemrefine.errors import OutputParseError
 from chemrefine.ids import structure_artifact_path
-from chemrefine.quantities import HARTREE_TO_EV
+from chemrefine.io import write_xyz
+from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
 from chemrefine.state import (
     JobBatch,
     StepContext,
@@ -33,136 +54,162 @@ from chemrefine.state import (
 
 logger = logging.getLogger(__name__)
 
-# MLFF backends report energy in eV; ChemRefine stores Hartree internally.
-_EV_TO_HARTREE: float = 1.0 / HARTREE_TO_EV
-
 
 @register("mlff")
 class MlffEngine:
-    """In-process MLFF scorer satisfying :class:`CalculationEngine`."""
+    """Template-driven direct MLFF engine satisfying :class:`CalculationEngine`."""
 
     name = "mlff"
     supports_nms = False
 
-    def __init__(self) -> None:
-        self._calculator: MlffCalculator | None = None
-
-    # -- lifecycle ---------------------------------------------------------
+    # -- prepare -----------------------------------------------------------
 
     def prepare(self, ctx: StepContext) -> StepInputs:
-        """No input files needed — record paths so cache + manifest still work."""
+        """Render one ``.py`` + ``.xyz`` per seed structure."""
         ctx.step_dir.mkdir(parents=True, exist_ok=True)
-        files: list[tuple] = []
+        template = self._resolve_template(ctx)
         step = ctx.step_cfg.step
+
+        files: list[tuple[Path, Path, str]] = []
         for struct in ctx.prev_state.structures:
-            placeholder_inp = structure_artifact_path(ctx.step_dir, step, struct.id, "json")
-            placeholder_out = structure_artifact_path(
-                ctx.step_dir, step, struct.id, "json.out"
+            xyz_paths = write_xyz(
+                [struct.atoms],
+                [struct.id],
+                step_number=step,
+                output_dir=ctx.step_dir,
             )
-            placeholder_inp.write_text(
-                f'{{"id": "{struct.id}", "engine": "mlff"}}\n',
-                encoding="utf-8",
+            xyz_path = xyz_paths[0]
+            script_path = structure_artifact_path(ctx.step_dir, step, struct.id, "py")
+            output_json = structure_artifact_path(ctx.step_dir, step, struct.id, "json")
+            mlff_input.build_input(
+                xyz_path=xyz_path,
+                template_path=template,
+                output_path=script_path,
+                output_json_path=output_json,
+                charge=ctx.charge,
+                multiplicity=ctx.multiplicity,
             )
-            files.append((placeholder_inp, placeholder_out, struct.id))
+            files.append((script_path, output_json, struct.id))
         return StepInputs(files=tuple(files))
 
+    def _resolve_template(self, ctx: StepContext) -> Path:
+        """Pick the MLFF Python-script template for this step."""
+        name = ctx.step_cfg.template or f"step{ctx.step_cfg.step}.py"
+        template = ctx.template_dir / name
+        if not template.is_file():
+            raise FileNotFoundError(f"MLFF template not found: {template}")
+        return template
+
+    # -- submit / wait -----------------------------------------------------
+
     def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
-        """Score every structure in-process; emit one ``.runlog`` per structure."""
-        calc = self._get_calculator(ctx)
+        """Wrap each rendered ``.py`` in a SLURM script and submit it."""
+        throttler = throttle.Throttler(max_cores=ctx.max_cores)
+        header_path = ctx.template_dir / ctx.slurm_template
+        if not header_path.is_file():
+            raise FileNotFoundError(f"SLURM header template not found: {header_path}")
+
+        options = MlffOptions.from_raw(ctx.step_cfg.options)
+        pal = min(options.cores, ctx.max_cores)
+
         step_label = ctx.step_cfg.dir_name()
-        engine_name = ctx.step_cfg.engine
-        for _inp, out, sid in inputs.files:
-            log_path = structure_artifact_path(
-                ctx.step_dir, ctx.step_cfg.step, sid, "runlog"
-            )
-            job_log.python_header(
-                engine=engine_name,
+        jobs: dict[Path, str] = {}
+        for inp, out, sid in inputs.files:
+            throttler.wait_for_room(pal, is_finished=slurm.is_finished)
+            script_path = inp.with_suffix(".slurm")
+            slurm.build_script(
+                job_name=inp.stem,
+                pal=pal,
+                template_path=header_path,
+                script_path=script_path,
+                input_path=inp,
+                output_dir=out.parent,
+                scratch_dir=ctx.scratch_dir,
+                run_block=f"python {inp.name}",
+                engine=ctx.step_cfg.engine,
                 operation=ctx.step_cfg.operation,
                 step=ctx.step_cfg.step,
                 structure_id=sid,
                 step_label=step_label,
-                step_dir=ctx.step_dir,
-                log_path=log_path,
+                output_globs=("*.json", "*.xyz"),
             )
-            start = job_log.monotonic_seconds()
-            exit_code = 0
-            try:
-                atoms = self._find_structure(ctx, sid).atoms.copy()
-                energy_ev, _gradient = calc.single_point(atoms)
-                energy_hartree = energy_ev * _EV_TO_HARTREE
-                out.write_text(
-                    f'{{"id": "{sid}", "energy_hartree": {energy_hartree}}}\n',
-                    encoding="utf-8",
-                )
-            except Exception:
-                exit_code = 1
-                job_log.python_footer(
-                    engine=engine_name,
-                    step_label=step_label,
-                    log_path=log_path,
-                    exit_code=exit_code,
-                    elapsed_seconds=job_log.monotonic_seconds() - start,
-                )
-                raise
-            job_log.python_footer(
-                engine=engine_name,
-                step_label=step_label,
-                log_path=log_path,
-                exit_code=exit_code,
-                elapsed_seconds=job_log.monotonic_seconds() - start,
-                files_copied=1,
-            )
-        return JobBatch(
-            jobs={inp: f"direct-{i}" for i, (inp, *_rest) in enumerate(inputs.files)}
-        )
+            job_id = slurm.submit(script_path)
+            throttler.register(job_id, pal)
+            jobs[inp] = job_id
+            logger.info("submitted %s as job %s (pal=%d)", inp.name, job_id, pal)
+
+        throttler.wait_all(is_finished=slurm.is_finished)
+        return JobBatch(jobs=jobs)
 
     def wait(self, batch: JobBatch) -> None:
-        """No-op — :meth:`submit` ran inline."""
+        """No-op: :meth:`submit` already blocked until every job finished."""
         return None
 
-    def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
-        """Re-read the per-structure JSON files into :class:`Structure` instances."""
-        import json
+    # -- parse -------------------------------------------------------------
 
-        seeds = {s.id: s for s in ctx.prev_state.structures}
-        results: list[Structure] = []
-        for _inp, out, sid in inputs.files:
-            data = json.loads(out.read_text(encoding="utf-8"))
-            seed = seeds[sid]
-            results.append(
+    def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
+        """Read each output JSON into a :class:`Structure`."""
+        prev_by_id = {s.id: s for s in ctx.prev_state.structures}
+        out_structures: list[Structure] = []
+        for _inp, out_path, sid in inputs.files:
+            data = _load_output_json(out_path)
+            seed = prev_by_id.get(sid)
+            atoms = _atoms_from_output(data, fallback=seed.atoms if seed else None)
+            forces = _forces_from_gradient(data.get("gradient_hartree_per_bohr"))
+            out_structures.append(
                 Structure(
                     id=sid,
-                    atoms=seed.atoms.copy(),
-                    parent_id=seed.parent_id,
+                    atoms=atoms,
+                    parent_id=seed.parent_id if seed is not None else None,
                     energy_hartree=float(data["energy_hartree"]),
-                    forces_ev_per_a=np.zeros((len(seed.atoms), 3)),
+                    forces_ev_per_a=forces,
                 )
             )
-        return StepResults(structures=tuple(results))
+        return StepResults(structures=tuple(out_structures))
 
     def normal_mode_sample(self, results: StepResults, ctx: StepContext) -> StepResults:
-        """Not supported."""
-        raise NotImplementedError("mlff does not support NMS")
+        """Not supported — the orchestrator gates this on ``supports_nms``."""
+        raise NotImplementedError("mlff does not support normal-mode sampling")
 
-    # -- helpers -----------------------------------------------------------
 
-    def _get_calculator(self, ctx: StepContext) -> MlffCalculator:
-        """Build the calculator once and cache it on the engine instance."""
-        if self._calculator is None:
-            options = MlffOptions.from_raw(ctx.step_cfg.options)
-            self._calculator = MlffCalculator(
-                model_name=options.model_name,
-                task_name=options.task_name,
-                device=options.device,
-                model_path=options.model_path,
+# ---------------------------------------------------------------------------
+# Output parsing helpers (top-level for testability)
+# ---------------------------------------------------------------------------
+
+
+def _load_output_json(out_path: Path) -> dict:
+    """Read the user's script output JSON; raise :class:`OutputParseError` if malformed."""
+    if not out_path.is_file():
+        raise OutputParseError(f"MLFF output not found: {out_path}")
+    try:
+        data = json.loads(out_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise OutputParseError(f"MLFF output {out_path} is not valid JSON: {e}") from e
+    if "energy_hartree" not in data:
+        raise OutputParseError(
+            f"MLFF output {out_path} missing required 'energy_hartree' field"
+        )
+    return data
+
+
+def _atoms_from_output(data: dict, *, fallback: Atoms | None) -> Atoms:
+    """Return ASE ``Atoms`` from the output JSON, falling back to the seed geometry."""
+    positions = data.get("positions_angstrom")
+    if positions is None or fallback is None:
+        if fallback is None:
+            raise OutputParseError(
+                "MLFF output lacks positions_angstrom and no seed atoms are available"
             )
-        return self._calculator
-
-    def _find_structure(self, ctx: StepContext, sid: str) -> Structure:
-        """Locate a seed structure by its ID."""
-        for struct in ctx.prev_state.structures:
-            if struct.id == sid:
-                return struct
-        raise KeyError(f"unknown structure id {sid!r}")
+        return fallback.copy()
+    updated = fallback.copy()
+    updated.set_positions(np.asarray(positions, dtype=float))
+    return updated
 
 
+def _forces_from_gradient(
+    gradient: list[list[float]] | None,
+) -> np.ndarray | None:
+    """Convert MLFF gradient (Hartree/Bohr) to ASE forces (eV/Å)."""
+    if not gradient:
+        return None
+    return np.asarray(gradient, dtype=float) * (-HARTREE_PER_BOHR_TO_EV_PER_A)

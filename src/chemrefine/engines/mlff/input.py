@@ -1,9 +1,8 @@
-"""PySCF Python-script template renderer (thin wrapper around the shared template).
+"""MLFF Python-script template renderer (thin wrapper around the shared template).
 
-Delegates to :mod:`chemrefine.engines._template` so a future
-template-driven backend (e.g. MLFF) shares one renderer instead of
-each backend re-implementing placeholder substitution + the JSON
-output footer.
+Delegates to :mod:`chemrefine.engines._template` so MLFF and PySCF
+share one renderer. See that module for placeholder + output-contract
+semantics.
 """
 
 from __future__ import annotations
@@ -22,7 +21,7 @@ def build_input(
     charge: int,
     multiplicity: int,
 ) -> Path:
-    """Render a PySCF ``step{N}.py`` template into ``output_path``.
+    """Render an MLFF ``step{N}.py`` template into ``output_path``.
 
     See :func:`chemrefine.engines._template.build_input` for the
     placeholder + output-contract semantics. This wrapper just sets
@@ -35,5 +34,5 @@ def build_input(
         output_json_path=output_json_path,
         charge=charge,
         multiplicity=multiplicity,
-        not_found_message="PySCF template not found",
+        not_found_message="MLFF template not found",
     )
