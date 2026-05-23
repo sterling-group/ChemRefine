@@ -66,11 +66,39 @@ class CalculationData:
 class BaseExtOptCalculator(Protocol):
     """Contract every ExtOpt-served backend implements.
 
-    Concrete backends construct themselves from the parsed server CLI
-    via :meth:`from_args` and answer requests via :meth:`calc`.
+    Concrete backends own their CLI surface (no backend literals in the
+    shared :mod:`server` / :mod:`client`):
+
+    * :meth:`add_cli_args` registers backend-specific argparse flags on
+      the shared server / client parsers — the shared layer iterates
+      over the registry and asks each backend to contribute.
+    * :meth:`settings_from_args` packs the parsed flags into the
+      ``settings`` block of each ``/calculate`` POST so the server can
+      forward them to the backend per call.
+    * :meth:`server_cli_from_options` translates a validated YAML
+      ``step.options`` dict into the matching ``--flag value`` tokens
+      the engine's SLURM ``run_block`` invokes the server with.
+    * :meth:`from_args` builds a per-process calculator instance from
+      the parsed server CLI namespace.
+    * :meth:`calc` answers one ``/calculate`` request.
     """
 
     name: str
+
+    @classmethod
+    def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:
+        """Register this backend's argparse flags on a shared parser."""
+        ...
+
+    @classmethod
+    def settings_from_args(cls, args: argparse.Namespace) -> dict[str, Any]:
+        """Pack per-call backend knobs into a settings dict (POST payload)."""
+        ...
+
+    @classmethod
+    def server_cli_from_options(cls, options: dict[str, Any]) -> list[str]:
+        """Translate validated YAML options into ``--flag value`` tokens."""
+        ...
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> BaseExtOptCalculator:

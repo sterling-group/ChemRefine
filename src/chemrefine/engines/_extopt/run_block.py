@@ -19,9 +19,15 @@ _SERVER_READY_TIMEOUT_SECONDS: int = 120
 def _server_command(
     *,
     backend: str,
-    extra_flags: list[tuple[str, str]],
+    extra_tokens: list[str],
 ) -> str:
-    """Build the ``python -m chemrefine.engines._extopt.server ...`` command."""
+    """Build the ``python -m chemrefine.engines._extopt.server ...`` command.
+
+    ``extra_tokens`` is a flat list of CLI tokens (e.g.
+    ``["--foo", "bar", "--baz"]``) emitted by the backend's
+    :meth:`BaseExtOptCalculator.server_cli_from_options`. Keeping them
+    as one list keeps key-value flags and bool flags symmetric.
+    """
     parts = [
         "python -m chemrefine.engines._extopt.server",
         f"--backend {shlex.quote(backend)}",
@@ -30,8 +36,7 @@ def _server_command(
         '--log-file "$LOG_FILE"',
         "--log-level INFO",
     ]
-    for flag, value in extra_flags:
-        parts.append(f"{flag} {shlex.quote(str(value))}")
+    parts.extend(shlex.quote(token) for token in extra_tokens)
     return " ".join(parts)
 
 

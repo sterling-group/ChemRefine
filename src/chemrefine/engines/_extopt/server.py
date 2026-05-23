@@ -1,12 +1,13 @@
 """Shared Flask + waitress ExtOpt server.
 
 Dispatches to one backend per process. The :func:`parse_args` CLI is
-the union of every backend's options; each backend's
-:meth:`BaseExtOptCalculator.from_args` picks only the fields it cares
-about. Kernel-assigned ports (``--bind 127.0.0.1:0``) are the default
-so multiple SLURM jobs on the same node never collide on a hardcoded
-port; the actual ``host:port`` is recorded to a sidecar URL file so
-the wrapper script can find it.
+**backend-agnostic** at the shared layer; each registered backend
+contributes its own flags via
+:meth:`BaseExtOptCalculator.add_cli_args`. Kernel-assigned ports
+(``--bind 127.0.0.1:0``) are the default so multiple SLURM jobs on
+the same node never collide on a hardcoded port; the actual
+``host:port`` is recorded to a sidecar URL file so the wrapper
+script can find it.
 
 The :func:`main` glue (binding waitress, writing the sidecar, blocking
 on requests) is the only path not exercised by tests — it lives on
@@ -40,8 +41,9 @@ DEFAULT_BIND_PORT: int = 0
 def parse_args(argv: list[str]) -> argparse.Namespace:
     """Return the shared server's parsed CLI namespace.
 
-    Backend-specific flags (``--model``, ``--xc``, ...) are all defined
-    here; each backend's :meth:`from_args` reads only what it needs.
+    Backend-specific flags come from each registered backend's
+    :meth:`BaseExtOptCalculator.add_cli_args`; the shared layer here
+    owns only the generic flags every backend shares.
     """
     parser = argparse.ArgumentParser(prog="chemrefine-extopt-server")
     parser.add_argument(
@@ -63,17 +65,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--log-level", default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
-    # MLFF-specific
-    parser.add_argument("--model", default=None, help="MLFF pretrained model name")
-    parser.add_argument("--task-name", default="omol", help="MLFF task name")
-    parser.add_argument("--device", default="cuda", help="cuda | cpu")
-    parser.add_argument("--model-path", default=None, help="custom MACE model checkpoint")
-    # PySCF-specific
-    parser.add_argument("--method", default="dft", choices=["dft", "hf"])
-    parser.add_argument("--xc", default="pbe", help="DFT exchange-correlation functional")
-    parser.add_argument("--basis", default="def2-svp", help="orbital basis set")
-    parser.add_argument("--df", action="store_true", help="enable density fitting / RI")
-    parser.add_argument("--gpu", action="store_true", help="attempt gpu4pyscf if installed")
+    for backend_name in sorted(CALCULATORS):
+        load_calculator(backend_name).add_cli_args(parser)
     return parser.parse_args(argv)
 
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
+from typing import Any
 
 from chemrefine.engines._extopt.base import (
     BaseExtOptCalculator,
@@ -25,6 +26,12 @@ from chemrefine.engines.pyscf import _runtime
 from chemrefine.engines.pyscf.options import PyscfOptions
 
 logger = logging.getLogger(__name__)
+
+# CLI flag names. The Pydantic ``PyscfOptions`` model owns the *defaults*;
+# this tuple lists which fields are exposed on the ExtOpt CLI surface
+# (server + client + engine run_block) so the three callers stay in lockstep.
+_KEY_VALUE_FLAGS: tuple[str, ...] = ("method", "xc", "basis")
+_BOOL_FLAGS: tuple[str, ...] = ("df", "gpu")
 
 
 class PyscfExtOptCalculator(BaseExtOptCalculator):
@@ -46,6 +53,67 @@ class PyscfExtOptCalculator(BaseExtOptCalculator):
         self.basis = basis
         self.df = df
         self.gpu = gpu
+
+    @classmethod
+    def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:
+        """Register PySCF flags on a shared server / client parser.
+
+        Defaults mirror :class:`PyscfOptions`; the Pydantic model stays
+        the canonical name + default source. Adding a knob here means
+        also adding it to ``PyscfOptions`` (or vice-versa) — the
+        ``_KEY_VALUE_FLAGS`` / ``_BOOL_FLAGS`` tuples gate which knobs
+        are CLI-exposed.
+        """
+        defaults = PyscfOptions()
+        parser.add_argument(
+            "--method", default=defaults.method, choices=["dft", "hf"],
+            help="SCF method (dft | hf)",
+        )
+        parser.add_argument(
+            "--xc", default=defaults.xc,
+            help="DFT exchange-correlation functional",
+        )
+        parser.add_argument(
+            "--basis", default=defaults.basis,
+            help="Orbital basis set",
+        )
+        parser.add_argument(
+            "--df", action="store_true",
+            help="Enable density fitting / RI",
+        )
+        parser.add_argument(
+            "--gpu", action="store_true",
+            help="Attempt gpu4pyscf if installed",
+        )
+
+    @classmethod
+    def settings_from_args(cls, args: argparse.Namespace) -> dict[str, Any]:
+        """Pack per-call PySCF knobs into the wrapper-script POST payload."""
+        return {
+            "method": args.method,
+            "xc": args.xc,
+            "basis": args.basis,
+            "df": bool(args.df),
+            "gpu": bool(args.gpu),
+        }
+
+    @classmethod
+    def server_cli_from_options(cls, options: dict[str, Any]) -> list[str]:
+        """Translate validated YAML options into a list of ``--flag value`` tokens.
+
+        Falsy values (``None``, empty string, ``False``) are omitted so
+        the engine's ``run_block`` only emits flags the user explicitly
+        set.
+        """
+        tokens: list[str] = []
+        for key in _KEY_VALUE_FLAGS:
+            value = options.get(key)
+            if value:
+                tokens.extend([f"--{key}", str(value)])
+        for flag in _BOOL_FLAGS:
+            if options.get(flag):
+                tokens.append(f"--{flag}")
+        return tokens
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> PyscfExtOptCalculator:

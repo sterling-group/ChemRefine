@@ -25,6 +25,7 @@ import logging
 from chemrefine.engines._extopt import run_block
 from chemrefine.engines._extopt.orca_engine import ExtOptOrcaEngine
 from chemrefine.engines.base import register
+from chemrefine.engines.mlff.extopt_calc import MlffExtOptCalculator
 from chemrefine.engines.mlff.options import MlffOptions
 from chemrefine.state import StepContext
 
@@ -52,13 +53,13 @@ class MlffExtOptEngine(ExtOptOrcaEngine):
     # -- SLURM customisation ----------------------------------------------
 
     def _server_cmd(self, ctx: StepContext) -> str:
-        """Build the ``python -m ..._extopt.server --backend mlff ...`` command."""
-        options = MlffOptions.from_raw(ctx.step_cfg.options)
-        return run_block._server_command(
-            backend="mlff",
-            extra_flags=[
-                ("--model", options.model_name),
-                ("--task-name", options.task_name),
-                ("--device", options.device),
-            ],
-        )
+        """Build the ``python -m ..._extopt.server --backend mlff ...`` command.
+
+        Validates ``ctx.step_cfg.options`` through :class:`MlffOptions`
+        first (so the engine fails fast on unknown YAML keys), then
+        delegates CLI generation to
+        :meth:`MlffExtOptCalculator.server_cli_from_options`.
+        """
+        options = MlffOptions.from_raw(ctx.step_cfg.options).model_dump()
+        tokens = MlffExtOptCalculator.server_cli_from_options(options)
+        return run_block._server_command(backend="mlff", extra_tokens=tokens)

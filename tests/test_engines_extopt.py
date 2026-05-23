@@ -244,6 +244,38 @@ def test_every_registered_backend_conforms_to_base_protocol():
         assert hasattr(cls, "name")
         assert callable(cls.calc)
         assert callable(cls.from_args)
+        assert callable(cls.add_cli_args)
+        assert callable(cls.settings_from_args)
+        assert callable(cls.server_cli_from_options)
+
+
+# ---------------------------------------------------------------------------
+# Shared layer is backend-agnostic (no backend literals leaking through)
+# ---------------------------------------------------------------------------
+
+
+def test_shared_server_source_has_no_backend_specific_flags():
+    """The shared server module must not enumerate any backend's CLI flags."""
+    import re
+
+    text = Path(server.__file__).read_text(encoding="utf-8")
+    forbidden = re.compile(
+        r'--(?:model|task-name|device|model-path|method|xc|basis|df|gpu)\b'
+    )
+    matches = forbidden.findall(text)
+    assert matches == [], f"shared server leaks backend CLI flags: {matches}"
+
+
+def test_shared_client_source_has_no_backend_specific_flags():
+    """The shared client module must not enumerate any backend's CLI flags."""
+    import re
+
+    text = Path(client.__file__).read_text(encoding="utf-8")
+    forbidden = re.compile(
+        r'--(?:model|task-name|device|model-path|method|xc|basis|df|gpu)\b'
+    )
+    matches = forbidden.findall(text)
+    assert matches == [], f"shared client leaks backend CLI flags: {matches}"
 
 
 # ---------------------------------------------------------------------------

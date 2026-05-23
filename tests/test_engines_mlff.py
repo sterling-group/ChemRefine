@@ -281,6 +281,63 @@ def test_mlff_extopt_calculator_from_args_builds_instance():
     assert calc.name == "mlff"
 
 
+def test_mlff_add_cli_args_registers_mlff_flags_with_pydantic_defaults():
+    """Defaults must mirror :class:`MlffOptions` (single source of truth)."""
+    import argparse
+
+    from chemrefine.engines.mlff.extopt_calc import MlffExtOptCalculator
+    from chemrefine.engines.mlff.options import MlffOptions
+
+    parser = argparse.ArgumentParser()
+    MlffExtOptCalculator.add_cli_args(parser)
+    args = parser.parse_args([])
+    defaults = MlffOptions()
+    assert args.model is None
+    assert args.task_name == defaults.task_name
+    assert args.device == defaults.device
+    assert args.model_path is None
+
+
+def test_mlff_settings_from_args_returns_empty_dict():
+    """MLFF has no per-call client knobs to forward today."""
+    import argparse
+
+    from chemrefine.engines.mlff.extopt_calc import MlffExtOptCalculator
+
+    parser = argparse.ArgumentParser()
+    MlffExtOptCalculator.add_cli_args(parser)
+    args = parser.parse_args(["--model", "medium"])
+    assert MlffExtOptCalculator.settings_from_args(args) == {}
+
+
+def test_mlff_server_cli_from_options_emits_all_set_flags():
+    from chemrefine.engines.mlff.extopt_calc import MlffExtOptCalculator
+
+    tokens = MlffExtOptCalculator.server_cli_from_options(
+        {
+            "model_name": "medium",
+            "task_name": "mace_off",
+            "device": "cpu",
+            "model_path": "/tmp/ckpt.model",
+        }
+    )
+    assert tokens == [
+        "--model", "medium",
+        "--task-name", "mace_off",
+        "--device", "cpu",
+        "--model-path", "/tmp/ckpt.model",
+    ]
+
+
+def test_mlff_server_cli_from_options_omits_falsy_values():
+    from chemrefine.engines.mlff.extopt_calc import MlffExtOptCalculator
+
+    tokens = MlffExtOptCalculator.server_cli_from_options(
+        {"model_name": "", "task_name": None, "device": None, "model_path": None}
+    )
+    assert tokens == []
+
+
 def test_mlff_extopt_calculator_calc_converts_units():
     """``calc`` should return Hartree / Hartree-per-Bohr regardless of ASE eV units."""
     import numpy as np

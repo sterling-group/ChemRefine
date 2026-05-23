@@ -5,9 +5,10 @@ Reads the ``.extinp.tmp`` ORCA wrote, POSTs it to the shared ExtOpt
 server, and writes the returned energy + gradient back as ``.engrad``
 so ORCA can take its next step.
 
-Backend-specific knobs (PySCF's ``--method``/``--xc``/``--basis``,
-etc.) are passed as a ``settings`` block in the JSON payload — the
-shared server forwards them unchanged to the backend's ``calc()``.
+Backend-specific knobs are contributed by each backend's
+:meth:`BaseExtOptCalculator.add_cli_args` and packed into the JSON
+payload's ``settings`` block by its :meth:`settings_from_args` — the
+shared layer here forwards them unchanged.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from urllib.request import Request, urlopen
 
 from chemrefine.engines._extopt import protocol
 from chemrefine.engines._extopt.base import SERVER_URL_FILENAME
-from chemrefine.engines._extopt.registry import CALCULATORS
+from chemrefine.engines._extopt.registry import CALCULATORS, load_calculator
 from chemrefine.errors import JobFailureError
 
 DEFAULT_TIMEOUT: float = 600.0
@@ -32,7 +33,13 @@ logger = logging.getLogger(__name__)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    """Return the wrapper script's parsed CLI namespace."""
+    """Return the wrapper script's parsed CLI namespace.
+
+    Each registered backend contributes its own flags via
+    :meth:`BaseExtOptCalculator.add_cli_args`; the shared layer owns
+    only the generic skeleton (``--backend``, ``--bind``,
+    ``--url-file``, ``--tag``, ``inputfile``).
+    """
     parser = argparse.ArgumentParser(prog="chemrefine-extopt-client")
     parser.add_argument(
         "--backend", required=True, choices=sorted(CALCULATORS),
@@ -47,25 +54,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help=f"sidecar URL file (default: $WORK_DIR/{SERVER_URL_FILENAME})",
     )
     parser.add_argument("--tag", default=None, help="optional correlation tag for server log")
-    # PySCF settings (no-op for MLFF — server ignores unknown settings keys)
-    parser.add_argument("--method", default="dft", choices=["dft", "hf"])
-    parser.add_argument("--xc", default="pbe")
-    parser.add_argument("--basis", default="def2-svp")
-    parser.add_argument("--df", action="store_true")
-    parser.add_argument("--gpu", action="store_true")
+    for backend_name in sorted(CALCULATORS):
+        load_calculator(backend_name).add_cli_args(parser)
+    # ``inputfile`` is the positional; register it last so backend
+    # contributions don't interleave with it.
     parser.add_argument("inputfile", help="ORCA-written ``.extinp.tmp`` to relay")
     return parser.parse_args(argv)
 
 
 def settings_from_args(args: argparse.Namespace) -> dict[str, Any]:
-    """Pack backend-specific knobs into the payload's ``settings`` block."""
-    return {
-        "method": args.method,
-        "xc": args.xc,
-        "basis": args.basis,
-        "df": bool(args.df),
-        "gpu": bool(args.gpu),
-    }
+    """Dispatch to the selected backend's ``settings_from_args``."""
+    return load_calculator(args.backend).settings_from_args(args)
 
 
 def submit_calculation(

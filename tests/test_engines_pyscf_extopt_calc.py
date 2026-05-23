@@ -430,3 +430,65 @@ def test_extopt_calc_localized_tensors(tmp_path: Path, monkeypatch):
         _data(save_tensors=True, localized=True, tag="s0")
     )
     assert mocks["lo"].Boys.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# add_cli_args / settings_from_args / server_cli_from_options
+# ---------------------------------------------------------------------------
+
+
+def test_add_cli_args_registers_pyscf_flags_with_pydantic_defaults():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    extopt_calc.PyscfExtOptCalculator.add_cli_args(parser)
+    args = parser.parse_args([])
+    defaults = PyscfOptions()
+    assert args.method == defaults.method
+    assert args.xc == defaults.xc
+    assert args.basis == defaults.basis
+    assert args.df is False
+    assert args.gpu is False
+
+
+def test_settings_from_args_packs_all_flags():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    extopt_calc.PyscfExtOptCalculator.add_cli_args(parser)
+    args = parser.parse_args(
+        ["--method", "hf", "--xc", "b3lyp", "--basis", "cc-pvdz", "--df", "--gpu"]
+    )
+    settings = extopt_calc.PyscfExtOptCalculator.settings_from_args(args)
+    assert settings == {
+        "method": "hf",
+        "xc": "b3lyp",
+        "basis": "cc-pvdz",
+        "df": True,
+        "gpu": True,
+    }
+
+
+def test_server_cli_from_options_emits_set_flags_only():
+    """Falsy values are omitted; bool flags only emit when truthy."""
+    tokens = extopt_calc.PyscfExtOptCalculator.server_cli_from_options(
+        {"method": "dft", "xc": "pbe", "basis": "def2-svp", "df": True, "gpu": False}
+    )
+    assert tokens == [
+        "--method", "dft", "--xc", "pbe", "--basis", "def2-svp", "--df",
+    ]
+
+
+def test_server_cli_from_options_omits_falsy_values():
+    tokens = extopt_calc.PyscfExtOptCalculator.server_cli_from_options(
+        {"method": "", "xc": None, "basis": "", "df": False, "gpu": False}
+    )
+    assert tokens == []
+
+
+def test_server_cli_from_options_handles_missing_keys():
+    """A YAML options dict missing some keys must not raise; just omit them."""
+    tokens = extopt_calc.PyscfExtOptCalculator.server_cli_from_options(
+        {"xc": "b3lyp"}
+    )
+    assert tokens == ["--xc", "b3lyp"]

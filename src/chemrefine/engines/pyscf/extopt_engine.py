@@ -13,6 +13,7 @@ import logging
 from chemrefine.engines._extopt import run_block
 from chemrefine.engines._extopt.orca_engine import ExtOptOrcaEngine
 from chemrefine.engines.base import register
+from chemrefine.engines.pyscf.extopt_calc import PyscfExtOptCalculator
 from chemrefine.state import StepContext
 
 logger = logging.getLogger(__name__)
@@ -41,27 +42,16 @@ class PyscfExtOptEngine(ExtOptOrcaEngine):
     # -- SLURM customisation ----------------------------------------------
 
     def _server_cmd(self, ctx: StepContext) -> str:
-        """Build the ``python -m ..._extopt.server --backend pyscf ...`` command."""
-        options = ctx.step_cfg.options or {}
-        extra: list[tuple[str, str]] = []
-        method = options.get("method")
-        if method:
-            extra.append(("--method", str(method)))
-        xc = options.get("xc")
-        if xc:
-            extra.append(("--xc", str(xc)))
-        basis = options.get("basis")
-        if basis:
-            extra.append(("--basis", str(basis)))
-        # Boolean flags rendered as bare ``--df`` / ``--gpu``
-        bool_flags = [
-            f"--{flag}" for flag in ("df", "gpu") if options.get(flag)
-        ]
+        """Build the ``python -m ..._extopt.server --backend pyscf ...`` command.
 
-        server_cmd = run_block._server_command(backend="pyscf", extra_flags=extra)
-        if bool_flags:
-            server_cmd = f"{server_cmd} {' '.join(bool_flags)}"
-        return server_cmd
+        Delegates CLI generation to
+        :meth:`PyscfExtOptCalculator.server_cli_from_options` so the
+        flag list lives in exactly one module.
+        """
+        tokens = PyscfExtOptCalculator.server_cli_from_options(
+            ctx.step_cfg.options or {}
+        )
+        return run_block._server_command(backend="pyscf", extra_tokens=tokens)
 
     # -- Helpers -----------------------------------------------------------
 
@@ -72,13 +62,7 @@ class PyscfExtOptEngine(ExtOptOrcaEngine):
         forwards them as the ``settings`` block in each ``/calculate``
         POST so per-call overrides work without restarting the server.
         """
-        options = ctx.step_cfg.options or {}
-        parts: list[str] = []
-        for flag in ("method", "xc", "basis"):
-            value = options.get(flag)
-            if value is not None:
-                parts.append(f"--{flag} {value}")
-        for flag in ("df", "gpu"):
-            if options.get(flag):
-                parts.append(f"--{flag}")
-        return " ".join(parts)
+        tokens = PyscfExtOptCalculator.server_cli_from_options(
+            ctx.step_cfg.options or {}
+        )
+        return " ".join(tokens)
