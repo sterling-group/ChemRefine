@@ -31,6 +31,25 @@ def test_natural_key_handles_paths():
     assert natural_key("step1_structure_0.out") < natural_key("step1_structure_10.out")
 
 
+def test_natural_key_orders_three_digit_ids_numerically():
+    """Regression: >100 structures must not sort lexicographically.
+
+    Plain string sorting puts ``structure_100`` before ``structure_11``
+    before ``structure_2``; natural ordering compares the digit runs as
+    integers so the order is 2 < 11 < 100.
+    """
+    names = [
+        "step1_structure_100.out",
+        "step1_structure_2.out",
+        "step1_structure_11.out",
+    ]
+    assert sorted(names, key=natural_key) == [
+        "step1_structure_2.out",
+        "step1_structure_11.out",
+        "step1_structure_100.out",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # write_xyz round-trip
 # ---------------------------------------------------------------------------
@@ -81,6 +100,20 @@ def test_gather_output_files_returns_natural_order(tmp_path: Path):
         (tmp_path / name).touch()
     found = gather_output_files(tmp_path, "*.out")
     assert [p.name for p in found] == ["step1.out", "step2.out", "step10.out"]
+
+
+def test_gather_output_files_orders_more_than_100_structures(tmp_path: Path):
+    """Regression: a seed dir with >100 structures must glob in numeric order."""
+    for sid in (100, 2, 11, 1, 99):
+        (tmp_path / f"step1_structure_{sid}.xyz").touch()
+    found = gather_output_files(tmp_path, "*.xyz")
+    assert [p.name for p in found] == [
+        "step1_structure_1.xyz",
+        "step1_structure_2.xyz",
+        "step1_structure_11.xyz",
+        "step1_structure_99.xyz",
+        "step1_structure_100.xyz",
+    ]
 
 
 def test_gather_output_files_missing_dir_returns_empty(tmp_path: Path):
