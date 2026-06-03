@@ -41,7 +41,13 @@ class PyscfOptions(BaseModel):
     """Boys-localize occupied / virtual orbitals before tensor extraction."""
 
     tensor_folder: str = Field("tensors", min_length=1)
-    """Directory (relative to ``$WORK_DIR``) for ``save_tensors`` output."""
+    """Output directory for ``save_tensors`` ``.npz`` files.
+
+    A relative path is resolved against the server's working directory
+    (``$WORK_DIR``, the per-job scratch), which is removed when the job
+    finishes — pass an **absolute** path (e.g. under the step's output
+    directory) when the tensors must persist past the run.
+    """
 
     @field_validator("tensor_folder")
     @classmethod

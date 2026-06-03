@@ -2,9 +2,9 @@
 
 Wraps :mod:`chemrefine.engines.pyscf._runtime` so the shared ExtOpt
 server can serve PySCF gradients via the same
-:class:`BaseExtOptCalculator` contract MLFF uses. Optional active-space
+:class:`ComputeBackend` contract MLFF uses. Optional active-space
 tensor extraction is gated on the per-call ``settings['save_tensors']``
-flag (which the wrapper-script CLI flips on with ``--save-tensors``).
+flag (which the wrapper-script CLI flips on with ``--save_tensors``).
 
 The SCF + gradient body needs PySCF + (optionally) gpu4pyscf
 installed; tests under :file:`tests/test_engines_pyscf_extopt_calc.py`
@@ -18,9 +18,9 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from chemrefine.engines._extopt.base import (
-    BaseExtOptCalculator,
+from chemrefine.engines._backend_server.base import (
     CalculationData,
+    ComputeBackend,
 )
 from chemrefine.engines.pyscf import _runtime
 from chemrefine.engines.pyscf.options import PyscfOptions
@@ -30,11 +30,13 @@ logger = logging.getLogger(__name__)
 # CLI flag names. The Pydantic ``PyscfOptions`` model owns the *defaults*;
 # this tuple lists which fields are exposed on the ExtOpt CLI surface
 # (server + client + engine run_block) so the three callers stay in lockstep.
-_KEY_VALUE_FLAGS: tuple[str, ...] = ("method", "xc", "basis")
-_BOOL_FLAGS: tuple[str, ...] = ("df", "gpu")
+# Flag spelling == YAML key == Pydantic field (underscores), so the generic
+# ``--{key}`` token builder below needs no per-flag special-casing.
+_KEY_VALUE_FLAGS: tuple[str, ...] = ("method", "xc", "basis", "tensor_folder")
+_BOOL_FLAGS: tuple[str, ...] = ("df", "gpu", "save_tensors", "localized")
 
 
-class PyscfExtOptCalculator(BaseExtOptCalculator):
+class PyscfExtOptCalculator(ComputeBackend):
     """ExtOpt-side adapter for PySCF / gpu4pyscf gradient calls."""
 
     name = "pyscf"
@@ -47,12 +49,18 @@ class PyscfExtOptCalculator(BaseExtOptCalculator):
         basis: str = "def2-svp",
         df: bool = False,
         gpu: bool = False,
+        save_tensors: bool = False,
+        localized: bool = False,
+        tensor_folder: str = "tensors",
     ) -> None:
         self.method = method
         self.xc = xc
         self.basis = basis
         self.df = df
         self.gpu = gpu
+        self.save_tensors = save_tensors
+        self.localized = localized
+        self.tensor_folder = tensor_folder
 
     @classmethod
     def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:
@@ -85,6 +93,18 @@ class PyscfExtOptCalculator(BaseExtOptCalculator):
             "--gpu", action="store_true",
             help="Attempt gpu4pyscf if installed",
         )
+        parser.add_argument(
+            "--save_tensors", action="store_true",
+            help="Dump active-space 1e/2e MO tensors after the SCF",
+        )
+        parser.add_argument(
+            "--localized", action="store_true",
+            help="Boys-localize occupied / virtual orbitals before tensor extraction",
+        )
+        parser.add_argument(
+            "--tensor_folder", default=defaults.tensor_folder,
+            help="Directory (relative to $WORK_DIR) for save_tensors .npz output",
+        )
 
     @classmethod
     def settings_from_args(cls, args: argparse.Namespace) -> dict[str, Any]:
@@ -95,6 +115,9 @@ class PyscfExtOptCalculator(BaseExtOptCalculator):
             "basis": args.basis,
             "df": bool(args.df),
             "gpu": bool(args.gpu),
+            "save_tensors": bool(args.save_tensors),
+            "localized": bool(args.localized),
+            "tensor_folder": args.tensor_folder,
         }
 
     @classmethod
@@ -124,6 +147,9 @@ class PyscfExtOptCalculator(BaseExtOptCalculator):
             basis=args.basis,
             df=args.df,
             gpu=args.gpu,
+            save_tensors=args.save_tensors,
+            localized=args.localized,
+            tensor_folder=args.tensor_folder,
         )
 
     def calc(
@@ -139,9 +165,9 @@ class PyscfExtOptCalculator(BaseExtOptCalculator):
                 "basis": data.settings.get("basis", self.basis),
                 "df": bool(data.settings.get("df", self.df)),
                 "gpu": bool(data.settings.get("gpu", self.gpu)),
-                "save_tensors": bool(data.settings.get("save_tensors", False)),
-                "localized": bool(data.settings.get("localized", False)),
-                "tensor_folder": data.settings.get("tensor_folder", "tensors"),
+                "save_tensors": bool(data.settings.get("save_tensors", self.save_tensors)),
+                "localized": bool(data.settings.get("localized", self.localized)),
+                "tensor_folder": data.settings.get("tensor_folder", self.tensor_folder),
             }
         )
 
@@ -167,7 +193,10 @@ class PyscfExtOptCalculator(BaseExtOptCalculator):
         )
 
         if per_call.save_tensors:
-            tag = data.settings.get("tag") or meta.get("tag") or "untagged"
+            # ``tag`` is the per-call correlation id the bridge derives from the
+            # ``.extinp.tmp`` stem (one file per ORCA geometry step); the server
+            # injects it into ``settings`` so dumps don't overwrite each other.
+            tag = data.settings.get("tag") or "untagged"
             nuc, h1, h2 = _runtime.get_active_space_tensors(
                 mol, mf, localized=per_call.localized
             )

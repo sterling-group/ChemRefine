@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from chemrefine.engines._extopt.base import CalculationData
+from chemrefine.engines._backend_server.base import CalculationData
 from chemrefine.engines.pyscf import _runtime, extopt_calc
 from chemrefine.engines.pyscf.options import PyscfOptions
 
@@ -449,6 +449,10 @@ def test_add_cli_args_registers_pyscf_flags_with_pydantic_defaults():
     assert args.basis == defaults.basis
     assert args.df is False
     assert args.gpu is False
+    # Tensor-extraction knobs default to PyscfOptions' values.
+    assert args.save_tensors is False
+    assert args.localized is False
+    assert args.tensor_folder == defaults.tensor_folder
 
 
 def test_settings_from_args_packs_all_flags():
@@ -457,7 +461,10 @@ def test_settings_from_args_packs_all_flags():
     parser = argparse.ArgumentParser()
     extopt_calc.PyscfExtOptCalculator.add_cli_args(parser)
     args = parser.parse_args(
-        ["--method", "hf", "--xc", "b3lyp", "--basis", "cc-pvdz", "--df", "--gpu"]
+        [
+            "--method", "hf", "--xc", "b3lyp", "--basis", "cc-pvdz", "--df", "--gpu",
+            "--save_tensors", "--localized", "--tensor_folder", "mytensors",
+        ]
     )
     settings = extopt_calc.PyscfExtOptCalculator.settings_from_args(args)
     assert settings == {
@@ -466,7 +473,23 @@ def test_settings_from_args_packs_all_flags():
         "basis": "cc-pvdz",
         "df": True,
         "gpu": True,
+        "save_tensors": True,
+        "localized": True,
+        "tensor_folder": "mytensors",
     }
+
+
+def test_from_args_round_trips_tensor_knobs():
+    """``from_args`` should carry the tensor knobs onto the constructed instance."""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    extopt_calc.PyscfExtOptCalculator.add_cli_args(parser)
+    args = parser.parse_args(["--save_tensors", "--localized", "--tensor_folder", "td"])
+    calc = extopt_calc.PyscfExtOptCalculator.from_args(args)
+    assert calc.save_tensors is True
+    assert calc.localized is True
+    assert calc.tensor_folder == "td"
 
 
 def test_server_cli_from_options_emits_set_flags_only():
@@ -477,6 +500,15 @@ def test_server_cli_from_options_emits_set_flags_only():
     assert tokens == [
         "--method", "dft", "--xc", "pbe", "--basis", "def2-svp", "--df",
     ]
+
+
+def test_server_cli_from_options_emits_tensor_flags_when_set():
+    """The tensor knobs flow through the same generic token builder."""
+    tokens = extopt_calc.PyscfExtOptCalculator.server_cli_from_options(
+        {"save_tensors": True, "localized": True, "tensor_folder": "mytensors"}
+    )
+    # key-value flags first (tensor_folder), then bool flags (save_tensors, localized).
+    assert tokens == ["--tensor_folder", "mytensors", "--save_tensors", "--localized"]
 
 
 def test_server_cli_from_options_omits_falsy_values():

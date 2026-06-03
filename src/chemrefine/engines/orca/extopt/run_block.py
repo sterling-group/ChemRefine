@@ -2,7 +2,7 @@
 
 The two engines that drive ORCA through an external optimizer (MLFF and
 PySCF) emit a SLURM ``run_block`` that spins up the shared
-:mod:`chemrefine.engines._extopt.server`, polls ``/healthz`` until it is
+:mod:`chemrefine.engines._backend_server.server`, polls ``/healthz`` until it is
 ready, runs ORCA, and tears the server down on exit. This module owns
 that bash so neither engine ends up importing helpers from the other.
 """
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import shlex
 
-from chemrefine.engines._extopt.base import DEFAULT_BIND_HOST, SERVER_URL_FILENAME
+from chemrefine.engines._backend_server.base import DEFAULT_BIND_HOST, SERVER_URL_FILENAME
 
 _SERVER_READY_TIMEOUT_SECONDS: int = 120
 
@@ -21,15 +21,15 @@ def _server_command(
     backend: str,
     extra_tokens: list[str],
 ) -> str:
-    """Build the ``python -m chemrefine.engines._extopt.server ...`` command.
+    """Build the ``python -m chemrefine.engines._backend_server.server ...`` command.
 
     ``extra_tokens`` is a flat list of CLI tokens (e.g.
     ``["--foo", "bar", "--baz"]``) emitted by the backend's
-    :meth:`BaseExtOptCalculator.server_cli_from_options`. Keeping them
+    :meth:`ComputeBackend.server_cli_from_options`. Keeping them
     as one list keeps key-value flags and bool flags symmetric.
     """
     parts = [
-        "python -m chemrefine.engines._extopt.server",
+        "python -m chemrefine.engines._backend_server.server",
         f"--backend {shlex.quote(backend)}",
         f"--bind {DEFAULT_BIND_HOST}:0",
         '--url-file "$URL_FILE"',

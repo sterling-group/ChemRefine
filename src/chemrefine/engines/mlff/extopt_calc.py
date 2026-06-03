@@ -1,7 +1,7 @@
 """MLFF backend for the shared ExtOpt server.
 
 Wraps an :class:`MlffCalculator` (the ASE-style backend dispatcher in
-``calculator.py``) and exposes it as a :class:`BaseExtOptCalculator` so
+``calculator.py``) and exposes it as a :class:`ComputeBackend` so
 the shared ExtOpt server can serve MLFF gradients alongside PySCF
 gradients without duplicating any HTTP / file-I/O glue.
 """
@@ -13,13 +13,13 @@ from typing import Any
 
 from ase import Atoms
 
-from chemrefine.engines._extopt.base import (
-    BaseExtOptCalculator,
+from chemrefine.engines._backend_server.base import (
     CalculationData,
+    ComputeBackend,
 )
 from chemrefine.engines.mlff.calculator import MlffCalculator
 from chemrefine.engines.mlff.options import MlffOptions
-from chemrefine.quantities import BOHR_TO_ANGSTROM, HARTREE_TO_EV
+from chemrefine.quantities import convert
 
 # YAML key → CLI flag mapping. YAML uses ``model_name`` / ``task_name`` /
 # ``model_path`` (Pydantic-friendly underscores); the CLI uses kebab-case
@@ -33,7 +33,7 @@ _KEY_VALUE_FLAGS: tuple[tuple[str, str], ...] = (
 )
 
 
-class MlffExtOptCalculator(BaseExtOptCalculator):
+class MlffExtOptCalculator(ComputeBackend):
     """ExtOpt-side adapter for any MLFF backend ``MlffCalculator`` supports."""
 
     name = "mlff"
@@ -116,9 +116,8 @@ class MlffExtOptCalculator(BaseExtOptCalculator):
             positions=data.positions_angstrom,
         )
         energy_ev, gradient_ev_per_a = self._calculator.single_point(atoms)
-        energy_hartree = energy_ev / HARTREE_TO_EV
-        gradient_hartree_per_bohr = [
-            [component * BOHR_TO_ANGSTROM / HARTREE_TO_EV for component in row]
-            for row in gradient_ev_per_a
-        ]
+        energy_hartree = convert(energy_ev, "ev", "hartree")
+        gradient_hartree_per_bohr = convert(
+            gradient_ev_per_a, "ev/angstrom", "hartree/bohr"
+        ).tolist()
         return energy_hartree, gradient_hartree_per_bohr

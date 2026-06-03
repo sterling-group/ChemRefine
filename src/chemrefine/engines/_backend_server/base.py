@@ -1,4 +1,4 @@
-"""``BaseExtOptCalculator`` ABC + the dataclass it consumes.
+"""``ComputeBackend`` ABC + the dataclass it consumes.
 
 Every ExtOpt-served backend implements one method — :meth:`calc` — and
 returns ``(energy_hartree, gradient_hartree_per_bohr)``. The shared
@@ -23,6 +23,9 @@ from numpy.typing import NDArray
 
 DEFAULT_BIND_HOST: str = "127.0.0.1"
 """Loopback host the ExtOpt server binds to by default."""
+
+DEFAULT_BIND_PORT: int = 0
+"""``0`` asks the kernel for any free ephemeral port (collision-safe)."""
 
 SERVER_URL_FILENAME: str = "server.url"
 """Filename of the sidecar that records ``host:port`` once the server is ready."""
@@ -63,7 +66,7 @@ class CalculationData:
 
 
 @runtime_checkable
-class BaseExtOptCalculator(Protocol):
+class ComputeBackend(Protocol):
     """Contract every ExtOpt-served backend implements.
 
     Concrete backends own their CLI surface (no backend literals in the
@@ -101,7 +104,7 @@ class BaseExtOptCalculator(Protocol):
         ...
 
     @classmethod
-    def from_args(cls, args: argparse.Namespace) -> BaseExtOptCalculator:
+    def from_args(cls, args: argparse.Namespace) -> ComputeBackend:
         """Build a calculator instance from the shared server CLI namespace."""
         ...
 

@@ -8,7 +8,7 @@ Two engines ship in this package:
 * ``PyscfExtOptEngine`` (registered as ``"pyscf-extopt"``) — drives ORCA's
   external optimizer protocol with a PySCF (or gpu4pyscf) gradient
   server. The HTTP / ExtOpt plumbing lives in
-  :mod:`chemrefine.engines._extopt`; only the SCF + gradient adapter
+  :mod:`chemrefine.engines._backend_server`; only the SCF + gradient adapter
   lives here as :mod:`.extopt_calc`.
 """
 

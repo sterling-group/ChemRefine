@@ -16,11 +16,14 @@ match the rest of ChemRefine.
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
-from chemrefine.engines._extopt.base import CalculationData
-from chemrefine.quantities import BOHR_TO_ANGSTROM, HARTREE_TO_EV
+from chemrefine.engines._backend_server.base import CalculationData
+
+# ORCA ``ProgExt`` file-format suffixes: ORCA hands the wrapper ``X.extinp.tmp``
+# and reads ``X.engrad`` back. Single source for the protocol's filenames.
+EXTINP_SUFFIX = ".extinp.tmp"
+ENGRAD_SUFFIX = ".engrad"
 
 
 def read_extinp(
@@ -139,7 +142,7 @@ def write_wrapper_script(
 
     The script reads the sidecar URL file (so the wrapper picks up the
     kernel-assigned port the server bound to), then execs the shared
-    ``_extopt.client`` module to relay the call.
+    ``orca.extopt.bridge`` module to relay the call.
     """
     path = Path(path)
     extra = f" {extra_args}" if extra_args else ""
@@ -152,53 +155,9 @@ def write_wrapper_script(
         "  exit 1\n"
         "fi\n"
         'SERVER_URL=$(cat "$URL_FILE")\n'
-        "exec python -m chemrefine.engines._extopt.client "
+        "exec python -m chemrefine.engines.orca.extopt.bridge "
         f'--backend {backend} --bind "$SERVER_URL"{extra} "$1"\n'
     )
     path.write_text(script, encoding="utf-8")
     path.chmod(0o755)
     return path
-
-
-# ---------------------------------------------------------------------------
-# Sidecar URL file (kernel-assigned port handoff)
-# ---------------------------------------------------------------------------
-
-
-def write_server_url(url_file: str | Path, url: str) -> Path:
-    """Atomically write ``host:port`` to ``url_file`` (tempfile + rename)."""
-    target = Path(url_file)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=".url.", dir=target.parent)
-    try:
-        with open(fd, "w", encoding="utf-8") as fh:
-            fh.write(url)
-        Path(tmp_name).replace(target)
-    except Exception:
-        Path(tmp_name).unlink(missing_ok=True)
-        raise
-    return target
-
-
-def read_server_url(url_file: str | Path) -> str:
-    """Return the ``host:port`` previously written by :func:`write_server_url`."""
-    return Path(url_file).read_text(encoding="utf-8").strip()
-
-
-# ---------------------------------------------------------------------------
-# Convenience: ASE Atoms → (energy_hartree, gradient_hartree_per_bohr)
-# ---------------------------------------------------------------------------
-
-
-def atoms_to_payload(atoms) -> tuple[float, list[list[float]]]:
-    """Convert an ASE-evaluated ``atoms`` into ChemRefine units.
-
-    ASE reports energies in eV and forces in eV/Å; ORCA's
-    ``.engrad`` wants Hartree and Hartree/Bohr. The negative sign on
-    forces flips them into ``-∂E/∂x`` gradient convention.
-    """
-    energy_ev = atoms.get_potential_energy()
-    forces_ev_per_a = atoms.get_forces()
-    energy_hartree = energy_ev / HARTREE_TO_EV
-    gradient = (-forces_ev_per_a * BOHR_TO_ANGSTROM / HARTREE_TO_EV).tolist()
-    return energy_hartree, gradient

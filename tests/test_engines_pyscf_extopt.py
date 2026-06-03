@@ -62,27 +62,35 @@ def _pyscf_ctx(tmp_path: Path, **option_overrides) -> StepContext:
         multiplicity=1,
         max_cores=2,
         slurm_template="cpu.slurm.header",
-        orca_executable="orca",
+        executables={},
     )
 
 
-def test_pyscf_extra_blocks_carries_method_settings(tmp_path: Path):
+def test_pyscf_extra_blocks_point_progext_at_wrapper_without_ext_params(tmp_path: Path):
+    """Settings ride the wrapper (single channel); the ``.inp`` carries no ``Ext_Params``."""
     engine = get_engine("pyscf-extopt")
     ctx = _pyscf_ctx(tmp_path, basis="cc-pvdz", xc="b3lyp")
     extra = engine._extra_blocks(ctx)
     assert "%method" in extra
     assert "ProgExt" in extra
     assert "pyscf_extopt.sh" in extra
-    assert "--basis cc-pvdz" in extra
-    assert "--xc b3lyp" in extra
+    # Settings are baked into the wrapper, not duplicated into the ORCA input.
+    assert "Ext_Params" not in extra
+    assert "--basis" not in extra
 
 
-def test_pyscf_extra_blocks_includes_gpu_and_df_flags(tmp_path: Path):
+def test_pyscf_wrapper_bakes_gpu_and_df_flags(tmp_path: Path):
+    """The bool flags reach the client via the generated wrapper, not the ``.inp``."""
+    import os
+
     engine = get_engine("pyscf-extopt")
     ctx = _pyscf_ctx(tmp_path, df=True, gpu=True)
-    extra = engine._extra_blocks(ctx)
-    assert "--df" in extra
-    assert "--gpu" in extra
+    engine.prepare(ctx)
+    wrapper = engine._wrapper_path(ctx)
+    assert os.access(wrapper, os.X_OK)
+    text = wrapper.read_text()
+    assert "--df" in text
+    assert "--gpu" in text
 
 
 def test_pyscf_run_block_starts_shared_extopt_server(tmp_path: Path):
@@ -93,7 +101,7 @@ def test_pyscf_run_block_starts_shared_extopt_server(tmp_path: Path):
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
     )
-    assert "python -m chemrefine.engines._extopt.server" in run_block
+    assert "python -m chemrefine.engines._backend_server.server" in run_block
     assert "--backend pyscf" in run_block
     assert "--method dft" in run_block
     assert "--xc pbe" in run_block
@@ -110,6 +118,29 @@ def test_pyscf_run_block_emits_gpu_and_df_when_set(tmp_path: Path):
     )
     assert "--df" in run_block
     assert "--gpu" in run_block
+
+
+def test_pyscf_save_tensors_reaches_server_cmd_and_wrapper(tmp_path: Path):
+    """``options: {save_tensors: true, ...}`` must reach both the server launch and
+    the wrapper's client args so the dark tensor-export path is actually wired."""
+    import os
+
+    engine = get_engine("pyscf-extopt")
+    ctx = _pyscf_ctx(tmp_path, save_tensors=True, localized=True, tensor_folder="td")
+    run_block = engine._run_block(
+        ctx,
+        inp_path=ctx.step_dir / "step1_structure_0.inp",
+        out_path=ctx.step_dir / "step1_structure_0.out",
+    )
+    assert "--save_tensors" in run_block
+    assert "--localized" in run_block
+    assert "--tensor_folder td" in run_block
+
+    engine.prepare(ctx)
+    wrapper_text = engine._wrapper_path(ctx).read_text()
+    assert os.access(engine._wrapper_path(ctx), os.X_OK)
+    assert "--save_tensors" in wrapper_text
+    assert "--tensor_folder td" in wrapper_text
 
 
 def test_pyscf_run_block_omits_optional_flags_when_unset(tmp_path: Path):
@@ -151,13 +182,34 @@ def test_pyscf_prepare_writes_inp_with_method_block(tmp_path: Path):
     assert "pyscf_extopt.sh" in inp_text
 
 
+def test_pyscf_prepare_materializes_executable_wrapper(tmp_path: Path):
+    """The ``ProgExt`` wrapper the ``.inp`` points at must actually be written."""
+    import os
+
+    engine = get_engine("pyscf-extopt")
+    ctx = _pyscf_ctx(tmp_path, basis="cc-pvdz", xc="b3lyp")
+    engine.prepare(ctx)
+
+    wrapper = engine._wrapper_path(ctx)
+    assert wrapper.is_file()
+    assert os.access(wrapper, os.X_OK)
+
+    text = wrapper.read_text()
+    assert "chemrefine.engines.orca.extopt.bridge" in text
+    assert "--backend pyscf" in text
+    # Per-call settings from step.options are baked into the wrapper so each
+    # gradient call honours the YAML instead of falling back to defaults.
+    assert "--basis cc-pvdz" in text
+    assert "--xc b3lyp" in text
+
+
 # ---------------------------------------------------------------------------
 # PyscfExtOptCalculator — full coverage lives in tests/test_engines_pyscf_extopt_calc.py
 # ---------------------------------------------------------------------------
 
 
 def test_pyscf_extopt_calculator_from_args_round_trips():
-    from chemrefine.engines._extopt.server import parse_args
+    from chemrefine.engines._backend_server.server import parse_args
     from chemrefine.engines.pyscf.extopt_calc import PyscfExtOptCalculator
 
     args = parse_args([

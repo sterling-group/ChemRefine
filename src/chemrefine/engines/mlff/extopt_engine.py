@@ -9,8 +9,8 @@ SLURM, output parser) and only differs in two ways:
    ExtOpt HTTP server and pipes the resulting energy + gradient back as
    ``.engrad``.
 2. The SLURM ``run_block`` (assembled by
-   :class:`~chemrefine.engines._extopt.orca_engine.ExtOptOrcaEngine`)
-   starts the shared :mod:`chemrefine.engines._extopt.server` with
+   :class:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine`)
+   starts the shared :mod:`chemrefine.engines._backend_server.server` with
    ``--backend mlff`` before ORCA, probes ``/healthz`` until the server
    is ready, and tears it down on exit.
 
@@ -22,11 +22,11 @@ from __future__ import annotations
 
 import logging
 
-from chemrefine.engines._extopt import run_block
-from chemrefine.engines._extopt.orca_engine import ExtOptOrcaEngine
 from chemrefine.engines.base import register
 from chemrefine.engines.mlff.extopt_calc import MlffExtOptCalculator
 from chemrefine.engines.mlff.options import MlffOptions
+from chemrefine.engines.orca.extopt import run_block
+from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
 from chemrefine.state import StepContext
 
 logger = logging.getLogger(__name__)
@@ -37,6 +37,7 @@ class MlffExtOptEngine(ExtOptOrcaEngine):
     """ORCA optimisation backed by an MLFF gradient server."""
 
     name = "mlff-extopt"
+    backend = "mlff"
     wrapper_filename = "mlff_extopt.sh"
 
     # -- ORCA input customisation -----------------------------------------
@@ -53,7 +54,7 @@ class MlffExtOptEngine(ExtOptOrcaEngine):
     # -- SLURM customisation ----------------------------------------------
 
     def _server_cmd(self, ctx: StepContext) -> str:
-        """Build the ``python -m ..._extopt.server --backend mlff ...`` command.
+        """Build the ``python -m ..._backend_server.server --backend mlff ...`` command.
 
         Validates ``ctx.step_cfg.options`` through :class:`MlffOptions`
         first (so the engine fails fast on unknown YAML keys), then
@@ -62,4 +63,4 @@ class MlffExtOptEngine(ExtOptOrcaEngine):
         """
         options = MlffOptions.from_raw(ctx.step_cfg.options).model_dump()
         tokens = MlffExtOptCalculator.server_cli_from_options(options)
-        return run_block._server_command(backend="mlff", extra_tokens=tokens)
+        return run_block._server_command(backend=self.backend, extra_tokens=tokens)

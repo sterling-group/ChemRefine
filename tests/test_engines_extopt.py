@@ -1,15 +1,15 @@
-"""Tests for the shared ``engines/_extopt`` infrastructure.
+"""Tests for the shared ``engines (_backend_server + orca/extopt)`` infrastructure.
 
 Covers:
 
-* :mod:`chemrefine.engines._extopt.protocol` — ``.extinp.tmp``,
+* :mod:`chemrefine.engines.orca.extopt.protocol` — ``.extinp.tmp``,
   ``.engrad``, wrapper script, and sidecar URL helpers.
-* :mod:`chemrefine.engines._extopt.server` — CLI parsing + Flask app
+* :mod:`chemrefine.engines._backend_server.server` — CLI parsing + Flask app
   factory (with a mock backend).
-* :mod:`chemrefine.engines._extopt.client` — CLI parsing, HTTP RPC,
+* :mod:`chemrefine.engines.orca.extopt.bridge` — CLI parsing, HTTP RPC,
   and the ``main`` glue end-to-end.
-* :mod:`chemrefine.engines._extopt.registry` — every registered
-  backend imports + conforms to the BaseExtOptCalculator contract.
+* :mod:`chemrefine.engines._backend_server.registry` — every registered
+  backend imports + conforms to the ComputeBackend contract.
 """
 
 from __future__ import annotations
@@ -23,12 +23,13 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from chemrefine.engines._extopt import client, protocol, registry, server
-from chemrefine.engines._extopt.base import (
+from chemrefine.engines._backend_server import registry, server, sidecar
+from chemrefine.engines._backend_server.base import (
     DEFAULT_BIND_HOST,
     SERVER_URL_FILENAME,
     CalculationData,
 )
+from chemrefine.engines.orca.extopt import bridge, protocol
 from chemrefine.errors import JobFailureError
 
 # ---------------------------------------------------------------------------
@@ -157,7 +158,7 @@ def test_write_wrapper_script_emits_exec_call_and_is_executable(tmp_path: Path):
     text = out.read_text(encoding="utf-8")
     assert "#!/usr/bin/env bash" in text
     assert 'URL_FILE="' + str(url_file) + '"' in text
-    assert "chemrefine.engines._extopt.client" in text
+    assert "chemrefine.engines.orca.extopt.bridge" in text
     assert "--backend mlff" in text
     assert out.stat().st_mode & 0o100  # owner-execute bit
 
@@ -171,6 +172,43 @@ def test_write_wrapper_script_threads_extra_args(tmp_path: Path):
     assert "--method dft --xc pbe" in out.read_text(encoding="utf-8")
 
 
+def test_extopt_modules_have_main_entry_guard():
+    """server + client must be runnable via ``python -m`` — the run_block starts the
+    server with ``python -m ..._backend_server.server`` and the wrapper calls
+    ``python -m ...orca.extopt.bridge``, so both need an ``if __name__ == '__main__'``
+    guard that invokes ``main()``. Without it the module imports and exits 0 without
+    starting, and the ExtOpt server "crashes during startup".
+    """
+    from chemrefine.engines._backend_server import server
+    from chemrefine.engines.orca.extopt import bridge
+
+    for mod in (server, bridge):
+        src = Path(mod.__file__).read_text(encoding="utf-8")
+        assert 'if __name__ == "__main__":' in src, f"{mod.__name__} missing -m entry guard"
+        assert "main()" in src
+
+
+def test_wrapper_passes_input_file_as_final_positional(tmp_path: Path):
+    """Argv contract: ORCA's input file ("$1") is the client's sole positional.
+
+    Settings ride as ``--flag`` options *before* it, so the client parses the
+    ``.extinp.tmp`` as its positional no matter how many settings are baked in.
+    This is the contract that lets us drop ORCA ``Ext_Params`` and keep one
+    settings channel. (Confirm against a real ORCA ``ProgExt`` run.)
+    """
+    out = tmp_path / "pyscf_extopt.sh"
+    protocol.write_wrapper_script(
+        path=out, backend="pyscf", url_file=tmp_path / "u",
+        extra_args="--method dft --xc pbe",
+    )
+    exec_line = next(
+        ln for ln in out.read_text(encoding="utf-8").splitlines() if ln.startswith("exec ")
+    )
+    assert exec_line.rstrip().endswith('"$1"')
+    assert "--backend pyscf" in exec_line
+    assert "--method dft --xc pbe" in exec_line
+
+
 # ---------------------------------------------------------------------------
 # Sidecar URL file
 # ---------------------------------------------------------------------------
@@ -178,39 +216,18 @@ def test_write_wrapper_script_threads_extra_args(tmp_path: Path):
 
 def test_write_and_read_server_url_round_trip(tmp_path: Path):
     target = tmp_path / "subdir" / "server.url"
-    protocol.write_server_url(target, "127.0.0.1:54321")
-    assert protocol.read_server_url(target) == "127.0.0.1:54321"
+    sidecar.write_server_url(target, "127.0.0.1:54321")
+    assert sidecar.read_server_url(target) == "127.0.0.1:54321"
 
 
 def test_write_server_url_cleans_up_temp_on_failure(tmp_path: Path):
     """A rename failure should remove the tempfile (no leftovers)."""
     target = tmp_path / "server.url"
     with patch("os.replace", side_effect=OSError("denied")), pytest.raises(OSError):
-        protocol.write_server_url(target, "x:1")
+        sidecar.write_server_url(target, "x:1")
     # Ensure no tempfiles linger
     leftovers = [p for p in tmp_path.iterdir() if p.name.startswith(".url.")]
     assert leftovers == []
-
-
-# ---------------------------------------------------------------------------
-# atoms_to_payload
-# ---------------------------------------------------------------------------
-
-
-def test_atoms_to_payload_converts_units(tmp_path: Path):
-    """eV → Hartree for energy, eV/Å → Hartree/Bohr for gradient."""
-
-    class _FakeAtoms:
-        def get_potential_energy(self):
-            return -27.211386245988  # exactly -1 Hartree
-
-        def get_forces(self):
-            return np.array([[1.0, 0.0, 0.0]])
-
-    energy_h, grad = protocol.atoms_to_payload(_FakeAtoms())
-    assert energy_h == pytest.approx(-1.0, rel=1e-12)
-    # 1 eV/Å force → -1 eV/Å gradient → in Hartree/Bohr:
-    assert grad[0][0] == pytest.approx(-1.0 * 0.529177210903 / 27.211386245988, rel=1e-12)
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +250,7 @@ def test_load_calculator_unknown_raises_keyerror():
 
 
 def test_every_registered_backend_conforms_to_base_protocol():
-    """Loaded backends should be ``BaseExtOptCalculator``-conformant classes.
+    """Loaded backends should be ``ComputeBackend``-conformant classes.
 
     We only check class-level shape (``name`` + ``calc`` + ``from_args``)
     here — real instantiation requires backend dependencies (torch /
@@ -270,7 +287,7 @@ def test_shared_client_source_has_no_backend_specific_flags():
     """The shared client module must not enumerate any backend's CLI flags."""
     import re
 
-    text = Path(client.__file__).read_text(encoding="utf-8")
+    text = Path(bridge.__file__).read_text(encoding="utf-8")
     forbidden = re.compile(
         r'--(?:model|task-name|device|model-path|method|xc|basis|df|gpu)\b'
     )
@@ -382,7 +399,7 @@ def test_create_app_logs_with_correlation_tag(caplog):
     """``payload['tag']`` should appear in the server's INFO log line."""
     import logging
 
-    caplog.set_level(logging.INFO, logger="chemrefine.engines._extopt.server")
+    caplog.set_level(logging.INFO, logger="chemrefine.engines._backend_server.server")
     app = server.create_app(_MockCalculator())
     app.test_client().post(
         "/calculate",
@@ -394,6 +411,32 @@ def test_create_app_logs_with_correlation_tag(caplog):
     assert any("req=req-abc" in rec.message for rec in caplog.records)
 
 
+def test_calculate_route_folds_top_level_tag_into_settings():
+    """The bridge sends ``tag`` at the payload top level; the server folds it into
+    ``settings`` so backends (e.g. PySCF tensor dumps) read it via the one
+    ``settings`` channel without a separate argument."""
+    captured: dict = {}
+
+    class _Recorder:
+        name = "rec"
+
+        def calc(self, data: CalculationData) -> tuple[float, list[list[float]]]:
+            captured["settings"] = dict(data.settings)
+            return 0.0, []
+
+    app = server.create_app(_Recorder())
+    app.test_client().post(
+        "/calculate",
+        json={
+            "atom_types": ["H"], "coordinates": [[0, 0, 0]],
+            "charge": 0, "mult": 1, "nthreads": 1,
+            "settings": {"method": "dft"}, "tag": "step3_structure_0",
+        },
+    )
+    assert captured["settings"]["tag"] == "step3_structure_0"
+    assert captured["settings"]["method"] == "dft"  # existing settings preserved
+
+
 # ---------------------------------------------------------------------------
 # Client CLI + HTTP RPC
 # ---------------------------------------------------------------------------
@@ -401,11 +444,11 @@ def test_create_app_logs_with_correlation_tag(caplog):
 
 def test_client_parse_args_requires_backend_and_inputfile():
     with pytest.raises(SystemExit):
-        client.parse_args(["job.extinp.tmp"])  # missing --backend
+        bridge.parse_args(["job.extinp.tmp"])  # missing --backend
 
 
 def test_client_parse_args_defaults():
-    args = client.parse_args(["--backend", "mlff", "job.extinp.tmp"])
+    args = bridge.parse_args(["--backend", "mlff", "job.extinp.tmp"])
     assert args.backend == "mlff"
     assert args.bind is None
     assert args.url_file is None
@@ -414,16 +457,19 @@ def test_client_parse_args_defaults():
 
 
 def test_client_settings_from_args_round_trip():
-    args = client.parse_args(
+    args = bridge.parse_args(
         ["--backend", "pyscf", "--method", "hf", "--basis", "cc-pvdz", "--df", "--gpu", "f"]
     )
-    settings = client.settings_from_args(args)
+    settings = bridge.settings_from_args(args)
     assert settings == {
         "method": "hf",
         "xc": "pbe",
         "basis": "cc-pvdz",
         "df": True,
         "gpu": True,
+        "save_tensors": False,
+        "localized": False,
+        "tensor_folder": "tensors",
     }
 
 
@@ -441,9 +487,9 @@ def _data() -> CalculationData:
 
 def test_submit_calculation_round_trip():
     expected = b'{"energy": -1.5, "gradient": [[0.0, 0.0, 0.0]]}'
-    with patch.object(client, "urlopen") as mock_open:
+    with patch.object(bridge, "urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(expected)
-        energy, gradient = client.submit_calculation(
+        energy, gradient = bridge.submit_calculation(
             server_url="127.0.0.1:54321", data=_data(),
         )
     assert energy == -1.5
@@ -455,41 +501,41 @@ def test_submit_calculation_http_error_becomes_jobfailure():
 
     err = HTTPError("http://x/calculate", 500, "internal", {}, None)
     with (
-        patch.object(client, "urlopen", side_effect=err),
+        patch.object(bridge, "urlopen", side_effect=err),
         pytest.raises(JobFailureError, match="HTTP 500"),
     ):
-        client.submit_calculation(server_url="x", data=_data())
+        bridge.submit_calculation(server_url="x", data=_data())
 
 
 def test_submit_calculation_url_error_becomes_jobfailure():
     from urllib.error import URLError
 
     with (
-        patch.object(client, "urlopen", side_effect=URLError("refused")),
+        patch.object(bridge, "urlopen", side_effect=URLError("refused")),
         pytest.raises(JobFailureError, match="unreachable"),
     ):
-        client.submit_calculation(server_url="x", data=_data())
+        bridge.submit_calculation(server_url="x", data=_data())
 
 
 def test_submit_calculation_non_json_response_becomes_jobfailure():
-    with patch.object(client, "urlopen") as mock_open:
+    with patch.object(bridge, "urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(b"<html>")
         with pytest.raises(JobFailureError, match="non-JSON"):
-            client.submit_calculation(server_url="x", data=_data())
+            bridge.submit_calculation(server_url="x", data=_data())
 
 
 def test_submit_calculation_error_field_becomes_jobfailure():
-    with patch.object(client, "urlopen") as mock_open:
+    with patch.object(bridge, "urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(b'{"error": "boom"}')
         with pytest.raises(JobFailureError, match="boom"):
-            client.submit_calculation(server_url="x", data=_data())
+            bridge.submit_calculation(server_url="x", data=_data())
 
 
 def test_submit_calculation_missing_fields_becomes_jobfailure():
-    with patch.object(client, "urlopen") as mock_open:
+    with patch.object(bridge, "urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(b'{"foo": 1}')
         with pytest.raises(JobFailureError, match="missing fields"):
-            client.submit_calculation(server_url="x", data=_data())
+            bridge.submit_calculation(server_url="x", data=_data())
 
 
 def test_submit_calculation_threads_tag_into_payload():
@@ -510,30 +556,39 @@ def test_submit_calculation_threads_tag_into_payload():
         captured["payload"] = json.loads(req.data.decode())
         return _FakeResp()
 
-    with patch.object(client, "urlopen", side_effect=_fake_urlopen):
-        client.submit_calculation(server_url="x", data=_data(), tag="abc-123")
+    with patch.object(bridge, "urlopen", side_effect=_fake_urlopen):
+        bridge.submit_calculation(server_url="x", data=_data(), tag="abc-123")
     assert captured["payload"]["tag"] == "abc-123"
 
 
 def test_resolve_server_url_prefers_explicit_bind(tmp_path: Path):
-    args = client.parse_args(["--backend", "mlff", "--bind", "1.2.3.4:5", "x"])
-    assert client.resolve_server_url(args) == "1.2.3.4:5"
+    args = bridge.parse_args(["--backend", "mlff", "--bind", "1.2.3.4:5", "x"])
+    assert bridge.resolve_server_url(args) == "1.2.3.4:5"
 
 
 def test_resolve_server_url_reads_url_file(tmp_path: Path):
     url_file = tmp_path / "server.url"
     url_file.write_text("127.0.0.1:9999\n", encoding="utf-8")
-    args = client.parse_args(["--backend", "mlff", "--url-file", str(url_file), "x"])
-    assert client.resolve_server_url(args) == "127.0.0.1:9999"
+    args = bridge.parse_args(["--backend", "mlff", "--url-file", str(url_file), "x"])
+    assert bridge.resolve_server_url(args) == "127.0.0.1:9999"
 
 
 def test_client_engrad_path_for_strips_extinp_tmp():
-    assert client._engrad_path_for("a/b/foo.extinp.tmp") == Path("a/b/foo.engrad")
+    assert bridge._engrad_path_for("a/b/foo.extinp.tmp") == Path("a/b/foo.engrad")
 
 
 def test_client_engrad_path_for_falls_back_to_with_suffix():
     """An input without ``.extinp.tmp`` still gets ``.engrad`` via ``with_suffix``."""
-    assert client._engrad_path_for("foo.tmp") == Path("foo.engrad")
+    assert bridge._engrad_path_for("foo.tmp") == Path("foo.engrad")
+
+
+def test_client_tag_for_strips_double_extinp_suffix():
+    """``_tag_for`` strips the full ``.extinp.tmp`` (not just ``.tmp``)."""
+    assert bridge._tag_for("a/b/step3_structure_0.extinp.tmp") == "step3_structure_0"
+
+
+def test_client_tag_for_falls_back_to_stem():
+    assert bridge._tag_for("foo.bar") == "foo"
 
 
 # ---------------------------------------------------------------------------
@@ -549,13 +604,13 @@ def test_client_main_writes_engrad(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(
         "sys.argv",
-        ["client.py", "--backend", "mlff", "--url-file", str(url_file), str(inp)],
+        ["bridge.py", "--backend", "mlff", "--url-file", str(url_file), str(inp)],
     )
 
     expected = b'{"energy": -1.0, "gradient": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]}'
-    with patch.object(client, "urlopen") as mock_open:
+    with patch.object(bridge, "urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(expected)
-        rc = client.main()
+        rc = bridge.main()
     assert rc == 0
     engrad = tmp_path / "step1_structure_0.engrad"
     assert engrad.is_file()
@@ -564,14 +619,45 @@ def test_client_main_writes_engrad(tmp_path: Path, monkeypatch):
     assert "Gradient [Eh/Bohr]" in text
 
 
+def test_client_main_tags_calls_with_extinp_jobname(tmp_path: Path, monkeypatch):
+    """Without an explicit ``--tag``, ``main`` derives a per-structure tag from the
+    ``.extinp.tmp`` jobname so per-call artefacts land in a per-structure file."""
+    inp = _write_extinp(tmp_path)  # writes step1_structure_0.extinp.tmp
+    url_file = tmp_path / "server.url"
+    url_file.write_text("127.0.0.1:1234\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "sys.argv",
+        ["bridge.py", "--backend", "mlff", "--url-file", str(url_file), str(inp)],
+    )
+    captured: dict = {}
+
+    class _Resp(BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _stub(req, timeout):
+        captured["payload"] = json.loads(req.data.decode())
+        return _Resp(b'{"energy": -1.0, "gradient": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]}')
+
+    with patch.object(bridge, "urlopen", side_effect=_stub):
+        rc = bridge.main()
+    assert rc == 0
+    assert captured["payload"]["tag"] == "step1_structure_0"
+
+
 # ---------------------------------------------------------------------------
 # Server main — end-to-end with fake waitress + mace
 # ---------------------------------------------------------------------------
 
 
 def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
-    """``main()`` parses argv, binds a real socket for port discovery,
-    writes the sidecar URL, then calls ``waitress.serve(server)``."""
+    """``main()`` parses argv, binds a real socket for port discovery, writes the
+    sidecar URL, then runs the server **on that pre-bound socket** via
+    ``create_server(...).run()`` (not ``waitress.serve``, which would start a
+    second server on the default port and leave the advertised port dead)."""
     import sys
     import types
     from unittest.mock import MagicMock, patch
@@ -586,12 +672,10 @@ def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
     monkeypatch.setitem(sys.modules, "mace", mace_parent)
     monkeypatch.setitem(sys.modules, "mace.calculators", mace_mod)
 
-    # Fake waitress + waitress.server.
+    # Fake waitress.server.create_server -> a server whose .run() blocks IRL.
     fake_server = MagicMock()
     create_server_mock = MagicMock(return_value=fake_server)
-    serve_mock = MagicMock()
     waitress_mod = types.ModuleType("waitress")
-    waitress_mod.serve = serve_mock
     waitress_server_mod = types.ModuleType("waitress.server")
     waitress_server_mod.create_server = create_server_mock
     waitress_mod.server = waitress_server_mod
@@ -620,5 +704,5 @@ def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
         rc = server.main()
     assert rc == 0
     create_server_mock.assert_called_once()
-    serve_mock.assert_called_once_with(fake_server)
+    fake_server.run.assert_called_once_with()
     assert url_file.read_text(encoding="utf-8") == "127.0.0.1:54321"

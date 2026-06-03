@@ -6,7 +6,7 @@ server, and writes the returned energy + gradient back as ``.engrad``
 so ORCA can take its next step.
 
 Backend-specific knobs are contributed by each backend's
-:meth:`BaseExtOptCalculator.add_cli_args` and packed into the JSON
+:meth:`ComputeBackend.add_cli_args` and packed into the JSON
 payload's ``settings`` block by its :meth:`settings_from_args` — the
 shared layer here forwards them unchanged.
 """
@@ -21,9 +21,10 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from chemrefine.engines._extopt import protocol
-from chemrefine.engines._extopt.base import SERVER_URL_FILENAME
-from chemrefine.engines._extopt.registry import CALCULATORS, load_calculator
+from chemrefine.engines._backend_server import sidecar
+from chemrefine.engines._backend_server.base import SERVER_URL_FILENAME
+from chemrefine.engines._backend_server.registry import CALCULATORS, load_calculator
+from chemrefine.engines.orca.extopt import protocol
 from chemrefine.errors import JobFailureError
 
 DEFAULT_TIMEOUT: float = 600.0
@@ -36,14 +37,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     """Return the wrapper script's parsed CLI namespace.
 
     Each registered backend contributes its own flags via
-    :meth:`BaseExtOptCalculator.add_cli_args`; the shared layer owns
+    :meth:`ComputeBackend.add_cli_args`; the shared layer owns
     only the generic skeleton (``--backend``, ``--bind``,
     ``--url-file``, ``--tag``, ``inputfile``).
     """
-    parser = argparse.ArgumentParser(prog="chemrefine-extopt-client")
+    parser = argparse.ArgumentParser(prog="chemrefine-extopt-bridge")
     parser.add_argument(
         "--backend", required=True, choices=sorted(CALCULATORS),
-        help="which BaseExtOptCalculator the server is running",
+        help="which ComputeBackend the server is running",
     )
     parser.add_argument(
         "--bind", default=None,
@@ -116,9 +117,25 @@ def submit_calculation(
 
 def _engrad_path_for(inputfile: str) -> Path:
     """ORCA writes ``X.extinp.tmp`` and reads ``X.engrad`` back — rewrite the suffix."""
-    if inputfile.endswith(".extinp.tmp"):
-        return Path(inputfile[: -len(".extinp.tmp")] + ".engrad")
-    return Path(inputfile).with_suffix(".engrad")
+    if inputfile.endswith(protocol.EXTINP_SUFFIX):
+        return Path(inputfile[: -len(protocol.EXTINP_SUFFIX)] + protocol.ENGRAD_SUFFIX)
+    return Path(inputfile).with_suffix(protocol.ENGRAD_SUFFIX)
+
+
+def _tag_for(inputfile: str) -> str:
+    """Per-call correlation tag = the ORCA jobname (``.extinp.tmp`` stripped).
+
+    ORCA reuses the same ``<job>.extinp.tmp`` for every geometry step of one
+    optimisation, so this tags all calls of one structure with that structure's
+    name. Backends that dump per-call artefacts (e.g. PySCF active-space tensors)
+    then write one file per structure, holding the converged-geometry result
+    (last write wins) instead of overwriting a single shared file across
+    structures.
+    """
+    name = Path(inputfile).name
+    if name.endswith(protocol.EXTINP_SUFFIX):
+        return name[: -len(protocol.EXTINP_SUFFIX)]
+    return Path(inputfile).stem
 
 
 def resolve_server_url(args: argparse.Namespace) -> str:
@@ -129,7 +146,7 @@ def resolve_server_url(args: argparse.Namespace) -> str:
 
     default_dir = Path(os.environ.get("WORK_DIR", "."))
     url_file = args.url_file or str(default_dir / SERVER_URL_FILENAME)
-    return protocol.read_server_url(url_file)
+    return sidecar.read_server_url(url_file)
 
 
 def main() -> int:
@@ -140,7 +157,7 @@ def main() -> int:
     server_url = resolve_server_url(args)
     data = protocol.read_extinp(args.inputfile, settings=settings_from_args(args))
     energy, gradient = submit_calculation(
-        server_url=server_url, data=data, tag=args.tag
+        server_url=server_url, data=data, tag=args.tag or _tag_for(args.inputfile)
     )
     engrad_path = _engrad_path_for(args.inputfile)
     protocol.write_engrad(
@@ -151,3 +168,7 @@ def main() -> int:
         dograd=data.dograd,
     )
     return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

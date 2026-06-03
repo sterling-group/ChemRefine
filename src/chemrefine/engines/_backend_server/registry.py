@@ -4,14 +4,14 @@ Looked up by :mod:`.server` (to choose which backend to instantiate)
 and consulted by :mod:`.client` (for the ``--backend`` CLI choice).
 
 Adding a third backend is: write ``engines/<name>/extopt_calc.py`` with
-a ``BaseExtOptCalculator``-conforming class, then add one line here.
+a ``ComputeBackend``-conforming class, then add one line here.
 """
 
 from __future__ import annotations
 
 import importlib
 
-from chemrefine.engines._extopt.base import BaseExtOptCalculator
+from chemrefine.engines._backend_server.base import ComputeBackend
 
 CALCULATORS: dict[str, str] = {
     "mlff": "chemrefine.engines.mlff.extopt_calc:MlffExtOptCalculator",
@@ -19,8 +19,8 @@ CALCULATORS: dict[str, str] = {
 }
 
 
-def load_calculator(name: str) -> type[BaseExtOptCalculator]:
-    """Return the ``BaseExtOptCalculator`` class registered under ``name``.
+def load_calculator(name: str) -> type[ComputeBackend]:
+    """Return the ``ComputeBackend`` class registered under ``name``.
 
     Raises :class:`KeyError` if ``name`` isn't in :data:`CALCULATORS`,
     :class:`ImportError` if the target module doesn't exist, or

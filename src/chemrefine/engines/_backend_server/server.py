@@ -1,9 +1,9 @@
-"""Shared Flask + waitress ExtOpt server.
+"""Shared Flask + waitress backend compute server.
 
 Dispatches to one backend per process. The :func:`parse_args` CLI is
 **backend-agnostic** at the shared layer; each registered backend
 contributes its own flags via
-:meth:`BaseExtOptCalculator.add_cli_args`. Kernel-assigned ports
+:meth:`ComputeBackend.add_cli_args`. Kernel-assigned ports
 (``--bind 127.0.0.1:0``) are the default so multiple SLURM jobs on
 the same node never collide on a hardcoded port; the actual
 ``host:port`` is recorded to a sidecar URL file so the wrapper
@@ -21,34 +21,32 @@ import logging
 import socket
 from typing import TYPE_CHECKING, Any
 
-from chemrefine.engines._extopt.base import (
+from chemrefine.engines._backend_server.base import (
     DEFAULT_BIND_HOST,
+    DEFAULT_BIND_PORT,
     SERVER_URL_FILENAME,
-    BaseExtOptCalculator,
     CalculationData,
+    ComputeBackend,
 )
-from chemrefine.engines._extopt.registry import CALCULATORS, load_calculator
+from chemrefine.engines._backend_server.registry import CALCULATORS, load_calculator
 
 if TYPE_CHECKING:
     from flask import Flask
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BIND_PORT: int = 0
-"""``0`` asks the kernel for any free ephemeral port (collision-safe)."""
-
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     """Return the shared server's parsed CLI namespace.
 
     Backend-specific flags come from each registered backend's
-    :meth:`BaseExtOptCalculator.add_cli_args`; the shared layer here
+    :meth:`ComputeBackend.add_cli_args`; the shared layer here
     owns only the generic flags every backend shares.
     """
-    parser = argparse.ArgumentParser(prog="chemrefine-extopt-server")
+    parser = argparse.ArgumentParser(prog="chemrefine-backend-server")
     parser.add_argument(
         "--backend", required=True, choices=sorted(CALCULATORS),
-        help="which BaseExtOptCalculator to load",
+        help="which ComputeBackend to load",
     )
     parser.add_argument(
         "--bind",
@@ -70,11 +68,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def create_app(calculator: BaseExtOptCalculator) -> Flask:
+def create_app(calculator: ComputeBackend) -> Flask:
     """Build a Flask app with the ``/healthz`` + ``/calculate`` routes."""
     from flask import Flask, jsonify, request
 
-    app = Flask("chemrefine-extopt-server")
+    app = Flask("chemrefine-backend-server")
     app.config["PROPAGATE_EXCEPTIONS"] = True
 
     @app.get("/healthz")
@@ -102,8 +100,20 @@ def create_app(calculator: BaseExtOptCalculator) -> Flask:
 
 
 def _payload_to_data(payload: dict[str, Any]) -> CalculationData:
-    """Build a :class:`CalculationData` from a wrapper-script POST payload."""
+    """Build a :class:`CalculationData` from a wrapper-script POST payload.
+
+    The top-level ``tag`` (the bridge's per-call correlation id, derived
+    from the ``.extinp.tmp`` stem) is folded into ``settings['tag']`` so
+    backends that key per-call artefacts on it — e.g. PySCF active-space
+    tensor dumps — can read it through the same ``settings`` channel as
+    every other knob.
+    """
     import numpy as np
+
+    settings = dict(payload.get("settings", {}))
+    tag = payload.get("tag")
+    if tag is not None:
+        settings.setdefault("tag", tag)
 
     return CalculationData(
         symbols=tuple(payload["atom_types"]),
@@ -112,25 +122,25 @@ def _payload_to_data(payload: dict[str, Any]) -> CalculationData:
         multiplicity=int(payload["mult"]),
         nthreads=int(payload.get("nthreads", 1)),
         dograd=bool(payload.get("dograd", True)),
-        settings=dict(payload.get("settings", {})),
+        settings=settings,
     )
 
 
 def main() -> int:
     """Server entry point: bind, write sidecar, serve.
 
-    Resolves the kernel-assigned port via ``socket.getsockname()`` after
-    waitress creates its server object, writes the actual URL to the
-    sidecar, then blocks in ``waitress.serve``.
+    Binds a real socket on the requested (possibly kernel-assigned) port,
+    resolves it via ``socket.getsockname()``, writes the actual URL to the
+    sidecar, then builds a waitress server **on that pre-bound socket** and
+    blocks in ``server.run()``.
     """
     import os
     import sys
     from pathlib import Path
 
-    import waitress
     from waitress.server import create_server
 
-    from chemrefine.engines._extopt import protocol
+    from chemrefine.engines._backend_server import sidecar
 
     args = parse_args(sys.argv[1:])
     logging.basicConfig(
@@ -155,8 +165,15 @@ def main() -> int:
 
     default_dir = Path(os.environ.get("WORK_DIR", "."))
     url_file = args.url_file or str(default_dir / SERVER_URL_FILENAME)
-    protocol.write_server_url(url_file, actual_url)
+    sidecar.write_server_url(url_file, actual_url)
     logger.info("ExtOpt server (%s) bound at %s, sidecar=%s", args.backend, actual_url, url_file)
+    # Serve on the pre-bound socket. Passing the server to ``waitress.serve``
+    # would ignore this socket and start a *second* server on the default
+    # 0.0.0.0:8080, so the advertised kernel port would have nothing listening.
     server = create_server(app, sockets=[sock], threads=args.nthreads)
-    waitress.serve(server)
+    server.run()
     return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
