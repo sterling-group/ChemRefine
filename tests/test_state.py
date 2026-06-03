@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from ase import Atoms
 
-from chemrefine.state import PipelineState, StepInputs, Structure
+from chemrefine.state import PipelineState, Structure
 
 
 def test_pipeline_state_len_matches_structures_length():
@@ -38,16 +36,3 @@ def test_structure_parent_id_carries_through_when_set():
     """Derived structures carry their input's lineage explicitly."""
     child = Structure(id="0-1", atoms=Atoms("H"), parent_id="0")
     assert child.parent_id == "0"
-
-
-def test_step_inputs_accessors_return_aligned_tuples():
-    """``input_paths`` / ``output_paths`` / ``structure_ids`` split the
-    ordered (inp, out, sid) triples into their three component tuples."""
-    files = (
-        (Path("a.inp"), Path("a.out"), "0"),
-        (Path("b.inp"), Path("b.out"), "1"),
-    )
-    inputs = StepInputs(files=files)
-    assert inputs.input_paths == (Path("a.inp"), Path("b.inp"))
-    assert inputs.output_paths == (Path("a.out"), Path("b.out"))
-    assert inputs.structure_ids == ("0", "1")

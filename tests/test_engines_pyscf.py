@@ -74,7 +74,7 @@ def _ctx(
         multiplicity=overrides.pop("multiplicity", 1),
         max_cores=overrides.pop("max_cores", 1),
         slurm_template="cpu.slurm.header",
-        orca_executable="orca",
+        executables={},
     )
 
 
@@ -147,7 +147,7 @@ def test_prepare_uses_step_specific_template_when_given(tmp_path: Path):
         multiplicity=1,
         max_cores=1,
         slurm_template="cpu.slurm.header",
-        orca_executable="orca",
+        executables={},
     )
     engine = get_engine("pyscf")
     inputs = engine.prepare(ctx)
@@ -214,6 +214,19 @@ def test_submit_respects_cores_option(tmp_path: Path):
     # The generated SLURM script should request the configured cores.
     script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
     assert "#SBATCH --ntasks=2" in script_text
+
+
+def test_submit_uses_template_engine_output_globs(tmp_path: Path):
+    """The direct engine's ``output_globs`` ClassVar flows through SlurmBatchEngine."""
+    ctx = _ctx(tmp_path, structures=(_seed(),))
+    engine = get_engine("pyscf")
+    inputs = engine.prepare(ctx)
+    with patch("chemrefine.slurm.shutil.which", return_value=None):
+        engine.submit(inputs, ctx)
+    script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
+    assert "*.json" in script_text
+    # ORCA-only globs must not leak into a direct-engine script.
+    assert "*.gbw" not in script_text
 
 
 # ---------------------------------------------------------------------------

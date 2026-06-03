@@ -17,7 +17,7 @@ Schema shape (see ``Examples/`` for full examples):
     multiplicity: 1
     max_cores: 64
     slurm_template: cpu.slurm.header
-    orca_executable: orca
+    executables: { orca: /opt/orca/orca }   # tool -> path, for external-binary engines
 
     steps:
       - step: 1
@@ -121,7 +121,7 @@ class StepConfig(BaseModel):
     """Engine key looked up in :data:`chemrefine.engines.base.ENGINES`."""
 
     operation: str
-    """Engine-defined operation (``opt_sp``, ``goat``, ``pes``, ``solvator``, ``mlff_train``...)."""
+    """Engine-defined operation (``opt_sp``, ``goat``, ``pes``, ``docker``, ``solvator``...)."""
 
     template: str | None = None
     """Engine input template (basename relative to ``template_dir`` if not absolute)."""
@@ -194,7 +194,11 @@ class Config(BaseModel):
     multiplicity: int = Field(1, ge=1)
     max_cores: int = Field(32, ge=1)
     slurm_template: str = "cpu.slurm.header"
-    orca_executable: str = "orca"
+    executables: dict[str, str] = Field(default_factory=dict)
+    """Global tool-name → binary-path map for external-binary engines (e.g.
+    ``{"orca": "/opt/orca/orca"}``). Set once and shared by every step using
+    that engine. Importable backends (mlff, pyscf, …) are installed as extras
+    and need no entry here; conda/module activation belongs in the SLURM header."""
     steps: list[StepConfig]
 
     @model_validator(mode="after")

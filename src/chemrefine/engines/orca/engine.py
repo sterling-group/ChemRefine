@@ -19,34 +19,27 @@ state between steps.
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 from ase import Atoms
 
-from chemrefine import slurm, throttle
-from chemrefine.engines.base import register
+from chemrefine.engines.base import SlurmBatchEngine, register
 from chemrefine.engines.orca import input as orca_input
 from chemrefine.engines.orca import nms, output
-from chemrefine.ids import structure_artifact_path
+from chemrefine.ids import allocate_child_ids, structure_artifact_path
 from chemrefine.io import write_xyz
-from chemrefine.state import (
-    JobBatch,
-    StepContext,
-    StepInputs,
-    StepResults,
-    Structure,
-)
-
-logger = logging.getLogger(__name__)
+from chemrefine.state import StepContext, StepInputs, StepResults, Structure
 
 
 @register("orca")
-class OrcaEngine:
+class OrcaEngine(SlurmBatchEngine):
     """Standard ORCA DFT engine."""
 
     name = "orca"
     supports_nms = True
+    label = "ORCA"
+    template_suffix = "inp"
+    output_globs = ("*.out", "*.xyz", "*.gbw", "*.hess")
 
     # -- prepare -----------------------------------------------------------
 
@@ -78,14 +71,6 @@ class OrcaEngine:
             files.append((inp_path, out_path, struct.id))
         return StepInputs(files=tuple(files))
 
-    def _resolve_template(self, ctx: StepContext) -> Path:
-        """Pick the ORCA input template for this step."""
-        name = ctx.step_cfg.template or f"step{ctx.step_cfg.step}.inp"
-        template = ctx.template_dir / name
-        if not template.is_file():
-            raise FileNotFoundError(f"ORCA template not found: {template}")
-        return template
-
     def _extra_blocks(self, ctx: StepContext) -> str:
         """Subclass hook for engines that need extra ORCA blocks (e.g. MLFF ``%method``).
 
@@ -94,66 +79,28 @@ class OrcaEngine:
         """
         return ""
 
-    # -- submit / wait -----------------------------------------------------
+    # -- submit (PAL + run_block hooks; the loop lives on SlurmBatchEngine) -
 
-    def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
-        """Generate SLURM scripts, submit under the PAL budget, block until done."""
-        throttler = throttle.Throttler(max_cores=ctx.max_cores)
-        header_path = ctx.template_dir / ctx.slurm_template
-        if not header_path.is_file():
-            raise FileNotFoundError(f"SLURM header template not found: {header_path}")
+    def _pal(self, ctx: StepContext) -> int:
+        """Read PAL once from the step template.
 
-        # PAL is a property of the template, not of any individual structure:
-        # ORCA copies the same %pal block into every generated .inp. Read it
-        # once from the template instead of re-reading the per-structure copy
-        # N times.
-        template = self._resolve_template(ctx)
-        pal = min(orca_input.parse_pal(template), ctx.max_cores)
-
-        step_label = ctx.step_cfg.dir_name()
-        jobs: dict[Path, str] = {}
-        for inp, out, sid in inputs.files:
-            throttler.wait_for_room(pal, is_finished=slurm.is_finished)
-            script_path = inp.with_suffix(".slurm")
-            run_block = self._run_block(ctx, inp, out)
-            slurm.build_script(
-                job_name=inp.stem,
-                pal=pal,
-                template_path=header_path,
-                script_path=script_path,
-                input_path=inp,
-                output_dir=out.parent,
-                scratch_dir=ctx.scratch_dir,
-                run_block=run_block,
-                engine=ctx.step_cfg.engine,
-                operation=ctx.step_cfg.operation,
-                step=ctx.step_cfg.step,
-                structure_id=sid,
-                step_label=step_label,
-                output_globs=("*.out", "*.xyz", "*.gbw", "*.hess"),
-                extra_header_fields=(("orca_executable", ctx.orca_executable),),
-            )
-            job_id = slurm.submit(script_path)
-            throttler.register(job_id, pal)
-            jobs[inp] = job_id
-            logger.info("submitted %s as job %s (pal=%d)", inp.name, job_id, pal)
-
-        throttler.wait_all(is_finished=slurm.is_finished)
-        return JobBatch(jobs=jobs)
+        PAL is a property of the template, not of any individual structure:
+        ORCA copies the same ``%pal`` block into every generated ``.inp``, so
+        read it once from the template rather than the per-structure copies.
+        """
+        return orca_input.parse_pal(self._resolve_template(ctx))
 
     def _run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
-        """Engine-specific bash that runs inside ``$SCRATCH_DIR``."""
+        """Engine-specific bash that runs inside ``$WORK_DIR``."""
+        orca = ctx.executables.get("orca", "orca")
         return (
             "export OMP_NUM_THREADS=1\n"
-            f"{ctx.orca_executable} {inp_path.name} > $OUTPUT_DIR/{out_path.name}"
+            f"{orca} {inp_path.name} > $OUTPUT_DIR/{out_path.name}"
         )
 
-    def wait(self, batch: JobBatch) -> None:
-        """No-op: :meth:`submit` already blocked until every job finished.
-
-        The parameter is kept for ``CalculationEngine`` Protocol parity.
-        """
-        return None
+    def _extra_header_fields(self, ctx: StepContext) -> tuple[tuple[str, object], ...]:
+        """Record which ORCA binary ran in the runlog header."""
+        return (("orca_executable", ctx.executables.get("orca", "orca")),)
 
     # -- parse -------------------------------------------------------------
 
@@ -161,22 +108,34 @@ class OrcaEngine:
         """Read each output file and build :class:`Structure` instances."""
         operation = ctx.step_cfg.operation
         prev_by_id = {s.id: s for s in ctx.prev_state.structures}
+
+        # Parse every output first so each input's fan-out is known, then mint
+        # child IDs through the shared lineage convention in `ids` instead of
+        # re-implementing the ``{parent}-{i}`` format here.
+        parsed_per_input = [
+            (sid, output.parse_output(out_path, operation))
+            for _inp, out_path, sid in inputs.files
+        ]
+        parents = [sid for sid, _ in parsed_per_input]
+        fanouts = [len(parsed) for _, parsed in parsed_per_input]
+        child_ids = iter(allocate_child_ids(parents, fanouts))
+
         out_structures: list[Structure] = []
-        for _inp, out_path, sid in inputs.files:
-            parsed = output.parse_output(out_path, operation)
+        for sid, parsed in parsed_per_input:
             input_struct = prev_by_id.get(sid)
             is_fanout = len(parsed) > 1
-            for index, ps in enumerate(parsed):
+            for ps in parsed:
                 # Fan-out: parent is the input that fanned out.
                 # 1:1: child inherits the input's parent lineage unchanged.
-                child_id = f"{sid}-{index}" if is_fanout else sid
-                child_parent = sid if is_fanout else (
-                    input_struct.parent_id if input_struct is not None else None
+                child_parent = (
+                    sid
+                    if is_fanout
+                    else (input_struct.parent_id if input_struct is not None else None)
                 )
                 atoms = Atoms(symbols=list(ps.symbols), positions=ps.positions)
                 out_structures.append(
                     Structure(
-                        id=child_id,
+                        id=next(child_ids),
                         atoms=atoms,
                         parent_id=child_parent,
                         energy_hartree=ps.energy_hartree,

@@ -8,7 +8,7 @@ Coverage:
 * ``MlffExtOptEngine`` produces the right ``%method`` block and SLURM
   ``run_block`` content (dynamic port + readiness loop + trap).
 * ``MlffExtOptCalculator`` adapts the ASE calculator to the shared
-  ExtOpt server's ``BaseExtOptCalculator`` contract.
+  ExtOpt server's ``ComputeBackend`` contract.
 * ``MlffEngine`` (direct, template-driven) renders one ``.py`` per
   structure, runs the local-bash fallback, and parses the JSON the
   appended footer wrote.
@@ -209,7 +209,7 @@ def _mlff_extopt_ctx(tmp_path: Path, **option_overrides) -> StepContext:
         multiplicity=1,
         max_cores=2,
         slurm_template="cpu.slurm.header",
-        orca_executable="orca",
+        executables={},
     )
 
 
@@ -230,11 +230,11 @@ def test_mlff_extopt_run_block_starts_shared_extopt_server(tmp_path: Path):
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
     )
-    assert "python -m chemrefine.engines._extopt.server" in run_block
+    assert "python -m chemrefine.engines._backend_server.server" in run_block
     assert "--backend mlff" in run_block
     assert "--bind 127.0.0.1:0" in run_block
     assert "--model" in run_block
-    assert ctx.orca_executable in run_block
+    assert ctx.executables.get("orca", "orca") in run_block
 
 
 def test_mlff_extopt_run_block_includes_readiness_loop_and_trap(tmp_path: Path):
@@ -261,6 +261,23 @@ def test_mlff_extopt_prepare_writes_inp_with_method_block(tmp_path: Path):
     assert "ProgExt" in inp_text
 
 
+def test_mlff_extopt_prepare_materializes_executable_wrapper(tmp_path: Path):
+    """The ``ProgExt`` wrapper the ``.inp`` points at must actually be written."""
+    import os
+
+    engine = get_engine("mlff-extopt")
+    ctx = _mlff_extopt_ctx(tmp_path)
+    engine.prepare(ctx)
+
+    wrapper = engine._wrapper_path(ctx)
+    assert wrapper.is_file()
+    assert os.access(wrapper, os.X_OK)
+
+    text = wrapper.read_text()
+    assert "chemrefine.engines.orca.extopt.bridge" in text
+    assert "--backend mlff" in text
+
+
 # ---------------------------------------------------------------------------
 # MlffExtOptCalculator — ExtOpt-side adapter
 # ---------------------------------------------------------------------------
@@ -268,7 +285,7 @@ def test_mlff_extopt_prepare_writes_inp_with_method_block(tmp_path: Path):
 
 def test_mlff_extopt_calculator_from_args_builds_instance():
     """``from_args`` should consume the shared server CLI namespace."""
-    from chemrefine.engines._extopt.server import parse_args
+    from chemrefine.engines._backend_server.server import parse_args
     from chemrefine.engines.mlff.extopt_calc import MlffExtOptCalculator
 
     args = parse_args(["--backend", "mlff", "--model", "medium", "--task-name", "mace_off"])
@@ -342,7 +359,7 @@ def test_mlff_extopt_calculator_calc_converts_units():
     """``calc`` should return Hartree / Hartree-per-Bohr regardless of ASE eV units."""
     import numpy as np
 
-    from chemrefine.engines._extopt.base import CalculationData
+    from chemrefine.engines._backend_server.base import CalculationData
     from chemrefine.engines.mlff.extopt_calc import MlffExtOptCalculator
     from chemrefine.quantities import BOHR_TO_ANGSTROM, HARTREE_TO_EV
 
@@ -422,7 +439,7 @@ def _mlff_direct_ctx(
         multiplicity=overrides.pop("multiplicity", 1),
         max_cores=overrides.pop("max_cores", 1),
         slurm_template="cpu.slurm.header",
-        orca_executable="orca",
+        executables={},
     )
 
 

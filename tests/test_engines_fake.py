@@ -27,7 +27,7 @@ def _ctx_with_seeds(tmp_path: Path, ids: list[str]) -> StepContext:
         multiplicity=1,
         max_cores=2,
         slurm_template="cpu.slurm.header",
-        orca_executable="orca",
+        executables={},
     )
 
 

@@ -86,7 +86,7 @@ def _ctx_for(tmp_path: Path) -> StepContext:
         multiplicity=1,
         max_cores=1,
         slurm_template="cpu.slurm.header",
-        orca_executable="orca",
+        executables={},
     )
 
 
@@ -208,7 +208,7 @@ def test_normal_mode_sample_honors_displacement_value_option(tmp_path: Path):
         multiplicity=1,
         max_cores=1,
         slurm_template="cpu.slurm.header",
-        orca_executable="orca",
+        executables={},
     )
     seed = Structure(id="0", atoms=Atoms("H2", positions=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]))
     ctx.step_dir.mkdir(parents=True, exist_ok=True)

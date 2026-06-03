@@ -52,7 +52,7 @@ def _ctx(
         multiplicity=1,
         max_cores=4,
         slurm_template="cpu.slurm.header",
-        orca_executable="orca",
+        executables={},
     )
 
 
@@ -90,7 +90,7 @@ def test_prepare_input_contains_charge_and_multiplicity(tmp_path: Path):
         multiplicity=3,
         max_cores=ctx.max_cores,
         slurm_template=ctx.slurm_template,
-        orca_executable=ctx.orca_executable,
+        executables=ctx.executables,
     )
     inputs = engine.prepare(ctx)
     text = inputs.files[0][0].read_text()
@@ -148,6 +148,9 @@ def test_submit_script_contains_orca_executable_invocation(_submit, _is_finished
     script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
     assert "orca step1_structure_0.inp" in script_text
     assert "$OUTPUT_DIR/step1_structure_0.out" in script_text
+    # ORCA's output_globs ClassVar flows through the shared SlurmBatchEngine.
+    assert "*.gbw" in script_text
+    assert "*.hess" in script_text
 
 
 @patch.object(slurm, "is_finished", return_value=True)

@@ -82,7 +82,9 @@ class StepContext:
     multiplicity: int
     max_cores: int
     slurm_template: str
-    orca_executable: str
+    executables: dict[str, str] = field(default_factory=dict)
+    """Tool-name → binary-path map (from ``Config.executables``); an engine
+    reads its own key, e.g. ``executables.get("orca", "orca")``."""
 
 
 @dataclass(frozen=True)
@@ -95,21 +97,6 @@ class StepInputs:
     """
 
     files: tuple[tuple[Path, Path, str], ...]
-
-    @property
-    def input_paths(self) -> tuple[Path, ...]:
-        """Return just the input file paths in order."""
-        return tuple(t[0] for t in self.files)
-
-    @property
-    def output_paths(self) -> tuple[Path, ...]:
-        """Return just the output file paths in order."""
-        return tuple(t[1] for t in self.files)
-
-    @property
-    def structure_ids(self) -> tuple[str, ...]:
-        """Return the structure IDs in order."""
-        return tuple(t[2] for t in self.files)
 
 
 @dataclass(frozen=True)
