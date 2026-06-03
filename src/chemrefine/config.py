@@ -141,6 +141,12 @@ class StepConfig(BaseModel):
     nms: bool = False
     """Opt-in normal-mode sampling (only honored if the engine ``supports_nms``)."""
 
+    on_failure: Literal["stop", "skip", "best"] = "skip"
+    """What to do when some structures fail this step (job error / no valid output,
+    or NMS-unresolved): ``stop`` halts the pipeline, ``skip`` (default) drops the
+    failures and keeps the successes, ``best`` keeps every structure using the
+    best geometry obtained for a failed one (else its submitted input)."""
+
     @field_validator("name")
     @classmethod
     def _validate_name(cls, v: str | None) -> str | None:

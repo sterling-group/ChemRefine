@@ -177,6 +177,127 @@ def test_cache_load_after_run_returns_results(tmp_path: Path):
     assert [s.id for s in cached.results.structures] == ["0"]
 
 
+# ---------------------------------------------------------------------------
+# on_failure policy + per-structure failure capture
+# ---------------------------------------------------------------------------
+
+
+def _register_fail_engine():
+    """Register a fake engine whose ``fail`` ClassVar marks per-sid failures.
+
+    ``fail[sid] == "missing"`` produces no output; ``"unconverged"`` produces an
+    output that parses but with ``terminated=False``; anything else succeeds.
+    """
+    from typing import ClassVar
+
+    from chemrefine.engines.base import register
+    from chemrefine.ids import structure_artifact_path
+    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+
+    @register("fake-fail")
+    class _FailEngine:
+        name = "fake-fail"
+        supports_nms = False
+        fail: ClassVar[dict[str, str]] = {}
+
+        def prepare(self, ctx):
+            ctx.step_dir.mkdir(parents=True, exist_ok=True)
+            files = []
+            for s in ctx.prev_state.structures:
+                step = ctx.step_cfg.step
+                inp = structure_artifact_path(ctx.step_dir, step, s.id, "inp")
+                out = structure_artifact_path(ctx.step_dir, step, s.id, "out")
+                inp.write_text("in\n", encoding="utf-8")
+                if self.fail.get(s.id) != "missing":
+                    out.write_text("out\n", encoding="utf-8")
+                files.append((inp, out, s.id))
+            return StepInputs(files=tuple(files))
+
+        def submit(self, inputs, ctx):
+            return JobBatch(jobs={})
+
+        def wait(self, batch):
+            return None
+
+        def parse(self, inputs, ctx):
+            seeds = {s.id: s for s in ctx.prev_state.structures}
+            out = []
+            for _inp, _o, sid in inputs.files:
+                seed = seeds[sid]
+                out.append(
+                    Structure(
+                        id=sid, atoms=seed.atoms, parent_id=seed.parent_id,
+                        energy_hartree=-1.0 - int(sid) * 1e-3,
+                        terminated=self.fail.get(sid) != "unconverged",
+                        converged=True,
+                    )
+                )
+            return StepResults(structures=tuple(out))
+
+        def normal_mode_sample(self, results, ctx):
+            raise NotImplementedError
+
+    return _FailEngine
+
+
+def test_on_failure_skip_drops_failed_keeps_successes(tmp_path: Path):
+    from chemrefine import cache
+    from chemrefine.engines.base import ENGINES
+
+    eng = _register_fail_engine()
+    try:
+        eng.fail = {"1": "unconverged"}
+        cfg = _config(tmp_path, engine="fake-fail")  # on_failure defaults to skip
+        outcome = run_step(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]))
+        assert {s.id for s in outcome.state.structures} == {"0", "2"}
+        step_dir = cfg.output_dir.resolve() / "step1"
+        assert cache.load_failed_jobs(step_dir) == [
+            {"structure_id": "1", "reason": "did not terminate normally"}
+        ]
+    finally:
+        eng.fail = {}
+        ENGINES.pop("fake-fail", None)
+
+
+def test_on_failure_stop_halts(tmp_path: Path):
+    import pytest
+
+    from chemrefine.engines.base import ENGINES
+    from chemrefine.errors import ChemRefineError
+
+    eng = _register_fail_engine()
+    try:
+        eng.fail = {"1": "missing"}
+        cfg = _config(tmp_path, engine="fake-fail", on_failure="stop")
+        with pytest.raises(ChemRefineError):
+            run_step(cfg, cfg.steps[0], _seed_state(["0", "1"]))
+    finally:
+        eng.fail = {}
+        ENGINES.pop("fake-fail", None)
+
+
+def test_on_failure_best_backfills_all(tmp_path: Path):
+    from chemrefine.engines.base import ENGINES
+
+    # Seeds carry an energy (as a real prior step would), so a missing-output
+    # backfill (the submitted input) still survives energy filtering.
+    seeds = PipelineState(
+        structures=tuple(
+            Structure(id=i, atoms=Atoms("H"), energy_hartree=-1.0) for i in ["0", "1", "2"]
+        )
+    )
+    eng = _register_fail_engine()
+    try:
+        # "1" unconverged (parsed → best obtained); "2" missing (→ submitted input).
+        eng.fail = {"1": "unconverged", "2": "missing"}
+        cfg = _config(tmp_path, engine="fake-fail", on_failure="best")
+        outcome = run_step(cfg, cfg.steps[0], seeds)
+        assert {s.id for s in outcome.state.structures} == {"0", "1", "2"}
+    finally:
+        eng.fail = {}
+        ENGINES.pop("fake-fail", None)
+
+
 def test_run_step_nms_branch_runs_when_engine_supports_it(tmp_path: Path):
     """The NMS branch in run_step fires when both step_cfg.nms and engine.supports_nms are true."""
     from chemrefine.engines.base import ENGINES, register

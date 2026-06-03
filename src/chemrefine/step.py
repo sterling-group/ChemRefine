@@ -17,8 +17,14 @@ from dataclasses import dataclass
 from chemrefine import cache, filtering
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.base import CalculationEngine, get_engine
-from chemrefine.errors import CacheError, OutputParseError
-from chemrefine.state import PipelineState, StepContext, StepInputs, StepResults
+from chemrefine.errors import CacheError, ChemRefineError, OutputParseError
+from chemrefine.state import (
+    PipelineState,
+    StepContext,
+    StepInputs,
+    StepResults,
+    Structure,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +134,8 @@ def run_step(
     engine.wait(batch)
 
     logger.info("step %d: parsing outputs", step_cfg.step)
-    results = _parse_capturing_failures(engine, inputs, ctx, step_cfg)
+    successes, failures = _parse_with_failures(engine, inputs, ctx)
+    results = _apply_failure_policy(successes, failures, ctx, step_cfg)
 
     if step_cfg.nms and engine.supports_nms:
         logger.info("step %d: running normal-mode sampling", step_cfg.step)
@@ -148,39 +155,111 @@ def run_step(
     )
 
 
-def _parse_capturing_failures(
-    engine: CalculationEngine,
-    inputs: StepInputs,
+@dataclass(frozen=True)
+class _Failure:
+    """One failed structure: its id, why, and the best geometry obtained (if any)."""
+
+    sid: str
+    reason: str
+    best: Structure | None
+
+
+def _succeeded(s: Structure) -> bool:
+    """A parsed structure failed only when an engine success flag is explicitly False.
+
+    ``None`` (engine doesn't report it) is treated as 'not a failure signal', so
+    backends that don't set termination/convergence flags are never gated.
+    """
+    return s.terminated is not False and s.converged is not False
+
+
+def _failure_reason(s: Structure) -> str:
+    """Human reason for a parsed-but-unsuccessful structure."""
+    if s.terminated is False:
+        return "did not terminate normally"
+    if s.converged is False:
+        return "did not converge"
+    return "failed"
+
+
+def _parse_with_failures(
+    engine: CalculationEngine, inputs: StepInputs, ctx: StepContext
+) -> tuple[list[Structure], list[_Failure]]:
+    """Parse each output independently; classify into successes and failures.
+
+    A job is a *failure* when its output is missing, unparseable, or parses to a
+    structure the engine marks unconverged / not-terminated. Parsing per input
+    (rather than the whole batch at once) means one bad job never crashes the
+    step — its failure is captured and the rest still parse. Engine success
+    flags are set in the single parse pass (see ``orca.output``).
+    """
+    successes: list[Structure] = []
+    failures: list[_Failure] = []
+    for triple in inputs.files:
+        _inp, out, sid = triple
+        if not out.is_file():
+            failures.append(_Failure(sid, "output missing", None))
+            continue
+        try:
+            parsed = list(engine.parse(StepInputs(files=(triple,)), ctx).structures)
+        except OutputParseError as e:
+            failures.append(_Failure(sid, f"unparseable: {e}", None))
+            continue
+        successes.extend(s for s in parsed if _succeeded(s))
+        bad = [s for s in parsed if not _succeeded(s)]
+        if bad:
+            best = min(
+                bad,
+                key=lambda s: (s.energy_hartree is None, s.energy_hartree or 0.0),
+            )
+            failures.append(_Failure(sid, _failure_reason(bad[0]), best))
+    return successes, failures
+
+
+def _apply_failure_policy(
+    successes: list[Structure],
+    failures: list[_Failure],
     ctx: StepContext,
     step_cfg: StepConfig,
 ) -> StepResults:
-    """Parse the structures whose output exists; ledger the ones that produced none.
+    """Record failures to the ledger and resolve them per ``step_cfg.on_failure``.
 
-    A job that crashed / timed out leaves no output file. Rather than fail the
-    whole step, record those structure IDs to ``_cache/failed_jobs.json`` (so
-    ``chemrefine rerun`` can resubmit just them) and parse the rest. Raises only
-    if *nothing* produced output. A clean run clears any stale ledger.
+    ``stop`` raises (halts the pipeline); ``skip`` (default) drops the failures
+    and keeps the successes; ``best`` keeps every structure, backfilling a
+    failure with the best geometry obtained for it (else its submitted input).
+    The ``failed_jobs.json`` ledger is always written (so ``rerun`` / ``resume``
+    can re-attempt) and cleared on a clean step.
     """
-    present = tuple(f for f in inputs.files if f[1].is_file())
-    missing = [sid for _inp, out, sid in inputs.files if not out.is_file()]
-    if missing:
-        cache.save_failed_jobs(
-            ctx.step_dir,
-            [{"structure_id": sid, "reason": "output missing"} for sid in missing],
-        )
-        logger.warning(
-            "step %d: %d job(s) produced no output; recorded to failed_jobs.json "
-            "(resubmit with `chemrefine rerun`)",
-            step_cfg.step,
-            len(missing),
-        )
-        if not present:
-            raise OutputParseError(
-                f"step {step_cfg.step}: no job produced output (all {len(missing)} failed)"
-            )
-    else:
+    if not failures:
         cache.clear_failed_jobs(ctx.step_dir)
-    return engine.parse(StepInputs(files=present), ctx)
+        return StepResults(structures=tuple(successes))
+
+    cache.save_failed_jobs(
+        ctx.step_dir,
+        [{"structure_id": f.sid, "reason": f.reason} for f in failures],
+    )
+    for f in failures:
+        logger.debug("step %d: structure %s failed — %s", step_cfg.step, f.sid, f.reason)
+    logger.warning(
+        "step %d: %d/%d structure(s) failed [on_failure=%s]",
+        step_cfg.step,
+        len(failures),
+        len(successes) + len(failures),
+        step_cfg.on_failure,
+    )
+
+    if step_cfg.on_failure == "stop":
+        raise ChemRefineError(
+            f"step {step_cfg.step}: {len(failures)} structure(s) failed and "
+            "on_failure='stop'"
+        )
+    if step_cfg.on_failure == "best":
+        prev_by_id = {s.id: s for s in ctx.prev_state.structures}
+        for f in failures:
+            fallback = f.best if f.best is not None else prev_by_id.get(f.sid)
+            if fallback is not None:
+                successes.append(fallback)
+    return StepResults(structures=tuple(successes))
 
 
 def _resubmit_failed(
@@ -214,7 +293,8 @@ def _resubmit_failed(
     )
     engine.wait(engine.submit(failed_inputs, ctx))
 
-    results = _parse_capturing_failures(engine, manifest, ctx, step_cfg)
+    successes, failures = _parse_with_failures(engine, manifest, ctx)
+    results = _apply_failure_policy(successes, failures, ctx, step_cfg)
     if step_cfg.nms and engine.supports_nms:
         results = engine.normal_mode_sample(results, ctx)
     cache.save(

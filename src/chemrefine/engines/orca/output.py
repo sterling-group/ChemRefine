@@ -49,16 +49,28 @@ _GRAD_LINE_RE = re.compile(
 _FINAL_ENERGY_RE = re.compile(
     r"FINAL SINGLE POINT ENERGY(?:\s*\(From external program\))?\s+(-?\d+\.\d+)"
 )
+# Run-status markers. ORCA prints "****ORCA TERMINATED NORMALLY****" only on a
+# clean exit; any "... NOT CONVERGED ..." (SCF or geometry/MaxIter) marks a
+# failed stationary point. Read in the same single pass as energy/coords.
+_TERMINATED_RE = re.compile(r"ORCA TERMINATED NORMALLY")
+_NOT_CONVERGED_RE = re.compile(r"NOT CONVERGED", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
 class ParsedStructure:
-    """One structure extracted from an ORCA output file."""
+    """One structure extracted from an ORCA output file.
+
+    ``terminated`` / ``converged`` are the run-status flags read in the same
+    pass (``None`` when not applicable, e.g. sidecar ensemble frames); a
+    structure is a *failure* only when one is explicitly ``False``.
+    """
 
     symbols: tuple[str, ...]
     positions: NDArray[np.float64]
     energy_hartree: float
     forces_ev_per_a: NDArray[np.float64] | None
+    converged: bool | None = None
+    terminated: bool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +101,8 @@ def parse_dft(path: str | Path) -> list[ParsedStructure]:
             positions=positions,
             energy_hartree=float(energy_matches[-1]),
             forces_ev_per_a=parse_forces(text),
+            terminated=bool(_TERMINATED_RE.search(text)),
+            converged=not bool(_NOT_CONVERGED_RE.search(text)),
         )
     ]
 
@@ -265,6 +279,7 @@ def parse_pes(path: str | Path) -> list[ParsedStructure]:
     """
     text = Path(path).read_text(encoding="utf-8", errors="replace")
     segments = _PES_SEGMENT_RE.split(text)[:-1]  # last fragment has no DONE marker
+    terminated = bool(_TERMINATED_RE.search(text))
 
     structures: list[ParsedStructure] = []
     for seg in segments:
@@ -282,6 +297,9 @@ def parse_pes(path: str | Path) -> list[ParsedStructure]:
                 positions=positions,
                 energy_hartree=energy,
                 forces_ev_per_a=None,
+                # Each frame is a converged scan point (split on RUN DONE).
+                converged=True,
+                terminated=terminated,
             )
         )
     if not structures:

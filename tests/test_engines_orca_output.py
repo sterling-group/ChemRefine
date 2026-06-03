@@ -35,6 +35,47 @@ def test_fixture_present():
 
 
 # ---------------------------------------------------------------------------
+# Run-status flags (terminated / converged) read in the single parse pass
+# ---------------------------------------------------------------------------
+
+
+def _minimal_out(*, terminated: bool, not_converged: bool) -> str:
+    """Smallest .out parse_dft accepts, with optional status markers."""
+    body = (
+        "FINAL SINGLE POINT ENERGY     -1.500000\n\n"
+        "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "----------------\n"
+        "  H   0.000000   0.000000   0.000000\n"
+        "----------------\n"
+    )
+    if not_converged:
+        body += "\nThe optimization HAS NOT CONVERGED\n"
+    if terminated:
+        body += "\n                  ****ORCA TERMINATED NORMALLY****\n"
+    return body
+
+
+def test_parse_dft_marks_success(tmp_path: Path):
+    out = tmp_path / "ok.out"
+    out.write_text(_minimal_out(terminated=True, not_converged=False), encoding="utf-8")
+    ps = parse_dft(out)[0]
+    assert ps.terminated is True
+    assert ps.converged is True
+
+
+def test_parse_dft_marks_not_terminated(tmp_path: Path):
+    out = tmp_path / "crash.out"
+    out.write_text(_minimal_out(terminated=False, not_converged=False), encoding="utf-8")
+    assert parse_dft(out)[0].terminated is False
+
+
+def test_parse_dft_marks_not_converged(tmp_path: Path):
+    out = tmp_path / "maxiter.out"
+    out.write_text(_minimal_out(terminated=True, not_converged=True), encoding="utf-8")
+    assert parse_dft(out)[0].converged is False
+
+
+# ---------------------------------------------------------------------------
 # parse_dft — verified against the real fixture
 # ---------------------------------------------------------------------------
 

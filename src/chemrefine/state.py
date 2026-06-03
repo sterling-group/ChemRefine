@@ -44,6 +44,13 @@ class Structure:
     parent_id: str | None = None
     energy_hartree: float | None = None
     forces_ev_per_a: NDArray[np.float64] | None = None
+    converged: bool | None = None
+    """Did the run converge (SCF + geometry)? ``None`` when the engine
+    doesn't report it — treated as 'not a failure signal'."""
+    terminated: bool | None = None
+    """Did the program terminate normally? ``None`` when the engine doesn't
+    report it. A structure is a *failure* only when a flag is explicitly
+    ``False`` (see :func:`chemrefine.step._succeeded`)."""
 
 
 @dataclass(frozen=True)
