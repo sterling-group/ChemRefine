@@ -53,7 +53,7 @@ def _ctx(tmp_path: Path, **option_overrides) -> StepContext:
         prev_state=PipelineState(),
         charge=0, multiplicity=1, max_cores=4,
         slurm_template="cpu.slurm.header",
-        orca_executable="orca",
+        executables={},
     )
 
 
@@ -81,6 +81,22 @@ def test_prepare_inputs_writes_train_and_test_xyz(tmp_path: Path):
     # 90/10 split → 9 train, 1 test
     assert train_path.read_text().count("\nH2") >= 0  # just verify content non-empty
     assert "Properties=" in train_path.read_text()
+
+
+def test_prepare_inputs_split_counts_and_is_deterministic(tmp_path: Path):
+    """10 structures at valid_fraction=0.1 → 9 train / 1 test, and a fixed seed
+    (default 42) yields the identical split on every run."""
+    results = StepResults(structures=tuple(_struct(str(i), -1.0 - i * 0.1) for i in range(10)))
+
+    train_path, test_path = trainer.prepare_inputs(results, _ctx(tmp_path))
+    n_train = train_path.read_text().count("DFT_energy=")
+    n_test = test_path.read_text().count("DFT_energy=")
+    assert (n_train, n_test) == (9, 1)
+
+    # Same seed + structures → byte-identical extxyz (deterministic split).
+    train2, test2 = trainer.prepare_inputs(results, _ctx(tmp_path / "again"))
+    assert train2.read_text() == train_path.read_text()
+    assert test2.read_text() == test_path.read_text()
 
 
 def test_prepare_inputs_converts_energy_to_ev(tmp_path: Path):
@@ -262,3 +278,46 @@ def test_run_training_drives_pipeline_and_returns_results_unchanged(tmp_path: Pa
     assert (ctx.step_dir / "mace_test.xyz").is_file()
     assert (ctx.step_dir / "input.yaml").is_file()
     assert (ctx.step_dir / "train.slurm").is_file()
+
+
+# ---------------------------------------------------------------------------
+# MlffTrainEngine — the "mlff-train" engine wiring
+# ---------------------------------------------------------------------------
+
+
+def test_mlff_train_engine_is_registered():
+    from chemrefine.engines.base import ENGINES, get_engine
+
+    assert "mlff-train" in ENGINES
+    assert get_engine("mlff-train").supports_nms is False
+
+
+def test_mlff_train_engine_trains_on_prev_and_passes_structures_through(tmp_path: Path):
+    """submit() calls trainer.run_training on the previous step's structures;
+    parse() passes those structures through unchanged (model is the artifact)."""
+    from chemrefine.engines.base import get_engine
+
+    structs = tuple(_struct(str(i)) for i in range(3))
+    ctx = _ctx(tmp_path)
+    ctx = StepContext(
+        step_cfg=ctx.step_cfg,
+        step_dir=ctx.step_dir,
+        template_dir=ctx.template_dir,
+        scratch_dir=ctx.scratch_dir,
+        prev_state=PipelineState(structures=structs),
+        charge=ctx.charge,
+        multiplicity=ctx.multiplicity,
+        max_cores=ctx.max_cores,
+        slurm_template=ctx.slurm_template,
+        executables=ctx.executables,
+    )
+    engine = get_engine("mlff-train")
+    inputs = engine.prepare(ctx)
+    assert inputs.files == ()  # training is not per-structure
+    with patch.object(trainer, "run_training", return_value=None) as mock_train:
+        engine.submit(inputs, ctx)
+    # trainer received the previous step's structures.
+    passed = mock_train.call_args.args[0]
+    assert passed.structures == structs
+    # parse passes the same structures forward.
+    assert engine.parse(inputs, ctx).structures == structs
