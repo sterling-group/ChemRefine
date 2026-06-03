@@ -13,7 +13,7 @@ Verified against real fixtures under ``tests/data/``:
   ``*** OPTIMIZATION RUN DONE ***`` markers.
 
 ExtOpt ``.extinp.tmp`` / ``.engrad`` round-trip helpers live in
-:mod:`chemrefine.engines._extopt.protocol`.
+:mod:`chemrefine.engines.orca.extopt.protocol`.
 """
 
 from __future__ import annotations
@@ -343,18 +343,47 @@ def _is_float_triplet(tokens: list[str]) -> bool:
 # Dispatcher
 # ---------------------------------------------------------------------------
 
+# ORCA-defined ensemble sidecar suffixes (``<base>.<suffix>``), one per
+# multi-structure operation. Single source for these external-contract names.
+_GOAT_SUFFIX = "finalensemble.xyz"
+_DOCKER_SUFFIX = "docker.struc1.allopt.xyz"
+_SOLVATOR_SUFFIX = "solventbuild.xyz"
+
+
+def _ensemble_sidecar(out_path: str | Path, suffix: str) -> Path:
+    """Return the ORCA ensemble sidecar ``<base>.<suffix>`` next to the ``.out``.
+
+    Multi-structure operations (GOAT / Docker / Solvator) write their ensemble
+    to a file named after ORCA's ``%base`` (the ``.out`` stem), not into the
+    ``.out`` log itself — e.g. ``step1_structure_0.finalensemble.xyz``. The
+    SLURM ``*.xyz`` glob copies it back beside the ``.out``. Raises
+    :class:`OutputParseError` if it is absent.
+    """
+    out_path = Path(out_path)
+    sidecar = out_path.with_name(f"{out_path.stem}.{suffix}")
+    if not sidecar.is_file():
+        raise OutputParseError(
+            f"expected ORCA ensemble file {sidecar.name} next to {out_path.name}; "
+            "not found (did the run produce it?)"
+        )
+    return sidecar
+
 
 def parse_output(path: str | Path, operation: str) -> list[ParsedStructure]:
-    """Pick the right parser based on the YAML ``operation`` string."""
+    """Pick the right parser based on the YAML ``operation`` string.
+
+    ``opt_sp`` / ``sp`` / ``pes`` read the ``.out`` directly; the multi-frame
+    ensemble operations read their ``<base>.<suffix>`` sidecar instead.
+    """
     op = operation.lower().replace("+", "_")
     if op in {"opt_sp", "dft", "sp"}:
         return parse_dft(path)
-    if op == "goat":
-        return parse_goat_ensemble(path)
     if op == "pes":
         return parse_pes(path)
+    if op == "goat":
+        return parse_goat_ensemble(_ensemble_sidecar(path, _GOAT_SUFFIX))
     if op == "docker":
-        return parse_docker(path)
+        return parse_docker(_ensemble_sidecar(path, _DOCKER_SUFFIX))
     if op == "solvator":
-        return parse_solvator(path)
+        return parse_solvator(_ensemble_sidecar(path, _SOLVATOR_SUFFIX))
     raise OutputParseError(f"unknown ORCA operation: {operation!r}")

@@ -210,6 +210,28 @@ def test_parse_goat_ensemble_forces_are_none():
     assert all(p.forces_ev_per_a is None for p in parsed)
 
 
+def test_parse_output_goat_reads_finalensemble_sidecar(tmp_path: Path):
+    """``parse_output(.out, 'goat')`` must read ``<base>.finalensemble.xyz``.
+
+    ORCA writes the ensemble to a sidecar next to the ``.out`` (the engine only
+    knows the ``.out`` path), so the dispatcher must resolve the sidecar.
+    """
+    base = tmp_path / "step1_structure_0"
+    base.with_suffix(".out").write_text("ORCA log, not an ensemble\n", encoding="utf-8")
+    (tmp_path / "step1_structure_0.finalensemble.xyz").write_text(
+        GOAT_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    parsed = parse_output(base.with_suffix(".out"), "goat")
+    assert len(parsed) == 3  # same as the fixture frames
+
+
+def test_parse_output_goat_missing_sidecar_raises(tmp_path: Path):
+    out = tmp_path / "step1_structure_0.out"
+    out.write_text("log only\n", encoding="utf-8")
+    with pytest.raises(OutputParseError, match="finalensemble"):
+        parse_output(out, "goat")
+
+
 def test_parse_goat_ensemble_missing_raises(tmp_path: Path):
     empty = tmp_path / "empty.xyz"
     empty.write_text("", encoding="utf-8")
@@ -289,19 +311,29 @@ def test_parse_output_accepts_opt_plus_sp_alias():
     assert len(parsed) == 1
 
 
-def test_parse_output_dispatches_goat():
-    parsed = parse_output(GOAT_FIXTURE, "goat")
-    assert len(parsed) == 3
+def _with_sidecar(tmp_path: Path, suffix: str, fixture: Path) -> Path:
+    """Lay out a dummy ``.out`` plus its ``<base>.<suffix>`` ensemble sidecar."""
+    out = tmp_path / "step1_structure_0.out"
+    out.write_text("ORCA log\n", encoding="utf-8")
+    (tmp_path / f"step1_structure_0.{suffix}").write_text(
+        fixture.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    return out
 
 
-def test_parse_output_dispatches_docker():
-    parsed = parse_output(DOCKER_FIXTURE, "docker")
-    assert len(parsed) == 3   # 4 frames - 1 (last dropped)
+def test_parse_output_dispatches_goat(tmp_path: Path):
+    out = _with_sidecar(tmp_path, "finalensemble.xyz", GOAT_FIXTURE)
+    assert len(parse_output(out, "goat")) == 3
 
 
-def test_parse_output_dispatches_solvator():
-    parsed = parse_output(SOLVATOR_FIXTURE, "solvator")
-    assert len(parsed) == 3
+def test_parse_output_dispatches_docker(tmp_path: Path):
+    out = _with_sidecar(tmp_path, "docker.struc1.allopt.xyz", DOCKER_FIXTURE)
+    assert len(parse_output(out, "docker")) == 3  # 4 frames - 1 (last dropped)
+
+
+def test_parse_output_dispatches_solvator(tmp_path: Path):
+    out = _with_sidecar(tmp_path, "solventbuild.xyz", SOLVATOR_FIXTURE)
+    assert len(parse_output(out, "solvator")) == 3
 
 
 def test_parse_output_unknown_operation_raises():
