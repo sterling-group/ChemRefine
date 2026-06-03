@@ -64,6 +64,11 @@ class StepCache:
     operation: str
     parent_ids: tuple[str, ...]
     results: StepResults
+    reuse_fingerprint: str = ""
+    """Coarser fingerprint (NMS steps only) that's stable across search-param
+    tuning but not across the resolution criterion — lets ``resume`` re-attempt
+    only the unresolved parents and reuse the round-1 freq. ``""`` for steps
+    that don't use it. See :func:`chemrefine.step._nms_reuse_fingerprint`."""
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +136,7 @@ def save(
     results: StepResults,
     step_dir: Path,
     chemrefine_version: str,
+    reuse_fingerprint: str = "",
 ) -> None:
     """Persist ``results`` for ``step_cfg`` to ``step_dir/_cache/``."""
     fp = fingerprint(step_cfg, parent_ids)
@@ -144,6 +150,7 @@ def save(
         operation=step_cfg.operation,
         parent_ids=parent_ids,
         results=results,
+        reuse_fingerprint=reuse_fingerprint,
     )
     pkl_path, json_path = _paths(step_dir)
     _atomic_write(pkl_path, pickle.dumps(cache, protocol=pickle.HIGHEST_PROTOCOL))
@@ -151,6 +158,7 @@ def save(
         "cache_format": CACHE_FORMAT_VERSION,
         "chemrefine_version": chemrefine_version,
         "fingerprint": fp,
+        "reuse_fingerprint": reuse_fingerprint,
         "step": step_cfg.step,
         "name": step_cfg.name,
         "engine": step_cfg.engine,

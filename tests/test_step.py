@@ -178,6 +178,39 @@ def test_cache_load_after_run_returns_results(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# NMS reuse fingerprint
+# ---------------------------------------------------------------------------
+
+
+def test_nms_reuse_fingerprint_ignores_search_params():
+    from chemrefine.step import _nms_reuse_fingerprint
+
+    base = StepConfig(
+        step=1, engine="orca", operation="freq", nms=True,
+        options={"target": "minimum", "displacement_value": 1.0},
+    )
+    tuned = base.model_copy(update={"options": {"target": "minimum", "displacement_value": 2.0}})
+    assert _nms_reuse_fingerprint(base, ("0",)) == _nms_reuse_fingerprint(tuned, ("0",))
+
+
+def test_nms_reuse_fingerprint_changes_on_criterion():
+    from chemrefine.step import _nms_reuse_fingerprint
+
+    mn = StepConfig(
+        step=1, engine="orca", operation="freq", nms=True, options={"target": "minimum"}
+    )
+    ts = mn.model_copy(update={"options": {"target": "ts"}})
+    assert _nms_reuse_fingerprint(mn, ("0",)) != _nms_reuse_fingerprint(ts, ("0",))
+
+
+def test_nms_reuse_fingerprint_empty_for_non_nms():
+    from chemrefine.step import _nms_reuse_fingerprint
+
+    plain = StepConfig(step=1, engine="orca", operation="opt_sp")
+    assert _nms_reuse_fingerprint(plain, ("0",)) == ""
+
+
+# ---------------------------------------------------------------------------
 # on_failure policy + per-structure failure capture
 # ---------------------------------------------------------------------------
 

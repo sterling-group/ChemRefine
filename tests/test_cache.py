@@ -101,6 +101,28 @@ def test_save_and_load_round_trip(tmp_path: Path):
     assert loaded.results.structures[1].energy_hartree == -1.5
 
 
+def test_reuse_fingerprint_round_trips(tmp_path: Path):
+    step_dir = tmp_path / "step1"
+    save(
+        step_cfg=_cfg(),
+        parent_ids=("0",),
+        results=_results(),
+        step_dir=step_dir,
+        chemrefine_version="2.0.0",
+        reuse_fingerprint="abc123",
+    )
+    assert load(step_dir).reuse_fingerprint == "abc123"
+
+
+def test_reuse_fingerprint_defaults_empty(tmp_path: Path):
+    step_dir = tmp_path / "step1"
+    save(
+        step_cfg=_cfg(), parent_ids=("0",), results=_results(),
+        step_dir=step_dir, chemrefine_version="2.0.0",
+    )
+    assert load(step_dir).reuse_fingerprint == ""
+
+
 def test_load_missing_returns_none(tmp_path: Path):
     assert load(tmp_path / "step1") is None
 

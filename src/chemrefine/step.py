@@ -100,6 +100,8 @@ def run_step(
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     engine = engine if engine is not None else get_engine(step_cfg.engine)
 
+    is_nms = step_cfg.nms and engine.supports_nms
+
     if use_cache and cache.is_valid(
         step_cfg=step_cfg, parent_ids=parent_ids, step_dir=ctx.step_dir
     ):
@@ -108,8 +110,10 @@ def run_step(
             raise CacheError("is_valid returned True but load returned None")
         failed = cache.load_failed_jobs(ctx.step_dir)
         if failed:
-            results = _resubmit_failed(
-                engine, ctx, step_cfg, failed, parent_ids, __version__
+            results = (
+                _reattempt_nms(engine, ctx, step_cfg, cached, parent_ids, __version__)
+                if is_nms
+                else _resubmit_failed(engine, ctx, step_cfg, failed, parent_ids, __version__)
             )
             return StepOutcome(
                 state=filtering.apply(results, step_cfg.sample), cache_hit=False
@@ -124,6 +128,38 @@ def run_step(
             cache_hit=True,
         )
 
+    # Full fingerprint invalid. For an NMS step whose *search* params changed but
+    # whose round-1 + criterion are unchanged (reuse fingerprint matches), reuse
+    # the round-1 freq + already-resolved children and re-attempt only the
+    # ledgered-unresolved parents — instead of re-running the whole step.
+    if use_cache and is_nms:
+        try:
+            cached = cache.load(ctx.step_dir)
+        except CacheError:
+            cached = None
+        if cached is not None and getattr(cached, "reuse_fingerprint", "") == (
+            _nms_reuse_fingerprint(step_cfg, parent_ids)
+        ):
+            if cache.load_failed_jobs(ctx.step_dir):
+                results = _reattempt_nms(
+                    engine, ctx, step_cfg, cached, parent_ids, __version__
+                )
+            else:
+                # All were resolved already; just re-stamp the new fingerprints.
+                logger.info(
+                    "step %d: NMS search params changed, all resolved — reusing cache",
+                    step_cfg.step,
+                )
+                cache.save(
+                    step_cfg=step_cfg, parent_ids=parent_ids, results=cached.results,
+                    step_dir=ctx.step_dir, chemrefine_version=__version__,
+                    reuse_fingerprint=_nms_reuse_fingerprint(step_cfg, parent_ids),
+                )
+                results = cached.results
+            return StepOutcome(
+                state=filtering.apply(results, step_cfg.sample), cache_hit=False
+            )
+
     logger.info("step %d (%s): preparing inputs", step_cfg.step, step_cfg.engine)
     inputs = engine.prepare(ctx)
     cache.save_manifest(
@@ -136,13 +172,20 @@ def run_step(
 
     logger.info("step %d: parsing outputs", step_cfg.step)
     successes, failures = _parse_with_failures(engine, inputs, ctx)
-    results = _apply_failure_policy(successes, failures, ctx, step_cfg)
 
-    if step_cfg.nms and engine.supports_nms:
+    if is_nms:
+        # Run NMS on the round-1 survivors, then apply the failure policy once
+        # over BOTH round-1 job failures and NMS-unresolved parents (a single
+        # ledger write — otherwise the NMS resolution would clobber the round-1
+        # failures).
         logger.info("step %d: running normal-mode sampling", step_cfg.step)
+        round1 = StepResults(structures=tuple(successes))
         results = _resolve_nms(
-            engine.normal_mode_sample(results, ctx), results, ctx, step_cfg
+            engine.normal_mode_sample(round1, ctx), round1, ctx, step_cfg,
+            round1_failures=failures,
         )
+    else:
+        results = _apply_failure_policy(successes, failures, ctx, step_cfg)
 
     cache.save(
         step_cfg=step_cfg,
@@ -150,6 +193,7 @@ def run_step(
         results=results,
         step_dir=ctx.step_dir,
         chemrefine_version=__version__,
+        reuse_fingerprint=_nms_reuse_fingerprint(step_cfg, parent_ids),
     )
 
     return StepOutcome(
@@ -287,19 +331,110 @@ def rebuild_cache_step(
         )
     logger.info("step %d: rebuilding cache from existing outputs", step_cfg.step)
     successes, failures = _parse_with_failures(engine, manifest, ctx)
-    results = _apply_failure_policy(successes, failures, ctx, step_cfg)
     if step_cfg.nms and engine.supports_nms:
+        round1 = StepResults(structures=tuple(successes))
         results = _resolve_nms(
-            engine.resolve_nms_from_existing(results, ctx), results, ctx, step_cfg
+            engine.resolve_nms_from_existing(round1, ctx), round1, ctx, step_cfg,
+            round1_failures=failures,
         )
+    else:
+        results = _apply_failure_policy(successes, failures, ctx, step_cfg)
     cache.save(
         step_cfg=step_cfg,
         parent_ids=parent_ids,
         results=results,
         step_dir=ctx.step_dir,
         chemrefine_version=__version__,
+        reuse_fingerprint=_nms_reuse_fingerprint(step_cfg, parent_ids),
     )
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
+
+
+# NMS *search* params: tuning these doesn't change what counts as resolved, so
+# changing them reuses round-1 (the reuse fingerprint ignores them). The
+# resolution *criterion* (target / ts_mode_index) stays in, so changing it
+# forces a full re-run.
+_NMS_SEARCH_KEYS = frozenset({"displacement_value", "num_random_displacements", "seed"})
+
+
+def _nms_reuse_fingerprint(step_cfg: StepConfig, parent_ids: tuple[str, ...]) -> str:
+    """Fingerprint that's stable across NMS search-param tuning.
+
+    Same as :func:`chemrefine.cache.fingerprint` but with the NMS search
+    parameters stripped from ``options`` — so bumping ``displacement_value``
+    leaves it unchanged (reuse round-1 + resolved, re-attempt only the
+    unresolved), while changing the criterion / template / parents changes it.
+    Returns ``""`` for non-NMS steps (the reuse path is NMS-only).
+    """
+    if not step_cfg.nms:
+        return ""
+    trimmed = {k: v for k, v in (step_cfg.options or {}).items() if k not in _NMS_SEARCH_KEYS}
+    return cache.fingerprint(step_cfg.model_copy(update={"options": trimmed}), parent_ids)
+
+
+def _reattempt_nms(
+    engine: CalculationEngine,
+    ctx: StepContext,
+    step_cfg: StepConfig,
+    cached: cache.StepCache,
+    parent_ids: tuple[str, ...],
+    version: str,
+) -> StepResults:
+    """Re-attempt only the ledgered-unresolved NMS parents, reusing round-1.
+
+    Round-1 freq is reused from disk (re-parsed, not resubmitted) for parents
+    whose output exists; a parent whose round-1 output is genuinely *missing*
+    has it resubmitted first. NMS round-2 is re-run for those parents under the
+    current ``NmsOptions``; the still-valid resolved structures from the old
+    cache are kept, and the merged result is re-cached.
+    """
+    manifest = cache.load_manifest(ctx.step_dir)
+    if manifest is None:
+        raise CacheError(
+            f"step {step_cfg.step}: cannot re-attempt NMS — no manifest on disk"
+        )
+    failed = cache.load_failed_jobs(ctx.step_dir)
+    failed_ids = {f["structure_id"] for f in failed}
+    missing_ids = {f["structure_id"] for f in failed if f.get("reason") == "output missing"}
+
+    failed_manifest = StepInputs(
+        files=tuple(f for f in manifest.files if f[2] in failed_ids)
+    )
+    missing_inputs = StepInputs(
+        files=tuple(f for f in failed_manifest.files if f[2] in missing_ids)
+    )
+    if missing_inputs.files:
+        logger.info(
+            "step %d: NMS re-attempt resubmitting %d missing round-1 job(s)",
+            step_cfg.step,
+            len(missing_inputs.files),
+        )
+        engine.wait(engine.submit(missing_inputs, ctx))
+
+    # Re-parse the failed parents' round-1 outputs (reuse on disk; caches freqs),
+    # then re-run NMS round-2 for them under the current options. Round-1 jobs
+    # that still produced no output stay failures, carried into the resolution.
+    r1_succ, r1_fail = _parse_with_failures(engine, failed_manifest, ctx)
+    round1_failed = StepResults(structures=tuple(r1_succ))
+    reattempt = _resolve_nms(
+        engine.normal_mode_sample(round1_failed, ctx), round1_failed, ctx, step_cfg,
+        round1_failures=r1_fail,
+    )
+    kept = tuple(
+        s
+        for s in cached.results.structures
+        if s.id not in failed_ids and (s.parent_id not in failed_ids)
+    )
+    merged = StepResults(structures=kept + reattempt.structures)
+    cache.save(
+        step_cfg=step_cfg,
+        parent_ids=parent_ids,
+        results=merged,
+        step_dir=ctx.step_dir,
+        chemrefine_version=version,
+        reuse_fingerprint=_nms_reuse_fingerprint(step_cfg, parent_ids),
+    )
+    return merged
 
 
 def _resolve_nms(
@@ -307,14 +442,17 @@ def _resolve_nms(
     round1: StepResults,
     ctx: StepContext,
     step_cfg: StepConfig,
+    round1_failures: list[_Failure] | tuple[_Failure, ...] = (),
 ) -> StepResults:
     """Group two-round NMS outputs by the round-1 structure each resolves.
 
     A round-1 structure is *resolved* if it passed through already at the
     target (``converged=True``) or any of its displaced ± children resolved.
     Resolved children are kept (both ±, no dedup); a round-1 structure with no
-    resolved outcome is a failure handed to the step's ``on_failure`` policy
-    (recorded to ``failed_jobs.json`` so ``resume`` can re-attempt it).
+    resolved outcome is a failure handed to the step's ``on_failure`` policy.
+    ``round1_failures`` (jobs that produced no/unparseable output) are carried
+    in unchanged, so the ledger records *both* failure kinds in one write
+    (recorded to ``failed_jobs.json`` so ``resume`` can re-attempt them).
     """
     round1_ids = {s.id for s in round1.structures}
     successes: list[Structure] = []
@@ -329,7 +467,7 @@ def _resolve_nms(
             successes.append(o)
             resolved_parents.add(key)
 
-    failures: list[_Failure] = []
+    failures: list[_Failure] = list(round1_failures)
     for s in round1.structures:
         if s.id in resolved_parents:
             continue
@@ -356,7 +494,8 @@ def _resubmit_failed(
     Rehydrates the per-structure inputs from the manifest, resubmits the failed
     subset (their input files already exist on disk from the original prepare),
     then re-parses the *whole* step so fan-out lineage stays consistent and the
-    ledger is refreshed (cleared if all now succeeded).
+    ledger is refreshed (cleared if all now succeeded). NMS steps use
+    :func:`_reattempt_nms` instead (they reuse round-1 rather than resubmit it).
     """
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
@@ -376,10 +515,6 @@ def _resubmit_failed(
 
     successes, failures = _parse_with_failures(engine, manifest, ctx)
     results = _apply_failure_policy(successes, failures, ctx, step_cfg)
-    if step_cfg.nms and engine.supports_nms:
-        results = _resolve_nms(
-            engine.normal_mode_sample(results, ctx), results, ctx, step_cfg
-        )
     cache.save(
         step_cfg=step_cfg,
         parent_ids=parent_ids,

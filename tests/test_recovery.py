@@ -246,6 +246,139 @@ def test_rerun_redoes_whole_step(tmp_path: Path):
         ENGINES.pop("flaky", None)
 
 
+def _register_fake_nms():
+    """A two-round NMS fake: ``resolved`` controls which parents resolve;
+    ``fail_round1`` produce no round-1 output; ``submitted``/``nms_seen`` log
+    round-1 submissions and which parents reached the NMS stage."""
+    from typing import ClassVar
+
+    from ase import Atoms
+
+    from chemrefine.engines.base import register
+    from chemrefine.ids import structure_artifact_path
+    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+
+    @register("fake-nms2")
+    class _FakeNms2:
+        name = "fake-nms2"
+        supports_nms = True
+        resolved: ClassVar[set[str]] = set()
+        fail_round1: ClassVar[set[str]] = set()
+        submitted: ClassVar[list[str]] = []
+        nms_seen: ClassVar[list[str]] = []
+
+        def prepare(self, ctx):
+            ctx.step_dir.mkdir(parents=True, exist_ok=True)
+            files = []
+            for s in ctx.prev_state.structures:
+                step = ctx.step_cfg.step
+                inp = structure_artifact_path(ctx.step_dir, step, s.id, "inp")
+                out = structure_artifact_path(ctx.step_dir, step, s.id, "out")
+                inp.write_text("in\n", encoding="utf-8")
+                files.append((inp, out, s.id))
+            return StepInputs(files=tuple(files))
+
+        def submit(self, inputs, ctx):
+            for _inp, out, sid in inputs.files:
+                _FakeNms2.submitted.append(sid)
+                if sid not in _FakeNms2.fail_round1:
+                    out.write_text("E -1.0\n", encoding="utf-8")
+            return JobBatch(jobs={})
+
+        def wait(self, batch):
+            return None
+
+        def parse(self, inputs, ctx):
+            seeds = {s.id: s for s in ctx.prev_state.structures}
+            out = []
+            for _inp, _o, sid in inputs.files:
+                seed = seeds.get(sid)
+                out.append(
+                    Structure(
+                        id=sid, atoms=seed.atoms if seed else Atoms("H"),
+                        energy_hartree=-1.0, terminated=True, converged=True,
+                    )
+                )
+            return StepResults(structures=tuple(out))
+
+        def normal_mode_sample(self, round1, ctx):
+            _FakeNms2.nms_seen.extend(s.id for s in round1.structures)
+            children = [
+                Structure(
+                    id=f"{s.id}_c", atoms=s.atoms, parent_id=s.id, energy_hartree=-1.0,
+                    terminated=True, converged=(s.id in _FakeNms2.resolved),
+                )
+                for s in round1.structures
+            ]
+            return StepResults(structures=tuple(children))
+
+    return _FakeNms2
+
+
+def _nms_step(displacement: float) -> StepConfig:
+    return StepConfig(
+        step=1, name="s", engine="fake-nms2", operation="freq", nms=True,
+        options={"target": "minimum", "displacement_value": displacement},
+    )
+
+
+def test_resume_after_tuning_reattempts_only_unresolved(tmp_path: Path):
+    """Tuning displacement_value (reuse fingerprint unchanged) + resume reuses
+    round-1 and re-runs NMS for ONLY the previously-unresolved parent."""
+    from chemrefine import cache
+    from chemrefine.engines.base import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        eng.resolved = {"0"}  # "1" stays unresolved on the first run
+        cfg1 = _seeded_config(tmp_path, [_nms_step(1.0)])
+        step_dir = (cfg1.output_dir / "step1_s").resolve()
+        execute(cfg1, Action.RESUME)
+        assert cache.load_failed_jobs(step_dir) == [
+            {"structure_id": "1", "reason": "NMS: target stationary point not reached"}
+        ]
+        assert {s.id for s in cache.load(step_dir).results.structures} == {"0_c"}
+
+        eng.resolved = {"0", "1"}  # new distance resolves "1"
+        eng.submitted, eng.nms_seen = [], []
+        execute(_seeded_config(tmp_path, [_nms_step(2.0)]), Action.RESUME)
+        assert eng.submitted == []        # round-1 freq reused, not resubmitted
+        assert eng.nms_seen == ["1"]      # only the unresolved parent re-attempted
+        assert cache.load_failed_jobs(step_dir) == []
+        assert {s.id for s in cache.load(step_dir).results.structures} == {"0_c", "1_c"}
+    finally:
+        eng.resolved, eng.fail_round1, eng.submitted, eng.nms_seen = set(), set(), [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_reattempt_resubmits_missing_round1(tmp_path: Path):
+    """A parent whose round-1 output is missing gets its round-1 resubmitted on
+    the next resume (NMS-unresolved parents do not)."""
+    from chemrefine import cache
+    from chemrefine.engines.base import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        eng.resolved = {"0", "1"}
+        eng.fail_round1 = {"1"}  # "1" produces no round-1 output
+        cfg = _seeded_config(tmp_path, [_nms_step(1.0)])
+        step_dir = (cfg.output_dir / "step1_s").resolve()
+        execute(cfg, Action.RESUME)
+        assert cache.load_failed_jobs(step_dir) == [
+            {"structure_id": "1", "reason": "output missing"}
+        ]
+
+        eng.fail_round1 = set()  # round-1 recovers
+        eng.submitted = []
+        execute(cfg, Action.RESUME)  # same config → full-valid + ledger → _reattempt_nms
+        assert eng.submitted == ["1"]  # round-1 resubmitted only for the missing one
+        assert cache.load_failed_jobs(step_dir) == []
+        assert {s.id for s in cache.load(step_dir).results.structures} == {"0_c", "1_c"}
+    finally:
+        eng.resolved, eng.fail_round1, eng.submitted, eng.nms_seen = set(), set(), [], []
+        ENGINES.pop("fake-nms2", None)
+
+
 def test_rebuild_cache_reparses_without_submitting(tmp_path: Path):
     """`rebuild-cache` rebuilds a step's cache from existing outputs — no submit."""
     from chemrefine import cache
