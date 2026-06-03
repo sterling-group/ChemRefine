@@ -1,8 +1,10 @@
 """Per-job operational logs (one file per structure per step).
 
 A *runlog* is one file per structure per step at
-``<step_dir>/step{N}_structure_{ID}.runlog``. Both bash (SLURM) and
-direct (in-process) engines emit the same skeleton:
+``<step_dir>/step{N}_structure_{ID}.runlog``. The bash header/footer
+snippets here are embedded in every generated SLURM script (which also
+runs via the local bash fallback), so every engine emits the same
+skeleton:
 
 * A start header with host, job_id, mode, engine, operation, step,
   structure_id, scratch path, output path, and cores. Engines append
@@ -12,19 +14,15 @@ direct (in-process) engines emit the same skeleton:
 * A finish footer with exit_code, elapsed_seconds, files_copied,
   scratch_kept.
 
-The fixed fields appear in both modes so a maintainer grepping
-``outputs/step*/step*_structure_*.runlog`` sees a uniform corpus;
-engine-specific rows extend the header without disturbing that
-shape.
+The fixed fields (``_HEADER_KEYS`` / ``_FOOTER_KEYS``) drive the field
+order, so a maintainer grepping ``outputs/step*/step*_structure_*.runlog``
+sees a uniform corpus; engine-specific rows extend the header without
+disturbing that shape.
 """
 
 from __future__ import annotations
 
-import os
-import socket
-import time
 from collections.abc import Sequence
-from datetime import datetime
 from pathlib import Path
 
 _HEADER_KEYS = (
@@ -52,11 +50,6 @@ def _format_field(key: str, value: object) -> str:
     return f"  {key}={value}"
 
 
-def _now_iso() -> str:
-    """Return a timezone-aware ISO-8601 timestamp at second precision."""
-    return datetime.now().astimezone().isoformat(timespec="seconds")
-
-
 # ---------------------------------------------------------------------------
 # Bash side (embedded in SLURM scripts)
 # ---------------------------------------------------------------------------
@@ -82,19 +75,19 @@ def bash_header(
     ``(key, value)`` rows via ``extra_fields`` — they render after the
     fixed runlog skeleton.
     """
-    fields = [
-        ("host", "$(hostname)"),
-        ("job_id", "${SLURM_JOB_ID:-$$}"),
-        ("mode", "$__cr_mode"),
-        ("engine", engine),
-        ("operation", operation),
-        ("step", step),
-        ("structure_id", structure_id),
-        ("scratch", "$WORK_DIR"),
-        ("output", step_dir),
-        ("cores", cores),
-        *extra_fields,
-    ]
+    values = {
+        "host": "$(hostname)",
+        "job_id": "${SLURM_JOB_ID:-$$}",
+        "mode": "$__cr_mode",
+        "engine": engine,
+        "operation": operation,
+        "step": step,
+        "structure_id": structure_id,
+        "scratch": "$WORK_DIR",
+        "output": step_dir,
+        "cores": cores,
+    }
+    fields = [(k, values[k]) for k in _HEADER_KEYS] + list(extra_fields)
     field_lines = "\n".join(_format_field(k, v) for k, v in fields)
     return (
         'if [ -n "${SLURM_JOB_ID:-}" ]; then __cr_mode=slurm; else __cr_mode=bash; fi\n'
@@ -114,12 +107,13 @@ def bash_footer(*, engine: str, step_label: str) -> str:
     should be set by the surrounding script before this footer fires;
     fallbacks of ``0`` and ``false`` are used when they are not.
     """
-    fields = [
-        ("exit_code", "$exit_code"),
-        ("elapsed_seconds", "$elapsed_seconds"),
-        ("files_copied", "${files_copied:-0}"),
-        ("scratch_kept", "${scratch_kept:-false}"),
-    ]
+    values = {
+        "exit_code": "$exit_code",
+        "elapsed_seconds": "$elapsed_seconds",
+        "files_copied": "${files_copied:-0}",
+        "scratch_kept": "${scratch_kept:-false}",
+    }
+    fields = [(k, values[k]) for k in _FOOTER_KEYS]
     field_lines = "\n".join(_format_field(k, v) for k, v in fields)
     return (
         "end_time=$(date +%s)\n"
@@ -129,85 +123,3 @@ def bash_footer(*, engine: str, step_label: str) -> str:
         f"{field_lines}\n"
         "EOF"
     )
-
-
-# ---------------------------------------------------------------------------
-# Python side (direct in-process engines)
-# ---------------------------------------------------------------------------
-
-
-def python_header(
-    *,
-    engine: str,
-    operation: str,
-    step: int,
-    structure_id: str,
-    step_label: str,
-    step_dir: Path,
-    log_path: Path,
-    cores: int = 1,
-    extra_fields: Sequence[tuple[str, object]] = (),
-) -> Path:
-    """Write the job-start header to ``log_path`` and return that path.
-
-    ``cores`` defaults to ``1`` because in-process scoring is
-    single-threaded by convention. Engine-specific identifiers (the
-    ORCA binary path, an MLFF model name, …) belong in ``extra_fields``.
-    """
-    fields = [
-        ("host", socket.gethostname()),
-        ("job_id", os.getpid()),
-        ("mode", "direct"),
-        ("engine", engine),
-        ("operation", operation),
-        ("step", step),
-        ("structure_id", structure_id),
-        ("scratch", step_dir),
-        ("output", step_dir),
-        ("cores", cores),
-        *extra_fields,
-    ]
-    lines = [
-        f"[{_now_iso()}] ChemRefine {engine} {step_label} starting",
-        *(_format_field(k, v) for k, v in fields),
-        "",
-    ]
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text("\n".join(lines), encoding="utf-8")
-    return log_path
-
-
-def python_footer(
-    *,
-    engine: str,
-    step_label: str,
-    log_path: Path,
-    exit_code: int,
-    elapsed_seconds: int,
-    files_copied: int = 0,
-    scratch_kept: bool = False,
-) -> None:
-    """Append the job-end footer to ``log_path``."""
-    fields = [
-        ("exit_code", exit_code),
-        ("elapsed_seconds", elapsed_seconds),
-        ("files_copied", files_copied),
-        ("scratch_kept", "true" if scratch_kept else "false"),
-    ]
-    lines = [
-        f"[{_now_iso()}] ChemRefine {engine} {step_label} finished",
-        *(_format_field(k, v) for k, v in fields),
-        "",
-    ]
-    with log_path.open("a", encoding="utf-8") as fh:
-        fh.write("\n".join(lines))
-
-
-# ---------------------------------------------------------------------------
-# Convenience: time the direct-mode payload
-# ---------------------------------------------------------------------------
-
-
-def monotonic_seconds() -> int:
-    """Return an integer monotonic second counter for elapsed timing."""
-    return int(time.monotonic())
