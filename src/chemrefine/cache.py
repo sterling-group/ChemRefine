@@ -35,13 +35,14 @@ from chemrefine.config import StepConfig
 from chemrefine.errors import CacheError
 from chemrefine.state import StepInputs, StepResults
 
-CACHE_FORMAT_VERSION = "v4.1"
-"""Bump whenever ``Structure`` / ``StepResults`` gain or change a field
-in a way that would silently misread an older pickle. The current
-bump (v4.0 → v4.1) marks the addition of ``Structure.parent_id``;
-caches written before that field exists deserialize without it,
-falling back to the class default of ``None`` and silently breaking
-``by_parent`` grouping until rebuilt."""
+CACHE_FORMAT_VERSION = "v2.0"
+"""On-disk cache schema version, tracking the 2.0.0 release line.
+
+Bump whenever the pickled :class:`StepCache` /
+:class:`~chemrefine.state.Structure` / :class:`~chemrefine.state.StepResults`
+layout changes in a way that would silently misread an older pickle;
+:func:`load` rejects any cache whose ``cache_format`` differs, forcing a clean
+rebuild rather than a wrong read."""
 
 logger = logging.getLogger(__name__)
 

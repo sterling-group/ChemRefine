@@ -78,7 +78,7 @@ def test_save_creates_pickle_and_json(tmp_path: Path):
         parent_ids=("0", "1"),
         results=_results(),
         step_dir=step_dir,
-        chemrefine_version="4.0.0",
+        chemrefine_version="2.0.0",
     )
     assert (step_dir / "_cache" / "step.pkl").is_file()
     assert (step_dir / "_cache" / "step.json").is_file()
@@ -91,7 +91,7 @@ def test_save_and_load_round_trip(tmp_path: Path):
         parent_ids=("0", "1"),
         results=_results(),
         step_dir=step_dir,
-        chemrefine_version="4.0.0",
+        chemrefine_version="2.0.0",
     )
     loaded = load(step_dir)
     assert loaded is not None
@@ -159,7 +159,7 @@ def test_is_valid_true_when_cache_matches(tmp_path: Path):
         parent_ids=("0",),
         results=_results(),
         step_dir=step_dir,
-        chemrefine_version="4.0.0",
+        chemrefine_version="2.0.0",
     )
     assert is_valid(step_cfg=cfg, parent_ids=("0",), step_dir=step_dir)
 
@@ -171,7 +171,7 @@ def test_is_valid_false_when_config_changes(tmp_path: Path):
         parent_ids=("0",),
         results=_results(),
         step_dir=step_dir,
-        chemrefine_version="4.0.0",
+        chemrefine_version="2.0.0",
     )
     assert not is_valid(step_cfg=_cfg(charge=-1), parent_ids=("0",), step_dir=step_dir)
 
@@ -193,7 +193,7 @@ def test_is_valid_false_when_parents_change(tmp_path: Path):
         parent_ids=("0",),
         results=_results(),
         step_dir=step_dir,
-        chemrefine_version="4.0.0",
+        chemrefine_version="2.0.0",
     )
     assert not is_valid(step_cfg=cfg, parent_ids=("0", "1"), step_dir=step_dir)
 
@@ -214,7 +214,7 @@ def test_invalidate_removes_cache(tmp_path: Path):
         parent_ids=("0",),
         results=_results(),
         step_dir=step_dir,
-        chemrefine_version="4.0.0",
+        chemrefine_version="2.0.0",
     )
     invalidate(step_dir)
     assert not (step_dir / "_cache" / "step.pkl").exists()
@@ -227,7 +227,7 @@ def test_invalidate_missing_is_noop(tmp_path: Path):
 
 def test_cache_format_version_constant():
     """Bumping CACHE_FORMAT_VERSION is a public ABI break we want to notice."""
-    assert CACHE_FORMAT_VERSION == "v4.1"
+    assert CACHE_FORMAT_VERSION == "v2.0"
 
 
 # ---------------------------------------------------------------------------
