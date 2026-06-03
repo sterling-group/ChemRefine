@@ -17,15 +17,15 @@ from __future__ import annotations
 
 import logging
 import time
+from math import ceil
 from pathlib import Path
 
 import numpy as np
 import yaml
 from ase import Atoms
 from ase.io import write as ase_write
-from sklearn.model_selection import train_test_split
 
-from chemrefine import slurm
+from chemrefine import ids, slurm
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import StepContext, StepResults
 
@@ -70,16 +70,23 @@ def prepare_inputs(results: StepResults, ctx: StepContext) -> tuple[Path, Path]:
     if not atoms_list:
         raise ValueError("no usable structures for MLFF training")
 
-    if len(atoms_list) < 2:
-        # train_test_split needs at least one of each — fall back to "all train".
+    n = len(atoms_list)
+    if n < 2:
+        # A split needs at least one of each — fall back to "all train".
         train_set, test_set = atoms_list, []
     else:
-        train_set, test_set = train_test_split(
-            atoms_list,
-            test_size=valid_fraction,
-            random_state=seed,
-            shuffle=True,
-        )
+        # Random validation split: ``ceil(valid_fraction * n)`` structures to
+        # test, the rest to train (same sizing sklearn's train_test_split used).
+        n_test = ceil(valid_fraction * n)
+        if n - n_test == 0:
+            raise ValueError(
+                f"valid_fraction={valid_fraction} leaves no training structures "
+                f"for n={n}; lower it."
+            )
+        perm = np.random.default_rng(seed).permutation(n)
+        test_idx, train_idx = perm[:n_test], perm[n_test:]
+        train_set = [atoms_list[i] for i in train_idx]
+        test_set = [atoms_list[i] for i in test_idx]
 
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     train_path = ctx.step_dir / "mace_train.xyz"
@@ -103,12 +110,18 @@ def write_training_config(
 ) -> Path:
     """Render a MACE training YAML from the per-step template.
 
-    The template is ``<template_dir>/step{N}.inp`` (a YAML body). We
-    patch the dataset paths and three output directories so MACE writes
-    inside the step dir, then write the resolved config to
-    ``<step_dir>/input.yaml``.
+    The template is the step's ``template:`` override or the default
+    ``<template_dir>/step{N}.inp`` (a YAML body). We patch the dataset paths
+    and three output directories so MACE writes inside the step dir, then
+    write the resolved config to ``<step_dir>/input.yaml``.
     """
-    template_path = ctx.template_dir / f"step{ctx.step_cfg.step}.inp"
+    template_path = ids.resolve_step_template(
+        ctx.template_dir,
+        ctx.step_cfg.step,
+        template=ctx.step_cfg.template,
+        suffix="inp",
+        label="MLFF training",
+    )
     raw = template_path.read_text(encoding="utf-8")
     config = yaml.safe_load(raw) or {}
     config["train_file"] = str(train_path)

@@ -26,10 +26,16 @@ pre-commit install   # optional: run ruff + interrogate on every commit
   `.slurm` script can be executed with `bash` directly)
 
 The base install pulls `numpy`, `pyyaml`, `pandas`, `ase`, `rdkit`,
-`scikit-learn`, `pydantic >= 2`, and `typer >= 0.12`. The `[mlff]`
-extra adds `torch >= 2.8, < 2.9`, `mace-torch >= 0.3.16`,
-`e3nn == 0.4.4`, `fairchem-core` (Sterling Group's patched fork),
-plus `flask`, `waitress`, and `requests` for the gradient server.
+`pydantic >= 2`, and `typer >= 0.12`. Optional extras layer backends on
+top:
+
+- `[mlff]` — `torch >= 2.8, < 2.9`, `mace-torch >= 0.3.16`,
+  `e3nn == 0.4.4`, `fairchem-core` (Sterling Group's patched fork),
+  plus the `[server]` gradient server.
+- `[pyscf]` — `pyscf` for the PySCF engine / PySCF-ExtOpt gradients
+  (plus `[server]`); `[pyscf-gpu]` adds `gpu4pyscf` on top.
+- `[server]` — just `flask` + `waitress` (the ExtOpt HTTP server);
+  pulled in automatically by `[mlff]` and `[pyscf]`.
 
 ## Verification
 

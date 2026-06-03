@@ -44,17 +44,25 @@ dependencies = [
     "pandas>=2.2.3",
     "ase>=3.26.0",
     "rdkit>=2024.9",
-    "scikit-learn>=1.5.2",
     "pydantic>=2.5",
     "typer>=0.12",
 ]
 
 [project.optional-dependencies]
+# Flask/waitress live here only — every backend that needs the ExtOpt
+# HTTP server (mlff, pyscf) cross-references `chemrefine[server]` instead
+# of re-pinning them, so the server deps have a single source of truth.
+# downloads: flask, waitress (tiny)
+server = [
+    "flask>=3.0",
+    "waitress>=3.0",
+]
 # `mace-torch` pins `e3nn==0.4.4` exactly while every PyPI release of
 # `fairchem-core` requires `e3nn>=0.5`. The two are mutually
 # unsatisfiable, so we install fairchem from a patched fork that
 # relaxes the e3nn floor. The fork can be swapped for the upstream
 # PyPI release once either side gives ground.
+# downloads: torch (+CUDA), e3nn, mace-torch, fairchem-core (git clone), + server (heavy)
 mlff = [
     "torch>=2.8.0,<2.9.0",
     "e3nn==0.4.4",
@@ -63,17 +71,28 @@ mlff = [
     # Swap in once mace-torch lifts its `e3nn==0.4.4` pin and the
     # fork above is no longer needed:
     # "fairchem-core>=2.9",
-    "flask>=3.0",
-    "waitress>=3.0",
+    "chemrefine[server]",
 ]
-server = [
-    "flask>=3.0",
-    "waitress>=3.0",
+# The `pyscf` and `pyscf-extopt` engines import `pyscf` lazily; the extopt
+# path also needs the server, so cross-reference `[server]`.
+# downloads: pyscf (libcint/libxc), + server (moderate)
+pyscf = [
+    "pyscf>=2.6",
+    "chemrefine[server]",
 ]
+# GPU SCF path (`run_dft(..., want_gpu=True)` in pyscf/_runtime). gpu4pyscf
+# needs pyscf, so cross-reference `[pyscf]` for a complete stack.
+# downloads: gpu4pyscf (→ cupy/CUDA), + pyscf (heavy, GPU)
+pyscf-gpu = [
+    "gpu4pyscf",
+    "chemrefine[pyscf]",
+]
+# downloads: pytest, pytest-cov (tiny)
 test = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
 ]
+# downloads: mkdocs, mkdocs-material, interrogate (small)
 docs = [
     "mkdocs>=1.6",
     "mkdocs-material>=9.5",
@@ -83,6 +102,7 @@ docs = [
 # `[docs]` so their pinned tools (pytest, interrogate, ...) only need
 # one source of truth, plus the linting tools that have no separate
 # extra of their own.
+# downloads: test + docs, ruff, pre-commit (small)
 dev = [
     "chemrefine[test,docs]",
     "ruff>=0.5",
