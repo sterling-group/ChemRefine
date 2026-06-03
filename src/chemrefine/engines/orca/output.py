@@ -33,9 +33,15 @@ _COORD_BLOCK_RE = re.compile(
     r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n",
     re.DOTALL,
 )
+# Ensemble (GOAT / Docker / Solvator) contract: per-frame energy-header regex
+# and the ``<base>.<suffix>`` sidecar filename ORCA writes the ensemble to.
+# Grouped here as the single source for these external-contract names.
 _GOAT_HEADER_RE = re.compile(r"^\s*(-?\d+\.\d+)")
 _DOCKER_HEADER_RE = re.compile(r"Eopt\s*=\s*(-?\d+\.\d+)\s*\(Eh\)", re.IGNORECASE)
 _SOLVATOR_HEADER_RE = re.compile(r"Energy\s+(-?\d+\.\d+)", re.IGNORECASE)
+_GOAT_SUFFIX = "finalensemble.xyz"
+_DOCKER_SUFFIX = "docker.struc1.allopt.xyz"
+_SOLVATOR_SUFFIX = "solventbuild.xyz"
 _GRAD_BLOCK_RE = re.compile(
     r"CARTESIAN GRADIENT\s*\n-+\n((?:.*?\n)+?)-+\n",
     re.DOTALL,
@@ -375,12 +381,6 @@ def _is_float_triplet(tokens: list[str]) -> bool:
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
-
-# ORCA-defined ensemble sidecar suffixes (``<base>.<suffix>``), one per
-# multi-structure operation. Single source for these external-contract names.
-_GOAT_SUFFIX = "finalensemble.xyz"
-_DOCKER_SUFFIX = "docker.struc1.allopt.xyz"
-_SOLVATOR_SUFFIX = "solventbuild.xyz"
 
 
 def _ensemble_sidecar(out_path: str | Path, suffix: str) -> Path:
