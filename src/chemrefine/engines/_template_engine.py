@@ -23,36 +23,29 @@ generic.
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 from typing import ClassVar
 
 import numpy as np
 from ase import Atoms
 
-from chemrefine import slurm, throttle
-from chemrefine.engines import _template
+from chemrefine.engines import _template_render
+from chemrefine.engines.base import SlurmBatchEngine
 from chemrefine.errors import OutputParseError
 from chemrefine.ids import structure_artifact_path
 from chemrefine.io import write_xyz
 from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
-from chemrefine.state import (
-    JobBatch,
-    StepContext,
-    StepInputs,
-    StepResults,
-    Structure,
-)
-
-logger = logging.getLogger(__name__)
+from chemrefine.state import StepContext, StepInputs, StepResults, Structure
 
 
-class TemplateScriptEngine:
+class TemplateScriptEngine(SlurmBatchEngine):
     """Direct template-driven engine satisfying :class:`CalculationEngine`."""
 
     name: ClassVar[str]
     label: ClassVar[str]
     supports_nms: ClassVar[bool] = False
+    template_suffix: ClassVar[str] = "py"
+    output_globs: ClassVar[tuple[str, ...]] = ("*.json", "*.xyz")
 
     # -- prepare -----------------------------------------------------------
 
@@ -73,7 +66,7 @@ class TemplateScriptEngine:
             xyz_path = xyz_paths[0]
             script_path = structure_artifact_path(ctx.step_dir, step, struct.id, "py")
             output_json = structure_artifact_path(ctx.step_dir, step, struct.id, "json")
-            _template.build_input(
+            _template_render.build_input(
                 xyz_path=xyz_path,
                 template_path=template,
                 output_path=script_path,
@@ -84,58 +77,15 @@ class TemplateScriptEngine:
             files.append((script_path, output_json, struct.id))
         return StepInputs(files=tuple(files))
 
-    def _resolve_template(self, ctx: StepContext) -> Path:
-        """Pick the Python-script template for this step."""
-        name = ctx.step_cfg.template or f"step{ctx.step_cfg.step}.py"
-        template = ctx.template_dir / name
-        if not template.is_file():
-            raise FileNotFoundError(f"{self.label} template not found: {template}")
-        return template
+    # -- submit (PAL + run_block hooks; the loop lives on SlurmBatchEngine) -
 
-    # -- submit / wait -----------------------------------------------------
+    def _pal(self, ctx: StepContext) -> int:
+        """Direct scripts take their core count from ``options.cores`` (default 1)."""
+        return int((ctx.step_cfg.options or {}).get("cores", 1))
 
-    def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
-        """Wrap each rendered ``.py`` in a SLURM script and submit it."""
-        throttler = throttle.Throttler(max_cores=ctx.max_cores)
-        header_path = ctx.template_dir / ctx.slurm_template
-        if not header_path.is_file():
-            raise FileNotFoundError(f"SLURM header template not found: {header_path}")
-
-        options = ctx.step_cfg.options or {}
-        pal = min(int(options.get("cores", 1)), ctx.max_cores)
-
-        step_label = ctx.step_cfg.dir_name()
-        jobs: dict[Path, str] = {}
-        for inp, out, sid in inputs.files:
-            throttler.wait_for_room(pal, is_finished=slurm.is_finished)
-            script_path = inp.with_suffix(".slurm")
-            slurm.build_script(
-                job_name=inp.stem,
-                pal=pal,
-                template_path=header_path,
-                script_path=script_path,
-                input_path=inp,
-                output_dir=out.parent,
-                scratch_dir=ctx.scratch_dir,
-                run_block=f"python {inp.name}",
-                engine=ctx.step_cfg.engine,
-                operation=ctx.step_cfg.operation,
-                step=ctx.step_cfg.step,
-                structure_id=sid,
-                step_label=step_label,
-                output_globs=("*.json", "*.xyz"),
-            )
-            job_id = slurm.submit(script_path)
-            throttler.register(job_id, pal)
-            jobs[inp] = job_id
-            logger.info("submitted %s as job %s (pal=%d)", inp.name, job_id, pal)
-
-        throttler.wait_all(is_finished=slurm.is_finished)
-        return JobBatch(jobs=jobs)
-
-    def wait(self, batch: JobBatch) -> None:
-        """No-op: :meth:`submit` already blocked until every job finished."""
-        return None
+    def _run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
+        """Run the rendered Python script inside ``$WORK_DIR``."""
+        return f"python {inp_path.name}"
 
     # -- parse -------------------------------------------------------------
 

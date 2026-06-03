@@ -3,7 +3,7 @@
 The per-engine ``test_engines_pyscf.py`` and ``test_engines_mlff.py``
 exercise the lifecycle end-to-end with their backend labels. The
 tests here exercise the *shared* surface area — the renderer
-(``_template.build_input``) and the top-level output-parsing
+(``_template_render.build_input``) and the top-level output-parsing
 helpers (``_atoms_from_output`` / ``_forces_from_gradient``) — once,
 not twice.
 """
@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 from ase import Atoms
 
-from chemrefine.engines import _template
+from chemrefine.engines import _template_render
 from chemrefine.engines._template_engine import (
     _atoms_from_output,
     _forces_from_gradient,
@@ -24,7 +24,7 @@ from chemrefine.engines._template_engine import (
 from chemrefine.errors import OutputParseError
 
 # ---------------------------------------------------------------------------
-# _template.build_input — renderer
+# _template_render.build_input — renderer
 # ---------------------------------------------------------------------------
 
 
@@ -35,7 +35,7 @@ def test_build_input_substitutes_geometry_placeholders(tmp_path: Path):
         encoding="utf-8",
     )
     out = tmp_path / "rendered.py"
-    _template.build_input(
+    _template_render.build_input(
         xyz_path=tmp_path / "frame.xyz",
         template_path=template,
         output_path=out,
@@ -54,7 +54,7 @@ def test_build_input_appends_output_footer(tmp_path: Path):
     template = tmp_path / "step1.py"
     template.write_text("energy_hartree = -1.0\n", encoding="utf-8")
     out = tmp_path / "rendered.py"
-    _template.build_input(
+    _template_render.build_input(
         xyz_path=tmp_path / "frame.xyz",
         template_path=template,
         output_path=out,
@@ -79,7 +79,7 @@ def test_build_input_leaves_legacy_output_json_placeholder_alone(tmp_path: Path)
         encoding="utf-8",
     )
     out = tmp_path / "rendered.py"
-    _template.build_input(
+    _template_render.build_input(
         xyz_path=tmp_path / "frame.xyz",
         template_path=template,
         output_path=out,
@@ -95,7 +95,7 @@ def test_build_input_leaves_legacy_output_json_placeholder_alone(tmp_path: Path)
 def test_build_input_missing_template_raises_generic(tmp_path: Path):
     """Direct call (no engine layer above it) surfaces the generic message."""
     with pytest.raises(FileNotFoundError, match="template not found"):
-        _template.build_input(
+        _template_render.build_input(
             xyz_path=tmp_path / "x.xyz",
             template_path=tmp_path / "missing.py",
             output_path=tmp_path / "out.py",
@@ -116,7 +116,7 @@ def test_build_input_preserves_python_braces(tmp_path: Path):
         encoding="utf-8",
     )
     out = tmp_path / "rendered.py"
-    _template.build_input(
+    _template_render.build_input(
         xyz_path=tmp_path / "x.xyz",
         template_path=template,
         output_path=out,
@@ -138,7 +138,7 @@ def test_build_input_leaves_unknown_placeholders_intact(tmp_path: Path):
         encoding="utf-8",
     )
     out = tmp_path / "rendered.py"
-    _template.build_input(
+    _template_render.build_input(
         xyz_path=tmp_path / "x.xyz",
         template_path=template,
         output_path=out,

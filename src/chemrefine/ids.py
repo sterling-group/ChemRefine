@@ -21,6 +21,10 @@ The functions here own three concerns:
    (:func:`extract_structure_id`) and build the canonical per-structure
    artifact path (:func:`structure_artifact_path`) — the inverse +
    forward sides of the same naming convention.
+4. Resolve a step's input *template* path (:func:`resolve_step_template`,
+   :func:`default_template_name`) — the ``step{N}.{ext}`` template-naming
+   convention, kept here beside the artifact-path convention so every
+   canonical ChemRefine filename lives in one module.
 """
 
 from __future__ import annotations
@@ -156,3 +160,34 @@ def structure_artifact_path(
     layout change only touches one file.
     """
     return step_dir / f"step{step}_structure_{structure_id}.{ext}"
+
+
+def default_template_name(step: int, suffix: str) -> str:
+    """Return the default per-step template basename ``step{step}.{suffix}``.
+
+    The single source of truth for the ``step{N}.<ext>`` template-naming
+    convention; every engine resolves its template through here so a future
+    layout change touches one place.
+    """
+    return f"step{step}.{suffix}"
+
+
+def resolve_step_template(
+    template_dir: Path,
+    step: int,
+    *,
+    template: str | None,
+    suffix: str,
+    label: str,
+) -> Path:
+    """Resolve a step's input template under ``template_dir``.
+
+    Uses the step's explicit ``template`` override when set, otherwise
+    :func:`default_template_name`. Raises :class:`FileNotFoundError` naming
+    ``label`` (the human backend name) when the file is missing.
+    """
+    name = template or default_template_name(step, suffix)
+    path = template_dir / name
+    if not path.is_file():
+        raise FileNotFoundError(f"{label} template not found: {path}")
+    return path
