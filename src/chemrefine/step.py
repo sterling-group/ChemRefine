@@ -139,7 +139,9 @@ def run_step(
 
     if step_cfg.nms and engine.supports_nms:
         logger.info("step %d: running normal-mode sampling", step_cfg.step)
-        results = engine.normal_mode_sample(results, ctx)
+        results = _resolve_nms(
+            engine.normal_mode_sample(results, ctx), results, ctx, step_cfg
+        )
 
     cache.save(
         step_cfg=step_cfg,
@@ -262,6 +264,47 @@ def _apply_failure_policy(
     return StepResults(structures=tuple(successes))
 
 
+def _resolve_nms(
+    nms_results: StepResults,
+    round1: StepResults,
+    ctx: StepContext,
+    step_cfg: StepConfig,
+) -> StepResults:
+    """Group two-round NMS outputs by the round-1 structure each resolves.
+
+    A round-1 structure is *resolved* if it passed through already at the
+    target (``converged=True``) or any of its displaced ± children resolved.
+    Resolved children are kept (both ±, no dedup); a round-1 structure with no
+    resolved outcome is a failure handed to the step's ``on_failure`` policy
+    (recorded to ``failed_jobs.json`` so ``resume`` can re-attempt it).
+    """
+    round1_ids = {s.id for s in round1.structures}
+    successes: list[Structure] = []
+    resolved_parents: set[str] = set()
+    attempts: dict[str, list[Structure]] = {}
+    for o in nms_results.structures:
+        # An already-resolved pass-through carries its own round-1 id; a
+        # displaced child carries its round-1 parent in ``parent_id``.
+        key = o.id if o.id in round1_ids else (o.parent_id or o.id)
+        attempts.setdefault(key, []).append(o)
+        if _succeeded(o):
+            successes.append(o)
+            resolved_parents.add(key)
+
+    failures: list[_Failure] = []
+    for s in round1.structures:
+        if s.id in resolved_parents:
+            continue
+        group = attempts.get(s.id, [])
+        best = (
+            min(group, key=lambda a: (a.energy_hartree is None, a.energy_hartree or 0.0))
+            if group
+            else s
+        )
+        failures.append(_Failure(s.id, "NMS: target stationary point not reached", best))
+    return _apply_failure_policy(successes, failures, ctx, step_cfg)
+
+
 def _resubmit_failed(
     engine: CalculationEngine,
     ctx: StepContext,
@@ -296,7 +339,9 @@ def _resubmit_failed(
     successes, failures = _parse_with_failures(engine, manifest, ctx)
     results = _apply_failure_policy(successes, failures, ctx, step_cfg)
     if step_cfg.nms and engine.supports_nms:
-        results = engine.normal_mode_sample(results, ctx)
+        results = _resolve_nms(
+            engine.normal_mode_sample(results, ctx), results, ctx, step_cfg
+        )
     cache.save(
         step_cfg=step_cfg,
         parent_ids=parent_ids,

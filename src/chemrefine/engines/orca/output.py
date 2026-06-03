@@ -84,15 +84,24 @@ def parse_dft(path: str | Path) -> list[ParsedStructure]:
     Raises :class:`OutputParseError` if the energy or coordinates block
     is missing.
     """
-    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    return parse_dft_from_text(
+        Path(path).read_text(encoding="utf-8", errors="replace"), src=str(path)
+    )
 
+
+def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedStructure]:
+    """Parse a DFT ``opt_sp`` output from already-read text (single pass).
+
+    ``src`` only labels error messages. Callers that also need the
+    frequency block (NMS) read the file once and reuse ``text`` here.
+    """
     energy_matches = _FINAL_ENERGY_RE.findall(text)
     if not energy_matches:
-        raise OutputParseError(f"no FINAL SINGLE POINT ENERGY in {path}")
+        raise OutputParseError(f"no FINAL SINGLE POINT ENERGY in {src}")
 
     coord_blocks = _COORD_BLOCK_RE.findall(text)
     if not coord_blocks:
-        raise OutputParseError(f"no CARTESIAN COORDINATES block in {path}")
+        raise OutputParseError(f"no CARTESIAN COORDINATES block in {src}")
 
     symbols, positions = _parse_coord_block(coord_blocks[-1])
     return [
@@ -277,7 +286,13 @@ def parse_pes(path: str | Path) -> list[ParsedStructure]:
     the **last** ``FINAL SINGLE POINT ENERGY`` line — that's the
     converged geometry for that scan point.
     """
-    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    return parse_pes_from_text(
+        Path(path).read_text(encoding="utf-8", errors="replace"), src=str(path)
+    )
+
+
+def parse_pes_from_text(text: str, *, src: str = "<text>") -> list[ParsedStructure]:
+    """Parse a PES-scan output from already-read text (single pass)."""
     segments = _PES_SEGMENT_RE.split(text)[:-1]  # last fragment has no DONE marker
     terminated = bool(_TERMINATED_RE.search(text))
 
@@ -303,7 +318,7 @@ def parse_pes(path: str | Path) -> list[ParsedStructure]:
             )
         )
     if not structures:
-        raise OutputParseError(f"no PES scan frames found in {path}")
+        raise OutputParseError(f"no PES scan frames found in {src}")
     return structures
 
 
@@ -387,14 +402,35 @@ def _ensemble_sidecar(out_path: str | Path, suffix: str) -> Path:
     return sidecar
 
 
+# Operations whose structures come from the ``.out`` itself (not a sidecar).
+# ``freq`` is an opt+freq run — its geometry/energy parse exactly like opt_sp.
+_DFT_OPERATIONS = frozenset({"opt_sp", "dft", "sp", "freq"})
+TEXT_BASED_OPERATIONS = _DFT_OPERATIONS | {"pes"}
+
+
+def parse_text(text: str, operation: str, *, src: str = "<text>") -> list[ParsedStructure]:
+    """Parse a ``.out``-based operation from already-read text (parse-once).
+
+    Only the :data:`TEXT_BASED_OPERATIONS` (the ones that read the ``.out``
+    directly) are handled here; the sidecar ensemble operations use
+    :func:`parse_output`.
+    """
+    op = operation.lower().replace("+", "_")
+    if op in _DFT_OPERATIONS:
+        return parse_dft_from_text(text, src=src)
+    if op == "pes":
+        return parse_pes_from_text(text, src=src)
+    raise OutputParseError(f"{operation!r} is not a text-based ORCA operation")
+
+
 def parse_output(path: str | Path, operation: str) -> list[ParsedStructure]:
     """Pick the right parser based on the YAML ``operation`` string.
 
-    ``opt_sp`` / ``sp`` / ``pes`` read the ``.out`` directly; the multi-frame
-    ensemble operations read their ``<base>.<suffix>`` sidecar instead.
+    ``opt_sp`` / ``sp`` / ``freq`` / ``pes`` read the ``.out`` directly; the
+    multi-frame ensemble operations read their ``<base>.<suffix>`` sidecar.
     """
     op = operation.lower().replace("+", "_")
-    if op in {"opt_sp", "dft", "sp"}:
+    if op in _DFT_OPERATIONS:
         return parse_dft(path)
     if op == "pes":
         return parse_pes(path)

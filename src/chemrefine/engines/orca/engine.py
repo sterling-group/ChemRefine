@@ -19,16 +19,29 @@ state between steps.
 
 from __future__ import annotations
 
+import logging
+from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 from ase import Atoms
+from numpy.typing import NDArray
 
+from chemrefine import cache
 from chemrefine.engines.base import SlurmBatchEngine, register
+from chemrefine.engines.orca import frequencies, nms, output
 from chemrefine.engines.orca import input as orca_input
-from chemrefine.engines.orca import nms, output
 from chemrefine.ids import allocate_child_ids, structure_artifact_path
 from chemrefine.io import write_xyz
-from chemrefine.state import StepContext, StepInputs, StepResults, Structure
+from chemrefine.state import (
+    PipelineState,
+    StepContext,
+    StepInputs,
+    StepResults,
+    Structure,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @register("orca")
@@ -40,6 +53,14 @@ class OrcaEngine(SlurmBatchEngine):
     label = "ORCA"
     template_suffix = "inp"
     output_globs = ("*.out", "*.xyz", "*.gbw", "*.hess")
+
+    def __init__(self) -> None:
+        # Per-run, per-id caches populated in `parse` (parse-once): the
+        # imaginary frequencies and normal-mode tensor of each NMS output,
+        # reused by `normal_mode_sample` for displacement + resolution
+        # without re-reading the `.out`.
+        self._imag_freqs: dict[str, dict[int, float]] = {}
+        self._modes: dict[str, NDArray[np.float64] | None] = {}
 
     # -- prepare -----------------------------------------------------------
 
@@ -105,17 +126,31 @@ class OrcaEngine(SlurmBatchEngine):
     # -- parse -------------------------------------------------------------
 
     def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
-        """Read each output file and build :class:`Structure` instances."""
+        """Parse each output once into :class:`Structure` instances.
+
+        For ``.out``-based operations the file is read a single time and that
+        text yields geometry/energy/forces + the run-status flags, and — for
+        NMS steps — the imaginary frequencies + normal-mode tensor (cached for
+        :meth:`normal_mode_sample`). Ensemble operations read their sidecar.
+        """
         operation = ctx.step_cfg.operation
+        text_based = operation.lower().replace("+", "_") in output.TEXT_BASED_OPERATIONS
         prev_by_id = {s.id: s for s in ctx.prev_state.structures}
 
         # Parse every output first so each input's fan-out is known, then mint
         # child IDs through the shared lineage convention in `ids` instead of
         # re-implementing the ``{parent}-{i}`` format here.
-        parsed_per_input = [
-            (sid, output.parse_output(out_path, operation))
-            for _inp, out_path, sid in inputs.files
-        ]
+        parsed_per_input: list[tuple[str, list[output.ParsedStructure]]] = []
+        for _inp, out_path, sid in inputs.files:
+            if text_based:
+                text = out_path.read_text(encoding="utf-8", errors="replace")
+                parsed = output.parse_text(text, operation, src=str(out_path))
+                if ctx.step_cfg.nms and parsed:
+                    self._cache_frequencies(sid, text, n_atoms=len(parsed[0].symbols))
+            else:
+                parsed = output.parse_output(out_path, operation)
+            parsed_per_input.append((sid, parsed))
+
         parents = [sid for sid, _ in parsed_per_input]
         fanouts = [len(parsed) for _, parsed in parsed_per_input]
         child_ids = iter(allocate_child_ids(parents, fanouts))
@@ -146,8 +181,85 @@ class OrcaEngine(SlurmBatchEngine):
                 )
         return StepResults(structures=tuple(out_structures))
 
-    # -- nms ---------------------------------------------------------------
+    def _cache_frequencies(self, sid: str, text: str, *, n_atoms: int) -> None:
+        """Cache the imaginary freqs + normal-mode tensor from this output's text.
+
+        Part of the single parse pass for NMS steps; :meth:`normal_mode_sample`
+        reads these instead of re-reading the ``.out``. A missing freq block
+        leaves ``modes=None`` so the structure simply isn't displaced.
+        """
+        self._imag_freqs[sid] = frequencies.parse_imaginary_frequencies_from_text(text)
+        try:
+            self._modes[sid] = frequencies.parse_normal_modes_tensor_from_text(
+                text, num_atoms=n_atoms
+            )
+        except ValueError:
+            self._modes[sid] = None
+
+    # -- nms (two-round: displace round-1 survivors, re-optimise, mark resolved) --
 
     def normal_mode_sample(self, results: StepResults, ctx: StepContext) -> StepResults:
-        """Delegate to :mod:`engines.orca.nms`."""
-        return nms.normal_mode_sample(results, ctx)
+        """Displace round-1 survivors per target, re-optimise them, flag resolution.
+
+        For each round-1 structure: if it already matches the target imaginary
+        count it passes through (``converged=True``); otherwise it is displaced
+        (target-aware, via :mod:`engines.orca.nms`) and the ± children are
+        re-optimised (``opt+freq``) in a ``nms/`` subdir (round 2). Each child's
+        ``converged`` flag records whether its round-2 imaginary count matches
+        the target. :func:`chemrefine.step.run_step` then groups by parent and
+        applies the step's ``on_failure`` policy to unresolved parents.
+        """
+        opts = nms.NmsOptions.from_raw(ctx.step_cfg.options)
+        rng = np.random.default_rng(opts.seed)
+        target = nms.target_imaginary_count(opts)
+
+        outputs: list[Structure] = []
+        children: list[Structure] = []
+        for s in results.structures:
+            imag = self._imag_freqs.get(s.id, {})
+            if target is not None and len(imag) == target:
+                outputs.append(replace(s, converged=True))  # already at target
+                continue
+            modes = self._modes.get(s.id)
+            if modes is None:
+                logger.warning(
+                    "NMS %s: no normal-mode tensor; cannot displace (left unresolved)",
+                    s.id,
+                )
+                continue
+            for suffix, positions in nms.select_displacements(s, imag, modes, opts, rng):
+                child_atoms = s.atoms.copy()
+                child_atoms.set_positions(positions)
+                children.append(
+                    Structure(id=f"{s.id}_{suffix}", atoms=child_atoms, parent_id=s.id)
+                )
+
+        if children:
+            outputs.extend(self._run_nms_round_two(children, ctx, target))
+        return StepResults(structures=tuple(outputs))
+
+    def _run_nms_round_two(
+        self, children: list[Structure], ctx: StepContext, target: int | None
+    ) -> list[Structure]:
+        """Re-optimise displaced children in ``nms/`` and flag their resolution."""
+        nms_ctx = replace(
+            ctx,
+            step_dir=ctx.step_dir / "nms",
+            prev_state=PipelineState(structures=tuple(children)),
+        )
+        inputs = self.prepare(nms_ctx)
+        cache.save_manifest(
+            inputs, nms_ctx.step_dir,
+            operation=ctx.step_cfg.operation, engine=ctx.step_cfg.engine,
+        )
+        self.wait(self.submit(inputs, nms_ctx))
+        round2 = self.parse(inputs, nms_ctx)
+
+        flagged: list[Structure] = []
+        for c in round2.structures:
+            imag = self._imag_freqs.get(c.id, {})
+            resolved = c.terminated is not False and (
+                target is None or len(imag) == target
+            )
+            flagged.append(replace(c, converged=resolved))
+        return flagged

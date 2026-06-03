@@ -226,3 +226,39 @@ def test_orca_engine_nms_returns_empty_on_no_freq_output(tmp_path: Path):
 
     expanded = engine.normal_mode_sample(StepResults(structures=()), ctx)
     assert expanded.structures == ()
+
+
+def test_orca_nms_passes_through_minimum_and_displaces_imaginary(tmp_path, monkeypatch):
+    """Round-1 structure already at the target passes through; one with an
+    imaginary mode is displaced and its ± children sent to round 2."""
+    import numpy as np
+
+    from chemrefine.state import StepResults
+
+    engine = get_engine("orca")
+    engine._imag_freqs = {"min": {}, "imag": {5: -42.0}}
+    modes = np.zeros((2, 3, 6))
+    modes[0, 0, 5], modes[1, 0, 5] = 0.1, -0.1
+    engine._modes = {"min": modes, "imag": modes}
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_round2(children, ctx, target):
+        captured["children"] = [c.id for c in children]
+        c = children[0]
+        return [
+            Structure(id=c.id, atoms=c.atoms, parent_id="imag", converged=True, terminated=True)
+        ]
+
+    monkeypatch.setattr(engine, "_run_nms_round_two", fake_round2)
+    ctx = _ctx(
+        tmp_path, structures=(),
+        step_cfg=StepConfig(step=1, engine="orca", operation="freq", nms=True),
+    )
+    out = engine.normal_mode_sample(
+        StepResults(structures=(_seed_structure("min"), _seed_structure("imag"))), ctx
+    )
+    ids = {s.id for s in out.structures}
+    assert "min" in ids  # already at the minimum → pass-through
+    assert captured["children"] == ["imag_m5_pos", "imag_m5_neg"]
+    assert "imag_m5_pos" in ids  # resolved round-2 child forwarded

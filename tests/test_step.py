@@ -298,6 +298,41 @@ def test_on_failure_best_backfills_all(tmp_path: Path):
         ENGINES.pop("fake-fail", None)
 
 
+def test_resolve_nms_keeps_resolved_drops_unresolved(tmp_path: Path):
+    """_resolve_nms: already-resolved pass-through + resolved children kept;
+    a round-1 parent with no resolved child becomes a (ledgered) failure."""
+    from chemrefine import cache
+    from chemrefine.state import StepResults
+    from chemrefine.step import _resolve_nms, build_context
+
+    cfg = _config(tmp_path, engine="orca", operation="freq", nms=True)
+    ctx = build_context(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]))
+    ctx.step_dir.mkdir(parents=True, exist_ok=True)
+    round1 = StepResults(
+        structures=tuple(
+            Structure(id=i, atoms=Atoms("H"), energy_hartree=-1.0) for i in ["0", "1", "2"]
+        )
+    )
+    def _r(sid, parent, e, conv):
+        return Structure(
+            id=sid, atoms=Atoms("H"), parent_id=parent,
+            energy_hartree=e, converged=conv, terminated=True,
+        )
+
+    nms_results = StepResults(structures=(
+        _r("0", None, -1.0, True),          # already at the target (round-1 id)
+        _r("1_m5_pos", "1", -1.1, True),    # "1" → one resolved child
+        _r("1_m5_neg", "1", -1.0, False),   #        one not
+        _r("2_m5_pos", "2", -0.9, False),   # "2" → both children unresolved
+        _r("2_m5_neg", "2", -0.8, False),
+    ))
+    out = _resolve_nms(nms_results, round1, ctx, cfg.steps[0])
+    assert {s.id for s in out.structures} == {"0", "1_m5_pos"}
+    assert cache.load_failed_jobs(ctx.step_dir) == [
+        {"structure_id": "2", "reason": "NMS: target stationary point not reached"}
+    ]
+
+
 def test_run_step_nms_branch_runs_when_engine_supports_it(tmp_path: Path):
     """The NMS branch in run_step fires when both step_cfg.nms and engine.supports_nms are true."""
     from chemrefine.engines.base import ENGINES, register
