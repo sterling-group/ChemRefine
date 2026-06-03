@@ -209,16 +209,66 @@ class OrcaEngine(SlurmBatchEngine):
         the target. :func:`chemrefine.step.run_step` then groups by parent and
         applies the step's ``on_failure`` policy to unresolved parents.
         """
+        target = nms.target_imaginary_count(nms.NmsOptions.from_raw(ctx.step_cfg.options))
+        already, children = self._nms_displace(results, ctx)
+        outputs = list(already)
+        if children:
+            nms_ctx = self._nms_round_two_ctx(ctx, children)
+            inputs = self.prepare(nms_ctx)
+            cache.save_manifest(
+                inputs, nms_ctx.step_dir,
+                operation=ctx.step_cfg.operation, engine=ctx.step_cfg.engine,
+            )
+            self.wait(self.submit(inputs, nms_ctx))
+            outputs.extend(self._flag_resolution(self.parse(inputs, nms_ctx), target))
+        return StepResults(structures=tuple(outputs))
+
+    def resolve_nms_from_existing(
+        self, results: StepResults, ctx: StepContext
+    ) -> StepResults:
+        """Re-resolve NMS from round-2 outputs already on disk — no submission.
+
+        Used by ``rebuild-cache``: re-derives the (deterministic) displaced
+        children and parses their existing ``nms/`` ``.out`` files to re-flag
+        resolution. Round-1 frequencies must already be cached (the caller
+        re-parses round 1 first). Children with no output on disk are simply
+        absent, so :func:`chemrefine.step._resolve_nms` treats their parent as
+        unresolved.
+        """
+        target = nms.target_imaginary_count(nms.NmsOptions.from_raw(ctx.step_cfg.options))
+        already, children = self._nms_displace(results, ctx)
+        outputs = list(already)
+        if children:
+            nms_ctx = self._nms_round_two_ctx(ctx, children)
+            step = ctx.step_cfg.step
+
+            def _triple(c: Structure) -> tuple[Path, Path, str]:
+                return (
+                    structure_artifact_path(nms_ctx.step_dir, step, c.id, "inp"),
+                    structure_artifact_path(nms_ctx.step_dir, step, c.id, "out"),
+                    c.id,
+                )
+
+            present = StepInputs(
+                files=tuple(t for c in children if (t := _triple(c))[1].is_file())
+            )
+            if present.files:
+                outputs.extend(self._flag_resolution(self.parse(present, nms_ctx), target))
+        return StepResults(structures=tuple(outputs))
+
+    def _nms_displace(
+        self, results: StepResults, ctx: StepContext
+    ) -> tuple[list[Structure], list[Structure]]:
+        """Split round-1 survivors into (already-at-target, displaced children)."""
         opts = nms.NmsOptions.from_raw(ctx.step_cfg.options)
         rng = np.random.default_rng(opts.seed)
         target = nms.target_imaginary_count(opts)
-
-        outputs: list[Structure] = []
+        already: list[Structure] = []
         children: list[Structure] = []
         for s in results.structures:
             imag = self._imag_freqs.get(s.id, {})
             if target is not None and len(imag) == target:
-                outputs.append(replace(s, converged=True))  # already at target
+                already.append(replace(s, converged=True))  # already at target
                 continue
             modes = self._modes.get(s.id)
             if modes is None:
@@ -233,28 +283,20 @@ class OrcaEngine(SlurmBatchEngine):
                 children.append(
                     Structure(id=f"{s.id}_{suffix}", atoms=child_atoms, parent_id=s.id)
                 )
+        return already, children
 
-        if children:
-            outputs.extend(self._run_nms_round_two(children, ctx, target))
-        return StepResults(structures=tuple(outputs))
-
-    def _run_nms_round_two(
-        self, children: list[Structure], ctx: StepContext, target: int | None
-    ) -> list[Structure]:
-        """Re-optimise displaced children in ``nms/`` and flag their resolution."""
-        nms_ctx = replace(
+    def _nms_round_two_ctx(
+        self, ctx: StepContext, children: list[Structure]
+    ) -> StepContext:
+        """The round-2 context: children as seeds, ``nms/`` as the work dir."""
+        return replace(
             ctx,
             step_dir=ctx.step_dir / "nms",
             prev_state=PipelineState(structures=tuple(children)),
         )
-        inputs = self.prepare(nms_ctx)
-        cache.save_manifest(
-            inputs, nms_ctx.step_dir,
-            operation=ctx.step_cfg.operation, engine=ctx.step_cfg.engine,
-        )
-        self.wait(self.submit(inputs, nms_ctx))
-        round2 = self.parse(inputs, nms_ctx)
 
+    def _flag_resolution(self, round2: StepResults, target: int | None) -> list[Structure]:
+        """Set each round-2 child's ``converged`` to whether it hit the target."""
         flagged: list[Structure] = []
         for c in round2.structures:
             imag = self._imag_freqs.get(c.id, {})

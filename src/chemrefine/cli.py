@@ -5,15 +5,14 @@ This is the **only** module that calls :func:`sys.exit` or reads
 :class:`~chemrefine.recovery.Action` values:
 
 * ``chemrefine run CONFIG`` — full pipeline from step 1 (caches invalidated).
-* ``chemrefine resume CONFIG`` — honor existing cache where possible.
-* ``chemrefine rebuild-cache CONFIG [STEP]`` — invalidate one step's
-  cache, then resume.
-* ``chemrefine rebuild-nms CONFIG [STEP]`` — same as rebuild-cache but
-  semantically scoped to normal-mode-sampling rebuilds (engines may
-  treat it differently in their parse step).
-* ``chemrefine rerun CONFIG [STEP]`` — resubmit only the failed jobs of a
-  step (those recorded in its ``_cache/failed_jobs.json``), keeping the
-  cached good results; then re-parse and re-cache.
+* ``chemrefine resume CONFIG`` — honor existing cache; incremental, so a step
+  with a ``failed_jobs.json`` ledger resubmits only its still-failed structures.
+* ``chemrefine rerun CONFIG [STEP]`` — redo one whole step from scratch
+  (others cache-hit).
+* ``chemrefine rebuild-cache CONFIG [STEP]`` — rebuild one step's cache from
+  outputs already on disk (parse only, no submission).
+* ``chemrefine rebuild-nms CONFIG [STEP]`` — re-run the NMS step with the
+  current options (a named alias of ``rerun``).
 
 Global flags: ``--maxcores INT`` overrides ``max_cores`` in the YAML;
 ``--dry-run`` loads and validates the config without executing; ``-v``
@@ -164,7 +163,7 @@ def rebuild_cache(
     maxcores: MaxCoresOpt = None,
     dry_run: DryRunOpt = False,
 ) -> None:
-    """Invalidate one step's cache (default: latest step), then resume."""
+    """Rebuild one step's cache from existing outputs (default: latest); no submission."""
     cfg = _load(config_path, maxcores=maxcores)
     raise typer.Exit(_dispatch(Action.REBUILD_CACHE, cfg, target=target, dry_run=dry_run))
 
@@ -176,7 +175,7 @@ def rebuild_nms(
     maxcores: MaxCoresOpt = None,
     dry_run: DryRunOpt = False,
 ) -> None:
-    """Rebuild one step's normal-mode-sampling output, then resume."""
+    """Re-run the NMS step with the current options (alias of rerun)."""
     cfg = _load(config_path, maxcores=maxcores)
     raise typer.Exit(_dispatch(Action.REBUILD_NMS, cfg, target=target, dry_run=dry_run))
 
@@ -188,6 +187,6 @@ def rerun(
     maxcores: MaxCoresOpt = None,
     dry_run: DryRunOpt = False,
 ) -> None:
-    """Re-execute one step (default: latest), resubmitting jobs as needed."""
+    """Redo one whole step from scratch (default: latest); others cache-hit."""
     cfg = _load(config_path, maxcores=maxcores)
     raise typer.Exit(_dispatch(Action.RERUN, cfg, target=target, dry_run=dry_run))

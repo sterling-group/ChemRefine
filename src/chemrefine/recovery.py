@@ -1,11 +1,15 @@
-"""Action dispatcher — run / resume / rebuild-cache / rebuild-nms / rerun.
+"""Action dispatcher — run / resume / rerun / rebuild-cache / rebuild-nms.
 
-The CLI maps each subcommand to an :class:`Action` and calls
-:func:`execute`. ``run`` wipes every step's cache and re-executes from
-scratch; ``resume`` honors whatever cache is on disk; ``rebuild-cache`` /
-``rebuild-nms`` invalidate one step's cache (latest if no target) and
-resume; ``rerun`` keeps the cached good results and resubmits only the
-failed jobs recorded in that step's ``failed_jobs.json``.
+The CLI maps each subcommand to an :class:`Action` and calls :func:`execute`:
+
+* ``run`` — wipe every step's cache and re-execute from scratch.
+* ``resume`` — honor the on-disk cache; **incremental**, so a step with a
+  ``failed_jobs.json`` ledger resubmits only its still-failed structures.
+* ``rerun [step]`` — redo one whole step from scratch (others cache-hit).
+* ``rebuild-cache [step]`` — rebuild one step's cache from outputs already on
+  disk (parse only, no submission).
+* ``rebuild-nms [step]`` — re-run the NMS step with the current options
+  (a named alias of ``rerun`` for the NMS-tuning workflow).
 """
 
 from __future__ import annotations
@@ -61,8 +65,13 @@ def _action_resume(config: Config, _target: str | int | None) -> None:
     pipeline.run(config, use_cache=True)
 
 
-def _action_invalidate_one(config: Config, target: str | int | None) -> None:
-    """Invalidate one step (latest if ``target`` is None) then resume."""
+def _action_rerun(config: Config, target: str | int | None) -> None:
+    """Redo one whole step from scratch (latest if ``target`` is None), then resume.
+
+    Invalidates the target step's cache so it re-executes end-to-end (both NMS
+    rounds; with current options) while prior steps cache-hit. To repair only
+    failed jobs without redoing successful ones, use ``resume`` (incremental).
+    """
     target_step = (
         config.steps[-1] if target is None else resolve_target(config, target)
     )
@@ -70,26 +79,28 @@ def _action_invalidate_one(config: Config, target: str | int | None) -> None:
     pipeline.run(config, use_cache=True)
 
 
-def _action_rerun(config: Config, target: str | int | None) -> None:
-    """Resubmit only the failed jobs of one step (latest if ``target`` is None).
+def _action_rebuild_cache(config: Config, target: str | int | None) -> None:
+    """Rebuild one step's cache from outputs already on disk (no submission).
 
-    Unlike ``rebuild-cache`` (which re-runs the whole step), ``rerun`` keeps the
-    cached good results and resubmits only the structures recorded in the step's
-    ``failed_jobs.json``, then re-parses + re-caches. Prior steps cache-hit so
-    the resubmitted step still receives the correct upstream state.
+    Prior steps cache-hit to supply the upstream state; the target step is
+    re-parsed from its existing outputs (and re-resolved, for NMS) and its
+    ``StepCache`` rewritten. Use after a parser/cache change to avoid re-running
+    finished jobs.
     """
     target_step = (
         config.steps[-1] if target is None else resolve_target(config, target)
     )
-    pipeline.run(config, use_cache=True, rerun_step=target_step.step)
+    pipeline.run(config, use_cache=True, rebuild_step=target_step.step)
 
 
 _HANDLERS: dict[Action, Callable[[Config, str | int | None], None]] = {
     Action.RUN: _action_run,
     Action.RESUME: _action_resume,
-    Action.REBUILD_CACHE: _action_invalidate_one,
+    Action.REBUILD_CACHE: _action_rebuild_cache,
     Action.RERUN: _action_rerun,
-    Action.REBUILD_NMS: _action_invalidate_one,
+    # rebuild-nms re-runs the NMS step with the current NmsOptions (re-displace +
+    # re-optimise); it's a named alias of rerun for the NMS-tuning workflow.
+    Action.REBUILD_NMS: _action_rerun,
 }
 
 

@@ -137,16 +137,14 @@ def test_execute_unknown_action_raises(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_rerun_resubmits_only_failed_then_clears_ledger(tmp_path: Path):
-    """A flaky engine fails structure "1" on the first run (recorded in
-    failed_jobs.json, "0" still cached); after it recovers, `rerun` resubmits
-    only "1", re-parses the full step, and clears the ledger."""
+def _register_flaky():
+    """A fake engine: ``fail_ids`` produce no output; ``submitted`` logs each
+    submitted structure id so tests can assert what was (re)run."""
     from typing import ClassVar
 
     import numpy as np
 
-    from chemrefine import cache
-    from chemrefine.engines.base import ENGINES, register
+    from chemrefine.engines.base import register
     from chemrefine.ids import structure_artifact_path
     from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
 
@@ -155,6 +153,7 @@ def test_rerun_resubmits_only_failed_then_clears_ledger(tmp_path: Path):
         name = "flaky"
         supports_nms = False
         fail_ids: ClassVar[set[str]] = set()
+        submitted: ClassVar[list[str]] = []
 
         def prepare(self, ctx):
             ctx.step_dir.mkdir(parents=True, exist_ok=True)
@@ -169,6 +168,7 @@ def test_rerun_resubmits_only_failed_then_clears_ledger(tmp_path: Path):
 
         def submit(self, inputs, ctx):
             for _inp, out, sid in inputs.files:
+                _Flaky.submitted.append(sid)
                 if sid not in _Flaky.fail_ids:  # failed jobs produce no output
                     out.write_text(f"FINAL ENERGY: {-1.0 - int(sid) * 1e-3}\n", encoding="utf-8")
             return JobBatch(jobs={})
@@ -194,23 +194,75 @@ def test_rerun_resubmits_only_failed_then_clears_ledger(tmp_path: Path):
         def normal_mode_sample(self, results, ctx):
             raise NotImplementedError
 
+    return _Flaky
+
+
+def test_resume_is_incremental_resubmits_only_failed(tmp_path: Path):
+    """A flaky engine fails "1" on the first run (ledgered, "0" cached); after it
+    recovers, `resume` resubmits ONLY "1" (incremental) and clears the ledger."""
+    from chemrefine import cache
+    from chemrefine.engines.base import ENGINES
+
+    eng = _register_flaky()
     try:
         cfg = _seeded_config(
-            tmp_path,
-            [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp")],
+            tmp_path, [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp")]
         )
         step_dir = (cfg.output_dir / "step1_s").resolve()
 
-        _Flaky.fail_ids = {"1"}
+        eng.fail_ids = {"1"}
         execute(cfg, Action.RESUME)
         assert cache.load_failed_jobs(step_dir) == [
             {"structure_id": "1", "reason": "output missing"}
         ]
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0"}
 
-        _Flaky.fail_ids = set()  # engine recovers
-        assert execute(cfg, Action.RERUN, target=1) == 0
+        eng.fail_ids = set()  # engine recovers
+        eng.submitted = []
+        assert execute(cfg, Action.RESUME) == 0  # incremental re-attempt
+        assert eng.submitted == ["1"]  # only the failed structure resubmitted
         assert cache.load_failed_jobs(step_dir) == []  # ledger cleared
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
     finally:
+        eng.fail_ids, eng.submitted = set(), []
+        ENGINES.pop("flaky", None)
+
+
+def test_rerun_redoes_whole_step(tmp_path: Path):
+    """`rerun` invalidates the step and re-executes it end-to-end (all structures)."""
+    from chemrefine.engines.base import ENGINES
+
+    eng = _register_flaky()
+    try:
+        cfg = _seeded_config(
+            tmp_path, [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp")]
+        )
+        execute(cfg, Action.RESUME)
+        eng.submitted = []
+        assert execute(cfg, Action.RERUN, target=1) == 0
+        assert sorted(eng.submitted) == ["0", "1"]  # whole step redone
+    finally:
+        eng.fail_ids, eng.submitted = set(), []
+        ENGINES.pop("flaky", None)
+
+
+def test_rebuild_cache_reparses_without_submitting(tmp_path: Path):
+    """`rebuild-cache` rebuilds a step's cache from existing outputs — no submit."""
+    from chemrefine import cache
+    from chemrefine.engines.base import ENGINES
+
+    eng = _register_flaky()
+    try:
+        cfg = _seeded_config(
+            tmp_path, [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp")]
+        )
+        step_dir = (cfg.output_dir / "step1_s").resolve()
+        execute(cfg, Action.RESUME)  # produces outputs + cache
+        cache.invalidate(step_dir)  # drop the cache, keep outputs on disk
+        eng.submitted = []
+        assert execute(cfg, Action.REBUILD_CACHE, target=1) == 0
+        assert eng.submitted == []  # parse-only, nothing resubmitted
+        assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
+    finally:
+        eng.fail_ids, eng.submitted = set(), []
         ENGINES.pop("flaky", None)

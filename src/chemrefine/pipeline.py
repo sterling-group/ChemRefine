@@ -31,7 +31,7 @@ from chemrefine.state import PipelineState, Structure
 # Importing :mod:`chemrefine.step` pulls in :mod:`chemrefine.engines.base`,
 # which runs :mod:`chemrefine.engines`'s ``__init__`` and self-registers every
 # bundled engine. No explicit ``import chemrefine.engines`` needed.
-from chemrefine.step import StepOutcome, run_step
+from chemrefine.step import StepOutcome, rebuild_cache_step, run_step
 
 logger = logging.getLogger(__name__)
 
@@ -133,14 +133,16 @@ def _write_step_csv(config: Config, step_cfg: StepConfig, state: PipelineState) 
 
 
 def run(
-    config: Config, *, use_cache: bool = True, rerun_step: int | None = None
+    config: Config, *, use_cache: bool = True, rebuild_step: int | None = None
 ) -> list[StepOutcome]:
     """Run every step in order; return the per-step outcomes.
 
     If a step produces no survivors the pipeline stops early — there is
-    nothing to feed the next step. When ``rerun_step`` is set, that step
-    resubmits only its failed jobs (recorded in its ``failed_jobs.json``)
-    instead of taking the normal cache hit.
+    nothing to feed the next step. ``resume`` (``use_cache=True``) is
+    incremental: a cached step is reused, but any step with a failed-jobs
+    ledger resubmits just the still-failed structures. When ``rebuild_step``
+    is set, that one step is rebuilt **from outputs already on disk** (parse
+    only, no submission) instead of executing.
     """
     state = bootstrap(config)
     logger.info(
@@ -155,10 +157,10 @@ def run(
             step_cfg.dir_name(),
             step_cfg.engine,
         )
-        outcome = run_step(
-            config, step_cfg, state, use_cache=use_cache,
-            rerun=(rerun_step == step_cfg.step),
-        )
+        if rebuild_step == step_cfg.step:
+            outcome = rebuild_cache_step(config, step_cfg, state)
+        else:
+            outcome = run_step(config, step_cfg, state, use_cache=use_cache)
         outcomes.append(outcome)
         _write_step_csv(config, step_cfg, outcome.state)
         state = outcome.state

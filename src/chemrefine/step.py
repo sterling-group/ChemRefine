@@ -76,16 +76,17 @@ def run_step(
     *,
     engine: CalculationEngine | None = None,
     use_cache: bool = True,
-    rerun: bool = False,
 ) -> StepOutcome:
     """Execute one step end-to-end and return its surviving state.
 
     * If ``use_cache`` is true and the on-disk cache fingerprint matches
       the current step config + parent IDs, the cached
-      :class:`~chemrefine.state.StepResults` are reused and only
-      filtering runs again — unless ``rerun`` is set and a failed-jobs
-      ledger exists, in which case only the failed structures are
-      resubmitted (see :func:`_resubmit_failed`).
+      :class:`~chemrefine.state.StepResults` are reused and only filtering
+      runs again — **unless** a failed-jobs ledger exists, in which case
+      ``resume`` is incremental: only the still-failed structures are
+      resubmitted (see :func:`_resubmit_failed`). ``rerun`` (redo a whole
+      step) is expressed by the caller invalidating the cache first, so the
+      step falls through to a full re-execution.
     * Otherwise the engine's full lifecycle runs and the resulting
       :class:`~chemrefine.state.StepResults` is cached for next time.
     """
@@ -106,7 +107,7 @@ def run_step(
         if cached is None:  # pragma: no cover
             raise CacheError("is_valid returned True but load returned None")
         failed = cache.load_failed_jobs(ctx.step_dir)
-        if rerun and failed:
+        if failed:
             results = _resubmit_failed(
                 engine, ctx, step_cfg, failed, parent_ids, __version__
             )
@@ -262,6 +263,43 @@ def _apply_failure_policy(
             if fallback is not None:
                 successes.append(fallback)
     return StepResults(structures=tuple(successes))
+
+
+def rebuild_cache_step(
+    config: Config, step_cfg: StepConfig, prev_state: PipelineState
+) -> StepOutcome:
+    """Rebuild one step's cache from outputs already on disk — **no submission**.
+
+    Re-parses the step's existing outputs (via its manifest), re-applies the
+    ``on_failure`` policy and — for NMS steps — re-resolves from the existing
+    ``nms/`` round-2 outputs, then rewrites the ``StepCache`` with the same
+    fingerprint a normal run would produce. Backs ``chemrefine rebuild-cache``.
+    """
+    from chemrefine import __version__
+
+    ctx = build_context(config, step_cfg, prev_state)
+    parent_ids = tuple(s.id for s in prev_state.structures)
+    engine = get_engine(step_cfg.engine)
+    manifest = cache.load_manifest(ctx.step_dir)
+    if manifest is None:
+        raise CacheError(
+            f"step {step_cfg.step}: cannot rebuild-cache — no manifest on disk"
+        )
+    logger.info("step %d: rebuilding cache from existing outputs", step_cfg.step)
+    successes, failures = _parse_with_failures(engine, manifest, ctx)
+    results = _apply_failure_policy(successes, failures, ctx, step_cfg)
+    if step_cfg.nms and engine.supports_nms:
+        results = _resolve_nms(
+            engine.resolve_nms_from_existing(results, ctx), results, ctx, step_cfg
+        )
+    cache.save(
+        step_cfg=step_cfg,
+        parent_ids=parent_ids,
+        results=results,
+        step_dir=ctx.step_dir,
+        chemrefine_version=__version__,
+    )
+    return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
 
 def _resolve_nms(
