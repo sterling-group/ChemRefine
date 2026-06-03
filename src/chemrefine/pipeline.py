@@ -23,8 +23,9 @@ from pathlib import Path
 from ase.io import read as ase_read
 
 from chemrefine import io
-from chemrefine.config import Config
+from chemrefine.config import Config, StepConfig
 from chemrefine.errors import ConfigError
+from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 from chemrefine.state import PipelineState, Structure
 
 # Importing :mod:`chemrefine.step` pulls in :mod:`chemrefine.engines.base`,
@@ -107,11 +108,39 @@ def _seed_from_smiles_csv(csv_path: Path, out_dir: Path) -> PipelineState:
 # ---------------------------------------------------------------------------
 
 
-def run(config: Config, *, use_cache: bool = True) -> list[StepOutcome]:
+def _write_step_csv(config: Config, step_cfg: StepConfig, state: PipelineState) -> None:
+    """Append this step's survivor energies to the cumulative ``steps.csv``.
+
+    Uses the step's own ``sample.temperature_k`` when a sample filter is set
+    so the report's Boltzmann weights match the temperature the step filtered
+    at; otherwise the standard reference temperature. A step with no survivors
+    has nothing to summarise, so no row is written.
+    """
+    if not state.structures:
+        return
+    temperature_k = (
+        step_cfg.sample.temperature_k
+        if step_cfg.sample is not None
+        else DEFAULT_TEMPERATURE_K
+    )
+    io.save_step_csv(
+        energies_hartree=[s.energy_hartree for s in state.structures],
+        structure_ids=[s.id for s in state.structures],
+        step_number=step_cfg.step,
+        output_dir=config.output_dir,
+        temperature_k=temperature_k,
+    )
+
+
+def run(
+    config: Config, *, use_cache: bool = True, rerun_step: int | None = None
+) -> list[StepOutcome]:
     """Run every step in order; return the per-step outcomes.
 
     If a step produces no survivors the pipeline stops early — there is
-    nothing to feed the next step.
+    nothing to feed the next step. When ``rerun_step`` is set, that step
+    resubmits only its failed jobs (recorded in its ``failed_jobs.json``)
+    instead of taking the normal cache hit.
     """
     state = bootstrap(config)
     logger.info(
@@ -126,8 +155,12 @@ def run(config: Config, *, use_cache: bool = True) -> list[StepOutcome]:
             step_cfg.dir_name(),
             step_cfg.engine,
         )
-        outcome = run_step(config, step_cfg, state, use_cache=use_cache)
+        outcome = run_step(
+            config, step_cfg, state, use_cache=use_cache,
+            rerun=(rerun_step == step_cfg.step),
+        )
         outcomes.append(outcome)
+        _write_step_csv(config, step_cfg, outcome.state)
         state = outcome.state
         if not state:
             logger.warning(

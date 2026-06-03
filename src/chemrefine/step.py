@@ -4,9 +4,8 @@ This is the only place that knows the order in which an engine's
 lifecycle methods are called. :func:`run_step` is intentionally short
 (~30 LOC) — every concern it touches lives in its own module:
 
-* Caching:        :mod:`chemrefine.cache`
-* File manifest:  :mod:`chemrefine.manifest`
-* Filtering:      :mod:`chemrefine.filtering`
+* Caching + manifest:  :mod:`chemrefine.cache`
+* Filtering:           :mod:`chemrefine.filtering`
 * Engine lookup:  :mod:`chemrefine.engines.base`
 """
 
@@ -15,11 +14,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from chemrefine import cache, filtering, manifest
+from chemrefine import cache, filtering
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.base import CalculationEngine, get_engine
-from chemrefine.errors import CacheError
-from chemrefine.state import PipelineState, StepContext
+from chemrefine.errors import CacheError, OutputParseError
+from chemrefine.state import PipelineState, StepContext, StepInputs, StepResults
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +46,7 @@ def build_context(
         ),
         max_cores=config.max_cores,
         slurm_template=config.slurm_template,
-        orca_executable=config.orca_executable,
+        executables=config.executables,
     )
 
 
@@ -71,13 +70,16 @@ def run_step(
     *,
     engine: CalculationEngine | None = None,
     use_cache: bool = True,
+    rerun: bool = False,
 ) -> StepOutcome:
     """Execute one step end-to-end and return its surviving state.
 
     * If ``use_cache`` is true and the on-disk cache fingerprint matches
       the current step config + parent IDs, the cached
       :class:`~chemrefine.state.StepResults` are reused and only
-      filtering runs again.
+      filtering runs again — unless ``rerun`` is set and a failed-jobs
+      ledger exists, in which case only the failed structures are
+      resubmitted (see :func:`_resubmit_failed`).
     * Otherwise the engine's full lifecycle runs and the resulting
       :class:`~chemrefine.state.StepResults` is cached for next time.
     """
@@ -89,6 +91,7 @@ def run_step(
     ctx = build_context(config, step_cfg, prev_state)
     parent_ids = tuple(s.id for s in prev_state.structures)
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
+    engine = engine if engine is not None else get_engine(step_cfg.engine)
 
     if use_cache and cache.is_valid(
         step_cfg=step_cfg, parent_ids=parent_ids, step_dir=ctx.step_dir
@@ -96,6 +99,14 @@ def run_step(
         cached = cache.load(ctx.step_dir)
         if cached is None:  # pragma: no cover
             raise CacheError("is_valid returned True but load returned None")
+        failed = cache.load_failed_jobs(ctx.step_dir)
+        if rerun and failed:
+            results = _resubmit_failed(
+                engine, ctx, step_cfg, failed, parent_ids, __version__
+            )
+            return StepOutcome(
+                state=filtering.apply(results, step_cfg.sample), cache_hit=False
+            )
         logger.info(
             "step %d: cache hit, reusing %d structures",
             step_cfg.step,
@@ -106,11 +117,9 @@ def run_step(
             cache_hit=True,
         )
 
-    engine = engine if engine is not None else get_engine(step_cfg.engine)
-
     logger.info("step %d (%s): preparing inputs", step_cfg.step, step_cfg.engine)
     inputs = engine.prepare(ctx)
-    manifest.save(
+    cache.save_manifest(
         inputs, ctx.step_dir, operation=step_cfg.operation, engine=step_cfg.engine
     )
 
@@ -119,7 +128,7 @@ def run_step(
     engine.wait(batch)
 
     logger.info("step %d: parsing outputs", step_cfg.step)
-    results = engine.parse(inputs, ctx)
+    results = _parse_capturing_failures(engine, inputs, ctx, step_cfg)
 
     if step_cfg.nms and engine.supports_nms:
         logger.info("step %d: running normal-mode sampling", step_cfg.step)
@@ -137,3 +146,82 @@ def run_step(
         state=filtering.apply(results, step_cfg.sample),
         cache_hit=False,
     )
+
+
+def _parse_capturing_failures(
+    engine: CalculationEngine,
+    inputs: StepInputs,
+    ctx: StepContext,
+    step_cfg: StepConfig,
+) -> StepResults:
+    """Parse the structures whose output exists; ledger the ones that produced none.
+
+    A job that crashed / timed out leaves no output file. Rather than fail the
+    whole step, record those structure IDs to ``_cache/failed_jobs.json`` (so
+    ``chemrefine rerun`` can resubmit just them) and parse the rest. Raises only
+    if *nothing* produced output. A clean run clears any stale ledger.
+    """
+    present = tuple(f for f in inputs.files if f[1].is_file())
+    missing = [sid for _inp, out, sid in inputs.files if not out.is_file()]
+    if missing:
+        cache.save_failed_jobs(
+            ctx.step_dir,
+            [{"structure_id": sid, "reason": "output missing"} for sid in missing],
+        )
+        logger.warning(
+            "step %d: %d job(s) produced no output; recorded to failed_jobs.json "
+            "(resubmit with `chemrefine rerun`)",
+            step_cfg.step,
+            len(missing),
+        )
+        if not present:
+            raise OutputParseError(
+                f"step {step_cfg.step}: no job produced output (all {len(missing)} failed)"
+            )
+    else:
+        cache.clear_failed_jobs(ctx.step_dir)
+    return engine.parse(StepInputs(files=present), ctx)
+
+
+def _resubmit_failed(
+    engine: CalculationEngine,
+    ctx: StepContext,
+    step_cfg: StepConfig,
+    failed: list[dict],
+    parent_ids: tuple[str, ...],
+    version: str,
+) -> StepResults:
+    """Resubmit only the failed structures, then re-parse + re-cache the full step.
+
+    Rehydrates the per-structure inputs from the manifest, resubmits the failed
+    subset (their input files already exist on disk from the original prepare),
+    then re-parses the *whole* step so fan-out lineage stays consistent and the
+    ledger is refreshed (cleared if all now succeeded).
+    """
+    manifest = cache.load_manifest(ctx.step_dir)
+    if manifest is None:
+        raise CacheError(
+            f"step {step_cfg.step}: cannot rerun — no manifest to rehydrate inputs"
+        )
+    failed_ids = {f["structure_id"] for f in failed}
+    failed_inputs = StepInputs(
+        files=tuple(f for f in manifest.files if f[2] in failed_ids)
+    )
+    logger.info(
+        "step %d: rerun — resubmitting %d failed job(s)",
+        step_cfg.step,
+        len(failed_inputs.files),
+    )
+    engine.wait(engine.submit(failed_inputs, ctx))
+
+    results = _parse_capturing_failures(engine, manifest, ctx, step_cfg)
+    if step_cfg.nms and engine.supports_nms:
+        results = engine.normal_mode_sample(results, ctx)
+    cache.save(
+        step_cfg=step_cfg,
+        parent_ids=parent_ids,
+        results=results,
+        step_dir=ctx.step_dir,
+        chemrefine_version=version,
+    )
+    return results

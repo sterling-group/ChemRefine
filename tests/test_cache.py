@@ -1,4 +1,4 @@
-"""Tests for the per-step pickle cache + fingerprint."""
+"""Tests for the per-step pickle cache, fingerprint, and JSON manifest."""
 
 from __future__ import annotations
 
@@ -15,11 +15,14 @@ from chemrefine.cache import (
     invalidate,
     is_valid,
     load,
+    load_manifest,
+    manifest_path,
     save,
+    save_manifest,
 )
 from chemrefine.config import StepConfig
 from chemrefine.errors import CacheError
-from chemrefine.state import StepResults, Structure
+from chemrefine.state import StepInputs, StepResults, Structure
 
 
 def _results() -> StepResults:
@@ -225,3 +228,64 @@ def test_invalidate_missing_is_noop(tmp_path: Path):
 def test_cache_format_version_constant():
     """Bumping CACHE_FORMAT_VERSION is a public ABI break we want to notice."""
     assert CACHE_FORMAT_VERSION == "v4.1"
+
+
+# ---------------------------------------------------------------------------
+# Per-step JSON manifest (save_manifest / load_manifest / manifest_path)
+# ---------------------------------------------------------------------------
+
+
+def _manifest_inputs(tmp_path: Path) -> StepInputs:
+    return StepInputs(
+        files=(
+            (tmp_path / "in/step1_structure_0.inp", tmp_path / "out/step1_structure_0.out", "0"),
+            (tmp_path / "in/step1_structure_1.inp", tmp_path / "out/step1_structure_1.out", "1"),
+        )
+    )
+
+
+def test_manifest_save_writes_under_cache(tmp_path: Path):
+    inputs = _manifest_inputs(tmp_path)
+    path = save_manifest(inputs, tmp_path / "step1", operation="opt_sp", engine="fake")
+    assert path == manifest_path(tmp_path / "step1")
+    assert path.is_file()
+    assert path.parent.name == "_cache"
+
+
+def test_manifest_save_and_load_round_trip(tmp_path: Path):
+    inputs = _manifest_inputs(tmp_path)
+    save_manifest(inputs, tmp_path / "step1", operation="opt_sp", engine="fake")
+    loaded = load_manifest(tmp_path / "step1")
+    assert loaded is not None
+    assert loaded.files == inputs.files
+
+
+def test_manifest_load_missing_returns_none(tmp_path: Path):
+    assert load_manifest(tmp_path / "step1") is None
+
+
+def test_manifest_save_records_operation_and_engine(tmp_path: Path):
+    import json
+
+    inputs = _manifest_inputs(tmp_path)
+    path = save_manifest(inputs, tmp_path / "step1", operation="goat", engine="orca")
+    data = json.loads(path.read_text())
+    assert data["operation"] == "goat"
+    assert data["engine"] == "orca"
+
+
+def test_manifest_load_corrupt_json_raises_cache_error(tmp_path: Path):
+    path = manifest_path(tmp_path / "step1")
+    path.parent.mkdir(parents=True)
+    path.write_text("not valid json {", encoding="utf-8")
+    with pytest.raises(CacheError):
+        load_manifest(tmp_path / "step1")
+
+
+def test_manifest_load_missing_files_key_raises_cache_error(tmp_path: Path):
+    """A manifest with no ``files`` key must surface as a ``CacheError``."""
+    path = manifest_path(tmp_path / "step1")
+    path.parent.mkdir(parents=True)
+    path.write_text('{"operation": "opt_sp", "engine": "orca"}', encoding="utf-8")
+    with pytest.raises(CacheError):
+        load_manifest(tmp_path / "step1")

@@ -164,6 +164,30 @@ def test_run_executes_each_step_in_order(tmp_path: Path):
     assert all(o.cache_hit is False for o in outcomes)
 
 
+def test_run_writes_steps_csv(tmp_path: Path):
+    """A full run emits the cumulative ``steps.csv`` energy summary."""
+    seed = tmp_path / "step0_structure_seed.xyz"
+    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    cfg = _config(
+        tmp_path,
+        input=seed,
+        steps=[
+            StepConfig(step=1, engine="fake", operation="opt_sp"),
+            StepConfig(step=2, engine="fake", operation="opt_sp"),
+        ],
+    )
+    pipeline.run(cfg)
+
+    csv_path = cfg.output_dir / "steps.csv"
+    assert csv_path.is_file()
+    text = csv_path.read_text(encoding="utf-8")
+    header = text.splitlines()[0]
+    for column in ("Step", "Conformer", "Energy (Hartree)", "% Cumulative"):
+        assert column in header
+    # Both steps appended (header + one survivor row per step).
+    assert "1," in text and "2," in text
+
+
 def test_run_threads_state_between_steps(tmp_path: Path):
     # Two seed files in a directory.
     seed_dir = tmp_path / "seeds"

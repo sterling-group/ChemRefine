@@ -11,9 +11,9 @@ This is the **only** module that calls :func:`sys.exit` or reads
 * ``chemrefine rebuild-nms CONFIG [STEP]`` — same as rebuild-cache but
   semantically scoped to normal-mode-sampling rebuilds (engines may
   treat it differently in their parse step).
-* ``chemrefine rerun CONFIG [STEP]`` — re-execute a step (alias of
-  rebuild-cache for now; will resubmit failed jobs once the recovery
-  module learns about ``failed_jobs.json``).
+* ``chemrefine rerun CONFIG [STEP]`` — resubmit only the failed jobs of a
+  step (those recorded in its ``_cache/failed_jobs.json``), keeping the
+  cached good results; then re-parse and re-cache.
 
 Global flags: ``--maxcores INT`` overrides ``max_cores`` in the YAML;
 ``--dry-run`` loads and validates the config without executing; ``-v``

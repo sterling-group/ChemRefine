@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ase import Atoms
 
-from chemrefine import cache, manifest
+from chemrefine import cache
 from chemrefine.config import Config, StepConfig
 from chemrefine.state import PipelineState, Structure
 from chemrefine.step import StepOutcome, build_context, run_step
@@ -164,7 +164,7 @@ def test_manifest_persists_for_rebuild(tmp_path: Path):
     cfg = _config(tmp_path)
     run_step(cfg, cfg.steps[0], _seed_state(["0", "1"]))
     step_dir = cfg.output_dir.resolve() / "step1"
-    inputs = manifest.load(step_dir)
+    inputs = cache.load_manifest(step_dir)
     assert inputs is not None
     assert [t[2] for t in inputs.files] == ["0", "1"]
 

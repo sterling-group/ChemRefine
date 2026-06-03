@@ -11,6 +11,14 @@ step.
 Writes are atomic — the pickle and JSON are written to ``.tmp_*`` files
 inside the cache directory and renamed into place, so an interrupted
 write never produces a half-baked cache.
+
+This module also owns the per-step **manifest** (``{step_dir}/_cache/
+manifest.json``): the input→output→structure-ID file layout that
+produced the results. The cache pickle records the *parsed results*;
+the manifest records the *file layout*, so ``rerun`` / recovery can
+rehydrate which input produced which output after a restart. Both are
+the same concern — per-step state under ``_cache/`` — so they live in
+one module and share the atomic writer.
 """
 
 from __future__ import annotations
@@ -25,7 +33,7 @@ from pathlib import Path
 
 from chemrefine.config import StepConfig
 from chemrefine.errors import CacheError
-from chemrefine.state import StepResults
+from chemrefine.state import StepInputs, StepResults
 
 CACHE_FORMAT_VERSION = "v4.1"
 """Bump whenever ``Structure`` / ``StepResults`` gain or change a field
@@ -203,3 +211,91 @@ def invalidate(step_dir: Path) -> None:
     pkl_path, json_path = _paths(step_dir)
     pkl_path.unlink(missing_ok=True)
     json_path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Manifest — the input→output→structure-ID file layout for one step
+# ---------------------------------------------------------------------------
+
+
+def manifest_path(step_dir: Path) -> Path:
+    """Return the manifest file path for ``step_dir``."""
+    return step_dir / "_cache" / "manifest.json"
+
+
+def save_manifest(
+    inputs: StepInputs,
+    step_dir: Path,
+    *,
+    operation: str,
+    engine: str,
+) -> Path:
+    """Persist ``inputs`` plus step metadata to ``manifest.json``; return the path.
+
+    The file layout (which input produced which output for which structure ID)
+    is what ``rerun`` / recovery rehydrates via :func:`load_manifest` after a
+    restart. Written atomically, like the cache pickle.
+    """
+    path = manifest_path(step_dir)
+    data = {
+        "operation": operation,
+        "engine": engine,
+        "files": [
+            {"input": str(inp), "output": str(out), "id": sid}
+            for inp, out, sid in inputs.files
+        ],
+    }
+    _atomic_write(path, json.dumps(data, indent=2).encode())
+    return path
+
+
+def load_manifest(step_dir: Path) -> StepInputs | None:
+    """Rehydrate :class:`StepInputs` from the persisted manifest, or ``None``.
+
+    Raises :class:`CacheError` if the JSON is malformed or is missing the
+    expected ``files`` field — callers should treat a corrupt manifest as fatal
+    rather than silently re-parsing an empty batch.
+    """
+    path = manifest_path(step_dir)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        files = tuple(
+            (Path(rec["input"]), Path(rec["output"]), rec["id"])
+            for rec in data["files"]
+        )
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        raise CacheError(f"corrupt manifest at {path}: {e}") from e
+    return StepInputs(files=files)
+
+
+# ---------------------------------------------------------------------------
+# Failed-job ledger — structures whose job produced no output (for `rerun`)
+# ---------------------------------------------------------------------------
+
+
+def failed_jobs_path(step_dir: Path) -> Path:
+    """Return the failed-jobs ledger path for ``step_dir``."""
+    return step_dir / "_cache" / "failed_jobs.json"
+
+
+def save_failed_jobs(step_dir: Path, failed: list[dict]) -> None:
+    """Persist the list of failed-job records (``{"structure_id", "reason"}``)."""
+    _atomic_write(failed_jobs_path(step_dir), json.dumps(failed, indent=2).encode())
+
+
+def load_failed_jobs(step_dir: Path) -> list[dict]:
+    """Return the failed-job records for ``step_dir`` (``[]`` if none)."""
+    path = failed_jobs_path(step_dir)
+    if not path.is_file():
+        return []
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise CacheError(f"corrupt failed-jobs ledger at {path}: {e}") from e
+
+
+def clear_failed_jobs(step_dir: Path) -> None:
+    """Delete the failed-jobs ledger. No-op if absent."""
+    failed_jobs_path(step_dir).unlink(missing_ok=True)

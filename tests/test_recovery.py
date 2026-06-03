@@ -130,3 +130,87 @@ def test_execute_unknown_action_raises(tmp_path: Path):
     cfg = _two_step_config(tmp_path)
     with pytest.raises(ChemRefineError):
         execute(cfg, "not-an-action")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# rerun — resubmit only the failed jobs, then clear the ledger
+# ---------------------------------------------------------------------------
+
+
+def test_rerun_resubmits_only_failed_then_clears_ledger(tmp_path: Path):
+    """A flaky engine fails structure "1" on the first run (recorded in
+    failed_jobs.json, "0" still cached); after it recovers, `rerun` resubmits
+    only "1", re-parses the full step, and clears the ledger."""
+    from typing import ClassVar
+
+    import numpy as np
+
+    from chemrefine import cache
+    from chemrefine.engines.base import ENGINES, register
+    from chemrefine.ids import structure_artifact_path
+    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+
+    @register("flaky")
+    class _Flaky:
+        name = "flaky"
+        supports_nms = False
+        fail_ids: ClassVar[set[str]] = set()
+
+        def prepare(self, ctx):
+            ctx.step_dir.mkdir(parents=True, exist_ok=True)
+            files = []
+            for s in ctx.prev_state.structures:
+                step = ctx.step_cfg.step
+                inp = structure_artifact_path(ctx.step_dir, step, s.id, "inp")
+                out = structure_artifact_path(ctx.step_dir, step, s.id, "out")
+                inp.write_text("in\n", encoding="utf-8")
+                files.append((inp, out, s.id))
+            return StepInputs(files=tuple(files))
+
+        def submit(self, inputs, ctx):
+            for _inp, out, sid in inputs.files:
+                if sid not in _Flaky.fail_ids:  # failed jobs produce no output
+                    out.write_text(f"FINAL ENERGY: {-1.0 - int(sid) * 1e-3}\n", encoding="utf-8")
+            return JobBatch(jobs={})
+
+        def wait(self, batch):
+            return None
+
+        def parse(self, inputs, ctx):
+            seeds = {s.id: s for s in ctx.prev_state.structures}
+            out = []
+            for _inp, o, sid in inputs.files:
+                energy = float(o.read_text().split("FINAL ENERGY:")[1])
+                seed = seeds[sid]
+                out.append(
+                    Structure(
+                        id=sid, atoms=seed.atoms, parent_id=seed.parent_id,
+                        energy_hartree=energy,
+                        forces_ev_per_a=np.zeros((len(seed.atoms), 3)),
+                    )
+                )
+            return StepResults(structures=tuple(out))
+
+        def normal_mode_sample(self, results, ctx):
+            raise NotImplementedError
+
+    try:
+        cfg = _seeded_config(
+            tmp_path,
+            [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp")],
+        )
+        step_dir = (cfg.output_dir / "step1_s").resolve()
+
+        _Flaky.fail_ids = {"1"}
+        execute(cfg, Action.RESUME)
+        assert cache.load_failed_jobs(step_dir) == [
+            {"structure_id": "1", "reason": "output missing"}
+        ]
+        assert {s.id for s in cache.load(step_dir).results.structures} == {"0"}
+
+        _Flaky.fail_ids = set()  # engine recovers
+        assert execute(cfg, Action.RERUN, target=1) == 0
+        assert cache.load_failed_jobs(step_dir) == []  # ledger cleared
+        assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
+    finally:
+        ENGINES.pop("flaky", None)
