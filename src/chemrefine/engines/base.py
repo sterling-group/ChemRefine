@@ -6,7 +6,7 @@ decorator at import time, so importing :mod:`chemrefine.engines`
 populates the registry as a side effect.
 
 The orchestrator only ever sees the :class:`CalculationEngine` Protocol
-plus the :data:`ENGINES` dict. ORCA-specific imports, MLFF imports, etc.
+plus the :data:`ENGINES` dict. ORCA-specific imports, MLIP imports, etc.
 never reach :mod:`chemrefine.pipeline` — that's how the orchestrator
 stays engine-agnostic.
 
@@ -21,7 +21,9 @@ Adding a new engine (e.g. qchem, psi4, cfour)
    the ``output_globs`` / ``template_suffix`` / ``label`` ClassVars) or
    satisfies :class:`CalculationEngine` directly, decorated with
    ``@register("<name>")``. Import it from ``engines/<name>/__init__.py`` and
-   list that package in ``engines/__init__.py`` so registration fires.
+   list that package in ``engines/__init__.py`` so registration fires. (Old
+   spellings are mapped to the canonical name by the config normalizer, not by
+   registration — see :func:`chemrefine.config._normalize_legacy`.)
 3. An external binary? Read its path from ``ctx.executables.get("<name>")``
    (set in the YAML ``executables`` map). An importable backend? Ship it as a
    ``pip install chemrefine[<name>]`` extra and import it in-process.
@@ -82,7 +84,13 @@ class CalculationEngine(Protocol):
 
 
 ENGINES: dict[str, type[CalculationEngine]] = {}
-"""Registry mapping the YAML ``engine:`` string to a concrete engine class."""
+"""Registry mapping the YAML ``engine:`` string to a concrete engine class.
+
+Only **canonical** names live here. Old spellings (``mlff*``, ``dft``) are
+rewritten to canonical names by the config normalizer
+(:func:`chemrefine.config._normalize_legacy`) — the single place that knows the
+legacy vocabulary — before any lookup, so the registry stays alias-free.
+"""
 
 
 def register(name: str) -> Callable[[type], type]:
@@ -98,10 +106,11 @@ def register(name: str) -> Callable[[type], type]:
 
 
 def get_engine(name: str) -> CalculationEngine:
-    """Look up an engine by name and return a fresh instance.
+    """Look up an engine by its canonical name and return a fresh instance.
 
-    Raises :class:`~chemrefine.errors.EngineNotFoundError` if ``name``
-    is not in the registry.
+    Raises :class:`~chemrefine.errors.EngineNotFoundError` if ``name`` isn't
+    registered. (Legacy spellings are normalized at config-parse time, so the
+    name reaching here is already canonical.)
     """
     engine_cls = ENGINES.get(name)
     if engine_cls is None:

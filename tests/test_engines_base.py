@@ -81,3 +81,11 @@ def test_register_rejects_duplicate_with_different_class():
             pass
 
     ENGINES.pop("dup-test-engine", None)
+
+
+def test_registry_holds_only_canonical_engine_names():
+    """Legacy spellings (``mlff*``, ``dft``) are mapped by the config normalizer,
+    not the registry — so the registry exposes only canonical names."""
+    assert {"orca", "mlip", "mlip-extopt", "mlip-train"} <= set(ENGINES)
+    for legacy in ("mlff", "mlff-extopt", "mlff-train", "dft"):
+        assert legacy not in ENGINES

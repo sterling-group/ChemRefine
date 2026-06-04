@@ -22,7 +22,7 @@ Schema shape (see ``Examples/`` for full examples):
     steps:
       - step: 1
         name: screen        # optional human-readable label
-        engine: mlff
+        engine: mlip
         operation: opt_sp
         options: { model: mace_off23 }
         sample: { method: boltzmann, percent_cumulative: 99 }
@@ -30,6 +30,7 @@ Schema shape (see ``Examples/`` for full examples):
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Annotated, Any, Literal, TypeAlias
@@ -46,6 +47,8 @@ from pydantic import (
 
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import DEFAULT_TEMPERATURE_K
+
+logger = logging.getLogger(__name__)
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -173,6 +176,150 @@ class StepConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Legacy-YAML normalizer — the single place that knows the old (v1.3.1) vocabulary
+# ---------------------------------------------------------------------------
+
+#: Old engine name → canonical. Includes the ``mlff`` ↔ ``mlip`` rename aliases.
+_ENGINE_RENAMES = {
+    "mlff": "mlip",
+    "mlff-extopt": "mlip-extopt",
+    "mlff-train": "mlip-train",
+    "dft": "orca",
+}
+
+#: Legacy step-level engine-config block → the canonical engine it implies.
+#: v1.3.1 ran MLFF/PySCF through ORCA (the ``mlff:`` block configured the
+#: gradient server), so they map to the ``*-extopt`` engines.
+_LEGACY_BLOCKS = {
+    "mlff": "mlip-extopt",
+    "pyscf": "pyscf-extopt",
+    "trainer": "mlip-train",
+}
+
+#: Option sub-keys that are auto-managed now and dropped from a moved block.
+_OBSOLETE_OPTION_KEYS = frozenset({"bind"})
+
+#: ``sample_type.parameters`` → flat ``sample`` key, per method.
+_SAMPLE_PARAM_RENAMES = {
+    "boltzmann": {"weight": "percent_cumulative"},
+    "integer": {"num_structures": "count"},
+    "high_energy": {"num_structures": "count"},
+    "energy_window": {"energy": "window_kcal"},
+}
+
+
+def _normalize_legacy(raw: dict) -> dict:
+    """Rewrite legacy (v1.3.1 / ``mlff``-named) YAML keys to the current schema.
+
+    The single place that knows the old vocabulary. Idempotent — new-style input
+    passes through unchanged — and logs one warning per legacy feature rewritten.
+    ``calculation_type`` is intentionally unsupported and raises
+    :class:`~chemrefine.errors.ConfigError`.
+    """
+    out = dict(raw)
+    if "orca_executable" in out:
+        logger.warning("`orca_executable` is deprecated; use `executables: {orca: ...}`")
+        execs = dict(out.get("executables") or {})
+        execs.setdefault("orca", out.pop("orca_executable"))
+        out["executables"] = execs
+    if "initial_xyz" in out:
+        if "input" not in out:
+            logger.warning("`initial_xyz` is deprecated; use `input`")
+            out["input"] = out["initial_xyz"]
+        out.pop("initial_xyz")
+    if isinstance(out.get("steps"), list):
+        out["steps"] = [_normalize_step(s) for s in out["steps"]]
+    return out
+
+
+def _normalize_step(step: Any) -> Any:
+    """Rewrite one legacy step dict to the current schema (helper for :func:`_normalize_legacy`)."""
+    if not isinstance(step, dict):
+        return step
+    s = dict(step)
+
+    if "calculation_type" in s:
+        raise ConfigError(
+            "`calculation_type` is no longer supported; use `engine:` + `operation:` "
+            "(see docs/migrating-from-main.md)"
+        )
+
+    # Engine-config block (mlff:/pyscf:/trainer:) → options, and it sets the engine.
+    options = dict(s.get("options") or {})
+    block_engine: str | None = None
+    for block, engine_name in _LEGACY_BLOCKS.items():
+        if isinstance(s.get(block), dict):
+            logger.warning("step-level `%s:` block is deprecated; use `options:`", block)
+            for k, v in s.pop(block).items():
+                if k not in _OBSOLETE_OPTION_KEYS:
+                    options.setdefault(k, v)
+            block_engine = engine_name
+    if options or "options" in s:
+        s["options"] = options
+
+    # Engine name: the block decides it, else the rename map (after lower-casing).
+    if block_engine is not None:
+        s["engine"] = block_engine
+    elif isinstance(s.get("engine"), str):
+        eng = s["engine"].lower()
+        s["engine"] = _ENGINE_RENAMES.get(eng, eng)
+
+    # Operation: ``OPT+SP`` → ``opt_sp``, ``GOAT`` → ``goat`` (engines lower/replace too).
+    if isinstance(s.get("operation"), str):
+        s["operation"] = s["operation"].lower().replace("+", "_")
+        # ``MLFF_TRAIN`` was a training *operation* that implied the trainer engine.
+        if s["operation"] in ("mlff_train", "mlip_train"):
+            s["engine"] = "mlip-train"
+            s["operation"] = "mlip_train"
+
+    # normal_mode_sampling{,_parameters} → nms + options. main's NMS knobs are
+    # renamed: calc_type → target (rm_imag → ts, the default; random → random),
+    # displacement_vector → displacement_value; other keys pass through.
+    if "normal_mode_sampling" in s or "normal_mode_sampling_parameters" in s:
+        logger.warning("`normal_mode_sampling*` is deprecated; use `nms` + `options`")
+        nms_on = bool(s.pop("normal_mode_sampling", False))
+        if nms_on:
+            s["nms"] = True
+        params = dict(s.pop("normal_mode_sampling_parameters", None) or {})
+        opts = dict(s.get("options") or {})
+        calc_type = str(params.pop("calc_type", "rm_imag")).lower()  # main default rm_imag → ts
+        if nms_on:
+            opts.setdefault("target", {"rm_imag": "ts"}.get(calc_type, calc_type))
+        if "displacement_vector" in params:
+            opts.setdefault("displacement_value", params.pop("displacement_vector"))
+        for k, v in params.items():
+            opts.setdefault(k, v)
+        if opts:
+            s["options"] = opts
+
+    # sample_type{method, parameters} → sample{method, <renamed>}.
+    if "sample_type" in s:
+        if "sample" not in s:
+            logger.warning("`sample_type` is deprecated; use `sample`")
+            s["sample"] = _normalize_sample(s["sample_type"])
+        s.pop("sample_type")
+
+    return s
+
+
+def _normalize_sample(sample_type: Any) -> Any:
+    """Convert a legacy ``sample_type`` mapping to the flat ``sample`` mapping."""
+    if not isinstance(sample_type, dict):
+        return sample_type
+    method = sample_type.get("method")
+    renames = _SAMPLE_PARAM_RENAMES.get(method, {})
+    out: dict[str, Any] = {"method": method}
+    for k, v in (sample_type.get("parameters") or {}).items():
+        if k == "unit":  # energy_window unit (kcal/mol) is implicit now
+            continue
+        out[renames.get(k, k)] = v
+    for k, v in sample_type.items():  # carry through any non-nested extras
+        if k not in ("method", "parameters"):
+            out.setdefault(k, v)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Top-level configuration
 # ---------------------------------------------------------------------------
 
@@ -181,6 +328,12 @@ class Config(BaseModel):
     """Top-level YAML config."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_yaml(cls, data: Any) -> Any:
+        """Rewrite legacy (v1.3.1 / ``mlff``-named) keys before validation."""
+        return _normalize_legacy(data) if isinstance(data, dict) else data
 
     template_dir: Path = Path("./templates")
     scratch_dir: Path | None = None
@@ -203,7 +356,7 @@ class Config(BaseModel):
     executables: dict[str, str] = Field(default_factory=dict)
     """Global tool-name → binary-path map for external-binary engines (e.g.
     ``{"orca": "/opt/orca/orca"}``). Set once and shared by every step using
-    that engine. Importable backends (mlff, pyscf, …) are installed as extras
+    that engine. Importable backends (mlip, pyscf, …) are installed as extras
     and need no entry here; conda/module activation belongs in the SLURM header."""
     steps: list[StepConfig]
 

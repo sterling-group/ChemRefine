@@ -263,7 +263,7 @@ def test_step_options_round_trip(tmp_path: Path):
         steps=[
             {
                 "step": 1,
-                "engine": "mlff",
+                "engine": "mlip",
                 "operation": "opt_sp",
                 "options": {"model": "mace_off23", "device": "cuda"},
             }
@@ -317,3 +317,144 @@ def test_scratch_dir_equal_output_dir_rejected(tmp_path: Path):
     data = _minimal_config(scratch_dir="./outputs", output_dir="./outputs")
     with pytest.raises(ConfigError):
         load_config(_write_yaml(tmp_path, data))
+
+
+# ---------------------------------------------------------------------------
+# Legacy-YAML normalizer (v1.3.1 / mlff-named configs load + run)
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_top_level_renames():
+    cfg = Config(
+        template_dir="./t",
+        orca_executable="/orca",
+        initial_xyz="./seed.xyz",
+        steps=[{"step": 1, "engine": "orca", "operation": "opt_sp"}],
+    )
+    assert cfg.executables == {"orca": "/orca"}
+    assert cfg.input == Path("seed.xyz")
+
+
+def test_legacy_engine_renames():
+    cfg = Config(
+        template_dir="./t",
+        steps=[
+            {"step": 1, "engine": "DFT", "operation": "OPT+SP"},
+            {"step": 2, "engine": "mlff", "operation": "opt_sp"},
+        ],
+    )
+    assert [s.engine for s in cfg.steps] == ["orca", "mlip"]
+    assert cfg.steps[0].operation == "opt_sp"
+
+
+def test_legacy_mlff_block_becomes_options_and_extopt_engine():
+    cfg = Config(
+        template_dir="./t",
+        steps=[{
+            "step": 1, "engine": "MLFF", "operation": "OPT+SP",
+            "mlff": {"model_name": "uma-s-1", "task_name": "omol",
+                     "device": "cuda", "bind": "x:1"},
+        }],
+    )
+    s = cfg.steps[0]
+    assert s.engine == "mlip-extopt"
+    assert s.options == {"model_name": "uma-s-1", "task_name": "omol", "device": "cuda"}
+    assert "bind" not in s.options  # obsolete sub-key dropped
+
+
+def test_legacy_train_operation_selects_trainer():
+    cfg = Config(
+        template_dir="./t",
+        steps=[{"step": 1, "operation": "MLFF_TRAIN"}],
+    )
+    assert cfg.steps[0].engine == "mlip-train"
+
+
+def test_legacy_sample_type_and_param_renames():
+    cfg = Config(
+        template_dir="./t",
+        steps=[
+            {"step": 1, "engine": "orca", "operation": "sp",
+             "sample_type": {"method": "boltzmann", "parameters": {"weight": 95}}},
+            {"step": 2, "engine": "orca", "operation": "sp",
+             "sample_type": {"method": "integer", "parameters": {"num_structures": 3}}},
+            {"step": 3, "engine": "orca", "operation": "sp",
+             "sample_type": {"method": "energy_window",
+                             "parameters": {"energy": 8, "unit": "kcal/mol"}}},
+        ],
+    )
+    assert isinstance(cfg.steps[0].sample, BoltzmannSample)
+    assert cfg.steps[0].sample.percent_cumulative == 95
+    assert isinstance(cfg.steps[1].sample, IntegerSample)
+    assert cfg.steps[1].sample.count == 3
+    assert isinstance(cfg.steps[2].sample, EnergyWindowSample)
+    assert cfg.steps[2].sample.window_kcal == 8
+
+
+def test_legacy_normal_mode_sampling_renamed():
+    cfg = Config(
+        template_dir="./t",
+        steps=[{"step": 1, "engine": "orca", "operation": "freq",
+                "normal_mode_sampling": True}],
+    )
+    # bare nms maps to target: ts (main's default calc_type was rm_imag).
+    assert cfg.steps[0].nms is True
+    assert cfg.steps[0].options == {"target": "ts"}
+
+
+def test_legacy_nms_rm_imag_maps_to_ts_and_displacement():
+    cfg = Config(
+        template_dir="./t",
+        steps=[{"step": 1, "engine": "orca", "operation": "freq",
+                "normal_mode_sampling": True,
+                "normal_mode_sampling_parameters": {
+                    "calc_type": "rm_imag", "displacement_vector": 1.5}}],
+    )
+    s = cfg.steps[0]
+    assert s.nms is True
+    assert s.options == {"target": "ts", "displacement_value": 1.5}
+    # the renamed knobs are the ones NmsOptions reads.
+    from chemrefine.engines.orca.nms import NmsOptions
+
+    opts = NmsOptions.from_raw(s.options)
+    assert (opts.target, opts.displacement_value) == ("ts", 1.5)
+
+
+def test_legacy_nms_random_passes_params_through():
+    cfg = Config(
+        template_dir="./t",
+        steps=[{"step": 1, "engine": "orca", "operation": "freq",
+                "normal_mode_sampling": True,
+                "normal_mode_sampling_parameters": {
+                    "calc_type": "random", "num_random_displacements": 3}}],
+    )
+    assert cfg.steps[0].options == {"target": "random", "num_random_displacements": 3}
+
+
+def test_legacy_calculation_type_raises_clear_error():
+    with pytest.raises(ConfigError, match="calculation_type"):
+        Config(template_dir="./t", steps=[{"step": 1, "calculation_type": "DFT"}])
+
+
+def test_normalizer_is_idempotent_on_new_style():
+    new = {
+        "template_dir": "./t", "executables": {"orca": "/orca"}, "input": "./s.xyz",
+        "steps": [{"step": 1, "engine": "mlip-extopt", "operation": "opt_sp",
+                   "options": {"model_name": "uma-s-1", "task_name": "omol"},
+                   "sample": {"method": "integer", "count": 5}}],
+    }
+    cfg = Config(**new)
+    assert cfg.executables == {"orca": "/orca"}
+    assert cfg.steps[0].engine == "mlip-extopt"
+    assert cfg.steps[0].options == {"model_name": "uma-s-1", "task_name": "omol"}
+
+
+def test_every_shipped_example_yaml_loads():
+    """Every Example (all v1.3.1-style) must load through the normalizer."""
+    import glob
+
+    root = Path(__file__).resolve().parent.parent
+    files = sorted(glob.glob(str(root / "Examples/**/input.yaml"), recursive=True))
+    assert files, "no Example YAMLs found"
+    for f in files:
+        load_config(f)  # raises ConfigError on any failure
