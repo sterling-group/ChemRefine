@@ -39,7 +39,7 @@ steps:
     sample_type:
       method: "integer"
       parameters:
-        num_strucures: 15
+        num_structures: 15
 
   - step: 4
     operation: "OPT+SP"
@@ -47,7 +47,7 @@ steps:
     sample_type:
       method: "integer"
       parameters:
-        num_strucures: 15
+        num_structures: 15
 
 
   - step: 5
