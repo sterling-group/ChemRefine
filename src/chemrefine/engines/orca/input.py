@@ -7,7 +7,7 @@ onto the end of the template, stripping any pre-existing ``* xyzfile``
 line first so the template can be reused across steps with different
 seed geometries.
 
-Engines that drive ORCA from an external program (MLFF, PySCF) pass
+Engines that drive ORCA from an external program (MLIP, PySCF) pass
 their own ``extra_blocks`` argument — typically a ``%method ... end``
 block that points to the external server wrapper.
 

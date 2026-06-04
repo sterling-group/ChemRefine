@@ -1,6 +1,6 @@
-"""MLFF training pipeline.
+"""MLIP training pipeline.
 
-Trains a MACE-style MLFF on the structures + energies + forces
+Trains a MACE-style MLIP on the structures + energies + forces
 collected by a previous pipeline step. The training itself runs as a
 single SLURM job (one ``mace_run_train`` invocation against a YAML
 config); ChemRefine only writes the inputs, submits the job, and
@@ -48,7 +48,7 @@ def prepare_inputs(results: StepResults, ctx: StepContext) -> tuple[Path, Path]:
     ``step.options.seed`` respectively.
 
     Raises :class:`ValueError` when any structure is missing an energy
-    or forces — MLFF training needs both.
+    or forces — MLIP training needs both.
     """
     options = ctx.step_cfg.options or {}
     valid_fraction = float(options.get("valid_fraction", 0.1))
@@ -68,7 +68,7 @@ def prepare_inputs(results: StepResults, ctx: StepContext) -> tuple[Path, Path]:
         atoms_list.append(atoms)
 
     if not atoms_list:
-        raise ValueError("no usable structures for MLFF training")
+        raise ValueError("no usable structures for MLIP training")
 
     n = len(atoms_list)
     if n < 2:
@@ -94,7 +94,7 @@ def prepare_inputs(results: StepResults, ctx: StepContext) -> tuple[Path, Path]:
     ase_write(str(train_path), train_set, format="extxyz")
     ase_write(str(test_path), test_set, format="extxyz")
     logger.info(
-        "MLFF training: wrote %d train / %d test structures",
+        "MLIP training: wrote %d train / %d test structures",
         len(train_set), len(test_set),
     )
     return train_path, test_path
@@ -120,7 +120,7 @@ def write_training_config(
         ctx.step_cfg.step,
         template=ctx.step_cfg.template,
         suffix="inp",
-        label="MLFF training",
+        label="MLIP training",
     )
     raw = template_path.read_text(encoding="utf-8")
     config = yaml.safe_load(raw) or {}
@@ -150,7 +150,7 @@ def write_training_slurm(*, ctx: StepContext, config_path: Path) -> Path:
     if not header_path.is_file():
         raise FileNotFoundError(f"SLURM header template not found: {header_path}")
 
-    job_name = options.get("job_name", "mlff_train")
+    job_name = options.get("job_name", "mlip_train")
     script_path = ctx.step_dir / "train.slurm"
     header_text = header_path.read_text(encoding="utf-8").rstrip()
     body = (
@@ -172,12 +172,12 @@ def write_training_slurm(*, ctx: StepContext, config_path: Path) -> Path:
 
 
 def submit_training(*, script_path: Path, poll_seconds: float = 30.0) -> str:
-    """Submit the MLFF training SLURM job and block until it finishes."""
+    """Submit the MLIP training SLURM job and block until it finishes."""
     job_id = slurm.submit(script_path)
-    logger.info("MLFF training submitted as job %s", job_id)
+    logger.info("MLIP training submitted as job %s", job_id)
     while not slurm.is_finished(job_id):
         time.sleep(poll_seconds)
-    logger.info("MLFF training job %s finished", job_id)
+    logger.info("MLIP training job %s finished", job_id)
     return job_id
 
 
@@ -187,7 +187,7 @@ def submit_training(*, script_path: Path, poll_seconds: float = 30.0) -> str:
 
 
 def run_training(results: StepResults, ctx: StepContext) -> StepResults:
-    """Train an MLFF on ``results`` and return the seed structures unchanged.
+    """Train an MLIP on ``results`` and return the seed structures unchanged.
 
     The pipeline writes the training inputs + config + SLURM script
     into ``ctx.step_dir`` and submits one MACE training job. Downstream

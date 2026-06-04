@@ -1,4 +1,4 @@
-"""Tests for the MLFF training pipeline (``engines/mlff/trainer.py``).
+"""Tests for the MLIP training pipeline (``engines/mlip/trainer.py``).
 
 The actual ``mace_run_train`` invocation is not exercised here — it
 requires a real CUDA stack. We only test the inputs we generate
@@ -17,7 +17,7 @@ import yaml
 from ase import Atoms
 
 from chemrefine.config import StepConfig
-from chemrefine.engines.mlff import trainer
+from chemrefine.engines.mlip import trainer
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import PipelineState, StepContext, StepResults, Structure
 
@@ -42,7 +42,7 @@ def _ctx(tmp_path: Path, **option_overrides) -> StepContext:
     options = {"device": "cpu"}
     options.update(option_overrides)
     step_cfg = StepConfig(
-        step=1, name="train", engine="mlff", operation="mlff_train",
+        step=1, name="train", engine="mlip", operation="mlip_train",
         options=options,
     )
     return StepContext(
@@ -200,7 +200,7 @@ def test_write_training_slurm_uses_cpu_header_when_device_cpu(tmp_path: Path):
     text = script.read_text()
     assert "#SBATCH --partition=normal" in text
     assert "mace_run_train --config" in text
-    assert "--job-name=mlff_train" in text
+    assert "--job-name=mlip_train" in text
 
 
 def test_write_training_slurm_uses_cuda_header_when_device_cuda(tmp_path: Path):
@@ -281,18 +281,18 @@ def test_run_training_drives_pipeline_and_returns_results_unchanged(tmp_path: Pa
 
 
 # ---------------------------------------------------------------------------
-# MlffTrainEngine — the "mlff-train" engine wiring
+# MlipTrainEngine — the "mlip-train" engine wiring
 # ---------------------------------------------------------------------------
 
 
-def test_mlff_train_engine_is_registered():
+def test_mlip_train_engine_is_registered():
     from chemrefine.engines.base import ENGINES, get_engine
 
-    assert "mlff-train" in ENGINES
-    assert get_engine("mlff-train").supports_nms is False
+    assert "mlip-train" in ENGINES
+    assert get_engine("mlip-train").supports_nms is False
 
 
-def test_mlff_train_engine_trains_on_prev_and_passes_structures_through(tmp_path: Path):
+def test_mlip_train_engine_trains_on_prev_and_passes_structures_through(tmp_path: Path):
     """submit() calls trainer.run_training on the previous step's structures;
     parse() passes those structures through unchanged (model is the artifact)."""
     from chemrefine.engines.base import get_engine
@@ -311,7 +311,7 @@ def test_mlff_train_engine_trains_on_prev_and_passes_structures_through(tmp_path
         slurm_template=ctx.slurm_template,
         executables=ctx.executables,
     )
-    engine = get_engine("mlff-train")
+    engine = get_engine("mlip-train")
     inputs = engine.prepare(ctx)
     assert inputs.files == ()  # training is not per-structure
     with patch.object(trainer, "run_training", return_value=None) as mock_train:

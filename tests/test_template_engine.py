@@ -1,6 +1,6 @@
 """Tests for the shared template renderer + ``TemplateScriptEngine`` helpers.
 
-The per-engine ``test_engines_pyscf.py`` and ``test_engines_mlff.py``
+The per-engine ``test_engines_pyscf.py`` and ``test_engines_mlip.py``
 exercise the lifecycle end-to-end with their backend labels. The
 tests here exercise the *shared* surface area — the renderer
 (``_template_render.build_input``) and the top-level output-parsing

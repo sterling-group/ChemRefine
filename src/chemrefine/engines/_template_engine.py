@@ -1,4 +1,4 @@
-"""Shared base for direct template-driven engines (``pyscf`` and ``mlff``).
+"""Shared base for direct template-driven engines (``pyscf`` and ``mlip``).
 
 Both engines render a user-supplied ``step{N}.py`` template per
 structure, submit each rendered script through the SLURM-or-local
@@ -8,11 +8,11 @@ logic below is identical.
 
 Subclasses set two ClassVars and inherit the rest:
 
-* ``name`` — registry / YAML tag (``"pyscf"``, ``"mlff"``). Becomes the
+* ``name`` — registry / YAML tag (``"pyscf"``, ``"mlip"``). Becomes the
   ``@register`` argument and the trailing word in the
   ``normal_mode_sample`` ``NotImplementedError``.
 * ``label`` — human backend label used in every parse / template
-  error message (``"PySCF"``, ``"MLFF"``).
+  error message (``"PySCF"``, ``"MLIP"``).
 
 The helper functions :func:`_atoms_from_output` and
 :func:`_forces_from_gradient` are top-level (not methods) because
@@ -54,6 +54,7 @@ class TemplateScriptEngine(SlurmBatchEngine):
         ctx.step_dir.mkdir(parents=True, exist_ok=True)
         template = self._resolve_template(ctx)
         step = ctx.step_cfg.step
+        extra_vars = self._template_vars(ctx)
 
         files: list[tuple[Path, Path, str]] = []
         for struct in ctx.prev_state.structures:
@@ -73,9 +74,19 @@ class TemplateScriptEngine(SlurmBatchEngine):
                 output_json_path=output_json,
                 charge=ctx.charge,
                 multiplicity=ctx.multiplicity,
+                extra_vars=extra_vars,
             )
             files.append((script_path, output_json, struct.id))
         return StepInputs(files=tuple(files))
+
+    def _template_vars(self, ctx: StepContext) -> dict[str, object]:
+        """Extra ``$VAR`` substitutions for the template (default: none).
+
+        Subclasses override this to let the YAML ``step.options`` drive the
+        rendered script — e.g. the MLIP engine injects ``$MODEL_NAME`` /
+        ``$TASK_NAME`` / ``$DEVICE`` so a template need not hardcode the model.
+        """
+        return {}
 
     # -- submit (PAL + run_block hooks; the loop lives on SlurmBatchEngine) -
 

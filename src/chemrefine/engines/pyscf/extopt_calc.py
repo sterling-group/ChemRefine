@@ -2,7 +2,7 @@
 
 Wraps :mod:`chemrefine.engines.pyscf._runtime` so the shared ExtOpt
 server can serve PySCF gradients via the same
-:class:`ComputeBackend` contract MLFF uses. Optional active-space
+:class:`ComputeBackend` contract MLIP uses. Optional active-space
 tensor extraction is gated on the per-call ``settings['save_tensors']``
 flag (which the wrapper-script CLI flips on with ``--save_tensors``).
 

@@ -63,7 +63,7 @@ server = [
 # relaxes the e3nn floor. The fork can be swapped for the upstream
 # PyPI release once either side gives ground.
 # downloads: torch (+CUDA), e3nn, mace-torch, fairchem-core (git clone), + server (heavy)
-mlff = [
+mlip = [
     "torch>=2.8.0,<2.9.0",
     "e3nn==0.4.4",
     "mace-torch>=0.3.16",
@@ -73,6 +73,8 @@ mlff = [
     # "fairchem-core>=2.9",
     "chemrefine[server]",
 ]
+# Back-compat alias: `mlff` was renamed to `mlip`; keep the old extra working.
+mlff = ["chemrefine[mlip]"]
 # The `pyscf` and `pyscf-extopt` engines import `pyscf` lazily; the extopt
 # path also needs the server, so cross-reference `[server]`.
 # downloads: pyscf (libcint/libxc), + server (moderate)

@@ -10,6 +10,6 @@ engine's own ``__init__`` registers it via the
 :func:`~chemrefine.engines.base.register` decorator at import time.
 """
 
-from chemrefine.engines import _fake, mlff, orca, pyscf
+from chemrefine.engines import _fake, mlip, orca, pyscf
 
-__all__ = ["_fake", "mlff", "orca", "pyscf"]
+__all__ = ["_fake", "mlip", "orca", "pyscf"]

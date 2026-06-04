@@ -1,6 +1,6 @@
-"""Shared base class for ORCA-driven ExtOpt engines (MLFF, PySCF, …).
+"""Shared base class for ORCA-driven ExtOpt engines (MLIP, PySCF, …).
 
-The MLFF and PySCF engines both run an external HTTP server for the
+The MLIP and PySCF engines both run an external HTTP server for the
 gradient evaluation and use ORCA itself as the optimizer. They differ
 only in what server they spin up and which ``%method`` block ORCA gets.
 This base class wires up the common bash ``run_block`` and the per-step
@@ -24,7 +24,7 @@ class ExtOptOrcaEngine(OrcaEngine):
     """ORCA driven by an ExtOpt HTTP server.
 
     Subclasses set ``backend`` (the registry key the server / client load,
-    e.g. ``"mlff"``) and ``wrapper_filename`` (the per-step ``ProgExt``
+    e.g. ``"mlip"``) and ``wrapper_filename`` (the per-step ``ProgExt``
     script name), and implement :meth:`_server_cmd` to return the shell
     command that launches their backend's server. The base wires the
     shared SLURM ``run_block``, the per-step wrapper-path lookup, and the

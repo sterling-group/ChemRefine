@@ -14,7 +14,7 @@ import importlib
 from chemrefine.engines._backend_server.base import ComputeBackend
 
 CALCULATORS: dict[str, str] = {
-    "mlff": "chemrefine.engines.mlff.extopt_calc:MlffExtOptCalculator",
+    "mlip": "chemrefine.engines.mlip.extopt_calc:MlipExtOptCalculator",
     "pyscf": "chemrefine.engines.pyscf.extopt_calc:PyscfExtOptCalculator",
 }
 

@@ -1,4 +1,4 @@
-"""ORCA-driven MLFF engine (ORCA optimises, MLFF provides gradients).
+"""ORCA-driven MLIP engine (ORCA optimises, MLIP provides gradients).
 
 This engine reuses the entire ORCA submission pipeline (input writer,
 SLURM, output parser) and only differs in two ways:
@@ -11,11 +11,11 @@ SLURM, output parser) and only differs in two ways:
 2. The SLURM ``run_block`` (assembled by
    :class:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine`)
    starts the shared :mod:`chemrefine.engines._backend_server.server` with
-   ``--backend mlff`` before ORCA, probes ``/healthz`` until the server
+   ``--backend mlip`` before ORCA, probes ``/healthz`` until the server
    is ready, and tears it down on exit.
 
 Backend selection / model name are read from ``step.options`` in the
-YAML via :class:`~chemrefine.engines.mlff.options.MlffOptions`.
+YAML via :class:`~chemrefine.engines.mlip.options.MlipOptions`.
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ from __future__ import annotations
 import logging
 
 from chemrefine.engines.base import register
-from chemrefine.engines.mlff.extopt_calc import MlffExtOptCalculator
-from chemrefine.engines.mlff.options import MlffOptions
+from chemrefine.engines.mlip.extopt_calc import MlipExtOptCalculator
+from chemrefine.engines.mlip.options import MlipOptions
 from chemrefine.engines.orca.extopt import run_block
 from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
 from chemrefine.state import StepContext
@@ -32,13 +32,13 @@ from chemrefine.state import StepContext
 logger = logging.getLogger(__name__)
 
 
-@register("mlff-extopt")
-class MlffExtOptEngine(ExtOptOrcaEngine):
-    """ORCA optimisation backed by an MLFF gradient server."""
+@register("mlip-extopt")
+class MlipExtOptEngine(ExtOptOrcaEngine):
+    """ORCA optimisation backed by an MLIP gradient server."""
 
-    name = "mlff-extopt"
-    backend = "mlff"
-    wrapper_filename = "mlff_extopt.sh"
+    name = "mlip-extopt"
+    backend = "mlip"
+    wrapper_filename = "mlip_extopt.sh"
 
     # -- ORCA input customisation -----------------------------------------
 
@@ -54,13 +54,13 @@ class MlffExtOptEngine(ExtOptOrcaEngine):
     # -- SLURM customisation ----------------------------------------------
 
     def _server_cmd(self, ctx: StepContext) -> str:
-        """Build the ``python -m ..._backend_server.server --backend mlff ...`` command.
+        """Build the ``python -m ..._backend_server.server --backend mlip ...`` command.
 
-        Validates ``ctx.step_cfg.options`` through :class:`MlffOptions`
+        Validates ``ctx.step_cfg.options`` through :class:`MlipOptions`
         first (so the engine fails fast on unknown YAML keys), then
         delegates CLI generation to
-        :meth:`MlffExtOptCalculator.server_cli_from_options`.
+        :meth:`MlipExtOptCalculator.server_cli_from_options`.
         """
-        options = MlffOptions.from_raw(ctx.step_cfg.options).model_dump()
-        tokens = MlffExtOptCalculator.server_cli_from_options(options)
+        options = MlipOptions.from_raw(ctx.step_cfg.options).model_dump()
+        tokens = MlipExtOptCalculator.server_cli_from_options(options)
         return run_block._server_command(backend=self.backend, extra_tokens=tokens)

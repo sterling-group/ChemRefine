@@ -150,16 +150,16 @@ def test_write_engrad_dograd_true_requires_gradient(tmp_path: Path):
 
 
 def test_write_wrapper_script_emits_exec_call_and_is_executable(tmp_path: Path):
-    out = tmp_path / "mlff_extopt.sh"
+    out = tmp_path / "mlip_extopt.sh"
     url_file = tmp_path / "server.url"
     protocol.write_wrapper_script(
-        path=out, backend="mlff", url_file=url_file,
+        path=out, backend="mlip", url_file=url_file,
     )
     text = out.read_text(encoding="utf-8")
     assert "#!/usr/bin/env bash" in text
     assert 'URL_FILE="' + str(url_file) + '"' in text
     assert "chemrefine.engines.orca.extopt.bridge" in text
-    assert "--backend mlff" in text
+    assert "--backend mlip" in text
     assert out.stat().st_mode & 0o100  # owner-execute bit
 
 
@@ -235,12 +235,12 @@ def test_write_server_url_cleans_up_temp_on_failure(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_registry_contains_mlff_and_pyscf():
-    assert set(registry.CALCULATORS) == {"mlff", "pyscf"}
+def test_registry_contains_mlip_and_pyscf():
+    assert set(registry.CALCULATORS) == {"mlip", "pyscf"}
 
 
 def test_load_calculator_returns_class():
-    cls = registry.load_calculator("mlff")
+    cls = registry.load_calculator("mlip")
     assert isinstance(cls, type)
 
 
@@ -306,8 +306,8 @@ def test_server_parse_args_requires_backend():
 
 
 def test_server_parse_args_defaults():
-    args = server.parse_args(["--backend", "mlff"])
-    assert args.backend == "mlff"
+    args = server.parse_args(["--backend", "mlip"])
+    assert args.backend == "mlip"
     assert args.bind == "127.0.0.1:0"
     assert args.nthreads == 4
     assert args.log_level == "INFO"
@@ -448,8 +448,8 @@ def test_client_parse_args_requires_backend_and_inputfile():
 
 
 def test_client_parse_args_defaults():
-    args = bridge.parse_args(["--backend", "mlff", "job.extinp.tmp"])
-    assert args.backend == "mlff"
+    args = bridge.parse_args(["--backend", "mlip", "job.extinp.tmp"])
+    assert args.backend == "mlip"
     assert args.bind is None
     assert args.url_file is None
     assert args.method == "dft"
@@ -562,14 +562,14 @@ def test_submit_calculation_threads_tag_into_payload():
 
 
 def test_resolve_server_url_prefers_explicit_bind(tmp_path: Path):
-    args = bridge.parse_args(["--backend", "mlff", "--bind", "1.2.3.4:5", "x"])
+    args = bridge.parse_args(["--backend", "mlip", "--bind", "1.2.3.4:5", "x"])
     assert bridge.resolve_server_url(args) == "1.2.3.4:5"
 
 
 def test_resolve_server_url_reads_url_file(tmp_path: Path):
     url_file = tmp_path / "server.url"
     url_file.write_text("127.0.0.1:9999\n", encoding="utf-8")
-    args = bridge.parse_args(["--backend", "mlff", "--url-file", str(url_file), "x"])
+    args = bridge.parse_args(["--backend", "mlip", "--url-file", str(url_file), "x"])
     assert bridge.resolve_server_url(args) == "127.0.0.1:9999"
 
 
@@ -604,7 +604,7 @@ def test_client_main_writes_engrad(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(
         "sys.argv",
-        ["bridge.py", "--backend", "mlff", "--url-file", str(url_file), str(inp)],
+        ["bridge.py", "--backend", "mlip", "--url-file", str(url_file), str(inp)],
     )
 
     expected = b'{"energy": -1.0, "gradient": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]}'
@@ -627,7 +627,7 @@ def test_client_main_tags_calls_with_extinp_jobname(tmp_path: Path, monkeypatch)
     url_file.write_text("127.0.0.1:1234\n", encoding="utf-8")
     monkeypatch.setattr(
         "sys.argv",
-        ["bridge.py", "--backend", "mlff", "--url-file", str(url_file), str(inp)],
+        ["bridge.py", "--backend", "mlip", "--url-file", str(url_file), str(inp)],
     )
     captured: dict = {}
 
@@ -662,7 +662,7 @@ def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
     import types
     from unittest.mock import MagicMock, patch
 
-    # Fake mace.calculators so MlffExtOptCalculator.from_args succeeds without
+    # Fake mace.calculators so MlipExtOptCalculator.from_args succeeds without
     # pulling a real backend in.
     mace_factory = MagicMock(return_value="MACE_OFF_CALC")
     mace_mod = types.ModuleType("mace.calculators")
@@ -691,10 +691,10 @@ def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
         sys, "argv",
         [
             "extopt-server",
-            "--backend", "mlff",
+            "--backend", "mlip",
             "--bind", "127.0.0.1:0",
             "--url-file", str(url_file),
-            "--model", "medium",
+            "--model", "small",
             "--task-name", "mace_off",
             "--device", "cpu",
         ],

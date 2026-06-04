@@ -1,6 +1,6 @@
 """Shared Python-script template renderer for engines that take a user template.
 
-Both `engines.pyscf.engine.PyscfEngine` and `engines.mlff.engine.MlffEngine`
+Both `engines.pyscf.engine.PyscfEngine` and `engines.mlip.engine.MlipEngine`
 take a user-supplied ``step{N}.py`` template, substitute geometry
 placeholders, and append a footer that harvests well-known variable
 names from the template's locals and writes a canonical JSON output.
@@ -13,6 +13,9 @@ syntax — collision-free with Python's ``{`` / ``}`` brackets):
 * ``$XYZ_PATH`` — absolute path to the per-structure ``.xyz`` file.
 * ``$CHARGE`` — integer total charge (from ``ctx.charge``).
 * ``$MULTIPLICITY`` — integer spin multiplicity (``= 2S + 1``).
+* engine ``extra_vars`` — per-engine option placeholders so the YAML can drive
+  the template. The MLIP engine passes ``$MODEL_NAME`` / ``$TASK_NAME`` /
+  ``$DEVICE`` from ``step.options`` (see :meth:`TemplateScriptEngine._template_vars`).
 
 Output contract (the appended footer harvests these names if present):
 
@@ -78,14 +81,15 @@ def build_input(
     output_json_path: Path,
     charge: int,
     multiplicity: int,
+    extra_vars: dict[str, object] | None = None,
 ) -> Path:
     """Render ``template_path`` into ``output_path`` and return the rendered path.
 
-    ``$XYZ_PATH`` / ``$CHARGE`` / ``$MULTIPLICITY`` are substituted via
-    :class:`string.Template.safe_substitute` so unknown ``$NAME``
-    references in the template are left alone — users can keep
-    shell-style ``$VAR`` lookups inside their script without
-    collision.
+    ``$XYZ_PATH`` / ``$CHARGE`` / ``$MULTIPLICITY`` (plus any engine-supplied
+    ``extra_vars`` such as ``$MODEL_NAME`` / ``$TASK_NAME`` / ``$DEVICE``) are
+    substituted via :class:`string.Template.safe_substitute` so unknown
+    ``$NAME`` references in the template are left alone — users can keep
+    shell-style ``$VAR`` lookups inside their script without collision.
 
     The appended footer reads the well-known variable names
     ``energy_hartree`` (required), ``gradient_hartree_per_bohr``, and
@@ -102,11 +106,13 @@ def build_input(
     if not template_path.is_file():
         raise FileNotFoundError(f"template not found: {template_path}")
     text = template_path.read_text(encoding="utf-8")
-    rendered = Template(text).safe_substitute(
-        XYZ_PATH=str(xyz_path),
-        CHARGE=charge,
-        MULTIPLICITY=multiplicity,
-    )
+    substitutions: dict[str, object] = {
+        "XYZ_PATH": str(xyz_path),
+        "CHARGE": charge,
+        "MULTIPLICITY": multiplicity,
+    }
+    substitutions.update({k: str(v) for k, v in (extra_vars or {}).items()})
+    rendered = Template(text).safe_substitute(substitutions)
     rendered = rendered.rstrip() + _build_output_footer(output_json_path.name)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(rendered, encoding="utf-8")

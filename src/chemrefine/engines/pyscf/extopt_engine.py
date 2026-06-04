@@ -1,6 +1,6 @@
 """ORCA-driven PySCF engine (ORCA optimises, PySCF provides gradients).
 
-Mirrors :class:`MlffExtOptEngine` — same shared ExtOpt server, different
+Mirrors :class:`MlipExtOptEngine` — same shared ExtOpt server, different
 backend choice (``--backend pyscf``) and a different per-step CLI
 that selects method / xc / basis / df / gpu. The actual SCF +
 gradient is computed by :class:`PyscfExtOptCalculator`.
@@ -35,7 +35,7 @@ class PyscfExtOptEngine(ExtOptOrcaEngine):
         The PySCF method / xc / basis selection is baked into the wrapper's
         client invocation (see :meth:`_wrapper_extra_args`), so ORCA needs no
         ``Ext_Params`` — the wrapper takes only the ``.extinp.tmp`` ORCA hands
-        it. This matches :class:`MlffExtOptEngine`'s single-channel design.
+        it. This matches :class:`MlipExtOptEngine`'s single-channel design.
         """
         wrapper = self._wrapper_path(ctx)
         return f'%method\n  ProgExt "{wrapper}"\nend'
