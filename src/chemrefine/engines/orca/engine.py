@@ -93,9 +93,9 @@ class OrcaEngine(SlurmBatchEngine):
         return StepInputs(files=tuple(files))
 
     def _extra_blocks(self, ctx: StepContext) -> str:
-        """Subclass hook for engines that need extra ORCA blocks (e.g. MLFF ``%method``).
+        """Subclass hook for engines that need extra ORCA blocks (e.g. MLIP ``%method``).
 
-        The base ORCA engine has nothing extra to add; MLFF and PySCF
+        The base ORCA engine has nothing extra to add; MLIP and PySCF
         override this to inject their ``%method ProgExt …`` block.
         """
         return ""
@@ -232,7 +232,7 @@ class OrcaEngine(SlurmBatchEngine):
         children and parses their existing ``nms/`` ``.out`` files to re-flag
         resolution. Round-1 frequencies must already be cached (the caller
         re-parses round 1 first). Children with no output on disk are simply
-        absent, so :func:`chemrefine.step._resolve_nms` treats their parent as
+        absent, so :func:`chemrefine.step_nms._resolve_nms` treats their parent as
         unresolved.
         """
         target = nms.target_imaginary_count(nms.NmsOptions.from_raw(ctx.step_cfg.options))

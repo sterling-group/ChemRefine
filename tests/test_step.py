@@ -183,7 +183,7 @@ def test_cache_load_after_run_returns_results(tmp_path: Path):
 
 
 def test_nms_reuse_fingerprint_ignores_search_params():
-    from chemrefine.step import _nms_reuse_fingerprint
+    from chemrefine.step_nms import _nms_reuse_fingerprint
 
     base = StepConfig(
         step=1, engine="orca", operation="freq", nms=True,
@@ -194,7 +194,7 @@ def test_nms_reuse_fingerprint_ignores_search_params():
 
 
 def test_nms_reuse_fingerprint_changes_on_criterion():
-    from chemrefine.step import _nms_reuse_fingerprint
+    from chemrefine.step_nms import _nms_reuse_fingerprint
 
     mn = StepConfig(
         step=1, engine="orca", operation="freq", nms=True, options={"target": "minimum"}
@@ -204,7 +204,7 @@ def test_nms_reuse_fingerprint_changes_on_criterion():
 
 
 def test_nms_reuse_fingerprint_empty_for_non_nms():
-    from chemrefine.step import _nms_reuse_fingerprint
+    from chemrefine.step_nms import _nms_reuse_fingerprint
 
     plain = StepConfig(step=1, engine="orca", operation="opt_sp")
     assert _nms_reuse_fingerprint(plain, ("0",)) == ""
@@ -336,7 +336,8 @@ def test_resolve_nms_keeps_resolved_drops_unresolved(tmp_path: Path):
     a round-1 parent with no resolved child becomes a (ledgered) failure."""
     from chemrefine import cache
     from chemrefine.state import StepResults
-    from chemrefine.step import _resolve_nms, build_context
+    from chemrefine.step import build_context
+    from chemrefine.step_nms import _resolve_nms
 
     cfg = _config(tmp_path, engine="orca", operation="freq", nms=True)
     ctx = build_context(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]))

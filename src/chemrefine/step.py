@@ -7,6 +7,7 @@ lifecycle methods are called. :func:`run_step` is intentionally short
 * Caching + manifest:  :mod:`chemrefine.cache`
 * Filtering:           :mod:`chemrefine.filtering`
 * Engine lookup:  :mod:`chemrefine.engines.base`
+* NMS resolution / recovery:  :mod:`chemrefine.step_nms`
 """
 
 from __future__ import annotations
@@ -90,10 +91,11 @@ def run_step(
     * Otherwise the engine's full lifecycle runs and the resulting
       :class:`~chemrefine.state.StepResults` is cached for next time.
     """
-    # Deferred import: chemrefine.__init__ imports chemrefine.engines, which
+    # Deferred imports: chemrefine.__init__ imports chemrefine.engines, which
     # imports this module (step.py) to register engines — a circular chain.
-    # Deferring to function scope breaks the cycle cleanly.
-    from chemrefine import __version__
+    # ``step_nms`` imports the failure helpers from *this* module at its module
+    # scope; deferring both to function scope breaks the cycle cleanly.
+    from chemrefine import __version__, step_nms
 
     ctx = build_context(config, step_cfg, prev_state)
     parent_ids = tuple(s.id for s in prev_state.structures)
@@ -111,7 +113,7 @@ def run_step(
         failed = cache.load_failed_jobs(ctx.step_dir)
         if failed:
             results = (
-                _reattempt_nms(engine, ctx, step_cfg, cached, parent_ids, __version__)
+                step_nms._reattempt_nms(engine, ctx, step_cfg, cached, parent_ids, __version__)
                 if is_nms
                 else _resubmit_failed(engine, ctx, step_cfg, failed, parent_ids, __version__)
             )
@@ -138,10 +140,10 @@ def run_step(
         except CacheError:
             cached = None
         if cached is not None and getattr(cached, "reuse_fingerprint", "") == (
-            _nms_reuse_fingerprint(step_cfg, parent_ids)
+            step_nms._nms_reuse_fingerprint(step_cfg, parent_ids)
         ):
             if cache.load_failed_jobs(ctx.step_dir):
-                results = _reattempt_nms(
+                results = step_nms._reattempt_nms(
                     engine, ctx, step_cfg, cached, parent_ids, __version__
                 )
             else:
@@ -153,7 +155,7 @@ def run_step(
                 cache.save(
                     step_cfg=step_cfg, parent_ids=parent_ids, results=cached.results,
                     step_dir=ctx.step_dir, chemrefine_version=__version__,
-                    reuse_fingerprint=_nms_reuse_fingerprint(step_cfg, parent_ids),
+                    reuse_fingerprint=step_nms._nms_reuse_fingerprint(step_cfg, parent_ids),
                 )
                 results = cached.results
             return StepOutcome(
@@ -180,7 +182,7 @@ def run_step(
         # failures).
         logger.info("step %d: running normal-mode sampling", step_cfg.step)
         round1 = StepResults(structures=tuple(successes))
-        results = _resolve_nms(
+        results = step_nms._resolve_nms(
             engine.normal_mode_sample(round1, ctx), round1, ctx, step_cfg,
             round1_failures=failures,
         )
@@ -193,7 +195,7 @@ def run_step(
         results=results,
         step_dir=ctx.step_dir,
         chemrefine_version=__version__,
-        reuse_fingerprint=_nms_reuse_fingerprint(step_cfg, parent_ids),
+        reuse_fingerprint=step_nms._nms_reuse_fingerprint(step_cfg, parent_ids),
     )
 
     return StepOutcome(
@@ -319,7 +321,7 @@ def rebuild_cache_step(
     ``nms/`` round-2 outputs, then rewrites the ``StepCache`` with the same
     fingerprint a normal run would produce. Backs ``chemrefine rebuild-cache``.
     """
-    from chemrefine import __version__
+    from chemrefine import __version__, step_nms
 
     ctx = build_context(config, step_cfg, prev_state)
     parent_ids = tuple(s.id for s in prev_state.structures)
@@ -333,7 +335,7 @@ def rebuild_cache_step(
     successes, failures = _parse_with_failures(engine, manifest, ctx)
     if step_cfg.nms and engine.supports_nms:
         round1 = StepResults(structures=tuple(successes))
-        results = _resolve_nms(
+        results = step_nms._resolve_nms(
             engine.resolve_nms_from_existing(round1, ctx), round1, ctx, step_cfg,
             round1_failures=failures,
         )
@@ -345,140 +347,9 @@ def rebuild_cache_step(
         results=results,
         step_dir=ctx.step_dir,
         chemrefine_version=__version__,
-        reuse_fingerprint=_nms_reuse_fingerprint(step_cfg, parent_ids),
+        reuse_fingerprint=step_nms._nms_reuse_fingerprint(step_cfg, parent_ids),
     )
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
-
-
-# NMS *search* params: tuning these doesn't change what counts as resolved, so
-# changing them reuses round-1 (the reuse fingerprint ignores them). The
-# resolution *criterion* (target / ts_mode_index) stays in, so changing it
-# forces a full re-run.
-_NMS_SEARCH_KEYS = frozenset({"displacement_value", "num_random_displacements", "seed"})
-
-
-def _nms_reuse_fingerprint(step_cfg: StepConfig, parent_ids: tuple[str, ...]) -> str:
-    """Fingerprint that's stable across NMS search-param tuning.
-
-    Same as :func:`chemrefine.cache.fingerprint` but with the NMS search
-    parameters stripped from ``options`` — so bumping ``displacement_value``
-    leaves it unchanged (reuse round-1 + resolved, re-attempt only the
-    unresolved), while changing the criterion / template / parents changes it.
-    Returns ``""`` for non-NMS steps (the reuse path is NMS-only).
-    """
-    if not step_cfg.nms:
-        return ""
-    trimmed = {k: v for k, v in (step_cfg.options or {}).items() if k not in _NMS_SEARCH_KEYS}
-    return cache.fingerprint(step_cfg.model_copy(update={"options": trimmed}), parent_ids)
-
-
-def _reattempt_nms(
-    engine: CalculationEngine,
-    ctx: StepContext,
-    step_cfg: StepConfig,
-    cached: cache.StepCache,
-    parent_ids: tuple[str, ...],
-    version: str,
-) -> StepResults:
-    """Re-attempt only the ledgered-unresolved NMS parents, reusing round-1.
-
-    Round-1 freq is reused from disk (re-parsed, not resubmitted) for parents
-    whose output exists; a parent whose round-1 output is genuinely *missing*
-    has it resubmitted first. NMS round-2 is re-run for those parents under the
-    current ``NmsOptions``; the still-valid resolved structures from the old
-    cache are kept, and the merged result is re-cached.
-    """
-    manifest = cache.load_manifest(ctx.step_dir)
-    if manifest is None:
-        raise CacheError(
-            f"step {step_cfg.step}: cannot re-attempt NMS — no manifest on disk"
-        )
-    failed = cache.load_failed_jobs(ctx.step_dir)
-    failed_ids = {f["structure_id"] for f in failed}
-    missing_ids = {f["structure_id"] for f in failed if f.get("reason") == "output missing"}
-
-    failed_manifest = StepInputs(
-        files=tuple(f for f in manifest.files if f[2] in failed_ids)
-    )
-    missing_inputs = StepInputs(
-        files=tuple(f for f in failed_manifest.files if f[2] in missing_ids)
-    )
-    if missing_inputs.files:
-        logger.info(
-            "step %d: NMS re-attempt resubmitting %d missing round-1 job(s)",
-            step_cfg.step,
-            len(missing_inputs.files),
-        )
-        engine.wait(engine.submit(missing_inputs, ctx))
-
-    # Re-parse the failed parents' round-1 outputs (reuse on disk; caches freqs),
-    # then re-run NMS round-2 for them under the current options. Round-1 jobs
-    # that still produced no output stay failures, carried into the resolution.
-    r1_succ, r1_fail = _parse_with_failures(engine, failed_manifest, ctx)
-    round1_failed = StepResults(structures=tuple(r1_succ))
-    reattempt = _resolve_nms(
-        engine.normal_mode_sample(round1_failed, ctx), round1_failed, ctx, step_cfg,
-        round1_failures=r1_fail,
-    )
-    kept = tuple(
-        s
-        for s in cached.results.structures
-        if s.id not in failed_ids and (s.parent_id not in failed_ids)
-    )
-    merged = StepResults(structures=kept + reattempt.structures)
-    cache.save(
-        step_cfg=step_cfg,
-        parent_ids=parent_ids,
-        results=merged,
-        step_dir=ctx.step_dir,
-        chemrefine_version=version,
-        reuse_fingerprint=_nms_reuse_fingerprint(step_cfg, parent_ids),
-    )
-    return merged
-
-
-def _resolve_nms(
-    nms_results: StepResults,
-    round1: StepResults,
-    ctx: StepContext,
-    step_cfg: StepConfig,
-    round1_failures: list[_Failure] | tuple[_Failure, ...] = (),
-) -> StepResults:
-    """Group two-round NMS outputs by the round-1 structure each resolves.
-
-    A round-1 structure is *resolved* if it passed through already at the
-    target (``converged=True``) or any of its displaced ± children resolved.
-    Resolved children are kept (both ±, no dedup); a round-1 structure with no
-    resolved outcome is a failure handed to the step's ``on_failure`` policy.
-    ``round1_failures`` (jobs that produced no/unparseable output) are carried
-    in unchanged, so the ledger records *both* failure kinds in one write
-    (recorded to ``failed_jobs.json`` so ``resume`` can re-attempt them).
-    """
-    round1_ids = {s.id for s in round1.structures}
-    successes: list[Structure] = []
-    resolved_parents: set[str] = set()
-    attempts: dict[str, list[Structure]] = {}
-    for o in nms_results.structures:
-        # An already-resolved pass-through carries its own round-1 id; a
-        # displaced child carries its round-1 parent in ``parent_id``.
-        key = o.id if o.id in round1_ids else (o.parent_id or o.id)
-        attempts.setdefault(key, []).append(o)
-        if _succeeded(o):
-            successes.append(o)
-            resolved_parents.add(key)
-
-    failures: list[_Failure] = list(round1_failures)
-    for s in round1.structures:
-        if s.id in resolved_parents:
-            continue
-        group = attempts.get(s.id, [])
-        best = (
-            min(group, key=lambda a: (a.energy_hartree is None, a.energy_hartree or 0.0))
-            if group
-            else s
-        )
-        failures.append(_Failure(s.id, "NMS: target stationary point not reached", best))
-    return _apply_failure_policy(successes, failures, ctx, step_cfg)
 
 
 def _resubmit_failed(
