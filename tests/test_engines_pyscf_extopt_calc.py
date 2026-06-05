@@ -401,33 +401,34 @@ def test_extopt_calc_skips_tensor_extraction_by_default(monkeypatch):
     mock_tensors.assert_not_called()
 
 
-def test_extopt_calc_extracts_tensors_when_settings_request_them(
+def test_extopt_calc_extracts_tensors_when_constructed_with_save_tensors(
     tmp_path: Path, monkeypatch
 ):
+    """``save_tensors`` comes from server construction; only ``tag`` rides the call."""
     _install_fake_pyscf(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    extopt_calc.PyscfExtOptCalculator().calc(
-        _data(save_tensors=True, tag="step3_structure_0")
+    extopt_calc.PyscfExtOptCalculator(save_tensors=True).calc(
+        _data(tag="step3_structure_0")
     )
     assert (tmp_path / "tensors" / "step3_structure_0.npz").is_file()
 
 
-def test_extopt_calc_honours_per_call_settings_override(monkeypatch):
-    """Per-request ``settings`` should override the per-process defaults."""
+def test_extopt_calc_uses_server_construction_not_per_call_settings(monkeypatch):
+    """Single channel: SCF knobs come from construction, not the per-call POST."""
     mocks = _install_fake_pyscf(monkeypatch)
     extopt_calc.PyscfExtOptCalculator(method="dft", xc="pbe").calc(
-        _data(method="hf", xc="b3lyp")
+        _data(method="hf", xc="b3lyp")  # stale settings must be ignored
     )
-    # ``method=hf`` short-circuits dft.RKS and uses scf.RHF instead.
-    mocks["scf"].RHF.assert_called_once()
-    mocks["dft"].RKS.assert_not_called()
+    # Construction said dft → dft.RKS is used; the POST's ``method=hf`` is ignored.
+    mocks["dft"].RKS.assert_called_once()
+    mocks["scf"].RHF.assert_not_called()
 
 
 def test_extopt_calc_localized_tensors(tmp_path: Path, monkeypatch):
     mocks = _install_fake_pyscf(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    extopt_calc.PyscfExtOptCalculator().calc(
-        _data(save_tensors=True, localized=True, tag="s0")
+    extopt_calc.PyscfExtOptCalculator(save_tensors=True, localized=True).calc(
+        _data(tag="s0")
     )
     assert mocks["lo"].Boys.call_count == 2
 
@@ -455,28 +456,16 @@ def test_add_cli_args_registers_pyscf_flags_with_pydantic_defaults():
     assert args.tensor_folder == defaults.tensor_folder
 
 
-def test_settings_from_args_packs_all_flags():
+def test_settings_from_args_is_empty_single_channel():
+    """Single channel: knobs come from server construction, so the POST carries none."""
     import argparse
 
     parser = argparse.ArgumentParser()
     extopt_calc.PyscfExtOptCalculator.add_cli_args(parser)
     args = parser.parse_args(
-        [
-            "--method", "hf", "--xc", "b3lyp", "--basis", "cc-pvdz", "--df", "--gpu",
-            "--save_tensors", "--localized", "--tensor_folder", "mytensors",
-        ]
+        ["--method", "hf", "--basis", "cc-pvdz", "--df", "--save_tensors"]
     )
-    settings = extopt_calc.PyscfExtOptCalculator.settings_from_args(args)
-    assert settings == {
-        "method": "hf",
-        "xc": "b3lyp",
-        "basis": "cc-pvdz",
-        "df": True,
-        "gpu": True,
-        "save_tensors": True,
-        "localized": True,
-        "tensor_folder": "mytensors",
-    }
+    assert extopt_calc.PyscfExtOptCalculator.settings_from_args(args) == {}
 
 
 def test_from_args_round_trips_tensor_knobs():

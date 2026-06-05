@@ -2,9 +2,13 @@
 
 Wraps :mod:`chemrefine.engines.pyscf._runtime` so the shared ExtOpt
 server can serve PySCF gradients via the same
-:class:`ComputeBackend` contract MLIP uses. Optional active-space
-tensor extraction is gated on the per-call ``settings['save_tensors']``
-flag (which the wrapper-script CLI flips on with ``--save_tensors``).
+:class:`ComputeBackend` contract MLIP uses. **Single channel:** the SCF
+knobs (method / xc / basis / df / gpu / tensor settings) are baked into
+the calculator once, at server construction, from the step's YAML
+options — the wrapper and the per-call POST carry nothing. Optional
+active-space tensor extraction is gated on the server-constructed
+``save_tensors`` flag; only the per-call correlation ``tag`` rides the
+request (so dumps don't overwrite each other).
 
 The SCF + gradient body needs PySCF + (optionally) gpu4pyscf
 installed; tests under :file:`tests/test_engines_pyscf_extopt_calc.py`
@@ -108,17 +112,13 @@ class PyscfExtOptCalculator(ComputeBackend):
 
     @classmethod
     def settings_from_args(cls, args: argparse.Namespace) -> dict[str, Any]:
-        """Pack per-call PySCF knobs into the wrapper-script POST payload."""
-        return {
-            "method": args.method,
-            "xc": args.xc,
-            "basis": args.basis,
-            "df": bool(args.df),
-            "gpu": bool(args.gpu),
-            "save_tensors": bool(args.save_tensors),
-            "localized": bool(args.localized),
-            "tensor_folder": args.tensor_folder,
-        }
+        """No per-call client knobs — PySCF is single-channel like MLIP.
+
+        The calculator is constructed from the server CLI (:meth:`from_args`),
+        so the wrapper's POST carries no settings; the server still injects the
+        correlation ``tag`` on its own.
+        """
+        return {}
 
     @classmethod
     def server_cli_from_options(cls, options: dict[str, Any]) -> list[str]:
@@ -155,35 +155,25 @@ class PyscfExtOptCalculator(ComputeBackend):
     def calc(
         self, data: CalculationData
     ) -> tuple[float, list[list[float]]]:
-        """Run the SCF + (optional) gradient, return ``(energy, gradient)`` in atomic units."""
-        # Per-call overrides from the wrapper-script POST payload; missing
-        # keys fall back to the per-process defaults set at construction.
-        per_call = PyscfOptions.from_raw(
-            {
-                "method": data.settings.get("method", self.method),
-                "xc": data.settings.get("xc", self.xc),
-                "basis": data.settings.get("basis", self.basis),
-                "df": bool(data.settings.get("df", self.df)),
-                "gpu": bool(data.settings.get("gpu", self.gpu)),
-                "save_tensors": bool(data.settings.get("save_tensors", self.save_tensors)),
-                "localized": bool(data.settings.get("localized", self.localized)),
-                "tensor_folder": data.settings.get("tensor_folder", self.tensor_folder),
-            }
-        )
+        """Run the SCF + (optional) gradient, return ``(energy, gradient)`` in atomic units.
 
+        Single channel: the SCF knobs come from this instance (built once on the
+        server from the step's YAML options); only the per-call correlation
+        ``tag`` is read off the request, to key ``save_tensors`` dumps.
+        """
         mol = _runtime.build_mol(
             symbols=data.symbols,
             positions_angstrom=data.positions_angstrom,
             charge=data.charge,
             multiplicity=data.multiplicity,
-            basis=per_call.basis,
+            basis=self.basis,
         )
         energy, gradient, meta, mf = _runtime.run_dft(
             mol,
-            method=per_call.method,
-            xc=per_call.xc,
-            use_df=per_call.df,
-            want_gpu=per_call.gpu,
+            method=self.method,
+            xc=self.xc,
+            use_df=self.df,
+            want_gpu=self.gpu,
             nthreads=data.nthreads,
             dograd=data.dograd,
         )
@@ -192,15 +182,15 @@ class PyscfExtOptCalculator(ComputeBackend):
             energy, meta["converged"], meta["gpu_used"], meta["elapsed_seconds"],
         )
 
-        if per_call.save_tensors:
+        if self.save_tensors:
             # ``tag`` is the per-call correlation id the bridge derives from the
             # ``.extinp.tmp`` stem (one file per ORCA geometry step); the server
             # injects it into ``settings`` so dumps don't overwrite each other.
             tag = data.settings.get("tag") or "untagged"
             nuc, h1, h2 = _runtime.get_active_space_tensors(
-                mol, mf, localized=per_call.localized
+                mol, mf, localized=self.localized
             )
-            target = Path(per_call.tensor_folder) / f"{tag}.npz"
+            target = Path(self.tensor_folder) / f"{tag}.npz"
             _runtime.save_tensors(path=target, nuc=nuc, h1=h1, h2=h2)
             logger.info("PySCF tensors saved: %s", target)
 

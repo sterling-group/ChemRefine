@@ -67,20 +67,20 @@ def _pyscf_ctx(tmp_path: Path, **option_overrides) -> StepContext:
 
 
 def test_pyscf_extra_blocks_point_progext_at_wrapper_without_ext_params(tmp_path: Path):
-    """Settings ride the wrapper (single channel); the ``.inp`` carries no ``Ext_Params``."""
+    """Settings live on the server (single channel); the ``.inp`` carries no ``Ext_Params``."""
     engine = get_engine("pyscf-extopt")
     ctx = _pyscf_ctx(tmp_path, basis="cc-pvdz", xc="b3lyp")
     extra = engine._extra_blocks(ctx)
     assert "%method" in extra
     assert "ProgExt" in extra
     assert "pyscf_extopt.sh" in extra
-    # Settings are baked into the wrapper, not duplicated into the ORCA input.
+    # The knobs live on the server launch, not duplicated into the ORCA input.
     assert "Ext_Params" not in extra
     assert "--basis" not in extra
 
 
-def test_pyscf_wrapper_bakes_gpu_and_df_flags(tmp_path: Path):
-    """The bool flags reach the client via the generated wrapper, not the ``.inp``."""
+def test_pyscf_wrapper_carries_no_per_call_flags(tmp_path: Path):
+    """Single channel: the wrapper is the plain single-arg form; df/gpu live on the server."""
     import os
 
     engine = get_engine("pyscf-extopt")
@@ -89,8 +89,16 @@ def test_pyscf_wrapper_bakes_gpu_and_df_flags(tmp_path: Path):
     wrapper = engine._wrapper_path(ctx)
     assert os.access(wrapper, os.X_OK)
     text = wrapper.read_text()
-    assert "--df" in text
-    assert "--gpu" in text
+    assert "--df" not in text
+    assert "--gpu" not in text
+    # ... they reach the backend via the server construction instead.
+    run_block = engine._run_block(
+        ctx,
+        inp_path=ctx.step_dir / "step1_structure_0.inp",
+        out_path=ctx.step_dir / "step1_structure_0.out",
+    )
+    assert "--df" in run_block
+    assert "--gpu" in run_block
 
 
 def test_pyscf_run_block_starts_shared_extopt_server(tmp_path: Path):
@@ -120,9 +128,9 @@ def test_pyscf_run_block_emits_gpu_and_df_when_set(tmp_path: Path):
     assert "--gpu" in run_block
 
 
-def test_pyscf_save_tensors_reaches_server_cmd_and_wrapper(tmp_path: Path):
-    """``options: {save_tensors: true, ...}`` must reach both the server launch and
-    the wrapper's client args so the dark tensor-export path is actually wired."""
+def test_pyscf_save_tensors_reaches_server_cmd(tmp_path: Path):
+    """``options: {save_tensors: true, ...}`` reaches the server launch (single channel);
+    the wrapper stays the plain single-arg form."""
     import os
 
     engine = get_engine("pyscf-extopt")
@@ -139,8 +147,8 @@ def test_pyscf_save_tensors_reaches_server_cmd_and_wrapper(tmp_path: Path):
     engine.prepare(ctx)
     wrapper_text = engine._wrapper_path(ctx).read_text()
     assert os.access(engine._wrapper_path(ctx), os.X_OK)
-    assert "--save_tensors" in wrapper_text
-    assert "--tensor_folder td" in wrapper_text
+    assert "--save_tensors" not in wrapper_text
+    assert "--tensor_folder" not in wrapper_text
 
 
 def test_pyscf_run_block_omits_optional_flags_when_unset(tmp_path: Path):
@@ -197,10 +205,9 @@ def test_pyscf_prepare_materializes_executable_wrapper(tmp_path: Path):
     text = wrapper.read_text()
     assert "chemrefine.engines.orca.extopt.bridge" in text
     assert "--backend pyscf" in text
-    # Per-call settings from step.options are baked into the wrapper so each
-    # gradient call honours the YAML instead of falling back to defaults.
-    assert "--basis cc-pvdz" in text
-    assert "--xc b3lyp" in text
+    # Single channel: the SCF knobs live on the server, never baked into the wrapper.
+    assert "--basis" not in text
+    assert "--xc" not in text
 
 
 # ---------------------------------------------------------------------------

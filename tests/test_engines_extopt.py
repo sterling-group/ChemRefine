@@ -456,21 +456,16 @@ def test_client_parse_args_defaults():
     assert args.inputfile == "job.extinp.tmp"
 
 
-def test_client_settings_from_args_round_trip():
-    args = bridge.parse_args(
+def test_client_settings_from_args_is_empty_single_channel():
+    """Both shipped backends are single-channel: knobs live on the server, the POST
+    carries no per-call settings (the server injects only the correlation ``tag``)."""
+    pyscf_args = bridge.parse_args(
         ["--backend", "pyscf", "--method", "hf", "--basis", "cc-pvdz", "--df", "--gpu", "f"]
     )
-    settings = bridge.settings_from_args(args)
-    assert settings == {
-        "method": "hf",
-        "xc": "pbe",
-        "basis": "cc-pvdz",
-        "df": True,
-        "gpu": True,
-        "save_tensors": False,
-        "localized": False,
-        "tensor_folder": "tensors",
-    }
+    assert bridge.settings_from_args(pyscf_args) == {}
+
+    mlip_args = bridge.parse_args(["--backend", "mlip", "--device", "cpu", "f"])
+    assert bridge.settings_from_args(mlip_args) == {}
 
 
 def _data() -> CalculationData:

@@ -32,36 +32,23 @@ class PyscfExtOptEngine(ExtOptOrcaEngine):
     def _extra_blocks(self, ctx: StepContext) -> str:
         """Emit a ``%method ProgExt "<wrapper>"`` block.
 
-        The PySCF method / xc / basis selection is baked into the wrapper's
-        client invocation (see :meth:`_wrapper_extra_args`), so ORCA needs no
-        ``Ext_Params`` — the wrapper takes only the ``.extinp.tmp`` ORCA hands
-        it. This matches :class:`MlipExtOptEngine`'s single-channel design.
+        The PySCF method / xc / basis selection lives only on the **server**
+        (built once from the step's YAML options, see :meth:`_server_cmd`), so
+        ORCA needs no ``Ext_Params`` and the wrapper carries no per-call args —
+        it takes only the ``.extinp.tmp`` ORCA hands it. Single channel, exactly
+        like :class:`MlipExtOptEngine`.
         """
         wrapper = self._wrapper_path(ctx)
         return f'%method\n  ProgExt "{wrapper}"\nend'
 
     # -- SLURM customisation ----------------------------------------------
 
-    def _option_tokens(self, ctx: StepContext) -> list[str]:
-        """The PySCF CLI flag tokens for this step's options — built in one place.
-
-        Both consumers (the server command and the wrapper's client args)
-        derive from here so the flag list lives in exactly one module
-        (:meth:`PyscfExtOptCalculator.server_cli_from_options`).
-        """
-        return PyscfExtOptCalculator.server_cli_from_options(ctx.step_cfg.options or {})
-
     def _server_cmd(self, ctx: StepContext) -> str:
-        """Build the ``python -m ..._backend_server.server --backend pyscf ...`` command."""
-        return run_block._server_command(
-            backend=self.backend, extra_tokens=self._option_tokens(ctx)
-        )
+        """Build the ``python -m ..._backend_server.server --backend pyscf ...`` command.
 
-    def _wrapper_extra_args(self, ctx: StepContext) -> str:
-        """Bake this step's PySCF flags into the wrapper's client invocation.
-
-        The client's argparse defaults would otherwise post default settings
-        that override the server's real construction, so the wrapper must
-        carry the step's actual method / xc / basis.
+        The step's method / xc / basis / df / gpu / tensor knobs are baked into
+        the server construction here (the single source of truth); the wrapper
+        and per-call POST stay empty (see :class:`PyscfExtOptCalculator`).
         """
-        return " ".join(self._option_tokens(ctx))
+        tokens = PyscfExtOptCalculator.server_cli_from_options(ctx.step_cfg.options or {})
+        return run_block._server_command(backend=self.backend, extra_tokens=tokens)

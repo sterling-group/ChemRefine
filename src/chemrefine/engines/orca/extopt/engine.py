@@ -61,9 +61,11 @@ class ExtOptOrcaEngine(OrcaEngine):
     def _wrapper_extra_args(self, ctx: StepContext) -> str:
         """Per-call backend flags baked into the wrapper's client invocation.
 
-        The base backend has no per-call knobs; PySCF overrides this to bake
-        its method / xc / basis selection so each gradient call honours the
-        step's YAML options.
+        Empty for every shipped backend: MLIP and PySCF are both single-channel
+        (the calculator is constructed once on the server from the step's YAML
+        options, so the wrapper carries no per-call flags). The hook stays as an
+        extension point for a future backend that genuinely needs per-geometry
+        knobs in the POST.
         """
         return ""
 
