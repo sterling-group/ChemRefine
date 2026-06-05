@@ -1,10 +1,18 @@
-"""Action dispatcher — run / resume / rerun / rebuild-cache / rebuild-nms.
+"""Action dispatcher — run / resume / rerun-errors / rerun / rebuild-cache / rebuild-nms.
 
-The CLI maps each subcommand to an :class:`Action` and calls :func:`execute`:
+The CLI maps each subcommand to an :class:`Action` and calls :func:`execute`.
+Failure handling is per step via ``on_failure: stop | skip | best``: ``skip``
+(default) drops failures and continues, ``best`` keeps all (backfilling the
+best geometry), ``stop`` halts the run after caching the step's successes.
+Only a ``stop`` step leaves failures pending — and these actions recover them:
 
 * ``run`` — wipe every step's cache and re-execute from scratch.
-* ``resume`` — honor the on-disk cache; **incremental**, so a step with a
-  ``failed_jobs.json`` ledger resubmits only its still-failed structures.
+* ``resume`` — honor the on-disk cache and re-attempt the pending failed jobs
+  of any ``on_failure: stop`` step (only those: ``skip`` / ``best`` failures are
+  already resolved), then continue. The ``failed_jobs.json`` ledger records the
+  failures of *every* policy, so they're always visible.
+* ``rerun-errors [step]`` — re-attempt only one step's pending failed jobs
+  (latest if no step given); like ``resume`` but scoped to that step.
 * ``rerun [step]`` — redo one whole step from scratch (others cache-hit).
 * ``rebuild-cache [step]`` — rebuild one step's cache from outputs already on
   disk (parse only, no submission).
@@ -33,6 +41,7 @@ class Action(StrEnum):
     REBUILD_CACHE = "rebuild-cache"
     REBUILD_NMS = "rebuild-nms"
     RERUN = "rerun"
+    RERUN_ERRORS = "rerun-errors"
 
 
 def resolve_target(config: Config, key: str | int) -> StepConfig:
@@ -79,6 +88,31 @@ def _action_rerun(config: Config, target: str | int | None) -> None:
     pipeline.run(config, use_cache=True)
 
 
+def _action_rerun_errors(config: Config, target: str | int | None) -> None:
+    """Re-attempt only one step's pending failed jobs (latest if ``target`` is None).
+
+    Like ``resume`` but scoped to a single step: prior steps cache-hit, the
+    target step's still-failed structures are resubmitted (it must be
+    ``on_failure: stop`` to have pending failures), and the run continues.
+    """
+    target_step = (
+        config.steps[-1] if target is None else resolve_target(config, target)
+    )
+    step_dir = (config.output_dir / target_step.dir_name()).resolve()
+    n_failed = len(cache.load_failed_jobs(step_dir))
+    if n_failed:
+        logger.info(
+            "rerun-errors: re-attempting %d failed job(s) in %s",
+            n_failed, target_step.dir_name(),
+        )
+    else:
+        logger.info(
+            "rerun-errors: %s has no recorded failures to rerun",
+            target_step.dir_name(),
+        )
+    pipeline.run(config, use_cache=True, resubmit_step=target_step.step)
+
+
 def _action_rebuild_cache(config: Config, target: str | int | None) -> None:
     """Rebuild one step's cache from outputs already on disk (no submission).
 
@@ -96,6 +130,7 @@ def _action_rebuild_cache(config: Config, target: str | int | None) -> None:
 _HANDLERS: dict[Action, Callable[[Config, str | int | None], None]] = {
     Action.RUN: _action_run,
     Action.RESUME: _action_resume,
+    Action.RERUN_ERRORS: _action_rerun_errors,
     Action.REBUILD_CACHE: _action_rebuild_cache,
     Action.RERUN: _action_rerun,
     # rebuild-nms re-runs the NMS step with the current NmsOptions (re-displace +

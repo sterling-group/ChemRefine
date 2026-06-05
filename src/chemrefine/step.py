@@ -77,19 +77,23 @@ def run_step(
     *,
     engine: CalculationEngine | None = None,
     use_cache: bool = True,
+    resubmit_step: int | None = None,
 ) -> StepOutcome:
     """Execute one step end-to-end and return its surviving state.
 
-    * If ``use_cache`` is true and the on-disk cache fingerprint matches
-      the current step config + parent IDs, the cached
-      :class:`~chemrefine.state.StepResults` are reused and only filtering
-      runs again — **unless** a failed-jobs ledger exists, in which case
-      ``resume`` is incremental: only the still-failed structures are
-      resubmitted (see :func:`_resubmit_failed`). ``rerun`` (redo a whole
-      step) is expressed by the caller invalidating the cache first, so the
-      step falls through to a full re-execution.
-    * Otherwise the engine's full lifecycle runs and the resulting
-      :class:`~chemrefine.state.StepResults` is cached for next time.
+    * If ``use_cache`` is true and the on-disk cache fingerprint matches the
+      current step config + parent IDs, the cached
+      :class:`~chemrefine.state.StepResults` are reused and only filtering runs
+      again — **unless** the step is ``on_failure: stop`` and has a failed-jobs
+      ledger, in which case ``resume`` re-attempts only the still-failed
+      structures (see :func:`_resubmit_failed`). ``skip`` / ``best`` steps keep
+      their ledger for visibility but are never re-attempted. ``resubmit_step``
+      (set by ``rerun-errors``) scopes the re-attempt to one step; ``None``
+      re-attempts whichever ``stop`` step is pending. ``rerun`` (redo a whole
+      step) is the caller invalidating the cache first.
+    * Otherwise the engine's full lifecycle runs and the result is cached. An
+      ``on_failure: stop`` step that ends with failures caches its successes,
+      then halts the run (after the cache write) via :func:`_halt_if_pending`.
     """
     # Deferred imports: chemrefine.__init__ imports chemrefine.engines, which
     # imports this module (step.py) to register engines — a circular chain.
@@ -111,12 +115,17 @@ def run_step(
         if cached is None:  # pragma: no cover
             raise CacheError("is_valid returned True but load returned None")
         failed = cache.load_failed_jobs(ctx.step_dir)
-        if failed:
+        if (
+            failed
+            and step_cfg.on_failure == "stop"
+            and (resubmit_step is None or resubmit_step == step_cfg.step)
+        ):
             results = (
                 step_nms._reattempt_nms(engine, ctx, step_cfg, cached, parent_ids, __version__)
                 if is_nms
                 else _resubmit_failed(engine, ctx, step_cfg, failed, parent_ids, __version__)
             )
+            _halt_if_pending(ctx, step_cfg)
             return StepOutcome(
                 state=filtering.apply(results, step_cfg.sample), cache_hit=False
             )
@@ -158,6 +167,7 @@ def run_step(
                     reuse_fingerprint=step_nms._nms_reuse_fingerprint(step_cfg, parent_ids),
                 )
                 results = cached.results
+            _halt_if_pending(ctx, step_cfg)
             return StepOutcome(
                 state=filtering.apply(results, step_cfg.sample), cache_hit=False
             )
@@ -197,6 +207,7 @@ def run_step(
         chemrefine_version=__version__,
         reuse_fingerprint=step_nms._nms_reuse_fingerprint(step_cfg, parent_ids),
     )
+    _halt_if_pending(ctx, step_cfg)
 
     return StepOutcome(
         state=filtering.apply(results, step_cfg.sample),
@@ -273,11 +284,13 @@ def _apply_failure_policy(
 ) -> StepResults:
     """Record failures to the ledger and resolve them per ``step_cfg.on_failure``.
 
-    ``stop`` raises (halts the pipeline); ``skip`` (default) drops the failures
-    and keeps the successes; ``best`` keeps every structure, backfilling a
-    failure with the best geometry obtained for it (else its submitted input).
-    The ``failed_jobs.json`` ledger is always written (so ``rerun`` / ``resume``
-    can re-attempt) and cleared on a clean step.
+    The ``failed_jobs.json`` ledger is **always** written for any failures (so
+    they're visible regardless of policy) and cleared on a clean step. ``skip``
+    (default) drops the failures and keeps the successes; ``best`` keeps every
+    structure, backfilling a failure with the best geometry obtained for it
+    (else its submitted input); ``stop`` keeps the successes too but the run is
+    halted by :func:`_halt_if_pending` *after* the cache is written (so
+    ``resume`` / ``rerun-errors`` re-attempt only those failed jobs).
     """
     if not failures:
         cache.clear_failed_jobs(ctx.step_dir)
@@ -297,11 +310,6 @@ def _apply_failure_policy(
         step_cfg.on_failure,
     )
 
-    if step_cfg.on_failure == "stop":
-        raise ChemRefineError(
-            f"step {step_cfg.step}: {len(failures)} structure(s) failed and "
-            "on_failure='stop'"
-        )
     if step_cfg.on_failure == "best":
         prev_by_id = {s.id: s for s in ctx.prev_state.structures}
         for f in failures:
@@ -309,6 +317,21 @@ def _apply_failure_policy(
             if fallback is not None:
                 successes.append(fallback)
     return StepResults(structures=tuple(successes))
+
+
+def _halt_if_pending(ctx: StepContext, step_cfg: StepConfig) -> None:
+    """Halt the run when an ``on_failure: stop`` step still has failed jobs.
+
+    Called *after* :func:`chemrefine.cache.save` so the step's successes are
+    already recorded; only ``stop`` turns its ledgered failures into a hard
+    stop, so ``resume`` / ``rerun-errors`` re-attempt just those. ``skip`` /
+    ``best`` keep their ledger for visibility but never halt.
+    """
+    if step_cfg.on_failure == "stop" and cache.load_failed_jobs(ctx.step_dir):
+        raise ChemRefineError(
+            f"step {step_cfg.step} halted (on_failure=stop); fix the failed "
+            f"job(s) and run `chemrefine resume` (or `rerun-errors {step_cfg.step}`)"
+        )
 
 
 def rebuild_cache_step(

@@ -292,24 +292,37 @@ def test_on_failure_skip_drops_failed_keeps_successes(tmp_path: Path):
         ENGINES.pop("fake-fail", None)
 
 
-def test_on_failure_stop_halts(tmp_path: Path):
+def test_on_failure_stop_caches_successes_then_halts(tmp_path: Path):
+    """`stop` runs the whole batch, caches the successes + ledgers the failure,
+    then halts — so resume can re-attempt only the failed one."""
     import pytest
 
+    from chemrefine import cache
     from chemrefine.engines.base import ENGINES
     from chemrefine.errors import ChemRefineError
 
     eng = _register_fail_engine()
     try:
-        eng.fail = {"1": "missing"}
+        eng.fail = {"1": "missing"}  # "0" and "2" succeed, "1" fails
         cfg = _config(tmp_path, engine="fake-fail", on_failure="stop")
+        step_dir = cfg.output_dir.resolve() / "step1"
         with pytest.raises(ChemRefineError):
-            run_step(cfg, cfg.steps[0], _seed_state(["0", "1"]))
+            run_step(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]))
+        # batch ran to completion: the successes are cached *before* the halt …
+        cached = cache.load(step_dir)
+        assert cached is not None
+        assert {s.id for s in cached.results.structures} == {"0", "2"}
+        # … and the failure is recorded (pending for resume).
+        assert cache.load_failed_jobs(step_dir) == [
+            {"structure_id": "1", "reason": "output missing"}
+        ]
     finally:
         eng.fail = {}
         ENGINES.pop("fake-fail", None)
 
 
 def test_on_failure_best_backfills_all(tmp_path: Path):
+    from chemrefine import cache
     from chemrefine.engines.base import ENGINES
 
     # Seeds carry an energy (as a real prior step would), so a missing-output
@@ -326,6 +339,9 @@ def test_on_failure_best_backfills_all(tmp_path: Path):
         cfg = _config(tmp_path, engine="fake-fail", on_failure="best")
         outcome = run_step(cfg, cfg.steps[0], seeds)
         assert {s.id for s in outcome.state.structures} == {"0", "1", "2"}
+        # best keeps going, but the failures are still visible in the ledger.
+        step_dir = cfg.output_dir.resolve() / "step1"
+        assert {f["structure_id"] for f in cache.load_failed_jobs(step_dir)} == {"1", "2"}
     finally:
         eng.fail = {}
         ENGINES.pop("fake-fail", None)

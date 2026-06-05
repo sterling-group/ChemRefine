@@ -121,7 +121,7 @@ Repository = "https://github.com/sterling-group/ChemRefine.git"
 Issues = "https://github.com/sterling-group/ChemRefine/issues"
 
 [project.scripts]
-chemrefine = "chemrefine.cli:app"
+chemrefine = "chemrefine.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/chemrefine"]

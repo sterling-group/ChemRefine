@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import textwrap
 from pathlib import Path
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
 from chemrefine import __version__
-from chemrefine.cli import app
+from chemrefine.cli import _translate_legacy_argv, app
 
 runner = CliRunner()
 
@@ -48,7 +50,7 @@ def _write_config(tmp_path: Path, **overrides) -> Path:
 def test_help_lists_every_subcommand():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for cmd in ("run", "resume", "rebuild-cache", "rebuild-nms", "rerun"):
+    for cmd in ("run", "resume", "rebuild-cache", "rebuild-nms", "rerun", "rerun-errors"):
         assert cmd in result.stdout
 
 
@@ -169,3 +171,74 @@ def test_unknown_top_level_key_returns_non_zero(tmp_path: Path):
     config_path = _write_config(tmp_path, orca_excutable="orca")  # typo
     result = runner.invoke(app, ["run", str(config_path)])
     assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# rerun-errors subcommand
+# ---------------------------------------------------------------------------
+
+
+def test_rerun_errors_dry_run(tmp_path: Path):
+    config_path = _write_config(tmp_path)
+    result = runner.invoke(app, ["rerun-errors", str(config_path), "1", "--dry-run"])
+    assert result.exit_code == 0
+    assert "rerun-errors" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Legacy (v1.3.1) flag-style argv translation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "legacy, expected",
+    [
+        (["c.yaml"], ["run", "c.yaml"]),
+        (["c.yaml", "--skip"], ["resume", "c.yaml"]),
+        (["c.yaml", "--rebuild_cache", "3"], ["rebuild-cache", "c.yaml", "3"]),
+        (["c.yaml", "--rebuild_cache"], ["rebuild-cache", "c.yaml"]),
+        (["c.yaml", "--rebuild_nms", "2"], ["rebuild-nms", "c.yaml", "2"]),
+        (["c.yaml", "--rerun_errors", "3"], ["rerun-errors", "c.yaml", "3"]),
+        (["c.yaml", "--maxcores", "8"], ["run", "c.yaml", "--maxcores", "8"]),
+        (["--maxcores", "8", "c.yaml", "--skip"], ["resume", "c.yaml", "--maxcores", "8"]),
+        (["-v", "c.yaml", "--rerun_errors", "1"], ["-v", "rerun-errors", "c.yaml", "1"]),
+    ],
+)
+def test_translate_legacy_argv_maps_old_flags(legacy, expected):
+    assert _translate_legacy_argv(legacy) == expected
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["run", "c.yaml"],
+        ["rerun-errors", "c.yaml", "2"],
+        ["rebuild-cache", "c.yaml", "--dry-run"],
+        ["--version"],
+        ["--help"],
+        [],
+    ],
+)
+def test_translate_legacy_argv_passes_new_style_through(argv):
+    assert _translate_legacy_argv(argv) == argv
+
+
+def test_legacy_rerun_errors_flag_dispatches_via_main(tmp_path: Path, monkeypatch):
+    """`chemrefine CONFIG --rerun_errors 1` (v1.3.1) reaches the rerun-errors action."""
+    from chemrefine import cli
+    from chemrefine.recovery import Action
+
+    config_path = _write_config(tmp_path)
+    seen = {}
+
+    def _fake_execute(config, action, target=None):
+        seen["action"], seen["target"] = action, target
+        return 0
+
+    monkeypatch.setattr(cli, "execute", _fake_execute)
+    monkeypatch.setattr(
+        "sys.argv", ["chemrefine", str(config_path), "--rerun_errors", "1"]
+    )
+    with contextlib.suppress(SystemExit):  # typer.Exit at the end of app()
+        cli.main()
+    assert seen == {"action": Action.RERUN_ERRORS, "target": "1"}

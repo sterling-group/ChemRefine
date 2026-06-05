@@ -198,20 +198,24 @@ def _register_flaky():
 
 
 def test_resume_is_incremental_resubmits_only_failed(tmp_path: Path):
-    """A flaky engine fails "1" on the first run (ledgered, "0" cached); after it
-    recovers, `resume` resubmits ONLY "1" (incremental) and clears the ledger."""
+    """An `on_failure: stop` step fails "1" (ledgered, "0" cached) and halts; after
+    the engine recovers, `resume` resubmits ONLY "1" (incremental) and clears it."""
     from chemrefine import cache
     from chemrefine.engines.base import ENGINES
+    from chemrefine.errors import ChemRefineError
 
     eng = _register_flaky()
     try:
         cfg = _seeded_config(
-            tmp_path, [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp")]
+            tmp_path,
+            [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp",
+                        on_failure="stop")],
         )
         step_dir = (cfg.output_dir / "step1_s").resolve()
 
         eng.fail_ids = {"1"}
-        execute(cfg, Action.RESUME)
+        with pytest.raises(ChemRefineError):  # stop halts after caching "0"
+            execute(cfg, Action.RESUME)
         assert cache.load_failed_jobs(step_dir) == [
             {"structure_id": "1", "reason": "output missing"}
         ]
@@ -241,6 +245,59 @@ def test_rerun_redoes_whole_step(tmp_path: Path):
         eng.submitted = []
         assert execute(cfg, Action.RERUN, target=1) == 0
         assert sorted(eng.submitted) == ["0", "1"]  # whole step redone
+    finally:
+        eng.fail_ids, eng.submitted = set(), []
+        ENGINES.pop("flaky", None)
+
+
+def test_rerun_errors_reattempts_only_the_target_step_failures(tmp_path: Path):
+    """`rerun-errors N` re-attempts only step N's pending (stop) failures."""
+    from chemrefine import cache
+    from chemrefine.engines.base import ENGINES
+    from chemrefine.errors import ChemRefineError
+
+    eng = _register_flaky()
+    try:
+        cfg = _seeded_config(
+            tmp_path,
+            [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp",
+                        on_failure="stop")],
+        )
+        step_dir = (cfg.output_dir / "step1_s").resolve()
+        eng.fail_ids = {"1"}
+        with pytest.raises(ChemRefineError):
+            execute(cfg, Action.RESUME)  # stop halts, "1" pending
+        eng.fail_ids, eng.submitted = set(), []
+        assert execute(cfg, Action.RERUN_ERRORS, target=1) == 0
+        assert eng.submitted == ["1"]  # only the failed structure
+        assert cache.load_failed_jobs(step_dir) == []
+    finally:
+        eng.fail_ids, eng.submitted = set(), []
+        ENGINES.pop("flaky", None)
+
+
+def test_resume_does_not_reattempt_skip_step(tmp_path: Path):
+    """A `skip` step records its failures (visible) but `resume` cache-hits it —
+    skipped failures are intentional, not pending."""
+    from chemrefine import cache
+    from chemrefine.engines.base import ENGINES
+
+    eng = _register_flaky()
+    try:
+        cfg = _seeded_config(
+            tmp_path,
+            [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp")],  # skip
+        )
+        step_dir = (cfg.output_dir / "step1_s").resolve()
+        eng.fail_ids = {"1"}
+        assert execute(cfg, Action.RESUME) == 0  # skip → continues, no halt
+        assert cache.load_failed_jobs(step_dir) == [
+            {"structure_id": "1", "reason": "output missing"}
+        ]  # failure is visible
+        eng.fail_ids, eng.submitted = set(), []
+        assert execute(cfg, Action.RESUME) == 0
+        assert eng.submitted == []  # cache-hit — the skipped failure is NOT re-run
+        assert cache.load_failed_jobs(step_dir) != []  # ledger kept for visibility
     finally:
         eng.fail_ids, eng.submitted = set(), []
         ENGINES.pop("flaky", None)
@@ -315,10 +372,11 @@ def _register_fake_nms():
     return _FakeNms2
 
 
-def _nms_step(displacement: float) -> StepConfig:
+def _nms_step(displacement: float, on_failure: str = "skip") -> StepConfig:
     return StepConfig(
         step=1, name="s", engine="fake-nms2", operation="freq", nms=True,
         options={"target": "minimum", "displacement_value": displacement},
+        on_failure=on_failure,
     )
 
 
@@ -356,14 +414,16 @@ def test_reattempt_resubmits_missing_round1(tmp_path: Path):
     the next resume (NMS-unresolved parents do not)."""
     from chemrefine import cache
     from chemrefine.engines.base import ENGINES
+    from chemrefine.errors import ChemRefineError
 
     eng = _register_fake_nms()
     try:
         eng.resolved = {"0", "1"}
         eng.fail_round1 = {"1"}  # "1" produces no round-1 output
-        cfg = _seeded_config(tmp_path, [_nms_step(1.0)])
+        cfg = _seeded_config(tmp_path, [_nms_step(1.0, on_failure="stop")])
         step_dir = (cfg.output_dir / "step1_s").resolve()
-        execute(cfg, Action.RESUME)
+        with pytest.raises(ChemRefineError):  # stop halts on the missing round-1
+            execute(cfg, Action.RESUME)
         assert cache.load_failed_jobs(step_dir) == [
             {"structure_id": "1", "reason": "output missing"}
         ]

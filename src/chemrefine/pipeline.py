@@ -133,16 +133,20 @@ def _write_step_csv(config: Config, step_cfg: StepConfig, state: PipelineState) 
 
 
 def run(
-    config: Config, *, use_cache: bool = True, rebuild_step: int | None = None
+    config: Config,
+    *,
+    use_cache: bool = True,
+    rebuild_step: int | None = None,
+    resubmit_step: int | None = None,
 ) -> list[StepOutcome]:
     """Run every step in order; return the per-step outcomes.
 
     If a step produces no survivors the pipeline stops early — there is
-    nothing to feed the next step. ``resume`` (``use_cache=True``) is
-    incremental: a cached step is reused, but any step with a failed-jobs
-    ledger resubmits just the still-failed structures. When ``rebuild_step``
-    is set, that one step is rebuilt **from outputs already on disk** (parse
-    only, no submission) instead of executing.
+    nothing to feed the next step. ``resume`` (``use_cache=True``) re-attempts
+    the failed jobs of any pending ``on_failure: stop`` step; ``resubmit_step``
+    (set by ``rerun-errors``) scopes that re-attempt to one step. When
+    ``rebuild_step`` is set, that one step is rebuilt **from outputs already on
+    disk** (parse only, no submission) instead of executing.
     """
     state = bootstrap(config)
     logger.info(
@@ -160,7 +164,9 @@ def run(
         if rebuild_step == step_cfg.step:
             outcome = rebuild_cache_step(config, step_cfg, state)
         else:
-            outcome = run_step(config, step_cfg, state, use_cache=use_cache)
+            outcome = run_step(
+                config, step_cfg, state, use_cache=use_cache, resubmit_step=resubmit_step
+            )
         outcomes.append(outcome)
         _write_step_csv(config, step_cfg, outcome.state)
         state = outcome.state

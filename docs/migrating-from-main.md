@@ -83,3 +83,35 @@ steps:
     options: { model_name: uma-s-1, task_name: omol, device: cuda }
     sample: { method: boltzmann, percent_cumulative: 95 }
 ```
+
+## Command line
+
+v1.3.1 was flag-style; v2 uses subcommands. Old invocations are translated automatically (you'll see a
+one-line warning), so existing scripts keep working:
+
+| v1.3.1                              | v2                                       |
+|-------------------------------------|------------------------------------------|
+| `chemrefine CONFIG`                 | `chemrefine run CONFIG`                  |
+| `chemrefine CONFIG --skip`          | `chemrefine resume CONFIG`               |
+| `chemrefine CONFIG --rebuild_cache [N]` | `chemrefine rebuild-cache CONFIG [N]` |
+| `chemrefine CONFIG --rebuild_nms [N]`   | `chemrefine rebuild-nms CONFIG [N]`   |
+| `chemrefine CONFIG --rerun_errors [N]`  | `chemrefine rerun-errors CONFIG [N]`  |
+| `--maxcores N`                      | `--maxcores N` (unchanged)               |
+
+## Failure handling & recovery
+
+Each step takes `on_failure: stop | skip | best` (in the YAML). For a step where, say, 2 of 5 structures
+fail:
+
+- **`skip`** (default) — drop the 2 failures and continue with the 3 survivors.
+- **`best`** — keep all 5, backfilling the 2 failures with the best geometry obtained.
+- **`stop`** — run every structure to completion, cache the 3 successes, then **halt** before the next
+  step.
+
+The `_cache/failed_jobs.json` ledger records which structures failed under **every** policy (so you can
+always see them), but only a `stop` step leaves failures *pending*. To recover:
+
+- **`chemrefine resume CONFIG`** — re-attempt the pending failures (only a `stop` step has any) and
+  continue.
+- **`chemrefine rerun-errors CONFIG [N]`** — re-attempt only step N's pending failures (latest if no N).
+- **`chemrefine rerun CONFIG [N]`** — redo the whole step N from scratch.
