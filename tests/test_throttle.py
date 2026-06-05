@@ -30,7 +30,67 @@ def test_throttler_rejects_zero_max_cores():
 def test_throttler_initial_state_is_empty():
     t = Throttler(max_cores=64)
     assert t.cores_in_use == 0
+    assert t.gpus_in_use == 0
     assert t.active_jobs == ()
+
+
+def test_throttler_rejects_negative_max_gpus():
+    with pytest.raises(ValueError):
+        Throttler(max_cores=8, max_gpus=-1)
+
+
+# ---------------------------------------------------------------------------
+# GPU budget + device assignment
+# ---------------------------------------------------------------------------
+
+
+def test_gpus_in_use_tracks_gpu_demand():
+    t = Throttler(max_cores=64, max_gpus=4)
+    t.register("a", 8, gpus=1)
+    t.register("b", 8, gpus=2)
+    assert t.gpus_in_use == 3
+    assert t.cores_in_use == 16
+
+
+def test_wait_for_room_blocks_on_gpu_budget_even_when_cores_free():
+    """One GPU, two GPU jobs: the second waits even though cores are plentiful."""
+    t = Throttler(max_cores=64, max_gpus=1, poll_interval=0)
+    t.register("g0", 1, gpus=1, device=0)
+    state = {"calls": 0}
+
+    def is_finished(jid: str) -> bool:
+        state["calls"] += 1
+        return state["calls"] >= 2 and jid == "g0"
+
+    with patch("time.sleep") as sleeper:
+        t.wait_for_room(1, is_finished=is_finished, gpus_needed=1)
+    sleeper.assert_called()  # had to wait for the GPU to free
+    assert t.active_jobs == ()
+
+
+def test_wait_for_room_admits_cpu_job_while_gpu_saturated():
+    """A gpus=0 job isn't blocked by a saturated GPU budget (CPU jobs keep flowing)."""
+    t = Throttler(max_cores=64, max_gpus=1)
+    t.register("g0", 1, gpus=1, device=0)
+    with patch("time.sleep") as sleeper:
+        t.wait_for_room(8, is_finished=_never_finished, gpus_needed=0)
+    sleeper.assert_not_called()
+
+
+def test_wait_for_room_rejects_gpu_request_above_budget():
+    t = Throttler(max_cores=16, max_gpus=1)
+    with pytest.raises(ValueError):
+        t.wait_for_room(1, is_finished=_always_finished, gpus_needed=2)
+
+
+def test_assign_device_returns_lowest_free_index_and_reuses_freed():
+    t = Throttler(max_cores=64, max_gpus=2)
+    assert t.assign_device() == 0
+    t.register("a", 1, gpus=1, device=0)
+    assert t.assign_device() == 1
+    t.register("b", 1, gpus=1, device=1)
+    t._reap(lambda jid: jid == "a")  # frees device 0
+    assert t.assign_device() == 0
 
 
 # ---------------------------------------------------------------------------

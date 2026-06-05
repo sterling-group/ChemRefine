@@ -17,6 +17,7 @@ Coverage:
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -174,6 +175,74 @@ def _mlip_extopt_ctx(tmp_path: Path, **option_overrides) -> StepContext:
         slurm_template="cpu.slurm.header",
         executables={},
     )
+
+
+def test_mlip_extopt_cuda_step_selects_cuda_header(tmp_path: Path):
+    """device: cuda → the whole ORCA-driven job lands on a GPU node (cuda header)."""
+    engine = get_engine("mlip-extopt")
+    ctx = _mlip_extopt_ctx(tmp_path)  # device: cuda by default
+    assert engine._gpus(ctx) == 1
+    assert engine._slurm_header_name(ctx) == "cuda.slurm.header"
+
+
+def test_mlip_extopt_cpu_step_keeps_global_header(tmp_path: Path):
+    engine = get_engine("mlip-extopt")
+    ctx = _mlip_extopt_ctx(tmp_path, device="cpu")
+    assert engine._gpus(ctx) == 0
+    assert engine._slurm_header_name(ctx) == ctx.slurm_template
+
+
+def test_mlip_direct_cuda_step_selects_cuda_header(tmp_path: Path):
+    engine = get_engine("mlip")
+    ctx = _mlip_direct_ctx(tmp_path, structures=(_seed(),), options={"device": "cuda"})
+    assert engine._gpus(ctx) == 1
+    assert engine._slurm_header_name(ctx) == "cuda.slurm.header"
+
+
+def test_per_step_slurm_template_overrides_device_pick(tmp_path: Path):
+    """An explicit per-step slurm_template wins over the device-driven cuda pick."""
+    engine = get_engine("mlip-extopt")
+    ctx0 = _mlip_extopt_ctx(tmp_path)  # device: cuda
+    step_cfg = ctx0.step_cfg.model_copy(update={"slurm_template": "special.header"})
+    ctx = replace(ctx0, step_cfg=step_cfg)
+    assert engine._gpus(ctx) == 1  # still a GPU job
+    assert engine._slurm_header_name(ctx) == "special.header"
+
+
+def test_local_gpu_jobs_get_distinct_cuda_visible_devices(tmp_path: Path, monkeypatch):
+    """Two concurrent local CUDA jobs are pinned to distinct GPUs via CUDA_VISIBLE_DEVICES."""
+    ctx = _mlip_direct_ctx(
+        tmp_path,
+        structures=(_seed("0"), _seed("1")),
+        options={"device": "cuda", "cores": 1},
+        max_cores=4,
+    )
+    ctx = replace(ctx, max_gpus=2)
+    (ctx.template_dir / "cuda.slurm.header").write_text(
+        "#!/bin/bash\n#SBATCH --gres=gpu:1\n", encoding="utf-8"
+    )
+    engine = get_engine("mlip")
+    inputs = engine.prepare(ctx)
+
+    captured: list[dict | None] = []
+
+    def fake_submit(script_path, *, env=None):
+        captured.append(env)
+        return f"local-{len(captured)}"
+
+    state = {"calls": 0}
+
+    def fake_is_finished(_jid):
+        state["calls"] += 1
+        return state["calls"] > 2  # both jobs stay active through the submit loop
+
+    monkeypatch.setattr("chemrefine.slurm.sbatch_available", lambda **k: False)
+    monkeypatch.setattr("chemrefine.slurm.submit", fake_submit)
+    monkeypatch.setattr("chemrefine.slurm.is_finished", fake_is_finished)
+
+    engine.submit(inputs, ctx)
+    devices = sorted(env["CUDA_VISIBLE_DEVICES"] for env in captured)
+    assert devices == ["0", "1"]
 
 
 def test_mlip_extopt_extra_blocks_contains_progext_pointing_to_wrapper(tmp_path: Path):

@@ -299,7 +299,65 @@ def test_is_finished_treats_squeue_failure_as_not_finished():
 
 
 def test_is_finished_true_for_local_job_id():
-    """Local fallback IDs are reported finished without touching squeue."""
+    """Unknown / already-reaped local IDs are reported finished without touching squeue."""
     with patch.object(subprocess, "run") as run:
-        assert slurm.is_finished("local-7") is True
+        assert slurm.is_finished("local-9999") is True
     run.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# GPU budget + device-aware headers
+# ---------------------------------------------------------------------------
+
+
+def test_header_name_for_device():
+    assert slurm.header_name_for_device("cuda") == "cuda.slurm.header"
+    assert slurm.header_name_for_device("CUDA") == "cuda.slurm.header"
+    assert slurm.header_name_for_device("cpu") == "cpu.slurm.header"
+
+
+def test_resolve_gpu_budget_explicit_value_wins():
+    assert slurm.resolve_gpu_budget(3) == 3
+
+
+def test_resolve_gpu_budget_unlimited_under_slurm():
+    with patch("chemrefine.slurm.shutil.which", return_value="/usr/bin/sbatch"):
+        assert slurm.resolve_gpu_budget(None) >= 1000
+
+
+def test_resolve_gpu_budget_uses_detected_count_locally():
+    with (
+        patch("chemrefine.slurm.shutil.which", return_value=None),
+        patch("chemrefine.slurm._detect_local_gpus", return_value=2),
+    ):
+        assert slurm.resolve_gpu_budget(None) == 2
+
+
+def test_detect_local_gpus_counts_mig_instances(monkeypatch):
+    """nvidia-smi -L lists MIG instances when the card is MIG-partitioned → count those."""
+    out = (
+        "GPU 0: NVIDIA H100 NVL (UUID: GPU-x)\n"
+        "  MIG 1g.12gb Device 0: (UUID: MIG-a)\n"
+        "  MIG 1g.12gb Device 1: (UUID: MIG-b)\n"
+    )
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **k: MagicMock(returncode=0, stdout=out, stderr="")
+    )
+    assert slurm._detect_local_gpus() == 2
+
+
+def test_detect_local_gpus_falls_back_to_one_without_nvidia_smi(monkeypatch):
+    monkeypatch.setattr(
+        subprocess, "run", MagicMock(side_effect=FileNotFoundError("nvidia-smi"))
+    )
+    assert slurm._detect_local_gpus() == 1
+
+
+def test_submit_local_applies_cuda_visible_devices_env(tmp_path: Path):
+    """The local fallback pins CUDA_VISIBLE_DEVICES for the launched process."""
+    script = tmp_path / "g.slurm"
+    script.write_text("#!/bin/bash\necho \"$CUDA_VISIBLE_DEVICES\"\n", encoding="utf-8")
+    with patch("chemrefine.slurm.shutil.which", return_value=None):
+        job_id = slurm.submit(script, env={"CUDA_VISIBLE_DEVICES": "1"})
+    _drain_local(job_id)
+    assert script.with_suffix(".runlog").read_text(encoding="utf-8") == "1\n"

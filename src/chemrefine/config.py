@@ -129,6 +129,12 @@ class StepConfig(BaseModel):
     template: str | None = None
     """Engine input template (basename relative to ``template_dir`` if not absolute)."""
 
+    slurm_template: str | None = None
+    """Per-step SLURM header override (basename in ``template_dir``); falls back to
+    ``Config.slurm_template`` when ``None``. A GPU-capable engine with
+    ``options.device: cuda`` (or ``options.gpu``) auto-picks ``cuda.slurm.header``
+    unless this is set explicitly."""
+
     charge: int | None = None
     """Per-step charge override; falls back to ``Config.charge`` when ``None``."""
 
@@ -352,6 +358,11 @@ class Config(BaseModel):
     charge: int = 0
     multiplicity: int = Field(1, ge=1)
     max_cores: int = Field(32, ge=1)
+    max_gpus: int | None = Field(None, ge=0)
+    """GPU budget for concurrent local jobs. ``None`` (default) auto-resolves:
+    unlimited under SLURM (the scheduler places GPUs via ``--gres``) and the
+    detected device count locally (``nvidia-smi -L``), so a single-GPU desktop
+    serialises CUDA jobs while CPU jobs still parallelise under ``max_cores``."""
     slurm_template: str = "cpu.slurm.header"
     executables: dict[str, str] = Field(default_factory=dict)
     """Global tool-name → binary-path map for external-binary engines (e.g.

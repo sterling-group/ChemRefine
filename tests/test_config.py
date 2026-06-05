@@ -48,9 +48,19 @@ def test_minimal_config_loads(tmp_path: Path):
     assert cfg.charge == 0
     assert cfg.multiplicity == 1
     assert cfg.max_cores == 32
+    assert cfg.max_gpus is None  # auto-resolved at submit time
     assert len(cfg.steps) == 1
     assert cfg.steps[0].step == 1
     assert cfg.steps[0].engine == "fake"
+    assert cfg.steps[0].slurm_template is None  # falls back to the global header
+
+
+def test_max_gpus_and_per_step_slurm_template_accepted(tmp_path: Path):
+    data = _minimal_config(max_gpus=2)
+    data["steps"][0]["slurm_template"] = "cuda.slurm.header"
+    cfg = load_config(_write_yaml(tmp_path, data))
+    assert cfg.max_gpus == 2
+    assert cfg.steps[0].slurm_template == "cuda.slurm.header"
 
 
 def test_unknown_top_level_field_rejected(tmp_path: Path):

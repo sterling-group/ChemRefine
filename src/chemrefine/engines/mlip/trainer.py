@@ -144,8 +144,7 @@ def write_training_slurm(*, ctx: StepContext, config_path: Path) -> Path:
     command at the end.
     """
     options = ctx.step_cfg.options or {}
-    device = options.get("device", "cuda")
-    header_name = "cuda.slurm.header" if device == "cuda" else "cpu.slurm.header"
+    header_name = slurm.header_name_for_device(options.get("device", "cuda"))
     header_path = ctx.template_dir / header_name
     if not header_path.is_file():
         raise FileNotFoundError(f"SLURM header template not found: {header_path}")

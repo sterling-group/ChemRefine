@@ -17,6 +17,7 @@ from __future__ import annotations
 import getpass
 import itertools
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -62,6 +63,57 @@ def sbatch_available(*, sbatch_cmd: str = "sbatch") -> bool:
     pick the poll cadence and GPU budget.
     """
     return shutil.which(sbatch_cmd) is not None
+
+
+# ---------------------------------------------------------------------------
+# GPU budget + device-aware header selection
+# ---------------------------------------------------------------------------
+
+_UNLIMITED_GPUS = 1_000_000
+"""Effectively-unlimited GPU budget used under SLURM, where the scheduler — not
+chemrefine — places GPUs (one ``--gres=gpu`` allocation per job)."""
+
+
+def header_name_for_device(device: str) -> str:
+    """Map a compute device to its SLURM header basename.
+
+    ``"cuda"`` → ``cuda.slurm.header`` (requests a GPU node via ``--gres=gpu``),
+    anything else → ``cpu.slurm.header``. The trainer and the batch engine both
+    call this so the cuda/cpu choice lives in one place.
+    """
+    return "cuda.slurm.header" if str(device).lower() == "cuda" else "cpu.slurm.header"
+
+
+def _detect_local_gpus() -> int:
+    """Best-effort count of locally visible CUDA devices via ``nvidia-smi -L``.
+
+    Counts MIG instances when the card is MIG-partitioned (each is its own CUDA
+    device) and whole cards otherwise. Falls back to ``1`` when ``nvidia-smi`` is
+    absent or errors — a single-device budget serialises GPU jobs, and the
+    engine's availability guard reports a genuinely missing GPU separately.
+    """
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "-L"], capture_output=True, text=True, check=True
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return 1
+    lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+    mig = [ln for ln in lines if ln.startswith("MIG")]
+    gpus = [ln for ln in lines if ln.startswith("GPU")]
+    return max(1, len(mig) or len(gpus))
+
+
+def resolve_gpu_budget(configured: int | None) -> int:
+    """Resolve the concurrent-GPU budget for the throttler.
+
+    An explicit ``Config.max_gpus`` wins. Otherwise: **unlimited under SLURM**
+    (the scheduler arbitrates GPUs, so chemrefine must not second-guess it) and
+    the **detected local device count** off-cluster.
+    """
+    if configured is not None:
+        return configured
+    return _UNLIMITED_GPUS if sbatch_available() else _detect_local_gpus()
 
 
 def _compute_work_dir_expr(output_dir: Path, scratch_dir: Path | None) -> str:
@@ -243,7 +295,7 @@ def build_script(
 # ---------------------------------------------------------------------------
 
 
-def _submit_local(script_path: str | Path) -> str:
+def _submit_local(script_path: str | Path, *, env: dict[str, str] | None = None) -> str:
     """Launch a generated SLURM script via ``bash`` in the background; return a ``local-N`` id.
 
     The script's ``#SBATCH`` directives are no-ops to bash, so the
@@ -261,7 +313,12 @@ def _submit_local(script_path: str | Path) -> str:
     script_path = Path(script_path)
     out_handle = script_path.with_suffix(".runlog").open("w", encoding="utf-8")
     err_handle = script_path.with_suffix(".err").open("w", encoding="utf-8")
-    proc = subprocess.Popen(["bash", str(script_path)], stdout=out_handle, stderr=err_handle)
+    proc = subprocess.Popen(
+        ["bash", str(script_path)],
+        stdout=out_handle,
+        stderr=err_handle,
+        env={**os.environ, **env} if env else None,
+    )
     job_id = f"{_LOCAL_JOB_PREFIX}{next(_LOCAL_JOB_COUNTER)}"
     _LOCAL_PROCS[job_id] = (proc, out_handle, err_handle)
     logger.info("launched %s locally as job %s (pid %s)", script_path, job_id, proc.pid)
@@ -284,7 +341,12 @@ def _local_is_finished(job_id: str) -> bool:
     return True
 
 
-def submit(script_path: str | Path, *, sbatch_cmd: str = "sbatch") -> str:
+def submit(
+    script_path: str | Path,
+    *,
+    sbatch_cmd: str = "sbatch",
+    env: dict[str, str] | None = None,
+) -> str:
     """Submit a SLURM script and return the assigned job ID.
 
     Falls back to running the generated script directly via ``bash``
@@ -298,9 +360,12 @@ def submit(script_path: str | Path, *, sbatch_cmd: str = "sbatch") -> str:
     exits non-zero or its output lacks a numeric job ID. The local
     fallback launches in the background and never raises on a non-zero
     exit — that surfaces through output parsing instead.
+
+    ``env`` (e.g. ``{"CUDA_VISIBLE_DEVICES": "1"}``) is applied only on the
+    local fallback; under SLURM the scheduler sets the per-job GPU environment.
     """
     if not sbatch_available(sbatch_cmd=sbatch_cmd):
-        return _submit_local(script_path)
+        return _submit_local(script_path, env=env)
     try:
         result = subprocess.run(
             [sbatch_cmd, str(script_path)],

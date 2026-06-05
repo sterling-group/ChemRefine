@@ -54,6 +54,7 @@ def build_context(
         max_cores=config.max_cores,
         slurm_template=config.slurm_template,
         executables=config.executables,
+        max_gpus=config.max_gpus,
     )
 
 

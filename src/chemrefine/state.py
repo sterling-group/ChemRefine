@@ -92,6 +92,9 @@ class StepContext:
     executables: dict[str, str] = field(default_factory=dict)
     """Tool-name → binary-path map (from ``Config.executables``); an engine
     reads its own key, e.g. ``executables.get("orca", "orca")``."""
+    max_gpus: int | None = None
+    """Configured GPU budget (``Config.max_gpus``); ``None`` = auto-resolve at
+    submit time (unlimited under SLURM, detected device count locally)."""
 
 
 @dataclass(frozen=True)

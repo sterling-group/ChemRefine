@@ -161,6 +161,33 @@ class SlurmBatchEngine:
         """Return the per-job core count (PAL); the base clamps it to ``max_cores``."""
         raise NotImplementedError
 
+    def _gpus(self, ctx: StepContext) -> int:
+        """GPUs this job needs: 1 for a CUDA/GPU step, else 0.
+
+        Reads the device knobs every GPU-capable engine already exposes —
+        ``options.device == "cuda"`` (mlip) or a truthy ``options.gpu`` (pyscf).
+        ORCA-only steps have neither (ORCA is CPU/MPI), so they request no GPU.
+        Also drives :meth:`_slurm_header_name` (a GPU job → the cuda header).
+        """
+        options = ctx.step_cfg.options or {}
+        if str(options.get("device", "")).lower() == "cuda" or options.get("gpu"):
+            return 1
+        return 0
+
+    def _slurm_header_name(self, ctx: StepContext) -> str:
+        """Pick the SLURM header for this step.
+
+        An explicit per-step ``slurm_template`` wins; otherwise a GPU step
+        (:meth:`_gpus` > 0) auto-selects ``cuda.slurm.header`` so the job lands on
+        a GPU node, and everything else uses the global ``Config.slurm_template``.
+        ORCA-only steps never report a GPU, so they keep the global header.
+        """
+        if ctx.step_cfg.slurm_template:
+            return ctx.step_cfg.slurm_template
+        if self._gpus(ctx) > 0:
+            return slurm.header_name_for_device("cuda")
+        return ctx.slurm_template
+
     def _run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
         """Return the engine-specific bash that runs inside ``$WORK_DIR``."""
         raise NotImplementedError
@@ -170,21 +197,30 @@ class SlurmBatchEngine:
         return ()
 
     def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
-        """Generate a SLURM script per structure, submit under the PAL budget, block until done."""
+        """Generate a SLURM script per structure, submit under the CPU+GPU budget, then block.
+
+        Blocks until every job in the batch finishes (success or failure).
+        """
         local = not slurm.sbatch_available()
         throttler = throttle.Throttler(
             max_cores=ctx.max_cores,
+            max_gpus=slurm.resolve_gpu_budget(ctx.max_gpus),
             poll_interval=_LOCAL_POLL_SECONDS if local else _SLURM_POLL_SECONDS,
         )
-        header_path = ctx.template_dir / ctx.slurm_template
+        header_path = ctx.template_dir / self._slurm_header_name(ctx)
         if not header_path.is_file():
             raise FileNotFoundError(f"SLURM header template not found: {header_path}")
 
         pal = min(self._pal(ctx), ctx.max_cores)
+        gpus = self._gpus(ctx)
         step_label = ctx.step_cfg.dir_name()
         jobs: dict[Path, str] = {}
         for inp, out, sid in inputs.files:
-            throttler.wait_for_room(pal, is_finished=slurm.is_finished)
+            throttler.wait_for_room(pal, is_finished=slurm.is_finished, gpus_needed=gpus)
+            # Pin a free GPU per local job so concurrent CUDA jobs don't collide on
+            # device 0; under SLURM the scheduler sets CUDA_VISIBLE_DEVICES itself.
+            device = throttler.assign_device() if (local and gpus) else None
+            env = {"CUDA_VISIBLE_DEVICES": str(device)} if device is not None else None
             script_path = inp.with_suffix(".slurm")
             slurm.build_script(
                 job_name=inp.stem,
@@ -203,10 +239,12 @@ class SlurmBatchEngine:
                 output_globs=self.output_globs,
                 extra_header_fields=self._extra_header_fields(ctx),
             )
-            job_id = slurm.submit(script_path)
-            throttler.register(job_id, pal)
+            job_id = slurm.submit(script_path, env=env)
+            throttler.register(job_id, pal, gpus=gpus, device=device)
             jobs[inp] = job_id
-            logger.info("submitted %s as job %s (pal=%d)", inp.name, job_id, pal)
+            logger.info(
+                "submitted %s as job %s (pal=%d, gpus=%d)", inp.name, job_id, pal, gpus
+            )
 
         throttler.wait_all(is_finished=slurm.is_finished)
         return JobBatch(jobs=jobs)

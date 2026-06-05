@@ -111,6 +111,14 @@ def test_run_block_keeps_orca_single_threaded_per_mpi_rank(tmp_path: Path):
     assert "OMP_NUM_THREADS=2" not in run_block
 
 
+def test_orca_step_requests_no_gpu_and_keeps_global_header(tmp_path: Path):
+    """ORCA is CPU/MPI: no GPU demand, and it keeps the global slurm_template."""
+    engine = get_engine("orca")
+    ctx = _ctx(tmp_path, structures=(_seed_structure(),))
+    assert engine._gpus(ctx) == 0
+    assert engine._slurm_header_name(ctx) == ctx.slurm_template
+
+
 def test_prepare_missing_template_raises(tmp_path: Path):
     engine = get_engine("orca")
     ctx = _ctx(tmp_path, structures=(_seed_structure(),))

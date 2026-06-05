@@ -115,3 +115,23 @@ always see them), but only a `stop` step leaves failures *pending*. To recover:
   continue.
 - **`chemrefine rerun-errors CONFIG [N]`** — re-attempt only step N's pending failures (latest if no N).
 - **`chemrefine rerun CONFIG [N]`** — redo the whole step N from scratch.
+
+## Cores, GPUs & devices
+
+`max_cores` is a **CPU** budget; jobs declare their core count (ORCA from `%pal nprocs`, the direct
+`mlip`/`pyscf` engines from `options.cores`) and the throttler keeps the in-flight total under it.
+
+- **On SLURM**, the scheduler is the real arbiter of both CPU (`cpu` TRES) and GPU (`gres/gpu`, where a unit
+  may be a whole card *or* a MIG slice, so several jobs can share one physical GPU). `max_cores` is just
+  chemrefine's dispatch ceiling; GPU placement is left to SLURM.
+- **Locally** (no `sbatch`), chemrefine is the only arbiter: jobs now run **in the background, in parallel**
+  under `max_cores`, with each thread-based engine (pyscf/mlip) pinned to its `options.cores` via
+  `OMP_NUM_THREADS` (ORCA stays MPI with `OMP=1`). A new **`max_gpus`** budget caps concurrent GPU jobs —
+  default auto: **unlimited under SLURM**, the **detected device count** (`nvidia-smi -L`, counting MIG
+  instances) off-cluster — so a single-GPU desktop serialises CUDA jobs while CPU jobs keep parallelising.
+  Concurrent local GPU jobs are pinned to distinct devices via `CUDA_VISIBLE_DEVICES`.
+
+`device: cuda` (mlip) / `gpu: true` (pyscf) sets the in-process compute device **and** makes a run step
+request a GPU node — the engine auto-picks `cuda.slurm.header` over the global `slurm_template`. A per-step
+`slurm_template:` override wins over that pick (for multiple GPU partitions). ORCA is CPU-only, so a "GPU run"
+is ORCA-on-CPUs + the gradient server-on-GPU, **one job** on a GPU (or MIG) node.
