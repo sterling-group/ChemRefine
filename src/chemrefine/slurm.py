@@ -38,11 +38,30 @@ _JOB_ID_RE = re.compile(r"\b(\d+)\b")
 _LOCAL_JOB_PREFIX = "local-"
 """Synthetic job-ID prefix used by :func:`_submit_local`.
 
-:func:`is_finished` treats any ID starting with this prefix as
-already-completed because the local fallback runs synchronously
-inside :func:`submit`.
+:func:`is_finished` polls the matching background process for any ID
+starting with this prefix.
 """
 _LOCAL_JOB_COUNTER = itertools.count(1)
+
+_LOCAL_PROCS: dict[str, tuple[subprocess.Popen, object, object]] = {}
+"""Background local jobs, keyed by ``local-N`` id → ``(proc, out_fh, err_fh)``.
+
+:func:`_submit_local` launches each script with :class:`subprocess.Popen` and
+records it here; :func:`is_finished` polls the process, closes its log handles,
+and drops the entry on completion. Running local jobs in the background (rather
+than blocking) is what lets a laptop run the same throttled parallelism a SLURM
+run gets — many scripts run at once under the PAL budget instead of one-at-a-time.
+"""
+
+
+def sbatch_available(*, sbatch_cmd: str = "sbatch") -> bool:
+    """Return True when ``sbatch`` is on ``PATH`` (i.e. we're on a real SLURM host).
+
+    The single source of truth for "SLURM vs local": :func:`submit` uses it to
+    pick ``sbatch`` over the local-bash fallback, and the batch engine uses it to
+    pick the poll cadence and GPU budget.
+    """
+    return shutil.which(sbatch_cmd) is not None
 
 
 def _compute_work_dir_expr(output_dir: Path, scratch_dir: Path | None) -> str:
@@ -225,32 +244,44 @@ def build_script(
 
 
 def _submit_local(script_path: str | Path) -> str:
-    """Run a generated SLURM script directly via ``bash``; return a synthetic job ID.
+    """Launch a generated SLURM script via ``bash`` in the background; return a ``local-N`` id.
 
     The script's ``#SBATCH`` directives are no-ops to bash, so the
     ``--output`` / ``--error`` redirection SLURM normally provides
-    doesn't fire. We capture both streams instead and write them to
-    the same ``script.runlog`` / ``script.err`` paths the SBATCH
-    directives point at, so users see the same on-disk artifacts in
-    local mode as they do under SLURM.
+    doesn't fire. We redirect both streams to the same ``script.runlog``
+    / ``script.err`` paths the SBATCH directives point at, so users see
+    the same on-disk artifacts in local mode as they do under SLURM.
+
+    Unlike a foreground run this returns immediately — the throttler
+    polls :func:`is_finished` to reap it — so several local jobs run
+    concurrently under the PAL budget. A non-zero exit is **not** raised
+    here; it surfaces through the engine's output parsing (the same path
+    SLURM failures take), so it lands in the ``on_failure`` ledger.
     """
     script_path = Path(script_path)
-    result = subprocess.run(
-        ["bash", str(script_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    script_path.with_suffix(".runlog").write_text(result.stdout, encoding="utf-8")
-    script_path.with_suffix(".err").write_text(result.stderr, encoding="utf-8")
-    if result.returncode != 0:
-        raise JobSubmissionError(
-            f"local execution of {script_path} failed "
-            f"(exit {result.returncode}): {result.stderr.strip()[:500]}"
-        )
+    out_handle = script_path.with_suffix(".runlog").open("w", encoding="utf-8")
+    err_handle = script_path.with_suffix(".err").open("w", encoding="utf-8")
+    proc = subprocess.Popen(["bash", str(script_path)], stdout=out_handle, stderr=err_handle)
     job_id = f"{_LOCAL_JOB_PREFIX}{next(_LOCAL_JOB_COUNTER)}"
-    logger.info("ran %s locally as job %s", script_path, job_id)
+    _LOCAL_PROCS[job_id] = (proc, out_handle, err_handle)
+    logger.info("launched %s locally as job %s (pid %s)", script_path, job_id, proc.pid)
     return job_id
+
+
+def _local_is_finished(job_id: str) -> bool:
+    """Poll a background local job; close its log handles and reap it when done."""
+    entry = _LOCAL_PROCS.get(job_id)
+    if entry is None:
+        return True  # never registered here, or already reaped
+    proc, out_handle, err_handle = entry
+    if proc.poll() is None:
+        return False
+    out_handle.close()
+    err_handle.close()
+    _LOCAL_PROCS.pop(job_id, None)
+    if proc.returncode != 0:
+        logger.warning("local job %s exited %d (see %s)", job_id, proc.returncode, out_handle.name)
+    return True
 
 
 def submit(script_path: str | Path, *, sbatch_cmd: str = "sbatch") -> str:
@@ -264,10 +295,11 @@ def submit(script_path: str | Path, *, sbatch_cmd: str = "sbatch") -> str:
     prefix as already-complete.
 
     Raises :class:`~chemrefine.errors.JobSubmissionError` if ``sbatch``
-    exits non-zero, its output lacks a numeric job ID, or the local
-    fallback script exits non-zero.
+    exits non-zero or its output lacks a numeric job ID. The local
+    fallback launches in the background and never raises on a non-zero
+    exit — that surfaces through output parsing instead.
     """
-    if shutil.which(sbatch_cmd) is None:
+    if not sbatch_available(sbatch_cmd=sbatch_cmd):
         return _submit_local(script_path)
     try:
         result = subprocess.run(
@@ -289,13 +321,14 @@ def submit(script_path: str | Path, *, sbatch_cmd: str = "sbatch") -> str:
 
 
 def is_finished(job_id: str, *, squeue_cmd: str = "squeue") -> bool:
-    """Return True if ``job_id`` is no longer in the current user's ``squeue``.
+    """Return True if ``job_id`` is no longer running.
 
-    Synthetic ``"local-N"`` IDs are reported finished immediately —
-    those scripts already ran to completion inside :func:`submit`.
+    ``"local-N"`` IDs are polled via their background process
+    (:func:`_local_is_finished`); real SLURM IDs are checked against the
+    current user's ``squeue``.
     """
     if job_id.startswith(_LOCAL_JOB_PREFIX):
-        return True
+        return _local_is_finished(job_id)
     try:
         result = subprocess.run(
             [squeue_cmd, "-u", _CURRENT_USER, "-o", "%i"],

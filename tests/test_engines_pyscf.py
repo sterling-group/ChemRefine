@@ -176,10 +176,10 @@ def test_submit_runs_template_locally_when_no_sbatch(tmp_path: Path):
     assert "energy_hartree" in data
 
 
-def test_submit_fails_when_template_lacks_energy_hartree(tmp_path: Path):
-    """A template that doesn't assign energy_hartree → footer raises NameError → submit fails."""
-    from chemrefine.errors import JobSubmissionError
-
+def test_submit_template_failure_is_deferred_to_parsing(tmp_path: Path):
+    """A template that doesn't assign energy_hartree exits non-zero, but the background
+    local run no longer raises at submit — the missing JSON output surfaces when the
+    step parses results (the same path SLURM failures take → the on_failure ledger)."""
     ctx = _ctx(tmp_path, structures=(_seed(),))
     # Build the context first (which writes the good fake template), then
     # overwrite step1.py with a broken one before prepare() reads it.
@@ -189,11 +189,25 @@ def test_submit_fails_when_template_lacks_energy_hartree(tmp_path: Path):
     )
     engine = get_engine("pyscf")
     inputs = engine.prepare(ctx)
-    with (
-        patch("chemrefine.slurm.shutil.which", return_value=None),
-        pytest.raises(JobSubmissionError, match="energy_hartree"),
-    ):
-        engine.submit(inputs, ctx)
+    with patch("chemrefine.slurm.shutil.which", return_value=None):
+        batch = engine.submit(inputs, ctx)  # does not raise
+    assert all(jid.startswith("local-") for jid in batch.jobs.values())
+    # The failed run wrote no valid JSON output → detected downstream at parse time.
+    assert not inputs.files[0][1].is_file()
+
+
+def test_template_run_block_caps_threads_to_cores(tmp_path: Path):
+    """pyscf/mlip direct runs are OpenMP/MKL-threaded → the run block pins them to cores."""
+    ctx = _ctx(tmp_path, structures=(_seed(),), options={"cores": 4})
+    engine = get_engine("pyscf")
+    run_block = engine._run_block(
+        ctx,
+        inp_path=ctx.step_dir / "step1_structure_0.py",
+        out_path=ctx.step_dir / "step1_structure_0.out",
+    )
+    assert "export OMP_NUM_THREADS=4" in run_block
+    assert "export MKL_NUM_THREADS=4" in run_block
+    assert "python step1_structure_0.py" in run_block
 
 
 def test_submit_missing_slurm_header_raises(tmp_path: Path):

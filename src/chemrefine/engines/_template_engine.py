@@ -95,8 +95,22 @@ class TemplateScriptEngine(SlurmBatchEngine):
         return int((ctx.step_cfg.options or {}).get("cores", 1))
 
     def _run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
-        """Run the rendered Python script inside ``$WORK_DIR``."""
-        return f"python {inp_path.name}"
+        """Run the rendered Python script inside ``$WORK_DIR``, capped to its core budget.
+
+        Template engines (pyscf / mlip direct) are OpenMP/MKL/torch-threaded with
+        no MPI, so we pin the thread count to the step's declared ``options.cores``
+        (= :meth:`_pal`). That's the real oversubscription guard on a laptop —
+        where several jobs now run concurrently — and harmless under SLURM
+        (``--cpus-per-task=1``). ORCA is the opposite (MPI ranks, ``OMP=1``) and
+        sets its own env, so this cap lives only here.
+        """
+        cores = self._pal(ctx)
+        return (
+            f"export OMP_NUM_THREADS={cores}\n"
+            f"export MKL_NUM_THREADS={cores}\n"
+            f"export OPENBLAS_NUM_THREADS={cores}\n"
+            f"python {inp_path.name}"
+        )
 
     # -- parse -------------------------------------------------------------
 

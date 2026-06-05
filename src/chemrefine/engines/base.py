@@ -47,6 +47,13 @@ from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
 
 logger = logging.getLogger(__name__)
 
+# Throttler poll cadence. SLURM ``squeue`` is expensive and jobs are minutes-long,
+# so poll slowly; background local processes are right here and often finish in
+# well under a second, so poll fast or every local step would stall for a full
+# SLURM interval.
+_SLURM_POLL_SECONDS = 10.0
+_LOCAL_POLL_SECONDS = 0.25
+
 
 @runtime_checkable
 class CalculationEngine(Protocol):
@@ -164,7 +171,11 @@ class SlurmBatchEngine:
 
     def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
         """Generate a SLURM script per structure, submit under the PAL budget, block until done."""
-        throttler = throttle.Throttler(max_cores=ctx.max_cores)
+        local = not slurm.sbatch_available()
+        throttler = throttle.Throttler(
+            max_cores=ctx.max_cores,
+            poll_interval=_LOCAL_POLL_SECONDS if local else _SLURM_POLL_SECONDS,
+        )
         header_path = ctx.template_dir / ctx.slurm_template
         if not header_path.is_file():
             raise FileNotFoundError(f"SLURM header template not found: {header_path}")

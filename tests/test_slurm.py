@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +11,13 @@ import pytest
 
 from chemrefine import slurm
 from chemrefine.errors import JobSubmissionError
+
+
+def _drain_local(job_id: str, *, timeout: float = 5.0) -> None:
+    """Block until a background ``local-N`` job is reaped (or the timeout)."""
+    deadline = time.monotonic() + timeout
+    while not slurm.is_finished(job_id) and time.monotonic() < deadline:
+        time.sleep(0.01)
 
 # ---------------------------------------------------------------------------
 # build_script
@@ -209,55 +217,62 @@ def test_submit_raises_when_output_lacks_job_id():
 
 
 def test_submit_falls_back_to_local_when_sbatch_missing(tmp_path: Path):
-    """No sbatch on PATH → run via bash, return a local-N synthetic job ID."""
+    """No sbatch on PATH → launch via bash in the background, return a local-N job ID."""
     script = tmp_path / "script.slurm"
-    script.touch()
-    fake = MagicMock(returncode=0, stdout="", stderr="")
-    with (
-        patch("chemrefine.slurm.shutil.which", return_value=None),
-        patch.object(subprocess, "run", return_value=fake) as run,
-    ):
+    script.write_text("#!/bin/bash\ntrue\n", encoding="utf-8")
+    with patch("chemrefine.slurm.shutil.which", return_value=None):
         job_id = slurm.submit(script)
     assert job_id.startswith("local-")
-    # The script should have been bash-executed.
-    assert run.call_args.args[0][0] == "bash"
+    _drain_local(job_id)
+    assert slurm.is_finished(job_id) is True
 
 
 def test_submit_local_writes_runlog_and_err_alongside_script(tmp_path: Path):
-    """``_submit_local`` writes captured stdout/stderr to the SBATCH paths."""
+    """The background local run redirects stdout/stderr to the SBATCH .runlog / .err paths."""
     script = tmp_path / "step1_structure_0.slurm"
-    script.touch()
-    fake = MagicMock(
-        returncode=0,
-        stdout="hello from the template\n",
-        stderr="warning: backend X loaded\n",
+    script.write_text(
+        "#!/bin/bash\necho 'hello from the template'\necho 'warning: backend X' >&2\n",
+        encoding="utf-8",
     )
-    with (
-        patch("chemrefine.slurm.shutil.which", return_value=None),
-        patch.object(subprocess, "run", return_value=fake),
-    ):
-        slurm.submit(script)
-    runlog = script.with_suffix(".runlog")
-    err = script.with_suffix(".err")
-    assert runlog.read_text(encoding="utf-8") == "hello from the template\n"
-    assert err.read_text(encoding="utf-8") == "warning: backend X loaded\n"
+    with patch("chemrefine.slurm.shutil.which", return_value=None):
+        job_id = slurm.submit(script)
+    _drain_local(job_id)
+    assert script.with_suffix(".runlog").read_text(encoding="utf-8") == "hello from the template\n"
+    assert script.with_suffix(".err").read_text(encoding="utf-8") == "warning: backend X\n"
 
 
-def test_submit_local_failure_raises(tmp_path: Path):
-    """Local fallback surfaces non-zero exit as JobSubmissionError."""
+def test_two_local_jobs_run_in_background_concurrently(tmp_path: Path):
+    """Background submission returns immediately, so two local jobs overlap — the old
+    synchronous fallback would have serialized them (the first blocking until done)."""
+    s1 = tmp_path / "a.slurm"
+    s2 = tmp_path / "b.slurm"
+    s1.write_text("#!/bin/bash\nsleep 0.5\n", encoding="utf-8")
+    s2.write_text("#!/bin/bash\nsleep 0.5\n", encoding="utf-8")
+    with patch("chemrefine.slurm.shutil.which", return_value=None):
+        j1 = slurm.submit(s1)
+        j2 = slurm.submit(s2)
+    # Right after submit, both are still running → they run in parallel.
+    assert slurm.is_finished(j1) is False
+    assert slurm.is_finished(j2) is False
+    _drain_local(j1)
+    _drain_local(j2)
+    assert slurm.is_finished(j1) is True
+    assert slurm.is_finished(j2) is True
+
+
+def test_submit_local_failure_is_not_raised_but_recorded_on_disk(tmp_path: Path):
+    """A non-zero local exit no longer raises at submit; the logs still land on disk
+    so the failure can surface through the engine's output parsing."""
     script = tmp_path / "script.slurm"
-    script.touch()
-    fake = MagicMock(returncode=2, stdout="partial stdout\n", stderr="boom")
-    with (
-        patch("chemrefine.slurm.shutil.which", return_value=None),
-        patch.object(subprocess, "run", return_value=fake),
-        pytest.raises(JobSubmissionError),
-    ):
-        slurm.submit(script)
-    # Even on failure, runlog + err must land on disk so the user
-    # can inspect what happened.
+    script.write_text(
+        "#!/bin/bash\necho 'partial stdout'\necho 'boom' >&2\nexit 2\n", encoding="utf-8"
+    )
+    with patch("chemrefine.slurm.shutil.which", return_value=None):
+        job_id = slurm.submit(script)  # does not raise
+    _drain_local(job_id)
+    assert slurm.is_finished(job_id) is True
     assert script.with_suffix(".runlog").read_text(encoding="utf-8") == "partial stdout\n"
-    assert script.with_suffix(".err").read_text(encoding="utf-8") == "boom"
+    assert script.with_suffix(".err").read_text(encoding="utf-8") == "boom\n"
 
 
 # ---------------------------------------------------------------------------

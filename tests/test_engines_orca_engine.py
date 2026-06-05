@@ -97,6 +97,20 @@ def test_prepare_input_contains_charge_and_multiplicity(tmp_path: Path):
     assert "* xyzfile -2 3" in text
 
 
+def test_run_block_keeps_orca_single_threaded_per_mpi_rank(tmp_path: Path):
+    """ORCA parallelises via MPI ranks (``%pal nprocs``), so each rank stays OMP=1 —
+    never OMP=pal (that would oversubscribe pal x pal threads)."""
+    engine = get_engine("orca")
+    ctx = _ctx(tmp_path, structures=(_seed_structure(),))  # template declares nprocs 2
+    run_block = engine._run_block(
+        ctx,
+        inp_path=ctx.step_dir / "step1_structure_0.inp",
+        out_path=ctx.step_dir / "step1_structure_0.out",
+    )
+    assert "export OMP_NUM_THREADS=1" in run_block
+    assert "OMP_NUM_THREADS=2" not in run_block
+
+
 def test_prepare_missing_template_raises(tmp_path: Path):
     engine = get_engine("orca")
     ctx = _ctx(tmp_path, structures=(_seed_structure(),))
