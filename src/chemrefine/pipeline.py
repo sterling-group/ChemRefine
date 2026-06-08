@@ -31,7 +31,12 @@ from chemrefine.state import PipelineState, Structure
 # Importing :mod:`chemrefine.step` pulls in :mod:`chemrefine.engines.base`,
 # which runs :mod:`chemrefine.engines`'s ``__init__`` and self-registers every
 # bundled engine. No explicit ``import chemrefine.engines`` needed.
-from chemrefine.step import StepOutcome, rebuild_cache_step, run_step
+from chemrefine.step import (
+    StepOutcome,
+    halt_if_pending,
+    rebuild_cache_step,
+    run_step,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +172,9 @@ def run(
             outcome = run_step(
                 config, step_cfg, state, use_cache=use_cache, resubmit_step=resubmit_step
             )
+            # Single halt point: an on_failure=stop step that still has pending
+            # failures stops the run here (after its successes were cached).
+            halt_if_pending(config, step_cfg, resubmit_step)
         outcomes.append(outcome)
         _write_step_csv(config, step_cfg, outcome.state)
         state = outcome.state

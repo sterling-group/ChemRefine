@@ -293,11 +293,12 @@ def test_on_failure_skip_drops_failed_keeps_successes(tmp_path: Path):
 
 
 def test_on_failure_stop_caches_successes_then_halts(tmp_path: Path):
-    """`stop` runs the whole batch, caches the successes + ledgers the failure,
-    then halts — so resume can re-attempt only the failed one."""
+    """`stop` runs the whole batch and caches the successes + ledgers the failure;
+    the single pipeline-level `halt_if_pending` then halts (run_step itself does not)."""
     import pytest
 
     from chemrefine import cache
+    from chemrefine import step as step_mod
     from chemrefine.engines.base import ENGINES
     from chemrefine.errors import ChemRefineError
 
@@ -306,16 +307,18 @@ def test_on_failure_stop_caches_successes_then_halts(tmp_path: Path):
         eng.fail = {"1": "missing"}  # "0" and "2" succeed, "1" fails
         cfg = _config(tmp_path, engine="fake-fail", on_failure="stop")
         step_dir = cfg.output_dir.resolve() / "step1"
-        with pytest.raises(ChemRefineError):
-            run_step(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]))
-        # batch ran to completion: the successes are cached *before* the halt …
+        # run_step no longer raises — it runs the whole batch, caches the
+        # successes *before* any halt, and ledgers the failure …
+        run_step(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]))
         cached = cache.load(step_dir)
         assert cached is not None
         assert {s.id for s in cached.results.structures} == {"0", "2"}
-        # … and the failure is recorded (pending for resume).
         assert cache.load_failed_jobs(step_dir) == [
             {"structure_id": "1", "reason": "output missing"}
         ]
+        # … and the run is halted by the single pipeline-level check.
+        with pytest.raises(ChemRefineError):
+            step_mod.halt_if_pending(cfg, cfg.steps[0], None)
     finally:
         eng.fail = {}
         ENGINES.pop("fake-fail", None)

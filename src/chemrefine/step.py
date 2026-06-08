@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 from chemrefine import cache, filtering
 from chemrefine.config import Config, StepConfig
@@ -35,13 +36,18 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def step_dir_for(config: Config, step_cfg: StepConfig) -> Path:
+    """The on-disk directory for a step's artifacts (cache, ledger, outputs)."""
+    return (config.output_dir / step_cfg.dir_name()).resolve()
+
+
 def build_context(
     config: Config, step_cfg: StepConfig, prev_state: PipelineState
 ) -> StepContext:
     """Bundle the per-step inputs into a :class:`StepContext`."""
     return StepContext(
         step_cfg=step_cfg,
-        step_dir=(config.output_dir / step_cfg.dir_name()).resolve(),
+        step_dir=step_dir_for(config, step_cfg),
         template_dir=config.template_dir.resolve(),
         scratch_dir=config.scratch_dir.resolve() if config.scratch_dir is not None else None,
         prev_state=prev_state,
@@ -93,8 +99,9 @@ def run_step(
       re-attempts whichever ``stop`` step is pending. ``rerun`` (redo a whole
       step) is the caller invalidating the cache first.
     * Otherwise the engine's full lifecycle runs and the result is cached. An
-      ``on_failure: stop`` step that ends with failures caches its successes,
-      then halts the run (after the cache write) via :func:`_halt_if_pending`.
+      ``on_failure: stop`` step that ends with failures caches its successes and
+      ledgers the failures; the pipeline then halts the run once via
+      :func:`halt_if_pending` (this function never raises).
     """
     # Deferred imports: chemrefine.__init__ imports chemrefine.engines, which
     # imports this module (step.py) to register engines — a circular chain.
@@ -126,7 +133,6 @@ def run_step(
                 if is_nms
                 else _resubmit_failed(engine, ctx, step_cfg, failed, parent_ids, __version__)
             )
-            _halt_if_pending(ctx, step_cfg)
             return StepOutcome(
                 state=filtering.apply(results, step_cfg.sample), cache_hit=False
             )
@@ -168,7 +174,6 @@ def run_step(
                     reuse_fingerprint=step_nms._nms_reuse_fingerprint(step_cfg, parent_ids),
                 )
                 results = cached.results
-            _halt_if_pending(ctx, step_cfg)
             return StepOutcome(
                 state=filtering.apply(results, step_cfg.sample), cache_hit=False
             )
@@ -208,7 +213,6 @@ def run_step(
         chemrefine_version=__version__,
         reuse_fingerprint=step_nms._nms_reuse_fingerprint(step_cfg, parent_ids),
     )
-    _halt_if_pending(ctx, step_cfg)
 
     return StepOutcome(
         state=filtering.apply(results, step_cfg.sample),
@@ -290,8 +294,8 @@ def _apply_failure_policy(
     (default) drops the failures and keeps the successes; ``best`` keeps every
     structure, backfilling a failure with the best geometry obtained for it
     (else its submitted input); ``stop`` keeps the successes too but the run is
-    halted by :func:`_halt_if_pending` *after* the cache is written (so
-    ``resume`` / ``rerun-errors`` re-attempt only those failed jobs).
+    halted by :func:`halt_if_pending` (from the pipeline) *after* the cache is
+    written (so ``resume`` / ``rerun-errors`` re-attempt only those failed jobs).
     """
     if not failures:
         cache.clear_failed_jobs(ctx.step_dir)
@@ -320,15 +324,23 @@ def _apply_failure_policy(
     return StepResults(structures=tuple(successes))
 
 
-def _halt_if_pending(ctx: StepContext, step_cfg: StepConfig) -> None:
+def halt_if_pending(
+    config: Config, step_cfg: StepConfig, resubmit_step: int | None
+) -> None:
     """Halt the run when an ``on_failure: stop`` step still has failed jobs.
 
-    Called *after* :func:`chemrefine.cache.save` so the step's successes are
-    already recorded; only ``stop`` turns its ledgered failures into a hard
-    stop, so ``resume`` / ``rerun-errors`` re-attempt just those. ``skip`` /
-    ``best`` keep their ledger for visibility but never halt.
+    Called **once** from the pipeline after a step executes (never after a
+    ``rebuild_cache_step``), so the step's successes are already cached. Only
+    ``stop`` turns its ledgered failures into a hard stop; ``skip`` / ``best``
+    keep their ledger for visibility but never halt. The ``resubmit_step`` gate
+    lets ``rerun-errors N`` cache-hit past a *different* step's pending failures
+    (it re-attempts only step N), matching the per-step scoping of ``run_step``.
     """
-    if step_cfg.on_failure == "stop" and cache.load_failed_jobs(ctx.step_dir):
+    if step_cfg.on_failure != "stop":
+        return
+    if resubmit_step is not None and resubmit_step != step_cfg.step:
+        return
+    if cache.load_failed_jobs(step_dir_for(config, step_cfg)):
         raise ChemRefineError(
             f"step {step_cfg.step} halted (on_failure=stop); fix the failed "
             f"job(s) and run `chemrefine resume` (or `rerun-errors {step_cfg.step}`)"
