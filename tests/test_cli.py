@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -63,6 +65,20 @@ def test_version_prints_package_version():
 def test_no_arguments_shows_help():
     result = runner.invoke(app, [])
     assert "Usage" in result.stdout or "Usage" in result.stderr
+
+
+def test_importing_cli_does_not_pull_the_heavy_stack():
+    """`--help`/`--version` must stay fast: importing the CLI must not import the
+    pipeline / engine registry / recovery / ase stack (those load lazily per command)."""
+    code = (
+        "import sys, chemrefine.cli; "
+        "heavy = ('chemrefine.pipeline', 'chemrefine.engines', 'chemrefine.recovery', 'ase'); "
+        "print(','.join(m for m in heavy if m in sys.modules))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert out.stdout.strip() == "", f"cli import leaked heavy modules: {out.stdout.strip()}"
 
 
 def test_missing_config_path_errors(tmp_path: Path):

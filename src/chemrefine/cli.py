@@ -36,14 +36,16 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
 from chemrefine import __version__
-from chemrefine.config import Config, load_config
 from chemrefine.errors import ChemRefineError
-from chemrefine.recovery import Action, execute
+
+if TYPE_CHECKING:  # type-only; never imported at runtime (keeps --help fast)
+    from chemrefine.config import Config
+    from chemrefine.recovery import Action
 
 logger = logging.getLogger("chemrefine")
 
@@ -95,18 +97,37 @@ def _main(
 # ---------------------------------------------------------------------------
 
 
+def execute(config: Config, action: Action, target: str | None = None) -> int:
+    """Run a recovery action — a thin, patchable indirection to
+    :func:`chemrefine.recovery.execute`.
+
+    Kept at module scope (rather than imported inside ``_dispatch``) so the heavy
+    ``recovery`` import stays lazy yet ``cli.execute`` remains a stable monkeypatch
+    target for tests.
+    """
+    from chemrefine import recovery
+
+    return recovery.execute(config, action, target=target)
+
+
 def _load(config_path: Path, *, maxcores: int | None) -> Config:
     """Load + validate ``config_path`` and apply the ``--maxcores`` override."""
+    from chemrefine.config import load_config
+
     cfg = load_config(config_path)
     if maxcores is not None:
         cfg = cfg.model_copy(update={"max_cores": maxcores})
     return cfg
 
 
-def _dispatch(action: Action, config: Config, *, target: str | None, dry_run: bool) -> int:
-    """Either describe the would-be execution (``--dry-run``) or run it."""
+def _dispatch(action_name: str, config: Config, *, target: str | None, dry_run: bool) -> int:
+    """Either describe the would-be execution (``--dry-run``) or run it.
+
+    ``action_name`` is the subcommand string (== the :class:`Action` value); the
+    enum is resolved lazily so a plain ``--dry-run`` never imports ``recovery``.
+    """
     if dry_run:
-        typer.echo(f"[dry-run] action={action.value}")
+        typer.echo(f"[dry-run] action={action_name}")
         typer.echo(f"[dry-run] output_dir={config.output_dir}")
         typer.echo(f"[dry-run] max_cores={config.max_cores}")
         for step_cfg in config.steps:
@@ -117,8 +138,10 @@ def _dispatch(action: Action, config: Config, *, target: str | None, dry_run: bo
         if target is not None:
             typer.echo(f"[dry-run] target step: {target}")
         return 0
+    from chemrefine.recovery import Action
+
     try:
-        return execute(config, action, target=target)
+        return execute(config, Action(action_name), target=target)
     except ChemRefineError as e:
         logger.error("%s: %s", type(e).__name__, e)
         raise typer.Exit(code=e.exit_code) from e
@@ -155,7 +178,7 @@ def run(
 ) -> None:
     """Run the full pipeline from step 1, invalidating any existing cache."""
     cfg = _load(config_path, maxcores=maxcores)
-    raise typer.Exit(_dispatch(Action.RUN, cfg, target=None, dry_run=dry_run))
+    raise typer.Exit(_dispatch("run", cfg, target=None, dry_run=dry_run))
 
 
 @app.command()
@@ -166,7 +189,7 @@ def resume(
 ) -> None:
     """Resume the pipeline, hitting the on-disk cache for unchanged steps."""
     cfg = _load(config_path, maxcores=maxcores)
-    raise typer.Exit(_dispatch(Action.RESUME, cfg, target=None, dry_run=dry_run))
+    raise typer.Exit(_dispatch("resume", cfg, target=None, dry_run=dry_run))
 
 
 @app.command("rebuild-cache")
@@ -178,7 +201,7 @@ def rebuild_cache(
 ) -> None:
     """Rebuild one step's cache from existing outputs (default: latest); no submission."""
     cfg = _load(config_path, maxcores=maxcores)
-    raise typer.Exit(_dispatch(Action.REBUILD_CACHE, cfg, target=target, dry_run=dry_run))
+    raise typer.Exit(_dispatch("rebuild-cache", cfg, target=target, dry_run=dry_run))
 
 
 @app.command("rebuild-nms")
@@ -190,7 +213,7 @@ def rebuild_nms(
 ) -> None:
     """Re-run the NMS step with the current options (alias of rerun)."""
     cfg = _load(config_path, maxcores=maxcores)
-    raise typer.Exit(_dispatch(Action.REBUILD_NMS, cfg, target=target, dry_run=dry_run))
+    raise typer.Exit(_dispatch("rebuild-nms", cfg, target=target, dry_run=dry_run))
 
 
 @app.command()
@@ -202,7 +225,7 @@ def rerun(
 ) -> None:
     """Redo one whole step from scratch (default: latest); others cache-hit."""
     cfg = _load(config_path, maxcores=maxcores)
-    raise typer.Exit(_dispatch(Action.RERUN, cfg, target=target, dry_run=dry_run))
+    raise typer.Exit(_dispatch("rerun", cfg, target=target, dry_run=dry_run))
 
 
 @app.command("rerun-errors")
@@ -214,7 +237,7 @@ def rerun_errors(
 ) -> None:
     """Re-attempt only one step's pending failed jobs (default: latest)."""
     cfg = _load(config_path, maxcores=maxcores)
-    raise typer.Exit(_dispatch(Action.RERUN_ERRORS, cfg, target=target, dry_run=dry_run))
+    raise typer.Exit(_dispatch("rerun-errors", cfg, target=target, dry_run=dry_run))
 
 
 # ---------------------------------------------------------------------------
