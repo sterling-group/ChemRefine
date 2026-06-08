@@ -82,11 +82,15 @@ pyscf = [
     "pyscf>=2.6",
     "chemrefine[server]",
 ]
-# GPU SCF path (`run_dft(..., want_gpu=True)` in pyscf/_runtime). gpu4pyscf
-# needs pyscf, so cross-reference `[pyscf]` for a complete stack.
-# downloads: gpu4pyscf (→ cupy/CUDA), + pyscf (heavy, GPU)
+# GPU SCF path (`run_dft(..., want_gpu=True)` in pyscf/_runtime). The bare
+# `gpu4pyscf` on PyPI is an sdist that needs a CUDA build toolchain; the usable
+# prebuilt wheels are the CUDA-tagged `gpu4pyscf-cudaNNx` + matching `cutensor-cuNN`.
+# This targets CUDA 12.x — CUDA-11 hosts swap in `gpu4pyscf-cuda11x` + `cutensor-cu11`.
+# gpu4pyscf needs pyscf, so cross-reference `[pyscf]` for a complete stack.
+# downloads: gpu4pyscf-cuda12x (→ cupy/CUDA), cutensor-cu12, + pyscf (heavy, GPU)
 pyscf-gpu = [
-    "gpu4pyscf",
+    "gpu4pyscf-cuda12x",
+    "cutensor-cu12",
     "chemrefine[pyscf]",
 ]
 # downloads: pytest, pytest-cov (tiny)
