@@ -208,6 +208,15 @@ class OrcaEngine(SlurmBatchEngine):
         ``converged`` flag records whether its round-2 imaginary count matches
         the target. :func:`chemrefine.step.run_step` then groups by parent and
         applies the step's ``on_failure`` policy to unresolved parents.
+
+        **Throttling / ordering.** This is the *second* throttled phase: round 1
+        (every structure) has already finished under the budget (``run_step``
+        blocks on ``submit``'s ``wait_all``) before this runs, then round 2 is a
+        **separate** ``submit`` whose ``nms_ctx`` is ``dataclasses.replace(ctx,
+        …)`` — so ``max_cores`` / ``max_gpus`` / ``device`` / header all carry
+        over and the displacements are throttled too. The two rounds never share
+        the budget at once: imag-freq removal starts only *after* round 1 fully
+        drains, not the instant an individual structure finishes.
         """
         target = nms.target_imaginary_count(nms.NmsOptions.from_raw(ctx.step_cfg.options))
         already, children = self._nms_displace(results, ctx)
