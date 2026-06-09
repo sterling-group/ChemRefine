@@ -106,6 +106,18 @@ def gather_output_files(directory: str | Path, pattern: str) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
+def _conformer_to_xyz_lines(mol, comment: str) -> list[str]:
+    """Render an embedded RDKit ``mol``'s conformer as XYZ-format text lines."""
+    conf = mol.GetConformer()
+    natoms = mol.GetNumAtoms()
+    lines = [str(natoms), comment]
+    for atom_idx in range(natoms):
+        atom = mol.GetAtomWithIdx(atom_idx)
+        pos = conf.GetAtomPosition(atom_idx)
+        lines.append(f"{atom.GetSymbol():2s} {pos.x:.6f} {pos.y:.6f} {pos.z:.6f}")
+    return lines
+
+
 def smiles_to_xyz(
     csv_file: str | Path,
     output_dir: str | Path,
@@ -143,14 +155,7 @@ def smiles_to_xyz(
             continue
         AllChem.UFFOptimizeMolecule(mol)
 
-        conf = mol.GetConformer()
-        natoms = mol.GetNumAtoms()
-        lines = [str(natoms), f"SMILES: {raw}"]
-        for atom_idx in range(natoms):
-            atom = mol.GetAtomWithIdx(atom_idx)
-            pos = conf.GetAtomPosition(atom_idx)
-            lines.append(f"{atom.GetSymbol():2s} {pos.x:.6f} {pos.y:.6f} {pos.z:.6f}")
-
+        lines = _conformer_to_xyz_lines(mol, f"SMILES: {raw}")
         xyz_path = out / f"structure_{idx}.xyz"
         xyz_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         written.append(xyz_path)
