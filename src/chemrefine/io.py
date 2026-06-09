@@ -14,7 +14,6 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 from ase import Atoms
 
 from chemrefine.ids import structure_artifact_path
@@ -119,6 +118,7 @@ def smiles_to_xyz(
     Each successful conversion writes ``output_dir/structure_{row}.xyz``.
     Invalid SMILES are logged and skipped — they do not abort the run.
     """
+    import pandas as pd
     from rdkit import Chem
     from rdkit.Chem import AllChem
 
@@ -193,6 +193,8 @@ def save_step_csv(
     Sorted by energy ascending. Step 1 writes the header; later steps
     append without a header.
     """
+    import pandas as pd
+
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     path = out / filename

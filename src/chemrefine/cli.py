@@ -36,16 +36,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
 import typer
 
 from chemrefine import __version__
 from chemrefine.errors import ChemRefineError
-
-if TYPE_CHECKING:  # type-only; never imported at runtime (keeps --help fast)
-    from chemrefine.config import Config
-    from chemrefine.recovery import Action
 
 logger = logging.getLogger("chemrefine")
 
@@ -97,9 +93,12 @@ def _main(
 # ---------------------------------------------------------------------------
 
 
-def execute(config: Config, action: Action, target: str | None = None) -> int:
+def execute(config, action, target: str | None = None) -> int:
     """Run a recovery action — a thin, patchable indirection to
-    :func:`chemrefine.recovery.execute`.
+    :func:`chemrefine.recovery.execute` (``config`` is a
+    :class:`~chemrefine.config.Config`, ``action`` a
+    :class:`~chemrefine.recovery.Action`; both stay un-annotated so the heavy
+    imports remain lazy rather than relying on a ``TYPE_CHECKING`` block).
 
     Kept at module scope (rather than imported inside ``_dispatch``) so the heavy
     ``recovery`` import stays lazy yet ``cli.execute`` remains a stable monkeypatch
@@ -110,8 +109,12 @@ def execute(config: Config, action: Action, target: str | None = None) -> int:
     return recovery.execute(config, action, target=target)
 
 
-def _load(config_path: Path, *, maxcores: int | None) -> Config:
-    """Load + validate ``config_path`` and apply the ``--maxcores`` override."""
+def _load(config_path: Path, *, maxcores: int | None):
+    """Load + validate ``config_path`` and apply the ``--maxcores`` override.
+
+    Returns a :class:`~chemrefine.config.Config` (un-annotated to keep the
+    pydantic/config import lazy — it loads only when a command actually runs).
+    """
     from chemrefine.config import load_config
 
     cfg = load_config(config_path)
@@ -120,7 +123,7 @@ def _load(config_path: Path, *, maxcores: int | None) -> Config:
     return cfg
 
 
-def _dispatch(action_name: str, config: Config, *, target: str | None, dry_run: bool) -> int:
+def _dispatch(action_name: str, config, *, target: str | None, dry_run: bool) -> int:
     """Either describe the would-be execution (``--dry-run``) or run it.
 
     ``action_name`` is the subcommand string (== the :class:`Action` value); the

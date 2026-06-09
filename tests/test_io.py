@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,6 +18,16 @@ from chemrefine.io import (
     save_step_csv,
     write_xyz,
 )
+
+
+def test_importing_io_does_not_pull_pandas():
+    """pandas loads only when CSV is actually read/written, not on `import chemrefine.io`."""
+    out = subprocess.run(
+        [sys.executable, "-c", "import sys, chemrefine.io; print('pandas' in sys.modules)"],
+        capture_output=True, text=True, check=True,
+    )
+    assert out.stdout.strip() == "False"
+
 
 # ---------------------------------------------------------------------------
 # natural_key
@@ -186,11 +198,11 @@ def test_smiles_to_xyz_skips_nan_and_whitespace_rows(tmp_path: Path):
     """
     import pandas as pd
 
-    from chemrefine import io as io_mod
     from chemrefine.io import smiles_to_xyz
 
     df = pd.DataFrame({"smiles": [float("nan"), "   ", "C"]})
-    with patch.object(io_mod.pd, "read_csv", return_value=df):
+    # pandas is imported lazily inside smiles_to_xyz, so patch it at the source.
+    with patch("pandas.read_csv", return_value=df):
         written = smiles_to_xyz(tmp_path / "ignored.csv", tmp_path / "out")
     assert len(written) == 1
 
