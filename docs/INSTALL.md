@@ -84,7 +84,7 @@ huggingface-cli login
 | Symptom | Likely cause |
 |---------|--------------|
 | `chemrefine: command not found` | Activate the env where you installed ChemRefine (`pip show chemrefine` to confirm). |
-| `ORCA not accessible` | Set `orca_executable` in the YAML to an absolute path, or put ORCA on `$PATH`. |
+| `ORCA not accessible` | Set `executables: { orca: ... }` in the YAML to an absolute path, or put ORCA on `$PATH`. |
 | `sbatch: command not found` | Either SLURM isn't installed locally — run the generated `.slurm` script with `bash` instead — or activate the cluster's SLURM module. |
 | `Server crashed during startup` (MLFF) | Check the per-job `server_${SLURM_JOB_ID}.log`; common causes are out-of-memory at model load or a missing HuggingFace token for FAIRChem. |
 | `PackageNotFoundError: ChemRefine` at runtime | `pip install -e .` again — the editable install was removed. |
