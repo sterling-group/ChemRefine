@@ -10,8 +10,8 @@
 
 Automated, interoperable manager for computational-chemistry workflows.
 ChemRefine drives multi-step conformer sampling and refinement through
-ORCA, MLFF (MACE / FairChem / SevenN / ORB), and PySCF, with SLURM
-submission, caching, and resumable runs built in.
+ORCA, MLIPs (MACE / FAIRChem / SevenNet / ORB / CHGNet), and PySCF, with
+SLURM submission, caching, and resumable runs built in.
 
 📖 **Full documentation:** <https://sterling-group.github.io/ChemRefine/>
 
@@ -43,12 +43,12 @@ charge: 0
 multiplicity: 1
 max_cores: 64
 slurm_template: cpu.slurm.header
-orca_executable: orca
+executables: { orca: orca }
 
 steps:
   - step: 1
     name: screen
-    engine: mlff
+    engine: mlip
     operation: opt_sp
     options: { model_name: medium, task_name: mace_off, device: cuda }
     sample: { method: boltzmann, percent_cumulative: 99 }
