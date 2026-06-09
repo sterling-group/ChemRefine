@@ -88,12 +88,15 @@ def test_throttler_register_rejects_negative_gpus():
         Throttler(max_cores=8, max_gpus=1).register("g", 1, gpus=-1)
 
 
-def test_throttler_assign_device_falls_back_when_all_taken():
+def test_throttler_assign_device_raises_when_all_taken():
     from chemrefine.throttle import Throttler
 
+    # Unreachable on the real call path (wait_for_room admits first), so assign_device
+    # fails loud rather than silently colliding two GPU jobs on device 0.
     t = Throttler(max_cores=8, max_gpus=1)
     t.register("g", 1, gpus=1, device=0)
-    assert t.assign_device() == 0  # budget already full → fallback index
+    with pytest.raises(RuntimeError, match="no free GPU device"):
+        t.assign_device()
 
 
 # --- base: the abstract SLURM hooks -----------------------------------------

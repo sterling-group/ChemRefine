@@ -86,7 +86,11 @@ class Throttler:
         for idx in range(self.max_gpus):
             if idx not in used:
                 return idx
-        return 0  # unreachable when wait_for_room respected the budget
+        # Unreachable when wait_for_room admitted this job first; fail loud rather
+        # than silently colliding two local GPU jobs on device 0 if that breaks.
+        raise RuntimeError(
+            f"no free GPU device in [0, {self.max_gpus}) — call wait_for_room before assign_device"
+        )
 
     # -- waiting -----------------------------------------------------------
 
