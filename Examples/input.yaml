@@ -1,9 +1,9 @@
-# ChemRefine v4 example workflow
+# ChemRefine v2 example workflow
 # Replace the path placeholders with paths on your system.
 template_dir: ./templates
 scratch_dir:  ./scratch
 output_dir:   ./outputs
-orca_executable: orca
+executables: { orca: orca }
 
 # Initial seed: either an .xyz, a directory of .xyz files, or a CSV of SMILES.
 input: ./templates/step1.xyz
@@ -17,13 +17,12 @@ steps:
   # Step 1 — cheap conformer generation with an MLFF surrogate.
   - step: 1
     name: screen
-    engine: mlff
+    engine: mlip
     operation: opt_sp
     options:
       model_name: medium
       task_name: mace_off
       device: cuda
-      bind: 127.0.0.1:8888
     sample:
       method: boltzmann
       percent_cumulative: 99
