@@ -15,9 +15,10 @@ cached so unchanged steps skip automatically.
 
 - **Step-based pipeline** driven by a single Pydantic-validated YAML
   config — every knob lives in one place.
-- **Engine plugins** with a narrow Protocol: ORCA, MLFF
-  (MACE / FairChem / SevenN / ORB), PySCF, plus an in-process
-  ``mlff-direct`` mode. New engines drop in via a registry decorator.
+- **Engine plugins** with a narrow Protocol: ORCA, MLIPs
+  (MACE / FAIRChem / SevenNet / ORB / CHGNet), and PySCF — each as a
+  direct engine or an ORCA-driven ``-extopt`` gradient server. New
+  engines drop in via a registry decorator.
 - **Filtering** by Boltzmann cumulative weight, energy window,
   fixed integer count, or "highest N" (PES-style), with optional
   per-parent grouping.
@@ -40,12 +41,13 @@ Quick path:
 
 ```bash
 pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git@main"
-pip install "chemrefine[mlff] @ git+https://github.com/sterling-group/ChemRefine.git@main"
+pip install "chemrefine[mlip] @ git+https://github.com/sterling-group/ChemRefine.git@main"
 ```
 
-Requires **Python 3.11–3.13**, **ORCA 6+**, and **SLURM**. The
-``[mlff]`` extra pulls torch, mace-torch, fairchem-core, flask, and
-waitress.
+Requires **Python 3.11–3.13** and **ORCA 6+**; SLURM is optional. The
+``[mlip]`` extra pulls torch, mace-torch, and fairchem-core (the default
+MACE + FAIRChem backends) plus the gradient-server deps (flask, waitress);
+``[mlff]`` is an alias for it.
 
 ## Quickstart
 
@@ -70,12 +72,12 @@ charge: 0
 multiplicity: 1
 max_cores: 64
 slurm_template: cpu.slurm.header
-orca_executable: orca
+executables: { orca: orca }
 
 steps:
   - step: 1
     name: screen              # optional label → directory step1_screen/
-    engine: mlff
+    engine: mlip
     operation: opt_sp
     options:
       model_name: medium
@@ -141,14 +143,15 @@ fan-out step.
 
 ## Engines
 
-| Engine          | Driver                | Backend                                  |
-|-----------------|-----------------------|------------------------------------------|
-| `orca`          | SLURM + ORCA          | DFT via ORCA 6+                          |
-| `mlff`          | SLURM + ORCA + server | MLFF gradient server via ORCA `%method`  |
-| `mlff-direct`   | in-process            | MACE / FairChem / SevenN / ORB direct    |
-| `pyscf`         | SLURM + ORCA + server | PySCF / gpu4pyscf via ORCA `%method`     |
-| `pyscf-direct`  | in-process            | PySCF in-process                         |
-| `fake`          | in-process            | Test stub used by the pipeline tests     |
+| Engine          | Driver                        | Backend                                       |
+|-----------------|-------------------------------|-----------------------------------------------|
+| `orca`          | SLURM + ORCA                  | DFT via ORCA 6+                                |
+| `mlip`          | template script (SLURM/local) | MACE / FAIRChem / SevenNet / ORB / CHGNet, direct (no ORCA) |
+| `mlip-extopt`   | SLURM + ORCA + server         | MLIP gradient server driving ORCA `%method`   |
+| `mlip-train`    | template script (SLURM/local) | MLIP model training                           |
+| `pyscf`         | template script (SLURM/local) | PySCF / gpu4pyscf, direct (no ORCA)           |
+| `pyscf-extopt`  | SLURM + ORCA + server         | PySCF gradient server driving ORCA `%method`  |
+| `fake`          | in-process                    | Test stub used by the pipeline tests          |
 
 ## Operations
 
@@ -161,7 +164,7 @@ Engines decide which operations they support. The current ORCA mapping:
 | `pes`         | PES scan (one frame per converged scan point)                |
 | `docker`      | Host–guest docking ensemble                                  |
 | `solvator`    | Explicit solvation ensemble                                  |
-| `mlff_train`  | MLFF model training (writes inputs + submits training job)   |
+| `mlip_train`  | MLIP model training (writes inputs + submits training job)   |
 
 Engines that don't know how to handle a given operation raise
 `OutputParseError` (or, for engines that can't perform an operation,
