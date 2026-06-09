@@ -15,15 +15,15 @@ ChemRefine automates this multi-step process:
    Performs a global search of the PES to identify low-energy conformers.  
 
 2. **Normal Mode Sampling (NMS)**  
-   Generates additional diverse geometries by displacing atoms along vibrational modes.  
+   Generates additional diverse geometries by displacing atoms along vibrational modes (`nms: true`, `target: random`).  
 
 3. **Reference DFT Optimizations (OPT+SP)**  
    Provides high-quality energies and forces for MLIP training.  
 
-4. **MLIP Training (MLFF_TRAIN)**  
-   Trains a potential (e.g., MACE) on the generated DFT dataset. We will be using MACE to train, as of writing this code (v1.2.1), Chemefine can only train/finetune with MACE. We need a MACE input yaml, explanation can be found [here](https://github.com/ACEsuit/mace).
+4. **MLIP Training (`mlip-train`)**  
+   Trains a potential (e.g., MACE) on the generated DFT dataset. As of writing, ChemRefine can only train/finetune with MACE. We need a MACE input yaml; an explanation can be found [here](https://github.com/ACEsuit/mace).
 
-5. **MLIP Validation (OPT+SP with MLFF)**  
+5. **MLIP Validation (`opt_sp` with `mlip-extopt`)**  
    Applies the trained model to evaluate new structures, testing its accuracy and efficiency.  
 
 ---
@@ -40,12 +40,12 @@ ChemRefine automates this multi-step process:
 
 We start with an initial structure located in the templates folder:
 
-- 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/MLIPTraining/input.yaml)  
-- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/MLIP-Training/step1.xyz)  
+- 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/MLIPTraining/input.yaml)  
+- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/MLIPTraining/step1.xyz)  
 
 ## Orca Input Files
 
-You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/mkdocs/Examples/Tutorials/MLIPTraining/templates)
+You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/main/Examples/Tutorials/MLIPTraining/templates)
 
 ---
 
@@ -57,7 +57,7 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 <script>
   let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
 
-  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/MLIPTraining/step1.xyz")
+  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Tutorials/MLIPTraining/step1.xyz")
     .then(r => r.text())
     .then(data => {
       viewer.addModel(data, "xyz");   // force XYZ format
@@ -75,67 +75,58 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 
 The full YAML input for this MLIP training workflow is included:
 
-➡️ [Examples/Tutorials/MLIP-Training/input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/MLIP-Training/input.yaml)
+➡️ [Examples/Tutorials/MLIPTraining/input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Tutorials/MLIPTraining/input.yaml)
 
-Download the template files [here](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/MLIP-Training/)
+Download the template files [here](https://github.com/sterling-group/ChemRefine/tree/main/Examples/Tutorials/MLIPTraining/templates)
 
 Example content:
 
 ```yaml
-orca_executable: /mfs/io/groups/sterling/software-tools/orca/orca_6_1_0_avx2/orca
+template_dir: ./templates
+scratch_dir: /scratch/
+output_dir: ./outputs
+executables: { orca: /orca/orca_6_1_0_avx2/orca }
+
 charge: 0
 multiplicity: 1
 
-initial_xyz: ./templates/step1.xyz
+input: ./templates/step1.xyz
 
 steps:
   - step: 1
-    operation: "GOAT"
-    engine: "DFT"
-    sample_type:
-      method: "integer"
-      parameters:
-       num_structures: 15
+    operation: goat
+    engine: orca
+    sample: { method: integer, count: 15 }
 
+  # Augment the dataset with normal-mode-sampled geometries.
   - step: 2
-    operation: "OPT+SP"
-    engine: "DFT"
-    normal_mode_sampling: True
-    normal_mode_sampling_parameters:
-      calc_type: "random"
-      displacement_vector: 1.0
-      num_random_displacements: 1
-    sample_type:
-      method: "integer"
-      parameters:
-       num_structures: 0
+    operation: opt_sp
+    engine: orca
+    nms: true
+    options: { target: random, displacement_value: 1.0, num_random_displacements: 1 }
+    sample: { method: integer, count: 0 }
 
+  # DFT labels (energies + forces) for training.
   - step: 3
-    operation: "OPT+SP"
-    engine: "DFT"
-    sample_type:
-      method: "integer"
-      parameters:
-        num_structures: 0
+    operation: opt_sp
+    engine: orca
+    sample: { method: integer, count: 0 }
 
+  # Train a MACE model on the labelled structures.
   - step: 4
-    operation: "MLFF_TRAIN"
-    sample_type:
-      method: "integer"
-      parameters:
-        num_structures: 0
+    engine: mlip-train
+    operation: mlip_train
+    sample: { method: integer, count: 0 }
 
+  # Validate the trained model via the MLIP gradient server.
   - step: 5
-    operation: "OPT+SP"
-    engine: "MLFF"
-    mlff:
-      model_name: "../step3/checkpoints_dir/goat_model_run-123_stagetwo.model"
-      task_name: "mace_off"
-      device: "cuda"
-    sample_type:
-      method: "integer"
-      parameters:
-       num_structures: 0
+    operation: opt_sp
+    engine: mlip-extopt
+    options:
+      model_name: ../step4/checkpoints_dir/goat_model_run-123_stagetwo.model
+      task_name: mace_off
+      device: cuda
+    sample: { method: integer, count: 0 }
 ```
 
 ---
@@ -152,7 +143,7 @@ Before running ChemRefine, ensure that:
 ### Option 1: Run from the Command Line
 
 ```bash
-chemrefine input.yaml --maxcores <N>
+chemrefine run input.yaml --maxcores <N>
 ```
 
 Here N is the number of simultaneous cores you want to use.
@@ -161,7 +152,7 @@ Here N is the number of simultaneous cores you want to use.
 
 On HPC systems with SLURM, submit the training workflow as a batch script:
 
-➡️ [Example ChemRefine SLURM script](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Templates/chemrefine.slurm)
+➡️ [Example ChemRefine SLURM script](https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Templates/chemrefine.slurm)
 
 ```bash
 #!/bin/bash
@@ -175,5 +166,5 @@ On HPC systems with SLURM, submit the training workflow as a batch script:
 
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
-chemrefine input.yaml --maxcores 8
+chemrefine run input.yaml --maxcores 8
 ```
