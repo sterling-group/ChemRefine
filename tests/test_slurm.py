@@ -275,6 +275,30 @@ def test_submit_local_failure_is_not_raised_but_recorded_on_disk(tmp_path: Path)
     assert script.with_suffix(".err").read_text(encoding="utf-8") == "boom\n"
 
 
+def test_submit_local_closes_handles_and_reraises_when_spawn_fails(tmp_path: Path):
+    """If spawning the background job fails, both log handles are closed and the error
+    propagates — no leaked file descriptors, no half-registered job."""
+    script = tmp_path / "boom.slurm"
+    script.write_text("#!/bin/bash\ntrue\n", encoding="utf-8")
+    opened: list = []
+    real_open = Path.open
+
+    def spy_open(self, *args, **kwargs):
+        handle = real_open(self, *args, **kwargs)
+        opened.append(handle)
+        return handle
+
+    before = set(slurm._LOCAL_PROCS)
+    with (
+        patch.object(Path, "open", spy_open),
+        patch.object(slurm.subprocess, "Popen", side_effect=OSError("cannot spawn")),
+        pytest.raises(OSError, match="cannot spawn"),
+    ):
+        slurm._submit_local(script)
+    assert len(opened) == 2 and all(handle.closed for handle in opened)
+    assert set(slurm._LOCAL_PROCS) == before  # no half-registered job
+
+
 # ---------------------------------------------------------------------------
 # is_finished
 # ---------------------------------------------------------------------------

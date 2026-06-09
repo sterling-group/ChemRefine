@@ -317,12 +317,17 @@ def _submit_local(script_path: str | Path, *, env: dict[str, str] | None = None)
     script_path = Path(script_path)
     out_handle = script_path.with_suffix(".runlog").open("w", encoding="utf-8")
     err_handle = script_path.with_suffix(".err").open("w", encoding="utf-8")
-    proc = subprocess.Popen(
-        ["bash", str(script_path)],
-        stdout=out_handle,
-        stderr=err_handle,
-        env={**os.environ, **env} if env else None,
-    )
+    try:
+        proc = subprocess.Popen(
+            ["bash", str(script_path)],
+            stdout=out_handle,
+            stderr=err_handle,
+            env={**os.environ, **env} if env else None,
+        )
+    except Exception:
+        out_handle.close()
+        err_handle.close()
+        raise
     job_id = f"{_LOCAL_JOB_PREFIX}{next(_LOCAL_JOB_COUNTER)}"
     _LOCAL_PROCS[job_id] = (proc, out_handle, err_handle)
     logger.info("launched %s locally as job %s (pid %s)", script_path, job_id, proc.pid)
