@@ -345,11 +345,16 @@ class Config(BaseModel):
     scratch_dir: Path | None = None
     """Fast-storage base for per-calculation working directories.
 
-    Leave unset (``None``) and ChemRefine will auto-derive a
-    ``_work_<jobid>_<ts>_<rand>`` subdirectory under ``output_dir`` for
-    each calculation — fine for laptop / local development. Set to a
-    fast filesystem on the compute node (e.g. ``/scratch/$USER``) for
-    HPC runs.
+    Leave unset (``None``) and ChemRefine auto-derives a
+    ``_work_<jobid>_<ts>_<rand>`` subdirectory under ``output_dir`` for each
+    calculation — fine for a laptop / local development.
+
+    On HPC, set it to the **compute node's fast local disk** (e.g.
+    ``/scratch/$USER``, node-local NVMe/SSD) — distinct from the shared network
+    filesystem (Lustre/NFS) that holds your home/project. The calculation's heavy
+    I/O then runs on that fast local disk instead of hammering the shared FS, and
+    the generated SLURM script's exit trap copies the result files back to
+    ``output_dir`` when the job ends.
     """
     output_dir: Path = Path("./outputs")
     input: Path | None = None

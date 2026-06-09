@@ -113,71 +113,121 @@ def run_step(
     parent_ids = tuple(s.id for s in prev_state.structures)
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     engine = engine if engine is not None else get_engine(step_cfg.engine)
-
     is_nms = step_cfg.nms and engine.supports_nms
 
-    if use_cache and cache.is_valid(
-        step_cfg=step_cfg, parent_ids=parent_ids, step_dir=ctx.step_dir
+    if use_cache:
+        cached = _cached_outcome(
+            ctx, step_cfg, parent_ids, engine,
+            is_nms=is_nms, resubmit_step=resubmit_step,
+            version=__version__, step_nms=step_nms,
+        )
+        if cached is not None:
+            return cached
+        # Full fingerprint invalid. For an NMS step whose *search* params changed
+        # but whose round-1 + criterion are unchanged (reuse fingerprint matches),
+        # reuse the round-1 freq + already-resolved children and re-attempt only
+        # the ledgered-unresolved parents — instead of re-running the whole step.
+        if is_nms:
+            reused = _nms_reuse_outcome(
+                ctx, step_cfg, parent_ids, engine,
+                version=__version__, step_nms=step_nms,
+            )
+            if reused is not None:
+                return reused
+
+    return _run_full_step(
+        ctx, step_cfg, parent_ids, engine,
+        is_nms=is_nms, version=__version__, step_nms=step_nms,
+    )
+
+
+def _cached_outcome(
+    ctx: StepContext,
+    step_cfg: StepConfig,
+    parent_ids: tuple[str, ...],
+    engine: CalculationEngine,
+    *,
+    is_nms: bool,
+    resubmit_step: int | None,
+    version: str,
+    step_nms,
+) -> StepOutcome | None:
+    """Outcome from a valid on-disk cache, or ``None`` if the cache is invalid.
+
+    A pending ``on_failure: stop`` ledger (scoped by ``resubmit_step``) re-attempts
+    only the still-failed structures; otherwise it's a plain cache hit (refilter).
+    """
+    if not cache.is_valid(step_cfg=step_cfg, parent_ids=parent_ids, step_dir=ctx.step_dir):
+        return None
+    cached = cache.load(ctx.step_dir)
+    if cached is None:  # pragma: no cover
+        raise CacheError("is_valid returned True but load returned None")
+    failed = cache.load_failed_jobs(ctx.step_dir)
+    if (
+        failed
+        and step_cfg.on_failure == "stop"
+        and (resubmit_step is None or resubmit_step == step_cfg.step)
     ):
+        results = (
+            step_nms._reattempt_nms(engine, ctx, step_cfg, cached, parent_ids, version)
+            if is_nms
+            else _resubmit_failed(engine, ctx, step_cfg, failed, parent_ids, version)
+        )
+        return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
+    logger.info(
+        "step %d: cache hit, reusing %d structures",
+        step_cfg.step, len(cached.results.structures),
+    )
+    return StepOutcome(state=filtering.apply(cached.results, step_cfg.sample), cache_hit=True)
+
+
+def _nms_reuse_outcome(
+    ctx: StepContext,
+    step_cfg: StepConfig,
+    parent_ids: tuple[str, ...],
+    engine: CalculationEngine,
+    *,
+    version: str,
+    step_nms,
+) -> StepOutcome | None:
+    """Reuse a cached NMS round-1 when only the *search* params changed.
+
+    Returns ``None`` (re-run the whole step) unless a cache exists whose reuse
+    fingerprint matches; then it re-attempts the ledgered-unresolved parents, or
+    re-stamps the cache when everything was already resolved.
+    """
+    try:
         cached = cache.load(ctx.step_dir)
-        if cached is None:  # pragma: no cover
-            raise CacheError("is_valid returned True but load returned None")
-        failed = cache.load_failed_jobs(ctx.step_dir)
-        if (
-            failed
-            and step_cfg.on_failure == "stop"
-            and (resubmit_step is None or resubmit_step == step_cfg.step)
-        ):
-            results = (
-                step_nms._reattempt_nms(engine, ctx, step_cfg, cached, parent_ids, __version__)
-                if is_nms
-                else _resubmit_failed(engine, ctx, step_cfg, failed, parent_ids, __version__)
-            )
-            return StepOutcome(
-                state=filtering.apply(results, step_cfg.sample), cache_hit=False
-            )
+    except CacheError:
+        cached = None
+    fingerprint = step_nms._nms_reuse_fingerprint(step_cfg, parent_ids)
+    if cached is None or getattr(cached, "reuse_fingerprint", "") != fingerprint:
+        return None
+    if cache.load_failed_jobs(ctx.step_dir):
+        results = step_nms._reattempt_nms(engine, ctx, step_cfg, cached, parent_ids, version)
+    else:
         logger.info(
-            "step %d: cache hit, reusing %d structures",
-            step_cfg.step,
-            len(cached.results.structures),
+            "step %d: NMS search params changed, all resolved — reusing cache", step_cfg.step
         )
-        return StepOutcome(
-            state=filtering.apply(cached.results, step_cfg.sample),
-            cache_hit=True,
+        cache.save(
+            step_cfg=step_cfg, parent_ids=parent_ids, results=cached.results,
+            step_dir=ctx.step_dir, chemrefine_version=version, reuse_fingerprint=fingerprint,
         )
+        results = cached.results
+    return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
-    # Full fingerprint invalid. For an NMS step whose *search* params changed but
-    # whose round-1 + criterion are unchanged (reuse fingerprint matches), reuse
-    # the round-1 freq + already-resolved children and re-attempt only the
-    # ledgered-unresolved parents — instead of re-running the whole step.
-    if use_cache and is_nms:
-        try:
-            cached = cache.load(ctx.step_dir)
-        except CacheError:
-            cached = None
-        if cached is not None and getattr(cached, "reuse_fingerprint", "") == (
-            step_nms._nms_reuse_fingerprint(step_cfg, parent_ids)
-        ):
-            if cache.load_failed_jobs(ctx.step_dir):
-                results = step_nms._reattempt_nms(
-                    engine, ctx, step_cfg, cached, parent_ids, __version__
-                )
-            else:
-                # All were resolved already; just re-stamp the new fingerprints.
-                logger.info(
-                    "step %d: NMS search params changed, all resolved — reusing cache",
-                    step_cfg.step,
-                )
-                cache.save(
-                    step_cfg=step_cfg, parent_ids=parent_ids, results=cached.results,
-                    step_dir=ctx.step_dir, chemrefine_version=__version__,
-                    reuse_fingerprint=step_nms._nms_reuse_fingerprint(step_cfg, parent_ids),
-                )
-                results = cached.results
-            return StepOutcome(
-                state=filtering.apply(results, step_cfg.sample), cache_hit=False
-            )
 
+def _run_full_step(
+    ctx: StepContext,
+    step_cfg: StepConfig,
+    parent_ids: tuple[str, ...],
+    engine: CalculationEngine,
+    *,
+    is_nms: bool,
+    version: str,
+    step_nms,
+) -> StepOutcome:
+    """Run the engine's full lifecycle (prepare → submit → parse → nms/policy → cache)."""
     logger.info("step %d (%s): preparing inputs", step_cfg.step, step_cfg.engine)
     inputs = engine.prepare(ctx)
     cache.save_manifest(
@@ -206,18 +256,11 @@ def run_step(
         results = _apply_failure_policy(successes, failures, ctx, step_cfg)
 
     cache.save(
-        step_cfg=step_cfg,
-        parent_ids=parent_ids,
-        results=results,
-        step_dir=ctx.step_dir,
-        chemrefine_version=__version__,
+        step_cfg=step_cfg, parent_ids=parent_ids, results=results,
+        step_dir=ctx.step_dir, chemrefine_version=version,
         reuse_fingerprint=step_nms._nms_reuse_fingerprint(step_cfg, parent_ids),
     )
-
-    return StepOutcome(
-        state=filtering.apply(results, step_cfg.sample),
-        cache_hit=False,
-    )
+    return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
 
 @dataclass(frozen=True)
@@ -239,7 +282,12 @@ def _succeeded(s: Structure) -> bool:
 
 
 def _failure_reason(s: Structure) -> str:
-    """Human reason for a parsed-but-unsuccessful structure."""
+    """Human-readable reason a parsed structure counts as a failure.
+
+    ``terminated is False`` → the engine crashed / didn't finish cleanly;
+    ``converged is False`` → it finished but the SCF/geometry didn't converge;
+    otherwise a generic ``"failed"`` (a flag the engine set we don't name).
+    """
     if s.terminated is False:
         return "did not terminate normally"
     if s.converged is False:
