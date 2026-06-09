@@ -1,79 +1,55 @@
+# Benzophenone spin states: DFT/MLIP screen, then singlet/triplet refinement.
 template_dir: ./templates
 scratch_dir: /scratch/
 output_dir: ./outputs
-orca_executable: /orca
+executables: { orca: /orca }
 
 charge: 0
 multiplicity: 1
 
-# Optional: Override default initial structure (default is /template_dir/step1.xyz)
-initial_xyz: ./templates/step1.xyz
+# Optional: override the default initial structure (default: template_dir/step1.xyz).
+input: ./templates/step1.xyz
 
 steps:
   - step: 1
-    engine: "DFT"
-    operation: "OPT+SP"
-    sample_type:
-      method: "energy_window"
-      parameters:
-        energy: 10
-        unit: kcal/mol
+    engine: orca
+    operation: opt_sp
+    sample: { method: energy_window, window_kcal: 10 }
 
-  # Step 2: Using MLFF to refine the calculation
+  # Refine with an MLIP gradient server (ORCA-driven).
   - step: 2
-    engine: "MLFF"
-    operation: "OPT+SP"
-    mlff:
-      model_name: "uma-s-1"
-      task_name: "omol"
-      device: "cuda"
-    sample_type:
-      method: "boltzmann"
-      parameters:
-        weight: 95
+    engine: mlip-extopt
+    operation: opt_sp
+    options: { model_name: uma-s-1, task_name: omol, device: cuda }
+    sample: { method: boltzmann, percent_cumulative: 95 }
 
   - step: 3
-    engine: "DFT"
-    operation: "OPT+SP"
-    sample_type:
-      method: "integer"
-      parameters:
-        num_structures: 3
+    engine: orca
+    operation: opt_sp
+    sample: { method: integer, count: 3 }
 
   - step: 4
-    engine: "DFT"
-    operation: "OPT+SP"
-    sample_type:
-      method: "integer"
-      parameters:
-        num_structures: 1
+    engine: orca
+    operation: opt_sp
+    sample: { method: integer, count: 1 }
 
   - step: 5
-    engine: "DFT"
-    operation: "OPT+SP"
+    engine: orca
+    operation: opt_sp
     charge: 0
     multiplicity: 1
-    sample_type:
-      method: "integer"
-      parameters:
-        num_structures: 0
+    sample: { method: integer, count: 0 }
 
   - step: 6
-    engine: "DFT"
-    operation: "OPT+SP"
+    engine: orca
+    operation: opt_sp
     charge: 0
     multiplicity: 3
-    sample_type:
-      method: "integer"
-      parameters:
-        num_structures: 0
+    sample: { method: integer, count: 0 }
 
   - step: 7
-    engine: "DFT"
-    operation: "OPT+SP"
+    engine: orca
+    operation: opt_sp
     charge: 0
     multiplicity: 1
-    sample_type:
-      method: "integer"
-      parameters:
-        num_structures: 0
+    sample: { method: integer, count: 0 }

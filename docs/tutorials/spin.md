@@ -4,7 +4,7 @@
     The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [Examples/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/input.yaml).
 
 
-This tutorial demonstrates how to use **ChemRefine** to investigate different **spin states** of a molecule and compare predictions between **DFT** and **machine-learned force fields (MLFFs)**.
+This tutorial demonstrates how to use **ChemRefine** to investigate different **spin states** of a molecule and compare predictions between **DFT** and **machine-learned interatomic potentials (MLIPs)**.
 
 ---
 
@@ -15,7 +15,7 @@ ChemRefine automates spin exploration with the following workflow:
 
 1. **Initialize geometry** from an input structure.  
 2. **Optimize structures** at multiple spin multiplicities.  
-3. **Compare MLFF vs DFT predictions** for spin energetics and geometries.  
+3. **Compare MLIP vs DFT predictions** for spin energetics and geometries.  
 4. **Extract spin energy gaps** for further analysis.  
 ---
 
@@ -23,7 +23,7 @@ ChemRefine automates spin exploration with the following workflow:
 
 - Installed **ChemRefine** (see [Installation Guide](../INSTALL.md))  
 - Access to an **ORCA executable**  
-- Example input (`spin_input.yaml`) from this tutorial folder  
+- Example input (`input.yaml`) from this tutorial folder  
 - Initial structure (`step1.xyz`)  
 
 ---
@@ -32,13 +32,13 @@ ChemRefine automates spin exploration with the following workflow:
 
 We start with an initial structure located in the templates folder:
 
-- 📄 [View spin_input.yaml](http://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Spin/heme_catalyst/input.yaml)  
-- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Spin/heme_catalyst/templates/step1.xyz)  
+- 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/Spin/heme_catalyst/input.yaml)  
+- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/Spin/heme_catalyst/templates/step1.xyz)  
 
 
   ## Orca Input Files
 
-You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/mkdocs/Examples/Tutorials/Spin/heme_catalyst/templates)
+You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/main/Examples/Tutorials/Spin/heme_catalyst/templates)
 
 ### Interactive 3D Viewer
 
@@ -48,7 +48,7 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 <script>
   let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
 
-  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Spin/heme.xyz")
+  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Tutorials/Spin/heme.xyz")
     .then(r => r.text())
     .then(data => {
       viewer.addModel(data, "xyz");   // force XYZ format
@@ -63,105 +63,74 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 
 ## YAML Configuration
 
-➡️ [Examples/Tutorials/Spin/spin_input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Spin/input.yaml)
+➡️ [Examples/Tutorials/Spin/heme_catalyst/input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Tutorials/Spin/heme_catalyst/input.yaml)
 
-Example content (excerpt):
+Example content:
 
 ```yaml
 template_dir: ./templates
 scratch_dir: /scratch/
 output_dir: ./outputs
-orca_executable: /orca
+executables: { orca: /orca }
 
 charge: 0
-multiplicity: 5 
+multiplicity: 5
 
-# Optional: Override default initial structure (default is /template_dir/step1.xyz)
-initial_xyz: ./templates/step1.xyz
+input: ./templates/step1.xyz
 
 steps:
   - step: 1
-    operation: "OPT+SP"
-    engine: "DFT"
-    sample_type:
-      method: "integer"  
-      parameters: 
-        num_structures: 0
+    operation: opt_sp
+    engine: orca
+    sample: { method: integer, count: 0 }
 
   - step: 2
-    operation: "OPT+SP"
-    engine: "DFT"
-    charge: 0 
+    operation: opt_sp
+    engine: orca
+    charge: 0
     multiplicity: 5
-    sample_type:
-      method: "integer"
-      parameters:
-        num_structures: 0
+    sample: { method: integer, count: 0 }
 
   - step: 3
-    operation: "OPT+SP"
-    engine: "DFT"
-    charge: 0 
+    operation: opt_sp
+    engine: orca
+    charge: 0
     multiplicity: 3
-    sample_type:
-      method: "integer"
-      parameters:
-        num_structures: 0   
+    sample: { method: integer, count: 0 }
 
   - step: 4
-    operation: "OPT+SP"
-    engine: "DFT"
-    charge: 0 
+    operation: opt_sp
+    engine: orca
+    charge: 0
     multiplicity: 1
-    sample_type:
-      method: "integer"
-      parameters:
-        num_structures: 0   
+    sample: { method: integer, count: 0 }
 
   - step: 5
-    operation: "OPT+SP"
-    engine: "MLFF"
+    operation: opt_sp
+    engine: mlip-extopt
     charge: 0
     multiplicity: 5
-    mlff:
-      model_name: "uma-s-1"
-      task_name: "omol"
-      device: "cuda"
-    sample_type:
-      method: "integer"  
-      parameters:
-       num_structures: 0  
+    options: { model_name: uma-s-1, task_name: omol, device: cuda }
+    sample: { method: integer, count: 0 }
 
   - step: 6
-    operation: "OPT+SP"
-    engine: "MLFF"
+    operation: opt_sp
+    engine: mlip-extopt
     charge: 0
     multiplicity: 3
-    mlff:
-      model_name: "uma-s-1"
-      task_name: "omol"
-      device: "cuda"
-    sample_type:
-      method: "integer"  
-      parameters:
-       num_structures: 0   
+    options: { model_name: uma-s-1, task_name: omol, device: cuda }
+    sample: { method: integer, count: 0 }
 
   - step: 7
-    operation: "OPT+SP"
-    engine: "MLFF"
+    operation: opt_sp
+    engine: mlip-extopt
     charge: 0
     multiplicity: 1
-    mlff:
-      model_name: "uma-s-1"
-      task_name: "omol"
-      device: "cuda"
-    sample_type:
-      method: "integer"  
-      parameters:
-       num_structures: 0  
+    options: { model_name: uma-s-1, task_name: omol, device: cuda }
+    sample: { method: integer, count: 0 }
 ```
 
-This workflow optimizes the same molecule in **singlet and triplet spin states** using both MLFF and DFT.
+This workflow optimizes the same molecule at **multiplicities 5, 3, and 1** using both DFT and MLIP.
 
 ---
 
@@ -177,7 +146,7 @@ Before running ChemRefine, ensure that:
 ### Option 1: Run from the Command Line
 
 ```bash
-chemrefine spin_input.yaml --maxcores <N>
+chemrefine run input.yaml --maxcores <N>
 ```
 
 Here `<N>` is the maximum number of simultaneous cores.  
@@ -187,26 +156,26 @@ Here `<N>` is the maximum number of simultaneous cores.
 On HPC systems with SLURM:
 
 ```bash
-sbatch ./Examples/templates/chemrefine.slurm
+sbatch ./Examples/Templates/chemrefine.slurm
 ```
 
-➡️ [Example ChemRefine SLURM script](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Templates/chemrefine.slurm)
+➡️ [Example ChemRefine SLURM script](https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Templates/chemrefine.slurm)
 
 ---
 
 ## Expected Outputs
 
-- **Singlet optimization (MLFF + DFT)** in `outputs/spin/step1/` and `outputs/spin/step2/`  
-- **Triplet optimization (MLFF + DFT)** in `outputs/spin/step3/` and `outputs/spin/step4/`  
+- **DFT-optimized spin states** (multiplicities 5 / 3 / 1) in `outputs/step2/`–`outputs/step4/`  
+- **MLIP-optimized spin states** (multiplicities 5 / 3 / 1) in `outputs/step5/`–`outputs/step7/`  
 
 Each directory contains `.out` logs, `.xyz` geometries, and total energy values.  
-You can compare these to evaluate **spin gaps** and test **MLFF accuracy vs DFT**.  
+You can compare these to evaluate **spin gaps** and test **MLIP accuracy vs DFT**.  
 
 ---
 
 ## Notes & Tips
 
 - Extend to higher spin states by adding more steps.  
-- Use MLFF first for speed, then benchmark with DFT.  
-- Monitor **ΔE(S=0 → S=2)** to quantify spin crossover energetics.  
+- Use MLIP first for speed, then benchmark with DFT.  
+- Monitor **ΔE(S=2 → S=0)** to quantify spin crossover energetics.  
 - Spin states may converge to different geometries — always visualize final `.xyz` files.  
