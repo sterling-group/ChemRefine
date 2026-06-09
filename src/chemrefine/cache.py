@@ -30,6 +30,7 @@ import pickle
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from chemrefine.config import StepConfig
 from chemrefine.errors import CacheError
@@ -124,6 +125,26 @@ def _atomic_write(path: Path, data: bytes) -> None:
         Path(tmp).unlink(missing_ok=True)
 
 
+def _write_json(path: Path, data: Any) -> None:
+    """Serialize ``data`` to indented JSON and write it atomically to ``path``."""
+    _atomic_write(path, json.dumps(data, indent=2).encode())
+
+
+def _read_json(path: Path, default: Any, *, label: str) -> Any:
+    """Return the JSON parsed from ``path``, or ``default`` if it doesn't exist.
+
+    Raises :class:`CacheError` (naming ``label``) if the file is present but
+    holds malformed JSON, so callers treat a corrupt sidecar as fatal rather
+    than silently continuing from an empty state.
+    """
+    if not path.is_file():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise CacheError(f"corrupt {label} at {path}: {e}") from e
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -167,7 +188,7 @@ def save(
         "parent_ids": [s.parent_id for s in results.structures],
         "energies_hartree": [s.energy_hartree for s in results.structures],
     }
-    _atomic_write(json_path, json.dumps(sidecar, indent=2).encode())
+    _write_json(json_path, sidecar)
     logger.info("saved step %d cache (fingerprint %s)", step_cfg.step, fp)
 
 
@@ -254,7 +275,7 @@ def save_manifest(
             for inp, out, sid in inputs.files
         ],
     }
-    _atomic_write(path, json.dumps(data, indent=2).encode())
+    _write_json(path, data)
     return path
 
 
@@ -266,15 +287,15 @@ def load_manifest(step_dir: Path) -> StepInputs | None:
     rather than silently re-parsing an empty batch.
     """
     path = manifest_path(step_dir)
-    if not path.is_file():
+    data = _read_json(path, None, label="manifest")
+    if data is None:
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
         files = tuple(
             (Path(rec["input"]), Path(rec["output"]), rec["id"])
             for rec in data["files"]
         )
-    except (json.JSONDecodeError, KeyError, TypeError) as e:
+    except (KeyError, TypeError) as e:
         raise CacheError(f"corrupt manifest at {path}: {e}") from e
     return StepInputs(files=files)
 
@@ -291,18 +312,12 @@ def failed_jobs_path(step_dir: Path) -> Path:
 
 def save_failed_jobs(step_dir: Path, failed: list[dict]) -> None:
     """Persist the list of failed-job records (``{"structure_id", "reason"}``)."""
-    _atomic_write(failed_jobs_path(step_dir), json.dumps(failed, indent=2).encode())
+    _write_json(failed_jobs_path(step_dir), failed)
 
 
 def load_failed_jobs(step_dir: Path) -> list[dict]:
     """Return the failed-job records for ``step_dir`` (``[]`` if none)."""
-    path = failed_jobs_path(step_dir)
-    if not path.is_file():
-        return []
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
-        raise CacheError(f"corrupt failed-jobs ledger at {path}: {e}") from e
+    return _read_json(failed_jobs_path(step_dir), [], label="failed-jobs ledger")
 
 
 def clear_failed_jobs(step_dir: Path) -> None:
