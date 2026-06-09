@@ -17,6 +17,8 @@ see :mod:`chemrefine.engines.mlip.extopt_engine`.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from chemrefine.engines._template_engine import TemplateScriptEngine
 from chemrefine.engines.base import register
 from chemrefine.engines.mlip.options import MlipOptions
@@ -27,8 +29,8 @@ from chemrefine.state import StepContext
 class MlipEngine(TemplateScriptEngine):
     """Direct MLIP engine — runs the user's ``step{N}.py`` per structure."""
 
-    name = "mlip"
-    label = "MLIP"
+    name: ClassVar[str] = "mlip"
+    label: ClassVar[str] = "MLIP"
 
     def _template_vars(self, ctx: StepContext) -> dict[str, object]:
         """Expose the MLIP options as template placeholders.

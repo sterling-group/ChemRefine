@@ -13,6 +13,8 @@ so tests can assert ordering without depending on Python's hash seed.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import numpy as np
 from ase import Atoms
 
@@ -43,8 +45,8 @@ def _fake_energy(structure_id: str) -> float:
 class FakeEngine:
     """Test stub satisfying :class:`~chemrefine.engines.base.CalculationEngine`."""
 
-    name = "fake"
-    supports_nms = False
+    name: ClassVar[str] = "fake"
+    supports_nms: ClassVar[bool] = False
 
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Write one trivial ``.inp`` per seed structure."""

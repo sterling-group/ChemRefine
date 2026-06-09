@@ -11,6 +11,8 @@ see :mod:`chemrefine.engines.pyscf.extopt_engine`.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from chemrefine.engines._template_engine import TemplateScriptEngine
 from chemrefine.engines.base import register
 
@@ -19,5 +21,5 @@ from chemrefine.engines.base import register
 class PyscfEngine(TemplateScriptEngine):
     """Direct PySCF engine — runs the user's ``step{N}.py`` per structure."""
 
-    name = "pyscf"
-    label = "PySCF"
+    name: ClassVar[str] = "pyscf"
+    label: ClassVar[str] = "PySCF"

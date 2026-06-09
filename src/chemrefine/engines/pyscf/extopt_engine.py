@@ -9,6 +9,7 @@ gradient is computed by :class:`PyscfExtOptCalculator`.
 from __future__ import annotations
 
 import logging
+from typing import ClassVar
 
 from chemrefine.engines.base import register
 from chemrefine.engines.orca.extopt import run_block
@@ -23,9 +24,9 @@ logger = logging.getLogger(__name__)
 class PyscfExtOptEngine(ExtOptOrcaEngine):
     """ORCA optimisation backed by a PySCF gradient server."""
 
-    name = "pyscf-extopt"
-    backend = "pyscf"
-    wrapper_filename = "pyscf_extopt.sh"
+    name: ClassVar[str] = "pyscf-extopt"
+    backend: ClassVar[str] = "pyscf"
+    wrapper_filename: ClassVar[str] = "pyscf_extopt.sh"
 
     # -- ORCA input customisation -----------------------------------------
 

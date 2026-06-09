@@ -21,6 +21,7 @@ YAML via :class:`~chemrefine.engines.mlip.options.MlipOptions`.
 from __future__ import annotations
 
 import logging
+from typing import ClassVar
 
 from chemrefine.engines.base import register
 from chemrefine.engines.mlip.extopt_calc import MlipExtOptCalculator
@@ -36,9 +37,9 @@ logger = logging.getLogger(__name__)
 class MlipExtOptEngine(ExtOptOrcaEngine):
     """ORCA optimisation backed by an MLIP gradient server."""
 
-    name = "mlip-extopt"
-    backend = "mlip"
-    wrapper_filename = "mlip_extopt.sh"
+    name: ClassVar[str] = "mlip-extopt"
+    backend: ClassVar[str] = "mlip"
+    wrapper_filename: ClassVar[str] = "mlip_extopt.sh"
 
     # -- ORCA input customisation -----------------------------------------
 

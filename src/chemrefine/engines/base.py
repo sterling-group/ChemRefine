@@ -10,27 +10,51 @@ plus the :data:`ENGINES` dict. ORCA-specific imports, MLIP imports, etc.
 never reach :mod:`chemrefine.pipeline` — that's how the orchestrator
 stays engine-agnostic.
 
-Adding a new engine (e.g. qchem, psi4, cfour)
+Adding a new engine
 ---------------------------------------------
-1. Create a package ``engines/<name>/`` — *everything* engine-specific lives
-   there (input writer, output parser, options model, ...). Shared, engine-
-   neutral infrastructure stays in ``engines/`` (this module, the SLURM batch
-   base, the template renderer, the ``_backend_server`` gradient service).
-2. Add ``engines/<name>/engine.py`` with a class that either subclasses
-   :class:`SlurmBatchEngine` (implement the ``_pal`` / ``_run_block`` hooks and
-   the ``output_globs`` / ``template_suffix`` / ``label`` ClassVars) or
-   satisfies :class:`CalculationEngine` directly, decorated with
-   ``@register("<name>")``. Import it from ``engines/<name>/__init__.py`` and
-   list that package in ``engines/__init__.py`` so registration fires. (Old
-   spellings are mapped to the canonical name by the config normalizer, not by
-   registration — see :func:`chemrefine.config._normalize_legacy`.)
-3. An external binary? Read its path from ``ctx.executables.get("<name>")``
-   (set in the YAML ``executables`` map). An importable backend? Ship it as a
-   ``pip install chemrefine[<name>]`` extra and import it in-process.
-4. To let ORCA optimise using this engine's gradients, add
-   ``engines/<name>/extopt_calc.py`` implementing
-   :class:`~chemrefine.engines._backend_server.base.ComputeBackend` and one
-   line in ``engines/_backend_server/registry.py``.
+Everything engine-specific lives in a new ``engines/<name>/`` package; shared,
+engine-neutral infrastructure stays in ``engines/`` (this module, the SLURM
+batch base, the template renderer, the ``_backend_server`` gradient service).
+
+**1. Pick a base** for ``engines/<name>/engine.py`` (decorate the class with
+``@register("<name>")``):
+
+* **The user supplies a ``step{N}.py``** they want run per structure → subclass
+  :class:`~chemrefine.engines._template_engine.TemplateScriptEngine`. You inherit
+  ``prepare`` / ``submit`` / ``parse`` / ``_pal`` / ``_run_block``; override only
+  ``_template_vars`` to inject ``$VAR`` placeholders from ``step.options``. (See
+  ``engines/mlip/engine.py`` — 20 lines.)
+* **A real binary / custom SLURM job** → subclass :class:`SlurmBatchEngine`:
+  implement ``prepare`` + ``parse``, the required hooks ``_pal`` + ``_run_block``,
+  and the ClassVars ``label`` / ``template_suffix`` / ``output_globs``. (See
+  ``engines/orca/engine.py``.)
+* **ORCA optimises using this engine's gradients** → subclass
+  :class:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine`: set the
+  ClassVars ``backend`` / ``wrapper_filename``, implement ``_server_cmd``, and
+  add a :class:`~chemrefine.engines._backend_server.base.ComputeBackend` in
+  ``engines/<name>/extopt_calc.py`` registered in
+  ``engines/_backend_server/registry.py``. (See ``engines/pyscf/extopt_engine.py``.)
+* **Local / orchestration-only** (no SLURM compute) → implement the
+  :class:`CalculationEngine` Protocol directly (the five lifecycle methods). (See
+  ``engines/mlip/train_engine.py`` / ``engines/_fake/engine.py``.)
+
+**2. Metadata** — declare ``name`` and ``supports_nms`` (plus any base-required
+ClassVars) as ``ClassVar[...]`` annotations, matching the other engines.
+
+**3. YAML knobs** → a Pydantic model in ``engines/<name>/options.py`` with a
+``from_raw`` classmethod (mirror ``engines/mlip/options.py`` /
+``engines/pyscf/options.py``); read it in ``prepare`` / ``_template_vars``.
+
+**4. Register** by importing the class in ``engines/<name>/__init__.py`` and
+listing the package in ``engines/__init__.py`` (registration is a side effect of
+that import). Legacy YAML spellings map to the canonical name in the config
+normalizer, not here — see :func:`chemrefine.config._normalize_legacy`.
+
+**5. Resources** — an external binary reads its path from
+``ctx.executables.get("<name>")``; an importable backend ships as a
+``pip install chemrefine[<name>]`` extra and is imported in-process (lazily).
+
+**6. Tests** go in ``tests/test_engines_<name>*.py``.
 """
 
 from __future__ import annotations

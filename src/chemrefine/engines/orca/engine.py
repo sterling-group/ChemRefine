@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 from ase import Atoms
@@ -48,11 +49,11 @@ logger = logging.getLogger(__name__)
 class OrcaEngine(SlurmBatchEngine):
     """Standard ORCA DFT engine."""
 
-    name = "orca"
-    supports_nms = True
-    label = "ORCA"
-    template_suffix = "inp"
-    output_globs = ("*.out", "*.xyz", "*.gbw", "*.hess")
+    name: ClassVar[str] = "orca"
+    supports_nms: ClassVar[bool] = True
+    label: ClassVar[str] = "ORCA"
+    template_suffix: ClassVar[str] = "inp"
+    output_globs: ClassVar[tuple[str, ...]] = ("*.out", "*.xyz", "*.gbw", "*.hess")
 
     def __init__(self) -> None:
         # Per-run, per-id caches populated in `parse` (parse-once): the
