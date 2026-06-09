@@ -3,12 +3,29 @@ and the engine's two-round orchestration + step resolution."""
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import numpy as np
 import pytest
 from ase import Atoms
+from synthetic import (
+    FREQUENCY_BLOCK,
+    NORMAL_MODES_BLOCK_2_ATOMS,
+    synthetic_dft_output,
+)
 
+from chemrefine.config import StepConfig
+from chemrefine.engines.base import get_engine
 from chemrefine.engines.orca import nms
-from chemrefine.state import Structure
+from chemrefine.ids import structure_artifact_path
+from chemrefine.state import (
+    JobBatch,
+    PipelineState,
+    StepContext,
+    StepInputs,
+    StepResults,
+    Structure,
+)
 
 
 def _struct(positions, sid: str = "0") -> Structure:
@@ -134,3 +151,159 @@ def test_select_applies_displacement_value():
     _, pos = sel[0]  # m5_pos; mode 5 moves atom0 by 0.1*6 = 0.6, x2.0 = 1.2
     np.testing.assert_allclose(pos[0], [1.2, 0.0, 0.0])
     np.testing.assert_allclose(pos[1], [1.0 - 1.2, 0.0, 0.0])
+
+
+def test_select_minimum_with_no_imaginary_returns_empty():
+    """No imaginary modes ⇒ nothing to displace (minimum/ts)."""
+    sel = nms.select_displacements(
+        _struct([[0, 0, 0], [1, 0, 0]]), {}, _modes(8),
+        nms.NmsOptions(target="minimum"), _rng(),
+    )
+    assert sel == []
+
+
+def test_select_random_with_no_candidate_modes_returns_empty():
+    """A zero-mode tensor leaves the random sampler no candidates."""
+    sel = nms.select_displacements(
+        _struct([[0, 0, 0], [1, 0, 0]]), {}, _modes(0),
+        nms.NmsOptions(target="random"), _rng(),
+    )
+    assert sel == []
+
+
+def test_select_skips_mode_with_shape_mismatch():
+    """A mode slice whose shape ≠ the geometry is logged and skipped."""
+    bad_modes = np.zeros((3, 3, 8))  # 3 "atoms" but the struct has 2
+    bad_modes[0, 0, 5] = 0.1
+    sel = nms.select_displacements(
+        _struct([[0, 0, 0], [1, 0, 0]]), {5: -42.0}, bad_modes,
+        nms.NmsOptions(target="minimum"), _rng(),
+    )
+    assert sel == []
+
+
+# ---------------------------------------------------------------------------
+# OrcaEngine two-round orchestration (mocked round-2 submit/parse)
+# ---------------------------------------------------------------------------
+
+
+def _orca_nms_ctx(tmp_path, *, target: str = "minimum") -> StepContext:
+    template_dir = tmp_path / "templates"
+    template_dir.mkdir(parents=True, exist_ok=True)
+    (template_dir / "step1.inp").write_text("! freq\n%pal\n  nprocs 1\nend\n", encoding="utf-8")
+    (template_dir / "cpu.slurm.header").write_text(
+        "#!/bin/bash\n#SBATCH --partition=x\n", encoding="utf-8"
+    )
+    seed = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
+    step_cfg = StepConfig(
+        step=1, engine="orca", operation="freq", nms=True, options={"target": target}
+    )
+    return StepContext(
+        step_cfg=step_cfg,
+        step_dir=tmp_path / "outputs" / "step1",
+        template_dir=template_dir,
+        scratch_dir=None,
+        prev_state=PipelineState(structures=(seed,)),
+        charge=0,
+        multiplicity=1,
+        max_cores=2,
+        slurm_template="cpu.slurm.header",
+        executables={},
+    )
+
+
+def test_orca_parse_caches_nms_freqs_and_modes(tmp_path):
+    """An NMS-step parse caches imaginary freqs + the normal-mode tensor."""
+    engine = get_engine("orca")
+    ctx = _orca_nms_ctx(tmp_path)
+    ctx.step_dir.mkdir(parents=True, exist_ok=True)
+    out = ctx.step_dir / "step1_structure_0.out"
+    out.write_text(
+        synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)])
+        + FREQUENCY_BLOCK + NORMAL_MODES_BLOCK_2_ATOMS + "\n****ORCA TERMINATED NORMALLY****\n",
+        encoding="utf-8",
+    )
+    inputs = StepInputs(files=((ctx.step_dir / "step1_structure_0.inp", out, "0"),))
+    engine.parse(inputs, ctx)
+    assert set(engine._imag_freqs["0"]) == {37, 38}
+    assert engine._modes["0"] is not None
+
+
+def test_orca_parse_sets_modes_none_when_block_missing(tmp_path):
+    """Freqs present but no NORMAL MODES block ⇒ ``_modes[sid]`` is ``None``."""
+    engine = get_engine("orca")
+    ctx = _orca_nms_ctx(tmp_path)
+    ctx.step_dir.mkdir(parents=True, exist_ok=True)
+    out = ctx.step_dir / "step1_structure_0.out"
+    out.write_text(
+        synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)])
+        + FREQUENCY_BLOCK + "\n****ORCA TERMINATED NORMALLY****\n",
+        encoding="utf-8",
+    )
+    inputs = StepInputs(files=((ctx.step_dir / "step1_structure_0.inp", out, "0"),))
+    engine.parse(inputs, ctx)
+    assert engine._modes["0"] is None
+
+
+def test_orca_normal_mode_sample_displaces_and_flags(tmp_path):
+    """A not-at-target structure is displaced, round 2 runs (mocked), children flagged."""
+    engine = get_engine("orca")
+    ctx = _orca_nms_ctx(tmp_path)
+    engine._imag_freqs = {"0": {5: -42.0}}  # one in-range imaginary mode
+    engine._modes = {"0": _modes(6)}
+    round1 = StepResults(structures=(_struct([[0, 0, 0], [0.74, 0, 0]], "0"),))
+    child = Structure(
+        id="0_m5_pos", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]),
+        parent_id="0", terminated=True,
+    )
+    captured = {}
+
+    def _fake_prepare(c):
+        captured["nms_dir"] = c.step_dir
+        return StepInputs(files=())
+
+    with (
+        patch.object(engine, "prepare", _fake_prepare),
+        patch.object(engine, "submit", lambda i, c: JobBatch(jobs={})),
+        patch.object(engine, "wait", lambda b: None),
+        patch.object(engine, "parse", lambda i, c: StepResults(structures=(child,))),
+    ):
+        result = engine.normal_mode_sample(round1, ctx)
+
+    assert captured["nms_dir"].name == "nms"
+    flagged = {s.id: s.converged for s in result.structures}
+    assert flagged == {"0_m5_pos": True}  # no imag cached for the child → resolved
+
+
+def test_orca_normal_mode_sample_skips_when_no_modes(tmp_path):
+    """A structure with no normal-mode tensor can't be displaced (left unresolved)."""
+    engine = get_engine("orca")
+    ctx = _orca_nms_ctx(tmp_path)
+    engine._imag_freqs = {"0": {5: -42.0}}
+    engine._modes = {"0": None}
+    round1 = StepResults(structures=(_struct([[0, 0, 0], [0.74, 0, 0]], "0"),))
+    assert engine.normal_mode_sample(round1, ctx).structures == ()
+
+
+def test_orca_resolve_nms_from_existing_reads_round2_outputs(tmp_path):
+    """rebuild-cache path: re-derive children and parse their existing ``nms/`` outputs."""
+    engine = get_engine("orca")
+    ctx = _orca_nms_ctx(tmp_path)
+    engine._imag_freqs = {"0": {5: -42.0}}
+    engine._modes = {"0": _modes(6)}
+    round1 = StepResults(structures=(_struct([[0, 0, 0], [0.74, 0, 0]], "0"),))
+    nms_dir = ctx.step_dir / "nms"
+    nms_dir.mkdir(parents=True, exist_ok=True)
+    for cid in ("0_m5_pos", "0_m5_neg"):
+        structure_artifact_path(nms_dir, 1, cid, "out").write_text(
+            synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)])
+            + "\n****ORCA TERMINATED NORMALLY****\n",
+            encoding="utf-8",
+        )
+    child = Structure(
+        id="0_m5_pos", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]),
+        parent_id="0", terminated=True,
+    )
+    with patch.object(engine, "parse", lambda i, c: StepResults(structures=(child,))):
+        result = engine.resolve_nms_from_existing(round1, ctx)
+    assert any(s.id == "0_m5_pos" for s in result.structures)

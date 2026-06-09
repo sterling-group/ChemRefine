@@ -160,7 +160,7 @@ def _cached_outcome(
     if not cache.is_valid(step_cfg=step_cfg, parent_ids=parent_ids, step_dir=ctx.step_dir):
         return None
     cached = cache.load(ctx.step_dir)
-    if cached is None:  # pragma: no cover
+    if cached is None:
         raise CacheError("is_valid returned True but load returned None")
     failed = cache.load_failed_jobs(ctx.step_dir)
     if (

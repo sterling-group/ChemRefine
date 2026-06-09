@@ -23,7 +23,7 @@ def _build_orb(*, model_name: str = "", device: str = "cuda", **_: Any) -> Any:
             from orb_models.forcefield.inference.calculator import ORBCalculator
         except ImportError:  # older layout
             from orb_models.forcefield.calculator import ORBCalculator
-    except ImportError as exc:  # pragma: no cover - optional dependency
+    except ImportError as exc:
         raise ImportError(
             "the 'orb' backend requires the 'orb-models' package "
             "(pip install orb-models); it is a separate library from SevenNet"
