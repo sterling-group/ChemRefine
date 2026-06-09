@@ -55,6 +55,11 @@ def resolve_target(config: Config, key: str | int) -> StepConfig:
     return step
 
 
+def _resolve_target_or_last(config: Config, target: str | int | None) -> StepConfig:
+    """Resolve ``target`` to a step, defaulting to the last step when it's None."""
+    return config.steps[-1] if target is None else resolve_target(config, target)
+
+
 def invalidate_step(config: Config, step_cfg: StepConfig) -> None:
     """Drop the cache for one step so the next run re-executes it."""
     step_dir = (config.output_dir / step_cfg.dir_name()).resolve()
@@ -81,9 +86,7 @@ def _action_rerun(config: Config, target: str | int | None) -> None:
     rounds; with current options) while prior steps cache-hit. To repair only
     failed jobs without redoing successful ones, use ``resume`` (incremental).
     """
-    target_step = (
-        config.steps[-1] if target is None else resolve_target(config, target)
-    )
+    target_step = _resolve_target_or_last(config, target)
     invalidate_step(config, target_step)
     pipeline.run(config, use_cache=True)
 
@@ -95,9 +98,7 @@ def _action_rerun_errors(config: Config, target: str | int | None) -> None:
     target step's still-failed structures are resubmitted (it must be
     ``on_failure: stop`` to have pending failures), and the run continues.
     """
-    target_step = (
-        config.steps[-1] if target is None else resolve_target(config, target)
-    )
+    target_step = _resolve_target_or_last(config, target)
     step_dir = (config.output_dir / target_step.dir_name()).resolve()
     n_failed = len(cache.load_failed_jobs(step_dir))
     if n_failed:
@@ -121,9 +122,7 @@ def _action_rebuild_cache(config: Config, target: str | int | None) -> None:
     ``StepCache`` rewritten. Use after a parser/cache change to avoid re-running
     finished jobs.
     """
-    target_step = (
-        config.steps[-1] if target is None else resolve_target(config, target)
-    )
+    target_step = _resolve_target_or_last(config, target)
     pipeline.run(config, use_cache=True, rebuild_step=target_step.step)
 
 
