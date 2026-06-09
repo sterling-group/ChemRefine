@@ -4,7 +4,7 @@
     The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [Examples/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/input.yaml).
 
 
-This tutorial demonstrates how to use **ChemRefine** to locate and validate **transition states (TS)** using a stepwise pipeline that combines **PES scans, optimizations, frequency analysis, and final single-point energy evaluation**.
+This tutorial demonstrates how to use **ChemRefine** to locate and validate **transition states (TS)** using a stepwise pipeline that combines a **PES scan, optimizations, and normal-mode sampling**.
 
 ---
 
@@ -15,9 +15,8 @@ ChemRefine automates TS exploration with the following workflow:
 
 1. **PES Scan:** Explore bond distances/angles to identify high-energy regions.  
 2. **TS Optimization (Top 5):** Optimize the five highest-energy structures from the PES scan.  
-3. **Frequency Analysis:** Confirm the presence of one imaginary mode.  
-4. **Imaginary Mode Displacement:** Remove the mode and generate corrected geometries.  
-5. **Final SP Calculation:** Compute high-level single-point energies on the corrected TS structure.  
+3. **Normal-Mode Sampling:** Run the frequency analysis and displace along the imaginary mode, keeping geometries with exactly one imaginary mode (`nms: true`, `target: ts`).  
+4. **Final SP Calculation:** Compute the single-point energy on the corrected TS structure.  
 
 ---
 
@@ -25,7 +24,7 @@ ChemRefine automates TS exploration with the following workflow:
 
 - Installed **ChemRefine** (see [Installation Guide](../INSTALL.md))  
 - Access to an **ORCA executable**  
-- Example input (`ts_input.yaml`) from this tutorial folder  
+- Example input (`input.yaml`) from this tutorial folder  
 - Initial structure (`step1.xyz`)  
 
 ---
@@ -34,12 +33,12 @@ ChemRefine automates TS exploration with the following workflow:
 
 We start with an initial structure located in the templates folder:
 
-- 📄 [View ts_input.yaml](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Transition-State/input.yaml)  
-- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Transition-State/step1.xyz)  
+- 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/Transition-State/input.yaml)  
+- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/Transition-State/step1.xyz)  
 
  ## Orca Input Files
 
-You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/mkdocs/Examples/Tutorials/Transition-State/templates)
+You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/main/Examples/Tutorials/Transition-State/templates)
 
 ### Interactive 3D Viewer
 
@@ -49,7 +48,7 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 <script>
   let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
 
-  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Tutorials/Transition-State/step1.xyz")
+  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Tutorials/Transition-State/step1.xyz")
     .then(r => r.text())
     .then(data => {
       viewer.addModel(data, "xyz");   // force XYZ format
@@ -64,55 +63,51 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 
 ## YAML Configuration
 
-➡️ [Examples/Tutorials/Transition-State/ts_input.yaml](https://github.com/sterling-group/ChemRefine/blob/mkdocs/Examples/Tutorials/Transition-State/input.yaml)
+➡️ [Examples/Tutorials/Transition-State/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/Transition-State/input.yaml)
+
+The scan coordinates and any geometry constraints live in the step's ORCA `.inp`
+template (e.g. a `%geom Scan ... end` block), not in the YAML.
 
 Example content (excerpt):
 
 ```yaml
 template_dir: ./templates
-scratch_dir: /scratch/ts_jobs
-output_dir: ./outputs/ts
-orca_executable: /mfs/io/groups/sterling/software-tools/orca/orca_6_1_0_avx2/orca
+scratch_dir: /scratch/
+output_dir: ./outputs
+executables: { orca: /orca/orca_6_1_0_avx2/orca }
 
-initial_xyz: ./templates/step1.xyz
+charge: 0
+multiplicity: 1
+
+input: ./templates/step1.xyz
 
 steps:
-  # Step 1: PES scan
+  # Step 1 — PES scan; keep the highest-energy frames as TS guesses.
   - step: 1
-    operation: "PES"
-    engine: "DFT"
-    sample_type:
-      method: "integer"
-      parameters:
-        num_structures: 20
-    constraints:
-      bonds: [(82-91), (0-79), (0-80), (0-82)]
+    operation: pes
+    engine: orca
+    sample: { method: high_energy, count: 5 }
 
-  # Step 2: Optimize top 5 high-energy structures
+  # Step 2 — optimise the guesses.
   - step: 2
-    operation: "OPT+SP"
-    engine: "DFT"
-    sample_type:
-      method: "energy_window"
-      parameters:
-        energy: top5
+    operation: opt_sp
+    engine: orca
+    sample: { method: integer, count: 5 }
 
-  # Step 3: Frequency calculation
+  # Step 3 — normal-mode sampling: frequency analysis + imaginary-mode
+  # displacement, keeping exactly one imaginary mode (a first-order saddle).
   - step: 3
-    operation: "FREQ"
-    engine: "DFT"
+    operation: opt_sp
+    engine: orca
+    nms: true
+    options: { target: ts, displacement_value: 1.0 }
+    sample: { method: integer, count: 3 }
 
-  # Step 4: Displace along imaginary mode
+  # Step 4 — final single point on the corrected TS.
   - step: 4
-    operation: "NORMAL_MODE_SAMPLING"
-    engine: "DFT"
-    parameters:
-      mode: imaginary
-
-  # Step 5: Final SP calculation on corrected TS
-  - step: 5
-    operation: "SP"
-    engine: "DFT"
+    operation: opt_sp
+    engine: orca
+    sample: { method: integer, count: 1 }
 ```
 
 ---
@@ -129,7 +124,7 @@ Before running ChemRefine, ensure that:
 ### Option 1: Run from the Command Line
 
 ```bash
-chemrefine ts_input.yaml --maxcores <N>
+chemrefine run input.yaml --maxcores <N>
 ```
 
 Here `<N>` is the maximum number of simultaneous jobs.  
@@ -139,20 +134,19 @@ Here `<N>` is the maximum number of simultaneous jobs.
 On HPC systems with SLURM:
 
 ```bash
-sbatch ./Examples/templates/chemrefine.slurm
+sbatch ./Examples/Templates/chemrefine.slurm
 ```
 
-➡️ [Example ChemRefine SLURM script](https://raw.githubusercontent.com/sterling-group/ChemRefine/mkdocs/Examples/Templates/chemrefine.slurm)
+➡️ [Example ChemRefine SLURM script](https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Templates/chemrefine.slurm)
 
 ---
 
 ## Expected Outputs
 
-- **PES scan geometries** in `outputs/ts/step1/`  
-- **Top 5 optimized candidates** in `outputs/ts/step2/`  
-- **Frequency analysis files** in `outputs/ts/step3/`  
-- **Imaginary mode displacement results** in `outputs/ts/step4/`  
-- **Final single-point energy** in `outputs/ts/step5/`  
+- **PES scan geometries** in `outputs/step1/`  
+- **Top 5 optimized candidates** in `outputs/step2/`  
+- **Normal-mode-sampled (corrected) TS geometries** in `outputs/step3/`  
+- **Final single-point energy** in `outputs/step4/`  
 
 Each directory contains `.out` logs, `.xyz` geometries, and summary files.  
 
@@ -162,7 +156,7 @@ Each directory contains `.out` logs, `.xyz` geometries, and summary files.
 
 - Increase the PES scan resolution for difficult reactions.  
 - Ensure only **one imaginary frequency** is present for a valid TS.  
-- Use `NORMAL_MODE_SAMPLING` to visualize imaginary modes.  
+- Use `nms: true` with `target: ts` on the optimisation step to remove spurious modes.  
 - Always double-check `.xyz` files to confirm correct TS geometry.  
 
 ### Identifying Good vs Bad Imaginary Modes
