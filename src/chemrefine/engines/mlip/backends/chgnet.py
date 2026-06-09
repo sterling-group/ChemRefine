@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from chemrefine.engines.mlip.calculator import register_backend
+from chemrefine.engines.mlip.calculator import optional_backend, register_backend
 
 
 @register_backend("chgnet")
@@ -19,7 +19,8 @@ def _build_chgnet(
     ``custom_mace`` (matching main). The canonical import is
     ``from chgnet.model import CHGNet, CHGNetCalculator``.
     """
-    from chgnet.model import CHGNet, CHGNetCalculator
+    with optional_backend(package="chgnet", extra="mlip-chgnet"):
+        from chgnet.model import CHGNet, CHGNetCalculator
 
     model = CHGNet.load(str(model_path)) if model_path else CHGNet.load()
     return CHGNetCalculator(model=model, use_device=device)

@@ -10,24 +10,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from chemrefine.engines.mlip.calculator import register_backend
+from chemrefine.engines.mlip.calculator import optional_backend, register_backend
 
 
 @register_backend("orb")
 def _build_orb(*, model_name: str = "", device: str = "cuda", **_: Any) -> Any:
     """ORB potential; ``model_name`` picks a loader from ``orb_models...pretrained``."""
-    try:
+    with optional_backend(package="orb-models", extra="mlip-orb"):
         from orb_models.forcefield import pretrained
 
         try:  # v3 layout
             from orb_models.forcefield.inference.calculator import ORBCalculator
         except ImportError:  # older layout
             from orb_models.forcefield.calculator import ORBCalculator
-    except ImportError as exc:
-        raise ImportError(
-            "the 'orb' backend requires the 'orb-models' package "
-            "(pip install orb-models); it is a separate library from SevenNet"
-        ) from exc
 
     loader = getattr(pretrained, model_name, None)
     if loader is None:

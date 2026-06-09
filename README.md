@@ -20,15 +20,14 @@ submission, caching, and resumable runs built in.
 ```bash
 pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git@main"
 
-# With MLFF backends (torch, mace-torch, fairchem, flask):
-pip install "chemrefine[mlff] @ git+https://github.com/sterling-group/ChemRefine.git@main"
+# With the default MLIP backends (MACE + FAIRChem):
+pip install "chemrefine[mlip] @ git+https://github.com/sterling-group/ChemRefine.git@main"
 ```
 
-Requires Python 3.11–3.13 and ORCA 6+. SLURM is the usual scheduler
-but is optional — the generated `.slurm` script runs unchanged under
-`bash` for local execution. See the
-[install guide](https://sterling-group.github.io/ChemRefine/INSTALL/) for
-GPU / FairChem / MACE setup notes.
+Requires Python 3.11–3.13 and ORCA 6+. SLURM is optional — the generated
+`.slurm` script runs unchanged under `bash` for local execution. The
+[install guide](https://sterling-group.github.io/ChemRefine/INSTALL/) covers the
+per-backend MLIP extras (MACE / FAIRChem / SevenNet / ORB / CHGNet), PySCF, and GPU setup.
 
 ## Run
 

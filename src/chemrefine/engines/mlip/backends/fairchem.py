@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from chemrefine.engines.mlip.calculator import register_backend
+from chemrefine.engines.mlip.calculator import optional_backend, register_backend
 
 #: Default checkpoint when ``model_name`` is unset (latest in the pinned
 #: fairchem build; ``uma-s-1p2`` = UMA-1.2 is newer but needs a newer fairchem).
@@ -31,7 +31,8 @@ def _build_fairchem(
     *, task_name: str, model_name: str = "", device: str = "cuda", **_: Any
 ) -> Any:
     """FAIRChem (UMA/eSEN): ``task_name`` is the head, ``model_name`` the checkpoint."""
-    from fairchem.core import FAIRChemCalculator, pretrained_mlip
+    with optional_backend(package="fairchem-core", extra="mlip-fairchem"):
+        from fairchem.core import FAIRChemCalculator, pretrained_mlip
 
     predictor = pretrained_mlip.get_predict_unit(
         model_name=model_name or _DEFAULT_MODEL, device=device

@@ -30,30 +30,56 @@ the **weights** handed to that builder.
 
 The 7 FAIRChem heads (``omol``/``omat``/``odac``/``oc20``/``oc22``/``oc25``/
 ``omc``) all register the one ``_build_fairchem`` and pass the head straight
-through to ``FAIRChemCalculator``. Backend imports happen inside each builder so
-this module imports cleanly even when the optional MLIP deps aren't installed.
+through to ``FAIRChemCalculator``. Backend imports happen inside each builder
+(wrapped in :func:`optional_backend`) so this module imports cleanly even when
+the optional MLIP deps aren't installed, and a missing one reports the
+``chemrefine[mlip-<backend>]`` extra to install (mace/fairchem ship in ``[mlip]``;
+sevenn/orb/chgnet are dedicated-env extras — see ``docs/INSTALL.md``).
 
 Adding a new backend = a new ``backends/<name>.py`` (decorated builder) listed in
 ``backends/__init__.py``::
 
-    from chemrefine.engines.mlip.calculator import register_backend
+    from chemrefine.engines.mlip.calculator import optional_backend, register_backend
 
     @register_backend("my_mlip")
     def _build_my_mlip(*, model_name="", device="cuda", **_):
-        from my_mlip_library import MyCalculator
+        with optional_backend(package="my-mlip-lib", extra="mlip-my_mlip"):
+            from my_mlip_library import MyCalculator
         return MyCalculator(model=model_name, device=device)
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from ase import Atoms
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def optional_backend(*, package: str, extra: str) -> Iterator[None]:
+    """Turn a missing optional-backend import into an actionable error.
+
+    Wrap a backend builder's lazy ``import`` so an absent library reports the
+    package to install (via the matching extra) instead of a bare
+    ``ModuleNotFoundError``. Each MLIP backend ships its deps in its own
+    ``chemrefine[mlip-<name>]`` extra — ``sevenn``/``orb``/``chgnet`` pull a
+    torch/e3nn that conflicts with the MACE+FAIRChem ``[mlip]`` stack, so they
+    need a dedicated environment.
+    """
+    try:
+        yield
+    except ImportError as exc:
+        raise ImportError(
+            f"this MLIP backend needs '{package}' — install it with "
+            f"`pip install chemrefine[{extra}]` (in its own environment)."
+        ) from exc
+
 
 # ---------------------------------------------------------------------------
 # Backend registry

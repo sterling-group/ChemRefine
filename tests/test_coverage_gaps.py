@@ -290,13 +290,23 @@ def test_rerun_errors_logs_when_no_failures(tmp_path: Path, monkeypatch):
 # --- orb older-layout fallback ----------------------------------------------
 
 
-def test_build_orb_missing_dependency_raises(monkeypatch):
-    """No ``orb_models`` installed → a helpful ImportError (the optional-dep guard)."""
-    monkeypatch.setitem(sys.modules, "orb_models", None)  # force ImportError
-    from chemrefine.engines.mlip.backends.orb import _build_orb
+@pytest.mark.parametrize(
+    "task, lib, package, extra",
+    [
+        ("mace_off", "mace", "mace-torch", "mlip-mace"),
+        ("omol", "fairchem", "fairchem-core", "mlip-fairchem"),
+        ("sevenn", "sevenn", "sevenn", "mlip-sevenn"),
+        ("chgnet", "chgnet", "chgnet", "mlip-chgnet"),
+        ("orb", "orb_models", "orb-models", "mlip-orb"),
+    ],
+)
+def test_backend_missing_dependency_names_the_extra(task, lib, package, extra, monkeypatch):
+    """A missing backend lib → a helpful ImportError naming the package + extra."""
+    monkeypatch.setitem(sys.modules, lib, None)  # force the lazy import to fail
+    from chemrefine.engines.mlip.calculator import build_calculator
 
-    with pytest.raises(ImportError, match="orb-models"):
-        _build_orb(model_name="orb_v2", device="cpu")
+    with pytest.raises(ImportError, match=f"{package}.*{extra}"):
+        build_calculator(task_name=task, model_name="x")
 
 
 def test_cached_outcome_raises_when_load_returns_none(tmp_path: Path, monkeypatch):

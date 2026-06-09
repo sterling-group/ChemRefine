@@ -57,22 +57,38 @@ server = [
     "flask>=3.0",
     "waitress>=3.0",
 ]
-# `mace-torch` pins `e3nn==0.4.4` exactly while every PyPI release of
-# `fairchem-core` requires `e3nn>=0.5`. The two are mutually
-# unsatisfiable, so we install fairchem from a patched fork that
-# relaxes the e3nn floor. The fork can be swapped for the upstream
-# PyPI release once either side gives ground.
-# downloads: torch (+CUDA), e3nn, mace-torch, fairchem-core (git clone), + server (heavy)
-mlip = [
+# MLIP backends — one self-contained extra each, so a single backend installs on
+# its own (mirrors the per-backend modules in engines/mlip/backends/). MACE and
+# FAIRChem co-install (the `[mlip]` default): `mace-torch` pins `e3nn==0.4.4` while
+# upstream `fairchem-core` needs `e3nn>=0.5`, so we use a patched fork that relaxes
+# the floor to `e3nn>=0.4.4` and the two share e3nn 0.4.4. `sevenn` / `orb` /
+# `chgnet` pull their OWN (conflicting) torch/e3nn trees — install each in a
+# DEDICATED environment; never combine them with `[mlip]`.
+# downloads: torch (+CUDA), e3nn, mace-torch, + server (heavy)
+mlip-mace = [
     "torch>=2.8.0,<2.9.0",
     "e3nn==0.4.4",
     "mace-torch>=0.3.16",
-    "fairchem-core @ git+https://github.com/sterling-group/fairchem-patched.git@main#subdirectory=packages/fairchem-core",
-    # Swap in once mace-torch lifts its `e3nn==0.4.4` pin and the
-    # fork above is no longer needed:
-    # "fairchem-core>=2.9",
     "chemrefine[server]",
 ]
+# downloads: torch (+CUDA), e3nn, fairchem-core (git clone), + server (heavy)
+mlip-fairchem = [
+    "torch>=2.8.0,<2.9.0",
+    "e3nn==0.4.4",
+    "fairchem-core @ git+https://github.com/sterling-group/fairchem-patched.git@main#subdirectory=packages/fairchem-core",
+    # Swap in once mace-torch lifts its `e3nn==0.4.4` pin and the fork is no
+    # longer needed: "fairchem-core>=2.9",
+    "chemrefine[server]",
+]
+# Dedicated-env alternatives (each pulls its own torch/e3nn — don't mix with [mlip]):
+# downloads: sevenn (→ e3nn>=0.5, torch_geometric, torch), + server (heavy)
+mlip-sevenn = ["sevenn", "chemrefine[server]"]
+# downloads: orb-models (→ torch>=2.8); needs Python >= 3.12, + server (heavy)
+mlip-orb = ["orb-models", "chemrefine[server]"]
+# downloads: chgnet (→ torch, pymatgen), + server (heavy)
+mlip-chgnet = ["chgnet", "chemrefine[server]"]
+# The default MLIP install = MACE + FAIRChem (the historical `[mlip]` stack).
+mlip = ["chemrefine[mlip-mace,mlip-fairchem]"]
 # Back-compat alias: `mlff` was renamed to `mlip`; keep the old extra working.
 mlff = ["chemrefine[mlip]"]
 # The `pyscf` and `pyscf-extopt` engines import `pyscf` lazily; the extopt

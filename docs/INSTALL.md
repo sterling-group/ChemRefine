@@ -5,8 +5,8 @@
 ```bash
 pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git"
 
-# With the MLFF backends (torch, mace-torch, fairchem, flask):
-pip install "chemrefine[mlff] @ git+https://github.com/sterling-group/ChemRefine.git"
+# With the default MLIP backends (MACE + FAIRChem):
+pip install "chemrefine[mlip] @ git+https://github.com/sterling-group/ChemRefine.git"
 ```
 
 ## From source
@@ -14,7 +14,7 @@ pip install "chemrefine[mlff] @ git+https://github.com/sterling-group/ChemRefine
 ```bash
 git clone https://github.com/sterling-group/ChemRefine.git
 cd ChemRefine
-pip install -e .[dev,test,docs,mlff]
+pip install -e .[dev,test,docs,mlip]
 pre-commit install   # optional: run ruff + interrogate on every commit
 ```
 
@@ -26,16 +26,38 @@ pre-commit install   # optional: run ruff + interrogate on every commit
   `.slurm` script can be executed with `bash` directly)
 
 The base install pulls `numpy`, `pyyaml`, `pandas`, `ase`, `rdkit`,
-`pydantic >= 2`, and `typer >= 0.12`. Optional extras layer backends on
-top:
+`pydantic >= 2`, and `typer >= 0.12`. Optional extras layer backends on top.
 
-- `[mlff]` — `torch >= 2.8, < 2.9`, `mace-torch >= 0.3.16`,
-  `e3nn == 0.4.4`, `fairchem-core` (Sterling Group's patched fork),
-  plus the `[server]` gradient server.
+### MLIP backends
+
+Each MLIP backend ships in its own extra, so you install only what you use. The
+default `[mlip]` install is **MACE + FAIRChem** — they co-exist because
+`mace-torch` pins `e3nn == 0.4.4` and Sterling Group's patched `fairchem-core`
+fork relaxes the upstream `e3nn >= 0.5` floor down to `>= 0.4.4`, so both share
+e3nn 0.4.4.
+
+| Extra | `task_name`(s) it enables | Pulls | Notes |
+|-------|---------------------------|-------|-------|
+| `[mlip]` | MACE + FAIRChem (the two rows below) | — | default; `[mlff]` is an alias |
+| `[mlip-mace]` | `mace_off`, `mace_mp`, `mace_omol`, `custom_mace` | `torch`, `e3nn==0.4.4`, `mace-torch` | |
+| `[mlip-fairchem]` | `omol`, `omat`, `odac`, `oc20`, `oc22`, `oc25`, `omc` | `torch`, `e3nn==0.4.4`, patched `fairchem-core` | UMA / eSEN checkpoints |
+| `[mlip-sevenn]` | `sevenn` | `sevenn` (→ `e3nn>=0.5`, `torch-geometric`) | **dedicated env** — `e3nn>=0.5` clashes with MACE's `==0.4.4` |
+| `[mlip-orb]` | `orb` | `orb-models` (→ `torch>=2.8`) | **dedicated env**; needs **Python ≥ 3.12** |
+| `[mlip-chgnet]` | `chgnet` | `chgnet` (→ `torch`, `pymatgen`) | **dedicated env**; pulls `pymatgen` |
+
+`sevenn` / `orb` / `chgnet` each drag their own (conflicting) torch/e3nn tree, so
+install each in a **separate environment** — never combine them with `[mlip]`.
+They don't pin a CUDA build of `torch`, so for GPU install the matching `torch`
+first. Selecting a backend whose package is missing raises a clear error naming
+the extra to install.
+
+### Other extras
+
 - `[pyscf]` — `pyscf` for the PySCF engine / PySCF-ExtOpt gradients
-  (plus `[server]`); `[pyscf-gpu]` adds `gpu4pyscf` on top.
+  (plus `[server]`); `[pyscf-gpu]` adds `gpu4pyscf-cuda12x` + `cutensor-cu12`
+  (CUDA 12; CUDA-11 hosts swap in the `-cuda11x` wheels).
 - `[server]` — just `flask` + `waitress` (the ExtOpt HTTP server);
-  pulled in automatically by `[mlff]` and `[pyscf]`.
+  pulled in automatically by every MLIP extra and `[pyscf]`.
 
 ## Verification
 

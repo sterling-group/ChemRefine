@@ -12,13 +12,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from chemrefine.engines.mlip.calculator import register_backend
+from chemrefine.engines.mlip.calculator import optional_backend, register_backend
 
 
 @register_backend("mace_off")
 def _build_mace_off(*, model_name: str = "", device: str = "cuda", **_: Any) -> Any:
     """MACE-OFF foundation model (organic molecules); ``model_name`` = the size."""
-    from mace.calculators import mace_off
+    with optional_backend(package="mace-torch", extra="mlip-mace"):
+        from mace.calculators import mace_off
 
     return mace_off(model=model_name or None, device=device)
 
@@ -26,7 +27,8 @@ def _build_mace_off(*, model_name: str = "", device: str = "cuda", **_: Any) -> 
 @register_backend("mace_mp")
 def _build_mace_mp(*, model_name: str = "", device: str = "cuda", **_: Any) -> Any:
     """MACE-MP foundation model (Materials Project); ``model_name`` = the size/model."""
-    from mace.calculators import mace_mp
+    with optional_backend(package="mace-torch", extra="mlip-mace"):
+        from mace.calculators import mace_mp
 
     return mace_mp(model=model_name or None, device=device)
 
@@ -34,7 +36,8 @@ def _build_mace_mp(*, model_name: str = "", device: str = "cuda", **_: Any) -> A
 @register_backend("mace_omol")
 def _build_mace_omol(*, model_name: str = "", device: str = "cuda", **_: Any) -> Any:
     """MACE-OMOL foundation model (charge/spin embeddings); ``model_name`` = the size."""
-    from mace.calculators import mace_omol
+    with optional_backend(package="mace-torch", extra="mlip-mace"):
+        from mace.calculators import mace_omol
 
     return mace_omol(model=model_name or None, device=device)
 
@@ -47,6 +50,7 @@ def _build_custom_mace(
     path = Path(model_path)
     if not path.is_file():
         raise FileNotFoundError(f"custom MACE model not found: {path}")
-    from mace.calculators import MACECalculator
+    with optional_backend(package="mace-torch", extra="mlip-mace"):
+        from mace.calculators import MACECalculator
 
     return MACECalculator(model_paths=str(path), device=device)
