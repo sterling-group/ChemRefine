@@ -110,6 +110,8 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedStructu
         raise OutputParseError(f"no CARTESIAN COORDINATES block in {src}")
 
     symbols, positions = _parse_coord_block(coord_blocks[-1])
+    if not symbols:
+        raise OutputParseError(f"CARTESIAN COORDINATES block has no atoms in {src}")
     return [
         ParsedStructure(
             symbols=symbols,

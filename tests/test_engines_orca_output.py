@@ -190,6 +190,22 @@ def test_parse_dft_missing_coords_raises(tmp_path: Path):
         parse_dft(path)
 
 
+def test_parse_dft_empty_coord_block_raises(tmp_path: Path):
+    """A coord block present but with no parseable atom rows is a corrupt output —
+    raise rather than emit a 0-atom structure that would be cached/filtered silently."""
+    path = tmp_path / "empty-coords.out"
+    path.write_text(
+        "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "---------------------------------\n"
+        "  ...truncated\n"               # no 4-token atom rows survive
+        "---------------------------------\n"
+        "FINAL SINGLE POINT ENERGY     -1.0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(OutputParseError, match="no atoms"):
+        parse_dft(path)
+
+
 # ---------------------------------------------------------------------------
 # parse_forces
 # ---------------------------------------------------------------------------
