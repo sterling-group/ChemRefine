@@ -238,6 +238,52 @@ def _normalize_legacy(raw: dict) -> dict:
     return out
 
 
+def _move_engine_block(s: dict) -> str | None:
+    """Fold a legacy engine block (``mlff:``/``pyscf:``/``trainer:``) into ``options``.
+
+    Mutates ``s`` (pops the block, merges its keys into ``options``) and returns the
+    canonical engine that block implies, or ``None`` when no block is present.
+    """
+    options = dict(s.get("options") or {})
+    block_engine: str | None = None
+    for block, engine_name in _LEGACY_BLOCKS.items():
+        if isinstance(s.get(block), dict):
+            logger.warning("step-level `%s:` block is deprecated; use `options:`", block)
+            for k, v in s.pop(block).items():
+                if k not in _OBSOLETE_OPTION_KEYS:
+                    options.setdefault(k, v)
+            block_engine = engine_name
+    if options or "options" in s:
+        s["options"] = options
+    return block_engine
+
+
+def _normalize_nms_keys(s: dict) -> None:
+    """Rewrite legacy ``normal_mode_sampling{,_parameters}`` into ``nms`` + ``options``.
+
+    main's knobs are renamed: ``calc_type`` → ``target`` (``rm_imag`` → ``ts``, the
+    default; ``random`` unchanged), ``displacement_vector`` → ``displacement_value``;
+    other keys pass through. Mutates ``s`` in place.
+    """
+    if "normal_mode_sampling" not in s and "normal_mode_sampling_parameters" not in s:
+        return
+    logger.warning("`normal_mode_sampling*` is deprecated; use `nms` + `options`")
+    nms_on = bool(s.pop("normal_mode_sampling", False))
+    if nms_on:
+        s["nms"] = True
+    params = dict(s.pop("normal_mode_sampling_parameters", None) or {})
+    opts = dict(s.get("options") or {})
+    calc_type = str(params.pop("calc_type", "rm_imag")).lower()  # main default rm_imag → ts
+    if nms_on:
+        opts.setdefault("target", {"rm_imag": "ts"}.get(calc_type, calc_type))
+    if "displacement_vector" in params:
+        opts.setdefault("displacement_value", params.pop("displacement_vector"))
+    for k, v in params.items():
+        opts.setdefault(k, v)
+    if opts:
+        s["options"] = opts
+
+
 def _normalize_step(step: Any) -> Any:
     """Rewrite one legacy step dict to the current schema (helper for :func:`_normalize_legacy`)."""
     if not isinstance(step, dict):
@@ -250,20 +296,8 @@ def _normalize_step(step: Any) -> Any:
             "(see docs/migrating-from-main.md)"
         )
 
-    # Engine-config block (mlff:/pyscf:/trainer:) → options, and it sets the engine.
-    options = dict(s.get("options") or {})
-    block_engine: str | None = None
-    for block, engine_name in _LEGACY_BLOCKS.items():
-        if isinstance(s.get(block), dict):
-            logger.warning("step-level `%s:` block is deprecated; use `options:`", block)
-            for k, v in s.pop(block).items():
-                if k not in _OBSOLETE_OPTION_KEYS:
-                    options.setdefault(k, v)
-            block_engine = engine_name
-    if options or "options" in s:
-        s["options"] = options
-
-    # Engine name: the block decides it, else the rename map (after lower-casing).
+    # Engine name: a moved engine-config block decides it, else the rename map.
+    block_engine = _move_engine_block(s)
     if block_engine is not None:
         s["engine"] = block_engine
     elif isinstance(s.get("engine"), str):
@@ -278,25 +312,7 @@ def _normalize_step(step: Any) -> Any:
             s["engine"] = "mlip-train"
             s["operation"] = "mlip_train"
 
-    # normal_mode_sampling{,_parameters} → nms + options. main's NMS knobs are
-    # renamed: calc_type → target (rm_imag → ts, the default; random → random),
-    # displacement_vector → displacement_value; other keys pass through.
-    if "normal_mode_sampling" in s or "normal_mode_sampling_parameters" in s:
-        logger.warning("`normal_mode_sampling*` is deprecated; use `nms` + `options`")
-        nms_on = bool(s.pop("normal_mode_sampling", False))
-        if nms_on:
-            s["nms"] = True
-        params = dict(s.pop("normal_mode_sampling_parameters", None) or {})
-        opts = dict(s.get("options") or {})
-        calc_type = str(params.pop("calc_type", "rm_imag")).lower()  # main default rm_imag → ts
-        if nms_on:
-            opts.setdefault("target", {"rm_imag": "ts"}.get(calc_type, calc_type))
-        if "displacement_vector" in params:
-            opts.setdefault("displacement_value", params.pop("displacement_vector"))
-        for k, v in params.items():
-            opts.setdefault(k, v)
-        if opts:
-            s["options"] = opts
+    _normalize_nms_keys(s)
 
     # sample_type{method, parameters} → sample{method, <renamed>}.
     if "sample_type" in s:

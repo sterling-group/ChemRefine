@@ -189,51 +189,50 @@ def _parse_xyz_ensemble(
     frame at the end of an ensemble.
     """
     lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
-
     structures: list[ParsedStructure] = []
     i = 0
     while i < len(lines):
-        line = lines[i].strip()
-        if not line.isdigit():
-            i += 1
-            continue
-        n_atoms = int(line)
-        if i + 1 + n_atoms >= len(lines):
-            break
-        header = lines[i + 1]
-        m = header_re.search(header)
-        if m is None:
-            i += 2 + n_atoms
-            continue
-        energy = float(m.group(1))
-
-        symbols: list[str] = []
-        positions: list[list[float]] = []
-        ok = True
-        for offset in range(n_atoms):
-            parts = lines[i + 2 + offset].split()
-            if len(parts) < 4:
-                ok = False
-                break
-            symbols.append(parts[0])
-            positions.append([float(parts[1]), float(parts[2]), float(parts[3])])
-        if not ok:
-            i += 2 + n_atoms
-            continue
-
-        structures.append(
-            ParsedStructure(
-                symbols=tuple(symbols),
-                positions=np.array(positions, dtype=np.float64),
-                energy_hartree=energy,
-                forces_ev_per_a=None,
-            )
-        )
-        i += 2 + n_atoms
-
+        structure, i = _parse_xyz_frame(lines, i, header_re)
+        if structure is not None:
+            structures.append(structure)
     if not structures:
         raise OutputParseError(f"no {fmt_name} frames found in {path}")
     return structures
+
+
+def _parse_xyz_frame(
+    lines: list[str], i: int, header_re: re.Pattern[str]
+) -> tuple[ParsedStructure | None, int]:
+    """Parse one XYZ frame at ``lines[i]``; return ``(structure_or_None, next_index)``.
+
+    ``None`` means "nothing here, advance past it": a non-count line (``+1``), a
+    header that doesn't match ``header_re`` or a short atom row (past the frame),
+    or a truncated trailing frame (jump to the end to stop the walk).
+    """
+    line = lines[i].strip()
+    if not line.isdigit():
+        return None, i + 1
+    n_atoms = int(line)
+    if i + 1 + n_atoms >= len(lines):
+        return None, len(lines)  # truncated trailing frame → stop
+    m = header_re.search(lines[i + 1])
+    if m is None:
+        return None, i + 2 + n_atoms
+    symbols: list[str] = []
+    positions: list[list[float]] = []
+    for offset in range(n_atoms):
+        parts = lines[i + 2 + offset].split()
+        if len(parts) < 4:
+            return None, i + 2 + n_atoms
+        symbols.append(parts[0])
+        positions.append([float(parts[1]), float(parts[2]), float(parts[3])])
+    structure = ParsedStructure(
+        symbols=tuple(symbols),
+        positions=np.array(positions, dtype=np.float64),
+        energy_hartree=float(m.group(1)),
+        forces_ev_per_a=None,
+    )
+    return structure, i + 2 + n_atoms
 
 
 def parse_goat_ensemble(path: str | Path) -> list[ParsedStructure]:

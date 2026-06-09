@@ -228,51 +228,24 @@ def build_script(
     extra_header_fields: Sequence[tuple[str, object]] = (),
     save_scratch: bool = False,
 ) -> Path:
-    """Assemble a SLURM script at ``script_path`` and return its path.
+    """Assemble a SLURM script at ``script_path`` from a header template + a run block.
 
-    Parameters
-    ----------
-    job_name:
-        Becomes ``#SBATCH --job-name`` and the stem of the ``.runlog`` /
-        ``.err`` files.
-    pal:
-        Becomes ``#SBATCH --ntasks``. ``--cpus-per-task`` is pinned to 1.
-    template_path:
-        Cluster-specific SLURM header (e.g. ``cpu.slurm.header``). Any
-        ``--ntasks`` / ``--cpus-per-task`` / ``--job-name`` /
-        ``--output`` / ``--error`` directives the user wrote there are
-        dropped and replaced with our overrides so PAL stays consistent.
-    script_path:
-        Output path for the generated ``.slurm`` script (parents will be
-        created).
-    input_path:
-        The engine input file. Copied into the per-calculation
-        ``$WORK_DIR`` so the calculation runs on local fast storage.
-    output_dir:
-        Where to copy results back to once the calculation finishes.
-        Used as the runlog destination via absolute ``#SBATCH --output``.
-    scratch_dir:
-        Fast-storage base for the per-calculation work dir. When
-        ``None``, the work dir is auto-derived as a sibling under
-        ``output_dir`` (``_work_<jobid>_<ts>_<rand>``). When set, the
-        work dir lives under ``scratch_dir`` instead.
-    run_block:
-        Engine-specific bash that actually invokes the calculation. It
-        runs after ``cd $WORK_DIR``; it can reference ``$OUTPUT_DIR``,
-        ``$WORK_DIR``, and the basename of the input file.
-    engine, operation, step, structure_id, step_label:
-        Forwarded to :mod:`chemrefine.job_log` so the runlog header /
-        footer carry the same fields direct-mode engines emit.
-    output_globs:
-        Shell globs of result files to copy back to ``output_dir`` once
-        the calculation finishes. Engines declare what they produce
-        (e.g. ORCA: ``("*.out", "*.xyz", "*.gbw", "*.hess")``); the
-        SLURM layer never assumes a specific engine's file set.
-    extra_header_fields:
-        Engine-specific ``(key, value)`` rows appended after the
-        generic runlog header fields. ORCA uses this for
-        ``orca_executable``; other engines pass whatever identifies the
-        binary they shelled out to.
+    Reads ``template_path`` (a cluster header), strips any ``#SBATCH``
+    directives we own (``--ntasks``/``--cpus-per-task``/``--job-name``/
+    ``--output``/``--error``) and re-adds them so PAL + log paths stay
+    consistent, then appends a scratch-setup + on-exit trap that runs the
+    engine's ``run_block`` in a fresh ``$WORK_DIR`` and copies ``output_globs``
+    back to ``output_dir``. Notable args:
+
+    * ``pal`` → ``#SBATCH --ntasks`` (``--cpus-per-task`` pinned to 1).
+    * ``scratch_dir`` → base for the per-calc ``$WORK_DIR``; ``None`` auto-derives
+      ``_work_<jobid>_<ts>_<rand>`` under ``output_dir`` (see :class:`Config`).
+    * ``run_block`` → engine bash run after ``cd $WORK_DIR`` (may use
+      ``$WORK_DIR``/``$OUTPUT_DIR`` + the input basename).
+    * ``output_globs`` → result-file globs copied back on exit (engine-declared).
+    * ``engine``/``operation``/``step``/``structure_id``/``step_label`` /
+      ``extra_header_fields`` → forwarded to :mod:`chemrefine.job_log` for the
+      runlog header/footer.
     """
     sbatch_lines, body_lines = _read_header(template_path)
     runlog_path = output_dir / f"{job_name}.runlog"

@@ -61,6 +61,40 @@ def build_mol(
     return mol
 
 
+def _build_scf(
+    mol, *, method: str, xc: str, want_gpu: bool, closed_shell: bool
+) -> tuple[Any, bool, str]:
+    """Construct the (un-run) SCF object; return ``(mf, gpu_used, gpu_msg)``.
+
+    ``method`` is ``"hf"`` (RHF/UHF) or DFT (RKS/UKS). For DFT, ``want_gpu`` tries
+    the gpu4pyscf RKS/UKS and falls back to CPU pyscf on any import/init failure;
+    HF stays CPU-only.
+    """
+    from pyscf import dft, scf
+
+    if method == "hf":
+        mf = scf.RHF(mol) if closed_shell else scf.UHF(mol)
+        hf_msg = "GPU requested but HF GPU path not enabled; using CPU HF" if want_gpu else ""
+        return mf, False, hf_msg
+
+    if want_gpu:
+        try:
+            from gpu4pyscf.dft import RKS as GPU_RKS  # type: ignore
+            from gpu4pyscf.dft import UKS as GPU_UKS  # type: ignore
+
+            mf = GPU_RKS(mol) if closed_shell else GPU_UKS(mol)
+            mf.xc = xc
+            return mf, True, "GPU4PySCF DFT backend (gpu4pyscf.dft.RKS/UKS)"
+        except Exception as e:
+            mf = dft.RKS(mol) if closed_shell else dft.UKS(mol)
+            mf.xc = xc
+            return mf, False, f"Failed to init gpu4pyscf; fell back to CPU DFT ({e})"
+
+    mf = dft.RKS(mol) if closed_shell else dft.UKS(mol)
+    mf.xc = xc
+    return mf, False, ""
+
+
 def run_dft(
     mol,
     *,
@@ -81,33 +115,14 @@ def run_dft(
     ``dograd`` is true, otherwise as an empty list. ``mf`` is returned
     so the caller can run downstream tensor extraction.
     """
-    from pyscf import dft, lib, scf
+    from pyscf import lib
 
     lib.num_threads(nthreads)
-    closed_shell = mol.spin == 0
     t0 = time.perf_counter()
-    gpu_used = False
-    gpu_msg = ""
-
-    if method == "hf":
-        mf = scf.RHF(mol) if closed_shell else scf.UHF(mol)
-        if want_gpu:
-            gpu_msg = "GPU requested but HF GPU path not enabled; using CPU HF"
-    else:
-        if want_gpu:
-            try:
-                from gpu4pyscf.dft import RKS as GPU_RKS  # type: ignore
-                from gpu4pyscf.dft import UKS as GPU_UKS  # type: ignore
-
-                mf = GPU_RKS(mol) if closed_shell else GPU_UKS(mol)
-                gpu_used = True
-                gpu_msg = "GPU4PySCF DFT backend (gpu4pyscf.dft.RKS/UKS)"
-            except Exception as e:
-                mf = dft.RKS(mol) if closed_shell else dft.UKS(mol)
-                gpu_msg = f"Failed to init gpu4pyscf; fell back to CPU DFT ({e})"
-        else:
-            mf = dft.RKS(mol) if closed_shell else dft.UKS(mol)
-        mf.xc = xc
+    closed_shell = mol.spin == 0
+    mf, gpu_used, gpu_msg = _build_scf(
+        mol, method=method, xc=xc, want_gpu=want_gpu, closed_shell=closed_shell
+    )
 
     if use_df:
         try:
