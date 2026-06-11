@@ -218,3 +218,20 @@ def test_smiles_to_xyz_logs_when_embed_fails(tmp_path: Path):
     with patch.object(AllChem, "EmbedMolecule", return_value=1):
         written = smiles_to_xyz(csv, tmp_path / "out")
     assert written == []
+
+
+def test_smiles_to_xyz_is_reproducible(tmp_path: Path):
+    """Two conversions of the same CSV must produce identical 3D geometries.
+
+    RDKit's embedding is non-deterministic unless seeded; the pipeline
+    re-bootstraps its seeds on every ``run``/``resume``, so unseeded
+    embedding would make runs irreproducible (and churn the seed-content
+    cache fingerprint).
+    """
+    from chemrefine.io import smiles_to_xyz
+
+    csv = tmp_path / "mols.csv"
+    csv.write_text("smiles\nCCO\nc1ccccc1\n", encoding="utf-8")
+    first = smiles_to_xyz(csv, tmp_path / "out_a")
+    second = smiles_to_xyz(csv, tmp_path / "out_b")
+    assert [p.read_text() for p in first] == [p.read_text() for p in second]

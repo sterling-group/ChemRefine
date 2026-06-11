@@ -124,11 +124,16 @@ def smiles_to_xyz(
     *,
     smiles_column: str = "smiles",
     max_attempts: int = 10,
+    random_seed: int = 42,
 ) -> list[Path]:
     """Convert a CSV column of SMILES into individual 3D XYZ files.
 
     Each successful conversion writes ``output_dir/structure_{row}.xyz``.
     Invalid SMILES are logged and skipped — they do not abort the run.
+
+    ``random_seed`` seeds RDKit's conformer embedding (which is otherwise
+    non-deterministic), so repeated runs — and ``resume``, which
+    re-bootstraps the seeds — regenerate identical 3D geometries.
     """
     import pandas as pd
     from rdkit import Chem
@@ -150,7 +155,7 @@ def smiles_to_xyz(
             logger.warning("invalid SMILES at row %d: %s", idx, raw)
             continue
         mol = Chem.AddHs(mol)
-        if AllChem.EmbedMolecule(mol, maxAttempts=max_attempts) != 0:
+        if AllChem.EmbedMolecule(mol, maxAttempts=max_attempts, randomSeed=random_seed) != 0:
             logger.warning("failed 3D embedding for SMILES: %s", raw)
             continue
         AllChem.UFFOptimizeMolecule(mol)
