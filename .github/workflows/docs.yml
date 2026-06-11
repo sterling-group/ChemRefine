@@ -8,6 +8,12 @@ on:
 permissions:
   contents: write
 
+# Serialise deploys (two concurrent `gh-deploy --force` runs race on the
+# gh-pages branch); don't cancel one mid-push.
+concurrency:
+  group: docs-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest

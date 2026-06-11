@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+# Supersede in-flight runs of the same branch/PR — only the newest push matters.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   FORCE_COLOR: "1"
 
