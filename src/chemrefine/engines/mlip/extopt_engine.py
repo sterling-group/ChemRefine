@@ -46,11 +46,7 @@ class MlipExtOptEngine(ExtOptOrcaEngine):
     def _extra_blocks(self, ctx: StepContext) -> str:
         """Emit a ``%method ProgExt "<wrapper>"`` block tied to this step."""
         wrapper = self._wrapper_path(ctx)
-        return (
-            "%method\n"
-            f'  ProgExt "{wrapper}"\n'
-            "end"
-        )
+        return f'%method\n  ProgExt "{wrapper}"\nend'
 
     # -- SLURM customisation ----------------------------------------------
 

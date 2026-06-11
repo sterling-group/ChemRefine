@@ -27,9 +27,7 @@ def synthetic_dft_output(
         ``(symbol, x, y, z)`` tuples for a single ``CARTESIAN
         COORDINATES (ANGSTROEM)`` block.
     """
-    coord_lines = "\n".join(
-        f"  {sym:2s}  {x:.6f}  {y:.6f}  {z:.6f}" for sym, x, y, z in coords
-    )
+    coord_lines = "\n".join(f"  {sym:2s}  {x:.6f}  {y:.6f}  {z:.6f}" for sym, x, y, z in coords)
     head = "CARTESIAN COORDINATES (ANGSTROEM)\n---------------------------------\n"
     tail = "\n---------------------------------\n"
     body = head + coord_lines + tail
@@ -70,8 +68,7 @@ def synthetic_gradient_block(
 ) -> str:
     """Build a synthetic ``CARTESIAN GRADIENT`` block."""
     lines = "\n".join(
-        f"   {idx}  {sym}  :    {dx:.6f}   {dy:.6f}   {dz:.6f}"
-        for idx, sym, dx, dy, dz in rows
+        f"   {idx}  {sym}  :    {dx:.6f}   {dy:.6f}   {dz:.6f}" for idx, sym, dx, dy, dz in rows
     )
     return f"CARTESIAN GRADIENT\n------------------\n{lines}\n------------------\n"
 

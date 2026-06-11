@@ -64,9 +64,7 @@ def bootstrap(config: Config) -> PipelineState:
     if path is None:
         default = config.template_dir / "step1.xyz"
         if not default.is_file():
-            raise ConfigError(
-                f"no 'input' declared and default {default} does not exist"
-            )
+            raise ConfigError(f"no 'input' declared and default {default} does not exist")
         return _seed_from_xyz(default)
 
     if path.is_dir():
@@ -90,8 +88,7 @@ def _seed_from_directory(directory: Path) -> PipelineState:
     if not xyz_files:
         raise ConfigError(f"no .xyz files found under {directory}")
     structures = tuple(
-        Structure(id=str(i), atoms=ase_read(str(f), format="xyz"))
-        for i, f in enumerate(xyz_files)
+        Structure(id=str(i), atoms=ase_read(str(f), format="xyz")) for i, f in enumerate(xyz_files)
     )
     return PipelineState(structures=structures)
 
@@ -102,8 +99,7 @@ def _seed_from_smiles_csv(csv_path: Path, out_dir: Path) -> PipelineState:
     if not xyz_files:
         raise ConfigError(f"no SMILES in {csv_path} converted to 3D structures")
     structures = tuple(
-        Structure(id=str(i), atoms=ase_read(str(f), format="xyz"))
-        for i, f in enumerate(xyz_files)
+        Structure(id=str(i), atoms=ase_read(str(f), format="xyz")) for i, f in enumerate(xyz_files)
     )
     return PipelineState(structures=structures)
 
@@ -124,9 +120,7 @@ def _write_step_csv(config: Config, step_cfg: StepConfig, state: PipelineState) 
     if not state.structures:
         return
     temperature_k = (
-        step_cfg.sample.temperature_k
-        if step_cfg.sample is not None
-        else DEFAULT_TEMPERATURE_K
+        step_cfg.sample.temperature_k if step_cfg.sample is not None else DEFAULT_TEMPERATURE_K
     )
     io.save_step_csv(
         energies_hartree=[s.energy_hartree for s in state.structures],
@@ -154,9 +148,7 @@ def run(
     disk** (parse only, no submission) instead of executing.
     """
     state = bootstrap(config)
-    logger.info(
-        "bootstrapped pipeline with %d seed structure(s)", len(state.structures)
-    )
+    logger.info("bootstrapped pipeline with %d seed structure(s)", len(state.structures))
 
     outcomes: list[StepOutcome] = []
     for step_cfg in config.steps:

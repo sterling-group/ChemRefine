@@ -96,9 +96,11 @@ def register_backend(name: str) -> Callable[[Callable[..., Any]], Callable[..., 
     calculator. Stackable: applying the decorator twice registers one function
     under two keys (the FAIRChem builder uses this — one function, every head).
     """
+
     def _wrap(fn: Callable[..., Any]) -> Callable[..., Any]:
         _BACKEND_BUILDERS[name] = fn
         return fn
+
     return _wrap
 
 
@@ -169,9 +171,7 @@ class MlipCalculator:
 
     # -- inference ---------------------------------------------------------
 
-    def single_point(
-        self, atoms: Atoms
-    ) -> tuple[float, list[list[float]]]:
+    def single_point(self, atoms: Atoms) -> tuple[float, list[list[float]]]:
         """Return ``(energy_eV, gradient_eV_per_A)`` for one geometry."""
         atoms.calc = self.calculator
         energy = atoms.get_potential_energy()
@@ -179,9 +179,7 @@ class MlipCalculator:
         gradient = (-forces).tolist()
         return energy, gradient
 
-    def optimize(
-        self, atoms: Atoms, *, fmax: float = 0.03, steps: int = 200
-    ) -> Atoms:
+    def optimize(self, atoms: Atoms, *, fmax: float = 0.03, steps: int = 200) -> Atoms:
         """In-process LBFGS optimisation; returns the relaxed ``atoms``."""
         from ase.optimize import LBFGS
 

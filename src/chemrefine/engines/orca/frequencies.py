@@ -28,9 +28,7 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
-_FREQ_LINE_RE = re.compile(
-    r"^\s*(?P<index>\d+):\s+(?P<value>-?\d+\.\d+)\s*cm\*\*-1(?P<rest>.*)$"
-)
+_FREQ_LINE_RE = re.compile(r"^\s*(?P<index>\d+):\s+(?P<value>-?\d+\.\d+)\s*cm\*\*-1(?P<rest>.*)$")
 _IMAG_TAG_RE = re.compile(r"imaginary mode", re.IGNORECASE)
 _MODE_COL_HEADER_RE = re.compile(r"^\s*(\d+\s+)+\d+\s*$")
 _MODE_ROW_RE = re.compile(r"^\s*\d+\s+[-\d.Ee\s]+$")
@@ -128,9 +126,7 @@ def parse_imaginary_frequencies_from_text(text: str) -> dict[int, float]:
 # ---------------------------------------------------------------------------
 
 
-def parse_normal_modes_tensor(
-    path: str | Path, *, num_atoms: int
-) -> NDArray[np.float64]:
+def parse_normal_modes_tensor(path: str | Path, *, num_atoms: int) -> NDArray[np.float64]:
     """Return the per-mode displacement tensor for an ORCA frequency output.
 
     The returned array has shape ``(num_atoms, 3, n_modes)`` — each
@@ -146,9 +142,7 @@ def parse_normal_modes_tensor(
     return parse_normal_modes_tensor_from_text(text, num_atoms=num_atoms)
 
 
-def parse_normal_modes_tensor_from_text(
-    text: str, *, num_atoms: int
-) -> NDArray[np.float64]:
+def parse_normal_modes_tensor_from_text(text: str, *, num_atoms: int) -> NDArray[np.float64]:
     """Same contract as :func:`parse_normal_modes_tensor` but on already-read text."""
     collecting = False
     block_rows: list[list[float]] = []
@@ -175,9 +169,7 @@ def parse_normal_modes_tensor_from_text(
             break
 
     if not blocks:
-        raise ValueError(
-            "no normal-mode blocks found; is this a frequency-calculation output?"
-        )
+        raise ValueError("no normal-mode blocks found; is this a frequency-calculation output?")
 
     full = np.hstack(blocks)
     if full.shape[0] != 3 * num_atoms:

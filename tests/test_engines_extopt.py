@@ -134,8 +134,11 @@ def test_write_engrad_emits_full_format(tmp_path: Path):
 def test_write_engrad_skips_gradient_block_when_dograd_false(tmp_path: Path):
     out = tmp_path / "job.engrad"
     protocol.write_engrad(
-        path=out, n_atoms=1, energy_hartree=-0.5,
-        gradients_hartree_per_bohr=None, dograd=False,
+        path=out,
+        n_atoms=1,
+        energy_hartree=-0.5,
+        gradients_hartree_per_bohr=None,
+        dograd=False,
     )
     text = out.read_text(encoding="utf-8")
     assert "Gradient" not in text
@@ -144,8 +147,11 @@ def test_write_engrad_skips_gradient_block_when_dograd_false(tmp_path: Path):
 def test_write_engrad_dograd_true_requires_gradient(tmp_path: Path):
     with pytest.raises(ValueError, match="dograd=True but no gradient"):
         protocol.write_engrad(
-            path=tmp_path / "x.engrad", n_atoms=1, energy_hartree=0.0,
-            gradients_hartree_per_bohr=None, dograd=True,
+            path=tmp_path / "x.engrad",
+            n_atoms=1,
+            energy_hartree=0.0,
+            gradients_hartree_per_bohr=None,
+            dograd=True,
         )
 
 
@@ -153,7 +159,9 @@ def test_write_wrapper_script_emits_exec_call_and_is_executable(tmp_path: Path):
     out = tmp_path / "mlip_extopt.sh"
     url_file = tmp_path / "server.url"
     protocol.write_wrapper_script(
-        path=out, backend="mlip", url_file=url_file,
+        path=out,
+        backend="mlip",
+        url_file=url_file,
     )
     text = out.read_text(encoding="utf-8")
     assert "#!/usr/bin/env bash" in text
@@ -166,7 +174,9 @@ def test_write_wrapper_script_emits_exec_call_and_is_executable(tmp_path: Path):
 def test_write_wrapper_script_threads_extra_args(tmp_path: Path):
     out = tmp_path / "pyscf_extopt.sh"
     protocol.write_wrapper_script(
-        path=out, backend="pyscf", url_file=tmp_path / "u",
+        path=out,
+        backend="pyscf",
+        url_file=tmp_path / "u",
         extra_args="--method dft --xc pbe",
     )
     assert "--method dft --xc pbe" in out.read_text(encoding="utf-8")
@@ -198,7 +208,9 @@ def test_wrapper_passes_input_file_as_final_positional(tmp_path: Path):
     """
     out = tmp_path / "pyscf_extopt.sh"
     protocol.write_wrapper_script(
-        path=out, backend="pyscf", url_file=tmp_path / "u",
+        path=out,
+        backend="pyscf",
+        url_file=tmp_path / "u",
         extra_args="--method dft --xc pbe",
     )
     exec_line = next(
@@ -276,9 +288,7 @@ def test_shared_server_source_has_no_backend_specific_flags():
     import re
 
     text = Path(server.__file__).read_text(encoding="utf-8")
-    forbidden = re.compile(
-        r'--(?:model|task-name|device|model-path|method|xc|basis|df|gpu)\b'
-    )
+    forbidden = re.compile(r"--(?:model|task-name|device|model-path|method|xc|basis|df|gpu)\b")
     matches = forbidden.findall(text)
     assert matches == [], f"shared server leaks backend CLI flags: {matches}"
 
@@ -288,9 +298,7 @@ def test_shared_client_source_has_no_backend_specific_flags():
     import re
 
     text = Path(bridge.__file__).read_text(encoding="utf-8")
-    forbidden = re.compile(
-        r'--(?:model|task-name|device|model-path|method|xc|basis|df|gpu)\b'
-    )
+    forbidden = re.compile(r"--(?:model|task-name|device|model-path|method|xc|basis|df|gpu)\b")
     matches = forbidden.findall(text)
     assert matches == [], f"shared client leaks backend CLI flags: {matches}"
 
@@ -315,18 +323,28 @@ def test_server_parse_args_defaults():
 
 
 def test_server_parse_args_accepts_all_overrides():
-    args = server.parse_args([
-        "--backend", "pyscf",
-        "--bind", "127.0.0.1:54321",
-        "--url-file", "/tmp/foo",
-        "--log-file", "/tmp/srv.log",
-        "--log-level", "DEBUG",
-        "--method", "hf",
-        "--xc", "b3lyp",
-        "--basis", "cc-pvdz",
-        "--df",
-        "--gpu",
-    ])
+    args = server.parse_args(
+        [
+            "--backend",
+            "pyscf",
+            "--bind",
+            "127.0.0.1:54321",
+            "--url-file",
+            "/tmp/foo",
+            "--log-file",
+            "/tmp/srv.log",
+            "--log-level",
+            "DEBUG",
+            "--method",
+            "hf",
+            "--xc",
+            "b3lyp",
+            "--basis",
+            "cc-pvdz",
+            "--df",
+            "--gpu",
+        ]
+    )
     assert args.backend == "pyscf"
     assert args.df is True
     assert args.gpu is True
@@ -367,7 +385,10 @@ def test_create_app_calculate_route_returns_energy_and_gradient():
         json={
             "atom_types": ["H", "H"],
             "coordinates": [[0, 0, 0], [0.74, 0, 0]],
-            "charge": 0, "mult": 1, "nthreads": 1, "dograd": True,
+            "charge": 0,
+            "mult": 1,
+            "nthreads": 1,
+            "dograd": True,
         },
     )
     assert resp.status_code == 200
@@ -387,8 +408,11 @@ def test_create_app_calculate_route_returns_500_on_calculator_error():
     resp = app.test_client().post(
         "/calculate",
         json={
-            "atom_types": ["H"], "coordinates": [[0, 0, 0]],
-            "charge": 0, "mult": 1, "nthreads": 1,
+            "atom_types": ["H"],
+            "coordinates": [[0, 0, 0]],
+            "charge": 0,
+            "mult": 1,
+            "nthreads": 1,
         },
     )
     assert resp.status_code == 500
@@ -404,8 +428,12 @@ def test_create_app_logs_with_correlation_tag(caplog):
     app.test_client().post(
         "/calculate",
         json={
-            "atom_types": ["H"], "coordinates": [[0, 0, 0]],
-            "charge": 0, "mult": 1, "nthreads": 1, "tag": "req-abc",
+            "atom_types": ["H"],
+            "coordinates": [[0, 0, 0]],
+            "charge": 0,
+            "mult": 1,
+            "nthreads": 1,
+            "tag": "req-abc",
         },
     )
     assert any("req=req-abc" in rec.message for rec in caplog.records)
@@ -428,9 +456,13 @@ def test_calculate_route_folds_top_level_tag_into_settings():
     app.test_client().post(
         "/calculate",
         json={
-            "atom_types": ["H"], "coordinates": [[0, 0, 0]],
-            "charge": 0, "mult": 1, "nthreads": 1,
-            "settings": {"method": "dft"}, "tag": "step3_structure_0",
+            "atom_types": ["H"],
+            "coordinates": [[0, 0, 0]],
+            "charge": 0,
+            "mult": 1,
+            "nthreads": 1,
+            "settings": {"method": "dft"},
+            "tag": "step3_structure_0",
         },
     )
     assert captured["settings"]["tag"] == "step3_structure_0"
@@ -485,7 +517,8 @@ def test_submit_calculation_round_trip():
     with patch.object(bridge, "urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(expected)
         energy, gradient = bridge.submit_calculation(
-            server_url="127.0.0.1:54321", data=_data(),
+            server_url="127.0.0.1:54321",
+            data=_data(),
         )
     assert energy == -1.5
     assert gradient == [[0.0, 0.0, 0.0]]
@@ -683,15 +716,22 @@ def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
 
     url_file = tmp_path / "server.url"
     monkeypatch.setattr(
-        sys, "argv",
+        sys,
+        "argv",
         [
             "extopt-server",
-            "--backend", "mlip",
-            "--bind", "127.0.0.1:0",
-            "--url-file", str(url_file),
-            "--model", "small",
-            "--task-name", "mace_off",
-            "--device", "cpu",
+            "--backend",
+            "mlip",
+            "--bind",
+            "127.0.0.1:0",
+            "--url-file",
+            str(url_file),
+            "--model",
+            "small",
+            "--task-name",
+            "mace_off",
+            "--device",
+            "cpu",
         ],
     )
 

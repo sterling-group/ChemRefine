@@ -59,10 +59,7 @@ def test_convert_length_pair():
 def test_convert_gradient_pair():
     from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
 
-    assert (
-        abs(convert(1.0, "hartree/bohr", "ev/angstrom") - HARTREE_PER_BOHR_TO_EV_PER_A)
-        < 1e-9
-    )
+    assert abs(convert(1.0, "hartree/bohr", "ev/angstrom") - HARTREE_PER_BOHR_TO_EV_PER_A) < 1e-9
 
 
 # ---------------------------------------------------------------------------

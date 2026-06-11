@@ -34,10 +34,7 @@ def _ctx(
         "! B3LYP def2-SVP\n%pal\n  nprocs 2\nend\n", encoding="utf-8"
     )
     (template_dir / "cpu.slurm.header").write_text(
-        "#!/bin/bash\n"
-        "#SBATCH --partition=normal\n"
-        "#SBATCH --time=24:00:00\n"
-        "module load orca/6.0\n",
+        "#!/bin/bash\n#SBATCH --partition=normal\n#SBATCH --time=24:00:00\nmodule load orca/6.0\n",
         encoding="utf-8",
     )
     step_cfg = step_cfg or StepConfig(step=1, engine="orca", operation="opt_sp")
@@ -264,7 +261,8 @@ def test_orca_nms_displace_passes_minimum_and_displaces_imaginary(tmp_path):
     engine._modes = {"min": modes, "imag": modes}
 
     ctx = _ctx(
-        tmp_path, structures=(),
+        tmp_path,
+        structures=(),
         step_cfg=StepConfig(step=1, engine="orca", operation="freq", nms=True),
     )
     already, children = engine._nms_displace(

@@ -124,9 +124,11 @@ def test_resolve_persistent_ids_no_parents_acts_as_bootstrap():
 
 
 def test_resolve_persistent_ids_one_to_one_preserves():
-    assert resolve_persistent_ids(
-        step_number=2, parent_ids=["0", "1", "2"], child_count=3
-    ) == ["0", "1", "2"]
+    assert resolve_persistent_ids(step_number=2, parent_ids=["0", "1", "2"], child_count=3) == [
+        "0",
+        "1",
+        "2",
+    ]
 
 
 def test_resolve_persistent_ids_single_parent_fanout():
@@ -138,20 +140,26 @@ def test_resolve_persistent_ids_single_parent_fanout():
 
 
 def test_resolve_persistent_ids_even_fanout():
-    assert resolve_persistent_ids(
-        step_number=2, parent_ids=["0", "1"], child_count=4
-    ) == ["0-0", "0-1", "1-0", "1-1"]
+    assert resolve_persistent_ids(step_number=2, parent_ids=["0", "1"], child_count=4) == [
+        "0-0",
+        "0-1",
+        "1-0",
+        "1-1",
+    ]
 
 
 def test_resolve_persistent_ids_fewer_children_than_parents():
     # 3 parents, 2 children → first 2 children inherit, last parent drops
-    assert resolve_persistent_ids(
-        step_number=2, parent_ids=["0", "1", "2"], child_count=2
-    ) == ["0", "1"]
+    assert resolve_persistent_ids(step_number=2, parent_ids=["0", "1", "2"], child_count=2) == [
+        "0",
+        "1",
+    ]
 
 
 def test_resolve_persistent_ids_uneven_extra_goes_to_first_parent():
     # 2 parents, 3 children → parent 0 fans out to 2 children, parent 1 keeps
-    assert resolve_persistent_ids(
-        step_number=2, parent_ids=["0", "1"], child_count=3
-    ) == ["0-0", "0-1", "1"]
+    assert resolve_persistent_ids(step_number=2, parent_ids=["0", "1"], child_count=3) == [
+        "0-0",
+        "0-1",
+        "1",
+    ]

@@ -27,9 +27,7 @@ _DEFAULT_MODEL = "uma-s-1p1"
 @register_backend("oc22")  # oxide catalysts
 @register_backend("oc25")  # electrolyte interfaces
 @register_backend("omc")  # molecular crystals
-def _build_fairchem(
-    *, task_name: str, model_name: str = "", device: str = "cuda", **_: Any
-) -> Any:
+def _build_fairchem(*, task_name: str, model_name: str = "", device: str = "cuda", **_: Any) -> Any:
     """FAIRChem (UMA/eSEN): ``task_name`` is the head, ``model_name`` the checkpoint."""
     with optional_backend(package="fairchem-core", extra="mlip-fairchem"):
         from fairchem.core import FAIRChemCalculator, pretrained_mlip

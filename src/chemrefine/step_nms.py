@@ -70,16 +70,12 @@ def _reattempt_nms(
     """
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
-        raise CacheError(
-            f"step {step_cfg.step}: cannot re-attempt NMS — no manifest on disk"
-        )
+        raise CacheError(f"step {step_cfg.step}: cannot re-attempt NMS — no manifest on disk")
     failed = cache.load_failed_jobs(ctx.step_dir)
     failed_ids = {f["structure_id"] for f in failed}
     missing_ids = {f["structure_id"] for f in failed if f.get("reason") == "output missing"}
 
-    failed_manifest = StepInputs(
-        files=tuple(f for f in manifest.files if f[2] in failed_ids)
-    )
+    failed_manifest = StepInputs(files=tuple(f for f in manifest.files if f[2] in failed_ids))
     missing_inputs = StepInputs(
         files=tuple(f for f in failed_manifest.files if f[2] in missing_ids)
     )
@@ -97,7 +93,10 @@ def _reattempt_nms(
     r1_succ, r1_fail = _parse_with_failures(engine, failed_manifest, ctx)
     round1_failed = StepResults(structures=tuple(r1_succ))
     reattempt = _resolve_nms(
-        engine.normal_mode_sample(round1_failed, ctx), round1_failed, ctx, step_cfg,
+        engine.normal_mode_sample(round1_failed, ctx),
+        round1_failed,
+        ctx,
+        step_cfg,
         round1_failures=r1_fail,
     )
     kept = tuple(

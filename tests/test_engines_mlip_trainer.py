@@ -27,8 +27,7 @@ def _ctx(tmp_path: Path, **option_overrides) -> StepContext:
     template_dir = tmp_path / "templates"
     template_dir.mkdir(parents=True, exist_ok=True)
     (template_dir / "step1.inp").write_text(
-        "model: MACE\n"
-        "max_num_epochs: 5\n",
+        "model: MACE\nmax_num_epochs: 5\n",
         encoding="utf-8",
     )
     (template_dir / "cpu.slurm.header").write_text(
@@ -42,7 +41,10 @@ def _ctx(tmp_path: Path, **option_overrides) -> StepContext:
     options = {"device": "cpu"}
     options.update(option_overrides)
     step_cfg = StepConfig(
-        step=1, name="train", engine="mlip", operation="mlip_train",
+        step=1,
+        name="train",
+        engine="mlip",
+        operation="mlip_train",
         options=options,
     )
     return StepContext(
@@ -51,7 +53,9 @@ def _ctx(tmp_path: Path, **option_overrides) -> StepContext:
         template_dir=template_dir,
         scratch_dir=None,
         prev_state=PipelineState(),
-        charge=0, multiplicity=1, max_cores=4,
+        charge=0,
+        multiplicity=1,
+        max_cores=4,
         slurm_template="cpu.slurm.header",
         executables={},
     )
@@ -157,9 +161,7 @@ def test_write_training_config_patches_paths(tmp_path: Path):
     test_path = ctx.step_dir / "mace_test.xyz"
     train_path.touch()
     test_path.touch()
-    config_path = trainer.write_training_config(
-        train_path=train_path, test_path=test_path, ctx=ctx
-    )
+    config_path = trainer.write_training_config(train_path=train_path, test_path=test_path, ctx=ctx)
     cfg = yaml.safe_load(config_path.read_text())
     assert cfg["train_file"] == str(train_path)
     assert cfg["test_file"] == str(test_path)
@@ -251,7 +253,8 @@ def test_submit_training_blocks_until_finished():
         patch.object(trainer.time, "sleep", return_value=None),
     ):
         job_id = trainer.submit_training(
-            script_path=Path("train.slurm"), poll_seconds=0,
+            script_path=Path("train.slurm"),
+            poll_seconds=0,
         )
     assert job_id == "12345"
     assert finished_calls == []

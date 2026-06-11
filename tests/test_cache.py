@@ -117,8 +117,11 @@ def test_reuse_fingerprint_round_trips(tmp_path: Path):
 def test_reuse_fingerprint_defaults_empty(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(
-        step_cfg=_cfg(), parent_ids=("0",), results=_results(),
-        step_dir=step_dir, chemrefine_version="2.0.0",
+        step_cfg=_cfg(),
+        parent_ids=("0",),
+        results=_results(),
+        step_dir=step_dir,
+        chemrefine_version="2.0.0",
     )
     assert load(step_dir).reuse_fingerprint == ""
 
@@ -137,6 +140,7 @@ def test_load_corrupt_pickle_raises(tmp_path: Path):
 
 def test_load_rejects_old_cache_format(tmp_path: Path):
     import pickle
+
     step_dir = tmp_path / "step1"
     cache_file = step_dir / "_cache" / "step.pkl"
     cache_file.parent.mkdir(parents=True)

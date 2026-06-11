@@ -55,9 +55,7 @@ def test_bootstrap_falls_back_to_templates_step1_xyz(tmp_path: Path):
     template_dir.mkdir()
     seed_path = template_dir / "step1.xyz"
     # Write a minimal xyz file directly
-    seed_path.write_text(
-        "2\nH2\nH 0.0 0.0 0.0\nH 0.74 0.0 0.0\n", encoding="utf-8"
-    )
+    seed_path.write_text("2\nH2\nH 0.0 0.0 0.0\nH 0.74 0.0 0.0\n", encoding="utf-8")
     cfg = _config(tmp_path, input=None)
     state = pipeline.bootstrap(cfg)
     assert len(state.structures) == 1
@@ -119,7 +117,7 @@ def test_run_stops_early_when_a_step_produces_no_survivors(tmp_path: Path):
             return None
 
         def parse(self, inputs, ctx):
-            return StepResults(structures=())   # no survivors
+            return StepResults(structures=())  # no survivors
 
         def normal_mode_sample(self, results, ctx):
             return results

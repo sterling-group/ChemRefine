@@ -141,9 +141,7 @@ class TemplateScriptEngine(SlurmBatchEngine):
         try:
             data = json.loads(out_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as e:
-            raise OutputParseError(
-                f"{self.label} output {out_path} is not valid JSON: {e}"
-            ) from e
+            raise OutputParseError(f"{self.label} output {out_path} is not valid JSON: {e}") from e
         if "energy_hartree" not in data:
             raise OutputParseError(
                 f"{self.label} output {out_path} missing required 'energy_hartree' field"

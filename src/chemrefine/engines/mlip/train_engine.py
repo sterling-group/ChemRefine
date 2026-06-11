@@ -34,11 +34,12 @@ class MlipTrainEngine:
 
     def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
         """Write the train/test sets + config + SLURM script and run the MACE job."""
-        logger.info("step %d: MLIP training on %d structures",
-                    ctx.step_cfg.step, len(ctx.prev_state.structures))
-        trainer.run_training(
-            StepResults(structures=ctx.prev_state.structures), ctx
+        logger.info(
+            "step %d: MLIP training on %d structures",
+            ctx.step_cfg.step,
+            len(ctx.prev_state.structures),
         )
+        trainer.run_training(StepResults(structures=ctx.prev_state.structures), ctx)
         return JobBatch(jobs={})
 
     def wait(self, batch: JobBatch) -> None:

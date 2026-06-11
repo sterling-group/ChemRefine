@@ -166,9 +166,7 @@ def test_atoms_from_output_uses_positions_when_present():
         {"energy_hartree": -1.0, "positions_angstrom": [[0.0, 0.0, 0.0], [0.0, 0.0, 1.5]]},
         fallback=seed,
     )
-    np.testing.assert_allclose(
-        atoms.get_positions(), [[0.0, 0.0, 0.0], [0.0, 0.0, 1.5]]
-    )
+    np.testing.assert_allclose(atoms.get_positions(), [[0.0, 0.0, 0.0], [0.0, 0.0, 1.5]])
 
 
 def test_atoms_from_output_raises_without_fallback_and_no_positions():

@@ -15,9 +15,7 @@ from chemrefine.recovery import Action, execute, invalidate_step, resolve_target
 
 def _seeded_config(tmp_path: Path, steps: list[StepConfig]) -> Config:
     seed_dir = tmp_path / "seeds"
-    io.write_xyz(
-        [Atoms("H"), Atoms("H")], ["a", "b"], step_number=0, output_dir=seed_dir
-    )
+    io.write_xyz([Atoms("H"), Atoms("H")], ["a", "b"], step_number=0, output_dir=seed_dir)
     return Config(
         template_dir=tmp_path / "templates",
         scratch_dir=tmp_path / "scratch",
@@ -184,7 +182,9 @@ def _register_flaky():
                 seed = seeds[sid]
                 out.append(
                     Structure(
-                        id=sid, atoms=seed.atoms, parent_id=seed.parent_id,
+                        id=sid,
+                        atoms=seed.atoms,
+                        parent_id=seed.parent_id,
                         energy_hartree=energy,
                         forces_ev_per_a=np.zeros((len(seed.atoms), 3)),
                     )
@@ -208,8 +208,7 @@ def test_resume_is_incremental_resubmits_only_failed(tmp_path: Path):
     try:
         cfg = _seeded_config(
             tmp_path,
-            [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp",
-                        on_failure="stop")],
+            [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp", on_failure="stop")],
         )
         step_dir = (cfg.output_dir / "step1_s").resolve()
 
@@ -260,8 +259,7 @@ def test_rerun_errors_reattempts_only_the_target_step_failures(tmp_path: Path):
     try:
         cfg = _seeded_config(
             tmp_path,
-            [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp",
-                        on_failure="stop")],
+            [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp", on_failure="stop")],
         )
         step_dir = (cfg.output_dir / "step1_s").resolve()
         eng.fail_ids = {"1"}
@@ -352,8 +350,11 @@ def _register_fake_nms():
                 seed = seeds.get(sid)
                 out.append(
                     Structure(
-                        id=sid, atoms=seed.atoms if seed else Atoms("H"),
-                        energy_hartree=-1.0, terminated=True, converged=True,
+                        id=sid,
+                        atoms=seed.atoms if seed else Atoms("H"),
+                        energy_hartree=-1.0,
+                        terminated=True,
+                        converged=True,
                     )
                 )
             return StepResults(structures=tuple(out))
@@ -362,8 +363,12 @@ def _register_fake_nms():
             _FakeNms2.nms_seen.extend(s.id for s in round1.structures)
             children = [
                 Structure(
-                    id=f"{s.id}_c", atoms=s.atoms, parent_id=s.id, energy_hartree=-1.0,
-                    terminated=True, converged=(s.id in _FakeNms2.resolved),
+                    id=f"{s.id}_c",
+                    atoms=s.atoms,
+                    parent_id=s.id,
+                    energy_hartree=-1.0,
+                    terminated=True,
+                    converged=(s.id in _FakeNms2.resolved),
                 )
                 for s in round1.structures
             ]
@@ -374,7 +379,11 @@ def _register_fake_nms():
 
 def _nms_step(displacement: float, on_failure: str = "skip") -> StepConfig:
     return StepConfig(
-        step=1, name="s", engine="fake-nms2", operation="freq", nms=True,
+        step=1,
+        name="s",
+        engine="fake-nms2",
+        operation="freq",
+        nms=True,
         options={"target": "minimum", "displacement_value": displacement},
         on_failure=on_failure,
     )
@@ -400,8 +409,8 @@ def test_resume_after_tuning_reattempts_only_unresolved(tmp_path: Path):
         eng.resolved = {"0", "1"}  # new distance resolves "1"
         eng.submitted, eng.nms_seen = [], []
         execute(_seeded_config(tmp_path, [_nms_step(2.0)]), Action.RESUME)
-        assert eng.submitted == []        # round-1 freq reused, not resubmitted
-        assert eng.nms_seen == ["1"]      # only the unresolved parent re-attempted
+        assert eng.submitted == []  # round-1 freq reused, not resubmitted
+        assert eng.nms_seen == ["1"]  # only the unresolved parent re-attempted
         assert cache.load_failed_jobs(step_dir) == []
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0_c", "1_c"}
     finally:

@@ -49,8 +49,7 @@ def resolve_target(config: Config, key: str | int) -> StepConfig:
     step = config.find_step(key)
     if step is None:
         raise ChemRefineError(
-            f"no step matches {key!r}; available: "
-            f"{[s.dir_name() for s in config.steps]}"
+            f"no step matches {key!r}; available: {[s.dir_name() for s in config.steps]}"
         )
     return step
 
@@ -104,7 +103,8 @@ def _action_rerun_errors(config: Config, target: str | int | None) -> None:
     if n_failed:
         logger.info(
             "rerun-errors: re-attempting %d failed job(s) in %s",
-            n_failed, target_step.dir_name(),
+            n_failed,
+            target_step.dir_name(),
         )
     else:
         logger.info(

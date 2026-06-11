@@ -108,9 +108,7 @@ class ComputeBackend(Protocol):
         """Build a calculator instance from the shared server CLI namespace."""
         ...
 
-    def calc(
-        self, data: CalculationData
-    ) -> tuple[float, list[list[float]]]:
+    def calc(self, data: CalculationData) -> tuple[float, list[list[float]]]:
         """Return ``(energy_hartree, gradient_hartree_per_bohr)``.
 
         ``gradient_hartree_per_bohr`` may be an empty list when

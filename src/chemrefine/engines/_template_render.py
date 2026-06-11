@@ -66,7 +66,7 @@ def _build_output_footer(output_basename: str) -> str:
         "for _chemrefine_name in _chemrefine_optional:\n"
         "    if _chemrefine_name in dir():\n"
         "        _chemrefine_result[_chemrefine_name] = locals()[_chemrefine_name]\n"
-        f"with open({output_basename!r}, \"w\") as _chemrefine_fh:\n"
+        f'with open({output_basename!r}, "w") as _chemrefine_fh:\n'
         "    _chemrefine_json.dump(\n"
         "        _chemrefine_result, _chemrefine_fh, cls=_ChemRefineEncoder\n"
         "    )\n"

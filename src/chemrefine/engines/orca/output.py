@@ -279,9 +279,7 @@ def parse_solvator(path: str | Path) -> list[ParsedStructure]:
 
 
 _PES_SEGMENT_RE = re.compile(r"\*{3}\s*OPTIMIZATION RUN DONE\s*\*{3}")
-_PES_COORD_HEADER_RE = re.compile(
-    r"^\s*CARTESIAN COORDINATES\s*\(ANGSTROEM\)\s*$", re.MULTILINE
-)
+_PES_COORD_HEADER_RE = re.compile(r"^\s*CARTESIAN COORDINATES\s*\(ANGSTROEM\)\s*$", re.MULTILINE)
 _PES_DASH_RE = re.compile(r"^\s*-{3,}\s*$")
 
 
@@ -340,9 +338,7 @@ def _parse_last_pes_coord_block(segment: str) -> list[tuple[str, float, float, f
     lines = segment.splitlines()
     start_line = segment.count("\n", 0, matches[-1].end()) + 1
     idx = start_line
-    while idx < len(lines) and (
-        not lines[idx].strip() or _PES_DASH_RE.match(lines[idx])
-    ):
+    while idx < len(lines) and (not lines[idx].strip() or _PES_DASH_RE.match(lines[idx])):
         idx += 1
     atoms: list[tuple[str, float, float, float]] = []
     while idx < len(lines):

@@ -19,6 +19,7 @@ def _drain_local(job_id: str, *, timeout: float = 5.0) -> None:
     while not slurm.is_finished(job_id) and time.monotonic() < deadline:
         time.sleep(0.01)
 
+
 # ---------------------------------------------------------------------------
 # build_script
 # ---------------------------------------------------------------------------
@@ -30,8 +31,8 @@ def _write_header(tmp_path: Path) -> Path:
         "#!/bin/bash\n"
         "#SBATCH --partition=normal\n"
         "#SBATCH --time=24:00:00\n"
-        "#SBATCH --ntasks=1\n"           # gets overridden
-        "#SBATCH --cpus-per-task=4\n"    # gets overridden
+        "#SBATCH --ntasks=1\n"  # gets overridden
+        "#SBATCH --cpus-per-task=4\n"  # gets overridden
         "module load orca/6.0\n",
         encoding="utf-8",
     )
@@ -65,7 +66,7 @@ def test_build_script_overrides_ntasks_and_writes_script(tmp_path: Path):
         **_build_kwargs(
             tmp_path,
             pal=12,
-            run_block='$ORCA step1_structure_0.inp > $OUTPUT_DIR/step1_structure_0.out',
+            run_block="$ORCA step1_structure_0.inp > $OUTPUT_DIR/step1_structure_0.out",
         )
     )
     assert script.exists()
@@ -149,9 +150,7 @@ def test_build_script_missing_template_raises(tmp_path: Path):
 
 def test_build_script_uses_caller_supplied_output_globs(tmp_path: Path):
     """The back-copy line must reflect the engine's declared file extensions."""
-    script = slurm.build_script(
-        **_build_kwargs(tmp_path, output_globs=("*.json", "*.npz"))
-    )
+    script = slurm.build_script(**_build_kwargs(tmp_path, output_globs=("*.json", "*.npz")))
     text = script.read_text()
     assert 'cp *.json *.npz "$OUTPUT_DIR/"' in text
     assert "files_copied=$(ls *.json *.npz 2>/dev/null | wc -l)" in text
@@ -371,16 +370,14 @@ def test_detect_local_gpus_counts_mig_instances(monkeypatch):
 
 
 def test_detect_local_gpus_falls_back_to_one_without_nvidia_smi(monkeypatch):
-    monkeypatch.setattr(
-        subprocess, "run", MagicMock(side_effect=FileNotFoundError("nvidia-smi"))
-    )
+    monkeypatch.setattr(subprocess, "run", MagicMock(side_effect=FileNotFoundError("nvidia-smi")))
     assert slurm._detect_local_gpus() == 1
 
 
 def test_submit_local_applies_cuda_visible_devices_env(tmp_path: Path):
     """The local fallback pins CUDA_VISIBLE_DEVICES for the launched process."""
     script = tmp_path / "g.slurm"
-    script.write_text("#!/bin/bash\necho \"$CUDA_VISIBLE_DEVICES\"\n", encoding="utf-8")
+    script.write_text('#!/bin/bash\necho "$CUDA_VISIBLE_DEVICES"\n', encoding="utf-8")
     with patch("chemrefine.slurm.shutil.which", return_value=None):
         job_id = slurm.submit(script, env={"CUDA_VISIBLE_DEVICES": "1"})
     _drain_local(job_id)

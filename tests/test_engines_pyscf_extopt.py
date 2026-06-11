@@ -219,10 +219,20 @@ def test_pyscf_extopt_calculator_from_args_round_trips():
     from chemrefine.engines._backend_server.server import parse_args
     from chemrefine.engines.pyscf.extopt_calc import PyscfExtOptCalculator
 
-    args = parse_args([
-        "--backend", "pyscf", "--method", "hf",
-        "--xc", "b3lyp", "--basis", "cc-pvdz", "--df", "--gpu",
-    ])
+    args = parse_args(
+        [
+            "--backend",
+            "pyscf",
+            "--method",
+            "hf",
+            "--xc",
+            "b3lyp",
+            "--basis",
+            "cc-pvdz",
+            "--df",
+            "--gpu",
+        ]
+    )
     calc = PyscfExtOptCalculator.from_args(args)
     assert calc.method == "hf"
     assert calc.xc == "b3lyp"

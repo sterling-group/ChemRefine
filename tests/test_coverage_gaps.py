@@ -30,9 +30,7 @@ from chemrefine.state import (
 
 def _ctx(tmp_path: Path, *, options=None, nms: bool = False, engine: str = "fake") -> StepContext:
     """A minimal StepContext for unit-level branch tests (no templates needed)."""
-    step_cfg = StepConfig(
-        step=1, engine=engine, operation="opt_sp", options=options or {}, nms=nms
-    )
+    step_cfg = StepConfig(step=1, engine=engine, operation="opt_sp", options=options or {}, nms=nms)
     return StepContext(
         step_cfg=step_cfg,
         step_dir=tmp_path / "outputs" / "step1",
@@ -190,8 +188,10 @@ def test_trainer_rejects_valid_fraction_leaving_no_training(tmp_path: Path):
 
     seeds = tuple(
         Structure(
-            id=str(i), atoms=Atoms("H", positions=[[0, 0, 0]]),
-            energy_hartree=-1.0, forces_ev_per_a=np.zeros((1, 3)),
+            id=str(i),
+            atoms=Atoms("H", positions=[[0, 0, 0]]),
+            energy_hartree=-1.0,
+            forces_ev_per_a=np.zeros((1, 3)),
         )
         for i in range(2)
     )
@@ -322,8 +322,14 @@ def test_cached_outcome_raises_when_load_returns_none(tmp_path: Path, monkeypatc
     monkeypatch.setattr(cache, "load", lambda step_dir: None)
     with pytest.raises(CacheError, match="is_valid returned True"):
         step._cached_outcome(
-            ctx, ctx.step_cfg, (), get_engine("fake"),
-            is_nms=False, resubmit_step=None, version="v", step_nms=None,
+            ctx,
+            ctx.step_cfg,
+            (),
+            get_engine("fake"),
+            is_nms=False,
+            resubmit_step=None,
+            version="v",
+            step_nms=None,
         )
 
 
@@ -397,8 +403,9 @@ def test_rebuild_cache_step_nms_branch(tmp_path: Path):
         output_dir=tmp_path / "outputs",
         template_dir=template_dir,
         steps=[
-            StepConfig(step=1, engine="orca", operation="freq", nms=True,
-                       options={"target": "minimum"}),
+            StepConfig(
+                step=1, engine="orca", operation="freq", nms=True, options={"target": "minimum"}
+            ),
         ],
     )
     step_cfg = cfg.steps[0]
@@ -407,7 +414,9 @@ def test_rebuild_cache_step_nms_branch(tmp_path: Path):
     out = step_dir / "step1_structure_0.out"
     out.write_text(
         synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)])
-        + FREQUENCY_BLOCK + NORMAL_MODES_BLOCK_2_ATOMS + "\n****ORCA TERMINATED NORMALLY****\n",
+        + FREQUENCY_BLOCK
+        + NORMAL_MODES_BLOCK_2_ATOMS
+        + "\n****ORCA TERMINATED NORMALLY****\n",
         encoding="utf-8",
     )
     inp = step_dir / "step1_structure_0.inp"
@@ -435,9 +444,7 @@ class _StubNms:
     def _reattempt_nms(self, engine, ctx, step_cfg, cached, parent_ids, version):
         return StepResults(
             structures=(
-                Structure(
-                    id="re", atoms=Atoms("H", positions=[[0, 0, 0]]), energy_hartree=-1.0
-                ),
+                Structure(id="re", atoms=Atoms("H", positions=[[0, 0, 0]]), energy_hartree=-1.0),
             )
         )
 
@@ -447,11 +454,14 @@ def _save_reuse_cache(ctx, reuse_fp: str):
 
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     cache.save(
-        step_cfg=ctx.step_cfg, parent_ids=(),
+        step_cfg=ctx.step_cfg,
+        parent_ids=(),
         results=StepResults(
             structures=(Structure(id="c", atoms=Atoms("H", positions=[[0, 0, 0]])),)
         ),
-        step_dir=ctx.step_dir, chemrefine_version="v", reuse_fingerprint=reuse_fp,
+        step_dir=ctx.step_dir,
+        chemrefine_version="v",
+        reuse_fingerprint=reuse_fp,
     )
 
 
@@ -461,9 +471,12 @@ def test_nms_reuse_outcome_none_without_cache(tmp_path: Path):
 
     ctx = _ctx(tmp_path, nms=True, engine="orca")
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
-    assert step._nms_reuse_outcome(
-        ctx, ctx.step_cfg, (), get_engine("orca"), version="v", step_nms=_StubNms()
-    ) is None
+    assert (
+        step._nms_reuse_outcome(
+            ctx, ctx.step_cfg, (), get_engine("orca"), version="v", step_nms=_StubNms()
+        )
+        is None
+    )
 
 
 def test_nms_reuse_outcome_none_on_corrupt_cache(tmp_path: Path):
@@ -474,9 +487,12 @@ def test_nms_reuse_outcome_none_on_corrupt_cache(tmp_path: Path):
     pkl_path, _ = cache._paths(ctx.step_dir)
     pkl_path.parent.mkdir(parents=True, exist_ok=True)
     pkl_path.write_bytes(b"not a pickle")
-    assert step._nms_reuse_outcome(
-        ctx, ctx.step_cfg, (), get_engine("orca"), version="v", step_nms=_StubNms()
-    ) is None
+    assert (
+        step._nms_reuse_outcome(
+            ctx, ctx.step_cfg, (), get_engine("orca"), version="v", step_nms=_StubNms()
+        )
+        is None
+    )
 
 
 def test_nms_reuse_outcome_restamps_when_all_resolved(tmp_path: Path):

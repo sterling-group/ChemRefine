@@ -137,9 +137,7 @@ def run_dft(
     grad_norm = 0.0
     if dograd:
         g = mf.nuc_grad_method().kernel()
-        gradient_rows = [
-            [float(c) for c in row] for row in np.asarray(g).reshape(-1, 3)
-        ]
+        gradient_rows = [[float(c) for c in row] for row in np.asarray(g).reshape(-1, 3)]
         grad_norm = float(np.linalg.norm(g))
 
     meta = {

@@ -115,10 +115,7 @@ class OrcaEngine(SlurmBatchEngine):
     def _run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
         """Engine-specific bash that runs inside ``$WORK_DIR``."""
         orca = ctx.executables.get("orca", "orca")
-        return (
-            "export OMP_NUM_THREADS=1\n"
-            f"{orca} {inp_path.name} > $OUTPUT_DIR/{out_path.name}"
-        )
+        return f"export OMP_NUM_THREADS=1\n{orca} {inp_path.name} > $OUTPUT_DIR/{out_path.name}"
 
     def _extra_header_fields(self, ctx: StepContext) -> tuple[tuple[str, object], ...]:
         """Record which ORCA binary ran in the runlog header."""
@@ -226,16 +223,16 @@ class OrcaEngine(SlurmBatchEngine):
             nms_ctx = self._nms_round_two_ctx(ctx, children)
             inputs = self.prepare(nms_ctx)
             cache.save_manifest(
-                inputs, nms_ctx.step_dir,
-                operation=ctx.step_cfg.operation, engine=ctx.step_cfg.engine,
+                inputs,
+                nms_ctx.step_dir,
+                operation=ctx.step_cfg.operation,
+                engine=ctx.step_cfg.engine,
             )
             self.wait(self.submit(inputs, nms_ctx))
             outputs.extend(self._flag_resolution(self.parse(inputs, nms_ctx), target))
         return StepResults(structures=tuple(outputs))
 
-    def resolve_nms_from_existing(
-        self, results: StepResults, ctx: StepContext
-    ) -> StepResults:
+    def resolve_nms_from_existing(self, results: StepResults, ctx: StepContext) -> StepResults:
         """Re-resolve NMS from round-2 outputs already on disk — no submission.
 
         Used by ``rebuild-cache``: re-derives the (deterministic) displaced
@@ -259,9 +256,7 @@ class OrcaEngine(SlurmBatchEngine):
                     c.id,
                 )
 
-            present = StepInputs(
-                files=tuple(t for c in children if (t := _triple(c))[1].is_file())
-            )
+            present = StepInputs(files=tuple(t for c in children if (t := _triple(c))[1].is_file()))
             if present.files:
                 outputs.extend(self._flag_resolution(self.parse(present, nms_ctx), target))
         return StepResults(structures=tuple(outputs))
@@ -290,14 +285,10 @@ class OrcaEngine(SlurmBatchEngine):
             for suffix, positions in nms.select_displacements(s, imag, modes, opts, rng):
                 child_atoms = s.atoms.copy()
                 child_atoms.set_positions(positions)
-                children.append(
-                    Structure(id=f"{s.id}_{suffix}", atoms=child_atoms, parent_id=s.id)
-                )
+                children.append(Structure(id=f"{s.id}_{suffix}", atoms=child_atoms, parent_id=s.id))
         return already, children
 
-    def _nms_round_two_ctx(
-        self, ctx: StepContext, children: list[Structure]
-    ) -> StepContext:
+    def _nms_round_two_ctx(self, ctx: StepContext, children: list[Structure]) -> StepContext:
         """The round-2 context: children as seeds, ``nms/`` as the work dir."""
         return replace(
             ctx,
@@ -310,8 +301,6 @@ class OrcaEngine(SlurmBatchEngine):
         flagged: list[Structure] = []
         for c in round2.structures:
             imag = self._imag_freqs.get(c.id, {})
-            resolved = c.terminated is not False and (
-                target is None or len(imag) == target
-            )
+            resolved = c.terminated is not False and (target is None or len(imag) == target)
             flagged.append(replace(c, converged=resolved))
         return flagged

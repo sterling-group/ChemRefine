@@ -101,8 +101,11 @@ def _rng():
 
 def test_select_minimum_displaces_every_imaginary_mode():
     sel = nms.select_displacements(
-        _struct([[0, 0, 0], [1, 0, 0]]), {5: -42.0, 6: -100.0}, _modes(8),
-        nms.NmsOptions(target="minimum"), _rng(),
+        _struct([[0, 0, 0], [1, 0, 0]]),
+        {5: -42.0, 6: -100.0},
+        _modes(8),
+        nms.NmsOptions(target="minimum"),
+        _rng(),
     )
     assert [label for label, _ in sel] == ["m5_pos", "m5_neg", "m6_pos", "m6_neg"]
 
@@ -110,16 +113,22 @@ def test_select_minimum_displaces_every_imaginary_mode():
 def test_select_ts_keeps_largest_imaginary_removes_spurious():
     # mode 6 is most-imaginary → reaction coordinate (kept); mode 5 displaced.
     sel = nms.select_displacements(
-        _struct([[0, 0, 0], [1, 0, 0]]), {5: -42.0, 6: -200.0}, _modes(8),
-        nms.NmsOptions(target="ts"), _rng(),
+        _struct([[0, 0, 0], [1, 0, 0]]),
+        {5: -42.0, 6: -200.0},
+        _modes(8),
+        nms.NmsOptions(target="ts"),
+        _rng(),
     )
     assert [label for label, _ in sel] == ["m5_pos", "m5_neg"]
 
 
 def test_select_ts_honors_explicit_mode_index():
     sel = nms.select_displacements(
-        _struct([[0, 0, 0], [1, 0, 0]]), {5: -42.0, 6: -200.0}, _modes(8),
-        nms.NmsOptions(target="ts", ts_mode_index=5), _rng(),
+        _struct([[0, 0, 0], [1, 0, 0]]),
+        {5: -42.0, 6: -200.0},
+        _modes(8),
+        nms.NmsOptions(target="ts", ts_mode_index=5),
+        _rng(),
     )
     # Keep mode 5 (explicit RC) → displace the other imaginary mode 6.
     assert [label for label, _ in sel] == ["m6_pos", "m6_neg"]
@@ -127,26 +136,34 @@ def test_select_ts_honors_explicit_mode_index():
 
 def test_select_random_count_and_determinism():
     opts = nms.NmsOptions(target="random", num_random_displacements=2, seed=42)
-    a = nms.select_displacements(_struct([[0, 0, 0], [1, 0, 0]]), {}, _modes(12), opts,
-                                 np.random.default_rng(42))
-    b = nms.select_displacements(_struct([[0, 0, 0], [1, 0, 0]]), {}, _modes(12), opts,
-                                 np.random.default_rng(42))
+    a = nms.select_displacements(
+        _struct([[0, 0, 0], [1, 0, 0]]), {}, _modes(12), opts, np.random.default_rng(42)
+    )
+    b = nms.select_displacements(
+        _struct([[0, 0, 0], [1, 0, 0]]), {}, _modes(12), opts, np.random.default_rng(42)
+    )
     assert len(a) == 4  # 2 modes x (pos, neg)
     assert [label for label, _ in a] == [label for label, _ in b]
 
 
 def test_select_skips_modes_outside_the_tensor():
     sel = nms.select_displacements(
-        _struct([[0, 0, 0], [1, 0, 0]]), {37: -100.0}, _modes(6),
-        nms.NmsOptions(target="minimum"), _rng(),
+        _struct([[0, 0, 0], [1, 0, 0]]),
+        {37: -100.0},
+        _modes(6),
+        nms.NmsOptions(target="minimum"),
+        _rng(),
     )
     assert sel == []
 
 
 def test_select_applies_displacement_value():
     sel = nms.select_displacements(
-        _struct([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]), {5: -42.0}, _modes(6),
-        nms.NmsOptions(displacement_value=2.0), _rng(),
+        _struct([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
+        {5: -42.0},
+        _modes(6),
+        nms.NmsOptions(displacement_value=2.0),
+        _rng(),
     )
     _, pos = sel[0]  # m5_pos; mode 5 moves atom0 by 0.1*6 = 0.6, x2.0 = 1.2
     np.testing.assert_allclose(pos[0], [1.2, 0.0, 0.0])
@@ -156,8 +173,11 @@ def test_select_applies_displacement_value():
 def test_select_minimum_with_no_imaginary_returns_empty():
     """No imaginary modes ⇒ nothing to displace (minimum/ts)."""
     sel = nms.select_displacements(
-        _struct([[0, 0, 0], [1, 0, 0]]), {}, _modes(8),
-        nms.NmsOptions(target="minimum"), _rng(),
+        _struct([[0, 0, 0], [1, 0, 0]]),
+        {},
+        _modes(8),
+        nms.NmsOptions(target="minimum"),
+        _rng(),
     )
     assert sel == []
 
@@ -165,8 +185,11 @@ def test_select_minimum_with_no_imaginary_returns_empty():
 def test_select_random_with_no_candidate_modes_returns_empty():
     """A zero-mode tensor leaves the random sampler no candidates."""
     sel = nms.select_displacements(
-        _struct([[0, 0, 0], [1, 0, 0]]), {}, _modes(0),
-        nms.NmsOptions(target="random"), _rng(),
+        _struct([[0, 0, 0], [1, 0, 0]]),
+        {},
+        _modes(0),
+        nms.NmsOptions(target="random"),
+        _rng(),
     )
     assert sel == []
 
@@ -176,8 +199,11 @@ def test_select_skips_mode_with_shape_mismatch():
     bad_modes = np.zeros((3, 3, 8))  # 3 "atoms" but the struct has 2
     bad_modes[0, 0, 5] = 0.1
     sel = nms.select_displacements(
-        _struct([[0, 0, 0], [1, 0, 0]]), {5: -42.0}, bad_modes,
-        nms.NmsOptions(target="minimum"), _rng(),
+        _struct([[0, 0, 0], [1, 0, 0]]),
+        {5: -42.0},
+        bad_modes,
+        nms.NmsOptions(target="minimum"),
+        _rng(),
     )
     assert sel == []
 
@@ -220,7 +246,9 @@ def test_orca_parse_caches_nms_freqs_and_modes(tmp_path):
     out = ctx.step_dir / "step1_structure_0.out"
     out.write_text(
         synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)])
-        + FREQUENCY_BLOCK + NORMAL_MODES_BLOCK_2_ATOMS + "\n****ORCA TERMINATED NORMALLY****\n",
+        + FREQUENCY_BLOCK
+        + NORMAL_MODES_BLOCK_2_ATOMS
+        + "\n****ORCA TERMINATED NORMALLY****\n",
         encoding="utf-8",
     )
     inputs = StepInputs(files=((ctx.step_dir / "step1_structure_0.inp", out, "0"),))
@@ -237,7 +265,8 @@ def test_orca_parse_sets_modes_none_when_block_missing(tmp_path):
     out = ctx.step_dir / "step1_structure_0.out"
     out.write_text(
         synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)])
-        + FREQUENCY_BLOCK + "\n****ORCA TERMINATED NORMALLY****\n",
+        + FREQUENCY_BLOCK
+        + "\n****ORCA TERMINATED NORMALLY****\n",
         encoding="utf-8",
     )
     inputs = StepInputs(files=((ctx.step_dir / "step1_structure_0.inp", out, "0"),))
@@ -253,8 +282,10 @@ def test_orca_normal_mode_sample_displaces_and_flags(tmp_path):
     engine._modes = {"0": _modes(6)}
     round1 = StepResults(structures=(_struct([[0, 0, 0], [0.74, 0, 0]], "0"),))
     child = Structure(
-        id="0_m5_pos", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]),
-        parent_id="0", terminated=True,
+        id="0_m5_pos",
+        atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]),
+        parent_id="0",
+        terminated=True,
     )
     captured = {}
 
@@ -301,8 +332,10 @@ def test_orca_resolve_nms_from_existing_reads_round2_outputs(tmp_path):
             encoding="utf-8",
         )
     child = Structure(
-        id="0_m5_pos", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]),
-        parent_id="0", terminated=True,
+        id="0_m5_pos",
+        atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]),
+        parent_id="0",
+        terminated=True,
     )
     with patch.object(engine, "parse", lambda i, c: StepResults(structures=(child,))):
         result = engine.resolve_nms_from_existing(round1, ctx)

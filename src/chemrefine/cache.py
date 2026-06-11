@@ -93,9 +93,7 @@ def fingerprint(step_cfg: StepConfig, parent_ids: tuple[str, ...]) -> str:
         "multiplicity": step_cfg.multiplicity,
         "template": step_cfg.template,
         "nms": step_cfg.nms,
-        "sample": (
-            step_cfg.sample.model_dump(mode="json") if step_cfg.sample else None
-        ),
+        "sample": (step_cfg.sample.model_dump(mode="json") if step_cfg.sample else None),
         "parent_ids": list(parent_ids),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -214,8 +212,7 @@ def load(step_dir: Path) -> StepCache | None:
         raise CacheError(f"cache at {pkl_path} is not a StepCache (got {type(obj).__name__})")
     if obj.cache_format != CACHE_FORMAT_VERSION:
         raise CacheError(
-            f"cache at {pkl_path} has format {obj.cache_format}; "
-            f"expected {CACHE_FORMAT_VERSION}"
+            f"cache at {pkl_path} has format {obj.cache_format}; expected {CACHE_FORMAT_VERSION}"
         )
     return obj
 
@@ -271,8 +268,7 @@ def save_manifest(
         "operation": operation,
         "engine": engine,
         "files": [
-            {"input": str(inp), "output": str(out), "id": sid}
-            for inp, out, sid in inputs.files
+            {"input": str(inp), "output": str(out), "id": sid} for inp, out, sid in inputs.files
         ],
     }
     _write_json(path, data)
@@ -291,10 +287,7 @@ def load_manifest(step_dir: Path) -> StepInputs | None:
     if data is None:
         return None
     try:
-        files = tuple(
-            (Path(rec["input"]), Path(rec["output"]), rec["id"])
-            for rec in data["files"]
-        )
+        files = tuple((Path(rec["input"]), Path(rec["output"]), rec["id"]) for rec in data["files"])
     except (KeyError, TypeError) as e:
         raise CacheError(f"corrupt manifest at {path}: {e}") from e
     return StepInputs(files=files)

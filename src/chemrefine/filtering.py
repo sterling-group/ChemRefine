@@ -60,9 +60,7 @@ def apply(results: StepResults, sample: SampleConfig | None) -> PipelineState:
     if sample.by_parent:
         survivors = _filter_by_parent(structures, sample)
     else:
-        survivors = _dispatch(
-            sorted(structures, key=operator.attrgetter("energy_hartree")), sample
-        )
+        survivors = _dispatch(sorted(structures, key=operator.attrgetter("energy_hartree")), sample)
     return PipelineState(structures=tuple(survivors))
 
 
@@ -96,9 +94,7 @@ def _filter_by_parent(structures: list[Structure], sample: SampleConfig) -> list
 _DISPATCHERS: dict[type, Callable[[list[Structure], SampleConfig], list[Structure]]] = {
     IntegerSample: lambda s, c: _filter_integer(s, c.count),
     EnergyWindowSample: lambda s, c: _filter_energy_window(s, c.window_kcal),
-    BoltzmannSample: lambda s, c: _filter_boltzmann(
-        s, c.percent_cumulative, c.temperature_k
-    ),
+    BoltzmannSample: lambda s, c: _filter_boltzmann(s, c.percent_cumulative, c.temperature_k),
     HighEnergySample: lambda s, c: _filter_high_energy(s, c.count),
 }
 
@@ -143,9 +139,7 @@ def _filter_boltzmann(
     """
     if len(sorted_structures) <= 1:
         return list(sorted_structures)
-    energies_kcal = (
-        np.array([s.energy_hartree for s in sorted_structures]) * HARTREE_TO_KCALMOL
-    )
+    energies_kcal = np.array([s.energy_hartree for s in sorted_structures]) * HARTREE_TO_KCALMOL
     weights = boltzmann_weights(energies_kcal - energies_kcal.min(), temperature_k)
     cumulative = np.cumsum(weights * 100.0)
     # Keep every structure whose cumulative weight is still below the
@@ -154,9 +148,7 @@ def _filter_boltzmann(
     return list(sorted_structures[: n_below + 1])
 
 
-def _filter_high_energy(
-    sorted_structures: list[Structure], count: int
-) -> list[Structure]:
+def _filter_high_energy(sorted_structures: list[Structure], count: int) -> list[Structure]:
     """Keep the ``count`` highest-energy structures (PES-style sampling).
 
     Precondition: ``sorted_structures`` must be sorted ascending by
@@ -164,5 +156,3 @@ def _filter_high_energy(
     every internal caller passes a non-empty list.
     """
     return list(reversed(sorted_structures))[:count]
-
-

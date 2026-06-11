@@ -60,9 +60,7 @@ class Throttler:
 
     # -- mutation ----------------------------------------------------------
 
-    def register(
-        self, job_id: str, pal: int, *, gpus: int = 0, device: int | None = None
-    ) -> None:
+    def register(self, job_id: str, pal: int, *, gpus: int = 0, device: int | None = None) -> None:
         """Mark a newly-submitted job as active, charging ``pal`` cores + ``gpus`` GPUs.
 
         ``device`` is the local GPU index handed out by :meth:`assign_device`
@@ -140,8 +138,12 @@ class Throttler:
                 )
             logger.debug(
                 "waiting on budget: cores %d+%d/%d, gpus %d+%d/%d",
-                self.cores_in_use, pal_needed, self.max_cores,
-                self.gpus_in_use, gpus_needed, self.max_gpus,
+                self.cores_in_use,
+                pal_needed,
+                self.max_cores,
+                self.gpus_in_use,
+                gpus_needed,
+                self.max_gpus,
             )
             time.sleep(self.poll_interval)
 

@@ -9,9 +9,7 @@ from chemrefine.engines.mlip.calculator import optional_backend, register_backen
 
 
 @register_backend("chgnet")
-def _build_chgnet(
-    *, model_path: str | Path | None = None, device: str = "cuda", **_: Any
-) -> Any:
+def _build_chgnet(*, model_path: str | Path | None = None, device: str = "cuda", **_: Any) -> Any:
     """CHGNet universal potential (a local checkpoint via ``model_path``).
 
     Note: ``model_path`` reaches here only if a caller selects ``chgnet``

@@ -75,9 +75,7 @@ def test_importing_cli_does_not_pull_the_heavy_stack():
         "heavy = ('chemrefine.pipeline', 'chemrefine.engines', 'chemrefine.recovery', 'ase'); "
         "print(','.join(m for m in heavy if m in sys.modules))"
     )
-    out = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=True
-    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "", f"cli import leaked heavy modules: {out.stdout.strip()}"
 
 
@@ -117,9 +115,7 @@ def test_dry_run_does_not_create_outputs(tmp_path: Path):
 
 def test_dry_run_with_target_step_prints_target(tmp_path: Path):
     config_path = _write_config(tmp_path)
-    result = runner.invoke(
-        app, ["rebuild-cache", str(config_path), "refine", "--dry-run"]
-    )
+    result = runner.invoke(app, ["rebuild-cache", str(config_path), "refine", "--dry-run"])
     assert result.exit_code == 0
     assert "target step: refine" in result.stdout
 
@@ -252,9 +248,7 @@ def test_legacy_rerun_errors_flag_dispatches_via_main(tmp_path: Path, monkeypatc
         return 0
 
     monkeypatch.setattr(cli, "execute", _fake_execute)
-    monkeypatch.setattr(
-        "sys.argv", ["chemrefine", str(config_path), "--rerun_errors", "1"]
-    )
+    monkeypatch.setattr("sys.argv", ["chemrefine", str(config_path), "--rerun_errors", "1"])
     with contextlib.suppress(SystemExit):  # typer.Exit at the end of app()
         cli.main()
     assert seen == {"action": Action.RERUN_ERRORS, "target": "1"}

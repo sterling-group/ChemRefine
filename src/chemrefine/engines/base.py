@@ -145,9 +145,7 @@ def get_engine(name: str) -> CalculationEngine:
     """
     engine_cls = ENGINES.get(name)
     if engine_cls is None:
-        raise EngineNotFoundError(
-            f"unknown engine {name!r}; registered: {sorted(ENGINES)}"
-        )
+        raise EngineNotFoundError(f"unknown engine {name!r}; registered: {sorted(ENGINES)}")
     return engine_cls()
 
 
@@ -266,9 +264,7 @@ class SlurmBatchEngine:
             job_id = slurm.submit(script_path, env=env)
             throttler.register(job_id, pal, gpus=gpus, device=device)
             jobs[inp] = job_id
-            logger.info(
-                "submitted %s as job %s (pal=%d, gpus=%d)", inp.name, job_id, pal, gpus
-            )
+            logger.info("submitted %s as job %s (pal=%d, gpus=%d)", inp.name, job_id, pal, gpus)
 
         throttler.wait_all(is_finished=slurm.is_finished)
         return JobBatch(jobs=jobs)

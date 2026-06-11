@@ -167,9 +167,7 @@ def smiles_to_xyz(
 # ---------------------------------------------------------------------------
 
 
-def _boltzmann_columns(
-    energy_kcal: np.ndarray, temperature_k: float
-) -> dict[str, np.ndarray]:
+def _boltzmann_columns(energy_kcal: np.ndarray, temperature_k: float) -> dict[str, np.ndarray]:
     """Return the four Boltzmann-derived report columns for a sorted energy array."""
     dE = energy_kcal - energy_kcal.min()
     weights = boltzmann_weights(dE, temperature_k)

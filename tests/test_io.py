@@ -24,7 +24,9 @@ def test_importing_io_does_not_pull_pandas():
     """pandas loads only when CSV is actually read/written, not on `import chemrefine.io`."""
     out = subprocess.run(
         [sys.executable, "-c", "import sys, chemrefine.io; print('pandas' in sys.modules)"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert out.stdout.strip() == "False"
 
@@ -153,9 +155,7 @@ def test_save_step_csv_appends_without_header_on_later_steps(tmp_path: Path):
 
 
 def test_save_step_csv_sorts_by_energy(tmp_path: Path):
-    path = save_step_csv(
-        [-1.0, -2.0, -0.5], ["a", "b", "c"], step_number=1, output_dir=tmp_path
-    )
+    path = save_step_csv([-1.0, -2.0, -0.5], ["a", "b", "c"], step_number=1, output_dir=tmp_path)
     rows = path.read_text().strip().splitlines()[1:]  # drop header
     conformers = [row.split(",")[1] for row in rows]
     assert conformers == ["b", "a", "c"]  # ascending by absolute energy

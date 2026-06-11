@@ -43,8 +43,10 @@ class MlipEngine(TemplateScriptEngine):
         raw = ctx.step_cfg.options or {}
         defaults = MlipOptions()
         return {
-            "MODEL_NAME": raw.get("model_name") or raw.get("model")
-            or raw.get("size") or defaults.model_name,
+            "MODEL_NAME": raw.get("model_name")
+            or raw.get("model")
+            or raw.get("size")
+            or defaults.model_name,
             "TASK_NAME": raw.get("task_name") or raw.get("task") or defaults.task_name,
             "DEVICE": raw.get("device") or defaults.device,
         }

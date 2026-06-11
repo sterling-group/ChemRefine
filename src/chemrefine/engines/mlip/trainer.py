@@ -95,7 +95,8 @@ def prepare_inputs(results: StepResults, ctx: StepContext) -> tuple[Path, Path]:
     ase_write(str(test_path), test_set, format="extxyz")
     logger.info(
         "MLIP training: wrote %d train / %d test structures",
-        len(train_set), len(test_set),
+        len(train_set),
+        len(test_set),
     )
     return train_path, test_path
 
@@ -105,9 +106,7 @@ def prepare_inputs(results: StepResults, ctx: StepContext) -> tuple[Path, Path]:
 # ---------------------------------------------------------------------------
 
 
-def write_training_config(
-    *, train_path: Path, test_path: Path, ctx: StepContext
-) -> Path:
+def write_training_config(*, train_path: Path, test_path: Path, ctx: StepContext) -> Path:
     """Render a MACE training YAML from the per-step template.
 
     The template is the step's ``template:`` override or the default
@@ -194,9 +193,7 @@ def run_training(results: StepResults, ctx: StepContext) -> StepResults:
     no-op.
     """
     train_path, test_path = prepare_inputs(results, ctx)
-    config_path = write_training_config(
-        train_path=train_path, test_path=test_path, ctx=ctx
-    )
+    config_path = write_training_config(train_path=train_path, test_path=test_path, ctx=ctx)
     script_path = write_training_slurm(ctx=ctx, config_path=config_path)
     submit_training(script_path=script_path)
     return results

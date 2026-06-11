@@ -247,9 +247,7 @@ def rerun_errors(
 # Legacy (v1.3.1) flag-style CLI → subcommand translation
 # ---------------------------------------------------------------------------
 
-_SUBCOMMANDS = frozenset(
-    {"run", "resume", "rerun", "rerun-errors", "rebuild-cache", "rebuild-nms"}
-)
+_SUBCOMMANDS = frozenset({"run", "resume", "rerun", "rerun-errors", "rebuild-cache", "rebuild-nms"})
 
 
 def _translate_legacy_argv(argv: list[str]) -> list[str]:
@@ -300,9 +298,7 @@ def _translate_legacy_argv(argv: list[str]) -> list[str]:
     new_argv = (["-v"] if ns.verbose else []) + [command, ns.input_yaml, *step]
     if ns.maxcores is not None:
         new_argv += ["--maxcores", str(ns.maxcores)]
-    logger.warning(
-        "legacy CLI flags detected; mapped to `chemrefine %s`", " ".join(new_argv)
-    )
+    logger.warning("legacy CLI flags detected; mapped to `chemrefine %s`", " ".join(new_argv))
     return new_argv
 
 

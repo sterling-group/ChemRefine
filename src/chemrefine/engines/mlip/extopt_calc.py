@@ -62,19 +62,24 @@ class MlipExtOptCalculator(ComputeBackend):
         """
         defaults = MlipOptions()
         parser.add_argument(
-            "--model", default=defaults.model_name,
+            "--model",
+            default=defaults.model_name,
             help="MLIP model weights (a MACE size or a FAIRChem/SevenNet/ORB id)",
         )
         parser.add_argument(
-            "--task-name", default=defaults.task_name,
+            "--task-name",
+            default=defaults.task_name,
             help="MLIP method / head — selects the backend (omol, mace_off, …)",
         )
         parser.add_argument(
-            "--device", default=defaults.device, choices=["cuda", "cpu"],
+            "--device",
+            default=defaults.device,
+            choices=["cuda", "cpu"],
             help="Compute device for the MLIP model",
         )
         parser.add_argument(
-            "--model-path", default=None,
+            "--model-path",
+            default=None,
             help="Custom MACE checkpoint path (selects the custom_mace backend)",
         )
 
@@ -107,9 +112,7 @@ class MlipExtOptCalculator(ComputeBackend):
             model_path=args.model_path,
         )
 
-    def calc(
-        self, data: CalculationData
-    ) -> tuple[float, list[list[float]]]:
+    def calc(self, data: CalculationData) -> tuple[float, list[list[float]]]:
         """Score one geometry, return ``(energy_hartree, gradient_hartree_per_bohr)``."""
         atoms = Atoms(
             symbols=list(data.symbols),

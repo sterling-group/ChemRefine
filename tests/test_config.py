@@ -105,9 +105,7 @@ def test_steps_must_be_contiguous(tmp_path: Path):
 
 
 def test_steps_must_be_one_indexed(tmp_path: Path):
-    data = _minimal_config(
-        steps=[{"step": 0, "engine": "fake", "operation": "opt_sp"}]
-    )
+    data = _minimal_config(steps=[{"step": 0, "engine": "fake", "operation": "opt_sp"}])
     with pytest.raises(ConfigError):
         load_config(_write_yaml(tmp_path, data))
 
@@ -360,11 +358,19 @@ def test_legacy_engine_renames():
 def test_legacy_mlff_block_becomes_options_and_extopt_engine():
     cfg = Config(
         template_dir="./t",
-        steps=[{
-            "step": 1, "engine": "MLFF", "operation": "OPT+SP",
-            "mlff": {"model_name": "uma-s-1", "task_name": "omol",
-                     "device": "cuda", "bind": "x:1"},
-        }],
+        steps=[
+            {
+                "step": 1,
+                "engine": "MLFF",
+                "operation": "OPT+SP",
+                "mlff": {
+                    "model_name": "uma-s-1",
+                    "task_name": "omol",
+                    "device": "cuda",
+                    "bind": "x:1",
+                },
+            }
+        ],
     )
     s = cfg.steps[0]
     assert s.engine == "mlip-extopt"
@@ -384,13 +390,27 @@ def test_legacy_sample_type_and_param_renames():
     cfg = Config(
         template_dir="./t",
         steps=[
-            {"step": 1, "engine": "orca", "operation": "sp",
-             "sample_type": {"method": "boltzmann", "parameters": {"weight": 95}}},
-            {"step": 2, "engine": "orca", "operation": "sp",
-             "sample_type": {"method": "integer", "parameters": {"num_structures": 3}}},
-            {"step": 3, "engine": "orca", "operation": "sp",
-             "sample_type": {"method": "energy_window",
-                             "parameters": {"energy": 8, "unit": "kcal/mol"}}},
+            {
+                "step": 1,
+                "engine": "orca",
+                "operation": "sp",
+                "sample_type": {"method": "boltzmann", "parameters": {"weight": 95}},
+            },
+            {
+                "step": 2,
+                "engine": "orca",
+                "operation": "sp",
+                "sample_type": {"method": "integer", "parameters": {"num_structures": 3}},
+            },
+            {
+                "step": 3,
+                "engine": "orca",
+                "operation": "sp",
+                "sample_type": {
+                    "method": "energy_window",
+                    "parameters": {"energy": 8, "unit": "kcal/mol"},
+                },
+            },
         ],
     )
     assert isinstance(cfg.steps[0].sample, BoltzmannSample)
@@ -404,8 +424,7 @@ def test_legacy_sample_type_and_param_renames():
 def test_legacy_normal_mode_sampling_renamed():
     cfg = Config(
         template_dir="./t",
-        steps=[{"step": 1, "engine": "orca", "operation": "freq",
-                "normal_mode_sampling": True}],
+        steps=[{"step": 1, "engine": "orca", "operation": "freq", "normal_mode_sampling": True}],
     )
     # bare nms maps to target: ts (main's default calc_type was rm_imag).
     assert cfg.steps[0].nms is True
@@ -415,10 +434,18 @@ def test_legacy_normal_mode_sampling_renamed():
 def test_legacy_nms_rm_imag_maps_to_ts_and_displacement():
     cfg = Config(
         template_dir="./t",
-        steps=[{"step": 1, "engine": "orca", "operation": "freq",
+        steps=[
+            {
+                "step": 1,
+                "engine": "orca",
+                "operation": "freq",
                 "normal_mode_sampling": True,
                 "normal_mode_sampling_parameters": {
-                    "calc_type": "rm_imag", "displacement_vector": 1.5}}],
+                    "calc_type": "rm_imag",
+                    "displacement_vector": 1.5,
+                },
+            }
+        ],
     )
     s = cfg.steps[0]
     assert s.nms is True
@@ -433,10 +460,18 @@ def test_legacy_nms_rm_imag_maps_to_ts_and_displacement():
 def test_legacy_nms_random_passes_params_through():
     cfg = Config(
         template_dir="./t",
-        steps=[{"step": 1, "engine": "orca", "operation": "freq",
+        steps=[
+            {
+                "step": 1,
+                "engine": "orca",
+                "operation": "freq",
                 "normal_mode_sampling": True,
                 "normal_mode_sampling_parameters": {
-                    "calc_type": "random", "num_random_displacements": 3}}],
+                    "calc_type": "random",
+                    "num_random_displacements": 3,
+                },
+            }
+        ],
     )
     assert cfg.steps[0].options == {"target": "random", "num_random_displacements": 3}
 
@@ -448,10 +483,18 @@ def test_legacy_calculation_type_raises_clear_error():
 
 def test_normalizer_is_idempotent_on_new_style():
     new = {
-        "template_dir": "./t", "executables": {"orca": "/orca"}, "input": "./s.xyz",
-        "steps": [{"step": 1, "engine": "mlip-extopt", "operation": "opt_sp",
-                   "options": {"model_name": "uma-s-1", "task_name": "omol"},
-                   "sample": {"method": "integer", "count": 5}}],
+        "template_dir": "./t",
+        "executables": {"orca": "/orca"},
+        "input": "./s.xyz",
+        "steps": [
+            {
+                "step": 1,
+                "engine": "mlip-extopt",
+                "operation": "opt_sp",
+                "options": {"model_name": "uma-s-1", "task_name": "omol"},
+                "sample": {"method": "integer", "count": 5},
+            }
+        ],
     }
     cfg = Config(**new)
     assert cfg.executables == {"orca": "/orca"}

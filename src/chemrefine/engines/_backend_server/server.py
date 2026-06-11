@@ -42,7 +42,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(prog="chemrefine-backend-server")
     parser.add_argument(
-        "--backend", required=True, choices=sorted(CALCULATORS),
+        "--backend",
+        required=True,
+        choices=sorted(CALCULATORS),
         help="which ComputeBackend to load",
     )
     parser.add_argument(
@@ -51,13 +53,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="host:port to bind (port 0 = kernel-assigned)",
     )
     parser.add_argument(
-        "--url-file", default=None,
+        "--url-file",
+        default=None,
         help=f"path of the sidecar URL file (default: $WORK_DIR/{SERVER_URL_FILENAME})",
     )
     parser.add_argument("--nthreads", type=int, default=4, help="waitress worker threads")
     parser.add_argument("--log-file", default=None, help="logging destination (default: stderr)")
     parser.add_argument(
-        "--log-level", default="INFO",
+        "--log-level",
+        default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
     for backend_name in sorted(CALCULATORS):
@@ -89,7 +93,11 @@ def create_app(calculator: ComputeBackend):
             if tag:
                 logger.info(
                     "[req=%s] calc backend=%s n_atoms=%d nthreads=%d dograd=%s",
-                    tag, calculator.name, len(data.symbols), data.nthreads, data.dograd,
+                    tag,
+                    calculator.name,
+                    len(data.symbols),
+                    data.nthreads,
+                    data.dograd,
                 )
             energy, gradient = calculator.calc(data)
         except Exception as e:

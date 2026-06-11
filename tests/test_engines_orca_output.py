@@ -158,7 +158,7 @@ def test_parse_dft_skips_short_lines_in_coord_block(tmp_path: Path):
         "CARTESIAN COORDINATES (ANGSTROEM)\n"
         "---------------------------------\n"
         "  H   0.000000   0.000000   0.000000\n"
-        "  ...continuation\n"               # only 1 token, len(parts) < 4
+        "  ...continuation\n"  # only 1 token, len(parts) < 4
         "  H   0.740000   0.000000   0.000000\n"
         "---------------------------------\n"
         "FINAL SINGLE POINT ENERGY     -1.10\n"
@@ -197,7 +197,7 @@ def test_parse_dft_empty_coord_block_raises(tmp_path: Path):
     path.write_text(
         "CARTESIAN COORDINATES (ANGSTROEM)\n"
         "---------------------------------\n"
-        "  ...truncated\n"               # no 4-token atom rows survive
+        "  ...truncated\n"  # no 4-token atom rows survive
         "---------------------------------\n"
         "FINAL SINGLE POINT ENERGY     -1.0\n",
         encoding="utf-8",
@@ -406,15 +406,12 @@ def test_parse_output_unknown_operation_raises():
 def test_parse_pes_returns_one_structure_per_completed_segment(tmp_path: Path):
     from synthetic import synthetic_pes_segment
 
-    text = (
-        synthetic_pes_segment(
-            coords=[("H", 0.0, 0.0, 0.0), ("H", 0.74, 0.0, 0.0)],
-            energy=-1.10,
-        )
-        + synthetic_pes_segment(
-            coords=[("H", 0.0, 0.0, 0.0), ("H", 0.80, 0.0, 0.0)],
-            energy=-1.05,
-        )
+    text = synthetic_pes_segment(
+        coords=[("H", 0.0, 0.0, 0.0), ("H", 0.74, 0.0, 0.0)],
+        energy=-1.10,
+    ) + synthetic_pes_segment(
+        coords=[("H", 0.0, 0.0, 0.0), ("H", 0.80, 0.0, 0.0)],
+        energy=-1.05,
     )
     out = tmp_path / "pes.out"
     out.write_text(text, encoding="utf-8")
@@ -497,8 +494,7 @@ def test_parse_pes_skips_segment_without_energy(tmp_path: Path):
     text = (
         "CARTESIAN COORDINATES (ANGSTROEM)\n"
         "  H   0.0  0.0  0.0\n  H   0.74 0.0 0.0\n\n"
-        "*** OPTIMIZATION RUN DONE ***\n"
-        + "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "*** OPTIMIZATION RUN DONE ***\n" + "CARTESIAN COORDINATES (ANGSTROEM)\n"
         "  H   0.0  0.0  0.0\n  H   0.80 0.0 0.0\n\n"
         "FINAL SINGLE POINT ENERGY     -1.05\n"
         "*** OPTIMIZATION RUN DONE ***\n"
@@ -515,7 +511,7 @@ def test_parse_pes_skips_non_atom_lines_inside_coord_block(tmp_path: Path):
     body = (
         "CARTESIAN COORDINATES (ANGSTROEM)\n"
         "  H   0.0    0.0    0.0\n"
-        "  C   not    a      number\n"        # 4 tokens but two are non-numeric
+        "  C   not    a      number\n"  # 4 tokens but two are non-numeric
         "  H   0.74   0.0    0.0\n"
         "\n"
         "FINAL SINGLE POINT ENERGY     -1.10\n"
@@ -531,8 +527,7 @@ def test_parse_pes_skips_segment_without_coords(tmp_path: Path):
     """A segment with FINAL SP ENERGY but no coord block is silently dropped."""
     text = (
         "FINAL SINGLE POINT ENERGY     -1.10\n"
-        "*** OPTIMIZATION RUN DONE ***\n"
-        + "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "*** OPTIMIZATION RUN DONE ***\n" + "CARTESIAN COORDINATES (ANGSTROEM)\n"
         "  H 0.0 0.0 0.0\n  H 0.80 0.0 0.0\n\n"
         "FINAL SINGLE POINT ENERGY     -1.05\n"
         "*** OPTIMIZATION RUN DONE ***\n"
@@ -567,8 +562,7 @@ def test_xyz_ensemble_skips_frames_with_unparseable_headers(tmp_path: Path):
     """A frame whose header doesn't match the regex must be silently skipped."""
     p = tmp_path / "mixed.xyz"
     p.write_text(
-        "2\nnot a header at all\nH 0 0 0\nH 0 0 1\n"
-        "2\n-1.5 converged=true\nH 0 0 0\nH 0 0 1\n",
+        "2\nnot a header at all\nH 0 0 0\nH 0 0 1\n2\n-1.5 converged=true\nH 0 0 0\nH 0 0 1\n",
         encoding="utf-8",
     )
     parsed = parse_goat_ensemble(p)
@@ -580,8 +574,7 @@ def test_xyz_ensemble_skips_frames_with_malformed_atom_rows(tmp_path: Path):
     """An atom line with fewer than 4 whitespace-separated parts kills the frame."""
     p = tmp_path / "badrow.xyz"
     p.write_text(
-        "2\n-1.0 converged=true\nH 0 0\nH 0 0 1\n"
-        "2\n-2.0 converged=true\nH 0 0 0\nH 0 0 1\n",
+        "2\n-1.0 converged=true\nH 0 0\nH 0 0 1\n2\n-2.0 converged=true\nH 0 0 0\nH 0 0 1\n",
         encoding="utf-8",
     )
     parsed = parse_goat_ensemble(p)
@@ -593,9 +586,7 @@ def test_xyz_ensemble_skips_non_digit_lines(tmp_path: Path):
     """Stray text between frames advances past the line without consuming a frame."""
     p = tmp_path / "stray.xyz"
     p.write_text(
-        "garbage line at the top\n"
-        "more garbage\n"
-        "2\n-2.0 converged=true\nH 0 0 0\nH 0 0 1\n",
+        "garbage line at the top\nmore garbage\n2\n-2.0 converged=true\nH 0 0 0\nH 0 0 1\n",
         encoding="utf-8",
     )
     parsed = parse_goat_ensemble(p)

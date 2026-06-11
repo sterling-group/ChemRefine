@@ -43,15 +43,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(prog="chemrefine-extopt-bridge")
     parser.add_argument(
-        "--backend", required=True, choices=sorted(CALCULATORS),
+        "--backend",
+        required=True,
+        choices=sorted(CALCULATORS),
         help="which ComputeBackend the server is running",
     )
     parser.add_argument(
-        "--bind", default=None,
+        "--bind",
+        default=None,
         help="explicit host:port (overrides --url-file)",
     )
     parser.add_argument(
-        "--url-file", default=None,
+        "--url-file",
+        default=None,
         help=f"sidecar URL file (default: $WORK_DIR/{SERVER_URL_FILENAME})",
     )
     parser.add_argument("--tag", default=None, help="optional correlation tag for server log")

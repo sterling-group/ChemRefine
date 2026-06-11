@@ -411,9 +411,7 @@ class Config(BaseModel):
         numbers = [s.step for s in v]
         expected = list(range(1, len(numbers) + 1))
         if numbers != expected:
-            raise ValueError(
-                f"step numbers must be a contiguous 1..N sequence; got {numbers}"
-            )
+            raise ValueError(f"step numbers must be a contiguous 1..N sequence; got {numbers}")
         return v
 
     @model_validator(mode="after")

@@ -89,12 +89,12 @@ def test_build_custom_mace_constructs_with_fake_module(monkeypatch, tmp_path: Pa
     model_file = tmp_path / "fake.model"
     model_file.touch()
     calc = MlipCalculator(
-        task_name="ignored", model_name="ignored", device="cuda",
+        task_name="ignored",
+        model_name="ignored",
+        device="cuda",
         model_path=str(model_file),
     )
-    factories["MACECalculator"].assert_called_once_with(
-        model_paths=str(model_file), device="cuda"
-    )
+    factories["MACECalculator"].assert_called_once_with(model_paths=str(model_file), device="cuda")
     assert calc.calculator == "CUSTOM_CALC"
 
 
@@ -115,9 +115,7 @@ def _install_fake_fairchem(monkeypatch) -> tuple[MagicMock, MagicMock]:
     predict = MagicMock()
     predict.get_predict_unit = MagicMock(return_value="PREDICTOR")
     fairchem_calc = MagicMock(return_value="FAIRCHEM_CALC")
-    core = _fake_module(
-        "fairchem.core", FAIRChemCalculator=fairchem_calc, pretrained_mlip=predict
-    )
+    core = _fake_module("fairchem.core", FAIRChemCalculator=fairchem_calc, pretrained_mlip=predict)
     monkeypatch.setitem(sys.modules, "fairchem", _fake_module("fairchem", core=core))
     monkeypatch.setitem(sys.modules, "fairchem.core", core)
     return predict.get_predict_unit, fairchem_calc
@@ -206,9 +204,7 @@ def _install_fake_orb(monkeypatch) -> tuple[MagicMock, MagicMock, object]:
     )
     forcefield = _fake_module("orb_models.forcefield", pretrained=pretrained)
     calc_class = MagicMock(return_value="ORB_CALC")
-    calc_mod = _fake_module(
-        "orb_models.forcefield.inference.calculator", ORBCalculator=calc_class
-    )
+    calc_mod = _fake_module("orb_models.forcefield.inference.calculator", ORBCalculator=calc_class)
     inference = _fake_module("orb_models.forcefield.inference")
     for name, mod in {
         "orb_models": _fake_module("orb_models", forcefield=forcefield),
@@ -223,9 +219,7 @@ def _install_fake_orb(monkeypatch) -> tuple[MagicMock, MagicMock, object]:
 
 def test_build_orb_constructs_real_orb_calculator(monkeypatch):
     loader, calc_class, orbff = _install_fake_orb(monkeypatch)
-    calc = MlipCalculator(
-        task_name="orb", model_name="orb_v3_conservative_inf_omat", device="cpu"
-    )
+    calc = MlipCalculator(task_name="orb", model_name="orb_v3_conservative_inf_omat", device="cpu")
     loader.assert_called_once_with(device="cpu")
     calc_class.assert_called_once_with(orbff, device="cpu")
     assert calc.calculator == "ORB_CALC"

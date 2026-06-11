@@ -140,7 +140,9 @@ def select_displacements(
         if idx >= n_modes:
             logger.warning(
                 "NMS %s: mode %d outside the %d-mode tensor; skipping",
-                struct.id, idx, n_modes,
+                struct.id,
+                idx,
+                n_modes,
             )
             continue
         mode = modes[:, :, idx]

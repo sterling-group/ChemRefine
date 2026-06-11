@@ -78,35 +78,44 @@ class PyscfExtOptCalculator(ComputeBackend):
         """
         defaults = PyscfOptions()
         parser.add_argument(
-            "--method", default=defaults.method, choices=["dft", "hf"],
+            "--method",
+            default=defaults.method,
+            choices=["dft", "hf"],
             help="SCF method (dft | hf)",
         )
         parser.add_argument(
-            "--xc", default=defaults.xc,
+            "--xc",
+            default=defaults.xc,
             help="DFT exchange-correlation functional",
         )
         parser.add_argument(
-            "--basis", default=defaults.basis,
+            "--basis",
+            default=defaults.basis,
             help="Orbital basis set",
         )
         parser.add_argument(
-            "--df", action="store_true",
+            "--df",
+            action="store_true",
             help="Enable density fitting / RI",
         )
         parser.add_argument(
-            "--gpu", action="store_true",
+            "--gpu",
+            action="store_true",
             help="Attempt gpu4pyscf if installed",
         )
         parser.add_argument(
-            "--save_tensors", action="store_true",
+            "--save_tensors",
+            action="store_true",
             help="Dump active-space 1e/2e MO tensors after the SCF",
         )
         parser.add_argument(
-            "--localized", action="store_true",
+            "--localized",
+            action="store_true",
             help="Boys-localize occupied / virtual orbitals before tensor extraction",
         )
         parser.add_argument(
-            "--tensor_folder", default=defaults.tensor_folder,
+            "--tensor_folder",
+            default=defaults.tensor_folder,
             help="Directory (relative to $WORK_DIR) for save_tensors .npz output",
         )
 
@@ -152,9 +161,7 @@ class PyscfExtOptCalculator(ComputeBackend):
             tensor_folder=args.tensor_folder,
         )
 
-    def calc(
-        self, data: CalculationData
-    ) -> tuple[float, list[list[float]]]:
+    def calc(self, data: CalculationData) -> tuple[float, list[list[float]]]:
         """Run the SCF + (optional) gradient, return ``(energy, gradient)`` in atomic units.
 
         Single channel: the SCF knobs come from this instance (built once on the
@@ -179,7 +186,10 @@ class PyscfExtOptCalculator(ComputeBackend):
         )
         logger.info(
             "PySCF calc: E=%.10f Eh converged=%s gpu=%s t=%.3fs",
-            energy, meta["converged"], meta["gpu_used"], meta["elapsed_seconds"],
+            energy,
+            meta["converged"],
+            meta["gpu_used"],
+            meta["elapsed_seconds"],
         )
 
         if self.save_tensors:
@@ -187,9 +197,7 @@ class PyscfExtOptCalculator(ComputeBackend):
             # ``.extinp.tmp`` stem (one file per ORCA geometry step); the server
             # injects it into ``settings`` so dumps don't overwrite each other.
             tag = data.settings.get("tag") or "untagged"
-            nuc, h1, h2 = _runtime.get_active_space_tensors(
-                mol, mf, localized=self.localized
-            )
+            nuc, h1, h2 = _runtime.get_active_space_tensors(mol, mf, localized=self.localized)
             target = Path(self.tensor_folder) / f"{tag}.npz"
             _runtime.save_tensors(path=target, nuc=nuc, h1=h1, h2=h2)
             logger.info("PySCF tensors saved: %s", target)

@@ -41,9 +41,7 @@ def step_dir_for(config: Config, step_cfg: StepConfig) -> Path:
     return (config.output_dir / step_cfg.dir_name()).resolve()
 
 
-def build_context(
-    config: Config, step_cfg: StepConfig, prev_state: PipelineState
-) -> StepContext:
+def build_context(config: Config, step_cfg: StepConfig, prev_state: PipelineState) -> StepContext:
     """Bundle the per-step inputs into a :class:`StepContext`."""
     return StepContext(
         step_cfg=step_cfg,
@@ -53,9 +51,7 @@ def build_context(
         prev_state=prev_state,
         charge=step_cfg.charge if step_cfg.charge is not None else config.charge,
         multiplicity=(
-            step_cfg.multiplicity
-            if step_cfg.multiplicity is not None
-            else config.multiplicity
+            step_cfg.multiplicity if step_cfg.multiplicity is not None else config.multiplicity
         ),
         max_cores=config.max_cores,
         slurm_template=config.slurm_template,
@@ -117,9 +113,14 @@ def run_step(
 
     if use_cache:
         cached = _cached_outcome(
-            ctx, step_cfg, parent_ids, engine,
-            is_nms=is_nms, resubmit_step=resubmit_step,
-            version=__version__, step_nms=step_nms,
+            ctx,
+            step_cfg,
+            parent_ids,
+            engine,
+            is_nms=is_nms,
+            resubmit_step=resubmit_step,
+            version=__version__,
+            step_nms=step_nms,
         )
         if cached is not None:
             return cached
@@ -129,15 +130,24 @@ def run_step(
         # the ledgered-unresolved parents — instead of re-running the whole step.
         if is_nms:
             reused = _nms_reuse_outcome(
-                ctx, step_cfg, parent_ids, engine,
-                version=__version__, step_nms=step_nms,
+                ctx,
+                step_cfg,
+                parent_ids,
+                engine,
+                version=__version__,
+                step_nms=step_nms,
             )
             if reused is not None:
                 return reused
 
     return _run_full_step(
-        ctx, step_cfg, parent_ids, engine,
-        is_nms=is_nms, version=__version__, step_nms=step_nms,
+        ctx,
+        step_cfg,
+        parent_ids,
+        engine,
+        is_nms=is_nms,
+        version=__version__,
+        step_nms=step_nms,
     )
 
 
@@ -176,7 +186,8 @@ def _cached_outcome(
         return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
     logger.info(
         "step %d: cache hit, reusing %d structures",
-        step_cfg.step, len(cached.results.structures),
+        step_cfg.step,
+        len(cached.results.structures),
     )
     return StepOutcome(state=filtering.apply(cached.results, step_cfg.sample), cache_hit=True)
 
@@ -210,8 +221,12 @@ def _nms_reuse_outcome(
             "step %d: NMS search params changed, all resolved — reusing cache", step_cfg.step
         )
         cache.save(
-            step_cfg=step_cfg, parent_ids=parent_ids, results=cached.results,
-            step_dir=ctx.step_dir, chemrefine_version=version, reuse_fingerprint=fingerprint,
+            step_cfg=step_cfg,
+            parent_ids=parent_ids,
+            results=cached.results,
+            step_dir=ctx.step_dir,
+            chemrefine_version=version,
+            reuse_fingerprint=fingerprint,
         )
         results = cached.results
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
@@ -230,9 +245,7 @@ def _run_full_step(
     """Run the engine's full lifecycle (prepare → submit → parse → nms/policy → cache)."""
     logger.info("step %d (%s): preparing inputs", step_cfg.step, step_cfg.engine)
     inputs = engine.prepare(ctx)
-    cache.save_manifest(
-        inputs, ctx.step_dir, operation=step_cfg.operation, engine=step_cfg.engine
-    )
+    cache.save_manifest(inputs, ctx.step_dir, operation=step_cfg.operation, engine=step_cfg.engine)
 
     logger.info("step %d: submitting %d jobs", step_cfg.step, len(inputs.files))
     batch = engine.submit(inputs, ctx)
@@ -249,15 +262,21 @@ def _run_full_step(
         logger.info("step %d: running normal-mode sampling", step_cfg.step)
         round1 = StepResults(structures=tuple(successes))
         results = step_nms._resolve_nms(
-            engine.normal_mode_sample(round1, ctx), round1, ctx, step_cfg,
+            engine.normal_mode_sample(round1, ctx),
+            round1,
+            ctx,
+            step_cfg,
             round1_failures=failures,
         )
     else:
         results = _apply_failure_policy(successes, failures, ctx, step_cfg)
 
     cache.save(
-        step_cfg=step_cfg, parent_ids=parent_ids, results=results,
-        step_dir=ctx.step_dir, chemrefine_version=version,
+        step_cfg=step_cfg,
+        parent_ids=parent_ids,
+        results=results,
+        step_dir=ctx.step_dir,
+        chemrefine_version=version,
         reuse_fingerprint=step_nms._nms_reuse_fingerprint(step_cfg, parent_ids),
     )
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
@@ -372,9 +391,7 @@ def _apply_failure_policy(
     return StepResults(structures=tuple(successes))
 
 
-def halt_if_pending(
-    config: Config, step_cfg: StepConfig, resubmit_step: int | None
-) -> None:
+def halt_if_pending(config: Config, step_cfg: StepConfig, resubmit_step: int | None) -> None:
     """Halt the run when an ``on_failure: stop`` step still has failed jobs.
 
     Called **once** from the pipeline after a step executes (never after a
@@ -412,15 +429,16 @@ def rebuild_cache_step(
     engine = get_engine(step_cfg.engine)
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
-        raise CacheError(
-            f"step {step_cfg.step}: cannot rebuild-cache — no manifest on disk"
-        )
+        raise CacheError(f"step {step_cfg.step}: cannot rebuild-cache — no manifest on disk")
     logger.info("step %d: rebuilding cache from existing outputs", step_cfg.step)
     successes, failures = _parse_with_failures(engine, manifest, ctx)
     if step_cfg.nms and engine.supports_nms:
         round1 = StepResults(structures=tuple(successes))
         results = step_nms._resolve_nms(
-            engine.resolve_nms_from_existing(round1, ctx), round1, ctx, step_cfg,
+            engine.resolve_nms_from_existing(round1, ctx),
+            round1,
+            ctx,
+            step_cfg,
             round1_failures=failures,
         )
     else:
@@ -454,13 +472,9 @@ def _resubmit_failed(
     """
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
-        raise CacheError(
-            f"step {step_cfg.step}: cannot rerun — no manifest to rehydrate inputs"
-        )
+        raise CacheError(f"step {step_cfg.step}: cannot rerun — no manifest to rehydrate inputs")
     failed_ids = {f["structure_id"] for f in failed}
-    failed_inputs = StepInputs(
-        files=tuple(f for f in manifest.files if f[2] in failed_ids)
-    )
+    failed_inputs = StepInputs(files=tuple(f for f in manifest.files if f[2] in failed_ids))
     logger.info(
         "step %d: rerun — resubmitting %d failed job(s)",
         step_cfg.step,

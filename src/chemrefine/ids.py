@@ -149,9 +149,7 @@ def resolve_persistent_ids(
     return allocate_child_ids(parent_ids, fanouts)
 
 
-def structure_artifact_path(
-    step_dir: Path, step: int, structure_id: str, ext: str
-) -> Path:
+def structure_artifact_path(step_dir: Path, step: int, structure_id: str, ext: str) -> Path:
     """Canonical per-structure artifact path.
 
     Returns ``step_dir/step{step}_structure_{structure_id}.{ext}``.

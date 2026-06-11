@@ -43,9 +43,7 @@ def _build_mace_omol(*, model_name: str = "", device: str = "cuda", **_: Any) ->
 
 
 @register_backend("custom_mace")
-def _build_custom_mace(
-    *, model_path: str | Path, device: str = "cuda", **_: Any
-) -> Any:
+def _build_custom_mace(*, model_path: str | Path, device: str = "cuda", **_: Any) -> Any:
     """User-supplied MACE checkpoint at ``model_path``."""
     path = Path(model_path)
     if not path.is_file():

@@ -190,7 +190,9 @@ def test_run_dft_uses_rks_for_closed_shell(monkeypatch):
     mol = _runtime.build_mol(
         symbols=("H", "H"),
         positions_angstrom=np.array([[0.0, 0.0, 0.0], [0.74, 0.0, 0.0]]),
-        charge=0, multiplicity=1, basis="def2-svp",
+        charge=0,
+        multiplicity=1,
+        basis="def2-svp",
     )
     mol.spin = 0
     energy, gradient, meta, _mf = _runtime.run_dft(mol, method="dft", xc="pbe")
@@ -205,8 +207,11 @@ def test_run_dft_uses_rks_for_closed_shell(monkeypatch):
 def test_run_dft_uses_uks_for_open_shell(monkeypatch):
     mocks = _install_fake_pyscf(monkeypatch, mol_spin=2)
     mol = _runtime.build_mol(
-        symbols=("H", "H"), positions_angstrom=np.array([[0, 0, 0], [0.74, 0, 0]]),
-        charge=0, multiplicity=3, basis="def2-svp",
+        symbols=("H", "H"),
+        positions_angstrom=np.array([[0, 0, 0], [0.74, 0, 0]]),
+        charge=0,
+        multiplicity=3,
+        basis="def2-svp",
     )
     mol.spin = 2
     _runtime.run_dft(mol, method="dft", xc="pbe")
@@ -217,8 +222,11 @@ def test_run_dft_uses_uks_for_open_shell(monkeypatch):
 def test_run_dft_uses_rhf_for_method_hf(monkeypatch):
     mocks = _install_fake_pyscf(monkeypatch)
     mol = _runtime.build_mol(
-        symbols=("H",), positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
-        charge=0, multiplicity=1, basis="sto-3g",
+        symbols=("H",),
+        positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
+        charge=0,
+        multiplicity=1,
+        basis="sto-3g",
     )
     mol.spin = 0
     _runtime.run_dft(mol, method="hf")
@@ -228,8 +236,11 @@ def test_run_dft_uses_rhf_for_method_hf(monkeypatch):
 def test_run_dft_uses_uhf_for_method_hf_open_shell(monkeypatch):
     mocks = _install_fake_pyscf(monkeypatch, mol_spin=1)
     mol = _runtime.build_mol(
-        symbols=("H",), positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
-        charge=0, multiplicity=2, basis="sto-3g",
+        symbols=("H",),
+        positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
+        charge=0,
+        multiplicity=2,
+        basis="sto-3g",
     )
     mol.spin = 1
     _runtime.run_dft(mol, method="hf")
@@ -240,8 +251,11 @@ def test_run_dft_hf_warns_about_gpu(monkeypatch):
     """``want_gpu`` is honored for DFT but ignored for HF (CPU only)."""
     _install_fake_pyscf(monkeypatch)
     mol = _runtime.build_mol(
-        symbols=("H",), positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
-        charge=0, multiplicity=1, basis="sto-3g",
+        symbols=("H",),
+        positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
+        charge=0,
+        multiplicity=1,
+        basis="sto-3g",
     )
     mol.spin = 0
     _, _, meta, _ = _runtime.run_dft(mol, method="hf", want_gpu=True)
@@ -254,8 +268,11 @@ def test_run_dft_falls_back_to_cpu_when_gpu_import_fails(monkeypatch):
     _install_fake_pyscf(monkeypatch)
     monkeypatch.setitem(sys.modules, "gpu4pyscf.dft", None)  # forces ImportError
     mol = _runtime.build_mol(
-        symbols=("H",), positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
-        charge=0, multiplicity=1, basis="sto-3g",
+        symbols=("H",),
+        positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
+        charge=0,
+        multiplicity=1,
+        basis="sto-3g",
     )
     mol.spin = 0
     _, _, meta, _ = _runtime.run_dft(mol, want_gpu=True)
@@ -268,8 +285,11 @@ def test_run_dft_density_fitting_continues_on_failure(monkeypatch):
     mocks = _install_fake_pyscf(monkeypatch)
     mocks["rks"].density_fit.side_effect = RuntimeError("no DF for you")
     mol = _runtime.build_mol(
-        symbols=("H",), positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
-        charge=0, multiplicity=1, basis="sto-3g",
+        symbols=("H",),
+        positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
+        charge=0,
+        multiplicity=1,
+        basis="sto-3g",
     )
     mol.spin = 0
     # use_df=True should attempt and silently fall back
@@ -279,8 +299,11 @@ def test_run_dft_density_fitting_continues_on_failure(monkeypatch):
 def test_run_dft_no_gradient_when_dograd_false(monkeypatch):
     _install_fake_pyscf(monkeypatch)
     mol = _runtime.build_mol(
-        symbols=("H",), positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
-        charge=0, multiplicity=1, basis="sto-3g",
+        symbols=("H",),
+        positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
+        charge=0,
+        multiplicity=1,
+        basis="sto-3g",
     )
     mol.spin = 0
     _, gradient, meta, _ = _runtime.run_dft(mol, dograd=False)
@@ -306,8 +329,11 @@ def test_run_dft_uses_gpu_classes_when_available(monkeypatch):
     monkeypatch.setitem(sys.modules, "gpu4pyscf.dft", gpu_dft)
 
     mol = _runtime.build_mol(
-        symbols=("H",), positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
-        charge=0, multiplicity=1, basis="sto-3g",
+        symbols=("H",),
+        positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
+        charge=0,
+        multiplicity=1,
+        basis="sto-3g",
     )
     mol.spin = 0
     energy, _, meta, _ = _runtime.run_dft(mol, want_gpu=True)
@@ -407,9 +433,7 @@ def test_extopt_calc_extracts_tensors_when_constructed_with_save_tensors(
     """``save_tensors`` comes from server construction; only ``tag`` rides the call."""
     _install_fake_pyscf(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    extopt_calc.PyscfExtOptCalculator(save_tensors=True).calc(
-        _data(tag="step3_structure_0")
-    )
+    extopt_calc.PyscfExtOptCalculator(save_tensors=True).calc(_data(tag="step3_structure_0"))
     assert (tmp_path / "tensors" / "step3_structure_0.npz").is_file()
 
 
@@ -427,9 +451,7 @@ def test_extopt_calc_uses_server_construction_not_per_call_settings(monkeypatch)
 def test_extopt_calc_localized_tensors(tmp_path: Path, monkeypatch):
     mocks = _install_fake_pyscf(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    extopt_calc.PyscfExtOptCalculator(save_tensors=True, localized=True).calc(
-        _data(tag="s0")
-    )
+    extopt_calc.PyscfExtOptCalculator(save_tensors=True, localized=True).calc(_data(tag="s0"))
     assert mocks["lo"].Boys.call_count == 2
 
 
@@ -462,9 +484,7 @@ def test_settings_from_args_is_empty_single_channel():
 
     parser = argparse.ArgumentParser()
     extopt_calc.PyscfExtOptCalculator.add_cli_args(parser)
-    args = parser.parse_args(
-        ["--method", "hf", "--basis", "cc-pvdz", "--df", "--save_tensors"]
-    )
+    args = parser.parse_args(["--method", "hf", "--basis", "cc-pvdz", "--df", "--save_tensors"])
     assert extopt_calc.PyscfExtOptCalculator.settings_from_args(args) == {}
 
 
@@ -487,7 +507,13 @@ def test_server_cli_from_options_emits_set_flags_only():
         {"method": "dft", "xc": "pbe", "basis": "def2-svp", "df": True, "gpu": False}
     )
     assert tokens == [
-        "--method", "dft", "--xc", "pbe", "--basis", "def2-svp", "--df",
+        "--method",
+        "dft",
+        "--xc",
+        "pbe",
+        "--basis",
+        "def2-svp",
+        "--df",
     ]
 
 
@@ -509,7 +535,5 @@ def test_server_cli_from_options_omits_falsy_values():
 
 def test_server_cli_from_options_handles_missing_keys():
     """A YAML options dict missing some keys must not raise; just omit them."""
-    tokens = extopt_calc.PyscfExtOptCalculator.server_cli_from_options(
-        {"xc": "b3lyp"}
-    )
+    tokens = extopt_calc.PyscfExtOptCalculator.server_cli_from_options({"xc": "b3lyp"})
     assert tokens == ["--xc", "b3lyp"]

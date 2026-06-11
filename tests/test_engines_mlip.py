@@ -320,9 +320,7 @@ def test_mlip_extopt_calculator_from_args_builds_instance():
     from chemrefine.engines._backend_server.server import parse_args
     from chemrefine.engines.mlip.extopt_calc import MlipExtOptCalculator
 
-    args = parse_args(
-        ["--backend", "mlip", "--model", "small", "--task-name", "mace_off"]
-    )
+    args = parse_args(["--backend", "mlip", "--model", "small", "--task-name", "mace_off"])
     with patch.dict(
         mlip_calculator._BACKEND_BUILDERS,
         {"mace_off": lambda **_kw: "MACE_CALC"},
@@ -373,10 +371,14 @@ def test_mlip_server_cli_from_options_emits_all_set_flags():
         }
     )
     assert tokens == [
-        "--model", "small",
-        "--task-name", "mace_off",
-        "--device", "cpu",
-        "--model-path", "/tmp/ckpt.model",
+        "--model",
+        "small",
+        "--task-name",
+        "mace_off",
+        "--device",
+        "cpu",
+        "--model-path",
+        "/tmp/ckpt.model",
     ]
 
 
@@ -423,9 +425,7 @@ def test_mlip_extopt_calculator_calc_converts_units():
             return_value=(HARTREE_TO_EV, [[1.0, 0.0, 0.0]]),
         ),
     ):
-        calc = MlipExtOptCalculator(
-            model_name="small", task_name="mace_off", device="cpu"
-        )
+        calc = MlipExtOptCalculator(model_name="small", task_name="mace_off", device="cpu")
         energy_h, gradient = calc.calc(_calc_data())
     assert energy_h == pytest.approx(1.0, rel=1e-12)
     assert gradient[0][0] == pytest.approx(BOHR_TO_ANGSTROM / HARTREE_TO_EV, rel=1e-12)
@@ -450,9 +450,7 @@ def test_mlip_extopt_calculator_calc_stamps_charge_and_spin():
         ),
         patch.object(MlipCalculator, "single_point", _capture),
     ):
-        calc = MlipExtOptCalculator(
-            model_name="uma-s-1p1", task_name="omol", device="cpu"
-        )
+        calc = MlipExtOptCalculator(model_name="uma-s-1p1", task_name="omol", device="cpu")
         calc.calc(_calc_data(charge=-1, multiplicity=2))
     assert seen == {"charge": -1, "spin": 2}
 
@@ -482,9 +480,7 @@ def _write_mlip_templates(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _mlip_direct_ctx(
-    tmp_path: Path, structures: tuple[Structure, ...], **overrides
-) -> StepContext:
+def _mlip_direct_ctx(tmp_path: Path, structures: tuple[Structure, ...], **overrides) -> StepContext:
     _write_mlip_templates(tmp_path)
     step_cfg = StepConfig(
         step=1,
@@ -532,21 +528,28 @@ def test_mlip_direct_prepare_renders_one_py_and_xyz_per_structure(tmp_path: Path
 def test_mlip_direct_substitutes_option_placeholders(tmp_path: Path):
     """The YAML ``step.options`` drive the rendered script via $MODEL_NAME/$TASK_NAME/$DEVICE."""
     template = (
-        "model = '$MODEL_NAME'\ntask = '$TASK_NAME'\ndevice = '$DEVICE'\n"
-        "energy_hartree = -1.0\n"
+        "model = '$MODEL_NAME'\ntask = '$TASK_NAME'\ndevice = '$DEVICE'\nenergy_hartree = -1.0\n"
     )
     (tmp_path / "step1.py").write_text(template, encoding="utf-8")
     (tmp_path / "cpu.slurm.header").write_text("#!/bin/bash\n", encoding="utf-8")
     step_cfg = StepConfig(
-        step=1, name="screen", engine="mlip", operation="opt_sp",
+        step=1,
+        name="screen",
+        engine="mlip",
+        operation="opt_sp",
         options={"model_name": "medium", "task_name": "mace_off", "device": "cpu"},
     )
     ctx = StepContext(
-        step_cfg=step_cfg, step_dir=tmp_path / "out" / "step1_screen",
-        template_dir=tmp_path, scratch_dir=None,
+        step_cfg=step_cfg,
+        step_dir=tmp_path / "out" / "step1_screen",
+        template_dir=tmp_path,
+        scratch_dir=None,
         prev_state=PipelineState(structures=(_seed("0"),)),
-        charge=0, multiplicity=1, max_cores=1,
-        slurm_template="cpu.slurm.header", executables={},
+        charge=0,
+        multiplicity=1,
+        max_cores=1,
+        slurm_template="cpu.slurm.header",
+        executables={},
     )
     rendered = get_engine("mlip").prepare(ctx).files[0][0].read_text()
     assert "model = 'medium'" in rendered
@@ -562,15 +565,23 @@ def test_mlip_direct_substitutes_option_aliases(tmp_path: Path):
     )
     (tmp_path / "cpu.slurm.header").write_text("#!/bin/bash\n", encoding="utf-8")
     step_cfg = StepConfig(
-        step=1, name="screen", engine="mlip", operation="opt_sp",
+        step=1,
+        name="screen",
+        engine="mlip",
+        operation="opt_sp",
         options={"size": "large", "task": "mace_mp"},
     )
     ctx = StepContext(
-        step_cfg=step_cfg, step_dir=tmp_path / "out" / "step1_screen",
-        template_dir=tmp_path, scratch_dir=None,
+        step_cfg=step_cfg,
+        step_dir=tmp_path / "out" / "step1_screen",
+        template_dir=tmp_path,
+        scratch_dir=None,
         prev_state=PipelineState(structures=(_seed("0"),)),
-        charge=0, multiplicity=1, max_cores=1,
-        slurm_template="cpu.slurm.header", executables={},
+        charge=0,
+        multiplicity=1,
+        max_cores=1,
+        slurm_template="cpu.slurm.header",
+        executables={},
     )
     rendered = get_engine("mlip").prepare(ctx).files[0][0].read_text()
     assert "model = 'large'" in rendered
@@ -592,6 +603,7 @@ def test_mlip_direct_submit_runs_template_locally_when_no_sbatch(tmp_path: Path)
     inputs = engine.prepare(ctx)
     with patch("chemrefine.slurm.shutil.which", return_value=None):
         from chemrefine.state import JobBatch
+
         batch = engine.submit(inputs, ctx)
     assert isinstance(batch, JobBatch)
     assert all(jid.startswith("local-") for jid in batch.jobs.values())
@@ -692,9 +704,7 @@ def test_mlip_direct_submit_respects_cores_option(tmp_path: Path):
 def test_mlip_direct_does_not_support_nms(tmp_path: Path):
     engine = get_engine("mlip")
     with pytest.raises(NotImplementedError, match="does not support normal-mode"):
-        engine.normal_mode_sample(
-            StepResults(structures=()), _mlip_direct_ctx(tmp_path, ())
-        )
+        engine.normal_mode_sample(StepResults(structures=()), _mlip_direct_ctx(tmp_path, ()))
 
 
 def test_mlip_direct_wait_is_noop():
