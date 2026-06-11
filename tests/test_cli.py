@@ -174,15 +174,23 @@ def test_invalid_yaml_returns_config_exit_code(tmp_path: Path):
     bad = tmp_path / "input.yaml"
     bad.write_text(textwrap.dedent("steps: [\n"), encoding="utf-8")
     result = runner.invoke(app, ["run", str(bad)])
-    # ConfigError.exit_code is 2 — but Typer's own usage error is also 2;
-    # accept anything non-zero here.
-    assert result.exit_code != 0
+    # The exit-code contract in chemrefine.errors: ConfigError → 2.
+    assert result.exit_code == 2
 
 
-def test_unknown_top_level_key_returns_non_zero(tmp_path: Path):
+def test_invalid_config_does_not_traceback(tmp_path: Path):
+    """A malformed config must exit cleanly (logged error), never a traceback."""
+    bad = tmp_path / "input.yaml"
+    bad.write_text("steps: []\n", encoding="utf-8")
+    result = runner.invoke(app, ["resume", str(bad)])
+    assert result.exit_code == 2
+    assert "Traceback" not in (result.stdout + str(result.stderr_bytes or b""))
+
+
+def test_unknown_top_level_key_returns_config_exit_code(tmp_path: Path):
     config_path = _write_config(tmp_path, orca_excutable="orca")  # typo
     result = runner.invoke(app, ["run", str(config_path)])
-    assert result.exit_code != 0
+    assert result.exit_code == 2
 
 
 # ---------------------------------------------------------------------------
