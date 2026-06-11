@@ -41,6 +41,25 @@ def test_bootstrap_from_xyz_file(tmp_path: Path):
     assert state.structures[0].id == "0"
 
 
+def test_bootstrap_from_multiframe_xyz_seeds_every_frame(tmp_path: Path):
+    """A multi-conformer seed file must yield one structure per frame.
+
+    ASE's default ``read`` keeps only the last frame — relying on it would
+    silently drop every other conformer the user supplied.
+    """
+    seed = tmp_path / "ensemble.xyz"
+    frame = "2\nH2 frame {i}\nH 0.0 0.0 0.0\nH {x} 0.0 0.0\n"
+    seed.write_text(
+        "".join(frame.format(i=i, x=0.70 + 0.02 * i) for i in range(3)), encoding="utf-8"
+    )
+    cfg = _config(tmp_path, input=seed)
+    state = pipeline.bootstrap(cfg)
+    assert [s.id for s in state.structures] == ["0", "1", "2"]
+    # Frames are distinct geometries, in file order.
+    assert state.structures[0].atoms.get_positions()[1][0] == pytest.approx(0.70)
+    assert state.structures[2].atoms.get_positions()[1][0] == pytest.approx(0.74)
+
+
 def test_bootstrap_from_directory(tmp_path: Path):
     seed_dir = tmp_path / "seeds"
     io.write_xyz([_h2(), _h2()], ["a", "b"], step_number=0, output_dir=seed_dir)

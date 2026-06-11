@@ -54,7 +54,7 @@ def bootstrap(config: Config) -> PipelineState:
     1. ``config.input`` is set → infer format from suffix / type:
        - directory: read every ``*.xyz`` inside, in natural sort order.
        - ``.csv``: convert SMILES to per-row XYZ files under ``output_dir/_seed``.
-       - ``.xyz``: read one structure (assigned ID ``"0"``).
+       - ``.xyz``: read every frame (IDs ``"0"``, ``"1"``, … in file order).
     2. ``config.input`` is None → fall back to
        ``templates/step1.xyz`` (the historic default).
 
@@ -77,9 +77,16 @@ def bootstrap(config: Config) -> PipelineState:
 
 
 def _seed_from_xyz(path: Path) -> PipelineState:
-    """Seed the pipeline from a single XYZ file (one structure, ID ``"0"``)."""
-    atoms = ase_read(str(path), format="xyz")
-    return PipelineState(structures=(Structure(id="0", atoms=atoms),))
+    """Seed the pipeline from an XYZ file — one structure **per frame**, in file order.
+
+    ``index=":"`` reads every frame; ASE's default would silently keep only
+    the *last* one, losing the rest of a multi-conformer seed file. A
+    single-frame file still yields exactly one structure with ID ``"0"``.
+    """
+    frames = ase_read(str(path), index=":", format="xyz")
+    return PipelineState(
+        structures=tuple(Structure(id=str(i), atoms=atoms) for i, atoms in enumerate(frames))
+    )
 
 
 def _seed_from_directory(directory: Path) -> PipelineState:

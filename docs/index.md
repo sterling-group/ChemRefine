@@ -56,8 +56,9 @@ MACE + FAIRChem backends) plus the gradient-server deps (flask, waitress);
 Three things on disk:
 
 - A YAML config (see the schema below).
-- A starting geometry: a single ``.xyz`` file, a directory of
-  ``.xyz`` files, or a CSV of SMILES (one column named ``smiles``).
+- A starting geometry: an ``.xyz`` file (multi-frame files seed one
+  structure per frame), a directory of ``.xyz`` files, or a CSV of
+  SMILES (one column named ``smiles``).
 - An ORCA input template per step in ``template_dir`` (default name:
   ``stepN.inp``; override with ``template:`` on the step).
 
