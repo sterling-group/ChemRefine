@@ -37,19 +37,26 @@ logger = logging.getLogger(__name__)
 _NMS_SEARCH_KEYS = frozenset({"displacement_value", "num_random_displacements", "seed"})
 
 
-def _nms_reuse_fingerprint(step_cfg: StepConfig, parent_ids: tuple[str, ...]) -> str:
+def _nms_reuse_fingerprint(
+    step_cfg: StepConfig, parent_ids: tuple[str, ...], *, parents_digest: str = ""
+) -> str:
     """Fingerprint that's stable across NMS search-param tuning.
 
-    Same as :func:`chemrefine.cache.fingerprint` but with the NMS search
-    parameters stripped from ``options`` — so bumping ``displacement_value``
-    leaves it unchanged (reuse round-1 + resolved, re-attempt only the
-    unresolved), while changing the criterion / template / parents changes it.
+    Same as :func:`chemrefine.cache.fingerprint` (including the
+    ``parents_digest`` content key) but with the NMS search parameters
+    stripped from ``options`` — so bumping ``displacement_value`` leaves it
+    unchanged (reuse round-1 + resolved, re-attempt only the unresolved),
+    while changing the criterion / template / parents changes it.
     Returns ``""`` for non-NMS steps (the reuse path is NMS-only).
     """
     if not step_cfg.nms:
         return ""
     trimmed = {k: v for k, v in (step_cfg.options or {}).items() if k not in _NMS_SEARCH_KEYS}
-    return cache.fingerprint(step_cfg.model_copy(update={"options": trimmed}), parent_ids)
+    return cache.fingerprint(
+        step_cfg.model_copy(update={"options": trimmed}),
+        parent_ids,
+        parents_digest=parents_digest,
+    )
 
 
 def _reattempt_nms(
@@ -105,13 +112,15 @@ def _reattempt_nms(
         if s.id not in failed_ids and (s.parent_id not in failed_ids)
     )
     merged = StepResults(structures=kept + reattempt.structures)
+    digest = cache.parents_digest(ctx.prev_state.structures)
     cache.save(
         step_cfg=step_cfg,
         parent_ids=parent_ids,
         results=merged,
         step_dir=ctx.step_dir,
         chemrefine_version=version,
-        reuse_fingerprint=_nms_reuse_fingerprint(step_cfg, parent_ids),
+        reuse_fingerprint=_nms_reuse_fingerprint(step_cfg, parent_ids, parents_digest=digest),
+        parents_digest=digest,
     )
     return merged
 

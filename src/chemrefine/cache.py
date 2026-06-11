@@ -4,9 +4,10 @@ Each step writes its parsed results to ``{step_dir}/_cache/step.pkl``
 plus a JSON sidecar (``step.json``) for human inspection. The cache is
 keyed by a SHA-1 *fingerprint* covering the step's config (engine,
 operation, options, charge, multiplicity, template, NMS flag, sample
-config) plus the parent structure IDs that fed into the step. If the
-YAML changes the fingerprint changes, so the next run re-executes the
-step.
+config) plus the parent structures that fed into the step — their IDs
+**and** their content (:func:`parents_digest`: symbols, coordinates,
+energy). If the YAML changes, or the seed file / any upstream result
+changes, the fingerprint changes and the next run re-executes the step.
 
 Writes are atomic — the pickle and JSON are written to ``.tmp_*`` files
 inside the cache directory and renamed into place, so an interrupted
@@ -28,13 +29,16 @@ import json
 import logging
 import pickle
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from chemrefine.config import StepConfig
 from chemrefine.errors import CacheError
-from chemrefine.state import StepInputs, StepResults
+from chemrefine.state import StepInputs, StepResults, Structure
 
 CACHE_FORMAT_VERSION = "v2.0"
 """On-disk cache schema version, tracking the 2.0.0 release line.
@@ -77,11 +81,38 @@ class StepCache:
 # ---------------------------------------------------------------------------
 
 
-def fingerprint(step_cfg: StepConfig, parent_ids: tuple[str, ...]) -> str:
+def parents_digest(structures: Sequence[Structure]) -> str:
+    """Return a 16-char SHA-1 over the parent structures' *content*.
+
+    Covers each parent's ID, chemical symbols, Cartesian coordinates (exact
+    float64 bytes — identical inputs parse to identical floats), and energy.
+    Folding this into :func:`fingerprint` is what makes the cache sensitive to
+    the structures themselves, not just their positional IDs: editing the seed
+    ``input.xyz`` (same path, same count → same IDs) or any upstream change to
+    a parent's geometry/energy must invalidate the step, or ``resume`` would
+    silently reuse results computed from the old geometry.
+    """
+    h = hashlib.sha1()
+    for s in structures:
+        h.update(s.id.encode())
+        h.update("".join(s.atoms.get_chemical_symbols()).encode())
+        h.update(np.asarray(s.atoms.get_positions(), dtype=np.float64).tobytes())
+        h.update(repr(s.energy_hartree).encode())
+    return h.hexdigest()[:16]
+
+
+def fingerprint(
+    step_cfg: StepConfig,
+    parent_ids: tuple[str, ...],
+    *,
+    parents_digest: str = "",
+) -> str:
     """Return a 16-char SHA-1 over the inputs that determine a step's output.
 
     Two runs whose YAML produces identical fingerprints are eligible for
-    cache reuse.
+    cache reuse. ``parents_digest`` (see :func:`parents_digest`) ties the
+    fingerprint to the parent structures' content so a changed seed file or
+    changed upstream result invalidates the step even when the IDs match.
     """
     payload = {
         "format": CACHE_FORMAT_VERSION,
@@ -95,6 +126,7 @@ def fingerprint(step_cfg: StepConfig, parent_ids: tuple[str, ...]) -> str:
         "nms": step_cfg.nms,
         "sample": (step_cfg.sample.model_dump(mode="json") if step_cfg.sample else None),
         "parent_ids": list(parent_ids),
+        "parents_digest": parents_digest,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha1(encoded).hexdigest()[:16]
@@ -156,9 +188,14 @@ def save(
     step_dir: Path,
     chemrefine_version: str,
     reuse_fingerprint: str = "",
+    parents_digest: str = "",
 ) -> None:
-    """Persist ``results`` for ``step_cfg`` to ``step_dir/_cache/``."""
-    fp = fingerprint(step_cfg, parent_ids)
+    """Persist ``results`` for ``step_cfg`` to ``step_dir/_cache/``.
+
+    ``parents_digest`` (the parent structures' content digest) is folded
+    into the stored fingerprint; pass the same value to :func:`is_valid`.
+    """
+    fp = fingerprint(step_cfg, parent_ids, parents_digest=parents_digest)
     cache = StepCache(
         cache_format=CACHE_FORMAT_VERSION,
         chemrefine_version=chemrefine_version,
@@ -222,6 +259,7 @@ def is_valid(
     step_cfg: StepConfig,
     parent_ids: tuple[str, ...],
     step_dir: Path,
+    parents_digest: str = "",
 ) -> bool:
     """True iff a cache exists and its fingerprint matches the current step config."""
     try:
@@ -230,7 +268,7 @@ def is_valid(
         return False
     if cached is None:
         return False
-    return cached.fingerprint == fingerprint(step_cfg, parent_ids)
+    return cached.fingerprint == fingerprint(step_cfg, parent_ids, parents_digest=parents_digest)
 
 
 def invalidate(step_dir: Path) -> None:

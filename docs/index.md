@@ -26,8 +26,9 @@ cached so unchanged steps skip automatically.
   participates in a total-core throttle so concurrent jobs never exceed
   ``max_cores``.
 - **Resumable**: each step's parsed results are pickled with a SHA-1
-  fingerprint of the step config + parent IDs. A change anywhere in
-  that surface invalidates the cache.
+  fingerprint of the step config + the parent structures (IDs and
+  content). A change anywhere in that surface — the YAML, the seed
+  file, an upstream result — invalidates the cache.
 - **Hierarchical IDs**: every conformer carries its lineage
   (``0`` → ``0-1`` → ``0-1-2``) so survivors can be traced back to
   their root structure across all steps.

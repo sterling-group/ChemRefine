@@ -17,6 +17,7 @@ from chemrefine.cache import (
     load,
     load_manifest,
     manifest_path,
+    parents_digest,
     save,
     save_manifest,
 )
@@ -64,6 +65,37 @@ def test_fingerprint_changes_when_parents_change():
 
 def test_fingerprint_is_sixteen_chars():
     assert len(fingerprint(_cfg(), ("0",))) == 16
+
+
+def test_fingerprint_changes_with_parents_digest():
+    cfg = _cfg()
+    assert fingerprint(cfg, ("0",), parents_digest="aaa") != fingerprint(
+        cfg, ("0",), parents_digest="bbb"
+    )
+
+
+def _h2(spacing: float = 0.74, energy: float | None = None) -> Structure:
+    atoms = Atoms(symbols=["H", "H"], positions=[[0, 0, 0], [spacing, 0, 0]])
+    return Structure(id="0", atoms=atoms, energy_hartree=energy)
+
+
+def test_parents_digest_stable_for_identical_content():
+    assert parents_digest([_h2()]) == parents_digest([_h2()])
+
+
+def test_parents_digest_changes_when_geometry_changes():
+    """Same IDs, different coordinates — the digest is what catches an edited seed file."""
+    assert parents_digest([_h2(spacing=0.74)]) != parents_digest([_h2(spacing=0.75)])
+
+
+def test_parents_digest_changes_when_energy_changes():
+    assert parents_digest([_h2(energy=-1.0)]) != parents_digest([_h2(energy=-1.1)])
+
+
+def test_parents_digest_changes_when_id_changes():
+    a = _h2()
+    b = Structure(id="7", atoms=a.atoms, energy_hartree=a.energy_hartree)
+    assert parents_digest([a]) != parents_digest([b])
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +285,9 @@ def test_invalidate_missing_is_noop(tmp_path: Path):
 
 def test_cache_format_version_constant():
     """Bumping CACHE_FORMAT_VERSION is a public ABI break we want to notice."""
+    # v2.0: the fingerprint gained the parents_digest content key, so caches
+    # written by older versions rebuild instead of comparing fingerprints
+    # computed under a different scheme.
     assert CACHE_FORMAT_VERSION == "v2.0"
 
 

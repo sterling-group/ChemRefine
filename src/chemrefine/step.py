@@ -85,7 +85,7 @@ def run_step(
     """Execute one step end-to-end and return its surviving state.
 
     * If ``use_cache`` is true and the on-disk cache fingerprint matches the
-      current step config + parent IDs, the cached
+      current step config + parent structures (IDs and content), the cached
       :class:`~chemrefine.state.StepResults` are reused and only filtering runs
       again — **unless** the step is ``on_failure: stop`` and has a failed-jobs
       ledger, in which case ``resume`` re-attempts only the still-failed
@@ -167,7 +167,12 @@ def _cached_outcome(
     A pending ``on_failure: stop`` ledger (scoped by ``resubmit_step``) re-attempts
     only the still-failed structures; otherwise it's a plain cache hit (refilter).
     """
-    if not cache.is_valid(step_cfg=step_cfg, parent_ids=parent_ids, step_dir=ctx.step_dir):
+    if not cache.is_valid(
+        step_cfg=step_cfg,
+        parent_ids=parent_ids,
+        step_dir=ctx.step_dir,
+        parents_digest=cache.parents_digest(ctx.prev_state.structures),
+    ):
         return None
     cached = cache.load(ctx.step_dir)
     if cached is None:
@@ -211,7 +216,8 @@ def _nms_reuse_outcome(
         cached = cache.load(ctx.step_dir)
     except CacheError:
         cached = None
-    fingerprint = step_nms._nms_reuse_fingerprint(step_cfg, parent_ids)
+    digest = cache.parents_digest(ctx.prev_state.structures)
+    fingerprint = step_nms._nms_reuse_fingerprint(step_cfg, parent_ids, parents_digest=digest)
     if cached is None or getattr(cached, "reuse_fingerprint", "") != fingerprint:
         return None
     if cache.load_failed_jobs(ctx.step_dir):
@@ -227,6 +233,7 @@ def _nms_reuse_outcome(
             step_dir=ctx.step_dir,
             chemrefine_version=version,
             reuse_fingerprint=fingerprint,
+            parents_digest=digest,
         )
         results = cached.results
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
@@ -271,13 +278,17 @@ def _run_full_step(
     else:
         results = _apply_failure_policy(successes, failures, ctx, step_cfg)
 
+    digest = cache.parents_digest(ctx.prev_state.structures)
     cache.save(
         step_cfg=step_cfg,
         parent_ids=parent_ids,
         results=results,
         step_dir=ctx.step_dir,
         chemrefine_version=version,
-        reuse_fingerprint=step_nms._nms_reuse_fingerprint(step_cfg, parent_ids),
+        reuse_fingerprint=step_nms._nms_reuse_fingerprint(
+            step_cfg, parent_ids, parents_digest=digest
+        ),
+        parents_digest=digest,
     )
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
@@ -443,13 +454,17 @@ def rebuild_cache_step(
         )
     else:
         results = _apply_failure_policy(successes, failures, ctx, step_cfg)
+    digest = cache.parents_digest(ctx.prev_state.structures)
     cache.save(
         step_cfg=step_cfg,
         parent_ids=parent_ids,
         results=results,
         step_dir=ctx.step_dir,
         chemrefine_version=__version__,
-        reuse_fingerprint=step_nms._nms_reuse_fingerprint(step_cfg, parent_ids),
+        reuse_fingerprint=step_nms._nms_reuse_fingerprint(
+            step_cfg, parent_ids, parents_digest=digest
+        ),
+        parents_digest=digest,
     )
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
@@ -490,5 +505,6 @@ def _resubmit_failed(
         results=results,
         step_dir=ctx.step_dir,
         chemrefine_version=version,
+        parents_digest=cache.parents_digest(ctx.prev_state.structures),
     )
     return results

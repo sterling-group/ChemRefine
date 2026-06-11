@@ -242,6 +242,26 @@ def test_run_second_call_hits_cache(tmp_path: Path):
     assert second[0].cache_hit is True
 
 
+def test_run_after_editing_seed_invalidates_cache(tmp_path: Path):
+    """Editing the seed geometry must re-execute the step on the next run.
+
+    Seed IDs are positional, so an edited file yields the *same* parent IDs —
+    only the content digest in the fingerprint catches the change. Without it,
+    ``resume`` silently reuses results computed from the old geometry.
+    """
+    seed = tmp_path / "input.xyz"
+    seed.write_text("2\nH2\nH 0.0 0.0 0.0\nH 0.74 0.0 0.0\n", encoding="utf-8")
+    cfg = _config(
+        tmp_path,
+        input=seed,
+        steps=[StepConfig(step=1, engine="fake", operation="opt_sp")],
+    )
+    assert pipeline.run(cfg)[0].cache_hit is False
+    # Same path, same structure count, same IDs — different coordinates.
+    seed.write_text("2\nH2 stretched\nH 0.0 0.0 0.0\nH 0.90 0.0 0.0\n", encoding="utf-8")
+    assert pipeline.run(cfg)[0].cache_hit is False
+
+
 def test_run_stops_when_no_survivors(tmp_path: Path):
     """pipeline.run raises ConfigError when the seed directory is empty."""
     # Force an empty seed directory — the pipeline has no structures to

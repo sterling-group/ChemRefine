@@ -438,7 +438,7 @@ class _StubNms:
     def __init__(self, fp: str = "FP"):
         self._fp = fp
 
-    def _nms_reuse_fingerprint(self, step_cfg, parent_ids):
+    def _nms_reuse_fingerprint(self, step_cfg, parent_ids, *, parents_digest=""):
         return self._fp
 
     def _reattempt_nms(self, engine, ctx, step_cfg, cached, parent_ids, version):
