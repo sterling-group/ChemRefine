@@ -35,10 +35,28 @@ def test_python_dash_m_runs_the_cli():
     """``python -m chemrefine --help`` executes via ``__main__.py``.
 
     ``runpy.run_module`` runs the module exactly the way the python
-    ``-m`` flag would, so ``__main__.py``'s import + ``app()`` call are
+    ``-m`` flag would, so ``__main__.py``'s import + ``main()`` call are
     real coverage hits. Typer exits with code 0 on ``--help``; we catch
     the SystemExit and assert it.
     """
     with patch("sys.argv", ["chemrefine", "--help"]), pytest.raises(SystemExit) as excinfo:
         runpy.run_module("chemrefine", run_name="__main__")
     assert excinfo.value.code == 0
+
+
+def test_python_dash_m_translates_legacy_argv():
+    """``python -m chemrefine CONFIG --skip`` gets the same legacy translation
+    as the ``chemrefine`` console script (both route through ``cli.main``)."""
+    import sys
+
+    captured = {}
+
+    def _fake_app():
+        captured["argv"] = sys.argv[1:]
+
+    with (
+        patch("chemrefine.cli.app", _fake_app),
+        patch("sys.argv", ["chemrefine", "input.yaml", "--skip"]),
+    ):
+        runpy.run_module("chemrefine", run_name="__main__")
+    assert captured["argv"] == ["resume", "input.yaml"]

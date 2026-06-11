@@ -165,6 +165,16 @@ def test_maxcores_overrides_yaml_value(tmp_path: Path):
     assert result.exit_code == 0
 
 
+def test_maxcores_zero_is_rejected_before_anything_runs(tmp_path: Path):
+    """The override is applied via ``model_copy`` (no re-validation), so the
+    flag itself must enforce the ``>= 1`` floor — otherwise an invalid budget
+    surfaces only mid-run as a raw Throttler ValueError, after inputs exist."""
+    config_path = _write_config(tmp_path)
+    result = runner.invoke(app, ["run", str(config_path), "--maxcores", "0"])
+    assert result.exit_code != 0
+    assert not (tmp_path / "outputs").exists()
+
+
 # ---------------------------------------------------------------------------
 # Config validation errors flow through to non-zero exit
 # ---------------------------------------------------------------------------

@@ -170,7 +170,9 @@ def _dispatch(
 ConfigArg = Annotated[Path, typer.Argument(..., exists=True, dir_okay=False, readable=True)]
 MaxCoresOpt = Annotated[
     int | None,
-    typer.Option("--maxcores", help="Override max_cores from the YAML."),
+    # min=1 mirrors Config's ``max_cores: ge=1`` — the override is applied via
+    # ``model_copy`` (no re-validation), so the flag must reject 0/negative itself.
+    typer.Option("--maxcores", min=1, help="Override max_cores from the YAML."),
 ]
 DryRunOpt = Annotated[
     bool,

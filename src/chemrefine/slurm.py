@@ -14,6 +14,7 @@ cluster.
 
 from __future__ import annotations
 
+import functools
 import getpass
 import itertools
 import logging
@@ -29,9 +30,21 @@ from chemrefine.errors import JobSubmissionError
 
 logger = logging.getLogger(__name__)
 
-# Resolved once at import time so the polling loop in :class:`Throttler`
-# doesn't re-query ``getpass`` per ``is_finished`` call.
-_CURRENT_USER: str = getpass.getuser()
+
+@functools.lru_cache(maxsize=1)
+def _current_user() -> str:
+    """The username for ``squeue -u``, resolved once (cached for the polling loop).
+
+    Resolved lazily, not at import: ``getpass.getuser()`` raises in
+    passwd-less environments (containers running under an arbitrary UID),
+    and an import-time call would make the whole package unimportable
+    there. The numeric UID is an equally valid ``squeue -u`` argument.
+    """
+    try:
+        return getpass.getuser()
+    except (KeyError, OSError):
+        return str(os.getuid())
+
 
 _SBATCH_OVERRIDES = ("--ntasks", "--cpus-per-task", "--job-name", "--output", "--error")
 _JOB_ID_RE = re.compile(r"\b(\d+)\b")
@@ -406,7 +419,7 @@ def is_finished(job_id: str, *, squeue_cmd: str = "squeue") -> bool:
         return _local_is_finished(job_id)
     try:
         result = subprocess.run(
-            [squeue_cmd, "-u", _CURRENT_USER, "-o", "%i"],
+            [squeue_cmd, "-u", _current_user(), "-o", "%i"],
             capture_output=True,
             text=True,
             check=True,

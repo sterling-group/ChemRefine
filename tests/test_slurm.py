@@ -329,6 +329,37 @@ def test_is_finished_true_for_local_job_id():
 
 
 # ---------------------------------------------------------------------------
+# _current_user
+# ---------------------------------------------------------------------------
+
+
+def test_current_user_falls_back_to_uid_when_no_passwd_entry():
+    """``getpass.getuser`` raises in passwd-less environments (containers under
+    an arbitrary UID); the numeric UID is an equally valid ``squeue -u`` value.
+    Resolved lazily so a failing lookup can't break the package import."""
+    import getpass
+    import os
+
+    slurm._current_user.cache_clear()
+    try:
+        with patch.object(getpass, "getuser", side_effect=KeyError("getpwuid(): uid not found")):
+            assert slurm._current_user() == str(os.getuid())
+    finally:
+        slurm._current_user.cache_clear()
+
+
+def test_current_user_returns_login_name():
+    import getpass
+
+    slurm._current_user.cache_clear()
+    try:
+        with patch.object(getpass, "getuser", return_value="alice"):
+            assert slurm._current_user() == "alice"
+    finally:
+        slurm._current_user.cache_clear()
+
+
+# ---------------------------------------------------------------------------
 # GPU budget + device-aware headers
 # ---------------------------------------------------------------------------
 
