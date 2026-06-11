@@ -61,7 +61,8 @@ server = [
 # its own (mirrors the per-backend modules in engines/mlip/backends/). MACE and
 # FAIRChem co-install (the `[mlip]` default): `mace-torch` pins `e3nn==0.4.4` while
 # upstream `fairchem-core` needs `e3nn>=0.5`, so we use a patched fork that relaxes
-# the floor to `e3nn>=0.4.4` and the two share e3nn 0.4.4. `sevenn` / `orb` /
+# the floor to `e3nn>=0.4.4` and the two share e3nn 0.4.4 (the fork itself is a
+# documented second pip step — see `mlip-fairchem` below). `sevenn` / `orb` /
 # `chgnet` pull their OWN (conflicting) torch/e3nn trees — install each in a
 # DEDICATED environment; never combine them with `[mlip]`.
 # downloads: torch (+CUDA), e3nn, mace-torch, + server (heavy)
@@ -71,13 +72,17 @@ mlip-mace = [
     "mace-torch>=0.3.16",
     "chemrefine[server]",
 ]
-# downloads: torch (+CUDA), e3nn, fairchem-core (git clone), + server (heavy)
+# downloads: torch (+CUDA), e3nn, + server (heavy)
+# NOTE: `fairchem-core` itself is deliberately NOT listed: the patched fork is
+# a direct git reference, and PyPI rejects any distribution whose metadata
+# carries direct URL dependencies — keeping it here would make every PyPI
+# upload fail. Install it as a documented second step (docs/INSTALL.md):
+#   pip install "fairchem-core @ git+https://github.com/sterling-group/fairchem-patched.git@main#subdirectory=packages/fairchem-core"
+# Swap a real PyPI dependency back in once mace-torch lifts its `e3nn==0.4.4`
+# pin and the fork is no longer needed: "fairchem-core>=2.9".
 mlip-fairchem = [
     "torch>=2.8.0,<2.9.0",
     "e3nn==0.4.4",
-    "fairchem-core @ git+https://github.com/sterling-group/fairchem-patched.git@main#subdirectory=packages/fairchem-core",
-    # Swap in once mace-torch lifts its `e3nn==0.4.4` pin and the fork is no
-    # longer needed: "fairchem-core>=2.9",
     "chemrefine[server]",
 ]
 # Dedicated-env alternatives (each pulls its own torch/e3nn — don't mix with [mlip]):
@@ -130,9 +135,6 @@ dev = [
     "ruff>=0.5",
     "pre-commit>=3.5",
 ]
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [project.urls]
 Homepage = "https://github.com/sterling-group/ChemRefine"

@@ -7,7 +7,14 @@ pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git"
 
 # With the default MLIP backends (MACE + FAIRChem):
 pip install "chemrefine[mlip] @ git+https://github.com/sterling-group/ChemRefine.git"
+pip install "fairchem-core @ git+https://github.com/sterling-group/fairchem-patched.git@main#subdirectory=packages/fairchem-core"
 ```
+
+The second command installs the patched `fairchem-core` fork. It cannot be a
+regular dependency of the `[mlip]` extra — PyPI rejects packages whose metadata
+carries direct git dependencies — so it is a documented second step until
+upstream `fairchem-core` co-installs with `mace-torch` (see
+[MLIP backends](#mlip-backends)). Skip it if you only use MACE.
 
 ## From source
 
@@ -34,13 +41,18 @@ Each MLIP backend ships in its own extra, so you install only what you use. The
 default `[mlip]` install is **MACE + FAIRChem** — they co-exist because
 `mace-torch` pins `e3nn == 0.4.4` and Sterling Group's patched `fairchem-core`
 fork relaxes the upstream `e3nn >= 0.5` floor down to `>= 0.4.4`, so both share
-e3nn 0.4.4.
+e3nn 0.4.4. The fork is installed as a **second pip step** (it is a direct git
+reference, which PyPI does not allow inside package metadata):
+
+```bash
+pip install "fairchem-core @ git+https://github.com/sterling-group/fairchem-patched.git@main#subdirectory=packages/fairchem-core"
+```
 
 | Extra | `task_name`(s) it enables | Pulls | Notes |
 |-------|---------------------------|-------|-------|
 | `[mlip]` | MACE + FAIRChem (the two rows below) | — | default; `[mlff]` is an alias |
 | `[mlip-mace]` | `mace_off`, `mace_mp`, `mace_omol`, `custom_mace` | `torch`, `e3nn==0.4.4`, `mace-torch` | |
-| `[mlip-fairchem]` | `omol`, `omat`, `odac`, `oc20`, `oc22`, `oc25`, `omc` | `torch`, `e3nn==0.4.4`, patched `fairchem-core` | UMA / eSEN checkpoints |
+| `[mlip-fairchem]` | `omol`, `omat`, `odac`, `oc20`, `oc22`, `oc25`, `omc` | `torch`, `e3nn==0.4.4` | UMA / eSEN checkpoints; + the patched `fairchem-core` step above |
 | `[mlip-sevenn]` | `sevenn` | `sevenn` (→ `e3nn>=0.5`, `torch-geometric`) | **dedicated env** — `e3nn>=0.5` clashes with MACE's `==0.4.4` |
 | `[mlip-orb]` | `orb` | `orb-models` (→ `torch>=2.8`) | **dedicated env**; needs **Python ≥ 3.12** |
 | `[mlip-chgnet]` | `chgnet` | `chgnet` (→ `torch`, `pymatgen`) | **dedicated env**; pulls `pymatgen` |

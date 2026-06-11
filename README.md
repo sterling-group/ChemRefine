@@ -22,6 +22,7 @@ pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git@m
 
 # With the default MLIP backends (MACE + FAIRChem):
 pip install "chemrefine[mlip] @ git+https://github.com/sterling-group/ChemRefine.git@main"
+pip install "fairchem-core @ git+https://github.com/sterling-group/fairchem-patched.git@main#subdirectory=packages/fairchem-core"
 ```
 
 Requires Python 3.11–3.13 and ORCA 6+. SLURM is optional — the generated

@@ -43,12 +43,14 @@ Quick path:
 ```bash
 pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git@main"
 pip install "chemrefine[mlip] @ git+https://github.com/sterling-group/ChemRefine.git@main"
+pip install "fairchem-core @ git+https://github.com/sterling-group/fairchem-patched.git@main#subdirectory=packages/fairchem-core"
 ```
 
 Requires **Python 3.11–3.13** and **ORCA 6+**; SLURM is optional. The
-``[mlip]`` extra pulls torch, mace-torch, and fairchem-core (the default
-MACE + FAIRChem backends) plus the gradient-server deps (flask, waitress);
-``[mlff]`` is an alias for it.
+``[mlip]`` extra pulls torch and mace-torch plus the gradient-server deps
+(flask, waitress); the patched ``fairchem-core`` fork is the documented
+second pip step above (PyPI forbids direct git deps in package metadata).
+``[mlff]`` is an alias for ``[mlip]``.
 
 ## Quickstart
 
