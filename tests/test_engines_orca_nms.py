@@ -278,7 +278,9 @@ def test_orca_normal_mode_sample_displaces_and_flags(tmp_path):
     """A not-at-target structure is displaced, round 2 runs (mocked), children flagged."""
     engine = get_engine("orca")
     ctx = _orca_nms_ctx(tmp_path)
-    engine._imag_freqs = {"0": {5: -42.0}}  # one in-range imaginary mode
+    # Round-1 parent has one imaginary mode; the round-2 child parsed a freq
+    # table with zero imaginary modes (counted-and-zero ⇒ resolved minimum).
+    engine._imag_freqs = {"0": {5: -42.0}, "0_m5_pos": {}}
     engine._modes = {"0": _modes(6)}
     round1 = StepResults(structures=(_struct([[0, 0, 0], [0.74, 0, 0]], "0"),))
     child = Structure(
@@ -303,7 +305,65 @@ def test_orca_normal_mode_sample_displaces_and_flags(tmp_path):
 
     assert captured["nms_dir"].name == "nms"
     flagged = {s.id: s.converged for s in result.structures}
-    assert flagged == {"0_m5_pos": True}  # no imag cached for the child → resolved
+    assert flagged == {"0_m5_pos": True}  # freq table parsed, 0 imaginary → resolved
+
+
+def test_orca_nms_child_without_freq_table_is_unresolved(tmp_path):
+    """A round-2 output with no VIBRATIONAL FREQUENCIES table must not resolve.
+
+    ``len({}) == 0`` matching the ``minimum`` target would silently pass a
+    structure as a verified minimum with no frequency evidence at all (e.g.
+    the template lost its ``Freq`` keyword, or the freq module aborted after
+    the optimisation).
+    """
+    engine = get_engine("orca")
+    ctx = _orca_nms_ctx(tmp_path)
+    engine._imag_freqs = {"0": {5: -42.0}}  # nothing cached for the child
+    engine._modes = {"0": _modes(6)}
+    round1 = StepResults(structures=(_struct([[0, 0, 0], [0.74, 0, 0]], "0"),))
+    child = Structure(
+        id="0_m5_pos",
+        atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]),
+        parent_id="0",
+        terminated=True,
+    )
+    with (
+        patch.object(engine, "prepare", lambda c: StepInputs(files=())),
+        patch.object(engine, "submit", lambda i, c: JobBatch(jobs={})),
+        patch.object(engine, "wait", lambda b: None),
+        patch.object(engine, "parse", lambda i, c: StepResults(structures=(child,))),
+    ):
+        result = engine.normal_mode_sample(round1, ctx)
+    flagged = {s.id: s.converged for s in result.structures}
+    assert flagged == {"0_m5_pos": False}
+
+
+def test_orca_parse_caches_none_when_freq_table_missing(tmp_path):
+    """An NMS-step output without a freq table caches ``None``, not ``{}``."""
+    engine = get_engine("orca")
+    ctx = _orca_nms_ctx(tmp_path)
+    ctx.step_dir.mkdir(parents=True, exist_ok=True)
+    out = ctx.step_dir / "step1_structure_0.out"
+    out.write_text(
+        synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)])
+        + "\n****ORCA TERMINATED NORMALLY****\n",
+        encoding="utf-8",
+    )
+    inputs = StepInputs(files=((ctx.step_dir / "step1_structure_0.inp", out, "0"),))
+    engine.parse(inputs, ctx)
+    assert engine._imag_freqs["0"] is None
+
+
+def test_orca_nms_parent_without_freq_table_is_not_already_at_target(tmp_path):
+    """Round 1: missing freq data must not count as 'already at the minimum'."""
+    engine = get_engine("orca")
+    ctx = _orca_nms_ctx(tmp_path)
+    engine._imag_freqs = {"0": None}
+    engine._modes = {"0": None}
+    round1 = StepResults(structures=(_struct([[0, 0, 0], [0.74, 0, 0]], "0"),))
+    already, children = engine._nms_displace(round1, ctx)
+    assert already == []  # not resolved — and no modes, so not displaced either
+    assert children == []
 
 
 def test_orca_normal_mode_sample_skips_when_no_modes(tmp_path):

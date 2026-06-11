@@ -59,8 +59,10 @@ class OrcaEngine(SlurmBatchEngine):
         # Per-run, per-id caches populated in `parse` (parse-once): the
         # imaginary frequencies and normal-mode tensor of each NMS output,
         # reused by `normal_mode_sample` for displacement + resolution
-        # without re-reading the `.out`.
-        self._imag_freqs: dict[str, dict[int, float]] = {}
+        # without re-reading the `.out`. ``None`` (vs ``{}``) records that the
+        # output had no frequency table at all — "no freq evidence" must never
+        # count as "zero imaginary modes" at resolution time.
+        self._imag_freqs: dict[str, dict[int, float] | None] = {}
         self._modes: dict[str, NDArray[np.float64] | None] = {}
 
     # -- prepare -----------------------------------------------------------
@@ -183,10 +185,16 @@ class OrcaEngine(SlurmBatchEngine):
         """Cache the imaginary freqs + normal-mode tensor from this output's text.
 
         Part of the single parse pass for NMS steps; :meth:`normal_mode_sample`
-        reads these instead of re-reading the ``.out``. A missing freq block
+        reads these instead of re-reading the ``.out``. An output with **no**
+        frequency table caches ``None`` — distinct from ``{}`` (a parsed table
+        with zero imaginary modes) so a run whose freq module never produced
+        results can't be mistaken for a verified minimum. A missing modes block
         leaves ``modes=None`` so the structure simply isn't displaced.
         """
-        self._imag_freqs[sid] = frequencies.parse_imaginary_frequencies_from_text(text)
+        if "VIBRATIONAL FREQUENCIES" in text:
+            self._imag_freqs[sid] = frequencies.parse_imaginary_frequencies_from_text(text)
+        else:
+            self._imag_freqs[sid] = None
         try:
             self._modes[sid] = frequencies.parse_normal_modes_tensor_from_text(
                 text, num_atoms=n_atoms
@@ -271,8 +279,9 @@ class OrcaEngine(SlurmBatchEngine):
         already: list[Structure] = []
         children: list[Structure] = []
         for s in results.structures:
-            imag = self._imag_freqs.get(s.id, {})
-            if target is not None and len(imag) == target:
+            # ``None`` = no freq table in the output; never "already at target".
+            imag = self._imag_freqs.get(s.id)
+            if imag is not None and target is not None and len(imag) == target:
                 already.append(replace(s, converged=True))  # already at target
                 continue
             modes = self._modes.get(s.id)
@@ -282,7 +291,7 @@ class OrcaEngine(SlurmBatchEngine):
                     s.id,
                 )
                 continue
-            for suffix, positions in nms.select_displacements(s, imag, modes, opts, rng):
+            for suffix, positions in nms.select_displacements(s, imag or {}, modes, opts, rng):
                 child_atoms = s.atoms.copy()
                 child_atoms.set_positions(positions)
                 children.append(Structure(id=f"{s.id}_{suffix}", atoms=child_atoms, parent_id=s.id))
@@ -297,10 +306,17 @@ class OrcaEngine(SlurmBatchEngine):
         )
 
     def _flag_resolution(self, round2: StepResults, target: int | None) -> list[Structure]:
-        """Set each round-2 child's ``converged`` to whether it hit the target."""
+        """Set each round-2 child's ``converged`` to whether it hit the target.
+
+        A child whose output carried no frequency table (``imag is None``) is
+        never resolved: without freq evidence, "zero imaginary modes" can't be
+        claimed — only counted-and-zero counts as a verified minimum.
+        """
         flagged: list[Structure] = []
         for c in round2.structures:
-            imag = self._imag_freqs.get(c.id, {})
-            resolved = c.terminated is not False and (target is None or len(imag) == target)
+            imag = self._imag_freqs.get(c.id)
+            resolved = c.terminated is not False and (
+                target is None or (imag is not None and len(imag) == target)
+            )
             flagged.append(replace(c, converged=resolved))
         return flagged
