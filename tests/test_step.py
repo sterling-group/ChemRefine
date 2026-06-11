@@ -430,3 +430,19 @@ def test_run_step_nms_branch_runs_when_engine_supports_it(tmp_path: Path):
         assert nms_calls == [1]
     finally:
         ENGINES.pop("fake-nms", None)
+
+
+def test_on_failure_best_drops_failure_with_no_fallback(tmp_path: Path):
+    """best: a failure with no best geometry and no prior-state entry has
+    nothing to backfill — it is dropped while the others are kept."""
+    from chemrefine.step import _apply_failure_policy, _Failure
+
+    cfg = _config(tmp_path, on_failure="best")
+    ctx = build_context(cfg, cfg.steps[0], _seed_state(["0"]))
+    ctx.step_dir.mkdir(parents=True, exist_ok=True)
+    failures = [_Failure(sid="ghost", reason="output missing", best=None)]
+    results = _apply_failure_policy([], failures, ctx, cfg.steps[0])
+    assert results.structures == ()
+    assert cache.load_failed_jobs(ctx.step_dir) == [
+        {"structure_id": "ghost", "reason": "output missing"}
+    ]

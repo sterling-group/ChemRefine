@@ -481,6 +481,62 @@ def test_legacy_calculation_type_raises_clear_error():
         Config(template_dir="./t", steps=[{"step": 1, "calculation_type": "DFT"}])
 
 
+def test_legacy_initial_xyz_does_not_override_existing_input():
+    """When both spellings are present, the new ``input`` wins; the legacy key is dropped."""
+    cfg = Config(
+        template_dir="./t",
+        input="./new.xyz",
+        initial_xyz="./old.xyz",
+        steps=[{"step": 1, "engine": "orca", "operation": "opt_sp"}],
+    )
+    assert cfg.input == Path("new.xyz")
+
+
+def test_legacy_sample_type_does_not_override_existing_sample():
+    """When both spellings are present, the new ``sample`` wins; ``sample_type`` is dropped."""
+    cfg = Config(
+        template_dir="./t",
+        steps=[
+            {
+                "step": 1,
+                "engine": "orca",
+                "operation": "opt_sp",
+                "sample": {"method": "integer", "count": 3},
+                "sample_type": {"method": "boltzmann", "parameters": {"weight": 99}},
+            }
+        ],
+    )
+    assert isinstance(cfg.steps[0].sample, IntegerSample)
+    assert cfg.steps[0].sample.count == 3
+
+
+def test_legacy_nms_false_with_no_parameters_normalizes_to_nothing():
+    """``normal_mode_sampling: false`` is consumed without setting nms or options."""
+    cfg = Config(
+        template_dir="./t",
+        steps=[{"step": 1, "engine": "orca", "operation": "freq", "normal_mode_sampling": False}],
+    )
+    assert cfg.steps[0].nms is False
+    assert cfg.steps[0].options == {}
+
+
+def test_normalizer_passes_through_non_list_steps():
+    """A non-list ``steps`` is left for Pydantic to reject with its own message."""
+    from chemrefine.config import _normalize_legacy
+
+    raw = {"steps": "not-a-list"}
+    assert _normalize_legacy(raw) == raw
+
+
+def test_normalizer_handles_step_without_operation():
+    """Engine renames still apply when ``operation`` is absent (validation rejects later)."""
+    from chemrefine.config import _normalize_step
+
+    s = _normalize_step({"step": 1, "engine": "DFT"})
+    assert s["engine"] == "orca"
+    assert "operation" not in s
+
+
 def test_normalizer_is_idempotent_on_new_style():
     new = {
         "template_dir": "./t",

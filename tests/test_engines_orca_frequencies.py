@@ -122,3 +122,26 @@ def test_parse_normal_modes_tensor_concatenates_multiple_column_blocks(tmp_path:
     assert tensor.shape == (1, 3, 8)
     assert tensor[0, 0, 6] == 0.9
     assert tensor[0, 0, 7] == 0.5
+
+
+def test_parse_normal_modes_tensor_tolerates_blank_line_inside_block(tmp_path: Path):
+    """A blank line between the column header and the rows is skipped, not a terminator."""
+    text = (
+        "NORMAL MODES\n"
+        "                  0          1          2          3          4          5\n"
+        "\n"
+        "      0       0.100000   0.000000   0.000000   0.000000   0.000000   0.000000\n"
+        "      1       0.000000   0.200000   0.000000   0.000000   0.000000   0.000000\n"
+        "      2       0.000000   0.000000   0.300000   0.000000   0.000000   0.000000\n"
+        "-----\n"
+    )
+    tensor = parse_normal_modes_tensor(_write(tmp_path, text), num_atoms=1)
+    assert tensor.shape == (1, 3, 6)
+    assert tensor[0, 0, 0] == 0.1
+
+
+def test_parse_normal_modes_tensor_raises_when_header_has_no_rows(tmp_path: Path):
+    """A column header followed directly by a separator carries no mode data."""
+    text = "                  0          1\n-----\n"
+    with pytest.raises(ValueError, match="no normal-mode blocks"):
+        parse_normal_modes_tensor(_write(tmp_path, text), num_atoms=1)

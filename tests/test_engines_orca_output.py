@@ -611,3 +611,19 @@ def test_xyz_ensemble_breaks_on_truncated_file(tmp_path: Path):
     p.write_text("100\n-1.0 converged=true\nH 0 0 0\n", encoding="utf-8")
     with pytest.raises(OutputParseError):
         parse_goat_ensemble(p)
+
+
+def test_pes_coord_block_at_end_of_segment_is_parsed():
+    """A coordinate block that runs to the very end of its segment (no trailing
+    blank line) still yields its atoms — the row loop must exit cleanly at EOF."""
+    from chemrefine.engines.orca.output import _parse_last_pes_coord_block
+
+    segment = (
+        "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "---------------------------------\n"
+        "H 0.0 0.0 0.0\n"
+        "H 0.74 0.0 0.0"
+    )
+    atoms = _parse_last_pes_coord_block(segment)
+    assert [a[0] for a in atoms] == ["H", "H"]
+    assert atoms[1][1] == 0.74

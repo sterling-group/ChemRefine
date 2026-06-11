@@ -400,3 +400,15 @@ def test_orca_resolve_nms_from_existing_reads_round2_outputs(tmp_path):
     with patch.object(engine, "parse", lambda i, c: StepResults(structures=(child,))):
         result = engine.resolve_nms_from_existing(round1, ctx)
     assert any(s.id == "0_m5_pos" for s in result.structures)
+
+
+def test_orca_resolve_nms_from_existing_with_no_round2_outputs(tmp_path):
+    """rebuild-cache path: children with no ``nms/`` outputs on disk are simply
+    absent from the result, so their parent stays unresolved downstream."""
+    engine = get_engine("orca")
+    ctx = _orca_nms_ctx(tmp_path)
+    engine._imag_freqs = {"0": {5: -42.0}}
+    engine._modes = {"0": _modes(6)}
+    round1 = StepResults(structures=(_struct([[0, 0, 0], [0.74, 0, 0]], "0"),))
+    result = engine.resolve_nms_from_existing(round1, ctx)
+    assert result.structures == ()
