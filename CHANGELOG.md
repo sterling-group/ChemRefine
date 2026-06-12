@@ -1,0 +1,80 @@
+# Changelog
+
+Notable changes to ChemRefine. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
+[semantic versioning](https://semver.org/). Update the Unreleased section
+as part of any user-visible change; it becomes the release notes when the
+version is tagged.
+
+## [2.0.0] — Unreleased
+
+A ground-up rewrite of the v1.3.1 pipeline. Legacy YAML configs and
+flag-style CLI invocations keep working through a translation layer that
+warns once per deprecated spelling — see
+[migrating from v1.3.1](docs/migrating-from-main.md) for the full map.
+
+### Added
+
+- Engine plugin system: a `CalculationEngine` protocol plus a registry, with
+  four documented base shapes for new engines (`engines/base.py`). Bundled
+  engines: `orca`, `mlip`, `mlip-extopt`, `mlip-train`, `pyscf`,
+  `pyscf-extopt`.
+- Subcommand CLI — `run`, `resume`, `rerun [step]`, `rerun-errors [step]`,
+  `rebuild-cache [step]`, `rebuild-nms [step]` — with documented process
+  exit codes per failure class.
+- Per-step result cache fingerprinted over the step config **and** the
+  parent structures' content; `resume` re-executes only what changed.
+  Filter-only (`sample:`) edits refilter cached results without re-running
+  calculations.
+- Per-step failure policy `on_failure: stop | skip | best` with a
+  `failed_jobs.json` ledger; `resume` / `rerun-errors` re-attempt only the
+  still-failed structures of a `stop` step.
+- Two-round normal-mode sampling (`nms: true`) with target-aware
+  displacement (`minimum` / `ts` / `random`) and a reuse fingerprint that
+  re-attempts only unresolved parents when search parameters are tuned.
+- Shared ExtOpt HTTP server: ORCA optimises on gradients served by an MLIP
+  or PySCF backend in the same SLURM job (kernel-assigned ports, health
+  probe, clean teardown).
+- Per-backend MLIP extras (`mlip-mace`, `mlip-fairchem`, `mlip-sevenn`,
+  `mlip-orb`, `mlip-chgnet`) and a backend-agnostic calculator factory.
+- SLURM-optional execution: the generated scripts run unchanged under
+  `bash` with the same core/GPU throttling, runlogs, and artifacts.
+- Seeding from a multi-frame `.xyz`, a directory of `.xyz` files (all
+  frames), or a CSV of SMILES (deterministic 3D embedding).
+- Engineering gates: 100% line+branch test coverage, 100% docstring
+  coverage, ruff, mypy, CodeQL, weekly `pip-audit`, and an
+  mkdocstrings-rendered API reference.
+
+### Changed
+
+- v2 YAML schema: `engine:` + `operation:` replace `calculation_type`;
+  `sample:` replaces `sample_type:`; `nms:` + `options:` replace
+  `normal_mode_sampling*`; `executables:` replaces `orca_executable`;
+  `input:` replaces `initial_xyz`. Legacy spellings are rewritten with a
+  deprecation warning — except `calculation_type`, which raises with a
+  pointer to the migration guide.
+- `mlff` renamed to `mlip` everywhere (engines, extras, YAML); the old
+  spellings remain as aliases.
+- The version is single-sourced in `pyproject.toml`; releases are tag-driven
+  (a `vX.Y.Z` tag builds, creates the GitHub Release, and publishes to PyPI
+  after a tag↔version consistency check).
+
+### Fixed
+
+Hardening landed during the 2.0.0 stabilization:
+
+- Cluster SLURM headers using `--ntasks-per-node` / `--ntasks-per-core` keep
+  those directives in generated scripts.
+- An ORCA template requesting more `%pal` ranks than `max_cores` is clamped
+  to the budget instead of oversubscribing its allocation.
+- A typoed `pyscf-extopt` option fails the step instead of silently running
+  with defaults.
+- Corrupt output files (overflowed coordinate tokens, malformed ensemble
+  frames) land in the failed-jobs ledger instead of crashing the run.
+- The ExtOpt tensor-dump tag is sanitized before filename use.
+
+## [1.3.1] and earlier
+
+The pre-rewrite line; see the
+[GitHub releases](https://github.com/sterling-group/ChemRefine/releases)
+for its history.

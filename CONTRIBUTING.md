@@ -48,4 +48,6 @@ line and branch, and every module/class/function carries a docstring
 Pushing a `vX.Y.Z` tag builds the package, creates a GitHub Release, and
 publishes to PyPI; a `vX.Y.Z.devN` tag publishes to TestPyPI instead
 (see `.github/workflows/publish.yml`). The version lives only in
-`pyproject.toml`.
+`pyproject.toml`, and the publish jobs refuse a tag that doesn't match it.
+Before tagging: bump the version, retitle the Unreleased section in
+`CHANGELOG.md`, and start a fresh Unreleased section.
