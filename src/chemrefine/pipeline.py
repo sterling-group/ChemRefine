@@ -90,14 +90,20 @@ def _seed_from_xyz(path: Path) -> PipelineState:
 
 
 def _seed_from_directory(directory: Path) -> PipelineState:
-    """Seed the pipeline from every ``*.xyz`` under ``directory``, sorted naturally."""
+    """Seed the pipeline from every ``*.xyz`` under ``directory``, sorted naturally.
+
+    Every **frame** of every file becomes a structure (``index=":"`` —
+    like :func:`_seed_from_xyz`, ASE's default would silently keep only
+    the last frame of a multi-conformer file). IDs number continuously
+    across files in natural-sort order.
+    """
     xyz_files = io.gather_output_files(directory, "*.xyz")
     if not xyz_files:
         raise ConfigError(f"no .xyz files found under {directory}")
-    structures = tuple(
-        Structure(id=str(i), atoms=ase_read(str(f), format="xyz")) for i, f in enumerate(xyz_files)
+    frames = [atoms for f in xyz_files for atoms in ase_read(str(f), index=":", format="xyz")]
+    return PipelineState(
+        structures=tuple(Structure(id=str(i), atoms=atoms) for i, atoms in enumerate(frames))
     )
-    return PipelineState(structures=structures)
 
 
 def _seed_from_smiles_csv(csv_path: Path, out_dir: Path) -> PipelineState:

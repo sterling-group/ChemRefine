@@ -69,6 +69,29 @@ def test_bootstrap_from_directory(tmp_path: Path):
     assert [s.id for s in state.structures] == ["0", "1"]
 
 
+def test_bootstrap_from_directory_seeds_every_frame_of_multiframe_files(tmp_path: Path):
+    """A multi-frame file inside a seed directory yields one structure per frame.
+
+    Regression: directory seeding used ASE's default read (last frame only),
+    silently dropping every other conformer — the exact bug the single-file
+    path already guards against.
+    """
+    seed_dir = tmp_path / "seeds"
+    seed_dir.mkdir()
+    frame = "2\nH2 frame {i}\nH 0.0 0.0 0.0\nH {x} 0.0 0.0\n"
+    (seed_dir / "a.xyz").write_text(
+        "".join(frame.format(i=i, x=0.70 + 0.02 * i) for i in range(2)), encoding="utf-8"
+    )
+    (seed_dir / "b.xyz").write_text(frame.format(i=9, x=0.80), encoding="utf-8")
+    cfg = _config(tmp_path, input=seed_dir)
+    state = pipeline.bootstrap(cfg)
+    assert [s.id for s in state.structures] == ["0", "1", "2"]
+    # a.xyz's first frame, then its second, then b.xyz's single frame.
+    assert state.structures[0].atoms.get_positions()[1][0] == pytest.approx(0.70)
+    assert state.structures[1].atoms.get_positions()[1][0] == pytest.approx(0.72)
+    assert state.structures[2].atoms.get_positions()[1][0] == pytest.approx(0.80)
+
+
 def test_bootstrap_falls_back_to_templates_step1_xyz(tmp_path: Path):
     template_dir = tmp_path / "templates"
     template_dir.mkdir()
