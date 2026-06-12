@@ -1,4 +1,4 @@
-"""Tests for the per-step pickle cache, fingerprint, and JSON manifest."""
+"""Tests for the per-step JSON cache, fingerprint, and manifest."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from ase import Atoms
 
 from chemrefine.cache import (
     CACHE_FORMAT_VERSION,
-    StepCache,
     fingerprint,
     invalidate,
     is_valid,
@@ -103,7 +102,8 @@ def test_parents_digest_changes_when_id_changes():
 # ---------------------------------------------------------------------------
 
 
-def test_save_creates_pickle_and_json(tmp_path: Path):
+def test_save_creates_single_json_document(tmp_path: Path):
+    """The cache is one JSON document — no pickle is ever written."""
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(),
@@ -112,8 +112,8 @@ def test_save_creates_pickle_and_json(tmp_path: Path):
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
-    assert (step_dir / "_cache" / "step.pkl").is_file()
     assert (step_dir / "_cache" / "step.json").is_file()
+    assert not (step_dir / "_cache" / "step.pkl").exists()
 
 
 def test_save_and_load_round_trip(tmp_path: Path):
@@ -158,50 +158,105 @@ def test_reuse_fingerprint_defaults_empty(tmp_path: Path):
     assert load(step_dir).reuse_fingerprint == ""
 
 
+def test_round_trip_preserves_positions_forces_and_flags(tmp_path: Path):
+    """Coordinates, forces, lineage, and status flags survive the JSON store."""
+    forces = np.array([[0.1234567890123456, -2.5e-7, 3.0]], dtype=np.float64)
+    struct = Structure(
+        id="0-1",
+        atoms=Atoms("H", positions=[[0.7414213562373095, 0.0, -1.5e-9]]),
+        parent_id="0",
+        energy_hartree=-1.0000000000000002,
+        forces_ev_per_a=forces,
+        converged=True,
+        terminated=False,
+    )
+    step_dir = tmp_path / "step1"
+    save(
+        step_cfg=_cfg(),
+        parent_ids=("0",),
+        results=StepResults(structures=(struct,)),
+        step_dir=step_dir,
+        chemrefine_version="2.0.0",
+    )
+    loaded = load(step_dir).results.structures[0]
+    assert loaded.parent_id == "0"
+    assert loaded.energy_hartree == -1.0000000000000002
+    assert loaded.converged is True and loaded.terminated is False
+    np.testing.assert_array_equal(loaded.atoms.get_positions(), struct.atoms.get_positions())
+    np.testing.assert_array_equal(loaded.forces_ev_per_a, forces)
+    assert loaded.forces_ev_per_a.dtype == np.float64
+
+
+def test_round_trip_keeps_parents_digest_stable(tmp_path: Path):
+    """The load-bearing property: a JSON round-trip must not perturb the digest.
+
+    Downstream steps fingerprint against ``parents_digest`` of *loaded*
+    structures (exact float64 bytes); any drift would invalidate every
+    downstream cache on resume.
+    """
+    struct = _h2(spacing=0.7414213562373095, energy=-1.1283791670955126)
+    step_dir = tmp_path / "step1"
+    save(
+        step_cfg=_cfg(),
+        parent_ids=("0",),
+        results=StepResults(structures=(struct,)),
+        step_dir=step_dir,
+        chemrefine_version="2.0.0",
+    )
+    loaded = load(step_dir).results.structures
+    assert parents_digest(loaded) == parents_digest([struct])
+
+
 def test_load_missing_returns_none(tmp_path: Path):
     assert load(tmp_path / "step1") is None
 
 
-def test_load_corrupt_pickle_raises(tmp_path: Path):
-    cache_file = tmp_path / "step1" / "_cache" / "step.pkl"
+def test_load_corrupt_json_raises(tmp_path: Path):
+    cache_file = tmp_path / "step1" / "_cache" / "step.json"
     cache_file.parent.mkdir(parents=True)
-    cache_file.write_bytes(b"not a pickle")
+    cache_file.write_bytes(b"{not json")
     with pytest.raises(CacheError):
         load(tmp_path / "step1")
 
 
 def test_load_rejects_old_cache_format(tmp_path: Path):
-    import pickle
+    import json
 
     step_dir = tmp_path / "step1"
-    cache_file = step_dir / "_cache" / "step.pkl"
-    cache_file.parent.mkdir(parents=True)
-    obj = StepCache(
-        cache_format="v3.0",
-        chemrefine_version="3.0.0",
-        fingerprint="abc",
-        step=1,
-        name=None,
-        engine="fake",
-        operation="opt_sp",
-        parent_ids=(),
+    save(
+        step_cfg=_cfg(),
+        parent_ids=("0",),
         results=_results(),
+        step_dir=step_dir,
+        chemrefine_version="2.0.0",
     )
-    cache_file.write_bytes(pickle.dumps(obj))
-    with pytest.raises(CacheError):
+    cache_file = step_dir / "_cache" / "step.json"
+    data = json.loads(cache_file.read_text(encoding="utf-8"))
+    data["cache_format"] = "v9.9"
+    cache_file.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(CacheError, match=r"format v9\.9"):
         load(step_dir)
 
 
-def test_load_rejects_pickle_that_is_not_step_cache(tmp_path: Path):
-    """A pickle whose payload isn't a StepCache must surface as CacheError."""
-    import pickle
+def test_load_rejects_legacy_summary_sidecar(tmp_path: Path):
+    """The pickle-era ``step.json`` was a summary without ``structures``.
 
+    Loading one must raise (→ ``is_valid`` False → clean rebuild), never
+    misread the summary as a complete cache.
+    """
     step_dir = tmp_path / "step1"
-    cache_file = step_dir / "_cache" / "step.pkl"
+    cache_file = step_dir / "_cache" / "step.json"
     cache_file.parent.mkdir(parents=True)
-    cache_file.write_bytes(pickle.dumps({"i": "am not a StepCache"}))
-    with pytest.raises(CacheError):
+    cache_file.write_text(
+        '{"cache_format": "v2.0", "chemrefine_version": "2.0.0", "fingerprint": "abc",'
+        ' "reuse_fingerprint": "", "step": 1, "name": null, "engine": "fake",'
+        ' "operation": "opt_sp", "structure_ids": ["0"], "parent_ids": [null],'
+        ' "energies_hartree": [-1.0]}',
+        encoding="utf-8",
+    )
+    with pytest.raises(CacheError, match="stale or corrupt"):
         load(step_dir)
+    assert not is_valid(step_cfg=_cfg(), parent_ids=("0",), step_dir=step_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +294,7 @@ def test_is_valid_false_when_cache_is_corrupt(tmp_path: Path):
     step_dir = tmp_path / "step1"
     cache_dir = step_dir / "_cache"
     cache_dir.mkdir(parents=True)
-    (cache_dir / "step.pkl").write_bytes(b"not a real pickle")
+    (cache_dir / "step.json").write_bytes(b"{not json")
     assert not is_valid(step_cfg=_cfg(), parent_ids=("0",), step_dir=step_dir)
 
 
@@ -265,7 +320,7 @@ def test_is_valid_false_when_no_cache(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_invalidate_removes_cache(tmp_path: Path):
+def test_invalidate_removes_cache_and_legacy_pickle(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(),
@@ -274,9 +329,11 @@ def test_invalidate_removes_cache(tmp_path: Path):
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
+    # A pre-JSON run may have left a step.pkl behind — invalidate sweeps it too.
+    (step_dir / "_cache" / "step.pkl").write_bytes(b"legacy")
     invalidate(step_dir)
-    assert not (step_dir / "_cache" / "step.pkl").exists()
     assert not (step_dir / "_cache" / "step.json").exists()
+    assert not (step_dir / "_cache" / "step.pkl").exists()
 
 
 def test_invalidate_missing_is_noop(tmp_path: Path):
@@ -285,9 +342,10 @@ def test_invalidate_missing_is_noop(tmp_path: Path):
 
 def test_cache_format_version_constant():
     """Bumping CACHE_FORMAT_VERSION is a public ABI break we want to notice."""
-    # v2.0: the fingerprint dropped the sample config (filtering re-runs on
-    # every load, so a filter-only edit must be a cache hit); older caches
-    # carry fingerprints computed under the v2.0 scheme and must rebuild.
+    # v2.0: a JSON document (pickle removed) whose fingerprint excludes the
+    # sample config (filtering re-runs on every load, so a filter-only edit
+    # must be a cache hit). Pickle-era summary sidecars are rejected
+    # structurally (no `structures` key), so no bump was needed pre-release.
     assert CACHE_FORMAT_VERSION == "v2.0"
 
 

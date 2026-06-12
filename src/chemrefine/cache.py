@@ -1,25 +1,29 @@
 """Per-step result cache for skip-on-resume.
 
-Each step writes its parsed results to ``{step_dir}/_cache/step.pkl``
-plus a JSON sidecar (``step.json``) for human inspection. The cache is
-keyed by a SHA-1 *fingerprint* covering the step's config (engine,
-operation, options, charge, multiplicity, template, NMS flag) plus the
-parent structures that fed into the step — their IDs **and** their
-content (:func:`parents_digest`: symbols, coordinates, energy). If the
-YAML changes, or the seed file / any upstream result changes, the
-fingerprint changes and the next run re-executes the step. The
+Each step writes its parsed results to ``{step_dir}/_cache/step.json``
+— one human-inspectable JSON document holding the step metadata and
+every structure (symbols, coordinates, energy, forces, status flags).
+Plain JSON rather than pickle on purpose: loading it can never execute
+code from the file, and Python's float round-tripping keeps coordinates
+byte-identical so :func:`parents_digest` is stable across save → load.
+The cache is keyed by a SHA-1 *fingerprint* covering the step's config
+(engine, operation, options, charge, multiplicity, template, NMS flag)
+plus the parent structures that fed into the step — their IDs **and**
+their content (:func:`parents_digest`: symbols, coordinates, energy).
+If the YAML changes, or the seed file / any upstream result changes,
+the fingerprint changes and the next run re-executes the step. The
 ``sample:`` filter is deliberately **excluded**: the cache stores the
 *pre-filter* results and filtering re-runs on every load, so tuning a
 filter must refilter the cached results, not redo the calculations
 (downstream steps still invalidate through the changed survivor set).
 
-Writes are atomic — the pickle and JSON are written to ``.tmp_*`` files
-inside the cache directory and renamed into place, so an interrupted
-write never produces a half-baked cache.
+Writes are atomic — the JSON is written to a ``.tmp_*`` file inside the
+cache directory and renamed into place, so an interrupted write never
+produces a half-baked cache.
 
 This module also owns the per-step **manifest** (``{step_dir}/_cache/
 manifest.json``): the input→output→structure-ID file layout that
-produced the results. The cache pickle records the *parsed results*;
+produced the results. The cache document records the *parsed results*;
 the manifest records the *file layout*, so ``rerun`` / recovery can
 rehydrate which input produced which output after a restart. Both are
 the same concern — per-step state under ``_cache/`` — so they live in
@@ -31,7 +35,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import pickle
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -39,6 +42,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from ase import Atoms
 
 from chemrefine.config import StepConfig
 from chemrefine.errors import CacheError
@@ -47,23 +51,22 @@ from chemrefine.state import StepInputs, StepResults, Structure
 CACHE_FORMAT_VERSION = "v2.0"
 """On-disk cache schema version, tracking the 2.0.0 release line.
 
-Bump whenever the pickled :class:`StepCache` /
-:class:`~chemrefine.state.Structure` / :class:`~chemrefine.state.StepResults`
-layout changes in a way that would silently misread an older pickle, **or**
-when the fingerprint payload changes (older stored fingerprints would never
-match again, which looks like a silent mass invalidation); :func:`load`
-rejects any cache whose ``cache_format`` differs, forcing a clean rebuild
-rather than a wrong read."""
+Bump whenever the ``step.json`` document layout changes in a way that
+would silently misread an older cache, **or** when the fingerprint
+payload changes (older stored fingerprints would never match again,
+which looks like a silent mass invalidation); :func:`load` rejects any
+cache whose ``cache_format`` differs, forcing a clean rebuild rather
+than a wrong read."""
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class StepCache:
-    """Persistable snapshot of one step's parsed results.
+    """In-memory snapshot of one step's parsed results.
 
-    The dataclass is the on-disk format: pickle serializes the whole
-    object including its :class:`~chemrefine.state.StepResults` payload.
+    :func:`save` serializes it to the ``step.json`` document (structures
+    via :func:`_structure_to_dict`); :func:`load` rebuilds it.
     """
 
     cache_format: str
@@ -145,10 +148,46 @@ def fingerprint(
 # ---------------------------------------------------------------------------
 
 
-def _paths(step_dir: Path) -> tuple[Path, Path]:
-    """Return ``(pickle_path, json_path)`` inside ``step_dir/_cache/``."""
-    cache_dir = step_dir / "_cache"
-    return cache_dir / "step.pkl", cache_dir / "step.json"
+def _cache_path(step_dir: Path) -> Path:
+    """Return the ``step.json`` cache document path inside ``step_dir/_cache/``."""
+    return step_dir / "_cache" / "step.json"
+
+
+def _structure_to_dict(s: Structure) -> dict[str, Any]:
+    """Serialize one :class:`Structure` to its JSON cache entry.
+
+    Only symbols + positions of the ``Atoms`` are stored — that is all the
+    pipeline ever reads back from a cached structure (and all that
+    :func:`parents_digest` hashes).
+    """
+    return {
+        "id": s.id,
+        "parent_id": s.parent_id,
+        "energy_hartree": s.energy_hartree,
+        "converged": s.converged,
+        "terminated": s.terminated,
+        "symbols": list(s.atoms.get_chemical_symbols()),
+        "positions": np.asarray(s.atoms.get_positions(), dtype=np.float64).tolist(),
+        "forces_ev_per_a": (
+            None
+            if s.forces_ev_per_a is None
+            else np.asarray(s.forces_ev_per_a, dtype=np.float64).tolist()
+        ),
+    }
+
+
+def _structure_from_dict(d: dict[str, Any]) -> Structure:
+    """Rebuild a :class:`Structure` from its JSON cache entry (inverse of the above)."""
+    forces = d["forces_ev_per_a"]
+    return Structure(
+        id=d["id"],
+        atoms=Atoms(symbols=d["symbols"], positions=d["positions"]),
+        parent_id=d["parent_id"],
+        energy_hartree=d["energy_hartree"],
+        forces_ev_per_a=None if forces is None else np.asarray(forces, dtype=np.float64),
+        converged=d["converged"],
+        terminated=d["terminated"],
+    )
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
@@ -204,21 +243,7 @@ def save(
     into the stored fingerprint; pass the same value to :func:`is_valid`.
     """
     fp = fingerprint(step_cfg, parent_ids, parents_digest=parents_digest)
-    cache = StepCache(
-        cache_format=CACHE_FORMAT_VERSION,
-        chemrefine_version=chemrefine_version,
-        fingerprint=fp,
-        step=step_cfg.step,
-        name=step_cfg.name,
-        engine=step_cfg.engine,
-        operation=step_cfg.operation,
-        parent_ids=parent_ids,
-        results=results,
-        reuse_fingerprint=reuse_fingerprint,
-    )
-    pkl_path, json_path = _paths(step_dir)
-    _atomic_write(pkl_path, pickle.dumps(cache, protocol=pickle.HIGHEST_PROTOCOL))
-    sidecar = {
+    document = {
         "cache_format": CACHE_FORMAT_VERSION,
         "chemrefine_version": chemrefine_version,
         "fingerprint": fp,
@@ -227,39 +252,48 @@ def save(
         "name": step_cfg.name,
         "engine": step_cfg.engine,
         "operation": step_cfg.operation,
-        "structure_ids": [s.id for s in results.structures],
-        "parent_ids": [s.parent_id for s in results.structures],
-        "energies_hartree": [s.energy_hartree for s in results.structures],
+        "parent_ids": list(parent_ids),
+        "structures": [_structure_to_dict(s) for s in results.structures],
     }
-    _write_json(json_path, sidecar)
+    _write_json(_cache_path(step_dir), document)
     logger.info("saved step %d cache (fingerprint %s)", step_cfg.step, fp)
 
 
 def load(step_dir: Path) -> StepCache | None:
-    """Return the cached :class:`StepCache` under ``step_dir``, or ``None``."""
-    pkl_path, _ = _paths(step_dir)
-    if not pkl_path.is_file():
+    """Return the cached :class:`StepCache` under ``step_dir``, or ``None``.
+
+    Raises :class:`CacheError` when the document exists but is malformed —
+    bad JSON, missing fields, or a ``cache_format`` this version doesn't
+    read. The summary-only ``step.json`` sidecar that pickle-era versions
+    wrote next to ``step.pkl`` lands here too (it has no ``structures``),
+    forcing a clean rebuild rather than a wrong read.
+    """
+    path = _cache_path(step_dir)
+    data = _read_json(path, None, label="step cache")
+    if data is None:
         return None
     try:
-        with pkl_path.open("rb") as fh:
-            obj = pickle.load(fh)
-        if isinstance(obj, StepCache):
-            # Schema probe: a pickle written before a Structure field was added
-            # would deserialize "successfully" but blow up later when the
-            # pipeline touches the missing attribute. Touching every required
-            # field here makes that AttributeError surface inside this try
-            # block, so the orchestrator transparently rebuilds the cache.
-            for s in obj.results.structures:
-                _ = (s.id, s.parent_id, s.atoms, s.energy_hartree, s.forces_ev_per_a)
-    except (pickle.UnpicklingError, EOFError, AttributeError) as e:
-        raise CacheError(f"stale or corrupt cache at {pkl_path}: {e}") from e
-    if not isinstance(obj, StepCache):
-        raise CacheError(f"cache at {pkl_path} is not a StepCache (got {type(obj).__name__})")
-    if obj.cache_format != CACHE_FORMAT_VERSION:
-        raise CacheError(
-            f"cache at {pkl_path} has format {obj.cache_format}; expected {CACHE_FORMAT_VERSION}"
+        if data["cache_format"] != CACHE_FORMAT_VERSION:
+            raise CacheError(
+                f"cache at {path} has format {data['cache_format']}; "
+                f"expected {CACHE_FORMAT_VERSION}"
+            )
+        return StepCache(
+            cache_format=data["cache_format"],
+            chemrefine_version=data["chemrefine_version"],
+            fingerprint=data["fingerprint"],
+            step=data["step"],
+            name=data["name"],
+            engine=data["engine"],
+            operation=data["operation"],
+            parent_ids=tuple(data["parent_ids"]),
+            results=StepResults(
+                structures=tuple(_structure_from_dict(d) for d in data["structures"])
+            ),
+            reuse_fingerprint=data.get("reuse_fingerprint", ""),
         )
-    return obj
+    except (KeyError, TypeError, ValueError) as e:
+        raise CacheError(f"stale or corrupt cache at {path}: {e!r}") from e
 
 
 def is_valid(
@@ -280,10 +314,13 @@ def is_valid(
 
 
 def invalidate(step_dir: Path) -> None:
-    """Delete the cache for ``step_dir``. No-op if nothing is cached."""
-    pkl_path, json_path = _paths(step_dir)
-    pkl_path.unlink(missing_ok=True)
-    json_path.unlink(missing_ok=True)
+    """Delete the cache for ``step_dir``. No-op if nothing is cached.
+
+    Also removes the ``step.pkl`` a pre-JSON version may have left behind,
+    so re-running over an old output tree leaves no stale binary around.
+    """
+    _cache_path(step_dir).unlink(missing_ok=True)
+    (step_dir / "_cache" / "step.pkl").unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +344,7 @@ def save_manifest(
 
     The file layout (which input produced which output for which structure ID)
     is what ``rerun`` / recovery rehydrates via :func:`load_manifest` after a
-    restart. Written atomically, like the cache pickle.
+    restart. Written atomically, like the cache document.
     """
     path = manifest_path(step_dir)
     data = {

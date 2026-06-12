@@ -82,7 +82,7 @@ def test_run_step_first_run_writes_cache_and_manifest(tmp_path: Path):
     assert isinstance(outcome, StepOutcome)
     assert outcome.cache_hit is False
     step_dir = cfg.output_dir.resolve() / "step1"
-    assert (step_dir / "_cache" / "step.pkl").is_file()
+    assert (step_dir / "_cache" / "step.json").is_file()
     assert (step_dir / "_cache" / "manifest.json").is_file()
 
 

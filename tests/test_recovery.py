@@ -74,11 +74,11 @@ def test_execute_run_invalidates_and_re_executes(tmp_path: Path):
     # First run populates caches.
     execute(cfg, Action.RESUME)
     step1_dir = (cfg.output_dir / "step1_screen").resolve()
-    assert (step1_dir / "_cache" / "step.pkl").is_file()
+    assert (step1_dir / "_cache" / "step.json").is_file()
     # RUN should invalidate and re-execute.
     assert execute(cfg, Action.RUN) == 0
     # Cache should exist again after re-execution.
-    assert (step1_dir / "_cache" / "step.pkl").is_file()
+    assert (step1_dir / "_cache" / "step.json").is_file()
 
 
 def test_execute_resume_keeps_caches(tmp_path: Path):
@@ -91,16 +91,16 @@ def test_execute_resume_keeps_caches(tmp_path: Path):
 def test_execute_rebuild_cache_invalidates_only_target(tmp_path: Path):
     cfg = _two_step_config(tmp_path)
     execute(cfg, Action.RESUME)
-    step1_pkl = (cfg.output_dir / "step1_screen").resolve() / "_cache" / "step.pkl"
-    step2_pkl = (cfg.output_dir / "step2_refine").resolve() / "_cache" / "step.pkl"
+    step1_cache = (cfg.output_dir / "step1_screen").resolve() / "_cache" / "step.json"
+    step2_cache = (cfg.output_dir / "step2_refine").resolve() / "_cache" / "step.json"
     # Both caches present.
-    assert step1_pkl.is_file()
-    assert step2_pkl.is_file()
+    assert step1_cache.is_file()
+    assert step2_cache.is_file()
 
     # Invalidate only step 2.
     execute(cfg, Action.REBUILD_CACHE, target=2)
-    assert step1_pkl.is_file()
-    assert step2_pkl.is_file()  # re-created by the resume run
+    assert step1_cache.is_file()
+    assert step2_cache.is_file()  # re-created by the resume run
 
 
 def test_execute_rerun_target_by_name(tmp_path: Path):
@@ -121,7 +121,7 @@ def test_invalidate_step_removes_cache(tmp_path: Path):
     execute(cfg, Action.RESUME)
     invalidate_step(cfg, cfg.steps[0])
     step1_dir = (cfg.output_dir / "step1_screen").resolve()
-    assert not (step1_dir / "_cache" / "step.pkl").exists()
+    assert not (step1_dir / "_cache" / "step.json").exists()
 
 
 def test_execute_unknown_action_raises(tmp_path: Path):

@@ -94,8 +94,8 @@ def test_run_executes_full_pipeline(tmp_path: Path):
     result = runner.invoke(app, ["run", str(config_path)])
     assert result.exit_code == 0
     # Caches are now on disk for both steps.
-    assert (tmp_path / "outputs" / "step1_screen" / "_cache" / "step.pkl").is_file()
-    assert (tmp_path / "outputs" / "step2_refine" / "_cache" / "step.pkl").is_file()
+    assert (tmp_path / "outputs" / "step1_screen" / "_cache" / "step.json").is_file()
+    assert (tmp_path / "outputs" / "step2_refine" / "_cache" / "step.json").is_file()
 
 
 def test_resume_after_run_is_cache_hit(tmp_path: Path):

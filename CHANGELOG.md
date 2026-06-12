@@ -63,6 +63,11 @@ warns once per deprecated spelling — see
 
 Hardening landed during the 2.0.0 stabilization:
 
+- The step cache is one plain-JSON document (`_cache/step.json`) instead of
+  a pickle — loading a cache can never execute code from the file, and the
+  document is directly inspectable. Caches from earlier dev builds rebuild
+  automatically.
+
 - Cluster SLURM headers using `--ntasks-per-node` / `--ntasks-per-core` keep
   those directives in generated scripts.
 - An ORCA template requesting more `%pal` ranks than `max_cores` is clamped

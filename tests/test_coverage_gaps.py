@@ -484,9 +484,9 @@ def test_nms_reuse_outcome_none_on_corrupt_cache(tmp_path: Path, monkeypatch):
 
     _pin_nms(monkeypatch)
     ctx = _ctx(tmp_path, nms=True, engine="orca")
-    pkl_path, _ = cache._paths(ctx.step_dir)
-    pkl_path.parent.mkdir(parents=True, exist_ok=True)
-    pkl_path.write_bytes(b"not a pickle")
+    cache_path = cache._cache_path(ctx.step_dir)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_bytes(b"not json")
     assert step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca")) is None
 
 
