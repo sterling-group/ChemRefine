@@ -55,6 +55,16 @@ jobs:
           name: Packages
           path: dist
 
+      - name: Check tag matches package version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(basename dist/*.tar.gz .tar.gz)"
+          version="${version#*-}"
+          if [ "$version" != "$tag" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match the built version ${version}; bump pyproject.toml first"
+            exit 1
+          fi
+
       - name: Upload package to Test PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
@@ -81,6 +91,19 @@ jobs:
         with:
           name: Packages
           path: dist
+
+      # GITHUB_REF_NAME is the tag on both trigger paths (tag push and
+      # release-published both run at the tag ref), so a v2.1.0 tag can never
+      # publish a wheel whose pyproject.toml still says 2.0.0.
+      - name: Check tag matches package version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(basename dist/*.tar.gz .tar.gz)"
+          version="${version#*-}"
+          if [ "$version" != "$tag" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match the built version ${version}; bump pyproject.toml first"
+            exit 1
+          fi
 
       - name: Upload package to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
