@@ -181,7 +181,7 @@ def test_cache_load_after_run_returns_results(tmp_path: Path):
 
 
 def test_nms_reuse_fingerprint_ignores_search_params():
-    from chemrefine.step_nms import _nms_reuse_fingerprint
+    from chemrefine.step_nms import nms_reuse_fingerprint
 
     base = StepConfig(
         step=1,
@@ -191,24 +191,24 @@ def test_nms_reuse_fingerprint_ignores_search_params():
         options={"target": "minimum", "displacement_value": 1.0},
     )
     tuned = base.model_copy(update={"options": {"target": "minimum", "displacement_value": 2.0}})
-    assert _nms_reuse_fingerprint(base, ("0",)) == _nms_reuse_fingerprint(tuned, ("0",))
+    assert nms_reuse_fingerprint(base, ("0",)) == nms_reuse_fingerprint(tuned, ("0",))
 
 
 def test_nms_reuse_fingerprint_changes_on_criterion():
-    from chemrefine.step_nms import _nms_reuse_fingerprint
+    from chemrefine.step_nms import nms_reuse_fingerprint
 
     mn = StepConfig(
         step=1, engine="orca", operation="freq", nms=True, options={"target": "minimum"}
     )
     ts = mn.model_copy(update={"options": {"target": "ts"}})
-    assert _nms_reuse_fingerprint(mn, ("0",)) != _nms_reuse_fingerprint(ts, ("0",))
+    assert nms_reuse_fingerprint(mn, ("0",)) != nms_reuse_fingerprint(ts, ("0",))
 
 
 def test_nms_reuse_fingerprint_empty_for_non_nms():
-    from chemrefine.step_nms import _nms_reuse_fingerprint
+    from chemrefine.step_nms import nms_reuse_fingerprint
 
     plain = StepConfig(step=1, engine="orca", operation="opt_sp")
-    assert _nms_reuse_fingerprint(plain, ("0",)) == ""
+    assert nms_reuse_fingerprint(plain, ("0",)) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -354,12 +354,12 @@ def test_on_failure_best_backfills_all(tmp_path: Path):
 
 
 def test_resolve_nms_keeps_resolved_drops_unresolved(tmp_path: Path):
-    """_resolve_nms: already-resolved pass-through + resolved children kept;
+    """resolve_nms: already-resolved pass-through + resolved children kept;
     a round-1 parent with no resolved child becomes a (ledgered) failure."""
     from chemrefine import cache
     from chemrefine.state import StepResults
     from chemrefine.step import build_context
-    from chemrefine.step_nms import _resolve_nms
+    from chemrefine.step_nms import resolve_nms
 
     cfg = _config(tmp_path, engine="orca", operation="freq", nms=True)
     ctx = build_context(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]))
@@ -389,7 +389,7 @@ def test_resolve_nms_keeps_resolved_drops_unresolved(tmp_path: Path):
             _r("2_m5_neg", "2", -0.8, False),
         )
     )
-    out = _resolve_nms(nms_results, round1, ctx, cfg.steps[0])
+    out = resolve_nms(nms_results, round1, ctx, cfg.steps[0])
     assert {s.id for s in out.structures} == {"0", "1_m5_pos"}
     assert cache.load_failed_jobs(ctx.step_dir) == [
         {"structure_id": "2", "reason": "NMS: target stationary point not reached"}
@@ -437,13 +437,13 @@ def test_run_step_nms_branch_runs_when_engine_supports_it(tmp_path: Path):
 def test_on_failure_best_drops_failure_with_no_fallback(tmp_path: Path):
     """best: a failure with no best geometry and no prior-state entry has
     nothing to backfill — it is dropped while the others are kept."""
-    from chemrefine.step import _apply_failure_policy, _Failure
+    from chemrefine.step_failures import Failure, apply_failure_policy
 
     cfg = _config(tmp_path, on_failure="best")
     ctx = build_context(cfg, cfg.steps[0], _seed_state(["0"]))
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
-    failures = [_Failure(sid="ghost", reason="output missing", best=None)]
-    results = _apply_failure_policy([], failures, ctx, cfg.steps[0])
+    failures = [Failure(sid="ghost", reason="output missing", best=None)]
+    results = apply_failure_policy([], failures, ctx, cfg.steps[0])
     assert results.structures == ()
     assert cache.load_failed_jobs(ctx.step_dir) == [
         {"structure_id": "ghost", "reason": "output missing"}

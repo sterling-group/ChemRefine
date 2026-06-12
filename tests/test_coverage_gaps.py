@@ -230,15 +230,15 @@ def _struct(**kw) -> Structure:
 
 
 def test_failure_reason_branches():
-    from chemrefine.step import _failure_reason
+    from chemrefine.step_failures import failure_reason
 
-    assert _failure_reason(_struct(terminated=False)) == "did not terminate normally"
-    assert _failure_reason(_struct(converged=False)) == "did not converge"
-    assert _failure_reason(_struct()) == "failed"
+    assert failure_reason(_struct(terminated=False)) == "did not terminate normally"
+    assert failure_reason(_struct(converged=False)) == "did not converge"
+    assert failure_reason(_struct()) == "failed"
 
 
 def test_parse_with_failures_records_unparseable(tmp_path: Path):
-    from chemrefine import step
+    from chemrefine import step_failures
 
     out = tmp_path / "s.out"
     out.write_text("garbage", encoding="utf-8")
@@ -248,7 +248,7 @@ def test_parse_with_failures_records_unparseable(tmp_path: Path):
             raise OutputParseError("boom")
 
     inputs = StepInputs(files=((tmp_path / "s.inp", out, "0"),))
-    successes, failures = step._parse_with_failures(_Engine(), inputs, _ctx(tmp_path))
+    successes, failures = step_failures.parse_with_failures(_Engine(), inputs, _ctx(tmp_path))
     assert successes == []
     assert failures[0].reason.startswith("unparseable")
 
@@ -328,8 +328,6 @@ def test_cached_outcome_raises_when_load_returns_none(tmp_path: Path, monkeypatc
             get_engine("fake"),
             is_nms=False,
             resubmit_step=None,
-            version="v",
-            step_nms=None,
         )
 
 
@@ -372,9 +370,7 @@ def test_resubmit_failed_raises_without_manifest(tmp_path: Path):
     ctx = _ctx(tmp_path)
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     with pytest.raises(CacheError, match="no manifest to rehydrate"):
-        step._resubmit_failed(
-            get_engine("fake"), ctx, ctx.step_cfg, [{"structure_id": "0"}], (), "v"
-        )
+        step._resubmit_failed(get_engine("fake"), ctx, ctx.step_cfg, [{"structure_id": "0"}], ())
 
 
 def test_reattempt_nms_raises_without_manifest(tmp_path: Path):
@@ -384,7 +380,7 @@ def test_reattempt_nms_raises_without_manifest(tmp_path: Path):
     ctx = _ctx(tmp_path, nms=True, engine="orca")
     ctx.step_dir.mkdir(parents=True, exist_ok=True)  # no manifest written
     with pytest.raises(CacheError, match="no manifest"):
-        step_nms._reattempt_nms(get_engine("orca"), ctx, ctx.step_cfg, None, (), "v")
+        step_nms.reattempt_nms(get_engine("orca"), ctx, ctx.step_cfg, None, ())
 
 
 def test_rebuild_cache_step_nms_branch(tmp_path: Path):
@@ -432,21 +428,28 @@ def test_rebuild_cache_step_nms_branch(tmp_path: Path):
 # --- _nms_reuse_outcome (NMS reuse-fingerprint path) ------------------------
 
 
-class _StubNms:
-    """Stub for the lazily-passed ``step_nms`` module in ``_nms_reuse_outcome``."""
+def _pin_nms(monkeypatch, fp: str = "FP") -> None:
+    """Pin ``step_nms``'s reuse fingerprint + re-attempt result for these tests.
 
-    def __init__(self, fp: str = "FP"):
-        self._fp = fp
+    ``step.py`` calls through the ``step_nms`` module object, so patching the
+    module attributes redirects the orchestrator without touching its code.
+    """
+    from chemrefine import step_nms
 
-    def _nms_reuse_fingerprint(self, step_cfg, parent_ids, *, parents_digest=""):
-        return self._fp
-
-    def _reattempt_nms(self, engine, ctx, step_cfg, cached, parent_ids, version):
-        return StepResults(
+    monkeypatch.setattr(
+        step_nms,
+        "nms_reuse_fingerprint",
+        lambda step_cfg, parent_ids, *, parents_digest="": fp,
+    )
+    monkeypatch.setattr(
+        step_nms,
+        "reattempt_nms",
+        lambda engine, ctx, step_cfg, cached, parent_ids: StepResults(
             structures=(
                 Structure(id="re", atoms=Atoms("H", positions=[[0, 0, 0]]), energy_hartree=-1.0),
             )
-        )
+        ),
+    )
 
 
 def _save_reuse_cache(ctx, reuse_fp: str):
@@ -465,56 +468,46 @@ def _save_reuse_cache(ctx, reuse_fp: str):
     )
 
 
-def test_nms_reuse_outcome_none_without_cache(tmp_path: Path):
+def test_nms_reuse_outcome_none_without_cache(tmp_path: Path, monkeypatch):
     from chemrefine import step
     from chemrefine.engines.base import get_engine
 
+    _pin_nms(monkeypatch)
     ctx = _ctx(tmp_path, nms=True, engine="orca")
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
-    assert (
-        step._nms_reuse_outcome(
-            ctx, ctx.step_cfg, (), get_engine("orca"), version="v", step_nms=_StubNms()
-        )
-        is None
-    )
+    assert step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca")) is None
 
 
-def test_nms_reuse_outcome_none_on_corrupt_cache(tmp_path: Path):
+def test_nms_reuse_outcome_none_on_corrupt_cache(tmp_path: Path, monkeypatch):
     from chemrefine import cache, step
     from chemrefine.engines.base import get_engine
 
+    _pin_nms(monkeypatch)
     ctx = _ctx(tmp_path, nms=True, engine="orca")
     pkl_path, _ = cache._paths(ctx.step_dir)
     pkl_path.parent.mkdir(parents=True, exist_ok=True)
     pkl_path.write_bytes(b"not a pickle")
-    assert (
-        step._nms_reuse_outcome(
-            ctx, ctx.step_cfg, (), get_engine("orca"), version="v", step_nms=_StubNms()
-        )
-        is None
-    )
+    assert step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca")) is None
 
 
-def test_nms_reuse_outcome_restamps_when_all_resolved(tmp_path: Path):
+def test_nms_reuse_outcome_restamps_when_all_resolved(tmp_path: Path, monkeypatch):
     from chemrefine import step
     from chemrefine.engines.base import get_engine
 
+    _pin_nms(monkeypatch, "FP")
     ctx = _ctx(tmp_path, nms=True, engine="orca")
     _save_reuse_cache(ctx, "FP")  # matching reuse fingerprint, no failed ledger
-    out = step._nms_reuse_outcome(
-        ctx, ctx.step_cfg, (), get_engine("orca"), version="v", step_nms=_StubNms("FP")
-    )
+    out = step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"))
     assert out is not None and out.cache_hit is False
 
 
-def test_nms_reuse_outcome_reattempts_when_ledger_present(tmp_path: Path):
+def test_nms_reuse_outcome_reattempts_when_ledger_present(tmp_path: Path, monkeypatch):
     from chemrefine import cache, step
     from chemrefine.engines.base import get_engine
 
+    _pin_nms(monkeypatch, "FP")
     ctx = _ctx(tmp_path, nms=True, engine="orca")
     _save_reuse_cache(ctx, "FP")
     cache.save_failed_jobs(ctx.step_dir, [{"structure_id": "0", "reason": "x"}])
-    out = step._nms_reuse_outcome(
-        ctx, ctx.step_cfg, (), get_engine("orca"), version="v", step_nms=_StubNms("FP")
-    )
+    out = step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"))
     assert out is not None and any(s.id == "re" for s in out.state.structures)

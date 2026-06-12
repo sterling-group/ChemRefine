@@ -4,28 +4,19 @@ The generic per-step lifecycle lives in :mod:`chemrefine.step`; this module
 holds the parts that are specific to two-round normal-mode sampling — grouping
 round-2 outputs back to their round-1 parent, re-attempting only the unresolved
 parents, and the search-param-stable reuse fingerprint. It is distinct from
-:mod:`chemrefine.engines.orca.nms` (the ORCA displacement math + ``NmsOptions``).
-
-It reuses the generic failure helpers from :mod:`chemrefine.step` (imported at
-module scope); :mod:`chemrefine.step` imports *this* module at function scope so
-there is no import cycle.
+:mod:`chemrefine.engines.orca.nms` (the ORCA displacement math + ``NmsOptions``)
+and builds on the shared failure vocabulary in :mod:`chemrefine.step_failures`.
 """
 
 from __future__ import annotations
 
 import logging
 
-from chemrefine import cache
+from chemrefine import __version__, cache, step_failures
 from chemrefine.config import StepConfig
 from chemrefine.engines.base import CalculationEngine
 from chemrefine.errors import CacheError
 from chemrefine.state import StepContext, StepInputs, StepResults, Structure
-from chemrefine.step import (
-    _apply_failure_policy,
-    _Failure,
-    _parse_with_failures,
-    _succeeded,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +28,7 @@ logger = logging.getLogger(__name__)
 _NMS_SEARCH_KEYS = frozenset({"displacement_value", "num_random_displacements", "seed"})
 
 
-def _nms_reuse_fingerprint(
+def nms_reuse_fingerprint(
     step_cfg: StepConfig, parent_ids: tuple[str, ...], *, parents_digest: str = ""
 ) -> str:
     """Fingerprint that's stable across NMS search-param tuning.
@@ -59,13 +50,12 @@ def _nms_reuse_fingerprint(
     )
 
 
-def _reattempt_nms(
+def reattempt_nms(
     engine: CalculationEngine,
     ctx: StepContext,
     step_cfg: StepConfig,
     cached: cache.StepCache,
     parent_ids: tuple[str, ...],
-    version: str,
 ) -> StepResults:
     """Re-attempt only the ledgered-unresolved NMS parents, reusing round-1.
 
@@ -97,9 +87,9 @@ def _reattempt_nms(
     # Re-parse the failed parents' round-1 outputs (reuse on disk; caches freqs),
     # then re-run NMS round-2 for them under the current options. Round-1 jobs
     # that still produced no output stay failures, carried into the resolution.
-    r1_succ, r1_fail = _parse_with_failures(engine, failed_manifest, ctx)
+    r1_succ, r1_fail = step_failures.parse_with_failures(engine, failed_manifest, ctx)
     round1_failed = StepResults(structures=tuple(r1_succ))
-    reattempt = _resolve_nms(
+    reattempt = resolve_nms(
         engine.normal_mode_sample(round1_failed, ctx),
         round1_failed,
         ctx,
@@ -118,19 +108,19 @@ def _reattempt_nms(
         parent_ids=parent_ids,
         results=merged,
         step_dir=ctx.step_dir,
-        chemrefine_version=version,
-        reuse_fingerprint=_nms_reuse_fingerprint(step_cfg, parent_ids, parents_digest=digest),
+        chemrefine_version=__version__,
+        reuse_fingerprint=nms_reuse_fingerprint(step_cfg, parent_ids, parents_digest=digest),
         parents_digest=digest,
     )
     return merged
 
 
-def _resolve_nms(
+def resolve_nms(
     nms_results: StepResults,
     round1: StepResults,
     ctx: StepContext,
     step_cfg: StepConfig,
-    round1_failures: list[_Failure] | tuple[_Failure, ...] = (),
+    round1_failures: list[step_failures.Failure] | tuple[step_failures.Failure, ...] = (),
 ) -> StepResults:
     """Group two-round NMS outputs by the round-1 structure each resolves.
 
@@ -151,11 +141,11 @@ def _resolve_nms(
         # displaced child carries its round-1 parent in ``parent_id``.
         key = o.id if o.id in round1_ids else (o.parent_id or o.id)
         attempts.setdefault(key, []).append(o)
-        if _succeeded(o):
+        if step_failures.succeeded(o):
             successes.append(o)
             resolved_parents.add(key)
 
-    failures: list[_Failure] = list(round1_failures)
+    failures: list[step_failures.Failure] = list(round1_failures)
     for s in round1.structures:
         if s.id in resolved_parents:
             continue
@@ -165,5 +155,7 @@ def _resolve_nms(
             if group
             else s
         )
-        failures.append(_Failure(s.id, "NMS: target stationary point not reached", best))
-    return _apply_failure_policy(successes, failures, ctx, step_cfg)
+        failures.append(
+            step_failures.Failure(s.id, "NMS: target stationary point not reached", best)
+        )
+    return step_failures.apply_failure_policy(successes, failures, ctx, step_cfg)

@@ -50,7 +50,7 @@ class Structure:
     terminated: bool | None = None
     """Did the program terminate normally? ``None`` when the engine doesn't
     report it. A structure is a *failure* only when a flag is explicitly
-    ``False`` (see :func:`chemrefine.step._succeeded`)."""
+    ``False`` (see :func:`chemrefine.step_failures.succeeded`)."""
 
 
 @dataclass(frozen=True)

@@ -469,7 +469,7 @@ def test_reattempt_resubmits_missing_round1(tmp_path: Path):
 
         eng.fail_round1 = set()  # round-1 recovers
         eng.submitted = []
-        execute(cfg, Action.RESUME)  # same config → full-valid + ledger → _reattempt_nms
+        execute(cfg, Action.RESUME)  # same config → full-valid + ledger → reattempt_nms
         assert eng.submitted == ["1"]  # round-1 resubmitted only for the missing one
         assert cache.load_failed_jobs(step_dir) == []
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0_c", "1_c"}
