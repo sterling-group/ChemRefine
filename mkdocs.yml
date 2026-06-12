@@ -2,6 +2,18 @@ site_name: ChemRefine
 theme:
   name: material
 
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            # The explicit docstring sections in the tree (e.g. throttle.py)
+            # are numpy-style; free-prose docstrings parse fine under it too.
+            docstring_style: numpy
+            show_source: false
+            members_order: source
+
 nav:
   - Home: index.md
   - Install: INSTALL.md
@@ -9,10 +21,9 @@ nav:
   - Tutorials:
       - Overview: tutorials/index.md
       - Conformer Sampling: tutorials/conformer_sampling.md
-      - Transition State Finding: tutorials/ts_finding.md 
+      - Transition State Finding: tutorials/ts_finding.md
       - Host-Guest Docking and Microsolvation: tutorials/host-guest.md
       - MLIP Training and Normal Mode Sampling: tutorials/mlip_training.md
       - Redox: tutorials/redox.md
       - Spin: tutorials/spin.md
-
-  
+  - API Reference: api.md
