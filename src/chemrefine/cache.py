@@ -3,11 +3,15 @@
 Each step writes its parsed results to ``{step_dir}/_cache/step.pkl``
 plus a JSON sidecar (``step.json``) for human inspection. The cache is
 keyed by a SHA-1 *fingerprint* covering the step's config (engine,
-operation, options, charge, multiplicity, template, NMS flag, sample
-config) plus the parent structures that fed into the step — their IDs
-**and** their content (:func:`parents_digest`: symbols, coordinates,
-energy). If the YAML changes, or the seed file / any upstream result
-changes, the fingerprint changes and the next run re-executes the step.
+operation, options, charge, multiplicity, template, NMS flag) plus the
+parent structures that fed into the step — their IDs **and** their
+content (:func:`parents_digest`: symbols, coordinates, energy). If the
+YAML changes, or the seed file / any upstream result changes, the
+fingerprint changes and the next run re-executes the step. The
+``sample:`` filter is deliberately **excluded**: the cache stores the
+*pre-filter* results and filtering re-runs on every load, so tuning a
+filter must refilter the cached results, not redo the calculations
+(downstream steps still invalidate through the changed survivor set).
 
 Writes are atomic — the pickle and JSON are written to ``.tmp_*`` files
 inside the cache directory and renamed into place, so an interrupted
@@ -45,9 +49,11 @@ CACHE_FORMAT_VERSION = "v2.0"
 
 Bump whenever the pickled :class:`StepCache` /
 :class:`~chemrefine.state.Structure` / :class:`~chemrefine.state.StepResults`
-layout changes in a way that would silently misread an older pickle;
-:func:`load` rejects any cache whose ``cache_format`` differs, forcing a clean
-rebuild rather than a wrong read."""
+layout changes in a way that would silently misread an older pickle, **or**
+when the fingerprint payload changes (older stored fingerprints would never
+match again, which looks like a silent mass invalidation); :func:`load`
+rejects any cache whose ``cache_format`` differs, forcing a clean rebuild
+rather than a wrong read."""
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +119,9 @@ def fingerprint(
     cache reuse. ``parents_digest`` (see :func:`parents_digest`) ties the
     fingerprint to the parent structures' content so a changed seed file or
     changed upstream result invalidates the step even when the IDs match.
+    ``sample:`` is excluded on purpose — the cached results are pre-filter
+    and filtering re-runs on every load, so a filter-only edit is a cache
+    hit, not a re-run.
     """
     payload = {
         "format": CACHE_FORMAT_VERSION,
@@ -124,7 +133,6 @@ def fingerprint(
         "multiplicity": step_cfg.multiplicity,
         "template": step_cfg.template,
         "nms": step_cfg.nms,
-        "sample": (step_cfg.sample.model_dump(mode="json") if step_cfg.sample else None),
         "parent_ids": list(parent_ids),
         "parents_digest": parents_digest,
     }

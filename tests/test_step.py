@@ -136,18 +136,20 @@ def test_run_step_creates_output_directory(tmp_path: Path):
     assert (cfg.output_dir.resolve() / "step1_named").is_dir()
 
 
-def test_run_step_filter_after_cache_hit(tmp_path: Path):
-    """Changing the sample method between runs only re-filters, no engine work needed."""
+def test_run_step_filter_only_change_is_cache_hit(tmp_path: Path):
+    """Changing only ``sample:`` re-filters the cached results — no engine re-run.
+
+    The cache stores pre-filter results and filtering re-runs on every load,
+    so the fingerprint deliberately excludes the sample config: tuning a
+    filter must never redo the step's calculations.
+    """
     # First run with no sampling -> cache stores all 3 structures.
     cfg_all = _config(tmp_path)
     seeds = _seed_state(["0", "1", "2"])
     run_step(cfg_all, cfg_all.steps[0], seeds)
-    # But changing `sample` changes the fingerprint too, so it's actually a miss.
     cfg_one = _config(tmp_path, sample={"method": "integer", "count": 1})
     outcome = run_step(cfg_one, cfg_one.steps[0], seeds)
-    # The fingerprint differs because the sample config is part of it,
-    # so the engine re-runs and the filtered state has 1 survivor.
-    assert outcome.cache_hit is False
+    assert outcome.cache_hit is True
     assert len(outcome.state.structures) == 1
 
 

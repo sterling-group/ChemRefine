@@ -285,9 +285,9 @@ def test_invalidate_missing_is_noop(tmp_path: Path):
 
 def test_cache_format_version_constant():
     """Bumping CACHE_FORMAT_VERSION is a public ABI break we want to notice."""
-    # v2.0: the fingerprint gained the parents_digest content key, so caches
-    # written by older versions rebuild instead of comparing fingerprints
-    # computed under a different scheme.
+    # v2.0: the fingerprint dropped the sample config (filtering re-runs on
+    # every load, so a filter-only edit must be a cache hit); older caches
+    # carry fingerprints computed under the v2.0 scheme and must rebuild.
     assert CACHE_FORMAT_VERSION == "v2.0"
 
 
