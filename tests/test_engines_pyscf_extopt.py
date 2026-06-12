@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from ase import Atoms
+from pydantic import ValidationError
 
 from chemrefine.config import StepConfig
 from chemrefine.engines.base import ENGINES, get_engine
@@ -151,21 +153,37 @@ def test_pyscf_save_tensors_reaches_server_cmd(tmp_path: Path):
     assert "--tensor_folder" not in wrapper_text
 
 
-def test_pyscf_run_block_omits_optional_flags_when_unset(tmp_path: Path):
-    """Each optional flag is gated on its option being set."""
+def test_pyscf_run_block_omits_bool_flags_when_unset(tmp_path: Path):
+    """Bool flags stay gated on their option; key-value knobs carry validated values."""
     engine = get_engine("pyscf-extopt")
-    ctx = _pyscf_ctx(tmp_path, method="", xc=None, basis=None, df=False, gpu=False)
+    ctx = _pyscf_ctx(tmp_path, df=False, gpu=False)
     run_block = engine._run_block(
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
     )
-    assert "--method " not in run_block
-    assert "--xc " not in run_block
-    assert "--basis " not in run_block
-    # Bool flags absent
+    assert "--method dft" in run_block
     assert " --df" not in run_block
     assert " --gpu" not in run_block
+    assert " --save_tensors" not in run_block
+    assert " --localized" not in run_block
+
+
+def test_pyscf_unknown_option_fails_fast(tmp_path: Path):
+    """A typoed knob (``basis_set:`` for ``basis:``) raises instead of silently
+    running the calculation with the default basis.
+
+    Regression: the raw options dict used to bypass :class:`PyscfOptions`, so
+    unknown keys were dropped and the run proceeded with wrong settings.
+    """
+    engine = get_engine("pyscf-extopt")
+    ctx = _pyscf_ctx(tmp_path, basis_set="def2-tzvp")
+    with pytest.raises(ValidationError, match="basis_set"):
+        engine._run_block(
+            ctx,
+            inp_path=ctx.step_dir / "step1_structure_0.inp",
+            out_path=ctx.step_dir / "step1_structure_0.out",
+        )
 
 
 def test_pyscf_run_block_includes_readiness_loop(tmp_path: Path):

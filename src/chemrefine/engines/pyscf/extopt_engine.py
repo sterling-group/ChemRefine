@@ -15,6 +15,7 @@ from chemrefine.engines.base import register
 from chemrefine.engines.orca.extopt import run_block
 from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
 from chemrefine.engines.pyscf.extopt_calc import PyscfExtOptCalculator
+from chemrefine.engines.pyscf.options import PyscfOptions
 from chemrefine.state import StepContext
 
 logger = logging.getLogger(__name__)
@@ -47,9 +48,13 @@ class PyscfExtOptEngine(ExtOptOrcaEngine):
     def _server_cmd(self, ctx: StepContext) -> str:
         """Build the ``python -m ..._backend_server.server --backend pyscf ...`` command.
 
-        The step's method / xc / basis / df / gpu / tensor knobs are baked into
-        the server construction here (the single source of truth); the wrapper
-        and per-call POST stay empty (see :class:`PyscfExtOptCalculator`).
+        Validates ``ctx.step_cfg.options`` through :class:`PyscfOptions` first
+        (so a typoed knob — ``basis_set:`` for ``basis:`` — fails the step
+        instead of silently running with the default), then bakes the method /
+        xc / basis / df / gpu / tensor knobs into the server construction (the
+        single source of truth); the wrapper and per-call POST stay empty (see
+        :class:`PyscfExtOptCalculator`).
         """
-        tokens = PyscfExtOptCalculator.server_cli_from_options(ctx.step_cfg.options or {})
+        options = PyscfOptions.from_raw(ctx.step_cfg.options).model_dump()
+        tokens = PyscfExtOptCalculator.server_cli_from_options(options)
         return run_block._server_command(backend=self.backend, extra_tokens=tokens)
