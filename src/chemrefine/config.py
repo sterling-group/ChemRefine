@@ -389,6 +389,14 @@ class Config(BaseModel):
     detected device count locally (``nvidia-smi -L``), so a single-GPU desktop
     serialises CUDA jobs while CPU jobs still parallelise under ``max_cores``."""
     slurm_template: str = "cpu.slurm.header"
+    slurm_array: bool = False
+    """Submit each step as SLURM job array(s) (``sbatch --array``) instead of
+    one job per structure. The scheduler then enforces the ``max_cores``
+    budget natively via the array's ``%limit`` (``max_cores // PAL``), and a
+    10⁴-structure step is one submission instead of 10⁴. Steps beyond the
+    per-array task cap are split into chunks. Per-structure outputs, runlogs,
+    and the failure ledger are identical to the per-job path. Ignored when
+    running locally (no ``sbatch`` on PATH)."""
     executables: dict[str, str] = Field(default_factory=dict)
     """Global tool-name → binary-path map for external-binary engines (e.g.
     ``{"orca": "/opt/orca/orca"}``). Set once and shared by every step using

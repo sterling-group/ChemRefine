@@ -39,6 +39,11 @@ warns once per deprecated spelling — see
   `mlip-orb`, `mlip-chgnet`) and a backend-agnostic calculator factory.
 - SLURM-optional execution: the generated scripts run unchanged under
   `bash` with the same core/GPU throttling, runlogs, and artifacts.
+- Opt-in job-array submission (`slurm_array: true`): each step goes out as
+  one `sbatch --array` per ≤1000 structures, with the scheduler enforcing
+  the `max_cores` budget via the array's `%limit` — large ensembles submit
+  in seconds instead of one sbatch call per structure. Outputs, runlogs,
+  and recovery behave identically to the per-job path.
 - Seeding from a multi-frame `.xyz`, a directory of `.xyz` files (all
   frames), or a CSV of SMILES (deterministic 3D embedding).
 - Engineering gates: 100% line+branch test coverage, 100% docstring

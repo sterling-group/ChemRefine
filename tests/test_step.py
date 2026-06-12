@@ -71,6 +71,15 @@ def test_build_context_named_step_dir_includes_label(tmp_path: Path):
     assert ctx.step_dir.name == "step1_screen"
 
 
+def test_build_context_threads_slurm_array():
+    cfg = Config(
+        slurm_array=True,
+        steps=[StepConfig(step=1, engine="fake", operation="opt_sp")],
+    )
+    ctx = build_context(cfg, cfg.steps[0], PipelineState())
+    assert ctx.slurm_array is True
+
+
 # ---------------------------------------------------------------------------
 # run_step end-to-end
 # ---------------------------------------------------------------------------

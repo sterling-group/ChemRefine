@@ -576,3 +576,11 @@ def test_every_shipped_example_yaml_loads():
     assert files, "no Example YAMLs found"
     for f in files:
         load_config(f)  # raises ConfigError on any failure
+
+
+def test_slurm_array_knob_defaults_off_and_loads(tmp_path: Path):
+    """`slurm_array: true` opts a run into array submission; absent = today's path."""
+    assert load_config(_write_yaml(tmp_path, _minimal_config())).slurm_array is False
+    data = _minimal_config()
+    data["slurm_array"] = True
+    assert load_config(_write_yaml(tmp_path, data)).slurm_array is True

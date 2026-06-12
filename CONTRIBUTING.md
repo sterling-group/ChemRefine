@@ -41,7 +41,7 @@ line and branch, and every module/class/function carries a docstring
   `tests/test_engines_<name>*.py`); shared synthetic ORCA snippets live
   in `tests/synthetic.py`, real trimmed fixtures in `tests/data/`.
 - **Commits** are short, present-tense, and prefixed
-  (`fix:`/`refactor:`/`docs:`/`ci:`/`test:`/`harden:`), matching `git log`.
+  (`feat:`/`fix:`/`refactor:`/`docs:`/`ci:`/`test:`/`harden:`), matching `git log`.
 
 ## Releases
 

@@ -339,6 +339,24 @@ def test_is_finished_false_when_job_still_running():
         assert slurm.is_finished("12345") is False
 
 
+def test_is_finished_false_while_array_tasks_run():
+    """An array's parent id never appears bare in squeue — running tasks print
+    as ``12345_0`` and pending ones as ``12345_[5-99%4]``; both must count."""
+    fake = MagicMock(returncode=0, stdout="JOBID\n12345_3\n", stderr="")
+    with patch.object(subprocess, "run", return_value=fake):
+        assert slurm.is_finished("12345") is False
+    fake = MagicMock(returncode=0, stdout="JOBID\n12345_[4-99%4]\n", stderr="")
+    with patch.object(subprocess, "run", return_value=fake):
+        assert slurm.is_finished("12345") is False
+
+
+def test_is_finished_array_prefix_does_not_match_other_jobs():
+    """``123`` must not be held back by an unrelated ``1234`` or ``1234_0``."""
+    fake = MagicMock(returncode=0, stdout="JOBID\n1234\n1234_0\n", stderr="")
+    with patch.object(subprocess, "run", return_value=fake):
+        assert slurm.is_finished("123") is True
+
+
 def test_is_finished_treats_squeue_failure_as_not_finished():
     err = subprocess.CalledProcessError(1, ["squeue"])
     with patch.object(subprocess, "run", side_effect=err):
@@ -437,3 +455,91 @@ def test_submit_local_applies_cuda_visible_devices_env(tmp_path: Path):
         job_id = slurm.submit(script, env={"CUDA_VISIBLE_DEVICES": "1"})
     _drain_local(job_id)
     assert script.with_suffix(".runlog").read_text(encoding="utf-8") == "1\n"
+
+
+# ---------------------------------------------------------------------------
+# Job arrays — build_array_script / write_array_manifests / submit_array
+# ---------------------------------------------------------------------------
+
+
+def test_build_array_script_resolves_task_from_manifest(tmp_path: Path):
+    """The array script looks up its structure at runtime: manifest line via
+    ``$SLURM_ARRAY_TASK_ID``, per-structure log redirect, run block on the
+    resolved basenames — the per-job script's values, computed in bash."""
+    script = slurm.build_array_script(
+        step_label="step2_refine",
+        pal=8,
+        template_path=_write_header(tmp_path),
+        script_path=tmp_path / "out" / "step2_refine_array.slurm",
+        output_dir=tmp_path / "out",
+        scratch_dir=tmp_path / "scratch",
+        run_block="orca $INP_NAME > $OUTPUT_DIR/$OUT_NAME",
+        engine="orca",
+        operation="opt_sp",
+        step=2,
+        output_globs=("*.out", "*.xyz"),
+    )
+    text = script.read_text()
+    assert 'line=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$CR_MANIFEST")' in text
+    assert "IFS=$'\\t' read -r INP OUT SID <<< \"$line\"" in text
+    assert 'INP_NAME=$(basename "$INP")' in text
+    assert f'exec >"{tmp_path / "out"}/${{INP_NAME%.*}}.runlog"' in text
+    assert 'cp "$INP" "$WORK_DIR/"' in text
+    assert "orca $INP_NAME > $OUTPUT_DIR/$OUT_NAME" in text
+    # Header handling matches the per-job script.
+    assert "#SBATCH --partition=normal" in text
+    assert "#SBATCH --ntasks=8" in text
+    assert "#SBATCH --cpus-per-task=1" in text
+    assert "--ntasks=1" not in text  # the header's own directive is overridden
+    # Runlog fields resolve at runtime; the fallback log catches early failures.
+    assert "structure_id=$SID" in text
+    assert "array_%A_%a.log" in text
+
+
+def test_write_array_manifests_chunks_at_max_array_size(tmp_path: Path):
+    files = tuple((tmp_path / f"s{i}.inp", tmp_path / f"s{i}.out", str(i)) for i in range(2500))
+    manifests = slurm.write_array_manifests(files, tmp_path, step_label="step1")
+    assert [m.name for m, _ in manifests] == [
+        "step1_array.manifest.0",
+        "step1_array.manifest.1",
+        "step1_array.manifest.2",
+    ]
+    assert [len(chunk) for _, chunk in manifests] == [1000, 1000, 500]
+    first_line = manifests[0][0].read_text(encoding="utf-8").splitlines()[0]
+    assert first_line == f"{tmp_path / 's0.inp'}\t{tmp_path / 's0.out'}\t0"
+    # Indices restart per chunk: line 0 of chunk 1 is task 1000 overall.
+    line0_chunk1 = manifests[1][0].read_text(encoding="utf-8").splitlines()[0]
+    assert line0_chunk1.endswith("\t1000")
+
+
+def test_submit_array_passes_array_and_export_flags(tmp_path: Path):
+    fake = MagicMock(returncode=0, stdout="Submitted batch job 777\n", stderr="")
+    with patch.object(subprocess, "run", return_value=fake) as run:
+        job_id = slurm.submit_array(
+            tmp_path / "a.slurm",
+            n_tasks=10,
+            max_concurrent=4,
+            manifest=tmp_path / "m.0",
+        )
+    assert job_id == "777"
+    argv = run.call_args[0][0]
+    assert f"--export=ALL,CR_MANIFEST={tmp_path / 'm.0'}" in argv
+    assert "--array=0-9%4" in argv
+
+
+def test_submit_array_raises_on_sbatch_failure(tmp_path: Path):
+    err = subprocess.CalledProcessError(1, ["sbatch"])
+    with (
+        patch.object(subprocess, "run", side_effect=err),
+        pytest.raises(JobSubmissionError, match="sbatch --array failed"),
+    ):
+        slurm.submit_array(tmp_path / "a.slurm", n_tasks=1, max_concurrent=1, manifest=tmp_path)
+
+
+def test_submit_array_raises_when_output_lacks_job_id(tmp_path: Path):
+    fake = MagicMock(returncode=0, stdout="no id here\n", stderr="")
+    with (
+        patch.object(subprocess, "run", return_value=fake),
+        pytest.raises(JobSubmissionError, match="could not parse job ID"),
+    ):
+        slurm.submit_array(tmp_path / "a.slurm", n_tasks=1, max_concurrent=1, manifest=tmp_path)

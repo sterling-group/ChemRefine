@@ -60,6 +60,7 @@ normalizer, not here — see :func:`chemrefine.config._normalize_legacy`.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar, Protocol, runtime_checkable
@@ -222,8 +223,12 @@ class SlurmBatchEngine:
         """Generate a SLURM script per structure, submit under the CPU+GPU budget, then block.
 
         Blocks until every job in the batch finishes (success or failure).
+        With ``slurm_array`` set (and a real SLURM host), the whole batch goes
+        out as job array(s) instead — see :meth:`_submit_array`.
         """
         local = not slurm.sbatch_available()
+        if ctx.slurm_array and not local:
+            return self._submit_array(inputs, ctx)
         throttler = throttle.Throttler(
             max_cores=ctx.max_cores,
             max_gpus=slurm.resolve_gpu_budget(ctx.max_gpus),
@@ -275,6 +280,70 @@ class SlurmBatchEngine:
             logger.info("submitted %s as job %s (pal=%d, gpus=%d)", inp.name, job_id, pal, gpus)
 
         throttler.wait_all(is_finished=slurm.is_finished)
+        return JobBatch(jobs=jobs)
+
+    def _submit_array(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
+        """Submit the whole batch as SLURM job array(s); block until they drain.
+
+        One script + one manifest per chunk; the scheduler enforces the core
+        budget natively via ``--array=...%{max_cores // pal}``, so no
+        Python-side throttling runs. The run block is rendered **once**
+        against sentinel paths whose *names* are the bash variables the
+        script resolves per task — every engine's ``_run_block`` uses only
+        ``.name``, so it composes unchanged. GPU placement is the scheduler's
+        (``--gres`` in the cuda header), as on the per-job SLURM path.
+        """
+        if not inputs.files:
+            return JobBatch(jobs={})
+        header_path = ctx.template_dir / self._slurm_header_name(ctx)
+        if not header_path.is_file():
+            raise FileNotFoundError(f"SLURM header template not found: {header_path}")
+
+        pal = min(self._pal(ctx), ctx.max_cores)
+        step_label = ctx.step_cfg.dir_name()
+        output_dir = inputs.files[0][1].parent
+        script_path = output_dir / f"{step_label}_array.slurm"
+        slurm.build_array_script(
+            step_label=step_label,
+            pal=pal,
+            template_path=header_path,
+            script_path=script_path,
+            output_dir=output_dir,
+            scratch_dir=ctx.scratch_dir,
+            run_block=self._run_block(ctx, Path("$INP_NAME"), Path("$OUT_NAME")),
+            engine=ctx.step_cfg.engine,
+            operation=ctx.step_cfg.operation,
+            step=ctx.step_cfg.step,
+            output_globs=self.output_globs,
+            extra_header_fields=self._extra_header_fields(ctx),
+        )
+
+        manifests = slurm.write_array_manifests(inputs.files, output_dir, step_label=step_label)
+        max_concurrent = max(1, ctx.max_cores // pal)
+        jobs: dict[Path, str] = {}
+        for manifest, chunk in manifests:
+            parent_id = slurm.submit_array(
+                script_path,
+                n_tasks=len(chunk),
+                max_concurrent=max_concurrent,
+                manifest=manifest,
+            )
+            for inp, _out, _sid in chunk:
+                jobs[inp] = parent_id
+            logger.info(
+                "submitted %s as array %s (%d tasks, pal=%d, max %d concurrent)",
+                step_label,
+                parent_id,
+                len(chunk),
+                pal,
+                max_concurrent,
+            )
+
+        pending = set(jobs.values())
+        while pending:
+            pending = {j for j in pending if not slurm.is_finished(j)}
+            if pending:
+                time.sleep(_SLURM_POLL_SECONDS)
         return JobBatch(jobs=jobs)
 
     def wait(self, batch: JobBatch) -> None:

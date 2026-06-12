@@ -196,6 +196,96 @@ def test_submit_missing_slurm_header_raises(_submit, _is_finished, tmp_path: Pat
         engine.submit(inputs, ctx)
 
 
+@patch.object(slurm, "sbatch_available", return_value=True)
+@patch.object(slurm, "is_finished", return_value=True)
+@patch.object(slurm, "submit_array", return_value="777")
+@patch.object(slurm, "submit")
+def test_submit_uses_one_array_when_slurm_array_set(
+    submit_mock, submit_array_mock, _is_finished, _sbatch, tmp_path: Path
+):
+    """`slurm_array: true` on a SLURM host → one array submission, zero per-job
+    sbatch calls, every input mapped to the parent id, one script + manifest."""
+    from dataclasses import replace
+
+    engine = get_engine("orca")
+    ctx = replace(
+        _ctx(tmp_path, structures=(_seed_structure("0"), _seed_structure("1"))),
+        slurm_array=True,
+    )
+    inputs = engine.prepare(ctx)
+    batch = engine.submit(inputs, ctx)
+    submit_mock.assert_not_called()
+    submit_array_mock.assert_called_once()
+    kwargs = submit_array_mock.call_args.kwargs
+    assert kwargs["n_tasks"] == 2
+    assert kwargs["max_concurrent"] == 2  # max_cores=4 // pal=2
+    assert set(batch.jobs.values()) == {"777"}
+    script = ctx.step_dir / "step1_array.slurm"
+    assert script.is_file()
+    assert "$INP_NAME" in script.read_text()
+    manifest = kwargs["manifest"]
+    assert manifest.read_text(encoding="utf-8").count("\n") == 2
+
+
+@patch.object(slurm, "is_finished", return_value=True)
+@patch.object(slurm, "submit_array")
+@patch.object(slurm, "submit", return_value="9001")
+def test_submit_ignores_slurm_array_locally(
+    _submit, submit_array_mock, _is_finished, tmp_path: Path
+):
+    """Without sbatch on PATH the knob is inert — the local per-job path runs."""
+    from dataclasses import replace
+
+    engine = get_engine("orca")
+    ctx = replace(_ctx(tmp_path, structures=(_seed_structure(),)), slurm_array=True)
+    inputs = engine.prepare(ctx)
+    with patch.object(slurm, "sbatch_available", return_value=False):
+        engine.submit(inputs, ctx)
+    submit_array_mock.assert_not_called()
+
+
+@patch.object(slurm, "sbatch_available", return_value=True)
+def test_submit_array_empty_batch_short_circuits(_sbatch, tmp_path: Path):
+    """An empty batch returns an empty JobBatch without touching sbatch."""
+    from dataclasses import replace
+
+    from chemrefine.state import StepInputs
+
+    engine = get_engine("orca")
+    ctx = replace(_ctx(tmp_path, structures=()), slurm_array=True)
+    assert engine.submit(StepInputs(files=()), ctx).jobs == {}
+
+
+@patch.object(slurm, "sbatch_available", return_value=True)
+@patch.object(slurm, "submit_array", return_value="777")
+def test_submit_array_polls_until_the_array_drains(_submit_array, _sbatch, tmp_path: Path):
+    """The wait loop re-polls (with the SLURM cadence) while tasks remain."""
+    from dataclasses import replace
+
+    engine = get_engine("orca")
+    ctx = replace(_ctx(tmp_path, structures=(_seed_structure(),)), slurm_array=True)
+    inputs = engine.prepare(ctx)
+    with (
+        patch.object(slurm, "is_finished", side_effect=[False, True]) as finished_mock,
+        patch("chemrefine.engines.base.time.sleep") as sleep_mock,
+    ):
+        engine.submit(inputs, ctx)
+    assert finished_mock.call_count == 2
+    sleep_mock.assert_called_once()
+
+
+@patch.object(slurm, "sbatch_available", return_value=True)
+def test_submit_array_missing_header_raises(_sbatch, tmp_path: Path):
+    from dataclasses import replace
+
+    engine = get_engine("orca")
+    ctx = replace(_ctx(tmp_path, structures=(_seed_structure(),)), slurm_array=True)
+    inputs = engine.prepare(ctx)
+    (ctx.template_dir / "cpu.slurm.header").unlink()
+    with pytest.raises(FileNotFoundError):
+        engine.submit(inputs, ctx)
+
+
 def test_wait_is_noop(tmp_path: Path):
     """``submit`` already blocks until finished; ``wait`` should not error."""
     engine = get_engine("orca")

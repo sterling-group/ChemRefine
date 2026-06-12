@@ -95,6 +95,9 @@ class StepContext:
     max_gpus: int | None = None
     """Configured GPU budget (``Config.max_gpus``); ``None`` = auto-resolve at
     submit time (unlimited under SLURM, detected device count locally)."""
+    slurm_array: bool = False
+    """Submit this step as SLURM job array(s) (``Config.slurm_array``);
+    ignored when running locally."""
 
 
 @dataclass(frozen=True)
