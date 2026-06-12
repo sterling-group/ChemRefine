@@ -1,0 +1,33 @@
+name: Security audit
+
+# Dependabot keeps the floors fresh; this catches known CVEs in what the
+# floors actually resolve to today, independent of any code change landing.
+on:
+  schedule:
+    - cron: "23 5 * * 1" # weekly, Monday morning UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install the resolved environment
+        # pip upgrades itself first — the audit covers the whole environment,
+        # and a stale runner pip would otherwise fail the job on its own CVE.
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[server]" pip-audit
+
+      - name: Audit for known vulnerabilities
+        # --skip-editable: the local chemrefine checkout isn't on PyPI.
+        run: pip-audit --skip-editable
