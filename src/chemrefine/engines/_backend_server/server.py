@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import argparse
 import logging
+import secrets
 import socket
 from typing import TYPE_CHECKING, Any
 
 from chemrefine.engines._backend_server.base import (
     DEFAULT_BIND_HOST,
     DEFAULT_BIND_PORT,
+    SERVER_TOKEN_FILENAME,
     SERVER_URL_FILENAME,
     CalculationData,
     ComputeBackend,
@@ -72,8 +74,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def create_app(calculator: ComputeBackend) -> Flask:
+def create_app(calculator: ComputeBackend, *, token: str | None = None) -> Flask:
     """Build a Flask app with the ``/healthz`` + ``/calculate`` routes.
+
+    ``token`` is the per-run bearer secret: when set, ``/calculate`` rejects
+    any request whose ``Authorization`` header doesn't carry it (``/healthz``
+    stays open for the run_block's readiness curl). ``None`` disables the
+    check — a unit-test affordance; :func:`main` always passes a token.
 
     The return annotation resolves under ``TYPE_CHECKING`` only — ``flask``
     is still imported lazily inside, not at module load, because the server
@@ -90,6 +97,10 @@ def create_app(calculator: ComputeBackend) -> Flask:
 
     @app.post("/calculate")
     def calculate() -> Any:
+        if token is not None and not secrets.compare_digest(
+            request.headers.get("Authorization", ""), f"Bearer {token}"
+        ):
+            return jsonify({"error": "unauthorized"}), 401
         try:
             payload = request.get_json(force=True)
             data = _payload_to_data(payload)
@@ -140,12 +151,14 @@ def _payload_to_data(payload: dict[str, Any]) -> CalculationData:
 
 
 def main() -> int:
-    """Server entry point: bind, write sidecar, serve.
+    """Server entry point: bind, write sidecars, serve.
 
     Binds a real socket on the requested (possibly kernel-assigned) port,
-    resolves it via ``socket.getsockname()``, writes the actual URL to the
-    sidecar, then builds a waitress server **on that pre-bound socket** and
-    blocks in ``server.run()``.
+    resolves it via ``socket.getsockname()``, writes the actual URL plus a
+    freshly generated per-run bearer token to the sidecars, then builds a
+    waitress server **on that pre-bound socket** and blocks in
+    ``server.run()``. The token gates ``/calculate`` so other users on the
+    same node can't drive this server.
     """
     import os
     import sys
@@ -164,7 +177,8 @@ def main() -> int:
 
     backend_cls = load_calculator(args.backend)
     calculator = backend_cls.from_args(args)
-    app = create_app(calculator)
+    token = secrets.token_hex(32)
+    app = create_app(calculator, token=token)
 
     host, port_str = args.bind.rsplit(":", 1)
     # Bind a real OS socket first so getsockname() reveals the
@@ -179,6 +193,7 @@ def main() -> int:
     default_dir = Path(os.environ.get("WORK_DIR", "."))
     url_file = args.url_file or str(default_dir / SERVER_URL_FILENAME)
     sidecar.write_server_url(url_file, actual_url)
+    sidecar.write_server_token(Path(url_file).with_name(SERVER_TOKEN_FILENAME), token)
     logger.info("ExtOpt server (%s) bound at %s, sidecar=%s", args.backend, actual_url, url_file)
     # Serve on the pre-bound socket. Passing the server to ``waitress.serve``
     # would ignore this socket and start a *second* server on the default

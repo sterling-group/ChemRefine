@@ -22,7 +22,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from chemrefine.engines._backend_server import sidecar
-from chemrefine.engines._backend_server.base import SERVER_URL_FILENAME
+from chemrefine.engines._backend_server.base import SERVER_TOKEN_FILENAME, SERVER_URL_FILENAME
 from chemrefine.engines._backend_server.registry import CALCULATORS, load_calculator
 from chemrefine.engines.orca.extopt import protocol
 from chemrefine.errors import JobFailureError
@@ -58,6 +58,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help=f"sidecar URL file (default: $WORK_DIR/{SERVER_URL_FILENAME})",
     )
+    parser.add_argument(
+        "--token-file",
+        default=None,
+        help=f"sidecar auth-token file (default: $WORK_DIR/{SERVER_TOKEN_FILENAME})",
+    )
     parser.add_argument("--tag", default=None, help="optional correlation tag for server log")
     for backend_name in sorted(CALCULATORS):
         load_calculator(backend_name).add_cli_args(parser)
@@ -77,11 +82,14 @@ def submit_calculation(
     server_url: str,
     data: protocol.CalculationData,
     tag: str | None = None,
+    token: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> tuple[float, list[list[float]]]:
     """Send one geometry to the ExtOpt server; return ``(energy, gradient)``.
 
-    Raises :class:`JobFailureError` on any HTTP / connection / JSON
+    ``token`` (the per-run secret from the server's token sidecar) rides as
+    a bearer ``Authorization`` header; the server rejects requests without
+    it. Raises :class:`JobFailureError` on any HTTP / connection / JSON
     error so the calling step records a clean failure.
     """
     payload = {
@@ -94,10 +102,13 @@ def submit_calculation(
         "settings": data.settings,
         "tag": tag,
     }
+    headers = {"Content-Type": "application/json"}
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
     request = Request(
         f"http://{server_url}/calculate",
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
@@ -153,6 +164,23 @@ def resolve_server_url(args: argparse.Namespace) -> str:
     return sidecar.read_server_url(url_file)
 
 
+def resolve_server_token(args: argparse.Namespace) -> str | None:
+    """Return the per-run bearer token, or ``None`` when no token sidecar exists.
+
+    Resolution mirrors :func:`resolve_server_url`: an explicit ``--token-file``
+    wins, else ``$WORK_DIR/server.token`` (the wrapper runs with ``WORK_DIR``
+    exported, so the ``--bind`` shortcut still finds the token). A missing
+    file degrades to ``None`` — the header is omitted and the server decides.
+    """
+    import os
+
+    default_dir = Path(os.environ.get("WORK_DIR", "."))
+    token_file = Path(args.token_file) if args.token_file else default_dir / SERVER_TOKEN_FILENAME
+    if not token_file.is_file():
+        return None
+    return sidecar.read_server_token(token_file)
+
+
 def main() -> int:
     """ORCA-invoked entry point: relay one ``.extinp.tmp`` → ``.engrad`` step."""
     import sys
@@ -161,7 +189,10 @@ def main() -> int:
     server_url = resolve_server_url(args)
     data = protocol.read_extinp(args.inputfile, settings=settings_from_args(args))
     energy, gradient = submit_calculation(
-        server_url=server_url, data=data, tag=args.tag or _tag_for(args.inputfile)
+        server_url=server_url,
+        data=data,
+        tag=args.tag or _tag_for(args.inputfile),
+        token=resolve_server_token(args),
     )
     engrad_path = _engrad_path_for(args.inputfile)
     protocol.write_engrad(

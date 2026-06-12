@@ -77,6 +77,9 @@ Hardening landed during the 2.0.0 stabilization:
 - Corrupt output files (overflowed coordinate tokens, malformed ensemble
   frames) land in the failed-jobs ledger instead of crashing the run.
 - The ExtOpt tensor-dump tag is sanitized before filename use.
+- The ExtOpt server requires a per-run bearer token on `/calculate` (written
+  `0600` next to `server.url`), so other users on a shared compute node can
+  no longer drive it.
 
 ## [1.3.1] and earlier
 

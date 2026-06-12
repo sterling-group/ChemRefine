@@ -242,6 +242,19 @@ def test_write_server_url_cleans_up_temp_on_failure(tmp_path: Path):
     assert leftovers == []
 
 
+def test_write_and_read_server_token_round_trip(tmp_path: Path):
+    target = tmp_path / "server.token"
+    sidecar.write_server_token(target, "s3cret")
+    assert sidecar.read_server_token(target) == "s3cret"
+
+
+def test_server_token_file_is_owner_readable_only(tmp_path: Path):
+    """The token is a secret — 0600, never group/world readable."""
+    target = tmp_path / "server.token"
+    sidecar.write_server_token(target, "s3cret")
+    assert target.stat().st_mode & 0o777 == 0o600
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -397,6 +410,48 @@ def test_create_app_calculate_route_returns_energy_and_gradient():
     assert data["gradient"] == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
 
 
+_CALC_PAYLOAD = {
+    "atom_types": ["H"],
+    "coordinates": [[0, 0, 0]],
+    "charge": 0,
+    "mult": 1,
+    "nthreads": 1,
+    "dograd": True,
+}
+
+
+def test_calculate_rejects_requests_without_token():
+    """With a token configured, an unauthenticated POST is 401 — any same-node
+    user can reach the loopback port, so possession of the token is the gate."""
+    app = server.create_app(_MockCalculator(), token="s3cret")
+    resp = app.test_client().post("/calculate", json=_CALC_PAYLOAD)
+    assert resp.status_code == 401
+    assert resp.get_json() == {"error": "unauthorized"}
+
+
+def test_calculate_rejects_wrong_token():
+    app = server.create_app(_MockCalculator(), token="s3cret")
+    resp = app.test_client().post(
+        "/calculate", json=_CALC_PAYLOAD, headers={"Authorization": "Bearer wrong"}
+    )
+    assert resp.status_code == 401
+
+
+def test_calculate_accepts_bearer_token():
+    app = server.create_app(_MockCalculator(), token="s3cret")
+    resp = app.test_client().post(
+        "/calculate", json=_CALC_PAYLOAD, headers={"Authorization": "Bearer s3cret"}
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["energy"] == -1.0
+
+
+def test_healthz_stays_open_with_token_configured():
+    """The run_block readiness curl carries no token — healthz must stay open."""
+    app = server.create_app(_MockCalculator(), token="s3cret")
+    assert app.test_client().get("/healthz").status_code == 200
+
+
 def test_create_app_calculate_route_returns_500_on_calculator_error():
     class _Boom:
         name = "boom"
@@ -522,6 +577,45 @@ def test_submit_calculation_round_trip():
         )
     assert energy == -1.5
     assert gradient == [[0.0, 0.0, 0.0]]
+
+
+def test_submit_calculation_sends_bearer_token():
+    with patch.object(bridge, "urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value = BytesIO(b'{"energy": -1.0, "gradient": []}')
+        bridge.submit_calculation(server_url="x", data=_data(), token="s3cret")
+    request = mock_open.call_args[0][0]
+    assert request.get_header("Authorization") == "Bearer s3cret"
+
+
+def test_submit_calculation_omits_header_without_token():
+    with patch.object(bridge, "urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value = BytesIO(b'{"energy": -1.0, "gradient": []}')
+        bridge.submit_calculation(server_url="x", data=_data())
+    assert mock_open.call_args[0][0].get_header("Authorization") is None
+
+
+def test_resolve_server_token_reads_work_dir_sidecar(tmp_path: Path, monkeypatch):
+    """Default resolution: $WORK_DIR/server.token — the wrapper's --bind path
+    still finds the token without any extra flag."""
+    monkeypatch.setenv("WORK_DIR", str(tmp_path))
+    sidecar.write_server_token(tmp_path / "server.token", "tok123")
+    args = argparse.Namespace(token_file=None)
+    assert bridge.resolve_server_token(args) == "tok123"
+
+
+def test_resolve_server_token_explicit_flag_wins(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("WORK_DIR", str(tmp_path))
+    sidecar.write_server_token(tmp_path / "server.token", "wrong")
+    explicit = tmp_path / "elsewhere.token"
+    sidecar.write_server_token(explicit, "right")
+    args = argparse.Namespace(token_file=str(explicit))
+    assert bridge.resolve_server_token(args) == "right"
+
+
+def test_resolve_server_token_missing_file_degrades_to_none(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("WORK_DIR", str(tmp_path))
+    args = argparse.Namespace(token_file=None)
+    assert bridge.resolve_server_token(args) is None
 
 
 def test_submit_calculation_http_error_becomes_jobfailure():
@@ -741,3 +835,9 @@ def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
     create_server_mock.assert_called_once()
     fake_server.run.assert_called_once_with()
     assert url_file.read_text(encoding="utf-8") == "127.0.0.1:54321"
+    # main() also writes the per-run bearer token next to the URL sidecar,
+    # owner-readable only.
+    token_file = tmp_path / "server.token"
+    assert token_file.is_file()
+    assert len(token_file.read_text(encoding="utf-8").strip()) == 64  # token_hex(32)
+    assert token_file.stat().st_mode & 0o777 == 0o600
