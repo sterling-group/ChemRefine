@@ -184,5 +184,6 @@ class MlipCalculator:
         from ase.optimize import LBFGS
 
         atoms.calc = self.calculator
-        LBFGS(atoms, logfile=None).run(fmax=fmax, steps=steps)
+        # ase accepts logfile=None (no log) at runtime; its annotation says IO|str.
+        LBFGS(atoms, logfile=None).run(fmax=fmax, steps=steps)  # type: ignore[arg-type]
         return atoms

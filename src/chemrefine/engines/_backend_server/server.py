@@ -19,7 +19,7 @@ from __future__ import annotations
 import argparse
 import logging
 import socket
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from chemrefine.engines._backend_server.base import (
     DEFAULT_BIND_HOST,
@@ -29,6 +29,9 @@ from chemrefine.engines._backend_server.base import (
     ComputeBackend,
 )
 from chemrefine.engines._backend_server.registry import CALCULATORS, load_calculator
+
+if TYPE_CHECKING:
+    from flask import Flask
 
 logger = logging.getLogger(__name__)
 
@@ -69,11 +72,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def create_app(calculator: ComputeBackend):
+def create_app(calculator: ComputeBackend) -> Flask:
     """Build a Flask app with the ``/healthz`` + ``/calculate`` routes.
 
-    Returns a :class:`flask.Flask` (un-annotated so ``flask`` is imported lazily
-    inside, not at module load — the server deps are an optional extra).
+    The return annotation resolves under ``TYPE_CHECKING`` only — ``flask``
+    is still imported lazily inside, not at module load, because the server
+    deps are an optional extra.
     """
     from flask import Flask, jsonify, request
 

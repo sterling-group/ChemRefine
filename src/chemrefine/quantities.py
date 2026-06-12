@@ -157,8 +157,9 @@ def convert(value: T, from_unit: str, to_unit: str) -> T:
     if factor is None:
         raise ValueError(f"unknown unit conversion: {from_unit!r} → {to_unit!r}")
     if isinstance(value, (int, float)):
+        # An int input converts to a float — the T=int constraint can't hold.
         return float(value) * factor  # type: ignore[return-value]
-    return np.asarray(value, dtype=np.float64) * factor  # type: ignore[return-value]
+    return np.asarray(value, dtype=np.float64) * factor
 
 
 def boltzmann_weights(

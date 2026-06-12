@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import cast
 
+from ase import Atoms
 from ase.io import read as ase_read
 
 from chemrefine import io
@@ -112,7 +114,10 @@ def _seed_from_smiles_csv(csv_path: Path, out_dir: Path) -> PipelineState:
     if not xyz_files:
         raise ConfigError(f"no SMILES in {csv_path} converted to 3D structures")
     structures = tuple(
-        Structure(id=str(i), atoms=ase_read(str(f), format="xyz")) for i, f in enumerate(xyz_files)
+        # Each file holds exactly one embedded conformer, so the read is a
+        # single Atoms — ase types it as a frame-list union.
+        Structure(id=str(i), atoms=cast(Atoms, ase_read(str(f), format="xyz")))
+        for i, f in enumerate(xyz_files)
     )
     return PipelineState(structures=structures)
 
@@ -136,7 +141,8 @@ def _write_step_csv(config: Config, step_cfg: StepConfig, state: PipelineState) 
         step_cfg.sample.temperature_k if step_cfg.sample is not None else DEFAULT_TEMPERATURE_K
     )
     io.save_step_csv(
-        energies_hartree=[s.energy_hartree for s in state.structures],
+        # filtering.apply drops None-energy structures, so survivors all carry one.
+        energies_hartree=cast("list[float]", [s.energy_hartree for s in state.structures]),
         structure_ids=[s.id for s in state.structures],
         step_number=step_cfg.step,
         output_dir=config.output_dir,

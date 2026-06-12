@@ -300,7 +300,9 @@ def rebuild_cache_step(
     if step_cfg.nms and engine.supports_nms:
         round1 = StepResults(structures=tuple(successes))
         results = step_nms.resolve_nms(
-            engine.resolve_nms_from_existing(round1, ctx),
+            # Not on the CalculationEngine Protocol: only NMS-capable engines
+            # (supports_nms=True, the gate above) provide this rebuild hook.
+            engine.resolve_nms_from_existing(round1, ctx),  # type: ignore[attr-defined]
             round1,
             ctx,
             step_cfg,

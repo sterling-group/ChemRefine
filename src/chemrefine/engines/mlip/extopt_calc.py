@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
+import numpy as np
 from ase import Atoms
 
 from chemrefine.engines._backend_server.base import (
@@ -125,7 +126,9 @@ class MlipExtOptCalculator(ComputeBackend):
         atoms.info["spin"] = data.multiplicity
         energy_ev, gradient_ev_per_a = self._calculator.single_point(atoms)
         energy_hartree = convert(energy_ev, "ev", "hartree")
-        gradient_hartree_per_bohr = convert(
-            gradient_ev_per_a, "ev/angstrom", "hartree/bohr"
+        # convert() is typed to return ArrayLike for array input; asarray is a
+        # no-copy pass-through on the ndarray it actually produces here.
+        gradient_hartree_per_bohr = np.asarray(
+            convert(gradient_ev_per_a, "ev/angstrom", "hartree/bohr")
         ).tolist()
         return energy_hartree, gradient_hartree_per_bohr

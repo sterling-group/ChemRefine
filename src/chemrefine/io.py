@@ -12,6 +12,7 @@ import logging
 import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from ase import Atoms
@@ -106,7 +107,7 @@ def gather_output_files(directory: str | Path, pattern: str) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
-def _conformer_to_xyz_lines(mol, comment: str) -> list[str]:
+def _conformer_to_xyz_lines(mol: Any, comment: str) -> list[str]:
     """Render an embedded RDKit ``mol``'s conformer as XYZ-format text lines."""
     conf = mol.GetConformer()
     natoms = mol.GetNumAtoms()
@@ -155,10 +156,11 @@ def smiles_to_xyz(
             logger.warning("invalid SMILES at row %d: %s", idx, raw)
             continue
         mol = Chem.AddHs(mol)
-        if AllChem.EmbedMolecule(mol, maxAttempts=max_attempts, randomSeed=random_seed) != 0:
+        # rdkit populates AllChem dynamically; mypy can't see these attributes.
+        if AllChem.EmbedMolecule(mol, maxAttempts=max_attempts, randomSeed=random_seed) != 0:  # type: ignore[attr-defined]
             logger.warning("failed 3D embedding for SMILES: %s", raw)
             continue
-        AllChem.UFFOptimizeMolecule(mol)
+        AllChem.UFFOptimizeMolecule(mol)  # type: ignore[attr-defined]
 
         lines = _conformer_to_xyz_lines(mol, f"SMILES: {raw}")
         xyz_path = out / f"structure_{idx}.xyz"

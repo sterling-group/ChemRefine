@@ -26,6 +26,7 @@ import logging
 import operator
 from collections import defaultdict
 from collections.abc import Callable
+from typing import Any, cast
 
 import numpy as np
 
@@ -91,7 +92,9 @@ def _filter_by_parent(structures: list[Structure], sample: SampleConfig) -> list
 # ---------------------------------------------------------------------------
 
 
-_DISPATCHERS: dict[type, Callable[[list[Structure], SampleConfig], list[Structure]]] = {
+# The second lambda argument is the *matching* variant (keyed by type), a
+# per-key correlation a dict value type can't express — hence ``Any``.
+_DISPATCHERS: dict[type, Callable[[list[Structure], Any], list[Structure]]] = {
     IntegerSample: lambda s, c: _filter_integer(s, c.count),
     EnergyWindowSample: lambda s, c: _filter_energy_window(s, c.window_kcal),
     BoltzmannSample: lambda s, c: _filter_boltzmann(s, c.percent_cumulative, c.temperature_k),
@@ -120,11 +123,12 @@ def _filter_energy_window(
     """Keep structures within ``window_kcal`` of the lowest-energy structure.
 
     Precondition: ``sorted_structures`` must be sorted ascending by
-    ``energy_hartree``.
+    ``energy_hartree``. ``apply()`` drops ``None``-energy structures before
+    dispatch, so the casts below never lie at runtime.
     """
-    min_e = sorted_structures[0].energy_hartree
+    min_e = cast(float, sorted_structures[0].energy_hartree)
     window_h = window_kcal / HARTREE_TO_KCALMOL
-    return [s for s in sorted_structures if s.energy_hartree <= min_e + window_h]
+    return [s for s in sorted_structures if cast(float, s.energy_hartree) <= min_e + window_h]
 
 
 def _filter_boltzmann(

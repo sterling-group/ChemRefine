@@ -333,7 +333,7 @@ def _normalize_sample(sample_type: Any) -> Any:
     if not isinstance(sample_type, dict):
         return sample_type
     method = sample_type.get("method")
-    renames = _SAMPLE_PARAM_RENAMES.get(method, {})
+    renames = _SAMPLE_PARAM_RENAMES.get(method, {}) if isinstance(method, str) else {}
     out: dict[str, Any] = {"method": method}
     for k, v in (sample_type.get("parameters") or {}).items():
         if k == "unit":  # energy_window unit (kcal/mol) is implicit now

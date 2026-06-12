@@ -17,8 +17,13 @@ match the rest of ChemRefine.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from chemrefine.engines._backend_server.base import CalculationData
+
+if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
 
 # ORCA ``ProgExt`` file-format suffixes: ORCA hands the wrapper ``X.extinp.tmp``
 # and reads ``X.engrad`` back. Single source for the protocol's filenames.
@@ -65,7 +70,7 @@ def read_extinp(
     )
 
 
-def _read_xyz(xyz_path: Path) -> tuple[list[str], list[list[float]]]:
+def _read_xyz(xyz_path: Path) -> tuple[list[str], NDArray[np.float64]]:
     """Return ``(symbols, positions)`` from a plain-format ``.xyz``."""
     import numpy as np
 
@@ -78,7 +83,7 @@ def _read_xyz(xyz_path: Path) -> tuple[list[str], list[list[float]]]:
             parts = fh.readline().split()
             symbols.append(parts[0])
             coords.append([float(x) for x in parts[1:4]])
-    return symbols, np.asarray(coords, dtype=float)
+    return symbols, np.asarray(coords, dtype=np.float64)
 
 
 def write_engrad(

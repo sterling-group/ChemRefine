@@ -20,6 +20,7 @@ Every PR must pass all of these — run them locally before pushing:
 ```bash
 pre-commit run --all-files                    # lint + format + docstring coverage
 pytest --cov=chemrefine --cov-fail-under=100  # 100% line AND branch coverage
+mypy                                          # type check (config in pyproject.toml)
 mkdocs build --strict                         # docs build with no warnings
 ```
 

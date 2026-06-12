@@ -35,7 +35,7 @@ def build_mol(
     charge: int,
     multiplicity: int,
     basis: str,
-):
+) -> Any:
     """Return a ``pyscf.gto.Mole`` built from Cartesian coordinates.
 
     Coordinates are converted to Bohr internally so ``mol.unit = "Bohr"``
@@ -62,7 +62,7 @@ def build_mol(
 
 
 def _build_scf(
-    mol, *, method: str, xc: str, want_gpu: bool, closed_shell: bool
+    mol: Any, *, method: str, xc: str, want_gpu: bool, closed_shell: bool
 ) -> tuple[Any, bool, str]:
     """Construct the (un-run) SCF object; return ``(mf, gpu_used, gpu_msg)``.
 
@@ -79,8 +79,8 @@ def _build_scf(
 
     if want_gpu:
         try:
-            from gpu4pyscf.dft import RKS as GPU_RKS  # type: ignore
-            from gpu4pyscf.dft import UKS as GPU_UKS  # type: ignore
+            from gpu4pyscf.dft import RKS as GPU_RKS
+            from gpu4pyscf.dft import UKS as GPU_UKS
 
             mf = GPU_RKS(mol) if closed_shell else GPU_UKS(mol)
             mf.xc = xc
@@ -96,7 +96,7 @@ def _build_scf(
 
 
 def run_dft(
-    mol,
+    mol: Any,
     *,
     method: str = "dft",
     xc: str = "pbe",
@@ -162,7 +162,7 @@ def run_dft(
 
 
 def get_active_space_tensors(
-    mol, mf, *, localized: bool = False
+    mol: Any, mf: Any, *, localized: bool = False
 ) -> tuple[float, NDArray[np.float64], NDArray[np.float64]]:
     """Return ``(nuc, h1_mo, h2_mo)`` — the one- and two-electron MO-basis tensors.
 

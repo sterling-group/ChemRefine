@@ -24,6 +24,7 @@ import shutil
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TextIO
 
 from chemrefine import job_log
 from chemrefine.errors import JobSubmissionError
@@ -60,7 +61,7 @@ starting with this prefix.
 """
 _LOCAL_JOB_COUNTER = itertools.count(1)
 
-_LOCAL_PROCS: dict[str, tuple[subprocess.Popen, object, object]] = {}
+_LOCAL_PROCS: dict[str, tuple[subprocess.Popen[bytes], TextIO, TextIO]] = {}
 """Background local jobs, keyed by ``local-N`` id → ``(proc, out_fh, err_fh)``.
 
 :func:`_submit_local` launches each script with :class:`subprocess.Popen` and
