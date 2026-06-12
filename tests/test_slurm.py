@@ -80,6 +80,30 @@ def test_build_script_overrides_ntasks_and_writes_script(tmp_path: Path):
     assert "module load orca/6.0" in text
 
 
+def test_build_script_keeps_ntasks_per_node_directive(tmp_path: Path):
+    """``--ntasks-per-*`` directives only share a prefix with ``--ntasks`` — keep them.
+
+    Regression: substring matching on ``--ntasks`` used to silently strip a
+    cluster header's ``--ntasks-per-node`` from every generated script.
+    """
+    header = tmp_path / "per_node.slurm.header"
+    header.write_text(
+        "#!/bin/bash\n"
+        "#SBATCH --ntasks-per-node=16\n"
+        "#SBATCH --ntasks-per-core=1\n"
+        "#SBATCH --ntasks 1\n"  # space-separated form of an owned flag
+        "#SBATCH --output=old.log\n",
+        encoding="utf-8",
+    )
+    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, pal=8))
+    text = script.read_text()
+    assert "#SBATCH --ntasks-per-node=16" in text
+    assert "#SBATCH --ntasks-per-core=1" in text
+    assert "#SBATCH --ntasks 1" not in text
+    assert "#SBATCH --ntasks=8" in text
+    assert "--output=old.log" not in text
+
+
 def test_build_script_emits_absolute_runlog_output_directives(tmp_path: Path):
     """``#SBATCH --output`` / ``--error`` must point at absolute paths in the step dir."""
     out = (tmp_path / "out").resolve()

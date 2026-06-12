@@ -46,7 +46,10 @@ def _current_user() -> str:
         return str(os.getuid())
 
 
-_SBATCH_OVERRIDES = ("--ntasks", "--cpus-per-task", "--job-name", "--output", "--error")
+# The lookahead requires `=`, whitespace, or end-of-line after the flag name so
+# only the exact directives we re-add are dropped — `--ntasks` must not swallow
+# a cluster header's `--ntasks-per-node` / `--ntasks-per-core`.
+_SBATCH_OVERRIDE_RE = re.compile(r"--(?:ntasks|cpus-per-task|job-name|output|error)(?=[=\s]|$)")
 _JOB_ID_RE = re.compile(r"\b(\d+)\b")
 
 _LOCAL_JOB_PREFIX = "local-"
@@ -152,6 +155,7 @@ def _read_header(template_path: Path) -> tuple[list[str], list[str]]:
     Drops any ``#SBATCH`` directive we override later (``--ntasks`` /
     ``--cpus-per-task`` / ``--job-name`` / ``--output`` / ``--error``) so PAL and
     log paths stay consistent regardless of what the cluster header declares.
+    Longer flags that merely share a prefix (``--ntasks-per-node``) are kept.
     """
     if not template_path.is_file():
         raise FileNotFoundError(f"SLURM header template {template_path} not found")
@@ -160,7 +164,7 @@ def _read_header(template_path: Path) -> tuple[list[str], list[str]]:
     for raw in template_path.read_text(encoding="utf-8").splitlines():
         stripped = raw.strip()
         if stripped.startswith("#SBATCH"):
-            if not any(flag in stripped for flag in _SBATCH_OVERRIDES):
+            if not _SBATCH_OVERRIDE_RE.search(stripped):
                 sbatch_lines.append(raw.rstrip())
         else:
             body_lines.append(raw.rstrip())
