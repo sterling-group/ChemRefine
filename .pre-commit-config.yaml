@@ -1,3 +1,10 @@
+# pre-commit.ci keeps the hook revs below current (Dependabot doesn't watch
+# this file). Requires the pre-commit.ci GitHub App installed on the repo;
+# its autoupdate PRs come from the app, so normal CI runs on them.
+ci:
+  autoupdate_schedule: monthly
+  autoupdate_commit_msg: "ci: autoupdate pre-commit hooks"
+
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.10
