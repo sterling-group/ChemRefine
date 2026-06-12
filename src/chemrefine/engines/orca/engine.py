@@ -91,6 +91,9 @@ class OrcaEngine(SlurmBatchEngine):
                 charge=ctx.charge,
                 multiplicity=ctx.multiplicity,
                 extra_blocks=self._extra_blocks(ctx),
+                # The submit loop clamps the SLURM allocation to max_cores; the
+                # .inp must declare the same PAL or ORCA over-spawns MPI ranks.
+                max_pal=ctx.max_cores,
             )
             files.append((inp_path, out_path, struct.id))
         return StepInputs(files=tuple(files))

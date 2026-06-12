@@ -94,6 +94,19 @@ def test_prepare_input_contains_charge_and_multiplicity(tmp_path: Path):
     assert "* xyzfile -2 3" in text
 
 
+def test_prepare_clamps_template_pal_to_max_cores(tmp_path: Path):
+    """A template PAL above ``max_cores`` is clamped in every generated ``.inp``."""
+    engine = get_engine("orca")
+    ctx = _ctx(tmp_path, structures=(_seed_structure(),))
+    (ctx.template_dir / "step1.inp").write_text(
+        "! B3LYP def2-SVP\n%pal\n  nprocs 16\nend\n", encoding="utf-8"
+    )
+    inputs = engine.prepare(ctx)
+    text = inputs.files[0][0].read_text()
+    assert "nprocs 4" in text  # ctx.max_cores
+    assert "nprocs 16" not in text
+
+
 def test_run_block_keeps_orca_single_threaded_per_mpi_rank(tmp_path: Path):
     """ORCA parallelises via MPI ranks (``%pal nprocs``), so each rank stays OMP=1 —
     never OMP=pal (that would oversubscribe pal x pal threads)."""
