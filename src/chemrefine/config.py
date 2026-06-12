@@ -159,13 +159,17 @@ class StepConfig(BaseModel):
     @field_validator("name")
     @classmethod
     def _validate_name(cls, v: str | None) -> str | None:
-        """Reject step names that aren't filesystem-safe."""
+        """Reject step names that aren't filesystem-safe or that shadow step numbers."""
         if v is None:
             return v
         if not _NAME_RE.match(v):
             raise ValueError(
                 "step name must contain only letters, digits, underscores, and hyphens"
             )
+        if v.isdigit():
+            # `matches` resolves an all-digit CLI target as a step *number*,
+            # so a digits-only name could never be addressed.
+            raise ValueError("step name must not be all digits (ambiguous with a step number)")
         return v
 
     def dir_name(self) -> str:

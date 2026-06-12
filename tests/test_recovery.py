@@ -274,6 +274,36 @@ def test_rerun_errors_reattempts_only_the_target_step_failures(tmp_path: Path):
         ENGINES.pop("flaky", None)
 
 
+def test_rerun_errors_on_skip_step_reports_nothing_pending(tmp_path: Path, caplog):
+    """`rerun-errors` on a skip step must not claim it is re-attempting anything.
+
+    The ledger is visibility-only for ``skip``/``best`` — ``run_step`` never
+    resubmits those failures, so the log must say nothing is pending instead
+    of announcing a re-attempt that silently never happens.
+    """
+    import logging
+
+    from chemrefine.engines.base import ENGINES
+
+    eng = _register_flaky()
+    try:
+        cfg = _seeded_config(
+            tmp_path,
+            [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp")],  # skip
+        )
+        eng.fail_ids = {"1"}
+        assert execute(cfg, Action.RESUME) == 0
+        eng.fail_ids, eng.submitted = set(), []
+        with caplog.at_level(logging.INFO, logger="chemrefine.recovery"):
+            assert execute(cfg, Action.RERUN_ERRORS, target=1) == 0
+        assert eng.submitted == []  # nothing was actually re-attempted
+        assert "nothing is pending" in caplog.text
+        assert "re-attempting" not in caplog.text
+    finally:
+        eng.fail_ids, eng.submitted = set(), []
+        ENGINES.pop("flaky", None)
+
+
 def test_resume_does_not_reattempt_skip_step(tmp_path: Path):
     """A `skip` step records its failures (visible) but `resume` cache-hits it —
     skipped failures are intentional, not pending."""

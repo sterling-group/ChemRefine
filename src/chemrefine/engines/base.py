@@ -65,7 +65,7 @@ from pathlib import Path
 from typing import ClassVar, Protocol, runtime_checkable
 
 from chemrefine import slurm, throttle
-from chemrefine.errors import EngineNotFoundError
+from chemrefine.errors import ConfigError, EngineNotFoundError
 from chemrefine.ids import resolve_step_template
 from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
 
@@ -235,6 +235,14 @@ class SlurmBatchEngine:
 
         pal = min(self._pal(ctx), ctx.max_cores)
         gpus = self._gpus(ctx)
+        if gpus > throttler.max_gpus:
+            # Surface a config mistake (e.g. `max_gpus: 0` with a CUDA step) as
+            # a ConfigError with its documented exit code, not as the
+            # throttler's internal ValueError traceback.
+            raise ConfigError(
+                f"step {ctx.step_cfg.step} needs {gpus} GPU(s) but the budget is "
+                f"{throttler.max_gpus}; raise `max_gpus` or set `options.device: cpu`"
+            )
         step_label = ctx.step_cfg.dir_name()
         jobs: dict[Path, str] = {}
         for inp, out, sid in inputs.files:

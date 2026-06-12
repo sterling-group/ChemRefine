@@ -245,6 +245,28 @@ def test_local_gpu_jobs_get_distinct_cuda_visible_devices(tmp_path: Path, monkey
     assert devices == ["0", "1"]
 
 
+def test_gpu_step_with_zero_gpu_budget_raises_config_error(tmp_path: Path, monkeypatch):
+    """`max_gpus: 0` + a CUDA step is a config mistake — surface it as a
+    ConfigError with its documented exit code, not the throttler's internal
+    ValueError traceback."""
+    from chemrefine.errors import ConfigError
+
+    ctx = _mlip_direct_ctx(
+        tmp_path,
+        structures=(_seed("0"),),
+        options={"device": "cuda", "cores": 1},
+    )
+    ctx = replace(ctx, max_gpus=0)
+    (ctx.template_dir / "cuda.slurm.header").write_text(
+        "#!/bin/bash\n#SBATCH --gres=gpu:1\n", encoding="utf-8"
+    )
+    engine = get_engine("mlip")
+    inputs = engine.prepare(ctx)
+    monkeypatch.setattr("chemrefine.slurm.sbatch_available", lambda **k: False)
+    with pytest.raises(ConfigError, match="max_gpus"):
+        engine.submit(inputs, ctx)
+
+
 def test_mlip_extopt_extra_blocks_contains_progext_pointing_to_wrapper(tmp_path: Path):
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path)

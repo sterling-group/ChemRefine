@@ -129,6 +129,15 @@ def test_step_name_rejects_path_separator(tmp_path: Path):
         load_config(_write_yaml(tmp_path, data))
 
 
+def test_step_name_rejects_all_digit_names(tmp_path: Path):
+    """A digits-only name is unreachable — CLI keys resolve digits as step numbers."""
+    data = _minimal_config(
+        steps=[{"step": 1, "name": "2", "engine": "fake", "operation": "opt_sp"}]
+    )
+    with pytest.raises(ConfigError, match="all digits"):
+        load_config(_write_yaml(tmp_path, data))
+
+
 def test_step_name_validator_accepts_explicit_none():
     """Explicit `name=None` must pass the validator's early-return branch."""
     sc = StepConfig(step=1, name=None, engine="fake", operation="opt_sp")

@@ -100,16 +100,27 @@ def _action_rerun_errors(config: Config, target: str | int | None) -> None:
     target_step = _resolve_target_or_last(config, target)
     step_dir = (config.output_dir / target_step.dir_name()).resolve()
     n_failed = len(cache.load_failed_jobs(step_dir))
-    if n_failed:
+    if not n_failed:
+        logger.info(
+            "rerun-errors: %s has no recorded failures to rerun",
+            target_step.dir_name(),
+        )
+    elif target_step.on_failure == "stop":
         logger.info(
             "rerun-errors: re-attempting %d failed job(s) in %s",
             n_failed,
             target_step.dir_name(),
         )
     else:
+        # The ledger is visibility-only for skip/best — run_step never
+        # re-attempts those, so don't claim a re-attempt is happening.
         logger.info(
-            "rerun-errors: %s has no recorded failures to rerun",
+            "rerun-errors: %s recorded %d failure(s) but on_failure=%s resolved them; "
+            "nothing is pending (use `rerun %s` to redo the whole step)",
             target_step.dir_name(),
+            n_failed,
+            target_step.on_failure,
+            target_step.step,
         )
     pipeline.run(config, use_cache=True, resubmit_step=target_step.step)
 

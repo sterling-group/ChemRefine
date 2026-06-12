@@ -218,6 +218,11 @@ def save_step_csv(
         df["Energy (Hartree)"] * HARTREE_TO_KCALMOL, errors="coerce"
     )
     df = df.dropna(subset=["Energy (kcal/mol)"])
+    if df.empty:
+        # Nothing finite to summarise (all energies None/NaN) — skip the row
+        # rather than crash computing Boltzmann columns on an empty frame.
+        logger.warning("step %d: no finite energies to summarise; skipping CSV", step_number)
+        return path
     df = df.sort_values("Energy (kcal/mol)").reset_index(drop=True)
 
     for column, values in _boltzmann_columns(

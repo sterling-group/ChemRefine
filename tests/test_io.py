@@ -161,6 +161,14 @@ def test_save_step_csv_sorts_by_energy(tmp_path: Path):
     assert conformers == ["b", "a", "c"]  # ascending by absolute energy
 
 
+def test_save_step_csv_all_nan_energies_skips_write(tmp_path: Path):
+    """No finite energies → skip the summary instead of crashing on an empty frame."""
+    path = save_step_csv(
+        [float("nan"), float("nan")], ["0", "1"], step_number=1, output_dir=tmp_path
+    )
+    assert not path.exists()
+
+
 # ---------------------------------------------------------------------------
 # smiles_to_xyz error paths
 # ---------------------------------------------------------------------------
