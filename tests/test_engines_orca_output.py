@@ -206,6 +206,23 @@ def test_parse_dft_empty_coord_block_raises(tmp_path: Path):
         parse_dft(path)
 
 
+def test_parse_dft_corrupt_coordinate_token_raises_parse_error(tmp_path: Path):
+    """A non-numeric coordinate token (e.g. a ``*****`` overflow placeholder)
+    is a per-file parse failure for the ledger, never a raw ``ValueError``
+    that would crash the whole step."""
+    path = tmp_path / "corrupt-coords.out"
+    path.write_text(
+        "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "---------------------------------\n"
+        "  H   0.000000   *********   0.000000\n"
+        "---------------------------------\n"
+        "FINAL SINGLE POINT ENERGY     -1.0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(OutputParseError, match="malformed coordinate row"):
+        parse_dft(path)
+
+
 # ---------------------------------------------------------------------------
 # parse_forces
 # ---------------------------------------------------------------------------
@@ -294,6 +311,26 @@ def test_parse_goat_ensemble_missing_raises(tmp_path: Path):
     empty.write_text("", encoding="utf-8")
     with pytest.raises(OutputParseError):
         parse_goat_ensemble(empty)
+
+
+def test_parse_goat_ensemble_skips_frame_with_corrupt_coordinate(tmp_path: Path):
+    """A frame whose coordinate token isn't numeric is skipped like any other
+    malformed frame — it must not crash the walk with a raw ``ValueError``."""
+    ensemble = tmp_path / "corrupt.finalensemble.xyz"
+    ensemble.write_text(
+        "1\n"
+        "-1.0\n"
+        "H 0.0 0.0 0.0\n"
+        "1\n"
+        "-2.0\n"
+        "H 0.0 ******** 0.0\n"  # corrupt middle frame
+        "1\n"
+        "-3.0\n"
+        "H 0.0 0.0 1.0\n",
+        encoding="utf-8",
+    )
+    parsed = parse_goat_ensemble(ensemble)
+    assert [p.energy_hartree for p in parsed] == [-1.0, -3.0]
 
 
 # ---------------------------------------------------------------------------

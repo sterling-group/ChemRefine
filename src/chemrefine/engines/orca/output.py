@@ -109,7 +109,12 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedStructu
     if not coord_blocks:
         raise OutputParseError(f"no CARTESIAN COORDINATES block in {src}")
 
-    symbols, positions = _parse_coord_block(coord_blocks[-1])
+    try:
+        symbols, positions = _parse_coord_block(coord_blocks[-1])
+    except ValueError as e:
+        # Corrupt token (e.g. a ``*****`` overflow placeholder) — a per-file
+        # parse failure for the ledger, not a crash for the whole step.
+        raise OutputParseError(f"malformed coordinate row in {src}: {e}") from e
     if not symbols:
         raise OutputParseError(f"CARTESIAN COORDINATES block has no atoms in {src}")
     return [
@@ -208,8 +213,8 @@ def _parse_xyz_frame(
     """Parse one XYZ frame at ``lines[i]``; return ``(structure_or_None, next_index)``.
 
     ``None`` means "nothing here, advance past it": a non-count line (``+1``), a
-    header that doesn't match ``header_re`` or a short atom row (past the frame),
-    or a truncated trailing frame (jump to the end to stop the walk).
+    header that doesn't match ``header_re``, a short or corrupt atom row (past
+    the frame), or a truncated trailing frame (jump to the end to stop the walk).
     """
     line = lines[i].strip()
     if not line.isdigit():
@@ -226,8 +231,14 @@ def _parse_xyz_frame(
         parts = lines[i + 2 + offset].split()
         if len(parts) < 4:
             return None, i + 2 + n_atoms
+        try:
+            row = [float(parts[1]), float(parts[2]), float(parts[3])]
+        except ValueError:
+            # Corrupt coordinate token (``*****`` overflow etc.) — skip the
+            # frame like any other malformed row instead of crashing the walk.
+            return None, i + 2 + n_atoms
         symbols.append(parts[0])
-        positions.append([float(parts[1]), float(parts[2]), float(parts[3])])
+        positions.append(row)
     structure = ParsedStructure(
         symbols=tuple(symbols),
         positions=np.array(positions, dtype=np.float64),
