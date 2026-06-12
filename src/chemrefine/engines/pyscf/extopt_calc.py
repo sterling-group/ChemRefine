@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,11 @@ logger = logging.getLogger(__name__)
 # ``--{key}`` token builder below needs no per-flag special-casing.
 _KEY_VALUE_FLAGS: tuple[str, ...] = ("method", "xc", "basis", "tensor_folder")
 _BOOL_FLAGS: tuple[str, ...] = ("df", "gpu", "save_tensors", "localized")
+
+# The correlation tag becomes a filename component; the request is untrusted
+# (any same-host client can POST to the loopback server), so squash anything
+# that could traverse out of tensor_folder.
+_TAG_UNSAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
 
 
 class PyscfExtOptCalculator(ComputeBackend):
@@ -196,7 +202,8 @@ class PyscfExtOptCalculator(ComputeBackend):
             # ``tag`` is the per-call correlation id the bridge derives from the
             # ``.extinp.tmp`` stem (one file per ORCA geometry step); the server
             # injects it into ``settings`` so dumps don't overwrite each other.
-            tag = data.settings.get("tag") or "untagged"
+            # Sanitised before use as a filename — the value arrives over HTTP.
+            tag = _TAG_UNSAFE_RE.sub("_", str(data.settings.get("tag") or "untagged"))
             nuc, h1, h2 = _runtime.get_active_space_tensors(mol, mf, localized=self.localized)
             target = Path(self.tensor_folder) / f"{tag}.npz"
             _runtime.save_tensors(path=target, nuc=nuc, h1=h1, h2=h2)

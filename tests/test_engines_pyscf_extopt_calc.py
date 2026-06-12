@@ -437,6 +437,16 @@ def test_extopt_calc_extracts_tensors_when_constructed_with_save_tensors(
     assert (tmp_path / "tensors" / "step3_structure_0.npz").is_file()
 
 
+def test_extopt_calc_sanitizes_tag_before_filename_use(tmp_path: Path, monkeypatch):
+    """The tag arrives over HTTP from any same-host client — path separators
+    must never let a tensor dump escape ``tensor_folder``."""
+    _install_fake_pyscf(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    extopt_calc.PyscfExtOptCalculator(save_tensors=True).calc(_data(tag="../../evil"))
+    assert not (tmp_path.parent.parent / "evil.npz").exists()
+    assert (tmp_path / "tensors" / ".._.._evil.npz").is_file()
+
+
 def test_extopt_calc_uses_server_construction_not_per_call_settings(monkeypatch):
     """Single channel: SCF knobs come from construction, not the per-call POST."""
     mocks = _install_fake_pyscf(monkeypatch)
