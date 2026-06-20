@@ -2,8 +2,8 @@
 
 All lifecycle logic lives on
 :class:`chemrefine.engines._template_engine.TemplateScriptEngine`; this
-module just binds the backend identity (``name`` + ``label``) and the
-registry entry.
+module binds the backend identity (``name`` + ``label``), the registry
+entry, and the option placeholders the template can use.
 
 The ORCA-driven PySCF flavor (``engine: pyscf-extopt``) is unrelated;
 see :mod:`chemrefine.engines.pyscf.extopt_engine`.
@@ -15,6 +15,7 @@ from typing import ClassVar
 
 from chemrefine.engines._template_engine import TemplateScriptEngine
 from chemrefine.engines.base import register
+from chemrefine.state import StepContext
 
 
 @register("pyscf")
@@ -23,3 +24,19 @@ class PyscfEngine(TemplateScriptEngine):
 
     name: ClassVar[str] = "pyscf"
     label: ClassVar[str] = "PySCF"
+
+    def _template_vars(self, ctx: StepContext) -> dict[str, object]:
+        """Expose the SCF knobs as template placeholders, for parity with direct MLIP.
+
+        Lets a direct ``step{N}.py`` read ``$METHOD`` / ``$XC`` / ``$BASIS`` from
+        the YAML ``step.options`` instead of hardcoding them. Read tolerantly (with
+        the standard fallbacks) so a template's extra knobs never fail the render;
+        the ``pyscf-extopt`` path validates strictly via
+        :class:`~chemrefine.engines.pyscf.options.PyscfOptions`.
+        """
+        raw = ctx.step_cfg.options or {}
+        return {
+            "METHOD": raw.get("method", "dft"),
+            "XC": raw.get("xc", "pbe"),
+            "BASIS": raw.get("basis", "def2-svp"),
+        }

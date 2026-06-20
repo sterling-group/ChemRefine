@@ -18,10 +18,17 @@ from ase import Atoms
 
 from chemrefine.engines import _template_render
 from chemrefine.engines._template_engine import (
+    TemplateScriptEngine,
     _atoms_from_output,
     _forces_from_gradient,
 )
 from chemrefine.errors import OutputParseError
+
+
+def test_base_template_vars_default_is_empty():
+    """The base ``_template_vars`` injects nothing; subclasses (mlip/pyscf) override it."""
+    assert TemplateScriptEngine()._template_vars(None) == {}  # type: ignore[arg-type]
+
 
 # ---------------------------------------------------------------------------
 # _template_render.build_input — renderer
