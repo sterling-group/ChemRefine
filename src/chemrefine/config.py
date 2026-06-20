@@ -476,8 +476,34 @@ class Config(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
+    """Resolve a config's relative paths against ``base`` (the config file's dir).
+
+    ChemRefine resolves ``template_dir`` / ``output_dir`` / ``scratch_dir`` /
+    ``input`` relative to the **config file's** location, not the process working
+    directory, so a config is portable: ``chemrefine run sub/proj/input.yaml``
+    from anywhere finds ``sub/proj/templates`` and writes ``sub/proj/outputs``.
+    Absolute paths pass through unchanged.
+    """
+    updates: dict[str, Path] = {}
+    if not cfg.template_dir.is_absolute():
+        updates["template_dir"] = base / cfg.template_dir
+    if not cfg.output_dir.is_absolute():
+        updates["output_dir"] = base / cfg.output_dir
+    if cfg.scratch_dir is not None and not cfg.scratch_dir.is_absolute():
+        updates["scratch_dir"] = base / cfg.scratch_dir
+    if cfg.input is not None and not cfg.input.is_absolute():
+        updates["input"] = base / cfg.input
+    return cfg.model_copy(update=updates) if updates else cfg
+
+
 def load_config(path: str | Path) -> Config:
     """Load and validate a ChemRefine YAML config file.
+
+    Relative ``template_dir`` / ``output_dir`` / ``scratch_dir`` / ``input``
+    paths are resolved against the config file's own directory (see
+    :func:`_resolve_relative_paths`), so the file is portable regardless of the
+    process working directory.
 
     Raises :class:`ConfigError` for any malformed file, unknown top-level
     field, or per-step validation failure. The exception message is the
@@ -495,6 +521,7 @@ def load_config(path: str | Path) -> Config:
     if not isinstance(raw, dict):
         raise ConfigError(f"config at {p} is not a YAML mapping")
     try:
-        return Config(**raw)
+        cfg = Config(**raw)
     except ValidationError as e:
         raise ConfigError(f"invalid config {p}:\n{e}") from e
+    return _resolve_relative_paths(cfg, base=p.parent.resolve())

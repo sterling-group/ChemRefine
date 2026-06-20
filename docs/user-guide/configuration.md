@@ -35,6 +35,13 @@ steps:
 
 ## Top-level keys
 
+!!! note "Relative paths are resolved against the config file"
+    `template_dir`, `output_dir`, `scratch_dir`, and `input` — when given as
+    relative paths — resolve against the **directory containing the YAML file**,
+    not the process working directory. So `chemrefine run proj/input.yaml` from
+    anywhere finds `proj/templates` and writes `proj/outputs`. Absolute paths are
+    used as-is.
+
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `template_dir` | path | `./templates` | Directory holding the per-step engine templates and SLURM headers. |

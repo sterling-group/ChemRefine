@@ -337,6 +337,42 @@ def test_scratch_dir_equal_output_dir_rejected(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Path resolution: relative paths resolve against the config file's directory
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_resolves_relative_paths_against_config_dir(tmp_path: Path):
+    """A portable config: relative dirs/input resolve next to the YAML, not the CWD."""
+    data = _minimal_config(
+        template_dir="./t",
+        output_dir="./out",
+        scratch_dir="./scr",
+        input="./seed.xyz",
+    )
+    cfg = load_config(_write_yaml(tmp_path, data))
+    base = tmp_path.resolve()
+    assert cfg.template_dir == base / "t"
+    assert cfg.output_dir == base / "out"
+    assert cfg.scratch_dir == base / "scr"
+    assert cfg.input == base / "seed.xyz"
+
+
+def test_load_config_leaves_absolute_paths_unchanged(tmp_path: Path):
+    """Absolute paths pass through resolution untouched."""
+    data = _minimal_config(
+        template_dir="/abs/t",
+        output_dir="/abs/out",
+        scratch_dir="/abs/scr",
+        input="/abs/seed.xyz",
+    )
+    cfg = load_config(_write_yaml(tmp_path, data))
+    assert cfg.template_dir == Path("/abs/t")
+    assert cfg.output_dir == Path("/abs/out")
+    assert cfg.scratch_dir == Path("/abs/scr")
+    assert cfg.input == Path("/abs/seed.xyz")
+
+
+# ---------------------------------------------------------------------------
 # Legacy-YAML normalizer (v1.3.1 / mlff-named configs load + run)
 # ---------------------------------------------------------------------------
 
