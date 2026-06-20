@@ -61,7 +61,7 @@ def _resolve_target_or_last(config: Config, target: str | int | None) -> StepCon
 
 def invalidate_step(config: Config, step_cfg: StepConfig) -> None:
     """Drop the cache for one step so the next run re-executes it."""
-    step_dir = (config.output_dir / step_cfg.dir_name()).resolve()
+    step_dir = config.step_dir(step_cfg).resolve()
     cache.invalidate(step_dir)
     logger.info("invalidated cache for %s", step_cfg.dir_name())
 
@@ -98,7 +98,7 @@ def _action_rerun_errors(config: Config, target: str | int | None) -> None:
     ``on_failure: stop`` to have pending failures), and the run continues.
     """
     target_step = _resolve_target_or_last(config, target)
-    step_dir = (config.output_dir / target_step.dir_name()).resolve()
+    step_dir = config.step_dir(target_step).resolve()
     n_failed = len(cache.load_failed_jobs(step_dir))
     if not n_failed:
         logger.info(

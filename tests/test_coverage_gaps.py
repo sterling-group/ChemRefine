@@ -312,25 +312,6 @@ def test_backend_missing_dependency_names_the_extra(task, lib, package, extra, m
         build_calculator(task_name=task, model_name="x")
 
 
-def test_cached_outcome_raises_when_load_returns_none(tmp_path: Path, monkeypatch):
-    """Defensive invariant: ``is_valid`` true but ``load`` None ⇒ CacheError."""
-    from chemrefine import cache, step
-    from chemrefine.engines.base import get_engine
-
-    ctx = _ctx(tmp_path)
-    monkeypatch.setattr(cache, "is_valid", lambda **k: True)
-    monkeypatch.setattr(cache, "load", lambda step_dir: None)
-    with pytest.raises(CacheError, match="is_valid returned True"):
-        step._cached_outcome(
-            ctx,
-            ctx.step_cfg,
-            (),
-            get_engine("fake"),
-            is_nms=False,
-            resubmit_step=None,
-        )
-
-
 def test_build_orb_older_layout(monkeypatch):
     """When the v3 ``inference.calculator`` import fails, fall back to the older path."""
     pretrained = types.SimpleNamespace(orb_v2=MagicMock(return_value="ORBFF"))

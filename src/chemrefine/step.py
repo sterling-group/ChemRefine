@@ -32,8 +32,12 @@ logger = logging.getLogger(__name__)
 
 
 def step_dir_for(config: Config, step_cfg: StepConfig) -> Path:
-    """The on-disk directory for a step's artifacts (cache, ledger, outputs)."""
-    return (config.output_dir / step_cfg.dir_name()).resolve()
+    """The on-disk directory for a step's artifacts (cache, ledger, outputs).
+
+    Resolves :meth:`Config.step_dir` (the single source of the
+    ``output_dir / dir_name`` construction) to an absolute path.
+    """
+    return config.step_dir(step_cfg).resolve()
 
 
 def build_context(config: Config, step_cfg: StepConfig, prev_state: PipelineState) -> StepContext:
@@ -138,16 +142,14 @@ def _cached_outcome(
     A pending ``on_failure: stop`` ledger (scoped by ``resubmit_step``) re-attempts
     only the still-failed structures; otherwise it's a plain cache hit (refilter).
     """
-    if not cache.is_valid(
+    cached = cache.load_if_valid(
         step_cfg=step_cfg,
         parent_ids=parent_ids,
         step_dir=ctx.step_dir,
         parents_digest=cache.parents_digest(ctx.prev_state.structures),
-    ):
-        return None
-    cached = cache.load(ctx.step_dir)
+    )
     if cached is None:
-        raise CacheError("is_valid returned True but load returned None")
+        return None
     failed = cache.load_failed_jobs(ctx.step_dir)
     if (
         failed

@@ -14,6 +14,7 @@ from chemrefine.cache import (
     invalidate,
     is_valid,
     load,
+    load_if_valid,
     load_manifest,
     manifest_path,
     parents_digest,
@@ -313,6 +314,40 @@ def test_is_valid_false_when_parents_change(tmp_path: Path):
 
 def test_is_valid_false_when_no_cache(tmp_path: Path):
     assert not is_valid(step_cfg=_cfg(), parent_ids=("0",), step_dir=tmp_path / "step1")
+
+
+# ---------------------------------------------------------------------------
+# load_if_valid — single load + fingerprint check (the cache-hit fast path)
+# ---------------------------------------------------------------------------
+
+
+def test_load_if_valid_returns_cache_on_match(tmp_path: Path):
+    """A matching fingerprint returns the cached StepCache (not just a bool)."""
+    step_dir = tmp_path / "step1"
+    cfg = _cfg()
+    save(
+        step_cfg=cfg,
+        parent_ids=("0",),
+        results=_results(),
+        step_dir=step_dir,
+        chemrefine_version="2.0.0",
+    )
+    cached = load_if_valid(step_cfg=cfg, parent_ids=("0",), step_dir=step_dir)
+    assert cached is not None
+    assert cached.fingerprint == fingerprint(cfg, ("0",))
+
+
+def test_load_if_valid_returns_none_on_mismatch(tmp_path: Path):
+    """A changed config returns None (re-run), never a stale cache."""
+    step_dir = tmp_path / "step1"
+    save(
+        step_cfg=_cfg(charge=0),
+        parent_ids=("0",),
+        results=_results(),
+        step_dir=step_dir,
+        chemrefine_version="2.0.0",
+    )
+    assert load_if_valid(step_cfg=_cfg(charge=-1), parent_ids=("0",), step_dir=step_dir) is None
 
 
 # ---------------------------------------------------------------------------

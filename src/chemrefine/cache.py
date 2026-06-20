@@ -296,6 +296,32 @@ def load(step_dir: Path) -> StepCache | None:
         raise CacheError(f"stale or corrupt cache at {path}: {e!r}") from e
 
 
+def load_if_valid(
+    *,
+    step_cfg: StepConfig,
+    parent_ids: tuple[str, ...],
+    step_dir: Path,
+    parents_digest: str = "",
+) -> StepCache | None:
+    """Return the cached :class:`StepCache` iff its fingerprint matches; else ``None``.
+
+    A single ``load`` + fingerprint compare, so a caller that needs the cached
+    results on a hit (e.g. :func:`chemrefine.step._cached_outcome`) reads
+    ``step.json`` **once** instead of validating and then re-loading — and there
+    is no window in which the cache could vanish between the two reads. A corrupt
+    or absent cache returns ``None`` (treated as "re-run"), never raises.
+    """
+    try:
+        cached = load(step_dir)
+    except CacheError:
+        return None
+    if cached is None:
+        return None
+    if cached.fingerprint != fingerprint(step_cfg, parent_ids, parents_digest=parents_digest):
+        return None
+    return cached
+
+
 def is_valid(
     *,
     step_cfg: StepConfig,
@@ -304,13 +330,15 @@ def is_valid(
     parents_digest: str = "",
 ) -> bool:
     """True iff a cache exists and its fingerprint matches the current step config."""
-    try:
-        cached = load(step_dir)
-    except CacheError:
-        return False
-    if cached is None:
-        return False
-    return cached.fingerprint == fingerprint(step_cfg, parent_ids, parents_digest=parents_digest)
+    return (
+        load_if_valid(
+            step_cfg=step_cfg,
+            parent_ids=parent_ids,
+            step_dir=step_dir,
+            parents_digest=parents_digest,
+        )
+        is not None
+    )
 
 
 def invalidate(step_dir: Path) -> None:
