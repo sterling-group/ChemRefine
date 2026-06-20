@@ -197,6 +197,12 @@ class OrcaEngine(SlurmBatchEngine):
         if "VIBRATIONAL FREQUENCIES" in text:
             self._imag_freqs[sid] = frequencies.parse_imaginary_frequencies_from_text(text)
         else:
+            logger.warning(
+                "NMS step: %s produced no frequency table — the step's operation / "
+                "template must request a frequency calc (e.g. opt+freq), or NMS has "
+                "nothing to act on and the structure is left unresolved",
+                sid,
+            )
             self._imag_freqs[sid] = None
         try:
             self._modes[sid] = frequencies.parse_normal_modes_tensor_from_text(
