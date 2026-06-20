@@ -166,6 +166,12 @@ def run(
     ``rebuild_step`` is set, that one step is rebuilt **from outputs already on
     disk** (parse only, no submission) instead of executing.
     """
+    logger.info(
+        "config: max_cores=%d, max_gpus=%s, output_dir=%s",
+        config.max_cores,
+        config.max_gpus if config.max_gpus is not None else "auto",
+        config.output_dir,
+    )
     state = bootstrap(config)
     logger.info("bootstrapped pipeline with %d seed structure(s)", len(state.structures))
 

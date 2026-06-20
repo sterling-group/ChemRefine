@@ -289,7 +289,7 @@ def test_rerun_errors_on_skip_step_reports_nothing_pending(tmp_path: Path, caplo
     try:
         cfg = _seeded_config(
             tmp_path,
-            [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp")],  # skip
+            [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp", on_failure="skip")],
         )
         eng.fail_ids = {"1"}
         assert execute(cfg, Action.RESUME) == 0
@@ -314,7 +314,7 @@ def test_resume_does_not_reattempt_skip_step(tmp_path: Path):
     try:
         cfg = _seeded_config(
             tmp_path,
-            [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp")],  # skip
+            [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp", on_failure="skip")],
         )
         step_dir = (cfg.output_dir / "step1_s").resolve()
         eng.fail_ids = {"1"}

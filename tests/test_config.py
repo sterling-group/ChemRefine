@@ -47,7 +47,7 @@ def test_minimal_config_loads(tmp_path: Path):
     cfg = load_config(_write_yaml(tmp_path, _minimal_config()))
     assert cfg.charge == 0
     assert cfg.multiplicity == 1
-    assert cfg.max_cores == 32
+    assert cfg.max_cores == 4
     assert cfg.max_gpus is None  # auto-resolved at submit time
     assert len(cfg.steps) == 1
     assert cfg.steps[0].step == 1

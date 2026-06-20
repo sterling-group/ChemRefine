@@ -31,6 +31,7 @@ Schema shape (see ``Examples/`` for full examples):
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Annotated, Any, Literal, TypeAlias
@@ -150,11 +151,13 @@ class StepConfig(BaseModel):
     nms: bool = False
     """Opt-in normal-mode sampling (only honored if the engine ``supports_nms``)."""
 
-    on_failure: Literal["stop", "skip", "best"] = "skip"
+    on_failure: Literal["stop", "skip", "best"] = "stop"
     """What to do when some structures fail this step (job error / no valid output,
-    or NMS-unresolved): ``stop`` halts the pipeline, ``skip`` (default) drops the
-    failures and keeps the successes, ``best`` keeps every structure using the
-    best geometry obtained for a failed one (else its submitted input)."""
+    or NMS-unresolved): ``stop`` (default) halts the pipeline after caching the
+    step's successes, ``skip`` drops the failures and keeps the successes, ``best``
+    keeps every structure using the best geometry obtained for a failed one (else
+    its submitted input). The default is ``stop`` so failures are never silently
+    dropped — opt into ``skip``/``best`` per step when that is what you want."""
 
     @field_validator("name")
     @classmethod
@@ -382,7 +385,7 @@ class Config(BaseModel):
 
     charge: int = 0
     multiplicity: int = Field(1, ge=1)
-    max_cores: int = Field(32, ge=1)
+    max_cores: int = Field(4, ge=1)
     max_gpus: int | None = Field(None, ge=0)
     """GPU budget for concurrent local jobs. ``None`` (default) auto-resolves:
     unlimited under SLURM (the scheduler places GPUs via ``--gres``) and the
@@ -432,6 +435,28 @@ class Config(BaseModel):
         names = [s.name for s in self.steps if s.name is not None]
         if len(names) != len(set(names)):
             raise ValueError("step names must be unique when provided")
+        return self
+
+    @model_validator(mode="after")
+    def _warn_missing_executable_paths(self) -> Config:
+        """Warn (don't fail) when an ``executables`` entry is a path that's absent.
+
+        Validation never hard-fails here: on HPC the binary is often provided by a
+        ``module load`` *inside* the SLURM job, so the login node parsing the YAML
+        legitimately can't see it. A bare command name (no path separator) is left
+        alone — it is resolved on the executing host at submit time. Only an
+        explicit path that doesn't exist on this host earns a warning, since that
+        is almost always a typo.
+        """
+        for tool, value in self.executables.items():
+            if os.sep in value and not Path(value).exists():
+                logger.warning(
+                    "executable %r for %r does not exist on this host (%s); "
+                    "ignore if a module load provides it inside the job",
+                    value,
+                    tool,
+                    value,
+                )
         return self
 
     def step_dir(self, step_cfg: StepConfig) -> Path:

@@ -292,7 +292,7 @@ def test_on_failure_skip_drops_failed_keeps_successes(tmp_path: Path):
     eng = _register_fail_engine()
     try:
         eng.fail = {"1": "unconverged"}
-        cfg = _config(tmp_path, engine="fake-fail")  # on_failure defaults to skip
+        cfg = _config(tmp_path, engine="fake-fail", on_failure="skip")
         outcome = run_step(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]))
         assert {s.id for s in outcome.state.structures} == {"0", "2"}
         step_dir = cfg.output_dir.resolve() / "step1"
