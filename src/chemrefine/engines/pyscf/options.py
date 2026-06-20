@@ -9,9 +9,10 @@ localized, tensor_folder).
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class PyscfOptions(BaseModel):
@@ -43,10 +44,12 @@ class PyscfOptions(BaseModel):
     tensor_folder: str = Field("tensors", min_length=1)
     """Output directory for ``save_tensors`` ``.npz`` files.
 
-    A relative path is resolved against the server's working directory
-    (``$WORK_DIR``, the per-job scratch), which is removed when the job
-    finishes — pass an **absolute** path (e.g. under the step's output
-    directory) when the tensors must persist past the run.
+    When ``save_tensors`` is set this **must be an absolute path**: the
+    calculator runs server-side with ``cwd = $WORK_DIR`` (the per-job scratch,
+    removed when the job ends), so a relative path would write the tensors into
+    scratch and they would be silently deleted — point it at a directory that
+    persists past the run (e.g. under the step's output directory). When
+    ``save_tensors`` is off the value is unused, so the relative default stands.
     """
 
     @field_validator("tensor_folder")
@@ -56,6 +59,24 @@ class PyscfOptions(BaseModel):
         if not v.strip():
             raise ValueError("tensor_folder must be a non-empty string")
         return v
+
+    @model_validator(mode="after")
+    def _tensor_folder_absolute_when_saving(self) -> PyscfOptions:
+        """A relative ``tensor_folder`` with ``save_tensors`` would lose the dumps.
+
+        The calculator writes under ``cwd = $WORK_DIR`` (scratch, deleted at job
+        end), and the engine's ``output_globs`` don't copy ``.npz`` back — so a
+        relative folder silently discards the tensors. Fail fast at config load
+        instead, naming the fix.
+        """
+        if self.save_tensors and not Path(self.tensor_folder).is_absolute():
+            raise ValueError(
+                f"tensor_folder must be an absolute path when save_tensors is set; "
+                f"got {self.tensor_folder!r}. A relative path resolves under the "
+                "per-job scratch ($WORK_DIR), which is deleted when the job ends — "
+                "the tensors would be lost. Point it at a persistent directory."
+            )
+        return self
 
     @classmethod
     def from_raw(cls, raw: dict[str, Any] | None) -> PyscfOptions:

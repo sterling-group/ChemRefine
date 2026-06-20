@@ -151,12 +151,29 @@ def test_pyscf_options_from_raw_handles_none():
 
 
 def test_pyscf_options_from_raw_round_trip():
-    raw = {"method": "hf", "save_tensors": True, "localized": True, "tensor_folder": "mytensors"}
+    # save_tensors requires an absolute tensor_folder (see the validator below).
+    raw = {
+        "method": "hf",
+        "save_tensors": True,
+        "localized": True,
+        "tensor_folder": "/abs/mytensors",
+    }
     opt = PyscfOptions.from_raw(raw)
     assert opt.method == "hf"
     assert opt.save_tensors is True
     assert opt.localized is True
-    assert opt.tensor_folder == "mytensors"
+    assert opt.tensor_folder == "/abs/mytensors"
+
+
+def test_pyscf_options_save_tensors_requires_absolute_folder():
+    """A relative tensor_folder with save_tensors would write into deleted scratch."""
+    with pytest.raises(ValueError, match="absolute path when save_tensors"):
+        PyscfOptions(save_tensors=True, tensor_folder="tensors")
+
+
+def test_pyscf_options_save_tensors_accepts_absolute_folder():
+    opt = PyscfOptions(save_tensors=True, tensor_folder="/scratch/keep/tensors")
+    assert opt.tensor_folder == "/scratch/keep/tensors"
 
 
 # ---------------------------------------------------------------------------

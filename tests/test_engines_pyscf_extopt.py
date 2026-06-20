@@ -136,7 +136,10 @@ def test_pyscf_save_tensors_reaches_server_cmd(tmp_path: Path):
     import os
 
     engine = get_engine("pyscf-extopt")
-    ctx = _pyscf_ctx(tmp_path, save_tensors=True, localized=True, tensor_folder="td")
+    # save_tensors requires an absolute tensor_folder (a relative one would be
+    # written into the deleted per-job scratch); see PyscfOptions.
+    tensor_dir = tmp_path / "td"
+    ctx = _pyscf_ctx(tmp_path, save_tensors=True, localized=True, tensor_folder=str(tensor_dir))
     run_block = engine._run_block(
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
@@ -144,7 +147,7 @@ def test_pyscf_save_tensors_reaches_server_cmd(tmp_path: Path):
     )
     assert "--save_tensors" in run_block
     assert "--localized" in run_block
-    assert "--tensor_folder td" in run_block
+    assert f"--tensor_folder {tensor_dir}" in run_block
 
     engine.prepare(ctx)
     wrapper_text = engine._wrapper_path(ctx).read_text()
