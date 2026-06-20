@@ -34,8 +34,8 @@ steps:
     operation: opt_sp
     template: dft_opt.inp
     sample:
-      method: energy_window
-      window_kcal: 3.0
+      method: min
+      window_kcalmol: 3.0
 
   # Step 3 — high-precision DFT on the survivors of step 2.
   - step: 3
@@ -44,6 +44,6 @@ steps:
     operation: opt_sp
     template: dft_high.inp
     sample:
-      method: integer
+      method: min
       count: 5
     nms: true

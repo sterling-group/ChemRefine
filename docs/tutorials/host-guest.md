@@ -83,14 +83,14 @@ steps:
   - step: 1
     operation: docker
     engine: orca
-    sample: { method: integer, count: 5 }
+    sample: { method: min, count: 5 }
 
   # Step 2 — refine with an MLIP gradient server (ORCA-driven).
   - step: 2
     operation: opt_sp
     engine: mlip-extopt
     options: { model_name: uma-s-1, task_name: omol, device: cuda }
-    sample: { method: energy_window, window_kcal: 10 }
+    sample: { method: min, window_kcalmol: 10 }
 
   # Step 3 — validate the best candidate with DFT.
   - step: 3
@@ -98,13 +98,13 @@ steps:
     engine: orca
     charge: -1
     multiplicity: 1
-    sample: { method: integer, count: 1 }
+    sample: { method: min, count: 1 }
 
   # Step 4 — explicit solvation.
   - step: 4
     operation: solvator
     engine: orca
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 
   # Step 5 — DFT on the solvated complex.
   - step: 5
@@ -112,7 +112,7 @@ steps:
     engine: orca
     charge: -1
     multiplicity: 1
-    sample: { method: energy_window, window_kcal: 10 }
+    sample: { method: min, window_kcalmol: 10 }
 ```
 
 ---

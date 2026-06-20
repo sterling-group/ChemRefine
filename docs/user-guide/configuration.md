@@ -30,7 +30,7 @@ steps:
     engine: orca
     operation: opt_sp
     template: dft_opt.inp
-    sample: { method: energy_window, window_kcal: 3.0 }
+    sample: { method: min, window_kcalmol: 3.0 }
 ```
 
 ## Top-level keys
@@ -79,12 +79,14 @@ steps:
 `by_parent` (default `false` — filter globally; `true` filters within each
 parent-ID group) and `temperature_k` (default `298.15`, used by Boltzmann).
 
-| `method` | Required field | Keeps |
-|----------|----------------|-------|
+`min` and `max` take **exactly one** selector: `count` (keep N) or
+`window_kcalmol` (keep all within that energy window).
+
+| `method` | Selector(s) | Keeps |
+|----------|-------------|-------|
 | `boltzmann` | `percent_cumulative` (default `99`) | Structures until the cumulative Boltzmann weight reaches the percentage. |
-| `energy_window` | `window_kcal` | All within `window_kcal` of the lowest-energy structure. |
-| `integer` | `count` | The `count` lowest-energy structures (`0` = keep all). |
-| `high_energy` | `count` (≥ 1) | The `count` *highest*-energy structures (PES-style sampling). |
+| `min` | `count` **or** `window_kcalmol` | The `count` lowest-energy structures (`0` = keep all), or all within `window_kcalmol` of the minimum. |
+| `max` | `count` (≥ 1) **or** `window_kcalmol` | The `count` *highest*-energy structures, or all within `window_kcalmol` of the maximum (PES-style sampling). |
 
 ## Engine options
 

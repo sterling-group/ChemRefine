@@ -82,28 +82,28 @@ steps:
   - step: 1
     operation: opt_sp
     engine: orca
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 
   - step: 2
     operation: opt_sp
     engine: orca
     charge: 0
     multiplicity: 5
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 
   - step: 3
     operation: opt_sp
     engine: orca
     charge: 0
     multiplicity: 3
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 
   - step: 4
     operation: opt_sp
     engine: orca
     charge: 0
     multiplicity: 1
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 
   - step: 5
     operation: opt_sp
@@ -111,7 +111,7 @@ steps:
     charge: 0
     multiplicity: 5
     options: { model_name: uma-s-1, task_name: omol, device: cuda }
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 
   - step: 6
     operation: opt_sp
@@ -119,7 +119,7 @@ steps:
     charge: 0
     multiplicity: 3
     options: { model_name: uma-s-1, task_name: omol, device: cuda }
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 
   - step: 7
     operation: opt_sp
@@ -127,7 +127,7 @@ steps:
     charge: 0
     multiplicity: 1
     options: { model_name: uma-s-1, task_name: omol, device: cuda }
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 ```
 
 This workflow optimizes the same molecule at **multiplicities 5, 3, and 1** using both DFT and MLIP.

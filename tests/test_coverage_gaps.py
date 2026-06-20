@@ -136,19 +136,28 @@ def test_translate_legacy_argv_passes_through_on_argparse_error():
 # --- config: legacy sample normalizer edges ---------------------------------
 
 
-def test_normalize_sample_passes_through_non_dict():
-    from chemrefine.config import _normalize_sample
+def test_normalize_sample_helpers_pass_through_non_dict():
+    from chemrefine.config import _flatten_sample_type, _normalize_sample_block
 
-    assert _normalize_sample("nope") == "nope"
+    assert _flatten_sample_type("nope") == "nope"
+    assert _normalize_sample_block("nope") == "nope"
 
 
-def test_normalize_sample_carries_through_extra_top_level_keys():
-    from chemrefine.config import _normalize_sample
+def test_flatten_then_normalize_carries_through_extra_top_level_keys():
+    from chemrefine.config import _flatten_sample_type, _normalize_sample_block
 
-    out = _normalize_sample(
+    flat = _flatten_sample_type(
         {"method": "boltzmann", "parameters": {"weight": 95}, "by_parent": True}
     )
+    out = _normalize_sample_block(flat)
     assert out == {"method": "boltzmann", "percent_cumulative": 95, "by_parent": True}
+
+
+def test_normalize_sample_block_without_method_passes_keys_through():
+    """A block with no ``method`` key leaves it out (validation rejects it later)."""
+    from chemrefine.config import _normalize_sample_block
+
+    assert _normalize_sample_block({"count": 5}) == {"count": 5}
 
 
 # --- orca output text dispatcher --------------------------------------------

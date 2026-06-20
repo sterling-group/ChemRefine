@@ -56,15 +56,19 @@ must be replaced by hand with `engine:` + `operation:`.
 
 ## Sampling
 
-`sample_type: { method, parameters: { … } }` becomes a flat `sample: { method, … }`,
-with these per-method parameter renames:
+`sample_type: { method, parameters: { … } }` becomes a flat `sample: { method, … }`.
+The methods were also renamed — `integer`/`high_energy` are now `min`/`max`, and
+`energy_window` folded into `min` with a `window_kcalmol` knob:
 
-| method         | v1.3.1 parameter        | v2 key               |
-|----------------|-------------------------|----------------------|
-| `boltzmann`    | `weight`                | `percent_cumulative` |
-| `integer`      | `num_structures`        | `count`              |
-| `high_energy`  | `num_structures`        | `count`              |
-| `energy_window`| `energy` (+ `unit`)     | `window_kcal`        |
+| v1.3.1 method (+ parameter) | v2 |
+|-----------------------------|----|
+| `boltzmann` (`weight`)              | `boltzmann` (`percent_cumulative`) |
+| `integer` (`num_structures`)        | `min` (`count`) |
+| `high_energy` (`num_structures`)    | `max` (`count`) |
+| `energy_window` (`energy` + `unit`) | `min` (`window_kcalmol`) |
+
+`min` / `max` take **exactly one** of `count` / `window_kcalmol`. All the old
+spellings auto-translate with one deprecation warning each.
 
 ## Example
 

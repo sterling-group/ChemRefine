@@ -14,9 +14,8 @@ an energy passes through.
 | Method | Keeps |
 |--------|-------|
 | `boltzmann` | Structures (lowest-energy first) until the cumulative Boltzmann weight reaches `percent_cumulative`. |
-| `energy_window` | All structures within `window_kcal` of the lowest-energy one. |
-| `integer` | The `count` lowest-energy structures (`count = 0` keeps all). |
-| `high_energy` | The `count` *highest*-energy structures (PES-style sampling). |
+| `min` | The `count` lowest-energy structures (`count = 0` keeps all), **or** all within `window_kcalmol` of the minimum. Set exactly one. |
+| `max` | The `count` *highest*-energy structures, **or** all within `window_kcalmol` of the maximum (PES-style sampling). Set exactly one. |
 
 Boltzmann weights use `temperature_k` (default 298.15 K); the same temperature is
 used for the `steps.csv` report so the reported weights match what the step

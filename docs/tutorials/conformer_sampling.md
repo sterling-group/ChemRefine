@@ -91,29 +91,29 @@ steps:
   - step: 1
     operation: goat
     engine: orca
-    sample: { method: integer, count: 15 }
+    sample: { method: min, count: 15 }
 
   # Refine the ensemble with an MLIP gradient server (ORCA-driven).
   - step: 2
     operation: opt_sp
     engine: mlip-extopt
     options: { model_name: uma-s-1, task_name: omol, device: cuda }
-    sample: { method: integer, count: 15 }
+    sample: { method: min, count: 15 }
 
   - step: 3
     operation: opt_sp
     engine: orca
-    sample: { method: integer, count: 15 }
+    sample: { method: min, count: 15 }
 
   - step: 4
     operation: opt_sp
     engine: orca
-    sample: { method: integer, count: 15 }
+    sample: { method: min, count: 15 }
 
   - step: 5
     operation: opt_sp
     engine: orca
-    sample: { method: integer, count: 15 }
+    sample: { method: min, count: 15 }
 ```
 ## How to Run
 

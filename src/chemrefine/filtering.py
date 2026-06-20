@@ -5,16 +5,16 @@ parsed :class:`~chemrefine.state.StepResults` and the step's
 :class:`~chemrefine.config.SampleConfig`. ``apply`` returns a
 :class:`~chemrefine.state.PipelineState` containing only the survivors.
 
-Four filter methods are supported (one Pydantic variant each):
+Three filter methods are supported (one Pydantic variant each):
 
 * ``boltzmann`` — keep structures whose cumulative Boltzmann weight (at
   the given temperature) reaches a target percentage.
-* ``energy_window`` — keep structures within ``window_kcal`` of the
-  lowest-energy one.
-* ``integer`` — keep the ``count`` lowest-energy structures
-  (``count == 0`` keeps everything).
-* ``high_energy`` — keep the ``count`` *highest*-energy structures
-  (used for PES-style sampling).
+* ``min`` — keep the lowest-energy structures: the ``count`` lowest
+  (``count == 0`` keeps everything) or all within ``window_kcalmol`` of
+  the minimum (exactly one selector).
+* ``max`` — keep the *highest*-energy structures (PES-style sampling):
+  the ``count`` highest or all within ``window_kcalmol`` of the maximum
+  (exactly one selector).
 
 Setting ``by_parent: true`` on the sample config applies the same
 method independently within each parent-ID group instead of globally.
@@ -32,9 +32,8 @@ import numpy as np
 
 from chemrefine.config import (
     BoltzmannSample,
-    EnergyWindowSample,
-    HighEnergySample,
-    IntegerSample,
+    MaxSample,
+    MinSample,
     SampleConfig,
 )
 from chemrefine.quantities import HARTREE_TO_KCALMOL, boltzmann_weights
@@ -95,10 +94,9 @@ def _filter_by_parent(structures: list[Structure], sample: SampleConfig) -> list
 # The second lambda argument is the *matching* variant (keyed by type), a
 # per-key correlation a dict value type can't express — hence ``Any``.
 _DISPATCHERS: dict[type, Callable[[list[Structure], Any], list[Structure]]] = {
-    IntegerSample: lambda s, c: _filter_integer(s, c.count),
-    EnergyWindowSample: lambda s, c: _filter_energy_window(s, c.window_kcal),
+    MinSample: lambda s, c: _filter_min(s, c),
+    MaxSample: lambda s, c: _filter_max(s, c),
     BoltzmannSample: lambda s, c: _filter_boltzmann(s, c.percent_cumulative, c.temperature_k),
-    HighEnergySample: lambda s, c: _filter_high_energy(s, c.count),
 }
 
 
@@ -110,25 +108,33 @@ def _dispatch(sorted_structures: list[Structure], sample: SampleConfig) -> list[
     return handler(sorted_structures, sample)
 
 
-def _filter_integer(sorted_structures: list[Structure], count: int) -> list[Structure]:
-    """Keep the ``count`` lowest-energy structures (``count == 0`` keeps all)."""
-    if count <= 0:
-        return list(sorted_structures)
-    return sorted_structures[:count]
+def _filter_min(sorted_structures: list[Structure], sample: MinSample) -> list[Structure]:
+    """Keep the lowest-energy structures by ``count`` or ``window_kcalmol``.
 
-
-def _filter_energy_window(
-    sorted_structures: list[Structure], window_kcal: float
-) -> list[Structure]:
-    """Keep structures within ``window_kcal`` of the lowest-energy structure.
-
-    Precondition: ``sorted_structures`` must be sorted ascending by
-    ``energy_hartree``. ``apply()`` drops ``None``-energy structures before
-    dispatch, so the casts below never lie at runtime.
+    Exactly one selector is set (the config validator guarantees it). ``count``
+    keeps the N lowest (``0`` = keep all); ``window_kcalmol`` keeps everything
+    within that window of the minimum. Precondition: ascending by ``energy_hartree``.
     """
+    if sample.count is not None:
+        return list(sorted_structures) if sample.count <= 0 else sorted_structures[: sample.count]
     min_e = cast(float, sorted_structures[0].energy_hartree)
-    window_h = window_kcal / HARTREE_TO_KCALMOL
+    window_h = cast(float, sample.window_kcalmol) / HARTREE_TO_KCALMOL
     return [s for s in sorted_structures if cast(float, s.energy_hartree) <= min_e + window_h]
+
+
+def _filter_max(sorted_structures: list[Structure], sample: MaxSample) -> list[Structure]:
+    """Keep the highest-energy structures by ``count`` or ``window_kcalmol``.
+
+    Exactly one selector is set (the config validator guarantees it). ``count``
+    keeps the N highest; ``window_kcalmol`` keeps everything within that window of
+    the maximum. Returned highest-first. Precondition: ascending by ``energy_hartree``.
+    """
+    high_first = list(reversed(sorted_structures))
+    if sample.count is not None:
+        return high_first[: sample.count]
+    max_e = cast(float, high_first[0].energy_hartree)
+    window_h = cast(float, sample.window_kcalmol) / HARTREE_TO_KCALMOL
+    return [s for s in high_first if cast(float, s.energy_hartree) >= max_e - window_h]
 
 
 def _filter_boltzmann(
@@ -150,13 +156,3 @@ def _filter_boltzmann(
     # threshold, plus the one that crosses it.
     n_below = int(np.sum(cumulative < percent_cumulative))
     return list(sorted_structures[: n_below + 1])
-
-
-def _filter_high_energy(sorted_structures: list[Structure], count: int) -> list[Structure]:
-    """Keep the ``count`` highest-energy structures (PES-style sampling).
-
-    Precondition: ``sorted_structures`` must be sorted ascending by
-    ``energy_hartree``. ``apply()`` short-circuits on empty input, so
-    every internal caller passes a non-empty list.
-    """
-    return list(reversed(sorted_structures))[:count]

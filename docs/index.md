@@ -22,9 +22,9 @@ cached so unchanged steps skip automatically.
   (MACE / FAIRChem / SevenNet / ORB / CHGNet), and PySCF — each as a
   direct engine or an ORCA-driven `-extopt` gradient server. New engines
   drop in via a registry decorator (see [Adding an Engine](developer/adding-an-engine.md)).
-- **Filtering** by Boltzmann cumulative weight, energy window, fixed
-  integer count, or "highest N" (PES-style), with optional per-parent
-  grouping.
+- **Filtering** by Boltzmann cumulative weight, or the lowest / highest
+  structures by count or energy window (`min` / `max`, the latter PES-style),
+  with optional per-parent grouping.
 - **SLURM-aware**: the PAL/`nprocs` value in each input participates in a
   total-core throttle so concurrent jobs never exceed `max_cores`; whole
   steps can also go out as job arrays.
@@ -64,7 +64,7 @@ steps:
     name: refine
     engine: orca
     operation: opt_sp
-    sample: { method: energy_window, window_kcal: 3.0 }
+    sample: { method: min, window_kcalmol: 3.0 }
 ```
 
 Run it (full [CLI reference](user-guide/cli.md)):

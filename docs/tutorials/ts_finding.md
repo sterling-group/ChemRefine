@@ -86,13 +86,13 @@ steps:
   - step: 1
     operation: pes
     engine: orca
-    sample: { method: high_energy, count: 5 }
+    sample: { method: max, count: 5 }
 
   # Step 2 — optimise the guesses.
   - step: 2
     operation: opt_sp
     engine: orca
-    sample: { method: integer, count: 5 }
+    sample: { method: min, count: 5 }
 
   # Step 3 — normal-mode sampling: frequency analysis + imaginary-mode
   # displacement, keeping exactly one imaginary mode (a first-order saddle).
@@ -101,13 +101,13 @@ steps:
     engine: orca
     nms: true
     options: { target: ts, displacement_value: 1.0 }
-    sample: { method: integer, count: 3 }
+    sample: { method: min, count: 3 }
 
   # Step 4 — final single point on the corrected TS.
   - step: 4
     operation: opt_sp
     engine: orca
-    sample: { method: integer, count: 1 }
+    sample: { method: min, count: 1 }
 ```
 
 ---

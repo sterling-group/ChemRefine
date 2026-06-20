@@ -10,8 +10,8 @@ import yaml
 from chemrefine.config import (
     BoltzmannSample,
     Config,
-    EnergyWindowSample,
-    IntegerSample,
+    MaxSample,
+    MinSample,
     StepConfig,
     load_config,
 )
@@ -208,51 +208,52 @@ def test_boltzmann_sample_parses(tmp_path: Path):
     assert sample.percent_cumulative == 95
 
 
-def test_energy_window_sample_requires_window(tmp_path: Path):
+def _sample_cfg(tmp_path: Path, sample: dict) -> Config:
+    """Load a minimal one-step config carrying ``sample``."""
     data = _minimal_config(
-        steps=[
-            {
-                "step": 1,
-                "engine": "fake",
-                "operation": "opt_sp",
-                "sample": {"method": "energy_window"},
-            }
-        ]
+        steps=[{"step": 1, "engine": "fake", "operation": "opt_sp", "sample": sample}]
     )
+    return load_config(_write_yaml(tmp_path, data))
+
+
+def test_min_sample_requires_exactly_one_selector(tmp_path: Path):
+    # neither count nor window_kcalmol
     with pytest.raises(ConfigError):
-        load_config(_write_yaml(tmp_path, data))
+        _sample_cfg(tmp_path, {"method": "min"})
+    # both at once
+    with pytest.raises(ConfigError):
+        _sample_cfg(tmp_path, {"method": "min", "count": 5, "window_kcalmol": 3.0})
 
 
-def test_integer_sample_parses(tmp_path: Path):
-    data = _minimal_config(
-        steps=[
-            {
-                "step": 1,
-                "engine": "fake",
-                "operation": "opt_sp",
-                "sample": {"method": "integer", "count": 5},
-            }
-        ]
-    )
-    cfg = load_config(_write_yaml(tmp_path, data))
-    assert isinstance(cfg.steps[0].sample, IntegerSample)
+def test_max_sample_requires_exactly_one_selector(tmp_path: Path):
+    with pytest.raises(ConfigError):
+        _sample_cfg(tmp_path, {"method": "max"})
+    with pytest.raises(ConfigError):
+        _sample_cfg(tmp_path, {"method": "max", "count": 5, "window_kcalmol": 3.0})
+
+
+def test_min_sample_parses(tmp_path: Path):
+    cfg = _sample_cfg(tmp_path, {"method": "min", "count": 5})
+    assert isinstance(cfg.steps[0].sample, MinSample)
     assert cfg.steps[0].sample.count == 5
 
 
-def test_energy_window_sample_parses(tmp_path: Path):
-    data = _minimal_config(
-        steps=[
-            {
-                "step": 1,
-                "engine": "fake",
-                "operation": "opt_sp",
-                "sample": {"method": "energy_window", "window_kcal": 3.0},
-            }
-        ]
-    )
-    cfg = load_config(_write_yaml(tmp_path, data))
-    assert isinstance(cfg.steps[0].sample, EnergyWindowSample)
-    assert cfg.steps[0].sample.window_kcal == 3.0
+def test_min_window_sample_parses(tmp_path: Path):
+    cfg = _sample_cfg(tmp_path, {"method": "min", "window_kcalmol": 3.0})
+    assert isinstance(cfg.steps[0].sample, MinSample)
+    assert cfg.steps[0].sample.window_kcalmol == 3.0
+
+
+def test_max_sample_parses(tmp_path: Path):
+    cfg = _sample_cfg(tmp_path, {"method": "max", "count": 5})
+    assert isinstance(cfg.steps[0].sample, MaxSample)
+    assert cfg.steps[0].sample.count == 5
+
+
+def test_max_window_sample_parses(tmp_path: Path):
+    cfg = _sample_cfg(tmp_path, {"method": "max", "window_kcalmol": 3.0})
+    assert isinstance(cfg.steps[0].sample, MaxSample)
+    assert cfg.steps[0].sample.window_kcalmol == 3.0
 
 
 def test_unknown_sample_method_rejected(tmp_path: Path):
@@ -460,10 +461,12 @@ def test_legacy_sample_type_and_param_renames():
     )
     assert isinstance(cfg.steps[0].sample, BoltzmannSample)
     assert cfg.steps[0].sample.percent_cumulative == 95
-    assert isinstance(cfg.steps[1].sample, IntegerSample)
+    # integer -> min, num_structures -> count
+    assert isinstance(cfg.steps[1].sample, MinSample)
     assert cfg.steps[1].sample.count == 3
-    assert isinstance(cfg.steps[2].sample, EnergyWindowSample)
-    assert cfg.steps[2].sample.window_kcal == 8
+    # energy_window -> min, energy -> window_kcalmol (unit dropped)
+    assert isinstance(cfg.steps[2].sample, MinSample)
+    assert cfg.steps[2].sample.window_kcalmol == 8
 
 
 def test_legacy_normal_mode_sampling_renamed():
@@ -551,7 +554,8 @@ def test_legacy_sample_type_does_not_override_existing_sample():
             }
         ],
     )
-    assert isinstance(cfg.steps[0].sample, IntegerSample)
+    # The direct `sample` block (legacy `integer` -> `min`) wins; sample_type dropped.
+    assert isinstance(cfg.steps[0].sample, MinSample)
     assert cfg.steps[0].sample.count == 3
 
 
@@ -593,7 +597,7 @@ def test_normalizer_is_idempotent_on_new_style():
                 "engine": "mlip-extopt",
                 "operation": "opt_sp",
                 "options": {"model_name": "uma-s-1", "task_name": "omol"},
-                "sample": {"method": "integer", "count": 5},
+                "sample": {"method": "min", "count": 5},
             }
         ],
     }

@@ -78,29 +78,46 @@ class BoltzmannSample(_SampleBase):
     percent_cumulative: float = Field(99.0, gt=0, le=100)
 
 
-class EnergyWindowSample(_SampleBase):
-    """Keep structures within ``window_kcal`` of the lowest-energy structure."""
+class MinSample(_SampleBase):
+    """Keep the lowest-energy structures.
 
-    method: Literal["energy_window"]
-    window_kcal: float = Field(..., gt=0)
+    Set **exactly one** selector: ``count`` keeps the N lowest (``0`` = keep all);
+    ``window_kcalmol`` keeps every structure within that window of the minimum.
+    """
+
+    method: Literal["min"]
+    count: int | None = Field(None, ge=0)
+    window_kcalmol: float | None = Field(None, gt=0)
+
+    @model_validator(mode="after")
+    def _exactly_one_selector(self) -> MinSample:
+        """Require exactly one of ``count`` / ``window_kcalmol``."""
+        if (self.count is None) == (self.window_kcalmol is None):
+            raise ValueError("min: set exactly one of 'count' or 'window_kcalmol'")
+        return self
 
 
-class IntegerSample(_SampleBase):
-    """Keep the ``count`` lowest-energy structures (0 = keep all)."""
+class MaxSample(_SampleBase):
+    """Keep the highest-energy structures (e.g. for PES sampling).
 
-    method: Literal["integer"]
-    count: int = Field(..., ge=0)
+    Set **exactly one** selector: ``count`` keeps the N highest;
+    ``window_kcalmol`` keeps every structure within that window of the maximum.
+    """
 
+    method: Literal["max"]
+    count: int | None = Field(None, ge=1)
+    window_kcalmol: float | None = Field(None, gt=0)
 
-class HighEnergySample(_SampleBase):
-    """Keep the ``count`` highest-energy structures (e.g. for PES sampling)."""
-
-    method: Literal["high_energy"]
-    count: int = Field(..., ge=1)
+    @model_validator(mode="after")
+    def _exactly_one_selector(self) -> MaxSample:
+        """Require exactly one of ``count`` / ``window_kcalmol``."""
+        if (self.count is None) == (self.window_kcalmol is None):
+            raise ValueError("max: set exactly one of 'count' or 'window_kcalmol'")
+        return self
 
 
 SampleConfig: TypeAlias = Annotated[
-    BoltzmannSample | EnergyWindowSample | IntegerSample | HighEnergySample,
+    BoltzmannSample | MinSample | MaxSample,
     Field(discriminator="method"),
 ]
 
@@ -212,12 +229,20 @@ _LEGACY_BLOCKS = {
 #: Option sub-keys that are auto-managed now and dropped from a moved block.
 _OBSOLETE_OPTION_KEYS = frozenset({"bind"})
 
-#: ``sample_type.parameters`` → flat ``sample`` key, per method.
-_SAMPLE_PARAM_RENAMES = {
-    "boltzmann": {"weight": "percent_cumulative"},
-    "integer": {"num_structures": "count"},
-    "high_energy": {"num_structures": "count"},
-    "energy_window": {"energy": "window_kcal"},
+#: Old sample-method name → canonical v2 name. ``integer``/``high_energy`` became
+#: ``min``/``max``; ``energy_window`` folded into ``min`` + a ``window_kcalmol`` knob.
+_SAMPLE_METHOD_RENAMES = {
+    "integer": "min",
+    "high_energy": "max",
+    "energy_window": "min",
+}
+
+#: Old sample parameter key → canonical v2 key (applies across methods).
+_SAMPLE_KEY_RENAMES = {
+    "num_structures": "count",
+    "weight": "percent_cumulative",
+    "energy": "window_kcalmol",
+    "window_kcal": "window_kcalmol",
 }
 
 
@@ -321,30 +346,60 @@ def _normalize_step(step: Any) -> Any:
 
     _normalize_nms_keys(s)
 
-    # sample_type{method, parameters} → sample{method, <renamed>}.
+    # sample_type{method, parameters} → sample{method, …}; legacy sample method /
+    # key names (integer/high_energy/energy_window, num_structures/energy/…) are
+    # rewritten to the v2 vocabulary (min/max/boltzmann, count/window_kcalmol)
+    # whether they arrive via the old `sample_type` block or a direct `sample`.
     if "sample_type" in s:
         if "sample" not in s:
             logger.warning("`sample_type` is deprecated; use `sample`")
-            s["sample"] = _normalize_sample(s["sample_type"])
+            s["sample"] = _flatten_sample_type(s["sample_type"])
         s.pop("sample_type")
+    # Normalize whatever `sample` we now have (from sample_type, or a direct
+    # block, possibly using legacy method/key names) to the v2 vocabulary.
+    if isinstance(s.get("sample"), dict):
+        s["sample"] = _normalize_sample_block(s["sample"])
 
     return s
 
 
-def _normalize_sample(sample_type: Any) -> Any:
-    """Convert a legacy ``sample_type`` mapping to the flat ``sample`` mapping."""
+def _flatten_sample_type(sample_type: Any) -> Any:
+    """Flatten a legacy ``sample_type`` ``{method, parameters: {…}}`` into a flat dict."""
     if not isinstance(sample_type, dict):
         return sample_type
-    method = sample_type.get("method")
-    renames = _SAMPLE_PARAM_RENAMES.get(method, {}) if isinstance(method, str) else {}
-    out: dict[str, Any] = {"method": method}
-    for k, v in (sample_type.get("parameters") or {}).items():
-        if k == "unit":  # energy_window unit (kcal/mol) is implicit now
-            continue
-        out[renames.get(k, k)] = v
+    flat: dict[str, Any] = {"method": sample_type.get("method")}
+    flat.update(sample_type.get("parameters") or {})
     for k, v in sample_type.items():  # carry through any non-nested extras
         if k not in ("method", "parameters"):
-            out.setdefault(k, v)
+            flat.setdefault(k, v)
+    return flat
+
+
+def _normalize_sample_block(sample: Any) -> Any:
+    """Rewrite a flat ``sample`` dict's legacy method/key names to the v2 vocabulary.
+
+    Idempotent: a current-vocabulary block (``min`` / ``max`` / ``boltzmann`` with
+    ``count`` / ``window_kcalmol`` / ``percent_cumulative``) passes through unchanged.
+    Logs one deprecation warning per legacy method or key actually rewritten.
+    """
+    if not isinstance(sample, dict):
+        return sample
+    out: dict[str, Any] = {}
+    method = sample.get("method")
+    if isinstance(method, str) and method in _SAMPLE_METHOD_RENAMES:
+        new_method = _SAMPLE_METHOD_RENAMES[method]
+        logger.warning("sample method `%s` is deprecated; use `%s`", method, new_method)
+        out["method"] = new_method
+    elif method is not None:
+        out["method"] = method
+    for raw_key, v in sample.items():
+        key = str(raw_key)
+        if key in ("method", "unit"):  # energy_window unit (kcal/mol) is implicit now
+            continue
+        new_key = _SAMPLE_KEY_RENAMES.get(key, key)
+        if new_key != key:
+            logger.warning("sample key `%s` is deprecated; use `%s`", key, new_key)
+        out.setdefault(new_key, v)
     return out
 
 

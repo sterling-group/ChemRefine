@@ -96,7 +96,7 @@ steps:
   - step: 1
     operation: goat
     engine: orca
-    sample: { method: integer, count: 15 }
+    sample: { method: min, count: 15 }
 
   # Augment the dataset with normal-mode-sampled geometries.
   - step: 2
@@ -104,19 +104,19 @@ steps:
     engine: orca
     nms: true
     options: { target: random, displacement_value: 1.0, num_random_displacements: 1 }
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 
   # DFT labels (energies + forces) for training.
   - step: 3
     operation: opt_sp
     engine: orca
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 
   # Train a MACE model on the labelled structures.
   - step: 4
     engine: mlip-train
     operation: mlip_train
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 
   # Validate the trained model via the MLIP gradient server.
   - step: 5
@@ -126,7 +126,7 @@ steps:
       model_name: ../step4/checkpoints_dir/goat_model_run-123_stagetwo.model
       task_name: mace_off
       device: cuda
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 ```
 
 ---

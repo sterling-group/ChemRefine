@@ -98,7 +98,7 @@ def test_run_step_first_run_writes_cache_and_manifest(tmp_path: Path):
 def test_run_step_returns_filtered_state(tmp_path: Path):
     cfg = _config(
         tmp_path,
-        sample={"method": "integer", "count": 1},
+        sample={"method": "min", "count": 1},
     )
     outcome = run_step(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]))
     assert len(outcome.state.structures) == 1
@@ -156,7 +156,7 @@ def test_run_step_filter_only_change_is_cache_hit(tmp_path: Path):
     cfg_all = _config(tmp_path)
     seeds = _seed_state(["0", "1", "2"])
     run_step(cfg_all, cfg_all.steps[0], seeds)
-    cfg_one = _config(tmp_path, sample={"method": "integer", "count": 1})
+    cfg_one = _config(tmp_path, sample={"method": "min", "count": 1})
     outcome = run_step(cfg_one, cfg_one.steps[0], seeds)
     assert outcome.cache_hit is True
     assert len(outcome.state.structures) == 1

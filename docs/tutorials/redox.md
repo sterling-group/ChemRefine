@@ -86,7 +86,7 @@ steps:
   - step: 2
     operation: opt_sp
     engine: orca
-    sample: { method: energy_window, window_kcal: 10 }
+    sample: { method: min, window_kcalmol: 10 }
 
   - step: 3
     operation: opt_sp
@@ -94,7 +94,7 @@ steps:
     charge: -1
     multiplicity: 2
     options: { model_name: uma-s-1, task_name: omol, device: cuda }
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 
   - step: 4
     operation: opt_sp
@@ -102,7 +102,7 @@ steps:
     charge: 0
     multiplicity: 1
     options: { model_name: uma-s-1, task_name: omol, device: cuda }
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 
   - step: 5
     operation: opt_sp
@@ -110,28 +110,28 @@ steps:
     charge: 1
     multiplicity: 2
     options: { model_name: uma-s-1, task_name: omol, device: cuda }
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 
   - step: 6
     operation: opt_sp
     engine: orca
     charge: -1
     multiplicity: 2
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 
   - step: 7
     operation: opt_sp
     engine: orca
     charge: 0
     multiplicity: 1
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 
   - step: 8
     operation: opt_sp
     engine: orca
     charge: 1
     multiplicity: 2
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 ```
 
 This workflow optimizes the neutral, reduced (–1), and oxidized (+1) charge states with both MLIP and DFT.

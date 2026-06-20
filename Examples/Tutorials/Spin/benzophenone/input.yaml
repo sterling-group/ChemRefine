@@ -14,7 +14,7 @@ steps:
   - step: 1
     engine: orca
     operation: opt_sp
-    sample: { method: energy_window, window_kcal: 10 }
+    sample: { method: min, window_kcalmol: 10 }
 
   # Refine with an MLIP gradient server (ORCA-driven).
   - step: 2
@@ -26,30 +26,30 @@ steps:
   - step: 3
     engine: orca
     operation: opt_sp
-    sample: { method: integer, count: 3 }
+    sample: { method: min, count: 3 }
 
   - step: 4
     engine: orca
     operation: opt_sp
-    sample: { method: integer, count: 1 }
+    sample: { method: min, count: 1 }
 
   - step: 5
     engine: orca
     operation: opt_sp
     charge: 0
     multiplicity: 1
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 
   - step: 6
     engine: orca
     operation: opt_sp
     charge: 0
     multiplicity: 3
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }
 
   - step: 7
     engine: orca
     operation: opt_sp
     charge: 0
     multiplicity: 1
-    sample: { method: integer, count: 0 }
+    sample: { method: min, count: 0 }

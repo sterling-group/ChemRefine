@@ -240,7 +240,7 @@ def test_run_threads_state_between_steps(tmp_path: Path):
                 step=1,
                 engine="fake",
                 operation="opt_sp",
-                sample={"method": "integer", "count": 1},
+                sample={"method": "min", "count": 1},
             ),
             StepConfig(step=2, engine="fake", operation="opt_sp"),
         ],

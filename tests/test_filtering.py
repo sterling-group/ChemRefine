@@ -7,9 +7,8 @@ from ase import Atoms
 
 from chemrefine.config import (
     BoltzmannSample,
-    EnergyWindowSample,
-    HighEnergySample,
-    IntegerSample,
+    MaxSample,
+    MinSample,
 )
 from chemrefine.filtering import apply
 from chemrefine.quantities import HARTREE_TO_KCALMOL
@@ -48,50 +47,50 @@ def test_apply_drops_structures_with_no_energy():
             Structure(id="1", atoms=Atoms("H"), energy_hartree=None),
         )
     )
-    state = apply(r, IntegerSample(method="integer", count=10))
+    state = apply(r, MinSample(method="min", count=10))
     assert [s.id for s in state.structures] == ["0"]
 
 
 def test_apply_empty_returns_empty():
-    state = apply(StepResults(structures=()), IntegerSample(method="integer", count=5))
+    state = apply(StepResults(structures=()), MinSample(method="min", count=5))
     assert state.structures == ()
 
 
 # ---------------------------------------------------------------------------
-# integer
+# min — count
 # ---------------------------------------------------------------------------
 
 
-def test_integer_keeps_lowest_n():
+def test_min_keeps_lowest_n():
     r = _results(("a", -1.0), ("b", -2.0), ("c", -0.5), ("d", -3.0))
-    state = apply(r, IntegerSample(method="integer", count=2))
+    state = apply(r, MinSample(method="min", count=2))
     assert [s.id for s in state.structures] == ["d", "b"]
 
 
-def test_integer_zero_keeps_all_sorted():
+def test_min_count_zero_keeps_all_sorted():
     r = _results(("a", -1.0), ("b", -2.0))
-    state = apply(r, IntegerSample(method="integer", count=0))
+    state = apply(r, MinSample(method="min", count=0))
     assert [s.id for s in state.structures] == ["b", "a"]
 
 
 # ---------------------------------------------------------------------------
-# energy_window
+# min — window_kcalmol (replaces the old energy_window method)
 # ---------------------------------------------------------------------------
 
 
-def test_energy_window_keeps_structures_within_window():
+def test_min_window_keeps_structures_within_window():
     # window = 1.0 kcal/mol -> in Hartree ~= 1/627.5 ~= 0.00159
     # min energy -1.0; threshold -1.0 + 1.0 kcal/mol ≈ -0.9984
     r = _results(("a", -1.0), ("b", -0.9985), ("c", -0.5))
-    state = apply(r, EnergyWindowSample(method="energy_window", window_kcal=1.0))
+    state = apply(r, MinSample(method="min", window_kcalmol=1.0))
     ids = {s.id for s in state.structures}
     assert "a" in ids
     assert "c" not in ids
 
 
-def test_energy_window_negative_results_are_sorted():
+def test_min_window_negative_results_are_sorted():
     r = _results(("a", -1.0), ("b", -1.0 + 1e-6))
-    state = apply(r, EnergyWindowSample(method="energy_window", window_kcal=10.0))
+    state = apply(r, MinSample(method="min", window_kcalmol=10.0))
     assert state.structures[0].id == "a"
 
 
@@ -131,28 +130,43 @@ def test_boltzmann_keeps_more_when_threshold_high():
 
 
 # ---------------------------------------------------------------------------
-# high_energy
+# max — count
 # ---------------------------------------------------------------------------
 
 
-def test_high_energy_keeps_top_n():
+def test_max_keeps_top_n():
     r = _results(("a", -1.0), ("b", -2.0), ("c", -0.5), ("d", -1.5))
-    state = apply(r, HighEnergySample(method="high_energy", count=2))
+    state = apply(r, MaxSample(method="max", count=2))
     # Sorted asc by energy: b(-2.0), d(-1.5), a(-1.0), c(-0.5)
     # Reversed asc gives desc; top 2 = c, a
     assert [s.id for s in state.structures] == ["c", "a"]
 
 
-def test_high_energy_count_one_keeps_max():
+def test_max_count_one_keeps_max():
     r = _results(("a", -1.0), ("b", -2.0), ("c", -0.5))
-    state = apply(r, HighEnergySample(method="high_energy", count=1))
+    state = apply(r, MaxSample(method="max", count=1))
     assert [s.id for s in state.structures] == ["c"]
 
 
-def test_high_energy_empty_input_returns_empty():
-    """apply with HighEnergySample short-circuits on an empty StepResults."""
-    state = apply(StepResults(structures=()), HighEnergySample(method="high_energy", count=5))
+def test_max_empty_input_returns_empty():
+    """apply with MaxSample short-circuits on an empty StepResults."""
+    state = apply(StepResults(structures=()), MaxSample(method="max", count=5))
     assert state.structures == ()
+
+
+# ---------------------------------------------------------------------------
+# max — window_kcalmol (highest-energy side)
+# ---------------------------------------------------------------------------
+
+
+def test_max_window_keeps_structures_within_window_of_max():
+    # max energy -0.5; threshold -0.5 - 1.0 kcal/mol ≈ -0.5016
+    r = _results(("a", -1.0), ("b", -0.5015), ("c", -0.5))
+    state = apply(r, MaxSample(method="max", window_kcalmol=1.0))
+    ids = [s.id for s in state.structures]
+    assert ids[0] == "c"  # highest first
+    assert "b" in ids
+    assert "a" not in ids
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +182,7 @@ def test_by_parent_groups_by_lineage():
         ("1-0", -1.0, "1"),
         ("1-1", -0.5, "1"),
     )
-    sample = IntegerSample(method="integer", count=1, by_parent=True)
+    sample = MinSample(method="min", count=1, by_parent=True)
     state = apply(r, sample)
     ids = {s.id for s in state.structures}
     # One survivor per parent group
@@ -177,7 +191,7 @@ def test_by_parent_groups_by_lineage():
 
 def test_by_parent_handles_flat_ids():
     r = _results(("0", -1.0), ("1", -2.0))
-    sample = IntegerSample(method="integer", count=1, by_parent=True)
+    sample = MinSample(method="min", count=1, by_parent=True)
     state = apply(r, sample)
     # Seed IDs (parent_id=None) form their own singleton groups
     assert {s.id for s in state.structures} == {"0", "1"}
@@ -203,7 +217,6 @@ def test_all_sample_variants_have_a_dispatcher():
     """Catches the "added a new SampleConfig variant but forgot to register it" bug."""
     from chemrefine.filtering import _DISPATCHERS
 
-    assert IntegerSample in _DISPATCHERS
-    assert EnergyWindowSample in _DISPATCHERS
+    assert MinSample in _DISPATCHERS
+    assert MaxSample in _DISPATCHERS
     assert BoltzmannSample in _DISPATCHERS
-    assert HighEnergySample in _DISPATCHERS
