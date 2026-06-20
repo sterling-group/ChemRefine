@@ -17,19 +17,19 @@ This is the **only** module that calls :func:`sys.exit` or reads
   current options (a named alias of ``rerun``).
 
 Per-step ``on_failure: stop | skip | best`` (in the YAML) decides in-run
-behaviour: ``skip`` (default) drops the failures and continues, ``best`` keeps
-all (backfilling the best geometry), ``stop`` halts the run after caching the
-step's successes. The ``failed_jobs.json`` ledger always records which
-structures failed (so they're visible), but only ``stop`` failures are pending
-for ``resume`` / ``rerun-errors`` to re-attempt.
+behaviour: ``stop`` (default) halts the run after caching the step's successes,
+``skip`` drops the failures and continues, ``best`` keeps all (backfilling the
+best geometry). The ``failed_jobs.json`` ledger always records which structures
+failed (so they're visible), but only ``stop`` failures are pending for
+``resume`` / ``rerun-errors`` to re-attempt.
 
 Legacy v1.3.1 flag-style invocations (``chemrefine CONFIG --rebuild_cache N``,
 ``--rerun_errors N``, ``--skip``, …) are translated to these subcommands by
 :func:`_translate_legacy_argv` before Typer parses.
 
-Global flags: ``--maxcores INT`` overrides ``max_cores`` in the YAML;
-``--dry-run`` loads and validates the config without executing; ``-v``
-turns on debug logging.
+Global flags: ``--maxcores INT`` / ``--maxgpus INT`` override ``max_cores`` /
+``max_gpus`` in the YAML; ``--dry-run`` loads and validates the config without
+executing; ``-v`` turns on debug logging.
 """
 
 from __future__ import annotations
@@ -111,18 +111,24 @@ def execute(config: Config, action: Action, target: str | None = None) -> int:
     return recovery.execute(config, action, target=target)
 
 
-def _load(config_path: Path, *, maxcores: int | None) -> Config:
-    """Load + validate ``config_path`` and apply the ``--maxcores`` override.
+def _load(config_path: Path, *, maxcores: int | None, maxgpus: int | None) -> Config:
+    """Load + validate ``config_path`` and apply the ``--maxcores`` / ``--maxgpus`` overrides.
 
     The return annotation resolves under ``TYPE_CHECKING`` only — the
     pydantic/config import stays lazy (it loads only when a command actually
-    runs).
+    runs). Both flags beat the YAML; ``model_copy`` skips re-validation, so the
+    flags enforce their own bounds (see :data:`MaxCoresOpt` / :data:`MaxGpusOpt`).
     """
     from chemrefine.config import load_config
 
     cfg = load_config(config_path)
+    updates: dict[str, int] = {}
     if maxcores is not None:
-        cfg = cfg.model_copy(update={"max_cores": maxcores})
+        updates["max_cores"] = maxcores
+    if maxgpus is not None:
+        updates["max_gpus"] = maxgpus
+    if updates:
+        cfg = cfg.model_copy(update=updates)
     return cfg
 
 
@@ -131,6 +137,7 @@ def _dispatch(
     config_path: Path,
     *,
     maxcores: int | None,
+    maxgpus: int | None,
     target: str | None,
     dry_run: bool,
 ) -> int:
@@ -144,11 +151,14 @@ def _dispatch(
     as a traceback.
     """
     try:
-        config = _load(config_path, maxcores=maxcores)
+        config = _load(config_path, maxcores=maxcores, maxgpus=maxgpus)
         if dry_run:
             typer.echo(f"[dry-run] action={action_name}")
             typer.echo(f"[dry-run] output_dir={config.output_dir}")
             typer.echo(f"[dry-run] max_cores={config.max_cores}")
+            typer.echo(
+                f"[dry-run] max_gpus={config.max_gpus if config.max_gpus is not None else 'auto'}"
+            )
             for step_cfg in config.steps:
                 typer.echo(
                     f"[dry-run] step {step_cfg.step}: "
@@ -177,6 +187,13 @@ MaxCoresOpt = Annotated[
     # ``model_copy`` (no re-validation), so the flag must reject 0/negative itself.
     typer.Option("--maxcores", min=1, help="Override max_cores from the YAML."),
 ]
+MaxGpusOpt = Annotated[
+    int | None,
+    # min=0 mirrors Config's ``max_gpus: ge=0``; applied via ``model_copy`` (no
+    # re-validation), so the flag enforces its own bound. Beats the YAML, like
+    # --maxcores; omit to keep the YAML's value (``None`` ⇒ auto-resolve).
+    typer.Option("--maxgpus", min=0, help="Override max_gpus from the YAML."),
+]
 DryRunOpt = Annotated[
     bool,
     typer.Option(
@@ -194,21 +211,29 @@ TargetArg = Annotated[
 def run(
     config_path: ConfigArg,
     maxcores: MaxCoresOpt = None,
+    maxgpus: MaxGpusOpt = None,
     dry_run: DryRunOpt = False,
 ) -> None:
     """Run the full pipeline from step 1, invalidating any existing cache."""
-    raise typer.Exit(_dispatch("run", config_path, maxcores=maxcores, target=None, dry_run=dry_run))
+    raise typer.Exit(
+        _dispatch(
+            "run", config_path, maxcores=maxcores, maxgpus=maxgpus, target=None, dry_run=dry_run
+        )
+    )
 
 
 @app.command()
 def resume(
     config_path: ConfigArg,
     maxcores: MaxCoresOpt = None,
+    maxgpus: MaxGpusOpt = None,
     dry_run: DryRunOpt = False,
 ) -> None:
     """Resume the pipeline, hitting the on-disk cache for unchanged steps."""
     raise typer.Exit(
-        _dispatch("resume", config_path, maxcores=maxcores, target=None, dry_run=dry_run)
+        _dispatch(
+            "resume", config_path, maxcores=maxcores, maxgpus=maxgpus, target=None, dry_run=dry_run
+        )
     )
 
 
@@ -217,11 +242,19 @@ def rebuild_cache(
     config_path: ConfigArg,
     target: TargetArg = None,
     maxcores: MaxCoresOpt = None,
+    maxgpus: MaxGpusOpt = None,
     dry_run: DryRunOpt = False,
 ) -> None:
     """Rebuild one step's cache from existing outputs (default: latest); no submission."""
     raise typer.Exit(
-        _dispatch("rebuild-cache", config_path, maxcores=maxcores, target=target, dry_run=dry_run)
+        _dispatch(
+            "rebuild-cache",
+            config_path,
+            maxcores=maxcores,
+            maxgpus=maxgpus,
+            target=target,
+            dry_run=dry_run,
+        )
     )
 
 
@@ -230,11 +263,19 @@ def rebuild_nms(
     config_path: ConfigArg,
     target: TargetArg = None,
     maxcores: MaxCoresOpt = None,
+    maxgpus: MaxGpusOpt = None,
     dry_run: DryRunOpt = False,
 ) -> None:
     """Re-run the NMS step with the current options (alias of rerun)."""
     raise typer.Exit(
-        _dispatch("rebuild-nms", config_path, maxcores=maxcores, target=target, dry_run=dry_run)
+        _dispatch(
+            "rebuild-nms",
+            config_path,
+            maxcores=maxcores,
+            maxgpus=maxgpus,
+            target=target,
+            dry_run=dry_run,
+        )
     )
 
 
@@ -243,11 +284,14 @@ def rerun(
     config_path: ConfigArg,
     target: TargetArg = None,
     maxcores: MaxCoresOpt = None,
+    maxgpus: MaxGpusOpt = None,
     dry_run: DryRunOpt = False,
 ) -> None:
     """Redo one whole step from scratch (default: latest); others cache-hit."""
     raise typer.Exit(
-        _dispatch("rerun", config_path, maxcores=maxcores, target=target, dry_run=dry_run)
+        _dispatch(
+            "rerun", config_path, maxcores=maxcores, maxgpus=maxgpus, target=target, dry_run=dry_run
+        )
     )
 
 
@@ -256,11 +300,19 @@ def rerun_errors(
     config_path: ConfigArg,
     target: TargetArg = None,
     maxcores: MaxCoresOpt = None,
+    maxgpus: MaxGpusOpt = None,
     dry_run: DryRunOpt = False,
 ) -> None:
     """Re-attempt only one step's pending failed jobs (default: latest)."""
     raise typer.Exit(
-        _dispatch("rerun-errors", config_path, maxcores=maxcores, target=target, dry_run=dry_run)
+        _dispatch(
+            "rerun-errors",
+            config_path,
+            maxcores=maxcores,
+            maxgpus=maxgpus,
+            target=target,
+            dry_run=dry_run,
+        )
     )
 
 

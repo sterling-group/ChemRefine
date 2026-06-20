@@ -165,6 +165,22 @@ def test_maxcores_overrides_yaml_value(tmp_path: Path):
     assert result.exit_code == 0
 
 
+def test_maxgpus_overrides_yaml_value(tmp_path: Path):
+    """--maxgpus beats the YAML; dry-run echoes the resolved value."""
+    config_path = _write_config(tmp_path)
+    result = runner.invoke(app, ["run", str(config_path), "--maxgpus", "3", "--dry-run"])
+    assert result.exit_code == 0
+    assert "max_gpus=3" in result.stdout
+
+
+def test_maxgpus_omitted_shows_auto(tmp_path: Path):
+    """Without --maxgpus the YAML default (None) resolves to 'auto' in the dry-run."""
+    config_path = _write_config(tmp_path)
+    result = runner.invoke(app, ["run", str(config_path), "--dry-run"])
+    assert result.exit_code == 0
+    assert "max_gpus=auto" in result.stdout
+
+
 def test_maxcores_zero_is_rejected_before_anything_runs(tmp_path: Path):
     """The override is applied via ``model_copy`` (no re-validation), so the
     flag itself must enforce the ``>= 1`` floor — otherwise an invalid budget
