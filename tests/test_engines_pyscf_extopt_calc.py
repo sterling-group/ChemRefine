@@ -124,11 +124,20 @@ def test_pyscf_options_defaults():
     assert opt.method == "dft"
     assert opt.xc == "pbe"
     assert opt.basis == "def2-svp"
-    assert opt.df is False
-    assert opt.gpu is False
+    assert opt.df is True  # DF defaults on
+    assert opt.device == "cuda"
+    assert opt.gpu is True  # derived from device=cuda
     assert opt.save_tensors is False
     assert opt.localized is False
     assert opt.tensor_folder == "tensors"
+
+
+def test_pyscf_options_gpu_derived_from_device():
+    assert PyscfOptions(device="cpu").gpu is False
+    assert PyscfOptions(device="cuda").gpu is True
+    # An explicit gpu always wins over the device-derived default.
+    assert PyscfOptions(device="cuda", gpu=False).gpu is False
+    assert PyscfOptions(device="cpu", gpu=True).gpu is True
 
 
 def test_pyscf_options_rejects_empty_tensor_folder():
@@ -146,20 +155,34 @@ def test_pyscf_options_rejects_unknown_field():
         PyscfOptions(unknown_field=True)  # type: ignore[arg-type]
 
 
-def test_pyscf_options_from_raw_handles_none():
-    assert PyscfOptions.from_raw(None) == PyscfOptions()
+def test_pyscf_options_from_raw_requires_basis():
+    """The YAML must name a basis — no silent default on the user-facing path."""
+    with pytest.raises(ValueError, match="'basis' is required"):
+        PyscfOptions.from_raw(None)
+    with pytest.raises(ValueError, match="'basis' is required"):
+        PyscfOptions.from_raw({"method": "hf"})
+
+
+def test_pyscf_options_from_raw_requires_xc_for_dft():
+    """A dft step must name xc; hf does not need it."""
+    with pytest.raises(ValueError, match="'xc' is required"):
+        PyscfOptions.from_raw({"method": "dft", "basis": "def2-svp"})
+    # hf needs no xc.
+    assert PyscfOptions.from_raw({"method": "hf", "basis": "def2-svp"}).method == "hf"
 
 
 def test_pyscf_options_from_raw_round_trip():
-    # save_tensors requires an absolute tensor_folder (see the validator below).
+    # basis is required; save_tensors requires an absolute tensor_folder.
     raw = {
         "method": "hf",
+        "basis": "def2-svp",
         "save_tensors": True,
         "localized": True,
         "tensor_folder": "/abs/mytensors",
     }
     opt = PyscfOptions.from_raw(raw)
     assert opt.method == "hf"
+    assert opt.basis == "def2-svp"
     assert opt.save_tensors is True
     assert opt.localized is True
     assert opt.tensor_folder == "/abs/mytensors"
