@@ -104,15 +104,27 @@ one-line warning), so existing scripts keep working:
 | `chemrefine CONFIG --rerun_errors [N]`  | `chemrefine rerun-errors CONFIG [N]`  |
 | `--maxcores N`                      | `--maxcores N` (unchanged)               |
 
+## v2 default changes worth knowing
+
+A few defaults differ from earlier expectations (all overridable):
+
+- **`on_failure` defaults to `stop`** (was `skip`) — failures halt the run after caching successes rather
+  than being silently dropped. Set `on_failure: skip` per step to restore the drop-and-continue behaviour.
+- **`max_cores` defaults to `4`** (a safe local default) — raise it in the YAML or with `--maxcores`.
+- **`--maxgpus`** is a new flag mirroring `--maxcores` (overrides `max_gpus`).
+- **PySCF**: `basis` is now required (and `xc` is required for `method: dft`) — no silent level of theory;
+  `df` defaults **on**; `gpu` is derived from a new `device` knob (`cuda` ⇒ attempt GPU, with CPU fallback).
+- **Direct `pyscf` templates** can now read `$METHOD` / `$XC` / `$BASIS` (parity with direct `mlip`).
+
 ## Failure handling & recovery
 
 Each step takes `on_failure: stop | skip | best` (in the YAML). For a step where, say, 2 of 5 structures
 fail:
 
-- **`skip`** (default) — drop the 2 failures and continue with the 3 survivors.
+- **`stop`** (default) — run every structure to completion, cache the 3 successes, then **halt** before
+  the next step, so failures are never silently dropped.
+- **`skip`** — drop the 2 failures and continue with the 3 survivors.
 - **`best`** — keep all 5, backfilling the 2 failures with the best geometry obtained.
-- **`stop`** — run every structure to completion, cache the 3 successes, then **halt** before the next
-  step.
 
 The `_cache/failed_jobs.json` ledger records which structures failed under **every** policy (so you can
 always see them), but only a `stop` step leaves failures *pending*. To recover:

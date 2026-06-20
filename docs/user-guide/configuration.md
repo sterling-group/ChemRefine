@@ -43,8 +43,8 @@ steps:
 | `input` | path | `None` | Seed structures: an `.xyz` (one structure per frame), a directory of `.xyz`, or a `.csv` of SMILES (column `smiles`). Unset falls back to `templates/step1.xyz`. |
 | `charge` | int | `0` | Global molecular charge (per-step `charge` overrides). |
 | `multiplicity` | int ≥ 1 | `1` | Global spin multiplicity `2S+1` (per-step `multiplicity` overrides). |
-| `max_cores` | int ≥ 1 | `32` | Total CPU budget the throttler enforces across concurrent jobs. The `--maxcores` flag overrides this. |
-| `max_gpus` | int ≥ 0 / `None` | `None` (auto) | Concurrent-GPU budget. `None` auto-resolves: unlimited under SLURM (the scheduler places GPUs via `--gres`), the detected device count (`nvidia-smi -L`) locally. |
+| `max_cores` | int ≥ 1 | `4` | Total CPU budget the throttler enforces across concurrent jobs. The `--maxcores` flag overrides this. |
+| `max_gpus` | int ≥ 0 / `None` | `None` (auto) | Concurrent-GPU budget. `None` auto-resolves: unlimited under SLURM (the scheduler places GPUs via `--gres`), the detected device count (`nvidia-smi -L`) locally. The `--maxgpus` flag overrides this. |
 | `slurm_template` | str | `cpu.slurm.header` | Default SLURM header basename in `template_dir`. A GPU step auto-picks `cuda.slurm.header`. |
 | `slurm_array` | bool | `False` | Submit each step as SLURM job array(s) instead of one job per structure (ignored when running locally). |
 | `executables` | map | `{}` | Tool → binary-path map for external-binary engines, e.g. `{ orca: /opt/orca/orca }`. Importable backends (mlip, pyscf) need no entry. |
@@ -64,7 +64,7 @@ steps:
 | `options` | map | `{}` | Engine-specific knobs (see below). |
 | `sample` | map | `None` | Survivor filter (see below). `None` keeps every structure. |
 | `nms` | bool | `False` | Opt-in normal-mode sampling (honoured only when the engine `supports_nms`). |
-| `on_failure` | `stop`/`skip`/`best` | `skip` | What to do when some structures fail: `skip` drops them, `best` keeps all (backfilling the best geometry), `stop` halts after caching successes. |
+| `on_failure` | `stop`/`skip`/`best` | `stop` | What to do when some structures fail: `stop` (default) caches the successes then halts so failures are never silently dropped; `skip` drops them and continues; `best` keeps all (backfilling the best geometry). |
 
 ## Sample (survivor filter)
 
@@ -98,10 +98,11 @@ parent-ID group) and `temperature_k` (default `298.15`, used by Boltzmann).
     | Key | Default | Description |
     |-----|---------|-------------|
     | `method` | `dft` | `dft` or `hf`. |
-    | `xc` | `pbe` | Exchange-correlation functional (DFT). |
-    | `basis` | `def2-svp` | Orbital basis set. |
-    | `df` | `False` | Density fitting / RI. |
-    | `gpu` | `False` | Attempt `gpu4pyscf` if installed. |
+    | `xc` | — (**required** for `dft`) | Exchange-correlation functional. No silent default — name it explicitly. |
+    | `basis` | — (**required**) | Orbital basis set. No silent default — name it explicitly. |
+    | `df` | `True` | Density fitting / RI (defaults on — large speed-up, negligible cost). |
+    | `device` | `cuda` | Compute device; drives `gpu` when `gpu` is unset (`cuda` ⇒ attempt GPU). |
+    | `gpu` | derived from `device` | Attempt `gpu4pyscf` if installed (falls back to CPU). Set explicitly to override the `device`-derived default. |
     | `save_tensors` | `False` | Dump 1e/2e MO tensors after the SCF. |
     | `localized` | `False` | Boys-localize before tensor extraction. |
     | `tensor_folder` | `tensors` | Output dir for `save_tensors` `.npz`. **Must be an absolute path when `save_tensors` is set** — a relative path resolves under the per-job scratch and would be deleted. |

@@ -31,6 +31,7 @@ chemrefine run input.yaml --dry-run          # validate + describe; submit nothi
 | Flag | Applies to | Effect |
 |------|-----------|--------|
 | `--maxcores INT` | all run commands | Override `max_cores` from the YAML (≥ 1). Flag beats YAML. |
+| `--maxgpus INT` | all run commands | Override `max_gpus` from the YAML (≥ 0). Flag beats YAML; omit to keep the YAML value (`None` ⇒ auto-resolve). |
 | `--dry-run` | all run commands | Load and validate the config and describe the would-be actions; submit nothing. |
 | `-v`, `--verbose` | global | Debug-level logging. |
 | `--version` | global | Print the ChemRefine version and exit. |
