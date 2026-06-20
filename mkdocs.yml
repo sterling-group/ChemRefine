@@ -1,29 +1,134 @@
 site_name: ChemRefine
+site_description: Automated, interoperable manager for computational-chemistry workflows
+site_url: https://sterling-group.github.io/ChemRefine/
+repo_url: https://github.com/sterling-group/ChemRefine
+repo_name: sterling-group/ChemRefine
+copyright: Copyright &copy; 2026 Sterling Group
+
 theme:
   name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  icon:
+    repo: fontawesome/brands/github
 
 plugins:
   - search
   - mkdocstrings:
       handlers:
         python:
+          paths: [src]
           options:
-            # The explicit docstring sections in the tree (e.g. throttle.py)
-            # are numpy-style; free-prose docstrings parse fine under it too.
+            # ChemRefine docstrings are numpy-style (see throttle.py et al.) —
+            # do NOT switch to google; interrogate + these renders expect numpy.
             docstring_style: numpy
             show_source: false
+            show_root_heading: true
+            show_symbol_type_heading: true
             members_order: source
+            merge_init_into_class: true
+            show_if_no_docstring: false
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        # Render ```mermaid blocks as diagrams (mkdocs-material ships the JS).
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.arithmatex:
+      generic: true
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+  - def_list
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 nav:
   - Home: index.md
-  - Install: INSTALL.md
-  - Migrating from v1.3.1: migrating-from-main.md
+  - User Guide:
+      - user-guide/index.md
+      - Installation: user-guide/installation.md
+      - Configuration: user-guide/configuration.md
+      - CLI Reference: user-guide/cli.md
   - Tutorials:
-      - Overview: tutorials/index.md
+      - tutorials/index.md
       - Conformer Sampling: tutorials/conformer_sampling.md
       - Transition State Finding: tutorials/ts_finding.md
-      - Host-Guest Docking and Microsolvation: tutorials/host-guest.md
-      - MLIP Training and Normal Mode Sampling: tutorials/mlip_training.md
+      - Host-Guest Docking & Microsolvation: tutorials/host-guest.md
+      - MLIP Training & Normal-Mode Sampling: tutorials/mlip_training.md
       - Redox: tutorials/redox.md
       - Spin: tutorials/spin.md
-  - API Reference: api.md
+  - Concepts:
+      - concepts/index.md
+      - Architecture & Code Flow: concepts/architecture.md
+      - Caching & Resume: concepts/caching.md
+      - Filtering: concepts/filtering.md
+      - Normal-Mode Sampling: concepts/nms.md
+  - API Reference:
+      - api/index.md
+      - Core:
+          - Configuration: api/config.md
+          - Runtime State: api/state.md
+          - Errors: api/errors.md
+          - Quantities: api/quantities.md
+      - Pipeline:
+          - Orchestrator: api/pipeline.md
+          - Step Lifecycle: api/step.md
+          - Failure Policy: api/step_failures.md
+          - NMS Resolution: api/step_nms.md
+          - Filtering: api/filtering.md
+          - Recovery Actions: api/recovery.md
+      - Engines:
+          - Contract & Registry: api/engines_base.md
+          - ORCA: api/engines_orca.md
+          - MLIP: api/engines_mlip.md
+          - PySCF: api/engines_pyscf.md
+      - Infrastructure:
+          - SLURM: api/slurm.md
+          - Throttle: api/throttle.md
+          - Cache: api/cache.md
+          - Filesystem I/O: api/io.md
+          - Identifiers: api/ids.md
+          - Job Log: api/job_log.md
+  - Migrating from v1.3.1: migrating-from-main.md
+  - Developer Guide:
+      - developer/index.md
+      - Contributing: developer/contributing.md
+      - Adding an Engine: developer/adding-an-engine.md

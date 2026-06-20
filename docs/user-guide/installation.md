@@ -98,7 +98,7 @@ huggingface-cli login
 | `chemrefine: command not found` | Activate the env where you installed ChemRefine (`pip show chemrefine` to confirm). |
 | `ORCA not accessible` | Set `executables: { orca: ... }` in the YAML to an absolute path, or put ORCA on `$PATH`. |
 | `sbatch: command not found` | Either SLURM isn't installed locally — run the generated `.slurm` script with `bash` instead — or activate the cluster's SLURM module. |
-| `Server crashed during startup` (MLFF) | Check the per-job `server_${SLURM_JOB_ID}.log`; common causes are out-of-memory at model load or a missing HuggingFace token for FAIRChem. |
+| `Server crashed during startup` (MLIP) | Check the per-job `server_${SLURM_JOB_ID}.log`; common causes are out-of-memory at model load or a missing HuggingFace token for FAIRChem. |
 | `PackageNotFoundError: ChemRefine` at runtime | `pip install -e .` again — the editable install was removed. |
 
 ## License
@@ -108,5 +108,5 @@ ChemRefine is released under [AGPL v3](https://github.com/sterling-group/ChemRef
 ## Getting help
 
 - [Project issues](https://github.com/sterling-group/ChemRefine/issues) — search before opening a new one
-- [Example tutorials](tutorials/index.md)
+- [Example tutorials](../tutorials/index.md)
 - [Project README](https://github.com/sterling-group/ChemRefine#readme) for the elevator pitch

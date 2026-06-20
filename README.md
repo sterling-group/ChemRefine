@@ -27,7 +27,7 @@ pip install "fairchem-core @ git+https://github.com/sterling-group/fairchem-patc
 
 Requires Python 3.11–3.13 and ORCA 6+. SLURM is optional — the generated
 `.slurm` script runs unchanged under `bash` for local execution. The
-[install guide](https://sterling-group.github.io/ChemRefine/INSTALL/) covers the
+[install guide](https://sterling-group.github.io/ChemRefine/user-guide/installation/) covers the
 per-backend MLIP extras (MACE / FAIRChem / SevenNet / ORB / CHGNet), PySCF, and GPU setup.
 
 ## Run

@@ -21,7 +21,7 @@ ChemRefine automates spin exploration with the following workflow:
 
 ## Prerequisites
 
-- Installed **ChemRefine** (see [Installation Guide](../INSTALL.md))  
+- Installed **ChemRefine** (see [Installation Guide](../user-guide/installation.md))  
 - Access to an **ORCA executable**  
 - Example input (`input.yaml`) from this tutorial folder  
 - Initial structure (`step1.xyz`)  
