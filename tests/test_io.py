@@ -169,6 +169,18 @@ def test_save_step_csv_all_nan_energies_skips_write(tmp_path: Path):
     assert not path.exists()
 
 
+def test_save_step_csv_step_one_truncates_stale_file(tmp_path: Path):
+    """A step 1 with no finite energies removes a prior run's report.
+
+    Otherwise step 2 would append onto the stale step-1 rows from the
+    previous run instead of starting a fresh report.
+    """
+    stale = save_step_csv([-1.0], ["0"], step_number=1, output_dir=tmp_path)
+    assert stale.exists()
+    path = save_step_csv([float("nan")], ["0"], step_number=1, output_dir=tmp_path)
+    assert not path.exists()
+
+
 # ---------------------------------------------------------------------------
 # smiles_to_xyz error paths
 # ---------------------------------------------------------------------------

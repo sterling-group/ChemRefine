@@ -208,6 +208,12 @@ def save_step_csv(
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     path = out / filename
+    if step_number == 1:
+        # Step 1 starts a fresh report each run; later steps append to it.
+        # Truncate up front so a step 1 with no finite energies (the early
+        # return below) can't leave a prior run's stale rows for step 2 to
+        # append onto.
+        path.unlink(missing_ok=True)
 
     df = pd.DataFrame(
         {
