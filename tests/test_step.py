@@ -185,42 +185,6 @@ def test_cache_load_after_run_returns_results(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# NMS reuse fingerprint
-# ---------------------------------------------------------------------------
-
-
-def test_nms_reuse_fingerprint_ignores_search_params():
-    from chemrefine.step_nms import nms_reuse_fingerprint
-
-    base = StepConfig(
-        step=1,
-        engine="orca",
-        operation="freq",
-        nms=True,
-        options={"target": "minimum", "displacement_value": 1.0},
-    )
-    tuned = base.model_copy(update={"options": {"target": "minimum", "displacement_value": 2.0}})
-    assert nms_reuse_fingerprint(base, ("0",)) == nms_reuse_fingerprint(tuned, ("0",))
-
-
-def test_nms_reuse_fingerprint_changes_on_criterion():
-    from chemrefine.step_nms import nms_reuse_fingerprint
-
-    mn = StepConfig(
-        step=1, engine="orca", operation="freq", nms=True, options={"target": "minimum"}
-    )
-    ts = mn.model_copy(update={"options": {"target": "ts"}})
-    assert nms_reuse_fingerprint(mn, ("0",)) != nms_reuse_fingerprint(ts, ("0",))
-
-
-def test_nms_reuse_fingerprint_empty_for_non_nms():
-    from chemrefine.step_nms import nms_reuse_fingerprint
-
-    plain = StepConfig(step=1, engine="orca", operation="opt_sp")
-    assert nms_reuse_fingerprint(plain, ("0",)) == ""
-
-
-# ---------------------------------------------------------------------------
 # on_failure policy + per-structure failure capture
 # ---------------------------------------------------------------------------
 
@@ -279,9 +243,6 @@ def _register_fail_engine():
                     )
                 )
             return StepResults(structures=tuple(out))
-
-        def normal_mode_sample(self, results, ctx):
-            raise NotImplementedError
 
         def input_digest(self, ctx):
             return ""
@@ -428,9 +389,6 @@ def _register_conv_engine():
                 )
             return StepResults(structures=tuple(out))
 
-        def normal_mode_sample(self, results, ctx):
-            raise NotImplementedError
-
         def input_digest(self, ctx):
             return ""
 
@@ -512,79 +470,69 @@ def test_resume_retries_unconverged_again_into_next_attempt(tmp_path: Path):
         ENGINES.pop("conv-retry", None)
 
 
+def test_check_nms_freq_gate_rejects_when_input_computes_no_frequencies(tmp_path: Path):
+    """B9 (generic): nms + no explicit operation + an input that computes no frequencies."""
+    import pytest
+
+    from chemrefine.engines.base import NmsInputInfo
+    from chemrefine.errors import ConfigError
+    from chemrefine.step import _check_nms_freq_gate, build_context
+
+    class _NoFreqEngine:
+        def nms_input_info(self, ctx):
+            return NmsInputInfo(is_transition_state=False, computes_frequencies=False)
+
+    cfg = _config(tmp_path, engine="orca", nms=True, operation=None)  # no explicit operation
+    ctx = build_context(cfg, cfg.steps[0], _seed_state([]))
+    with pytest.raises(ConfigError, match="frequency"):
+        _check_nms_freq_gate(_NoFreqEngine(), ctx, cfg.steps[0])  # type: ignore[arg-type]
+
+    class _FreqEngine:
+        def nms_input_info(self, ctx):
+            return NmsInputInfo(is_transition_state=False, computes_frequencies=True)
+
+    assert _check_nms_freq_gate(_FreqEngine(), ctx, cfg.steps[0]) is None  # type: ignore[arg-type]
+
+
 def test_archive_failed_attempt_numbers_sequentially(tmp_path: Path):
     """Numbered attempt dirs: next-free K, never blocked by an existing/odd one."""
-    from chemrefine import step
+    from chemrefine import step_failures
 
     sid_dir = tmp_path / "0"
     sid_dir.mkdir()
     (sid_dir / "step1_0.out").write_text("fail", encoding="utf-8")
-    dest = step._archive_failed_attempt(sid_dir)
+    dest = step_failures.archive_failed_attempt(sid_dir)
     assert dest.name == "attempt1"
     assert (dest / "step1_0.out").is_file()  # the loose file moved in
     assert not (sid_dir / "step1_0.out").exists()
 
     (sid_dir / "step1_0.out").write_text("fail2", encoding="utf-8")
-    assert step._archive_failed_attempt(sid_dir).name == "attempt2"  # next free
+    assert step_failures.archive_failed_attempt(sid_dir).name == "attempt2"  # next free
 
     # A manually-added higher attempt + a non-matching 'attempt*' dir: K = max+1,
     # the odd dir is ignored, and existing attempt dirs are left in place.
     (sid_dir / "attempt5").mkdir()
     (sid_dir / "attemptX").mkdir()  # matches the glob but not attempt<digits>
     (sid_dir / "step1_0.out").write_text("fail3", encoding="utf-8")
-    assert step._archive_failed_attempt(sid_dir).name == "attempt6"
+    assert step_failures.archive_failed_attempt(sid_dir).name == "attempt6"
     assert (sid_dir / "attempt1").is_dir() and (sid_dir / "attempt5").is_dir()
 
 
-def test_resolve_nms_keeps_resolved_drops_unresolved(tmp_path: Path):
-    """resolve_nms: already-resolved pass-through + resolved children kept;
-    a round-1 parent with no resolved child becomes a (ledgered) failure."""
-    from chemrefine import cache
-    from chemrefine.state import StepResults
-    from chemrefine.step import build_context
-    from chemrefine.step_nms import resolve_nms
-
-    cfg = _config(tmp_path, engine="orca", operation="freq", nms=True)
-    ctx = build_context(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]))
-    ctx.step_dir.mkdir(parents=True, exist_ok=True)
-    round1 = StepResults(
-        structures=tuple(
-            Structure(id=i, atoms=Atoms("H"), energy_hartree=-1.0) for i in ["0", "1", "2"]
-        )
-    )
-
-    def _r(sid, parent, e, conv):
-        return Structure(
-            id=sid,
-            atoms=Atoms("H"),
-            parent_id=parent,
-            energy_hartree=e,
-            converged=conv,
-            terminated=True,
-        )
-
-    nms_results = StepResults(
-        structures=(
-            _r("0", None, -1.0, True),  # already at the target (round-1 id)
-            _r("1_m5_pos", "1", -1.1, True),  # "1" → one resolved child
-            _r("1_m5_neg", "1", -1.0, False),  #        one not
-            _r("2_m5_pos", "2", -0.9, False),  # "2" → both children unresolved
-            _r("2_m5_neg", "2", -0.8, False),
-        )
-    )
-    out = resolve_nms(nms_results, round1, ctx, cfg.steps[0])
-    assert {s.id for s in out.structures} == {"0", "1_m5_pos"}
-    assert cache.load_failed_jobs(ctx.step_dir) == [
-        {"structure_id": "2", "reason": "NMS: target stationary point not reached"}
-    ]
-
-
-def test_run_step_nms_branch_runs_when_engine_supports_it(tmp_path: Path):
-    """The NMS branch in run_step fires when both step_cfg.nms and engine.supports_nms are true."""
-    from chemrefine.engines.base import ENGINES, register
+def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypatch):
+    """run_step routes an `nms: true` step through the generic coordinator (nms.run_nms),
+    then applies the on_failure policy to its survivors/failures."""
+    from chemrefine import nms as nms_mod
+    from chemrefine.engines.base import ENGINES, FrequencyData, NmsInputInfo, register
     from chemrefine.state import JobBatch, StepInputs, StepResults
+    from chemrefine.step_failures import NmsResolution
 
-    nms_calls: list[int] = []
+    calls: list[int] = []
+
+    def _fake_run_nms(engine, round1, failures, ctx, step_cfg):
+        calls.append(1)
+        return NmsResolution(survivors=round1.structures, failures=tuple(failures))
+
+    monkeypatch.setattr(nms_mod, "run_nms", _fake_run_nms)
 
     @register("fake-nms")
     class _NmsEngine:
@@ -602,20 +550,21 @@ def test_run_step_nms_branch_runs_when_engine_supports_it(tmp_path: Path):
             return None
 
         def parse(self, inputs, ctx):
-            return StepResults(structures=tuple(ctx.prev_state.structures))
-
-        def normal_mode_sample(self, results, ctx):
-            nms_calls.append(1)
-            return results
+            return StepResults(structures=())
 
         def input_digest(self, ctx):
             return ""
 
+        def nms_input_info(self, ctx):
+            return NmsInputInfo(is_transition_state=False, computes_frequencies=True)
+
+        def read_frequencies(self, structure_id, step_dir, ctx):
+            return FrequencyData(imaginary={}, modes=None)
+
     try:
         cfg = _config(tmp_path, engine="fake-nms", nms=True)
-        engine = ENGINES["fake-nms"]()
-        run_step(cfg, cfg.steps[0], _seed_state(["0"]), engine=engine)
-        assert nms_calls == [1]
+        run_step(cfg, cfg.steps[0], _seed_state(["0"]), engine=ENGINES["fake-nms"]())
+        assert calls == [1]
     finally:
         ENGINES.pop("fake-nms", None)
 

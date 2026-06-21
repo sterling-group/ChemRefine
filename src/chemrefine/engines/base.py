@@ -63,8 +63,12 @@ import hashlib
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Protocol, runtime_checkable
+
+import numpy as np
+from numpy.typing import NDArray
 
 from chemrefine import slurm, throttle
 from chemrefine.errors import ConfigError, EngineNotFoundError
@@ -85,11 +89,11 @@ _LOCAL_POLL_SECONDS = 0.25
 class CalculationEngine(Protocol):
     """Structural contract every engine must satisfy.
 
-    The five lifecycle methods mirror the five stages
-    :func:`chemrefine.step.run_step` calls in order. ``supports_nms`` is
-    a class-level boolean: when ``True``, :meth:`normal_mode_sample` is
-    invoked between :meth:`parse` and filtering for steps that set
-    ``nms: true`` in their YAML.
+    The four lifecycle methods mirror the stages :func:`chemrefine.step.run_step`
+    calls in order. ``supports_nms`` is a class-level boolean gate: when ``True``
+    (and the step sets ``nms: true``), the generic NMS coordinator
+    (:mod:`chemrefine.nms`) drives the engine through the two extra hooks of
+    :class:`NmsCapableEngine` between :meth:`parse` and filtering.
     """
 
     name: str
@@ -111,10 +115,6 @@ class CalculationEngine(Protocol):
         """Parse each output file into a :class:`~chemrefine.state.Structure`."""
         ...
 
-    def normal_mode_sample(self, results: StepResults, ctx: StepContext) -> StepResults:
-        """Expand a frequency-step result by displacing along imaginary modes."""
-        ...
-
     def input_digest(self, ctx: StepContext) -> str:
         """Digest of this step's resolved input template, or ``""`` if it has none.
 
@@ -123,6 +123,55 @@ class CalculationEngine(Protocol):
         fingerprint, yet the template now also drives ORCA's run-type
         detection when ``operation`` is omitted.
         """
+        ...
+
+
+@dataclass(frozen=True)
+class FrequencyData:
+    """Imaginary frequencies + normal-mode tensor parsed from one output.
+
+    The engine-specific half of NMS (see :class:`NmsCapableEngine`): ``imaginary`` maps
+    a mode index to its frequency (cm⁻¹); ``None`` means the output had **no** frequency
+    table at all — distinct from ``{}`` (a parsed table with zero imaginary modes), so a
+    run that never produced frequencies can't be mistaken for a verified minimum.
+    ``modes`` is the normal-mode displacement tensor (``None`` if absent).
+    """
+
+    imaginary: dict[int, float] | None
+    modes: NDArray[np.float64] | None
+
+
+@dataclass(frozen=True)
+class NmsInputInfo:
+    """What an engine's configured input does, for the generic NMS coordinator.
+
+    ``is_transition_state`` drives the default NMS target (``ts`` vs ``minimum``);
+    ``computes_frequencies`` gates NMS (a step that won't produce frequencies cannot be
+    resolved). Both are read from the engine's own input (ORCA: its template keywords).
+    """
+
+    is_transition_state: bool
+    computes_frequencies: bool
+
+
+@runtime_checkable
+class NmsCapableEngine(CalculationEngine, Protocol):
+    """An engine that supports normal-mode sampling, via just two hooks.
+
+    The two-round NMS algorithm — displacement, round-2 submission, resolution, retry —
+    is engine-independent and lives in :mod:`chemrefine.nms`, which drives any engine
+    through these two hooks plus the standard lifecycle. A new NMS-capable engine sets
+    ``supports_nms = True`` and implements only these.
+    """
+
+    def nms_input_info(self, ctx: StepContext) -> NmsInputInfo:
+        """Introspect this step's configured input (TS search? computes frequencies?)."""
+        ...
+
+    def read_frequencies(
+        self, structure_id: str, step_dir: Path, ctx: StepContext
+    ) -> FrequencyData:
+        """Read a structure's imaginary frequencies + normal modes from its output."""
         ...
 
 
@@ -173,8 +222,8 @@ class SlurmBatchEngine:
     * :meth:`_extra_header_fields` — optional runlog header rows.
     * ``output_globs`` / ``template_suffix`` / ``label`` ClassVars.
 
-    ``prepare`` / ``parse`` / ``normal_mode_sample`` stay engine-specific, so
-    a subclass still satisfies :class:`CalculationEngine` structurally.
+    ``prepare`` / ``parse`` stay engine-specific, so a subclass still satisfies
+    :class:`CalculationEngine` structurally.
     """
 
     output_globs: ClassVar[tuple[str, ...]]

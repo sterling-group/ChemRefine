@@ -60,9 +60,6 @@ def test_register_decorator_adds_entry_and_returns_class():
         def parse(self, inputs, ctx):
             return None
 
-        def normal_mode_sample(self, results, ctx):
-            return None
-
     try:
         assert ENGINES["temp-test-engine"] is _TempEngine
     finally:

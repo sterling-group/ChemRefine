@@ -1,8 +1,10 @@
 # ORCA Engine
 
 The standard DFT engine and its supporting modules: input generation, output
-parsing, frequency parsing, normal-mode displacement, and the ORCA-driven ExtOpt
-base.
+parsing, frequency parsing, template inspection, and the ORCA-driven ExtOpt base.
+NMS itself is engine-independent ([Normal-Mode Sampling](nms.md)); this engine only
+supplies the two NMS hooks (`nms_input_info` + `read_frequencies`) on the engine
+class below.
 
 ## Engine
 
@@ -20,9 +22,9 @@ base.
 
 ::: chemrefine.engines.orca.frequencies
 
-## Normal-mode displacement
+## Template inspection
 
-::: chemrefine.engines.orca.nms
+::: chemrefine.engines.orca.inspect
 
 ## ExtOpt base + protocol
 

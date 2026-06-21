@@ -19,8 +19,9 @@ Config → bootstrap → run_step (cache | engine lifecycle) → filtering → P
 
 - [Orchestrator](pipeline.md) — `bootstrap` + `run`
 - [Step Lifecycle](step.md) — `run_step` and the cache/rebuild paths
-- [Failure Policy](step_failures.md) — `stop` / `skip` / `best` resolution
-- [NMS Resolution](step_nms.md) — two-round normal-mode-sampling orchestration
+- [Failure Policy](step_failures.md) — `stop` / `skip` / `best` resolution + the
+  shared attempt/retry primitive
+- [Normal-Mode Sampling](nms.md) — engine-independent two-round NMS coordinator
 - [Filtering](filtering.md) — survivor selection
 - [Recovery Actions](recovery.md) — the `run` / `resume` / `rerun…` dispatcher
 
@@ -28,7 +29,7 @@ Config → bootstrap → run_step (cache | engine lifecycle) → filtering → P
 
 - [Contract & Registry](engines_base.md) — the `CalculationEngine` Protocol, the
   `ENGINES` registry, and the `SlurmBatchEngine` base
-- [ORCA](engines_orca.md) — input generation, output parsing, frequencies, NMS, ExtOpt
+- [ORCA](engines_orca.md) — input generation, output parsing, frequencies, the NMS hooks, ExtOpt
 - [MLIP](engines_mlip.md) — direct / ExtOpt / training engines + backend dispatcher
 - [PySCF](engines_pyscf.md) — direct / ExtOpt engines + the SCF runtime
 

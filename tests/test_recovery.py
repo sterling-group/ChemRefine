@@ -193,9 +193,6 @@ def _register_flaky():
                 )
             return StepResults(structures=tuple(out))
 
-        def normal_mode_sample(self, results, ctx):
-            raise NotImplementedError
-
         def input_digest(self, ctx):
             return ""
 
@@ -337,14 +334,17 @@ def test_resume_does_not_reattempt_skip_step(tmp_path: Path):
 
 
 def _register_fake_nms():
-    """A two-round NMS fake: ``resolved`` controls which parents resolve;
-    ``fail_round1`` produce no round-1 output; ``submitted``/``nms_seen`` log
-    round-1 submissions and which parents reached the NMS stage."""
+    """A two-round NMS fake driven through the engine hooks (``nms_input_info`` +
+    ``read_frequencies``); the generic coordinator does the displacement. ``resolved``
+    controls which parents' displaced children resolve; ``fail_round1`` produce no
+    round-1 output; ``submitted`` logs round-1 (parent) submissions and ``nms_seen``
+    the parents that reached the NMS stage."""
     from typing import ClassVar
 
+    import numpy as np
     from ase import Atoms
 
-    from chemrefine.engines.base import register
+    from chemrefine.engines.base import FrequencyData, NmsInputInfo, register
     from chemrefine.ids import structure_artifact_path
     from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
 
@@ -371,7 +371,8 @@ def _register_fake_nms():
 
         def submit(self, inputs, ctx):
             for _inp, out, sid in inputs.files:
-                _FakeNms2.submitted.append(sid)
+                if "_m" not in sid:  # a round-1 (parent) submission, not a displaced child
+                    _FakeNms2.submitted.append(sid)
                 if sid not in _FakeNms2.fail_round1:
                     out.parent.mkdir(parents=True, exist_ok=True)
                     out.write_text("E -1.0\n", encoding="utf-8")
@@ -396,23 +397,22 @@ def _register_fake_nms():
                 )
             return StepResults(structures=tuple(out))
 
-        def normal_mode_sample(self, round1, ctx):
-            _FakeNms2.nms_seen.extend(s.id for s in round1.structures)
-            children = [
-                Structure(
-                    id=f"{s.id}_c",
-                    atoms=s.atoms,
-                    parent_id=s.id,
-                    energy_hartree=-1.0,
-                    terminated=True,
-                    converged=(s.id in _FakeNms2.resolved),
-                )
-                for s in round1.structures
-            ]
-            return StepResults(structures=tuple(children))
-
         def input_digest(self, ctx):
             return ""
+
+        def nms_input_info(self, ctx):
+            return NmsInputInfo(is_transition_state=False, computes_frequencies=True)
+
+        def read_frequencies(self, structure_id, step_dir, ctx):
+            if "_m" in structure_id:  # a displaced child: resolved iff its parent is
+                parent = structure_id.split("_m")[0]
+                return FrequencyData(
+                    imaginary={} if parent in _FakeNms2.resolved else {3: -9.0}, modes=None
+                )
+            _FakeNms2.nms_seen.append(structure_id)  # a round-1 parent reaching NMS
+            modes = np.zeros((1, 3, 6))
+            modes[0, 0, 5] = 0.1
+            return FrequencyData(imaginary={5: -42.0}, modes=modes)
 
     return _FakeNms2
 
@@ -444,7 +444,8 @@ def test_resume_after_tuning_reattempts_only_unresolved(tmp_path: Path):
         assert cache.load_failed_jobs(step_dir) == [
             {"structure_id": "1", "reason": "NMS: target stationary point not reached"}
         ]
-        assert {s.id for s in cache.load(step_dir).results.structures} == {"0_c"}
+        # Unified model: the survivor keeps the parent's id (resolved geometry), not a child id.
+        assert {s.id for s in cache.load(step_dir).results.structures} == {"0"}
 
         eng.resolved = {"0", "1"}  # new distance resolves "1"
         eng.submitted, eng.nms_seen = [], []
@@ -452,7 +453,7 @@ def test_resume_after_tuning_reattempts_only_unresolved(tmp_path: Path):
         assert eng.submitted == []  # round-1 freq reused, not resubmitted
         assert eng.nms_seen == ["1"]  # only the unresolved parent re-attempted
         assert cache.load_failed_jobs(step_dir) == []
-        assert {s.id for s in cache.load(step_dir).results.structures} == {"0_c", "1_c"}
+        assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
     finally:
         eng.resolved, eng.fail_round1, eng.submitted, eng.nms_seen = set(), set(), [], []
         ENGINES.pop("fake-nms2", None)
@@ -482,7 +483,7 @@ def test_reattempt_resubmits_missing_round1(tmp_path: Path):
         execute(cfg, Action.RESUME)  # same config → full-valid + ledger → reattempt_nms
         assert eng.submitted == ["1"]  # round-1 resubmitted only for the missing one
         assert cache.load_failed_jobs(step_dir) == []
-        assert {s.id for s in cache.load(step_dir).results.structures} == {"0_c", "1_c"}
+        assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
     finally:
         eng.resolved, eng.fail_round1, eng.submitted, eng.nms_seen = set(), set(), [], []
         ENGINES.pop("fake-nms2", None)

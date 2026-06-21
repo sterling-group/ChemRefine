@@ -183,13 +183,14 @@ def test_parse_text_rejects_non_text_operation():
 # --- mlip-train engine no-op / unsupported ----------------------------------
 
 
-def test_mlip_train_engine_wait_and_nms(tmp_path: Path):
-    from chemrefine.engines.base import get_engine
+def test_mlip_train_engine_wait_and_not_nms_capable(tmp_path: Path):
+    from chemrefine.engines.base import NmsCapableEngine, get_engine
 
     eng = get_engine("mlip-train")
     assert eng.wait(JobBatch(jobs={})) is None
-    with pytest.raises(NotImplementedError):
-        eng.normal_mode_sample(StepResults(structures=()), _ctx(tmp_path))
+    # mlip-train is a pass-through: it neither supports NMS nor satisfies the hook contract.
+    assert eng.supports_nms is False
+    assert not isinstance(eng, NmsCapableEngine)
 
 
 def test_trainer_rejects_valid_fraction_leaving_no_training(tmp_path: Path):
@@ -342,7 +343,7 @@ def test_build_orb_older_layout(monkeypatch):
     assert _build_orb(model_name="orb_v2", device="cpu") == "OLD_CALC"
 
 
-# --- no-manifest guards (step / step_nms) -----------------------------------
+# --- no-manifest guards (step / nms) ----------------------------------------
 
 
 def test_rebuild_cache_step_raises_without_manifest(tmp_path: Path):
@@ -364,24 +365,22 @@ def test_resubmit_failed_raises_without_manifest(tmp_path: Path):
 
 
 def test_reattempt_nms_raises_without_manifest(tmp_path: Path):
-    from chemrefine import step_nms
+    from chemrefine import nms
     from chemrefine.engines.base import get_engine
 
     ctx = _ctx(tmp_path, nms=True, engine="orca")
     ctx.step_dir.mkdir(parents=True, exist_ok=True)  # no manifest written
     with pytest.raises(CacheError, match="no manifest"):
-        step_nms.reattempt_nms(get_engine("orca"), ctx, ctx.step_cfg, None, ())
+        nms.reattempt_nms(get_engine("orca"), ctx, ctx.step_cfg, None, ())  # type: ignore[arg-type]
 
 
 def test_rebuild_cache_step_nms_branch(tmp_path: Path):
-    """rebuild-cache on an NMS step re-resolves from the on-disk round-1 outputs."""
-    from synthetic import (
-        FREQUENCY_BLOCK,
-        NORMAL_MODES_BLOCK_2_ATOMS,
-        synthetic_dft_output,
-    )
+    """rebuild-cache routes an NMS step through nms.rebuild_nms (here: an already-resolved
+    round-1, so the survivor passes through at its canonical id)."""
+    from synthetic import synthetic_dft_output
 
     from chemrefine import cache, step
+    from chemrefine.ids import structure_artifact_path
 
     template_dir = tmp_path / "templates"
     template_dir.mkdir(parents=True, exist_ok=True)
@@ -395,44 +394,45 @@ def test_rebuild_cache_step_nms_branch(tmp_path: Path):
         ],
     )
     step_cfg = cfg.steps[0]
-    step_dir = cfg.output_dir / step_cfg.dir_name()
-    step_dir.mkdir(parents=True, exist_ok=True)
-    out = step_dir / "step1_structure_0.out"
+    step_dir = (cfg.output_dir / step_cfg.dir_name()).resolve()
+    out = structure_artifact_path(step_dir, 1, "0", "out")
+    inp = structure_artifact_path(step_dir, 1, "0", "inp")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    # A frequency table with NO imaginary modes ⇒ already at the minimum ⇒ resolved.
     out.write_text(
         synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)])
-        + FREQUENCY_BLOCK
-        + NORMAL_MODES_BLOCK_2_ATOMS
+        + "VIBRATIONAL FREQUENCIES\n-----------------------\n     6:    100.00 cm**-1\n"
         + "\n****ORCA TERMINATED NORMALLY****\n",
         encoding="utf-8",
     )
-    inp = step_dir / "step1_structure_0.inp"
-    inp.write_text("! freq\n", encoding="utf-8")
+    inp.write_text("! Opt Freq\n", encoding="utf-8")
     cache.save_manifest(
         StepInputs(files=((inp, out, "0"),)), step_dir, operation="freq", engine="orca"
     )
     seed = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
     outcome = step.rebuild_cache_step(cfg, step_cfg, PipelineState(structures=(seed,)))
     assert outcome.cache_hit is False
+    assert {s.id for s in outcome.state.structures} == {"0"}  # resolved, id kept
 
 
 # --- _nms_reuse_outcome (NMS reuse-fingerprint path) ------------------------
 
 
 def _pin_nms(monkeypatch, fp: str = "FP") -> None:
-    """Pin ``step_nms``'s reuse fingerprint + re-attempt result for these tests.
+    """Pin the NMS reuse fingerprint + re-attempt result for these tests.
 
-    ``step.py`` calls through the ``step_nms`` module object, so patching the
+    ``step.py`` calls through the :mod:`chemrefine.nms` module object, so patching the
     module attributes redirects the orchestrator without touching its code.
     """
-    from chemrefine import step_nms
+    from chemrefine import nms
 
     monkeypatch.setattr(
-        step_nms,
+        nms,
         "nms_reuse_fingerprint",
         lambda step_cfg, parent_ids, *, parents_digest="", template_digest="": fp,
     )
     monkeypatch.setattr(
-        step_nms,
+        nms,
         "reattempt_nms",
         lambda engine, ctx, step_cfg, cached, parent_ids: StepResults(
             structures=(

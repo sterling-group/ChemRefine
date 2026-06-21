@@ -9,8 +9,7 @@ logic below is identical.
 Subclasses set two ClassVars and inherit the rest:
 
 * ``name`` — registry / YAML tag (``"pyscf"``, ``"mlip"``). Becomes the
-  ``@register`` argument and the trailing word in the
-  ``normal_mode_sample`` ``NotImplementedError``.
+  ``@register`` argument.
 * ``label`` — human backend label used in every parse / template
   error message (``"PySCF"``, ``"MLIP"``).
 
@@ -145,10 +144,6 @@ class TemplateScriptEngine(SlurmBatchEngine):
                 f"{self.label} output {out_path} missing required 'energy_hartree' field"
             )
         return data
-
-    def normal_mode_sample(self, results: StepResults, ctx: StepContext) -> StepResults:
-        """Not supported — the orchestrator gates this on ``supports_nms``."""
-        raise NotImplementedError(f"{self.name} does not support normal-mode sampling")
 
 
 # ---------------------------------------------------------------------------

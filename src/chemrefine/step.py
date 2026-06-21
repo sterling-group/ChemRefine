@@ -8,26 +8,23 @@ lifecycle methods are called. :func:`run_step` is intentionally short
 * Filtering:           :mod:`chemrefine.filtering`
 * Engine lookup:  :mod:`chemrefine.engines.base`
 * Failure vocabulary + ``on_failure`` policy:  :mod:`chemrefine.step_failures`
-* NMS resolution / recovery:  :mod:`chemrefine.step_nms`
+* NMS resolution / recovery (engine-independent):  :mod:`chemrefine.nms`
 """
 
 from __future__ import annotations
 
 import logging
-import re
-import shutil
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
-from chemrefine import __version__, cache, filtering, step_failures, step_nms
+from chemrefine import __version__, cache, filtering, nms, step_failures
 from chemrefine.config import Config, StepConfig
-from chemrefine.engines.base import CalculationEngine, get_engine
-from chemrefine.errors import CacheError, ChemRefineError
-from chemrefine.state import PipelineState, StepContext, StepInputs, StepResults, Structure
+from chemrefine.engines.base import CalculationEngine, NmsCapableEngine, get_engine
+from chemrefine.errors import CacheError, ChemRefineError, ConfigError
+from chemrefine.state import PipelineState, StepContext, StepInputs, StepResults
 
 logger = logging.getLogger(__name__)
-
-_ATTEMPT_DIR_RE = re.compile(r"attempt(\d+)$")
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +159,7 @@ def _cached_outcome(
         and (resubmit_step is None or resubmit_step == step_cfg.step)
     ):
         results = (
-            step_nms.reattempt_nms(engine, ctx, step_cfg, cached, parent_ids)
+            nms.reattempt_nms(cast(NmsCapableEngine, engine), ctx, step_cfg, cached, parent_ids)
             if is_nms
             else _resubmit_failed(engine, ctx, step_cfg, failed, parent_ids)
         )
@@ -193,13 +190,15 @@ def _nms_reuse_outcome(
         cached = None
     digest = cache.parents_digest(ctx.prev_state.structures)
     template_digest = engine.input_digest(ctx)
-    fingerprint = step_nms.nms_reuse_fingerprint(
+    fingerprint = nms.nms_reuse_fingerprint(
         step_cfg, parent_ids, parents_digest=digest, template_digest=template_digest
     )
     if cached is None or getattr(cached, "reuse_fingerprint", "") != fingerprint:
         return None
     if cache.load_failed_jobs(ctx.step_dir):
-        results = step_nms.reattempt_nms(engine, ctx, step_cfg, cached, parent_ids)
+        results = nms.reattempt_nms(
+            cast(NmsCapableEngine, engine), ctx, step_cfg, cached, parent_ids
+        )
     else:
         logger.info(
             "step %d: NMS search params changed, all resolved — reusing cache", step_cfg.step
@@ -226,7 +225,9 @@ def _run_full_step(
     *,
     is_nms: bool,
 ) -> StepOutcome:
-    """Run the engine's full lifecycle (prepare → submit → parse → nms/policy → cache)."""
+    """Run the engine's full lifecycle (prepare → submit → parse → retry → nms/policy → cache)."""
+    if is_nms:
+        _check_nms_freq_gate(cast(NmsCapableEngine, engine), ctx, step_cfg)
     logger.info("step %d (%s): preparing inputs", step_cfg.step, step_cfg.engine)
     inputs = engine.prepare(ctx)
     cache.save_manifest(inputs, ctx.step_dir, operation=step_cfg.operation, engine=step_cfg.engine)
@@ -237,24 +238,20 @@ def _run_full_step(
 
     logger.info("step %d: parsing outputs", step_cfg.step)
     successes, failures = step_failures.parse_with_failures(engine, inputs, ctx)
+    # Round-1 convergence failures are retried from best before NMS / the policy.
+    successes, failures = step_failures.retry_unconverged(engine, ctx, successes, failures)
 
     if is_nms:
-        # Run NMS on the round-1 survivors, then apply the failure policy once
-        # over BOTH round-1 job failures and NMS-unresolved parents (a single
-        # ledger write — otherwise the NMS resolution would clobber the round-1
-        # failures).
         logger.info("step %d: running normal-mode sampling", step_cfg.step)
-        round1 = StepResults(structures=tuple(successes))
-        results = step_nms.resolve_nms(
-            engine.normal_mode_sample(round1, ctx),
-            round1,
+        resolution = nms.run_nms(
+            cast(NmsCapableEngine, engine),
+            StepResults(structures=tuple(successes)),
+            failures,
             ctx,
             step_cfg,
-            round1_failures=failures,
         )
-    else:
-        successes, failures = _retry_unconverged(engine, ctx, step_cfg, successes, failures)
-        results = step_failures.apply_failure_policy(successes, failures, ctx, step_cfg)
+        successes, failures = list(resolution.survivors), list(resolution.failures)
+    results = step_failures.apply_failure_policy(successes, failures, ctx, step_cfg)
 
     digest = cache.parents_digest(ctx.prev_state.structures)
     template_digest = engine.input_digest(ctx)
@@ -264,13 +261,31 @@ def _run_full_step(
         results=results,
         step_dir=ctx.step_dir,
         chemrefine_version=__version__,
-        reuse_fingerprint=step_nms.nms_reuse_fingerprint(
+        reuse_fingerprint=nms.nms_reuse_fingerprint(
             step_cfg, parent_ids, parents_digest=digest, template_digest=template_digest
         ),
         parents_digest=digest,
         template_digest=template_digest,
     )
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
+
+
+def _check_nms_freq_gate(engine: NmsCapableEngine, ctx: StepContext, step_cfg: StepConfig) -> None:
+    """B9: reject an ``nms: true`` step whose input computes no frequencies.
+
+    NMS acts on imaginary modes, so a step that won't produce frequencies can only
+    ever leave every structure unresolved — caught here before any job is submitted.
+    An explicit ``operation`` bypasses the check (the user's override for when input
+    inspection misreads the template).
+    """
+    if step_cfg.operation is not None:
+        return
+    if not engine.nms_input_info(ctx).computes_frequencies:
+        raise ConfigError(
+            f"step {step_cfg.step}: `nms: true` needs a frequency calculation, but the "
+            f"input computes none. Request frequencies (e.g. ORCA `! Opt Freq`), or set "
+            f"`operation` explicitly to override."
+        )
 
 
 def halt_if_pending(config: Config, step_cfg: StepConfig, resubmit_step: int | None) -> None:
@@ -300,9 +315,10 @@ def rebuild_cache_step(
     """Rebuild one step's cache from outputs already on disk — **no submission**.
 
     Re-parses the step's existing outputs (via its manifest), re-applies the
-    ``on_failure`` policy and — for NMS steps — re-resolves from the existing
-    ``nms/`` round-2 outputs, then rewrites the ``StepCache`` with the same
-    fingerprint a normal run would produce. Backs ``chemrefine rebuild-cache``.
+    ``on_failure`` policy and — for NMS steps — re-resolves from the displaced
+    children already on disk (under each structure's latest ``attemptK/``), then
+    rewrites the ``StepCache`` with the same fingerprint a normal run would produce.
+    Backs ``chemrefine rebuild-cache``.
     """
     ctx = build_context(config, step_cfg, prev_state)
     parent_ids = tuple(s.id for s in prev_state.structures)
@@ -313,18 +329,15 @@ def rebuild_cache_step(
     logger.info("step %d: rebuilding cache from existing outputs", step_cfg.step)
     successes, failures = step_failures.parse_with_failures(engine, manifest, ctx)
     if step_cfg.nms and engine.supports_nms:
-        round1 = StepResults(structures=tuple(successes))
-        results = step_nms.resolve_nms(
-            # Not on the CalculationEngine Protocol: only NMS-capable engines
-            # (supports_nms=True, the gate above) provide this rebuild hook.
-            engine.resolve_nms_from_existing(round1, ctx),  # type: ignore[attr-defined]
-            round1,
+        resolution = nms.rebuild_nms(
+            cast(NmsCapableEngine, engine),
+            StepResults(structures=tuple(successes)),
+            failures,
             ctx,
             step_cfg,
-            round1_failures=failures,
         )
-    else:
-        results = step_failures.apply_failure_policy(successes, failures, ctx, step_cfg)
+        successes, failures = list(resolution.survivors), list(resolution.failures)
+    results = step_failures.apply_failure_policy(successes, failures, ctx, step_cfg)
     digest = cache.parents_digest(ctx.prev_state.structures)
     template_digest = engine.input_digest(ctx)
     cache.save(
@@ -333,70 +346,13 @@ def rebuild_cache_step(
         results=results,
         step_dir=ctx.step_dir,
         chemrefine_version=__version__,
-        reuse_fingerprint=step_nms.nms_reuse_fingerprint(
+        reuse_fingerprint=nms.nms_reuse_fingerprint(
             step_cfg, parent_ids, parents_digest=digest, template_digest=template_digest
         ),
         parents_digest=digest,
         template_digest=template_digest,
     )
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
-
-
-def _archive_failed_attempt(sid_dir: Path) -> Path:
-    """Move a structure dir's loose files into the next free ``attemptK/``; return it.
-
-    ``K`` is one past the highest existing ``attempt<n>`` — so a re-run (or a
-    manually-added ``attempt2/``) never blocks a fresh attempt. Only loose files
-    move; existing ``attempt*/`` (and any nested) sub-directories stay in place.
-    """
-    existing = [
-        int(m.group(1))
-        for d in sid_dir.glob("attempt*")
-        if d.is_dir() and (m := _ATTEMPT_DIR_RE.fullmatch(d.name))
-    ]
-    dest = sid_dir / f"attempt{(max(existing) + 1) if existing else 1}"
-    dest.mkdir(parents=True, exist_ok=True)
-    for item in sid_dir.iterdir():
-        if item.is_dir():
-            continue  # leave attempt*/ (and any nested child dirs) where they are
-        shutil.move(str(item), str(dest / item.name))
-    return dest
-
-
-def _retry_unconverged(
-    engine: CalculationEngine,
-    ctx: StepContext,
-    step_cfg: StepConfig,
-    successes: list[Structure],
-    failures: list[step_failures.Failure],
-) -> tuple[list[Structure], list[step_failures.Failure]]:
-    """B10: retry each *unconverged* failure once, from its best geometry.
-
-    Convergence-only — a crashed or missing-output job is left for the
-    ``on_failure`` policy. For each "did not converge" failure the failed
-    attempt's files are archived into a numbered ``attemptK/``, the input is
-    re-prepared from the best geometry obtained, resubmitted, and re-parsed.
-    This is a **single inline pass** (no recursion): a structure is retried at
-    most once per run, and a later ``resume`` archives into the next attempt.
-    """
-    kept = list(successes)
-    remaining: list[step_failures.Failure] = []
-    for f in failures:
-        if f.reason != "did not converge" or f.best is None:
-            remaining.append(f)
-            continue
-        logger.info(
-            "step %d: %s did not converge — retrying from its best geometry", step_cfg.step, f.sid
-        )
-        _archive_failed_attempt(ctx.step_dir / f.sid)
-        seed = Structure(id=f.sid, atoms=f.best.atoms)
-        retry_ctx = replace(ctx, prev_state=PipelineState(structures=(seed,)))
-        inputs = engine.prepare(retry_ctx)
-        engine.wait(engine.submit(inputs, retry_ctx))
-        succ, fail = step_failures.parse_with_failures(engine, inputs, retry_ctx)
-        kept.extend(succ)
-        remaining.extend(fail)
-    return kept, remaining
 
 
 def _resubmit_failed(
@@ -412,7 +368,7 @@ def _resubmit_failed(
     subset (their input files already exist on disk from the original prepare),
     then re-parses the *whole* step so fan-out lineage stays consistent and the
     ledger is refreshed (cleared if all now succeeded). NMS steps use
-    :func:`chemrefine.step_nms.reattempt_nms` instead (they reuse round-1
+    :func:`chemrefine.nms.reattempt_nms` instead (they reuse round-1
     rather than resubmit it).
     """
     manifest = cache.load_manifest(ctx.step_dir)
@@ -432,7 +388,7 @@ def _resubmit_failed(
         engine.wait(engine.submit(failed_inputs, ctx))
 
     successes, failures = step_failures.parse_with_failures(engine, manifest, ctx)
-    successes, failures = _retry_unconverged(engine, ctx, step_cfg, successes, failures)
+    successes, failures = step_failures.retry_unconverged(engine, ctx, successes, failures)
     results = step_failures.apply_failure_policy(successes, failures, ctx, step_cfg)
     cache.save(
         step_cfg=step_cfg,

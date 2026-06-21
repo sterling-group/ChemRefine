@@ -4,23 +4,27 @@ A *failure* is a structure whose job produced no output, an unparseable
 output, or an output the engine flagged unconverged / not-terminated.
 This module owns that vocabulary — the :class:`Failure` record, the
 success test (:func:`succeeded`), per-output classification
-(:func:`parse_with_failures`), and the ``stop | skip | best`` policy
-resolution (:func:`apply_failure_policy`) — shared by the generic step
-lifecycle (:mod:`chemrefine.step`) and the two-round NMS resolution
-(:mod:`chemrefine.step_nms`). The ``failed_jobs.json`` ledger itself is
+(:func:`parse_with_failures`), the ``stop | skip | best`` policy
+(:func:`apply_failure_policy`), and the shared "attempt"/retry primitive
+(:func:`archive_failed_attempt`, :func:`retry_from_best`,
+:func:`retry_unconverged`) — used by both the generic step lifecycle
+(:mod:`chemrefine.step`) and the two-round NMS coordinator
+(:mod:`chemrefine.nms`). The ``failed_jobs.json`` ledger itself is
 persisted via :mod:`chemrefine.cache`.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import shutil
+from dataclasses import dataclass, replace
+from pathlib import Path
 
-from chemrefine import cache
+from chemrefine import cache, ids
 from chemrefine.config import StepConfig
 from chemrefine.engines.base import CalculationEngine
 from chemrefine.errors import OutputParseError
-from chemrefine.state import StepContext, StepInputs, StepResults, Structure
+from chemrefine.state import PipelineState, StepContext, StepInputs, StepResults, Structure
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +36,19 @@ class Failure:
     sid: str
     reason: str
     best: Structure | None
+
+
+@dataclass(frozen=True)
+class NmsResolution:
+    """Outcome of NMS resolution: the resolved survivors plus unresolved failures.
+
+    The generic NMS coordinator (:mod:`chemrefine.nms`) returns this; the step
+    lifecycle then applies the ``on_failure`` policy to ``failures`` exactly as for a
+    plain step, so NMS reuses the same failure handling.
+    """
+
+    survivors: tuple[Structure, ...]
+    failures: tuple[Failure, ...]
 
 
 def succeeded(s: Structure) -> bool:
@@ -89,6 +106,74 @@ def parse_with_failures(
             )
             failures.append(Failure(sid, failure_reason(bad[0]), best))
     return successes, failures
+
+
+# ---------------------------------------------------------------------------
+# Attempt / retry — the shared "resolve a structure in subdirs" primitive
+# ---------------------------------------------------------------------------
+
+
+def archive_failed_attempt(structure_dir: Path) -> Path:
+    """Move a structure dir's loose files into the next free ``attemptK/``; return it.
+
+    The shared "attempt" primitive (path via :func:`chemrefine.ids.next_attempt_dir`):
+    only loose **files** move — existing ``attempt*/`` (and any nested) sub-directories
+    stay put — so a re-run never clobbers an earlier attempt.
+    """
+    dest = ids.next_attempt_dir(structure_dir)
+    dest.mkdir(parents=True, exist_ok=True)
+    for item in structure_dir.iterdir():
+        if item.is_dir():
+            continue  # leave attempt*/ (and any nested) sub-directories in place
+        shutil.move(str(item), str(dest / item.name))
+    return dest
+
+
+def retry_from_best(
+    engine: CalculationEngine, ctx_for_prepare: StepContext, best: Structure
+) -> tuple[list[Structure], list[Failure]]:
+    """Archive a structure's failed attempt and re-run it once from ``best``.
+
+    ``best`` is the last good geometry obtained; its id locates the per-structure dir
+    under ``ctx_for_prepare.step_dir``. That dir's files are archived into a numbered
+    ``attemptK/``, a fresh input is prepared from ``best`` at the canonical place,
+    resubmitted, and re-parsed. ``ctx_for_prepare.step_dir`` is what nests the
+    structure, so the SAME helper serves a top-level structure (round-1, ``step_dir``
+    = the step dir) and an NMS round-2 child (``step_dir`` = the parent's dir).
+    """
+    archive_failed_attempt(ctx_for_prepare.step_dir / best.id)
+    seed = Structure(id=best.id, atoms=best.atoms)
+    retry_ctx = replace(ctx_for_prepare, prev_state=PipelineState(structures=(seed,)))
+    inputs = engine.prepare(retry_ctx)
+    engine.wait(engine.submit(inputs, retry_ctx))
+    return parse_with_failures(engine, inputs, retry_ctx)
+
+
+def retry_unconverged(
+    engine: CalculationEngine,
+    ctx_for_prepare: StepContext,
+    successes: list[Structure],
+    failures: list[Failure],
+) -> tuple[list[Structure], list[Failure]]:
+    """Retry each *unconverged* failure once, from its best geometry (B10).
+
+    Convergence-only — a crashed / missing-output failure (or one with no best
+    geometry) is left untouched for the ``on_failure`` policy. A single inline pass
+    (no recursion): each structure is retried at most once per run; a later ``resume``
+    archives into the next ``attemptK/``. Serves both round-1 and NMS round-2 children
+    (the caller passes the matching ``ctx_for_prepare``).
+    """
+    kept = list(successes)
+    remaining: list[Failure] = []
+    for f in failures:
+        if f.reason != "did not converge" or f.best is None:
+            remaining.append(f)
+            continue
+        logger.info("structure %s did not converge — retrying from its best geometry", f.sid)
+        succ, fail = retry_from_best(engine, ctx_for_prepare, f.best)
+        kept.extend(succ)
+        remaining.extend(fail)
+    return kept, remaining
 
 
 def apply_failure_policy(

@@ -29,7 +29,7 @@ from chemrefine.engines.base import ENGINES, get_engine
 from chemrefine.engines.mlip import calculator as mlip_calculator
 from chemrefine.engines.mlip.calculator import MlipCalculator, build_calculator
 from chemrefine.errors import OutputParseError
-from chemrefine.state import PipelineState, StepContext, StepResults, Structure
+from chemrefine.state import PipelineState, StepContext, Structure
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -735,10 +735,12 @@ def test_mlip_direct_submit_respects_cores_option(tmp_path: Path):
     assert "#SBATCH --ntasks=2" in script_text
 
 
-def test_mlip_direct_does_not_support_nms(tmp_path: Path):
+def test_mlip_direct_does_not_support_nms():
+    from chemrefine.engines.base import NmsCapableEngine
+
     engine = get_engine("mlip")
-    with pytest.raises(NotImplementedError, match="does not support normal-mode"):
-        engine.normal_mode_sample(StepResults(structures=()), _mlip_direct_ctx(tmp_path, ()))
+    assert engine.supports_nms is False
+    assert not isinstance(engine, NmsCapableEngine)  # provides neither NMS hook
 
 
 def test_mlip_direct_wait_is_noop():

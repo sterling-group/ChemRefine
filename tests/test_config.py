@@ -532,7 +532,7 @@ def test_legacy_nms_rm_imag_maps_to_ts_and_displacement():
     assert s.nms is True
     assert s.options == {"target": "ts", "displacement_value": 1.5}
     # the renamed knobs are the ones NmsOptions reads.
-    from chemrefine.engines.orca.nms import NmsOptions
+    from chemrefine.nms import NmsOptions
 
     opts = NmsOptions.from_raw(s.options)
     assert (opts.target, opts.displacement_value) == ("ts", 1.5)

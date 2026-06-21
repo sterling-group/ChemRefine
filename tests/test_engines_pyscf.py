@@ -21,7 +21,7 @@ from ase import Atoms
 from chemrefine.config import StepConfig
 from chemrefine.engines.base import get_engine
 from chemrefine.errors import OutputParseError
-from chemrefine.state import JobBatch, PipelineState, StepContext, StepResults, Structure
+from chemrefine.state import JobBatch, PipelineState, StepContext, Structure
 
 # ---------------------------------------------------------------------------
 # Sample template that bypasses PySCF and just emits a deterministic result.
@@ -333,7 +333,9 @@ def test_parse_raises_when_energy_missing(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_normal_mode_sample_not_supported(tmp_path: Path):
+def test_normal_mode_sample_not_supported():
+    from chemrefine.engines.base import NmsCapableEngine
+
     engine = get_engine("pyscf")
-    with pytest.raises(NotImplementedError, match="does not support normal-mode"):
-        engine.normal_mode_sample(StepResults(structures=()), _ctx(tmp_path, ()))
+    assert engine.supports_nms is False
+    assert not isinstance(engine, NmsCapableEngine)  # provides neither NMS hook

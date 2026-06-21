@@ -82,7 +82,7 @@ class StepCache:
     """Coarser fingerprint (NMS steps only) that's stable across search-param
     tuning but not across the resolution criterion — lets ``resume`` re-attempt
     only the unresolved parents and reuse the round-1 freq. ``""`` for steps
-    that don't use it. See :func:`chemrefine.step_nms.nms_reuse_fingerprint`."""
+    that don't use it. See :func:`chemrefine.nms.nms_reuse_fingerprint`."""
 
 
 # ---------------------------------------------------------------------------

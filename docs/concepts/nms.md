@@ -6,25 +6,39 @@ first-order saddle (transition state). It is opt-in per step (`nms: true`) and
 only runs on engines that report `supports_nms` (today: ORCA, which produces a
 frequency table).
 
-Because NMS acts on imaginary modes, the step's template **must** run a frequency
-calc: an ORCA NMS step whose template has no `Freq` keyword is rejected at prepare
-time with a `ConfigError` (set `operation` explicitly to override, e.g. when the
-template uses a spelling the inspector doesn't recognise).
+Because NMS acts on imaginary modes, the step's input **must** compute frequencies:
+an NMS step whose input computes none is rejected before any job is submitted with a
+`ConfigError` (set `operation` explicitly to override, e.g. when an ORCA template
+uses a spelling the inspector doesn't recognise).
 
-## Two rounds
+## A generic capability, not an engine feature
+
+The two-round algorithm lives in `chemrefine.nms` and is **engine-independent** — it
+drives any NMS-capable engine through just two hooks and imports no engine package:
+
+- `nms_input_info(ctx)` — does the input target a TS, and does it compute frequencies?
+- `read_frequencies(structure_id, step_dir, ctx)` — a structure's imaginary modes +
+  normal-mode tensor, read from its output.
+
+A new engine becomes NMS-capable by setting `supports_nms = True` and implementing
+those two methods; everything else is shared. (Today: ORCA.)
+
+## Two rounds + the unified "attempt" model
 
 NMS runs as two throttled rounds, never sharing the core budget at once:
 
-1. **Round 1** — an `opt+freq` on each survivor. ChemRefine parses the imaginary
-   frequencies and the normal-mode displacement tensor from each output.
-2. **Round 2** — for each structure that is *not* already at the target, displace
-   ±`displacement_value` along the selected mode(s), re-optimise the ± children
-   (each in its own directory nested under the parent's, like any "redo this
-   structure" re-run), and check whether each child reached the target.
+1. **Round 1** — an opt+freq on each survivor at its canonical `stepN/<id>/`.
+2. **Round 2** — for each structure not already at the target, displace
+   ±`displacement_value` along the selected mode(s) and re-optimise the ± children
+   under `stepN/<id>/attemptK/`, retrying any that fail to converge.
 
-A round-1 structure is *resolved* if it already had the target imaginary count or
-any of its displaced children resolved. Unresolved parents are handed to the
-step's `on_failure` policy, and both round-1 job failures and NMS-unresolved
+Resolving a structure is an **attempt**, the same shape as the `on_failure`
+convergence retry: the exploration is archived under `stepN/<id>/attemptK/` and the
+**winner lands at the canonical `stepN/<id>/` with the id unchanged**. For
+`minimum`/`ts` the single *best resolved* geometry becomes the survivor (id kept, no
+duplicate ± minima); a structure with no resolved child is handed to the step's
+`on_failure` policy. `random` is the exception — pure exploration with no resolution
+gate, so it fans out to new child structures. Round-1 job failures and NMS-unresolved
 parents are recorded in one `failed_jobs.json` write.
 
 ## Targets
@@ -45,12 +59,12 @@ The `target` defaults to whatever the template implies — an `OptTS` run target
 NMS distinguishes *search* parameters (`displacement_value`,
 `num_random_displacements`, `seed`) from the resolution *criterion* (`target`,
 `ts_mode_index`). Tuning only the search parameters lets `resume` reuse the
-round-1 frequencies and the already-resolved children, re-attempting just the
-unresolved parents — instead of re-running the whole step. Changing the criterion
+round-1 frequencies and the already-resolved structures, re-attempting just the
+unresolved ones — instead of re-running the whole step. Changing the criterion
 (or the parents/template) forces a full re-run.
 
 `rebuild-nms` is a named alias of `rerun` for the NMS-tuning workflow;
 `rebuild-cache` re-resolves NMS from the round-2 outputs already on disk.
 
-See the [NMS Resolution API](../api/step_nms.md) and the ORCA displacement math in
-the [ORCA engine API](../api/engines_orca.md).
+See the [Normal-Mode Sampling API](../api/nms.md) for the coordinator and the two
+engine hooks documented in the [ORCA engine API](../api/engines_orca.md).

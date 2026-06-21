@@ -29,8 +29,11 @@ The functions here own three concerns:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from pathlib import Path
+
+_ATTEMPT_DIR_RE = re.compile(r"attempt(\d+)$")
 
 
 def allocate_child_ids(parents: Sequence[str], fanouts: Sequence[int]) -> list[str]:
@@ -81,6 +84,39 @@ def input_geometry_path(step_dir: Path, step: int, structure_id: str) -> Path:
     copy-back into the structure's directory.
     """
     return step_dir / structure_id / f"step{step}_{structure_id}_inp.xyz"
+
+
+def next_attempt_dir(structure_dir: Path) -> Path:
+    """Return the next free ``attemptK/`` sub-directory under a structure's dir.
+
+    ``K`` is one past the highest existing ``attempt<n>`` (``attempt1`` if none), so
+    a re-run — or a manually-added ``attempt2/`` — never collides with, or is blocked
+    by, an existing one. This is the shared "attempt" primitive of the unified
+    resolution model: the convergence retry moves a failed attempt here, and NMS
+    archives a structure's exploration here. The directory is **not** created here
+    (path only); a non-matching ``attempt*`` entry (e.g. a stray file) is ignored.
+    """
+    existing = [
+        int(m.group(1))
+        for d in structure_dir.glob("attempt*")
+        if d.is_dir() and (m := _ATTEMPT_DIR_RE.fullmatch(d.name))
+    ]
+    return structure_dir / f"attempt{(max(existing) + 1) if existing else 1}"
+
+
+def latest_attempt_dir(structure_dir: Path) -> Path | None:
+    """Return the highest-numbered existing ``attemptK/`` under a structure's dir.
+
+    The read-side counterpart of :func:`next_attempt_dir`: ``rebuild-cache`` reads a
+    structure's most recent attempt (e.g. an NMS exploration) from here. ``None`` when
+    no ``attempt<n>/`` exists.
+    """
+    attempts = [
+        (int(m.group(1)), d)
+        for d in structure_dir.glob("attempt*")
+        if d.is_dir() and (m := _ATTEMPT_DIR_RE.fullmatch(d.name))
+    ]
+    return max(attempts)[1] if attempts else None
 
 
 def default_template_name(step: int, suffix: str) -> str:

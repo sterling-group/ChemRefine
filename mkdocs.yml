@@ -112,7 +112,7 @@ nav:
           - Orchestrator: api/pipeline.md
           - Step Lifecycle: api/step.md
           - Failure Policy: api/step_failures.md
-          - NMS Resolution: api/step_nms.md
+          - Normal-Mode Sampling: api/nms.md
           - Filtering: api/filtering.md
           - Recovery Actions: api/recovery.md
       - Engines:

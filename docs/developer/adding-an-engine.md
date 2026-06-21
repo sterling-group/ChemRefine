@@ -44,7 +44,7 @@ the backend's shape:
 | User supplies a `step{N}.py` run per structure | `TemplateScriptEngine` | only `_template_vars` (inject `$VAR`s from `step.options`) |
 | A real binary / custom SLURM job | `SlurmBatchEngine` | `prepare`, `parse`, `_pal`, `_run_block` + the ClassVars |
 | ORCA optimises using *this* engine's gradients | `ExtOptOrcaEngine` | `_server_cmd` + the `backend` / `wrapper_filename` ClassVars, plus a `ComputeBackend` in `extopt_calc.py` |
-| Local / orchestration-only (no SLURM compute) | implement the `CalculationEngine` Protocol directly | the five lifecycle methods |
+| Local / orchestration-only (no SLURM compute) | implement the `CalculationEngine` Protocol directly | `prepare` / `submit` / `wait` / `parse` + `input_digest` |
 
 ### 2. Declare the metadata ClassVars
 
@@ -97,12 +97,26 @@ ships at 100% line+branch coverage with a docstring on every public symbol.
 
 ## The lifecycle
 
-Whatever base you pick, the engine satisfies the five-stage contract the step
-lifecycle drives in order:
+Whatever base you pick, the engine satisfies the contract the step lifecycle
+drives in order (plus `input_digest`, folded into the cache fingerprint):
 
 ```
-prepare → submit → wait → parse → (normal_mode_sample, if supports_nms)
+prepare → submit → wait → parse
 ```
+
+### Supporting NMS
+
+Normal-mode sampling is **engine-independent**: the two-round algorithm lives in
+`chemrefine.nms` and drives any engine through *two* hooks. To make an engine
+NMS-capable, set `supports_nms = True` and implement the
+[`NmsCapableEngine`](../api/engines_base.md) Protocol's two methods:
+
+- `nms_input_info(ctx) -> NmsInputInfo` — introspect the step's input (is it a TS
+  search? does it compute frequencies?), driving the default target and the freq gate.
+- `read_frequencies(structure_id, step_dir, ctx) -> FrequencyData` — read a structure's
+  imaginary frequencies + normal-mode tensor from its output.
+
+Everything else — displacement, round-2 submission, resolution, retry — is generic.
 
 See the [Engine Contract & Registry API](../api/engines_base.md) for the exact
 signatures, and [Architecture & Code Flow](../concepts/architecture.md) for where

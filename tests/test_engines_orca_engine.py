@@ -12,7 +12,6 @@ from ase import Atoms
 from chemrefine import slurm
 from chemrefine.config import StepConfig
 from chemrefine.engines.base import get_engine
-from chemrefine.errors import ConfigError
 from chemrefine.state import JobBatch, PipelineState, StepContext, Structure
 
 FIXTURE = Path(__file__).parent / "data" / "orca.out"
@@ -385,96 +384,6 @@ def test_input_digest_tracks_template_contents(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# B9 — an NMS step's template must request a frequency calc (prepare-time gate)
-# ---------------------------------------------------------------------------
-
-
-def test_prepare_rejects_nms_without_freq_keyword(tmp_path: Path):
-    """`nms: true` + a no-Freq template + no explicit operation → ConfigError."""
-    engine = get_engine("orca")
-    ctx = _ctx(
-        tmp_path,
-        structures=(_seed_structure(),),
-        step_cfg=StepConfig(step=1, engine="orca", nms=True),  # operation omitted
-    )
-    # The default template (`! B3LYP def2-SVP`) has no Freq keyword.
-    with pytest.raises(ConfigError, match="frequency"):
-        engine.prepare(ctx)
-
-
-def test_prepare_allows_nms_with_freq_keyword(tmp_path: Path):
-    engine = get_engine("orca")
-    ctx = _ctx(
-        tmp_path,
-        structures=(_seed_structure(),),
-        step_cfg=StepConfig(step=1, engine="orca", nms=True),
-    )
-    (ctx.template_dir / "step1.inp").write_text("! B3LYP def2-SVP Opt Freq\n", encoding="utf-8")
-    assert len(engine.prepare(ctx).files) == 1  # no raise
-
-
-def test_prepare_nms_freq_gate_bypassed_by_explicit_operation(tmp_path: Path):
-    """An explicit operation overrides the gate (the user's escape hatch)."""
-    engine = get_engine("orca")
-    ctx = _ctx(
-        tmp_path,
-        structures=(_seed_structure(),),
-        step_cfg=StepConfig(step=1, engine="orca", operation="freq", nms=True),
-    )
-    # No-Freq template, but the explicit operation lets it run anyway.
-    assert len(engine.prepare(ctx).files) == 1  # no raise
-
-
-def test_prepare_non_nms_step_ignores_freq_gate(tmp_path: Path):
-    engine = get_engine("orca")
-    ctx = _ctx(
-        tmp_path,
-        structures=(_seed_structure(),),
-        step_cfg=StepConfig(step=1, engine="orca"),  # nms False
-    )
-    assert len(engine.prepare(ctx).files) == 1  # no raise (gate is NMS-only)
-
-
-# ---------------------------------------------------------------------------
-# F1 — NMS target inferred from the run type (OptTS → ts, else minimum)
-# ---------------------------------------------------------------------------
-
-
-def test_resolved_nms_target_inferred_minimum_for_plain_opt(tmp_path: Path):
-    engine = get_engine("orca")
-    ctx = _ctx(
-        tmp_path,
-        structures=(),
-        step_cfg=StepConfig(step=1, engine="orca", nms=True),
-    )
-    (ctx.template_dir / "step1.inp").write_text("! B3LYP def2-SVP Opt Freq\n", encoding="utf-8")
-    assert engine._resolved_nms_options(ctx).target == "minimum"
-
-
-def test_resolved_nms_target_inferred_ts_for_optts(tmp_path: Path):
-    engine = get_engine("orca")
-    ctx = _ctx(
-        tmp_path,
-        structures=(),
-        step_cfg=StepConfig(step=1, engine="orca", nms=True),
-    )
-    (ctx.template_dir / "step1.inp").write_text("! B3LYP def2-SVP OptTS Freq\n", encoding="utf-8")
-    assert engine._resolved_nms_options(ctx).target == "ts"
-
-
-def test_resolved_nms_explicit_target_wins_over_inference(tmp_path: Path):
-    engine = get_engine("orca")
-    ctx = _ctx(
-        tmp_path,
-        structures=(),
-        step_cfg=StepConfig(step=1, engine="orca", nms=True, options={"target": "minimum"}),
-    )
-    # An OptTS template would infer 'ts', but the explicit 'minimum' wins.
-    (ctx.template_dir / "step1.inp").write_text("! B3LYP def2-SVP OptTS Freq\n", encoding="utf-8")
-    assert engine._resolved_nms_options(ctx).target == "minimum"
-
-
-# ---------------------------------------------------------------------------
 # Engine registration
 # ---------------------------------------------------------------------------
 
@@ -487,39 +396,3 @@ def test_orca_engine_registered():
 
 def test_orca_engine_supports_nms_flag_is_true():
     assert get_engine("orca").supports_nms is True
-
-
-def test_orca_engine_nms_returns_empty_on_no_freq_output(tmp_path: Path):
-    """With no freq output on disk, NMS skips every structure cleanly."""
-    engine = get_engine("orca")
-    ctx = _ctx(tmp_path, structures=(_seed_structure(),))
-    from chemrefine.state import StepResults
-
-    expanded = engine.normal_mode_sample(StepResults(structures=()), ctx)
-    assert expanded.structures == ()
-
-
-def test_orca_nms_displace_passes_minimum_and_displaces_imaginary(tmp_path):
-    """_nms_displace: a round-1 structure already at the target (0 imaginary)
-    passes through; one with an imaginary mode yields ± displaced children."""
-    import numpy as np
-
-    from chemrefine.state import StepResults
-
-    engine = get_engine("orca")
-    engine._imag_freqs = {"min": {}, "imag": {5: -42.0}}
-    modes = np.zeros((2, 3, 6))
-    modes[0, 0, 5], modes[1, 0, 5] = 0.1, -0.1
-    engine._modes = {"min": modes, "imag": modes}
-
-    ctx = _ctx(
-        tmp_path,
-        structures=(),
-        step_cfg=StepConfig(step=1, engine="orca", operation="freq", nms=True),
-    )
-    already, children = engine._nms_displace(
-        StepResults(structures=(_seed_structure("min"), _seed_structure("imag"))), ctx
-    )
-    assert [s.id for s in already] == ["min"]  # already at the minimum
-    assert [c.id for c in children] == ["imag_m5_pos", "imag_m5_neg"]
-    assert all(c.parent_id == "imag" for c in children)
