@@ -228,6 +228,41 @@ def test_run_writes_steps_csv(tmp_path: Path):
     assert "1," in text and "2," in text
 
 
+def test_run_aligns_csv_and_cache_for_more_than_ten_structures(tmp_path: Path):
+    """Regression for #90: with ≥10 structures every id maps to its *own* energy in
+    both the cache and ``steps.csv`` — no v1-style lexical-sort mismatch (where "10"
+    sorted before "2" and rows desynced from their energies)."""
+    import pandas as pd
+
+    from chemrefine import cache
+    from chemrefine.engines._fake.engine import _fake_energy
+
+    seed_dir = tmp_path / "seeds"
+    io.write_xyz(
+        [_h2() for _ in range(12)], [str(i) for i in range(12)], step_number=0, output_dir=seed_dir
+    )
+    cfg = _config(tmp_path, input=seed_dir)
+
+    # Seeds bootstrap in natural order (10/11 after 2), not lexical.
+    assert [s.id for s in pipeline.bootstrap(cfg).structures] == [str(i) for i in range(12)]
+
+    pipeline.run(cfg)
+    expected = {str(i): _fake_energy(str(i)) for i in range(12)}
+
+    cached = cache.load((cfg.output_dir / "step1").resolve())
+    assert cached is not None
+    cache_map = {s.id: s.energy_hartree for s in cached.results.structures}
+    assert cache_map.keys() == expected.keys()
+    for sid, energy in expected.items():
+        assert cache_map[sid] == pytest.approx(energy)
+
+    df = pd.read_csv(cfg.output_dir / "steps.csv")
+    csv_map = {str(c): e for c, e in zip(df["Conformer"], df["Energy (Hartree)"], strict=True)}
+    assert csv_map.keys() == expected.keys()  # all 12, including "10"/"11"
+    for sid, energy in expected.items():
+        assert csv_map[sid] == pytest.approx(energy)  # each id paired with its own energy
+
+
 def test_run_threads_state_between_steps(tmp_path: Path):
     # Two seed files in a directory.
     seed_dir = tmp_path / "seeds"
