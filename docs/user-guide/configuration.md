@@ -141,12 +141,16 @@ kept as `…_inp.xyz` distinct from the engine's output geometry:
 outputs/
 ├── step1_screen/
 │   ├── 0/                     step1_0_inp.xyz  step1_0.{inp,out,xyz,...}  step1_0.runlog
+│   │   └── 0_m5_pos/          NMS round-2 (a displaced re-run) nests under its parent
 │   ├── 1/                     …
-│   ├── nms/<child_id>/        normal-mode round-2 children (NMS steps)
 │   └── _cache/                step.json, manifest.json, failed_jobs.json
 ├── step2_refine/<id>/…
 └── steps.csv                  Boltzmann summary per surviving structure
 ```
+
+NMS round-2 — re-optimising a displaced geometry — is treated like any "redo this
+structure" step: the child lives in a sub-directory *inside* its parent's directory
+(`stepN/<parent>/<child>/`), the same place a failure re-run would go.
 
 ## Legacy (v1.3.1) configs
 

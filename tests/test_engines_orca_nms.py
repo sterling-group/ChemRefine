@@ -303,7 +303,9 @@ def test_orca_normal_mode_sample_displaces_and_flags(tmp_path):
     ):
         result = engine.normal_mode_sample(round1, ctx)
 
-    assert captured["nms_dir"].name == "nms"
+    # Round-2 children nest inside their round-1 parent's dir (stepN/0/0_m5_pos/),
+    # so prepare runs with the parent's dir as its step_dir — no separate nms/ folder.
+    assert captured["nms_dir"] == ctx.step_dir / "0"
     flagged = {s.id: s.converged for s in result.structures}
     assert flagged == {"0_m5_pos": True}  # freq table parsed, 0 imaginary → resolved
 
@@ -377,16 +379,18 @@ def test_orca_normal_mode_sample_skips_when_no_modes(tmp_path):
 
 
 def test_orca_resolve_nms_from_existing_reads_round2_outputs(tmp_path):
-    """rebuild-cache path: re-derive children and parse their existing ``nms/`` outputs."""
+    """rebuild-cache path: re-derive children and parse their existing round-2 outputs.
+
+    Round-2 children live in ordinary per-id dirs in the step dir (no ``nms/`` folder).
+    """
     engine = get_engine("orca")
     ctx = _orca_nms_ctx(tmp_path)
     engine._imag_freqs = {"0": {5: -42.0}}
     engine._modes = {"0": _modes(6)}
     round1 = StepResults(structures=(_struct([[0, 0, 0], [0.74, 0, 0]], "0"),))
-    nms_dir = ctx.step_dir / "nms"
-    nms_dir.mkdir(parents=True, exist_ok=True)
+    # Round-2 children live under their parent's dir: stepN/0/<child>/.
     for cid in ("0_m5_pos", "0_m5_neg"):
-        out_path = structure_artifact_path(nms_dir, 1, cid, "out")
+        out_path = structure_artifact_path(ctx.step_dir / "0", 1, cid, "out")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(
             synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)])
