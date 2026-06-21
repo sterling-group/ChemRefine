@@ -70,7 +70,7 @@ steps:
 | `charge` / `multiplicity` | int | global | Per-step overrides of the global values. |
 | `options` | map | `{}` | Engine-specific knobs (see below). |
 | `sample` | map | `None` | Survivor filter (see below). `None` keeps every structure. |
-| `nms` | bool | `False` | Opt-in normal-mode sampling (honoured only when the engine `supports_nms`). |
+| `nms` | bool | `False` | Opt-in normal-mode sampling (honoured only when the engine `supports_nms`). Requires a frequency calc: an ORCA NMS step whose template has no `Freq` keyword is rejected at prepare time (set `operation` explicitly to override). The `target` (`minimum`/`ts`) is inferred from the template — `OptTS` → `ts`, else `minimum` — unless `options.target` is set. |
 | `on_failure` | `stop`/`skip`/`best` | `stop` | What to do when some structures fail: `stop` (default) caches the successes then halts so failures are never silently dropped; `skip` drops them and continues; `best` keeps all (backfilling the best geometry). |
 
 ## Sample (survivor filter)
@@ -125,7 +125,7 @@ raises a clear error if the chosen energy wasn't computed.
 
     | Key | Default | Description |
     |-----|---------|-------------|
-    | `target` | `minimum` | `minimum` removes every imaginary mode; `ts` keeps the reaction coordinate and removes the rest; `random` explores. |
+    | `target` | inferred | `minimum` removes every imaginary mode; `ts` keeps the reaction coordinate and removes the rest; `random` explores. Default: **inferred** from the template (`OptTS` → `ts`, else `minimum`); set this to override. |
     | `displacement_value` | `1.0` | ± displacement (Å) per selected mode. |
     | `num_random_displacements` | `1` | `random` only: how many modes to draw. |
     | `ts_mode_index` | `None` | `ts` only: which imaginary mode to keep (default: the largest-magnitude one). |

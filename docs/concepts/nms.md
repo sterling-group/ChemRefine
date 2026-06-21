@@ -6,6 +6,11 @@ first-order saddle (transition state). It is opt-in per step (`nms: true`) and
 only runs on engines that report `supports_nms` (today: ORCA, which produces a
 frequency table).
 
+Because NMS acts on imaginary modes, the step's template **must** run a frequency
+calc: an ORCA NMS step whose template has no `Freq` keyword is rejected at prepare
+time with a `ConfigError` (set `operation` explicitly to override, e.g. when the
+template uses a spelling the inspector doesn't recognise).
+
 ## Two rounds
 
 NMS runs as two throttled rounds, never sharing the core budget at once:
@@ -13,8 +18,9 @@ NMS runs as two throttled rounds, never sharing the core budget at once:
 1. **Round 1** — an `opt+freq` on each survivor. ChemRefine parses the imaginary
    frequencies and the normal-mode displacement tensor from each output.
 2. **Round 2** — for each structure that is *not* already at the target, displace
-   ±`displacement_value` along the selected mode(s), re-optimise the ± children in
-   an `nms/` subdirectory, and check whether each child reached the target.
+   ±`displacement_value` along the selected mode(s), re-optimise the ± children
+   (each in its own directory nested under the parent's, like any "redo this
+   structure" re-run), and check whether each child reached the target.
 
 A round-1 structure is *resolved* if it already had the target imaginary count or
 any of its displaced children resolved. Unresolved parents are handed to the
@@ -22,6 +28,9 @@ step's `on_failure` policy, and both round-1 job failures and NMS-unresolved
 parents are recorded in one `failed_jobs.json` write.
 
 ## Targets
+
+The `target` defaults to whatever the template implies — an `OptTS` run targets a
+`ts`, anything else a `minimum` — and an explicit `options.target` always wins.
 
 | `target` | Resolved when imaginary count = | Behaviour |
 |----------|--------------------------------|-----------|

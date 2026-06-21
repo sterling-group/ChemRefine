@@ -32,6 +32,7 @@ from numpy.typing import NDArray
 from chemrefine.engines.base import SlurmBatchEngine, register
 from chemrefine.engines.orca import frequencies, inspect, nms, output
 from chemrefine.engines.orca import input as orca_input
+from chemrefine.errors import ConfigError
 from chemrefine.ids import allocate_child_ids, input_geometry_path, structure_artifact_path
 from chemrefine.io import write_single_xyz
 from chemrefine.state import (
@@ -71,6 +72,7 @@ class OrcaEngine(SlurmBatchEngine):
         """Write one ``.xyz`` + ``.inp`` per seed structure."""
         ctx.step_dir.mkdir(parents=True, exist_ok=True)
         template = self._resolve_template(ctx)
+        self._check_nms_freq_requirement(ctx, template)
 
         files: list[tuple[Path, Path, str]] = []
         step = ctx.step_cfg.step
@@ -103,6 +105,27 @@ class OrcaEngine(SlurmBatchEngine):
         override this to inject their ``%method ProgExt …`` block.
         """
         return ""
+
+    def _check_nms_freq_requirement(self, ctx: StepContext, template: Path) -> None:
+        """B9: an NMS step must run a frequency calc — reject one whose template has none.
+
+        NMS acts on imaginary modes, so a step with ``nms: true`` whose template
+        carries no ``Freq`` keyword can only ever leave every structure unresolved.
+        Caught here at prepare time as a :class:`~chemrefine.errors.ConfigError`
+        rather than after a wasted round of jobs. An explicit ``operation``
+        bypasses the check — it's the user's override for when inspection misreads
+        the template.
+        """
+        if not (ctx.step_cfg.nms and self.supports_nms):
+            return
+        if ctx.step_cfg.operation is not None:
+            return
+        if not inspect.inspect_template(template).has_freq:
+            raise ConfigError(
+                f"step {ctx.step_cfg.step}: `nms: true` needs a frequency calculation, "
+                f"but {template.name} has no Freq keyword. Add Freq to the template "
+                f"(e.g. `! Opt Freq`), or set `operation` explicitly to override."
+            )
 
     # -- submit (PAL + run_block hooks; the loop lives on SlurmBatchEngine) -
 
@@ -224,6 +247,20 @@ class OrcaEngine(SlurmBatchEngine):
 
     # -- nms (two-round: displace round-1 survivors, re-optimise, mark resolved) --
 
+    def _resolved_nms_options(self, ctx: StepContext) -> nms.NmsOptions:
+        """NMS options with the ``target`` resolved (F1): explicit wins, else inferred.
+
+        When the step doesn't set ``options.target``, derive it from the template:
+        an ``OptTS`` run targets a ``ts`` (keep one imaginary mode), anything else a
+        ``minimum`` (remove them all). An explicit ``target`` is always honoured.
+        """
+        raw = ctx.step_cfg.options or {}
+        opts = nms.NmsOptions.from_raw(raw)
+        if "target" not in raw:
+            is_ts = inspect.inspect_template(self._resolve_template(ctx)).is_ts
+            opts = opts.model_copy(update={"target": "ts" if is_ts else "minimum"})
+        return opts
+
     def normal_mode_sample(self, results: StepResults, ctx: StepContext) -> StepResults:
         """Displace round-1 survivors per target, re-optimise them, flag resolution.
 
@@ -244,7 +281,7 @@ class OrcaEngine(SlurmBatchEngine):
         the budget at once: imag-freq removal starts only *after* round 1 fully
         drains, not the instant an individual structure finishes.
         """
-        target = nms.target_imaginary_count(nms.NmsOptions.from_raw(ctx.step_cfg.options))
+        target = nms.target_imaginary_count(self._resolved_nms_options(ctx))
         already, children = self._nms_displace(results, ctx)
         outputs = list(already)
         if children:
@@ -268,7 +305,7 @@ class OrcaEngine(SlurmBatchEngine):
         Children with no output on disk are simply absent, so
         :func:`chemrefine.step_nms.resolve_nms` treats their parent as unresolved.
         """
-        target = nms.target_imaginary_count(nms.NmsOptions.from_raw(ctx.step_cfg.options))
+        target = nms.target_imaginary_count(self._resolved_nms_options(ctx))
         already, children = self._nms_displace(results, ctx)
         outputs = list(already)
         if children:
@@ -292,7 +329,7 @@ class OrcaEngine(SlurmBatchEngine):
         self, results: StepResults, ctx: StepContext
     ) -> tuple[list[Structure], list[Structure]]:
         """Split round-1 survivors into (already-at-target, displaced children)."""
-        opts = nms.NmsOptions.from_raw(ctx.step_cfg.options)
+        opts = self._resolved_nms_options(ctx)
         rng = np.random.default_rng(opts.seed)
         target = nms.target_imaginary_count(opts)
         already: list[Structure] = []
