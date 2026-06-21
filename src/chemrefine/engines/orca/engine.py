@@ -32,8 +32,8 @@ from chemrefine import cache
 from chemrefine.engines.base import SlurmBatchEngine, register
 from chemrefine.engines.orca import frequencies, nms, output
 from chemrefine.engines.orca import input as orca_input
-from chemrefine.ids import allocate_child_ids, structure_artifact_path
-from chemrefine.io import write_xyz
+from chemrefine.ids import allocate_child_ids, input_geometry_path, structure_artifact_path
+from chemrefine.io import write_single_xyz
 from chemrefine.state import (
     PipelineState,
     StepContext,
@@ -73,15 +73,13 @@ class OrcaEngine(SlurmBatchEngine):
         template = self._resolve_template(ctx)
 
         files: list[tuple[Path, Path, str]] = []
+        step = ctx.step_cfg.step
         for struct in ctx.prev_state.structures:
-            xyz_paths = write_xyz(
-                [struct.atoms],
-                [struct.id],
-                step_number=ctx.step_cfg.step,
-                output_dir=ctx.step_dir,
+            xyz_path = write_single_xyz(
+                struct.atoms,
+                input_geometry_path(ctx.step_dir, step, struct.id),
+                comment=f"step {step} {struct.id} input",
             )
-            xyz_path = xyz_paths[0]
-            step = ctx.step_cfg.step
             inp_path = structure_artifact_path(ctx.step_dir, step, struct.id, "inp")
             out_path = structure_artifact_path(ctx.step_dir, step, struct.id, "out")
             orca_input.build_input(

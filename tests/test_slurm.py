@@ -167,6 +167,13 @@ def test_build_script_emits_exit_trap(tmp_path: Path):
     assert "trap _on_exit EXIT" in text
 
 
+def test_build_script_copies_output_dirs_back(tmp_path: Path):
+    """``output_dirs`` (e.g. pyscf ``tensors/``) are copied back wholesale on exit."""
+    script = slurm.build_script(**_build_kwargs(tmp_path, output_dirs=("tensors",)))
+    text = script.read_text()
+    assert 'cp -r "tensors" "$OUTPUT_DIR/" 2>/dev/null || true' in text
+
+
 def test_build_script_missing_template_raises(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
         slurm.build_script(**_build_kwargs(tmp_path, template_path=tmp_path / "missing.header"))
@@ -483,7 +490,9 @@ def test_build_array_script_resolves_task_from_manifest(tmp_path: Path):
     assert 'line=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$CR_MANIFEST")' in text
     assert "IFS=$'\\t' read -r INP OUT SID <<< \"$line\"" in text
     assert 'INP_NAME=$(basename "$INP")' in text
-    assert f'exec >"{tmp_path / "out"}/${{INP_NAME%.*}}.runlog"' in text
+    # Each task resolves its own per-structure dir from its output path.
+    assert 'OUT_DIR=$(dirname "$OUT")' in text
+    assert 'exec >"$OUT_DIR/${INP_NAME%.*}.runlog"' in text
     assert 'cp "$INP" "$WORK_DIR/"' in text
     assert "orca $INP_NAME > $OUTPUT_DIR/$OUT_NAME" in text
     # Header handling matches the per-job script.

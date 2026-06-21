@@ -2,10 +2,11 @@
 
 The template is a user-provided ORCA ``.inp`` file (e.g. ``step1.inp``)
 that declares the method, basis, and any ``%pal`` / ``%scf`` blocks.
-This module pastes a fresh ``%base`` line and an ``* xyzfile`` directive
-onto the end of the template, stripping any pre-existing ``* xyzfile``
-line first so the template can be reused across steps with different
-seed geometries.
+This module appends an ``* xyzfile`` directive (pointing at the per-structure
+``_inp.xyz``) onto the end of the template, stripping any pre-existing
+``* xyzfile`` line first so the template can be reused across steps with
+different seed geometries. No ``%base`` is emitted — ORCA defaults the base to
+the input filename's stem, keeping its outputs distinct from the input geometry.
 
 Engines that drive ORCA from an external program (MLIP, PySCF) pass
 their own ``extra_blocks`` argument — typically a ``%method ... end``
@@ -83,11 +84,13 @@ def build_input(
 ) -> Path:
     """Write an ORCA ``.inp`` to ``output_path``; return that path.
 
-    ``output_path``'s stem becomes the ORCA ``%base`` so all derived
-    files (``.out``, ``.engrad``, ``.xyz``, ``.gbw`` …) share a prefix.
-    ``max_pal`` (the engine passes ``Config.max_cores``) clamps any PAL
-    declaration in the template via :func:`clamp_pal` so the input never
-    asks for more ranks than the SLURM allocation grants.
+    No explicit ``%base`` is emitted: ORCA defaults the base to the input
+    filename's stem, so all derived files (``.out``, ``.engrad``, optimized
+    ``.xyz``, ``.gbw`` …) share that stem while staying distinct from the
+    ``_inp.xyz`` input geometry (``xyz_path``). ``max_pal`` (the engine passes
+    ``Config.max_cores``) clamps any PAL declaration in the template via
+    :func:`clamp_pal` so the input never asks for more ranks than the SLURM
+    allocation grants.
     """
     if not template_path.is_file():
         raise FileNotFoundError(f"ORCA template not found: {template_path}")
@@ -101,7 +104,9 @@ def build_input(
     extra = extra_blocks.strip()
     if extra:
         lines.extend([extra, ""])
-    lines.append(f'%base "{output_path.stem}"')
+    # No explicit %base: ORCA defaults the base to the input filename's stem
+    # (``step{N}_{id}``), so its outputs (optimized ``.xyz``, ``.gbw``, ``.hess``)
+    # are named distinctly from the ``_inp.xyz`` input and both survive copy-back.
     lines.append(f"* xyzfile {charge} {multiplicity} {xyz_path}")
     lines.append("")
 

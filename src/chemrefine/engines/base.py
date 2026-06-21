@@ -219,6 +219,16 @@ class SlurmBatchEngine:
         """Engine-specific ``(key, value)`` rows appended to the runlog header."""
         return ()
 
+    def _output_dirs(self, ctx: StepContext) -> tuple[str, ...]:
+        """Scratch sub-directories to copy back wholesale (``cp -r``) on exit.
+
+        Empty for most engines (curated file globs in ``output_globs`` suffice).
+        An engine that produces a *directory* of artifacts in ``$WORK_DIR`` —
+        e.g. pyscf's ``tensors/`` from ``save_tensors`` — overrides this so the
+        whole directory lands in the per-structure output dir.
+        """
+        return ()
+
     def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
         """Generate a SLURM script per structure, submit under the CPU+GPU budget, then block.
 
@@ -272,6 +282,7 @@ class SlurmBatchEngine:
                 structure_id=sid,
                 step_label=step_label,
                 output_globs=self.output_globs,
+                output_dirs=self._output_dirs(ctx),
                 extra_header_fields=self._extra_header_fields(ctx),
             )
             job_id = slurm.submit(script_path, env=env)
@@ -301,7 +312,9 @@ class SlurmBatchEngine:
 
         pal = min(self._pal(ctx), ctx.max_cores)
         step_label = ctx.step_cfg.dir_name()
-        output_dir = inputs.files[0][1].parent
+        # The shared array script + manifests live at the step dir; each task
+        # resolves its own per-structure dir (dirname of its output) at runtime.
+        output_dir = ctx.step_dir
         script_path = output_dir / f"{step_label}_array.slurm"
         slurm.build_array_script(
             step_label=step_label,
@@ -315,6 +328,7 @@ class SlurmBatchEngine:
             operation=ctx.step_cfg.operation,
             step=ctx.step_cfg.step,
             output_globs=self.output_globs,
+            output_dirs=self._output_dirs(ctx),
             extra_header_fields=self._extra_header_fields(ctx),
         )
 

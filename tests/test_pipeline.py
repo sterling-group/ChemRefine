@@ -34,7 +34,7 @@ def _config(tmp_path: Path, **overrides) -> Config:
 
 def test_bootstrap_from_xyz_file(tmp_path: Path):
     io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
-    seed = tmp_path / "step0_structure_seed.xyz"
+    seed = tmp_path / "step0_seed.xyz"
     cfg = _config(tmp_path, input=seed)
     state = pipeline.bootstrap(cfg)
     assert len(state.structures) == 1
@@ -189,7 +189,7 @@ def test_run_stops_early_when_a_step_produces_no_survivors(tmp_path: Path):
 
 
 def test_run_executes_each_step_in_order(tmp_path: Path):
-    seed = tmp_path / "step0_structure_seed.xyz"
+    seed = tmp_path / "step0_seed.xyz"
     io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
     cfg = _config(
         tmp_path,
@@ -206,7 +206,7 @@ def test_run_executes_each_step_in_order(tmp_path: Path):
 
 def test_run_writes_steps_csv(tmp_path: Path):
     """A full run emits the cumulative ``steps.csv`` energy summary."""
-    seed = tmp_path / "step0_structure_seed.xyz"
+    seed = tmp_path / "step0_seed.xyz"
     io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
     cfg = _config(
         tmp_path,

@@ -386,7 +386,9 @@ def test_orca_resolve_nms_from_existing_reads_round2_outputs(tmp_path):
     nms_dir = ctx.step_dir / "nms"
     nms_dir.mkdir(parents=True, exist_ok=True)
     for cid in ("0_m5_pos", "0_m5_neg"):
-        structure_artifact_path(nms_dir, 1, cid, "out").write_text(
+        out_path = structure_artifact_path(nms_dir, 1, cid, "out")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
             synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)])
             + "\n****ORCA TERMINATED NORMALLY****\n",
             encoding="utf-8",

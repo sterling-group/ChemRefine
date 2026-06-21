@@ -56,6 +56,7 @@ class FakeEngine:
         for struct in ctx.prev_state.structures:
             inp = structure_artifact_path(ctx.step_dir, step, struct.id, "inp")
             out = structure_artifact_path(ctx.step_dir, step, struct.id, "out")
+            inp.parent.mkdir(parents=True, exist_ok=True)  # per-structure dir
             inp.write_text(f"# fake input for {struct.id}\n", encoding="utf-8")
             files.append((inp, out, struct.id))
         return StepInputs(files=tuple(files))

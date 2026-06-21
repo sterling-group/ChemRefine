@@ -29,7 +29,7 @@ def test_build_input_appends_xyzfile_directive(tmp_path: Path):
     text = out.read_text()
     assert "! B3LYP def2-SVP" in text
     assert "%pal" in text
-    assert '%base "step1_structure_0"' in text
+    assert "%base" not in text  # ORCA defaults base to the .inp stem
     assert f"* xyzfile 0 1 {xyz}" in text
 
 
@@ -67,15 +67,15 @@ def test_build_input_inserts_extra_blocks_before_xyzfile(tmp_path: Path):
     )
     text = out.read_text()
     assert "ProgExt" in text
-    # extra blocks must appear before the %base + xyzfile directives
-    assert text.index("ProgExt") < text.index("%base")
-    assert text.index("%base") < text.index("* xyzfile")
+    # extra blocks must appear before the xyzfile directive
+    assert text.index("ProgExt") < text.index("* xyzfile")
 
 
-def test_build_input_uses_output_stem_for_base_directive(tmp_path: Path):
+def test_build_input_omits_base_directive(tmp_path: Path):
+    """No explicit %base — ORCA defaults the base to the .inp stem."""
     template = _template(tmp_path, "! B3LYP\n")
-    out = tmp_path / "step3_structure_0-1.inp"
-    xyz = tmp_path / "step3_structure_0-1.xyz"
+    out = tmp_path / "step3_0-1.inp"
+    xyz = tmp_path / "step3_0-1_inp.xyz"
     build_input(
         xyz_path=xyz,
         template_path=template,
@@ -83,7 +83,7 @@ def test_build_input_uses_output_stem_for_base_directive(tmp_path: Path):
         charge=0,
         multiplicity=1,
     )
-    assert '%base "step3_structure_0-1"' in out.read_text()
+    assert "%base" not in out.read_text()
 
 
 def test_build_input_missing_template_raises(tmp_path: Path):

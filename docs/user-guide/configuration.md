@@ -118,7 +118,7 @@ raises a clear error if the chosen energy wasn't computed.
     | `gpu` | derived from `device` | Attempt `gpu4pyscf` if installed (falls back to CPU). Set explicitly to override the `device`-derived default. |
     | `save_tensors` | `False` | Dump 1e/2e MO tensors after the SCF. |
     | `localized` | `False` | Boys-localize before tensor extraction. |
-    | `tensor_folder` | `tensors` | Output dir for `save_tensors` `.npz`. **Must be an absolute path when `save_tensors` is set** — a relative path resolves under the per-job scratch and would be deleted. |
+    | `tensor_folder` | `tensors` | Output dir for `save_tensors` `.npz`. A relative path (the default) is copied back into the structure's own dir (`outputs/stepN/<id>/tensors/`); an absolute path writes there directly. |
     | `cores` | `1` | Per-structure core budget. |
 
 === "nms (when nms: true)"
@@ -133,11 +133,19 @@ raises a clear error if the chosen energy wasn't computed.
 
 ## Output layout
 
+Each structure gets its **own directory** under the step dir, so a calculation's
+files sit together and never collide across structures. The input geometry is
+kept as `…_inp.xyz` distinct from the engine's output geometry:
+
 ```
 outputs/
-├── step1_screen/      *.inp *.out *.xyz  _cache/
-├── step2_refine/      *.inp *.out *.xyz  _cache/
-└── steps.csv          Boltzmann summary per surviving structure
+├── step1_screen/
+│   ├── 0/                     step1_0_inp.xyz  step1_0.{inp,out,xyz,...}  step1_0.runlog
+│   ├── 1/                     …
+│   ├── nms/<child_id>/        normal-mode round-2 children (NMS steps)
+│   └── _cache/                step.json, manifest.json, failed_jobs.json
+├── step2_refine/<id>/…
+└── steps.csv                  Boltzmann summary per surviving structure
 ```
 
 ## Legacy (v1.3.1) configs

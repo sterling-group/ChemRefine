@@ -107,9 +107,10 @@ def test_prepare_renders_one_py_and_xyz_per_structure(tmp_path: Path):
     inputs = engine.prepare(ctx)
     assert len(inputs.files) == 2
     for script_path, output_json, sid in inputs.files:
-        assert script_path.name == f"step1_structure_{sid}.py"
-        assert output_json.name == f"step1_structure_{sid}.json"
-        assert script_path.with_suffix(".xyz").is_file()
+        assert script_path.parent.name == sid  # per-structure directory
+        assert script_path.name == f"step1_{sid}.py"
+        assert output_json.name == f"step1_{sid}.json"
+        assert (script_path.parent / f"{script_path.stem}_inp.xyz").is_file()
         rendered = script_path.read_text()
         # Geometry placeholders should all be substituted.
         assert "$XYZ_PATH" not in rendered

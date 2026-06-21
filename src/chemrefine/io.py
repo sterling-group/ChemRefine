@@ -17,7 +17,6 @@ from typing import Any
 import numpy as np
 from ase import Atoms
 
-from chemrefine.ids import structure_artifact_path
 from chemrefine.quantities import (
     DEFAULT_TEMPERATURE_K,
     HARTREE_TO_KCALMOL,
@@ -51,18 +50,43 @@ def natural_key(name: str | Path) -> list[object]:
 CoordList = Sequence[tuple[str, float, float, float]]
 
 
+def write_single_xyz(geometry: Atoms | CoordList, path: str | Path, *, comment: str = "") -> Path:
+    """Write one geometry to ``path`` as plain XYZ; return ``path``.
+
+    ``geometry`` may be an :class:`ase.Atoms` or a list of ``(symbol, x, y, z)``
+    tuples (coerced on the fly). The parent directory is created if needed — this
+    is how a structure's per-id directory comes into being (engines call this with
+    :func:`chemrefine.ids.input_geometry_path`).
+    """
+    if isinstance(geometry, Atoms):
+        atoms = geometry
+    else:
+        atoms = Atoms(
+            symbols=[row[0] for row in geometry],
+            positions=np.array([row[1:] for row in geometry], dtype=float),
+        )
+    lines = [str(len(atoms)), comment]
+    for symbol, (x, y, z) in zip(atoms.get_chemical_symbols(), atoms.get_positions(), strict=True):
+        lines.append(f"{symbol:2s} {x:.6f} {y:.6f} {z:.6f}")
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return target
+
+
 def write_xyz(
     structures: Sequence[Atoms | CoordList],
     structure_ids: Sequence[str],
     step_number: int,
     output_dir: str | Path,
 ) -> list[Path]:
-    """Write each structure to ``output_dir/step{N}_structure_{ID}.xyz``.
+    """Write each structure **flat** to ``output_dir/step{N}_{ID}.xyz``.
 
-    Each ``structures`` entry may be an :class:`ase.Atoms` or a list of
-    ``(symbol, x, y, z)`` tuples — the loop coerces tuple form on the
-    fly. Returns the list of written paths in input order. Raises
-    :class:`ValueError` if ``structures`` and ``structure_ids`` differ
+    A flat, directly-globbable layout for *seed* sets (a directory of seeds is
+    read back via :func:`gather_output_files` with ``*.xyz``). Per-step engine
+    inputs do **not** use this — they live in per-structure directories via
+    :func:`write_single_xyz` + :func:`chemrefine.ids.input_geometry_path`.
+    Raises :class:`ValueError` if ``structures`` and ``structure_ids`` differ
     in length.
     """
     if len(structures) != len(structure_ids):
@@ -72,25 +96,12 @@ def write_xyz(
         )
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
-
-    written: list[Path] = []
-    for geometry, sid in zip(structures, structure_ids, strict=True):
-        if isinstance(geometry, Atoms):
-            atoms = geometry
-        else:
-            atoms = Atoms(
-                symbols=[row[0] for row in geometry],
-                positions=np.array([row[1:] for row in geometry], dtype=float),
-            )
-        path = structure_artifact_path(out, step_number, sid, "xyz")
-        lines = [str(len(atoms)), f"step {step_number} structure {sid}"]
-        for symbol, (x, y, z) in zip(
-            atoms.get_chemical_symbols(), atoms.get_positions(), strict=True
-        ):
-            lines.append(f"{symbol:2s} {x:.6f} {y:.6f} {z:.6f}")
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        written.append(path)
-    return written
+    return [
+        write_single_xyz(
+            geometry, out / f"step{step_number}_{sid}.xyz", comment=f"step {step_number} {sid}"
+        )
+        for geometry, sid in zip(structures, structure_ids, strict=True)
+    ]
 
 
 def gather_output_files(directory: str | Path, pattern: str) -> list[Path]:

@@ -160,6 +160,7 @@ def _register_flaky():
                 step = ctx.step_cfg.step
                 inp = structure_artifact_path(ctx.step_dir, step, s.id, "inp")
                 out = structure_artifact_path(ctx.step_dir, step, s.id, "out")
+                inp.parent.mkdir(parents=True, exist_ok=True)
                 inp.write_text("in\n", encoding="utf-8")
                 files.append((inp, out, s.id))
             return StepInputs(files=tuple(files))
@@ -168,6 +169,7 @@ def _register_flaky():
             for _inp, out, sid in inputs.files:
                 _Flaky.submitted.append(sid)
                 if sid not in _Flaky.fail_ids:  # failed jobs produce no output
+                    out.parent.mkdir(parents=True, exist_ok=True)
                     out.write_text(f"FINAL ENERGY: {-1.0 - int(sid) * 1e-3}\n", encoding="utf-8")
             return JobBatch(jobs={})
 
@@ -359,6 +361,7 @@ def _register_fake_nms():
                 step = ctx.step_cfg.step
                 inp = structure_artifact_path(ctx.step_dir, step, s.id, "inp")
                 out = structure_artifact_path(ctx.step_dir, step, s.id, "out")
+                inp.parent.mkdir(parents=True, exist_ok=True)
                 inp.write_text("in\n", encoding="utf-8")
                 files.append((inp, out, s.id))
             return StepInputs(files=tuple(files))
@@ -367,6 +370,7 @@ def _register_fake_nms():
             for _inp, out, sid in inputs.files:
                 _FakeNms2.submitted.append(sid)
                 if sid not in _FakeNms2.fail_round1:
+                    out.parent.mkdir(parents=True, exist_ok=True)
                     out.write_text("E -1.0\n", encoding="utf-8")
             return JobBatch(jobs={})
 

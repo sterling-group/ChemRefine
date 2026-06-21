@@ -32,8 +32,8 @@ from ase import Atoms
 from chemrefine.engines import _template_render
 from chemrefine.engines.base import SlurmBatchEngine
 from chemrefine.errors import OutputParseError
-from chemrefine.ids import structure_artifact_path
-from chemrefine.io import write_xyz
+from chemrefine.ids import input_geometry_path, structure_artifact_path
+from chemrefine.io import write_single_xyz
 from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
 from chemrefine.state import StepContext, StepInputs, StepResults, Structure
 
@@ -58,13 +58,11 @@ class TemplateScriptEngine(SlurmBatchEngine):
 
         files: list[tuple[Path, Path, str]] = []
         for struct in ctx.prev_state.structures:
-            xyz_paths = write_xyz(
-                [struct.atoms],
-                [struct.id],
-                step_number=step,
-                output_dir=ctx.step_dir,
+            xyz_path = write_single_xyz(
+                struct.atoms,
+                input_geometry_path(ctx.step_dir, step, struct.id),
+                comment=f"step {step} {struct.id} input",
             )
-            xyz_path = xyz_paths[0]
             script_path = structure_artifact_path(ctx.step_dir, step, struct.id, "py")
             output_json = structure_artifact_path(ctx.step_dir, step, struct.id, "json")
             _template_render.build_input(

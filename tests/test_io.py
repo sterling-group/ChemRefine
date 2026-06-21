@@ -77,11 +77,24 @@ def _h2o() -> Atoms:
 
 
 def test_write_xyz_writes_one_file_per_structure(tmp_path: Path):
+    # write_xyz is the flat seed writer (directly globbable by bootstrap).
     paths = write_xyz([_h2o(), _h2o()], ["0", "1"], step_number=3, output_dir=tmp_path)
     assert len(paths) == 2
-    assert paths[0].name == "step3_structure_0.xyz"
-    assert paths[1].name == "step3_structure_1.xyz"
+    assert paths[0].name == "step3_0.xyz"
+    assert paths[1].name == "step3_1.xyz"
     assert all(p.exists() for p in paths)
+    assert all(p.parent == tmp_path for p in paths)  # flat, not nested
+
+
+def test_write_single_xyz_to_input_geometry_path(tmp_path: Path):
+    from chemrefine.ids import input_geometry_path
+    from chemrefine.io import write_single_xyz
+
+    path = write_single_xyz(_h2o(), input_geometry_path(tmp_path, 2, "0-1"))
+    assert path == tmp_path / "0-1" / "step2_0-1_inp.xyz"
+    assert path.is_file()
+    back = ase_read(str(path), format="xyz")
+    assert list(back.get_chemical_symbols()) == ["O", "H", "H"]
 
 
 def test_write_xyz_roundtrips(tmp_path: Path):

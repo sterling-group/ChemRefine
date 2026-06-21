@@ -250,6 +250,7 @@ def _register_fail_engine():
                 step = ctx.step_cfg.step
                 inp = structure_artifact_path(ctx.step_dir, step, s.id, "inp")
                 out = structure_artifact_path(ctx.step_dir, step, s.id, "out")
+                inp.parent.mkdir(parents=True, exist_ok=True)
                 inp.write_text("in\n", encoding="utf-8")
                 if self.fail.get(s.id) != "missing":
                     out.write_text("out\n", encoding="utf-8")

@@ -9,6 +9,7 @@ gradient is computed by :class:`PyscfExtOptCalculator`.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import ClassVar
 
 from chemrefine.engines.base import register
@@ -58,3 +59,16 @@ class PyscfExtOptEngine(ExtOptOrcaEngine):
         options = PyscfOptions.from_raw(ctx.step_cfg.options).model_dump()
         tokens = PyscfExtOptCalculator.server_cli_from_options(options)
         return run_block._server_command(backend=self.backend, extra_tokens=tokens)
+
+    def _output_dirs(self, ctx: StepContext) -> tuple[str, ...]:
+        """Copy the ``save_tensors`` output directory back into the structure dir.
+
+        The server writes ``<tensor_folder>/<tag>.npz`` under ``$WORK_DIR``; a
+        relative ``tensor_folder`` is copied back so the tensors persist beside
+        the structure's other artifacts. An absolute ``tensor_folder`` already
+        persists at its own location, so nothing extra is copied.
+        """
+        opts = PyscfOptions.from_raw(ctx.step_cfg.options)
+        if opts.save_tensors and not Path(opts.tensor_folder).is_absolute():
+            return (opts.tensor_folder,)
+        return ()

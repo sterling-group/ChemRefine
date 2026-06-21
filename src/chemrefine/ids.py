@@ -14,12 +14,13 @@ The functions here own three concerns:
 
 1. Allocate IDs for new children (:func:`allocate_child_ids`) —
    engines compute their per-parent fan-out and mint child IDs here.
-2. Build the canonical per-structure artifact path
-   (:func:`structure_artifact_path`) — the forward side of the
-   ``step{N}_structure_{ID}.{ext}`` naming convention. (IDs travel in
-   the step manifest, never re-parsed out of filenames — note that NMS
-   child IDs like ``0_m5_pos`` contain letters, so a filename is not a
-   reliable place to recover an ID from.)
+2. Build the canonical per-structure artifact paths
+   (:func:`structure_artifact_path`, :func:`input_geometry_path`) — each
+   structure gets its own ``step_dir/{ID}/`` directory holding
+   ``step{N}_{ID}.{ext}`` (and ``step{N}_{ID}_inp.xyz`` for the input
+   geometry). (IDs travel in the step manifest, never re-parsed out of
+   filenames — note that NMS child IDs like ``0_m5_pos`` contain letters,
+   so a filename is not a reliable place to recover an ID from.)
 3. Resolve a step's input *template* path (:func:`resolve_step_template`,
    :func:`default_template_name`) — the ``step{N}.{ext}`` template-naming
    convention, kept here beside the artifact-path convention so every
@@ -62,11 +63,24 @@ def allocate_child_ids(parents: Sequence[str], fanouts: Sequence[int]) -> list[s
 def structure_artifact_path(step_dir: Path, step: int, structure_id: str, ext: str) -> Path:
     """Canonical per-structure artifact path.
 
-    Returns ``step_dir/step{step}_structure_{structure_id}.{ext}``.
-    Keeping the naming convention here means a future layout change
-    only touches one file.
+    Each structure gets its **own directory** under the step dir, so a
+    calculation's files (input, output, optimized geometry, ORCA scratch
+    copied back, pyscf tensors) sit together and never collide across
+    structures: ``step_dir/{structure_id}/step{step}_{structure_id}.{ext}``.
+    Keeping the naming convention here means a layout change touches one file.
     """
-    return step_dir / f"step{step}_structure_{structure_id}.{ext}"
+    return step_dir / structure_id / f"step{step}_{structure_id}.{ext}"
+
+
+def input_geometry_path(step_dir: Path, step: int, structure_id: str) -> Path:
+    """Path of a structure's **input** geometry, distinct from any output xyz.
+
+    Named ``step{step}_{structure_id}_inp.xyz`` (an ``_inp`` stem) so it never
+    shares a name with an engine's *output* geometry (e.g. ORCA writes the
+    optimized geometry to ``step{step}_{structure_id}.xyz``); both survive the
+    copy-back into the structure's directory.
+    """
+    return step_dir / structure_id / f"step{step}_{structure_id}_inp.xyz"
 
 
 def default_template_name(step: int, suffix: str) -> str:

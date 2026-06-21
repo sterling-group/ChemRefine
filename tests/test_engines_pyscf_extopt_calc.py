@@ -188,10 +188,10 @@ def test_pyscf_options_from_raw_round_trip():
     assert opt.tensor_folder == "/abs/mytensors"
 
 
-def test_pyscf_options_save_tensors_requires_absolute_folder():
-    """A relative tensor_folder with save_tensors would write into deleted scratch."""
-    with pytest.raises(ValueError, match="absolute path when save_tensors"):
-        PyscfOptions(save_tensors=True, tensor_folder="tensors")
+def test_pyscf_options_save_tensors_allows_relative_folder():
+    """A relative tensor_folder is fine now — it's copied back into the structure dir."""
+    opt = PyscfOptions(save_tensors=True, tensor_folder="tensors")
+    assert opt.tensor_folder == "tensors"
 
 
 def test_pyscf_options_save_tensors_accepts_absolute_folder():

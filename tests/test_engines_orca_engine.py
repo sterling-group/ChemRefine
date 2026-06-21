@@ -67,10 +67,12 @@ def test_prepare_writes_inp_and_xyz_per_structure(tmp_path: Path):
     ctx = _ctx(tmp_path, structures=(_seed_structure("0"), _seed_structure("1")))
     inputs = engine.prepare(ctx)
     assert len(inputs.files) == 2
-    for inp_path, _out_path, _sid in inputs.files:
+    for inp_path, _out_path, sid in inputs.files:
         assert inp_path.exists()
         assert inp_path.suffix == ".inp"
-        assert (inp_path.with_suffix(".xyz")).exists()
+        # Each structure has its own directory; the input geometry is _inp.xyz.
+        assert inp_path.parent.name == sid
+        assert (inp_path.parent / f"{inp_path.stem}_inp.xyz").exists()
 
 
 def test_prepare_input_contains_charge_and_multiplicity(tmp_path: Path):
@@ -178,8 +180,8 @@ def test_submit_script_contains_orca_executable_invocation(_submit, _is_finished
     inputs = engine.prepare(ctx)
     engine.submit(inputs, ctx)
     script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
-    assert "orca step1_structure_0.inp" in script_text
-    assert "$OUTPUT_DIR/step1_structure_0.out" in script_text
+    assert "orca step1_0.inp" in script_text
+    assert "$OUTPUT_DIR/step1_0.out" in script_text
     # ORCA's output_globs ClassVar flows through the shared SlurmBatchEngine.
     assert "*.gbw" in script_text
     assert "*.hess" in script_text
