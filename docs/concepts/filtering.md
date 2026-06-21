@@ -21,6 +21,16 @@ Boltzmann weights use `temperature_k` (default 298.15 K); the same temperature i
 used for the `steps.csv` report so the reported weights match what the step
 filtered on.
 
+## Energy type
+
+By default the filter ranks on the **electronic** energy. Set `energy_type` to
+`gibbs`, `enthalpy`, or `electronic_zero_point` (aliases `G` / `H` / `E_ZPE`) to
+rank on a thermochemical energy instead — these require a frequency calc to have
+populated that energy (ORCA writes Gibbs / enthalpy / ZPE in its
+`THERMOCHEMISTRY` block; see [`Structure`](../api/state.md)). If the chosen
+energy is missing for any survivor, filtering raises a `ConfigError` naming the
+structures, rather than silently ranking on the wrong energy.
+
 ## Per-parent grouping
 
 Set `by_parent: true` to apply the chosen method independently within each

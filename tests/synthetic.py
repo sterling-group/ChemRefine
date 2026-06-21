@@ -93,6 +93,20 @@ NORMAL MODES
 """
 
 
+# A minimal ORCA THERMOCHEMISTRY block. ``Zero point energy`` is the (positive)
+# ZPE correction; ``Total Enthalpy`` / ``Final Gibbs free energy`` are absolute Eh.
+# With an electronic energy of -76.40, electronic+ZPE = -76.40 + 0.02 = -76.38.
+THERMOCHEMISTRY_BLOCK = """\
+-------------------------
+THERMOCHEMISTRY AT 298.15K
+-------------------------
+
+Zero point energy                ...      0.02000000 Eh      12.55 kcal/mol
+Total Enthalpy                   ...    -76.38000000 Eh
+Final Gibbs free energy          ...    -76.41000000 Eh
+"""
+
+
 def synthetic_pes_segment(
     *,
     coords: list[tuple[str, float, float, float]],

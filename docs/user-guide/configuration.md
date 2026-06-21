@@ -77,7 +77,11 @@ steps:
 
 `sample` selects which structures advance to the next step. Common knobs:
 `by_parent` (default `false` — filter globally; `true` filters within each
-parent-ID group) and `temperature_k` (default `298.15`, used by Boltzmann).
+parent-ID group), `temperature_k` (default `298.15`, used by Boltzmann), and
+`energy_type` (default `electronic`) — the energy the filter sorts/selects on:
+`electronic`/`E`, `gibbs`/`G`, `enthalpy`/`H`, or `electronic_zero_point`/`E_ZPE`.
+The non-electronic types require a frequency calc (thermochemistry); filtering
+raises a clear error if the chosen energy wasn't computed.
 
 `min` and `max` take **exactly one** selector: `count` (keep N) or
 `window_kcalmol` (keep all within that energy window).

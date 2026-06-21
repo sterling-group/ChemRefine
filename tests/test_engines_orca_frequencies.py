@@ -12,12 +12,44 @@ from synthetic import (
 from synthetic import (
     NORMAL_MODES_BLOCK_2_ATOMS as _SYNTH_MODES,
 )
+from synthetic import (
+    THERMOCHEMISTRY_BLOCK as _SYNTH_THERMO,
+)
 
 from chemrefine.engines.orca.frequencies import (
     parse_frequencies,
     parse_imaginary_frequencies,
     parse_normal_modes_tensor,
+    parse_thermochemistry_from_text,
 )
+
+# ---------------------------------------------------------------------------
+# Thermochemistry
+# ---------------------------------------------------------------------------
+
+
+def test_thermochemistry_none_without_block():
+    assert parse_thermochemistry_from_text("no thermo here", electronic_hartree=-76.4) is None
+
+
+def test_thermochemistry_parses_absolute_values_and_zpe():
+    thermo = parse_thermochemistry_from_text(_SYNTH_THERMO, electronic_hartree=-76.40)
+    assert thermo is not None
+    assert thermo.gibbs_hartree == -76.41
+    assert thermo.enthalpy_hartree == -76.38
+    # electronic + ZPE correction (-76.40 + 0.02)
+    assert thermo.energy_zpe_hartree == pytest.approx(-76.38)
+
+
+def test_thermochemistry_missing_lines_yield_none():
+    """A block present but without the individual lines yields None per quantity."""
+    thermo = parse_thermochemistry_from_text(
+        "THERMOCHEMISTRY AT 298.15K\n(no value lines)\n", electronic_hartree=-76.40
+    )
+    assert thermo is not None
+    assert thermo.gibbs_hartree is None
+    assert thermo.enthalpy_hartree is None
+    assert thermo.energy_zpe_hartree is None
 
 
 def _write(tmp_path: Path, text: str) -> Path:

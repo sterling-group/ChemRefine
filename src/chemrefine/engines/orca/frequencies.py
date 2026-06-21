@@ -23,6 +23,7 @@ spectrum extraction, etc.).
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -178,3 +179,51 @@ def parse_normal_modes_tensor_from_text(text: str, *, num_atoms: int) -> NDArray
             f"expected {3 * num_atoms} (3 axes by {num_atoms} atoms)"
         )
     return full.reshape(num_atoms, 3, -1)
+
+
+# ---------------------------------------------------------------------------
+# Thermochemistry (Gibbs / enthalpy / electronic+ZPE) from a freq output
+# ---------------------------------------------------------------------------
+
+_THERMO_MARKER = "THERMOCHEMISTRY"
+# ORCA prints "<label>   ...   <value> Eh"; tolerate the dotted padding.
+_GIBBS_RE = re.compile(r"Final Gibbs free energy\s*\.*\s*(-?\d+\.\d+)")
+_ENTHALPY_RE = re.compile(r"Total Enthalpy\s*\.*\s*(-?\d+\.\d+)")
+_ZPE_RE = re.compile(r"Zero point energy\s*\.*\s*(-?\d+\.\d+)")
+
+
+@dataclass(frozen=True)
+class Thermochemistry:
+    """Absolute thermochemistry (Hartree) extracted from an ORCA freq output.
+
+    Any quantity whose line is absent from the block is ``None``.
+    """
+
+    gibbs_hartree: float | None
+    enthalpy_hartree: float | None
+    energy_zpe_hartree: float | None
+
+
+def parse_thermochemistry_from_text(
+    text: str, *, electronic_hartree: float
+) -> Thermochemistry | None:
+    """Return Gibbs / enthalpy / electronic+ZPE (Hartree), or ``None`` if no block.
+
+    ORCA's ``THERMOCHEMISTRY`` section prints an absolute ``Final Gibbs free
+    energy`` and ``Total Enthalpy``; ``Zero point energy`` is the (positive) ZPE
+    *correction*, so electronic+ZPE = ``electronic_hartree`` + that correction.
+    Returns ``None`` when the output has no thermochemistry block at all (e.g. a
+    plain ``opt_sp`` with no frequencies).
+    """
+    if _THERMO_MARKER not in text:
+        return None
+    # Take the last of each (a compound job may print thermochemistry more than
+    # once; the final block is the one we want), matching the energy parser.
+    gibbs = _GIBBS_RE.findall(text)
+    enthalpy = _ENTHALPY_RE.findall(text)
+    zpe = _ZPE_RE.findall(text)
+    return Thermochemistry(
+        gibbs_hartree=float(gibbs[-1]) if gibbs else None,
+        enthalpy_hartree=float(enthalpy[-1]) if enthalpy else None,
+        energy_zpe_hartree=(electronic_hartree + float(zpe[-1])) if zpe else None,
+    )

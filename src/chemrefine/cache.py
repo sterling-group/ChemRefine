@@ -164,6 +164,9 @@ def _structure_to_dict(s: Structure) -> dict[str, Any]:
         "id": s.id,
         "parent_id": s.parent_id,
         "energy_hartree": s.energy_hartree,
+        "gibbs_hartree": s.gibbs_hartree,
+        "enthalpy_hartree": s.enthalpy_hartree,
+        "energy_zpe_hartree": s.energy_zpe_hartree,
         "converged": s.converged,
         "terminated": s.terminated,
         "symbols": list(s.atoms.get_chemical_symbols()),
@@ -187,6 +190,10 @@ def _structure_from_dict(d: dict[str, Any]) -> Structure:
         forces_ev_per_a=None if forces is None else np.asarray(forces, dtype=np.float64),
         converged=d["converged"],
         terminated=d["terminated"],
+        # Thermochemistry is additive — caches written before it lack these keys.
+        gibbs_hartree=d.get("gibbs_hartree"),
+        enthalpy_hartree=d.get("enthalpy_hartree"),
+        energy_zpe_hartree=d.get("energy_zpe_hartree"),
     )
 
 

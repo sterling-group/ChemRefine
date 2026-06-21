@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
+from chemrefine.engines.orca import frequencies
 from chemrefine.errors import OutputParseError
 from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
 
@@ -77,6 +78,9 @@ class ParsedStructure:
     forces_ev_per_a: NDArray[np.float64] | None
     converged: bool | None = None
     terminated: bool | None = None
+    gibbs_hartree: float | None = None
+    enthalpy_hartree: float | None = None
+    energy_zpe_hartree: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -117,14 +121,20 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedStructu
         raise OutputParseError(f"malformed coordinate row in {src}: {e}") from e
     if not symbols:
         raise OutputParseError(f"CARTESIAN COORDINATES block has no atoms in {src}")
+    energy = float(energy_matches[-1])
+    # Thermochemistry rides along when the output has a freq block (else None).
+    thermo = frequencies.parse_thermochemistry_from_text(text, electronic_hartree=energy)
     return [
         ParsedStructure(
             symbols=symbols,
             positions=positions,
-            energy_hartree=float(energy_matches[-1]),
+            energy_hartree=energy,
             forces_ev_per_a=parse_forces(text),
             terminated=bool(_TERMINATED_RE.search(text)),
             converged=not bool(_NOT_CONVERGED_RE.search(text)),
+            gibbs_hartree=thermo.gibbs_hartree if thermo else None,
+            enthalpy_hartree=thermo.enthalpy_hartree if thermo else None,
+            energy_zpe_hartree=thermo.energy_zpe_hartree if thermo else None,
         )
     ]
 

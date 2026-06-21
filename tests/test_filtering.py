@@ -170,6 +170,34 @@ def test_max_window_keeps_structures_within_window_of_max():
 
 
 # ---------------------------------------------------------------------------
+# energy_type (gibbs / enthalpy / electronic_zero_point)
+# ---------------------------------------------------------------------------
+
+
+def test_energy_type_gibbs_sorts_on_gibbs():
+    """With energy_type=gibbs the filter ranks by Gibbs, not electronic energy."""
+    r = StepResults(
+        structures=(
+            # electronic order: a < b, but gibbs order: b < a
+            Structure(id="a", atoms=Atoms("H"), energy_hartree=-2.0, gibbs_hartree=-1.0),
+            Structure(id="b", atoms=Atoms("H"), energy_hartree=-1.0, gibbs_hartree=-2.0),
+        )
+    )
+    state = apply(r, MinSample(method="min", count=1, energy_type="gibbs"))
+    assert [s.id for s in state.structures] == ["b"]
+
+
+def test_energy_type_missing_thermochem_raises():
+    from chemrefine.errors import ConfigError
+
+    r = StepResults(
+        structures=(Structure(id="a", atoms=Atoms("H"), energy_hartree=-1.0, gibbs_hartree=None),)
+    )
+    with pytest.raises(ConfigError, match="energy_type='gibbs' needs thermochemistry"):
+        apply(r, MinSample(method="min", count=1, energy_type="gibbs"))
+
+
+# ---------------------------------------------------------------------------
 # by_parent
 # ---------------------------------------------------------------------------
 
@@ -207,6 +235,7 @@ def test_unknown_sample_type_raises():
         method = "nope"
         by_parent = False
         temperature_k = 298.15
+        energy_type = "electronic"
 
     r = _results(("a", -1.0))
     with pytest.raises(TypeError):

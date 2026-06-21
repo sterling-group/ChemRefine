@@ -5,10 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from synthetic import THERMOCHEMISTRY_BLOCK, synthetic_dft_output
 
 from chemrefine.engines.orca.output import (
     ParsedStructure,
     parse_dft,
+    parse_dft_from_text,
     parse_docker,
     parse_forces,
     parse_goat_ensemble,
@@ -17,6 +19,24 @@ from chemrefine.engines.orca.output import (
     parse_solvator,
 )
 from chemrefine.errors import OutputParseError
+
+_WATER = [("O", 0.0, 0.0, 0.0), ("H", 0.0, 0.0, 1.0), ("H", 0.0, 1.0, 0.0)]
+
+
+def test_parse_dft_attaches_thermochemistry_when_present():
+    text = synthetic_dft_output([-76.40], _WATER) + "\n" + THERMOCHEMISTRY_BLOCK
+    parsed = parse_dft_from_text(text)
+    assert parsed[0].gibbs_hartree == -76.41
+    assert parsed[0].enthalpy_hartree == -76.38
+    assert parsed[0].energy_zpe_hartree == pytest.approx(-76.38)
+
+
+def test_parse_dft_without_thermochemistry_leaves_none():
+    parsed = parse_dft_from_text(synthetic_dft_output([-76.40], _WATER))
+    assert parsed[0].gibbs_hartree is None
+    assert parsed[0].enthalpy_hartree is None
+    assert parsed[0].energy_zpe_hartree is None
+
 
 DATA = Path(__file__).parent / "data"
 FIXTURE = DATA / "orca.out"

@@ -180,6 +180,9 @@ class OrcaEngine(SlurmBatchEngine):
                         forces_ev_per_a=ps.forces_ev_per_a,
                         converged=ps.converged,
                         terminated=ps.terminated,
+                        gibbs_hartree=ps.gibbs_hartree,
+                        enthalpy_hartree=ps.enthalpy_hartree,
+                        energy_zpe_hartree=ps.energy_zpe_hartree,
                     )
                 )
         return StepResults(structures=tuple(out_structures))

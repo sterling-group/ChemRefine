@@ -188,6 +188,56 @@ def test_round_trip_preserves_positions_forces_and_flags(tmp_path: Path):
     assert loaded.forces_ev_per_a.dtype == np.float64
 
 
+def test_round_trip_preserves_thermochemistry(tmp_path: Path):
+    """Gibbs / enthalpy / electronic+ZPE survive the JSON store."""
+    struct = Structure(
+        id="0",
+        atoms=Atoms("H"),
+        energy_hartree=-76.40,
+        gibbs_hartree=-76.41,
+        enthalpy_hartree=-76.38,
+        energy_zpe_hartree=-76.38,
+    )
+    step_dir = tmp_path / "step1"
+    save(
+        step_cfg=_cfg(),
+        parent_ids=("0",),
+        results=StepResults(structures=(struct,)),
+        step_dir=step_dir,
+        chemrefine_version="2.0.0",
+    )
+    loaded = load(step_dir).results.structures[0]
+    assert loaded.gibbs_hartree == -76.41
+    assert loaded.enthalpy_hartree == -76.38
+    assert loaded.energy_zpe_hartree == -76.38
+
+
+def test_load_tolerates_cache_without_thermochemistry(tmp_path: Path):
+    """A cache written before thermochemistry existed loads with None fields."""
+    import json
+
+    from chemrefine.cache import _cache_path
+
+    save(
+        step_cfg=_cfg(),
+        parent_ids=("0",),
+        results=_results(),
+        step_dir=tmp_path / "step1",
+        chemrefine_version="2.0.0",
+    )
+    path = _cache_path(tmp_path / "step1")
+    doc = json.loads(path.read_text())
+    for entry in doc["structures"]:  # simulate an older document
+        entry.pop("gibbs_hartree", None)
+        entry.pop("enthalpy_hartree", None)
+        entry.pop("energy_zpe_hartree", None)
+    path.write_text(json.dumps(doc))
+    loaded = load(tmp_path / "step1").results.structures[0]
+    assert loaded.gibbs_hartree is None
+    assert loaded.enthalpy_hartree is None
+    assert loaded.energy_zpe_hartree is None
+
+
 def test_round_trip_keeps_parents_digest_stable(tmp_path: Path):
     """The load-bearing property: a JSON round-trip must not perturb the digest.
 

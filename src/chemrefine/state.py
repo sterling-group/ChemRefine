@@ -51,6 +51,15 @@ class Structure:
     """Did the program terminate normally? ``None`` when the engine doesn't
     report it. A structure is a *failure* only when a flag is explicitly
     ``False`` (see :func:`chemrefine.step_failures.succeeded`)."""
+    gibbs_hartree: float | None = None
+    """Gibbs free energy (Hartree) from a frequency calc; ``None`` when no
+    thermochemistry was computed. Used by ``sample.energy_type: gibbs``."""
+    enthalpy_hartree: float | None = None
+    """Total enthalpy (Hartree) from a frequency calc; ``None`` when none.
+    Used by ``sample.energy_type: enthalpy``."""
+    energy_zpe_hartree: float | None = None
+    """Electronic energy + zero-point correction (Hartree); ``None`` when no
+    thermochemistry was computed. Used by ``sample.energy_type: electronic_zero_point``."""
 
 
 @dataclass(frozen=True)

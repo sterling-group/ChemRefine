@@ -59,6 +59,15 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 # ---------------------------------------------------------------------------
 
 
+#: Short alias → canonical ``energy_type`` value (case-insensitive).
+_ENERGY_TYPE_ALIASES = {
+    "e": "electronic",
+    "g": "gibbs",
+    "h": "enthalpy",
+    "e_zpe": "electronic_zero_point",
+}
+
+
 class _SampleBase(BaseModel):
     """Common fields shared by every sample method."""
 
@@ -69,6 +78,22 @@ class _SampleBase(BaseModel):
 
     temperature_k: float = Field(DEFAULT_TEMPERATURE_K, gt=0)
     """Temperature used by Boltzmann-style filters (K)."""
+
+    energy_type: Literal["electronic", "gibbs", "enthalpy", "electronic_zero_point"] = "electronic"
+    """Which energy the filter sorts / selects on (default electronic).
+
+    ``gibbs`` / ``enthalpy`` / ``electronic_zero_point`` require a frequency calc
+    (thermochemistry) to have run; filtering raises if the chosen energy is
+    missing. Short aliases are accepted: ``E`` / ``G`` / ``H`` / ``E_ZPE``."""
+
+    @field_validator("energy_type", mode="before")
+    @classmethod
+    def _normalize_energy_type(cls, v: Any) -> Any:
+        """Map short aliases (``G`` → ``gibbs``) and lowercase before validation."""
+        if isinstance(v, str):
+            key = v.strip().lower()
+            return _ENERGY_TYPE_ALIASES.get(key, key)
+        return v
 
 
 class BoltzmannSample(_SampleBase):

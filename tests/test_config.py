@@ -256,6 +256,32 @@ def test_max_window_sample_parses(tmp_path: Path):
     assert cfg.steps[0].sample.window_kcalmol == 3.0
 
 
+def test_sample_energy_type_defaults_to_electronic(tmp_path: Path):
+    cfg = _sample_cfg(tmp_path, {"method": "min", "count": 1})
+    assert cfg.steps[0].sample.energy_type == "electronic"
+
+
+def test_sample_energy_type_accepts_short_aliases(tmp_path: Path):
+    for alias, canonical in [
+        ("G", "gibbs"),
+        ("H", "enthalpy"),
+        ("E_ZPE", "electronic_zero_point"),
+        ("Electronic", "electronic"),  # case-insensitive long name
+    ]:
+        cfg = _sample_cfg(tmp_path, {"method": "min", "count": 1, "energy_type": alias})
+        assert cfg.steps[0].sample.energy_type == canonical
+
+
+def test_sample_energy_type_rejects_unknown(tmp_path: Path):
+    with pytest.raises(ConfigError):
+        _sample_cfg(tmp_path, {"method": "min", "count": 1, "energy_type": "bogus"})
+
+
+def test_sample_energy_type_rejects_non_string(tmp_path: Path):
+    with pytest.raises(ConfigError):
+        _sample_cfg(tmp_path, {"method": "min", "count": 1, "energy_type": 123})
+
+
 def test_unknown_sample_method_rejected(tmp_path: Path):
     data = _minimal_config(
         steps=[
