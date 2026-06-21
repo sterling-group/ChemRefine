@@ -74,6 +74,15 @@ def test_fingerprint_changes_with_parents_digest():
     )
 
 
+def test_fingerprint_changes_with_template_digest():
+    # Editing a template (same basename) must re-run the step — the content
+    # digest is what carries that, since the basename alone is unchanged.
+    cfg = _cfg()
+    assert fingerprint(cfg, ("0",), template_digest="aaa") != fingerprint(
+        cfg, ("0",), template_digest="bbb"
+    )
+
+
 def _h2(spacing: float = 0.74, energy: float | None = None) -> Structure:
     atoms = Atoms(symbols=["H", "H"], positions=[[0, 0, 0], [spacing, 0, 0]])
     return Structure(id="0", atoms=atoms, energy_hartree=energy)
@@ -132,6 +141,23 @@ def test_save_and_load_round_trip(tmp_path: Path):
     assert loaded.engine == "fake"
     assert [s.id for s in loaded.results.structures] == ["0", "1"]
     assert loaded.results.structures[1].energy_hartree == -1.5
+
+
+def test_template_digest_round_trips_through_validity(tmp_path: Path):
+    """A cache saved with one template digest is invalid under a different one."""
+    step_dir = tmp_path / "step1"
+    save(
+        step_cfg=_cfg(),
+        parent_ids=("0",),
+        results=_results(),
+        step_dir=step_dir,
+        chemrefine_version="2.0.0",
+        template_digest="orig",
+    )
+    assert is_valid(step_cfg=_cfg(), parent_ids=("0",), step_dir=step_dir, template_digest="orig")
+    assert not is_valid(
+        step_cfg=_cfg(), parent_ids=("0",), step_dir=step_dir, template_digest="edited"
+    )
 
 
 def test_reuse_fingerprint_round_trips(tmp_path: Path):

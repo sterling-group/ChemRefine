@@ -53,3 +53,7 @@ class MlipTrainEngine:
     def normal_mode_sample(self, results: StepResults, ctx: StepContext) -> StepResults:
         """Not supported — the orchestrator gates this on ``supports_nms``."""
         raise NotImplementedError("mlip-train does not support normal-mode sampling")
+
+    def input_digest(self, ctx: StepContext) -> str:
+        """Training is a pass-through; nothing template-driven to fold into the cache."""
+        return ""

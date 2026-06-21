@@ -147,6 +147,7 @@ def _cached_outcome(
         parent_ids=parent_ids,
         step_dir=ctx.step_dir,
         parents_digest=cache.parents_digest(ctx.prev_state.structures),
+        template_digest=engine.input_digest(ctx),
     )
     if cached is None:
         return None
@@ -187,7 +188,10 @@ def _nms_reuse_outcome(
     except CacheError:
         cached = None
     digest = cache.parents_digest(ctx.prev_state.structures)
-    fingerprint = step_nms.nms_reuse_fingerprint(step_cfg, parent_ids, parents_digest=digest)
+    template_digest = engine.input_digest(ctx)
+    fingerprint = step_nms.nms_reuse_fingerprint(
+        step_cfg, parent_ids, parents_digest=digest, template_digest=template_digest
+    )
     if cached is None or getattr(cached, "reuse_fingerprint", "") != fingerprint:
         return None
     if cache.load_failed_jobs(ctx.step_dir):
@@ -204,6 +208,7 @@ def _nms_reuse_outcome(
             chemrefine_version=__version__,
             reuse_fingerprint=fingerprint,
             parents_digest=digest,
+            template_digest=template_digest,
         )
         results = cached.results
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
@@ -247,6 +252,7 @@ def _run_full_step(
         results = step_failures.apply_failure_policy(successes, failures, ctx, step_cfg)
 
     digest = cache.parents_digest(ctx.prev_state.structures)
+    template_digest = engine.input_digest(ctx)
     cache.save(
         step_cfg=step_cfg,
         parent_ids=parent_ids,
@@ -254,9 +260,10 @@ def _run_full_step(
         step_dir=ctx.step_dir,
         chemrefine_version=__version__,
         reuse_fingerprint=step_nms.nms_reuse_fingerprint(
-            step_cfg, parent_ids, parents_digest=digest
+            step_cfg, parent_ids, parents_digest=digest, template_digest=template_digest
         ),
         parents_digest=digest,
+        template_digest=template_digest,
     )
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
@@ -314,6 +321,7 @@ def rebuild_cache_step(
     else:
         results = step_failures.apply_failure_policy(successes, failures, ctx, step_cfg)
     digest = cache.parents_digest(ctx.prev_state.structures)
+    template_digest = engine.input_digest(ctx)
     cache.save(
         step_cfg=step_cfg,
         parent_ids=parent_ids,
@@ -321,9 +329,10 @@ def rebuild_cache_step(
         step_dir=ctx.step_dir,
         chemrefine_version=__version__,
         reuse_fingerprint=step_nms.nms_reuse_fingerprint(
-            step_cfg, parent_ids, parents_digest=digest
+            step_cfg, parent_ids, parents_digest=digest, template_digest=template_digest
         ),
         parents_digest=digest,
+        template_digest=template_digest,
     )
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
@@ -365,5 +374,6 @@ def _resubmit_failed(
         step_dir=ctx.step_dir,
         chemrefine_version=__version__,
         parents_digest=cache.parents_digest(ctx.prev_state.structures),
+        template_digest=engine.input_digest(ctx),
     )
     return results

@@ -30,7 +30,7 @@ from ase import Atoms
 from numpy.typing import NDArray
 
 from chemrefine.engines.base import SlurmBatchEngine, register
-from chemrefine.engines.orca import frequencies, nms, output
+from chemrefine.engines.orca import frequencies, inspect, nms, output
 from chemrefine.engines.orca import input as orca_input
 from chemrefine.ids import allocate_child_ids, input_geometry_path, structure_artifact_path
 from chemrefine.io import write_single_xyz
@@ -124,6 +124,16 @@ class OrcaEngine(SlurmBatchEngine):
         """Record which ORCA binary ran in the runlog header."""
         return (("orca_executable", ctx.executables.get("orca", "orca")),)
 
+    def _effective_operation(self, ctx: StepContext) -> str:
+        """Operation to parse with: the explicit one if set, else inspect the template.
+
+        An explicit ``operation`` always wins; otherwise the run type is inferred
+        from the template's ORCA keywords (:mod:`chemrefine.engines.orca.inspect`).
+        """
+        if ctx.step_cfg.operation is not None:
+            return ctx.step_cfg.operation
+        return inspect.inspect_template(self._resolve_template(ctx)).operation
+
     # -- parse -------------------------------------------------------------
 
     def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
@@ -134,7 +144,7 @@ class OrcaEngine(SlurmBatchEngine):
         NMS steps — the imaginary frequencies + normal-mode tensor (cached for
         :meth:`normal_mode_sample`). Ensemble operations read their sidecar.
         """
-        operation = ctx.step_cfg.operation
+        operation = self._effective_operation(ctx)
         text_based = operation.lower().replace("+", "_") in output.TEXT_BASED_OPERATIONS
         prev_by_id = {s.id: s for s in ctx.prev_state.structures}
 

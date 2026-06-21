@@ -98,3 +98,9 @@ def test_fake_engine_round_trip_preserves_ids(tmp_path: Path):
     engine.submit(inputs, ctx)
     results = engine.parse(inputs, ctx)
     assert [s.id for s in results.structures] == ["0", "1-0", "1-1"]
+
+
+def test_fake_engine_has_no_input_digest(tmp_path: Path):
+    """The fake engine fabricates results, so it has no template to fold into the cache."""
+    engine = get_engine("fake")
+    assert engine.input_digest(_ctx_with_seeds(tmp_path, ["0"])) == ""

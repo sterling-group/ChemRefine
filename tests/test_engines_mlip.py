@@ -532,6 +532,17 @@ def _seed(sid: str = "0") -> Structure:
     )
 
 
+def test_mlip_effective_operation_uses_explicit_or_blank(tmp_path: Path):
+    """A template engine's operation label is the explicit value, or '' when omitted."""
+    import dataclasses
+
+    engine = get_engine("mlip")
+    ctx = _mlip_direct_ctx(tmp_path, structures=(_seed(),))
+    assert engine._effective_operation(ctx) == "opt_sp"
+    blank = dataclasses.replace(ctx, step_cfg=ctx.step_cfg.model_copy(update={"operation": None}))
+    assert engine._effective_operation(blank) == ""
+
+
 def test_mlip_direct_prepare_renders_one_py_and_xyz_per_structure(tmp_path: Path):
     ctx = _mlip_direct_ctx(tmp_path, structures=(_seed("0"), _seed("1")))
     engine = get_engine("mlip")

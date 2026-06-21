@@ -14,11 +14,15 @@ The cache is keyed by a SHA-1 **fingerprint** covering:
 - the step config — engine, operation, options, charge, multiplicity, template,
   the NMS flag; and
 - the **parent structures** that fed the step — their IDs *and* their content
-  (symbols, coordinates, energy), via `parents_digest`.
+  (symbols, coordinates, energy), via `parents_digest`; and
+- the **template contents** — a digest of the resolved template file
+  (`input_digest`), so editing a template *in place* re-runs the step even though
+  its basename is unchanged. This also matters because, when `operation` is
+  omitted, the template's keywords decide what ORCA does.
 
-If the YAML changes, or the seed file / any upstream result changes, the
-fingerprint changes and the next run re-executes the step (and every downstream
-step, because its survivor set changed).
+If the YAML changes, or the seed file / a template's contents / any upstream
+result changes, the fingerprint changes and the next run re-executes the step
+(and every downstream step, because its survivor set changed).
 
 The `sample:` filter is deliberately **excluded** from the fingerprint: the cache
 stores the *pre-filter* results and filtering re-runs on every load, so tuning a

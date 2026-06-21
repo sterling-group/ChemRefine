@@ -75,7 +75,7 @@ class StepCache:
     step: int
     name: str | None
     engine: str
-    operation: str
+    operation: str | None
     parent_ids: tuple[str, ...]
     results: StepResults
     reuse_fingerprint: str = ""
@@ -115,6 +115,7 @@ def fingerprint(
     parent_ids: tuple[str, ...],
     *,
     parents_digest: str = "",
+    template_digest: str = "",
 ) -> str:
     """Return a 16-char SHA-1 over the inputs that determine a step's output.
 
@@ -122,6 +123,10 @@ def fingerprint(
     cache reuse. ``parents_digest`` (see :func:`parents_digest`) ties the
     fingerprint to the parent structures' content so a changed seed file or
     changed upstream result invalidates the step even when the IDs match.
+    ``template_digest`` (see :meth:`chemrefine.engines.base.CalculationEngine.input_digest`)
+    ties it to the *contents* of the resolved template — editing the template
+    in place (which now also drives ORCA's run-type detection when ``operation``
+    is omitted) re-runs the step, where the template basename alone could not.
     ``sample:`` is excluded on purpose — the cached results are pre-filter
     and filtering re-runs on every load, so a filter-only edit is a cache
     hit, not a re-run.
@@ -135,6 +140,7 @@ def fingerprint(
         "charge": step_cfg.charge,
         "multiplicity": step_cfg.multiplicity,
         "template": step_cfg.template,
+        "template_digest": template_digest,
         "nms": step_cfg.nms,
         "parent_ids": list(parent_ids),
         "parents_digest": parents_digest,
@@ -243,13 +249,17 @@ def save(
     chemrefine_version: str,
     reuse_fingerprint: str = "",
     parents_digest: str = "",
+    template_digest: str = "",
 ) -> None:
     """Persist ``results`` for ``step_cfg`` to ``step_dir/_cache/``.
 
-    ``parents_digest`` (the parent structures' content digest) is folded
-    into the stored fingerprint; pass the same value to :func:`is_valid`.
+    ``parents_digest`` (the parent structures' content digest) and
+    ``template_digest`` (the resolved template's content digest) are folded
+    into the stored fingerprint; pass the same values to :func:`is_valid`.
     """
-    fp = fingerprint(step_cfg, parent_ids, parents_digest=parents_digest)
+    fp = fingerprint(
+        step_cfg, parent_ids, parents_digest=parents_digest, template_digest=template_digest
+    )
     document = {
         "cache_format": CACHE_FORMAT_VERSION,
         "chemrefine_version": chemrefine_version,
@@ -309,6 +319,7 @@ def load_if_valid(
     parent_ids: tuple[str, ...],
     step_dir: Path,
     parents_digest: str = "",
+    template_digest: str = "",
 ) -> StepCache | None:
     """Return the cached :class:`StepCache` iff its fingerprint matches; else ``None``.
 
@@ -324,7 +335,10 @@ def load_if_valid(
         return None
     if cached is None:
         return None
-    if cached.fingerprint != fingerprint(step_cfg, parent_ids, parents_digest=parents_digest):
+    current = fingerprint(
+        step_cfg, parent_ids, parents_digest=parents_digest, template_digest=template_digest
+    )
+    if cached.fingerprint != current:
         return None
     return cached
 
@@ -335,6 +349,7 @@ def is_valid(
     parent_ids: tuple[str, ...],
     step_dir: Path,
     parents_digest: str = "",
+    template_digest: str = "",
 ) -> bool:
     """True iff a cache exists and its fingerprint matches the current step config."""
     return (
@@ -343,6 +358,7 @@ def is_valid(
             parent_ids=parent_ids,
             step_dir=step_dir,
             parents_digest=parents_digest,
+            template_digest=template_digest,
         )
         is not None
     )
@@ -372,7 +388,7 @@ def save_manifest(
     inputs: StepInputs,
     step_dir: Path,
     *,
-    operation: str,
+    operation: str | None,
     engine: str,
 ) -> Path:
     """Persist ``inputs`` plus step metadata to ``manifest.json``; return the path.

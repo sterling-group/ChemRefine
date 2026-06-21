@@ -196,6 +196,9 @@ def _register_flaky():
         def normal_mode_sample(self, results, ctx):
             raise NotImplementedError
 
+        def input_digest(self, ctx):
+            return ""
+
     return _Flaky
 
 
@@ -407,6 +410,9 @@ def _register_fake_nms():
                 for s in round1.structures
             ]
             return StepResults(structures=tuple(children))
+
+        def input_digest(self, ctx):
+            return ""
 
     return _FakeNms2
 

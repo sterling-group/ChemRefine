@@ -64,7 +64,7 @@ steps:
 | `step` | int ≥ 1 | — | **Required.** 1-based step number; drives directory naming and order. |
 | `name` | str | `None` | Optional filesystem-safe label (letters/digits/`_`/`-`, not all-digits). Directory becomes `stepN_name/`; usable as a CLI target. |
 | `engine` | str | — | **Required.** One of `orca`, `mlip`, `mlip-extopt`, `mlip-train`, `pyscf`, `pyscf-extopt`. |
-| `operation` | str | — | **Required.** Engine-defined: `opt_sp`, `sp`, `freq`, `pes`, `goat`, `docker`, `solvator`, `mlip_train`. |
+| `operation` | str | `None` | Engine-defined: `opt_sp`, `sp`, `freq`, `pes`, `goat`, `docker`, `solvator`, `mlip_train`. **Optional** — when omitted, ORCA infers the run type from the template's `!` keyword lines (`GOAT`/`DOCKER`/`SOLVATOR`/a `%geom Scan` block/`Opt`/`OptTS`/`Freq`; `#` comments are ignored, matching is case-insensitive), defaulting to a single point if it finds no run-type keyword. An explicit value always wins — give it when inspection can't decide. |
 | `template` | str | `stepN.{inp,py}` | Engine input template basename (relative to `template_dir` if not absolute). |
 | `slurm_template` | str | global | Per-step SLURM header override. |
 | `charge` / `multiplicity` | int | global | Per-step overrides of the global values. |

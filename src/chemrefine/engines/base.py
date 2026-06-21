@@ -59,6 +59,7 @@ normalizer, not here — see :func:`chemrefine.config._normalize_legacy`.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 from collections.abc import Callable
@@ -112,6 +113,16 @@ class CalculationEngine(Protocol):
 
     def normal_mode_sample(self, results: StepResults, ctx: StepContext) -> StepResults:
         """Expand a frequency-step result by displacing along imaginary modes."""
+        ...
+
+    def input_digest(self, ctx: StepContext) -> str:
+        """Digest of this step's resolved input template, or ``""`` if it has none.
+
+        Folded into the cache fingerprint so editing the template in place
+        re-runs the step — the template *basename* alone never changes the
+        fingerprint, yet the template now also drives ORCA's run-type
+        detection when ``operation`` is omitted.
+        """
         ...
 
 
@@ -180,6 +191,19 @@ class SlurmBatchEngine:
             label=self.label,
         )
 
+    def input_digest(self, ctx: StepContext) -> str:
+        """SHA-1 (16 hex) of the resolved template's bytes; ``""`` if it's missing.
+
+        Cheap to recompute and folded into the cache fingerprint, so editing a
+        template in place invalidates that step (see
+        :func:`chemrefine.cache.fingerprint`).
+        """
+        try:
+            template = self._resolve_template(ctx)
+        except FileNotFoundError:
+            return ""
+        return hashlib.sha1(template.read_bytes()).hexdigest()[:16]
+
     def _pal(self, ctx: StepContext) -> int:
         """Return the per-job core count (PAL); the base clamps it to ``max_cores``."""
         raise NotImplementedError
@@ -229,6 +253,15 @@ class SlurmBatchEngine:
         """
         return ()
 
+    def _effective_operation(self, ctx: StepContext) -> str:
+        """The operation label used for the runlog header (and ORCA's parser).
+
+        ``operation`` is optional; engines that can infer the run type from their
+        input (ORCA reads the template keywords) override this to fill the blank.
+        The base just passes the explicit value through (``""`` when unset).
+        """
+        return ctx.step_cfg.operation or ""
+
     def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
         """Generate a SLURM script per structure, submit under the CPU+GPU budget, then block.
 
@@ -277,7 +310,7 @@ class SlurmBatchEngine:
                 scratch_dir=ctx.scratch_dir,
                 run_block=self._run_block(ctx, inp, out),
                 engine=ctx.step_cfg.engine,
-                operation=ctx.step_cfg.operation,
+                operation=self._effective_operation(ctx),
                 step=ctx.step_cfg.step,
                 structure_id=sid,
                 step_label=step_label,
@@ -325,7 +358,7 @@ class SlurmBatchEngine:
             scratch_dir=ctx.scratch_dir,
             run_block=self._run_block(ctx, Path("$INP_NAME"), Path("$OUT_NAME")),
             engine=ctx.step_cfg.engine,
-            operation=ctx.step_cfg.operation,
+            operation=self._effective_operation(ctx),
             step=ctx.step_cfg.step,
             output_globs=self.output_globs,
             output_dirs=self._output_dirs(ctx),

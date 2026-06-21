@@ -166,8 +166,11 @@ class StepConfig(BaseModel):
     engine: str
     """Engine key looked up in :data:`chemrefine.engines.base.ENGINES`."""
 
-    operation: str
-    """Engine-defined operation (``opt_sp``, ``goat``, ``pes``, ``docker``, ``solvator``...)."""
+    operation: str | None = None
+    """Engine-defined operation (``opt_sp``, ``goat``, ``pes``, ``docker``,
+    ``solvator``...). **Optional**: when omitted, an engine that can inspect its
+    input (ORCA reads the template's keywords) auto-detects the run type; an
+    explicit value here always wins. Provide it when inspection can't decide."""
 
     template: str | None = None
     """Engine input template (basename relative to ``template_dir`` if not absolute)."""

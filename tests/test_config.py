@@ -55,6 +55,13 @@ def test_minimal_config_loads(tmp_path: Path):
     assert cfg.steps[0].slurm_template is None  # falls back to the global header
 
 
+def test_operation_is_optional(tmp_path: Path):
+    """A step may omit ``operation`` — engines that inspect their input fill it in."""
+    data = _minimal_config(steps=[{"step": 1, "engine": "fake"}])
+    cfg = load_config(_write_yaml(tmp_path, data))
+    assert cfg.steps[0].operation is None
+
+
 def test_max_gpus_and_per_step_slurm_template_accepted(tmp_path: Path):
     data = _minimal_config(max_gpus=2)
     data["steps"][0]["slurm_template"] = "cuda.slurm.header"

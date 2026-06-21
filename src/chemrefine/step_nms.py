@@ -29,16 +29,21 @@ _NMS_SEARCH_KEYS = frozenset({"displacement_value", "num_random_displacements", 
 
 
 def nms_reuse_fingerprint(
-    step_cfg: StepConfig, parent_ids: tuple[str, ...], *, parents_digest: str = ""
+    step_cfg: StepConfig,
+    parent_ids: tuple[str, ...],
+    *,
+    parents_digest: str = "",
+    template_digest: str = "",
 ) -> str:
     """Fingerprint that's stable across NMS search-param tuning.
 
     Same as :func:`chemrefine.cache.fingerprint` (including the
-    ``parents_digest`` content key) but with the NMS search parameters
-    stripped from ``options`` — so bumping ``displacement_value`` leaves it
-    unchanged (reuse round-1 + resolved, re-attempt only the unresolved),
-    while changing the criterion / template / parents changes it.
-    Returns ``""`` for non-NMS steps (the reuse path is NMS-only).
+    ``parents_digest`` and ``template_digest`` content keys) but with the NMS
+    search parameters stripped from ``options`` — so bumping
+    ``displacement_value`` leaves it unchanged (reuse round-1 + resolved,
+    re-attempt only the unresolved), while changing the criterion / template /
+    parents changes it. Returns ``""`` for non-NMS steps (the reuse path is
+    NMS-only).
     """
     if not step_cfg.nms:
         return ""
@@ -47,6 +52,7 @@ def nms_reuse_fingerprint(
         step_cfg.model_copy(update={"options": trimmed}),
         parent_ids,
         parents_digest=parents_digest,
+        template_digest=template_digest,
     )
 
 
@@ -103,14 +109,18 @@ def reattempt_nms(
     )
     merged = StepResults(structures=kept + reattempt.structures)
     digest = cache.parents_digest(ctx.prev_state.structures)
+    template_digest = engine.input_digest(ctx)
     cache.save(
         step_cfg=step_cfg,
         parent_ids=parent_ids,
         results=merged,
         step_dir=ctx.step_dir,
         chemrefine_version=__version__,
-        reuse_fingerprint=nms_reuse_fingerprint(step_cfg, parent_ids, parents_digest=digest),
+        reuse_fingerprint=nms_reuse_fingerprint(
+            step_cfg, parent_ids, parents_digest=digest, template_digest=template_digest
+        ),
         parents_digest=digest,
+        template_digest=template_digest,
     )
     return merged
 

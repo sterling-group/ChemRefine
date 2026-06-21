@@ -283,6 +283,9 @@ def _register_fail_engine():
         def normal_mode_sample(self, results, ctx):
             raise NotImplementedError
 
+        def input_digest(self, ctx):
+            return ""
+
     return _FailEngine
 
 
@@ -434,6 +437,9 @@ def test_run_step_nms_branch_runs_when_engine_supports_it(tmp_path: Path):
         def normal_mode_sample(self, results, ctx):
             nms_calls.append(1)
             return results
+
+        def input_digest(self, ctx):
+            return ""
 
     try:
         cfg = _config(tmp_path, engine="fake-nms", nms=True)

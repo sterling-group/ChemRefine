@@ -328,6 +328,62 @@ def test_parse_unknown_operation_raises(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# operation is optional: explicit value wins, else the template is inspected
+# ---------------------------------------------------------------------------
+
+
+def test_parse_without_operation_infers_parser_from_template(tmp_path: Path):
+    """A step with no ``operation`` parses via the template-inspected run type."""
+    engine = get_engine("orca")
+    ctx = _ctx(
+        tmp_path,
+        structures=(_seed_structure("0"),),
+        step_cfg=StepConfig(step=1, engine="orca"),  # operation omitted
+    )
+    inputs = engine.prepare(ctx)
+    shutil.copy(FIXTURE, inputs.files[0][1])
+    # The default template (`! B3LYP def2-SVP`, no Opt) inspects to sp → parse_dft.
+    results = engine.parse(inputs, ctx)
+    assert results.structures[0].energy_hartree is not None
+
+
+def test_effective_operation_explicit_wins_over_template(tmp_path: Path):
+    """An explicit ``operation`` overrides what the template would imply."""
+    engine = get_engine("orca")
+    ctx = _ctx(
+        tmp_path / "explicit",
+        structures=(_seed_structure(),),
+        step_cfg=StepConfig(step=1, engine="orca", operation="opt_sp"),
+    )
+    (ctx.template_dir / "step1.inp").write_text("! GOAT XTB\n", encoding="utf-8")
+    assert engine._effective_operation(ctx) == "opt_sp"
+
+
+def test_effective_operation_falls_back_to_inspection(tmp_path: Path):
+    """Without ``operation``, the template's keywords decide the run type."""
+    engine = get_engine("orca")
+    ctx = _ctx(
+        tmp_path / "infer",
+        structures=(_seed_structure(),),
+        step_cfg=StepConfig(step=1, engine="orca"),  # operation omitted
+    )
+    (ctx.template_dir / "step1.inp").write_text("! GOAT XTB\n", encoding="utf-8")
+    assert engine._effective_operation(ctx) == "goat"
+
+
+def test_input_digest_tracks_template_contents(tmp_path: Path):
+    """The template-content digest changes on edit and is empty when missing."""
+    engine = get_engine("orca")
+    ctx = _ctx(tmp_path, structures=(_seed_structure(),))
+    first = engine.input_digest(ctx)
+    assert first  # non-empty for an existing template
+    (ctx.template_dir / "step1.inp").write_text("! PBE def2-TZVP\n", encoding="utf-8")
+    assert engine.input_digest(ctx) != first  # an edit re-runs the step
+    (ctx.template_dir / "step1.inp").unlink()
+    assert engine.input_digest(ctx) == ""  # missing template → empty digest
+
+
+# ---------------------------------------------------------------------------
 # Engine registration
 # ---------------------------------------------------------------------------
 

@@ -100,3 +100,7 @@ class FakeEngine:
     def normal_mode_sample(self, results: StepResults, ctx: StepContext) -> StepResults:
         """Not supported — the orchestrator gates this on ``supports_nms``."""
         raise NotImplementedError("FakeEngine does not support normal-mode sampling")
+
+    def input_digest(self, ctx: StepContext) -> str:
+        """No template to hash — the fake engine fabricates its results."""
+        return ""

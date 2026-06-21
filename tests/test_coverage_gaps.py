@@ -429,7 +429,7 @@ def _pin_nms(monkeypatch, fp: str = "FP") -> None:
     monkeypatch.setattr(
         step_nms,
         "nms_reuse_fingerprint",
-        lambda step_cfg, parent_ids, *, parents_digest="": fp,
+        lambda step_cfg, parent_ids, *, parents_digest="", template_digest="": fp,
     )
     monkeypatch.setattr(
         step_nms,

@@ -164,6 +164,9 @@ def test_run_stops_early_when_a_step_produces_no_survivors(tmp_path: Path):
         def normal_mode_sample(self, results, ctx):
             return results
 
+        def input_digest(self, ctx):
+            return ""
+
     try:
         seed_dir = tmp_path / "seeds"
         io.write_xyz([_h2()], ["a"], step_number=0, output_dir=seed_dir)
