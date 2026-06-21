@@ -14,16 +14,20 @@ lifecycle methods are called. :func:`run_step` is intentionally short
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import re
+import shutil
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from chemrefine import __version__, cache, filtering, step_failures, step_nms
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.base import CalculationEngine, get_engine
 from chemrefine.errors import CacheError, ChemRefineError
-from chemrefine.state import PipelineState, StepContext, StepInputs, StepResults
+from chemrefine.state import PipelineState, StepContext, StepInputs, StepResults, Structure
 
 logger = logging.getLogger(__name__)
+
+_ATTEMPT_DIR_RE = re.compile(r"attempt(\d+)$")
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +253,7 @@ def _run_full_step(
             round1_failures=failures,
         )
     else:
+        successes, failures = _retry_unconverged(engine, ctx, step_cfg, successes, failures)
         results = step_failures.apply_failure_policy(successes, failures, ctx, step_cfg)
 
     digest = cache.parents_digest(ctx.prev_state.structures)
@@ -337,6 +342,63 @@ def rebuild_cache_step(
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
 
+def _archive_failed_attempt(sid_dir: Path) -> Path:
+    """Move a structure dir's loose files into the next free ``attemptK/``; return it.
+
+    ``K`` is one past the highest existing ``attempt<n>`` — so a re-run (or a
+    manually-added ``attempt2/``) never blocks a fresh attempt. Only loose files
+    move; existing ``attempt*/`` (and any nested) sub-directories stay in place.
+    """
+    existing = [
+        int(m.group(1))
+        for d in sid_dir.glob("attempt*")
+        if d.is_dir() and (m := _ATTEMPT_DIR_RE.fullmatch(d.name))
+    ]
+    dest = sid_dir / f"attempt{(max(existing) + 1) if existing else 1}"
+    dest.mkdir(parents=True, exist_ok=True)
+    for item in sid_dir.iterdir():
+        if item.is_dir():
+            continue  # leave attempt*/ (and any nested child dirs) where they are
+        shutil.move(str(item), str(dest / item.name))
+    return dest
+
+
+def _retry_unconverged(
+    engine: CalculationEngine,
+    ctx: StepContext,
+    step_cfg: StepConfig,
+    successes: list[Structure],
+    failures: list[step_failures.Failure],
+) -> tuple[list[Structure], list[step_failures.Failure]]:
+    """B10: retry each *unconverged* failure once, from its best geometry.
+
+    Convergence-only — a crashed or missing-output job is left for the
+    ``on_failure`` policy. For each "did not converge" failure the failed
+    attempt's files are archived into a numbered ``attemptK/``, the input is
+    re-prepared from the best geometry obtained, resubmitted, and re-parsed.
+    This is a **single inline pass** (no recursion): a structure is retried at
+    most once per run, and a later ``resume`` archives into the next attempt.
+    """
+    kept = list(successes)
+    remaining: list[step_failures.Failure] = []
+    for f in failures:
+        if f.reason != "did not converge" or f.best is None:
+            remaining.append(f)
+            continue
+        logger.info(
+            "step %d: %s did not converge — retrying from its best geometry", step_cfg.step, f.sid
+        )
+        _archive_failed_attempt(ctx.step_dir / f.sid)
+        seed = Structure(id=f.sid, atoms=f.best.atoms)
+        retry_ctx = replace(ctx, prev_state=PipelineState(structures=(seed,)))
+        inputs = engine.prepare(retry_ctx)
+        engine.wait(engine.submit(inputs, retry_ctx))
+        succ, fail = step_failures.parse_with_failures(engine, inputs, retry_ctx)
+        kept.extend(succ)
+        remaining.extend(fail)
+    return kept, remaining
+
+
 def _resubmit_failed(
     engine: CalculationEngine,
     ctx: StepContext,
@@ -356,16 +418,21 @@ def _resubmit_failed(
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
         raise CacheError(f"step {step_cfg.step}: cannot rerun — no manifest to rehydrate inputs")
-    failed_ids = {f["structure_id"] for f in failed}
+    # Convergence failures are re-attempted from their best geometry by the retry
+    # pass below (resubmitting the identical input would just fail again); the
+    # plain resubmit handles crashed / missing-output jobs.
+    failed_ids = {f["structure_id"] for f in failed if f.get("reason") != "did not converge"}
     failed_inputs = StepInputs(files=tuple(f for f in manifest.files if f[2] in failed_ids))
-    logger.info(
-        "step %d: rerun — resubmitting %d failed job(s)",
-        step_cfg.step,
-        len(failed_inputs.files),
-    )
-    engine.wait(engine.submit(failed_inputs, ctx))
+    if failed_inputs.files:
+        logger.info(
+            "step %d: rerun — resubmitting %d failed job(s)",
+            step_cfg.step,
+            len(failed_inputs.files),
+        )
+        engine.wait(engine.submit(failed_inputs, ctx))
 
     successes, failures = step_failures.parse_with_failures(engine, manifest, ctx)
+    successes, failures = _retry_unconverged(engine, ctx, step_cfg, successes, failures)
     results = step_failures.apply_failure_policy(successes, failures, ctx, step_cfg)
     cache.save(
         step_cfg=step_cfg,

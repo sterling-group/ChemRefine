@@ -28,6 +28,18 @@ The `sample:` filter is deliberately **excluded** from the fingerprint: the cach
 stores the *pre-filter* results and filtering re-runs on every load, so tuning a
 filter is a cache hit (re-filter), not a re-computation.
 
+## Auto-retry on non-convergence
+
+Before the `on_failure` policy runs, a structure whose job **did not converge**
+(SCF / geometry MaxIter, only ORCA flags this) is retried **once per run** from its
+best geometry: the failed attempt's files are archived into a numbered
+`stepN/<id>/attemptK/` sub-dir, the input is re-prepared from the last good
+geometry, resubmitted, and re-parsed. A crashed or missing-output job is *not*
+auto-retried — it goes straight to the policy. The retry is a single inline pass
+(at most one per run, never recursive); a later `resume` archives into the next
+`attemptK/`, so re-runs keep trying without ever looping or being blocked by an
+existing attempt dir.
+
 ## Resume and recovery
 
 `resume` honours the cache and re-attempts the pending failed jobs of any

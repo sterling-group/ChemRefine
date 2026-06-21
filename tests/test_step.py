@@ -366,6 +366,176 @@ def test_on_failure_best_backfills_all(tmp_path: Path):
         ENGINES.pop("fake-fail", None)
 
 
+# ---------------------------------------------------------------------------
+# B10 — auto-retry-once on convergence failure
+# ---------------------------------------------------------------------------
+
+
+def _register_conv_engine():
+    """A fake engine: structures fail to converge on the first parse and converge
+    on the retry (a second parse) — unless their id is in ``never``."""
+    from typing import ClassVar
+
+    import numpy as np
+
+    from chemrefine.engines.base import register
+    from chemrefine.ids import structure_artifact_path
+    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+
+    @register("conv-retry")
+    class _ConvEngine:
+        name = "conv-retry"
+        supports_nms = False
+        never: ClassVar[set[str]] = set()  # ids that never converge (even on retry)
+        parse_count: ClassVar[dict[str, int]] = {}
+
+        def prepare(self, ctx):
+            ctx.step_dir.mkdir(parents=True, exist_ok=True)
+            files = []
+            for s in ctx.prev_state.structures:
+                step = ctx.step_cfg.step
+                inp = structure_artifact_path(ctx.step_dir, step, s.id, "inp")
+                out = structure_artifact_path(ctx.step_dir, step, s.id, "out")
+                inp.parent.mkdir(parents=True, exist_ok=True)
+                inp.write_text("in\n", encoding="utf-8")
+                out.write_text("out\n", encoding="utf-8")
+                files.append((inp, out, s.id))
+            return StepInputs(files=tuple(files))
+
+        def submit(self, inputs, ctx):
+            return JobBatch(jobs={})
+
+        def wait(self, batch):
+            return None
+
+        def parse(self, inputs, ctx):
+            seeds = {s.id: s for s in ctx.prev_state.structures}
+            out = []
+            for _inp, _o, sid in inputs.files:
+                _ConvEngine.parse_count[sid] = _ConvEngine.parse_count.get(sid, 0) + 1
+                converged = sid not in _ConvEngine.never and _ConvEngine.parse_count[sid] >= 2
+                seed = seeds[sid]
+                out.append(
+                    Structure(
+                        id=sid,
+                        atoms=seed.atoms,
+                        parent_id=seed.parent_id,
+                        energy_hartree=-1.0 - int(sid) * 1e-3,
+                        forces_ev_per_a=np.zeros((len(seed.atoms), 3)),
+                        terminated=True,
+                        converged=converged,
+                    )
+                )
+            return StepResults(structures=tuple(out))
+
+        def normal_mode_sample(self, results, ctx):
+            raise NotImplementedError
+
+        def input_digest(self, ctx):
+            return ""
+
+    return _ConvEngine
+
+
+def test_run_step_retries_unconverged_from_best_geometry(tmp_path: Path):
+    """A "did not converge" structure is retried once from its best geometry; the
+    failed attempt is archived under ``attempt1/`` and the retry (which converges)
+    survives."""
+    from chemrefine.engines.base import ENGINES
+
+    eng = _register_conv_engine()
+    try:
+        eng.never = set()
+        eng.parse_count = {}
+        cfg = _config(tmp_path, engine="conv-retry", on_failure="stop")
+        outcome = run_step(cfg, cfg.steps[0], _seed_state(["0"]))
+        assert {s.id for s in outcome.state.structures} == {"0"}  # retry converged
+        step_dir = cfg.output_dir.resolve() / "step1"
+        assert (step_dir / "0" / "attempt1").is_dir()  # failed attempt archived
+        assert cache.load_failed_jobs(step_dir) == []  # no pending failures
+    finally:
+        eng.never = set()
+        eng.parse_count = {}
+        ENGINES.pop("conv-retry", None)
+
+
+def test_run_step_unconverged_retry_still_fails_is_ledgered(tmp_path: Path):
+    """When the retry also fails to converge, the failure is ledgered (after one
+    archived attempt) for `resume` to pick up."""
+    from chemrefine.engines.base import ENGINES
+
+    eng = _register_conv_engine()
+    try:
+        eng.never = {"0"}  # never converges, even on retry
+        eng.parse_count = {}
+        cfg = _config(tmp_path, engine="conv-retry", on_failure="stop")
+        outcome = run_step(cfg, cfg.steps[0], _seed_state(["0"]))
+        assert outcome.state.structures == ()
+        step_dir = cfg.output_dir.resolve() / "step1"
+        assert (step_dir / "0" / "attempt1").is_dir()  # one retry attempt, then stop
+        assert not (step_dir / "0" / "attempt2").exists()  # only once per run
+        assert cache.load_failed_jobs(step_dir) == [
+            {"structure_id": "0", "reason": "did not converge"}
+        ]
+    finally:
+        eng.never = set()
+        eng.parse_count = {}
+        ENGINES.pop("conv-retry", None)
+
+
+def test_resume_retries_unconverged_again_into_next_attempt(tmp_path: Path):
+    """A later run (resume) re-attempts a still-pending convergence failure, archiving
+    into the next attempt dir — proving the retry is per-run, not blocked by attempt1."""
+    from chemrefine.engines.base import ENGINES
+
+    eng = _register_conv_engine()
+    try:
+        eng.never = {"0"}  # never converges
+        eng.parse_count = {}
+        cfg = _config(tmp_path, engine="conv-retry", on_failure="stop")
+        state = _seed_state(["0"])
+        step_dir = cfg.output_dir.resolve() / "step1"
+
+        run_step(cfg, cfg.steps[0], state)  # first run → attempt1, then ledgered
+        assert (step_dir / "0" / "attempt1").is_dir()
+
+        # Resume: the cached step still has the pending convergence failure, so
+        # _resubmit_failed retries it again — into attempt2 (never blocked by attempt1).
+        run_step(cfg, cfg.steps[0], state)
+        assert (step_dir / "0" / "attempt2").is_dir()
+        assert cache.load_failed_jobs(step_dir) == [
+            {"structure_id": "0", "reason": "did not converge"}
+        ]
+    finally:
+        eng.never = set()
+        eng.parse_count = {}
+        ENGINES.pop("conv-retry", None)
+
+
+def test_archive_failed_attempt_numbers_sequentially(tmp_path: Path):
+    """Numbered attempt dirs: next-free K, never blocked by an existing/odd one."""
+    from chemrefine import step
+
+    sid_dir = tmp_path / "0"
+    sid_dir.mkdir()
+    (sid_dir / "step1_0.out").write_text("fail", encoding="utf-8")
+    dest = step._archive_failed_attempt(sid_dir)
+    assert dest.name == "attempt1"
+    assert (dest / "step1_0.out").is_file()  # the loose file moved in
+    assert not (sid_dir / "step1_0.out").exists()
+
+    (sid_dir / "step1_0.out").write_text("fail2", encoding="utf-8")
+    assert step._archive_failed_attempt(sid_dir).name == "attempt2"  # next free
+
+    # A manually-added higher attempt + a non-matching 'attempt*' dir: K = max+1,
+    # the odd dir is ignored, and existing attempt dirs are left in place.
+    (sid_dir / "attempt5").mkdir()
+    (sid_dir / "attemptX").mkdir()  # matches the glob but not attempt<digits>
+    (sid_dir / "step1_0.out").write_text("fail3", encoding="utf-8")
+    assert step._archive_failed_attempt(sid_dir).name == "attempt6"
+    assert (sid_dir / "attempt1").is_dir() and (sid_dir / "attempt5").is_dir()
+
+
 def test_resolve_nms_keeps_resolved_drops_unresolved(tmp_path: Path):
     """resolve_nms: already-resolved pass-through + resolved children kept;
     a round-1 parent with no resolved child becomes a (ledgered) failure."""
