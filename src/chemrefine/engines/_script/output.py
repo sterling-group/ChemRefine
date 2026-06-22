@@ -1,9 +1,9 @@
-"""Parse a template engine's output JSON into a :class:`ParsedResult`.
+"""Parse a script engine's output JSON into a :class:`ParsedResult`.
 
 The user's ``step{N}.py`` writes a JSON document (``energy_hartree`` required; optional
 ``positions_angstrom`` for an optimised geometry and ``gradient_hartree_per_bohr`` for
 forces); this reads it back into the shared ``ParsedResult`` the assembler turns into a
-:class:`~chemrefine.state.Structure`. Sibling to :mod:`chemrefine.engines._template_render`
+:class:`~chemrefine.state.Structure`. Sibling to :mod:`chemrefine.engines._script.render`
 (the input writer).
 """
 
@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 from ase import Atoms
 
-from chemrefine.engines._assemble import ParsedResult
+from chemrefine.engines.api import ParsedResult
 from chemrefine.errors import OutputParseError
 from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
 

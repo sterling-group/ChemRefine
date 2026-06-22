@@ -17,6 +17,7 @@ from ase import Atoms
 from chemrefine.engines._backend_server.base import (
     CalculationData,
     ComputeBackend,
+    tokens_from_options,
 )
 from chemrefine.engines.mlip.calculator import MlipCalculator
 from chemrefine.engines.mlip.options import MlipOptions
@@ -85,23 +86,9 @@ class MlipExtOptCalculator(ComputeBackend):
         )
 
     @classmethod
-    def settings_from_args(cls, args: argparse.Namespace) -> dict[str, Any]:
-        """MLIP has no per-call client knobs today — return empty dict."""
-        return {}
-
-    @classmethod
     def server_cli_from_options(cls, options: dict[str, Any]) -> list[str]:
-        """Translate validated YAML options into a list of ``--flag value`` tokens.
-
-        Falsy values are omitted so the engine's ``run_block`` only
-        emits flags the user explicitly set.
-        """
-        tokens: list[str] = []
-        for yaml_key, cli_flag in _KEY_VALUE_FLAGS:
-            value = options.get(yaml_key)
-            if value:
-                tokens.extend([cli_flag, str(value)])
-        return tokens
+        """Translate validated YAML options into ``--flag value`` tokens (kebab-mapped)."""
+        return tokens_from_options(options, value_flags=_KEY_VALUE_FLAGS)
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> MlipExtOptCalculator:

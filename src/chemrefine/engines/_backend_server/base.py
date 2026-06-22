@@ -102,8 +102,13 @@ class ComputeBackend(Protocol):
 
     @classmethod
     def settings_from_args(cls, args: argparse.Namespace) -> dict[str, Any]:
-        """Pack per-call backend knobs into a settings dict (POST payload)."""
-        ...
+        """Pack per-call backend knobs into a settings dict (POST payload).
+
+        Default: ``{}`` — the shipped backends are single-channel (the calculator is built
+        once on the server from the step's YAML options, so the per-call POST carries nothing).
+        A backend with genuine per-geometry knobs overrides this.
+        """
+        return {}
 
     @classmethod
     def server_cli_from_options(cls, options: dict[str, Any]) -> list[str]:
@@ -123,3 +128,28 @@ class ComputeBackend(Protocol):
         list of three-component ``[gx, gy, gz]`` rows.
         """
         ...
+
+
+def tokens_from_options(
+    options: dict[str, Any],
+    *,
+    value_flags: tuple[tuple[str, str], ...] = (),
+    bool_flags: tuple[str, ...] = (),
+) -> list[str]:
+    """Turn a validated options dict into ``--flag value`` / ``--flag`` CLI tokens.
+
+    The shared ``server_cli_from_options`` body for every backend: ``value_flags`` are
+    ``(option_key, cli_flag)`` pairs emitted as ``[cli_flag, str(value)]`` when the value is
+    truthy (covering MLIP's kebab mapping ``model_name → --model`` and PySCF's plain
+    ``method → --method`` alike); ``bool_flags`` are option keys emitted as ``--{key}`` when
+    truthy. Falsy values are omitted so the engine's ``run_block`` emits only flags the user set.
+    """
+    tokens: list[str] = []
+    for key, flag in value_flags:
+        value = options.get(key)
+        if value:
+            tokens.extend([flag, str(value)])
+    for key in bool_flags:
+        if options.get(key):
+            tokens.append(f"--{key}")
+    return tokens

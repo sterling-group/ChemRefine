@@ -1,7 +1,7 @@
 """Direct template-driven PySCF engine; registered under the YAML name ``"pyscf"``.
 
 All lifecycle logic lives on
-:class:`chemrefine.engines._template_engine.TemplateScriptEngine`; this
+:class:`chemrefine.engines._script.ScriptEngine`; this
 module binds the backend identity (``name`` + ``label``), the registry
 entry, and the option placeholders the template can use.
 
@@ -13,13 +13,13 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from chemrefine.engines._template_engine import TemplateScriptEngine
-from chemrefine.engines.base import register
+from chemrefine.engines._script import ScriptEngine
+from chemrefine.engines.api import register
 from chemrefine.state import StepContext
 
 
 @register("pyscf")
-class PyscfEngine(TemplateScriptEngine):
+class PyscfEngine(ScriptEngine):
     """Direct PySCF engine — runs the user's ``step{N}.py`` per structure."""
 
     name: ClassVar[str] = "pyscf"

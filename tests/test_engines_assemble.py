@@ -1,9 +1,9 @@
 """Tests for the engine-independent structure assembler.
 
-:func:`chemrefine.engines._assemble.build_structures` is the single home for turning
-each engine's per-input ``ParsedResult``s into lineage-correct ``Structure``s — minting
-child IDs and threading parents through a step's fan-out. The engines (ORCA, template)
-only produce ``ParsedResult``s; this exercises the shared assembly once.
+:func:`chemrefine.engines._job.build_structures` is the single home for turning each
+engine's per-input ``ParsedResult``s into lineage-correct ``Structure``s — minting child
+IDs and threading parents through a step's fan-out. The engines (ORCA, script) only produce
+``ParsedResult``s; this exercises the shared assembly once.
 """
 
 from __future__ import annotations
@@ -11,7 +11,8 @@ from __future__ import annotations
 import numpy as np
 from ase import Atoms
 
-from chemrefine.engines._assemble import ParsedResult, build_structures
+from chemrefine.engines._job import build_structures
+from chemrefine.engines.api import ParsedResult
 from chemrefine.state import PipelineState, Structure
 
 

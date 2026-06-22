@@ -8,7 +8,7 @@ import numpy as np
 from ase import Atoms
 
 from chemrefine.config import StepConfig
-from chemrefine.engines.base import get_engine
+from chemrefine.engines.api import get_engine
 from chemrefine.state import PipelineState, StepContext, Structure
 
 
@@ -82,7 +82,7 @@ def test_fake_engine_energy_is_deterministic(tmp_path: Path):
 
 
 def test_fake_engine_is_not_nms_capable():
-    from chemrefine.engines.base import NmsCapableEngine
+    from chemrefine.engines.api import NmsCapableEngine
 
     engine = get_engine("fake")
     assert not isinstance(engine, NmsCapableEngine)  # provides neither NMS hook

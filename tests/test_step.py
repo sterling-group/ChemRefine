@@ -197,7 +197,7 @@ def _register_fail_engine():
     """
     from typing import ClassVar
 
-    from chemrefine.engines.base import register
+    from chemrefine.engines.api import register
     from chemrefine.ids import structure_artifact_path
     from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
 
@@ -248,7 +248,7 @@ def _register_fail_engine():
 
 def test_on_failure_skip_drops_failed_keeps_successes(tmp_path: Path):
     from chemrefine import cache
-    from chemrefine.engines.base import ENGINES
+    from chemrefine.engines.api import ENGINES
 
     eng = _register_fail_engine()
     try:
@@ -272,7 +272,7 @@ def test_on_failure_stop_caches_successes_then_halts(tmp_path: Path):
 
     from chemrefine import cache
     from chemrefine import step as step_mod
-    from chemrefine.engines.base import ENGINES
+    from chemrefine.engines.api import ENGINES
     from chemrefine.errors import ChemRefineError
 
     eng = _register_fail_engine()
@@ -299,7 +299,7 @@ def test_on_failure_stop_caches_successes_then_halts(tmp_path: Path):
 
 def test_on_failure_best_backfills_all(tmp_path: Path):
     from chemrefine import cache
-    from chemrefine.engines.base import ENGINES
+    from chemrefine.engines.api import ENGINES
 
     # Seeds carry an energy (as a real prior step would), so a missing-output
     # backfill (the submitted input) still survives energy filtering.
@@ -335,7 +335,7 @@ def _register_conv_engine():
 
     import numpy as np
 
-    from chemrefine.engines.base import register
+    from chemrefine.engines.api import register
     from chemrefine.ids import structure_artifact_path
     from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
 
@@ -391,7 +391,7 @@ def test_run_step_retries_unconverged_from_best_geometry(tmp_path: Path):
     """A "did not converge" structure is retried once from its best geometry; the
     failed attempt is archived under ``attempt1/`` and the retry (which converges)
     survives."""
-    from chemrefine.engines.base import ENGINES
+    from chemrefine.engines.api import ENGINES
 
     eng = _register_conv_engine()
     try:
@@ -412,7 +412,7 @@ def test_run_step_retries_unconverged_from_best_geometry(tmp_path: Path):
 def test_run_step_unconverged_retry_still_fails_is_ledgered(tmp_path: Path):
     """When the retry also fails to converge, the failure is ledgered (after one
     archived attempt) for `resume` to pick up."""
-    from chemrefine.engines.base import ENGINES
+    from chemrefine.engines.api import ENGINES
 
     eng = _register_conv_engine()
     try:
@@ -436,7 +436,7 @@ def test_run_step_unconverged_retry_still_fails_is_ledgered(tmp_path: Path):
 def test_resume_retries_unconverged_again_into_next_attempt(tmp_path: Path):
     """A later run (resume) re-attempts a still-pending convergence failure, archiving
     into the next attempt dir — proving the retry is per-run, not blocked by attempt1."""
-    from chemrefine.engines.base import ENGINES
+    from chemrefine.engines.api import ENGINES
 
     eng = _register_conv_engine()
     try:
@@ -466,7 +466,7 @@ def test_check_nms_freq_gate_rejects_when_input_computes_no_frequencies(tmp_path
     """B9 (generic): nms + no explicit operation + an input that computes no frequencies."""
     import pytest
 
-    from chemrefine.engines.base import NmsInputInfo
+    from chemrefine.engines.api import NmsInputInfo
     from chemrefine.errors import ConfigError
     from chemrefine.step import _check_nms_freq_gate, build_context
 
@@ -514,7 +514,7 @@ def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypa
     """run_step routes an `nms: true` step through the generic coordinator (nms.run_nms),
     then applies the on_failure policy to its survivors/failures."""
     from chemrefine import nms as nms_mod
-    from chemrefine.engines.base import ENGINES, FrequencyData, NmsInputInfo, register
+    from chemrefine.engines.api import ENGINES, FrequencyData, NmsInputInfo, register
     from chemrefine.state import JobBatch, StepInputs, StepResults
     from chemrefine.step_failures import NmsResolution
 

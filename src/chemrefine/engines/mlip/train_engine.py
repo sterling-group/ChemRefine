@@ -6,7 +6,7 @@ training job. The step is a pass-through for the *structures*: downstream steps
 keep refining the same ensemble, while the trained model is the side-effect
 artifact written under the step dir. The heavy lifting lives in
 :mod:`chemrefine.engines.mlip.trainer`; this engine just adapts it to the
-:class:`~chemrefine.engines.base.CalculationEngine` lifecycle.
+:class:`~chemrefine.engines.api.CalculationEngine` lifecycle.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import ClassVar
 
-from chemrefine.engines.base import register
+from chemrefine.engines.api import register
 from chemrefine.engines.mlip import trainer
 from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
 

@@ -1,14 +1,15 @@
-"""Tests for the flat, engine-independent submitter (:mod:`chemrefine.submit`).
+"""Tests for the engine-independent scheduler (:mod:`chemrefine.engines._execution`).
 
-``submit.run_batch`` is not an engine responsibility — every per-structure engine
-delegates to it. A minimal fake :class:`~chemrefine.engines._batch.BatchEngine` (the
-only thing ``run_batch`` consumes) drives it here, proving the orchestration works for
-*any* batch engine, not just ORCA. The ORCA-specific submit paths (script contents, job
-arrays) are covered in ``test_engines_orca_engine.py``.
+``run_batch`` is not an engine responsibility — every :class:`~chemrefine.engines._job.JobEngine`
+delegates its ``submit`` to it. A minimal fake ``JobEngine`` (the only thing ``run_batch``
+consumes) drives it here, proving the orchestration works for *any* job engine, not just ORCA.
+The ORCA-specific submit paths (script contents, job arrays) are covered in
+``test_engines_orca_engine.py``.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar
 from unittest.mock import patch
@@ -16,34 +17,35 @@ from unittest.mock import patch
 import pytest
 from ase import Atoms
 
-from chemrefine import slurm, submit
+from chemrefine import slurm
 from chemrefine.config import StepConfig
-from chemrefine.engines._batch import BatchEngine
+from chemrefine.engines import _execution
+from chemrefine.engines._job import JobEngine
 from chemrefine.errors import ConfigError
 from chemrefine.state import JobBatch, PipelineState, StepContext, Structure
 
 
-class _FakeBatchEngine(BatchEngine):
-    """A non-ORCA batch engine that supplies only the primitives ``run_batch`` consumes."""
+class _FakeJobEngine(JobEngine):
+    """A non-ORCA job engine that supplies only the primitives ``run_batch`` consumes."""
 
-    name: ClassVar[str] = "fake-batch"
-    label: ClassVar[str] = "FakeBatch"
+    name: ClassVar[str] = "fake-job"
+    label: ClassVar[str] = "FakeJob"
     template_suffix: ClassVar[str] = "inp"
     output_suffix: ClassVar[str] = "out"
     output_globs: ClassVar[tuple[str, ...]] = ("*.out",)
-    gpus: ClassVar[int] = 0
+    gpu_count: ClassVar[int] = 0
 
-    def _build_input(self, *, xyz_path, template_path, input_path, output_path, ctx) -> None:
+    def build_input(self, *, xyz_path, template_path, input_path, output_path, ctx) -> None:
         input_path.write_text("fake input\n", encoding="utf-8")
 
-    def _run_block(self, ctx, inp_path, out_path) -> str:
+    def run_block(self, ctx, inp_path, out_path) -> str:
         return f"echo run {inp_path.name}"
 
-    def _pal(self, ctx) -> int:
+    def pal(self, ctx) -> int:
         return 1
 
-    def _gpus(self, ctx) -> int:
-        return self.gpus
+    def gpus(self, ctx) -> int:
+        return self.gpu_count
 
 
 def _ctx(tmp_path: Path, *, ids=("0",), max_gpus=None) -> StepContext:
@@ -54,7 +56,7 @@ def _ctx(tmp_path: Path, *, ids=("0",), max_gpus=None) -> StepContext:
     (template_dir / "cuda.slurm.header").write_text("#!/bin/bash\n#SBATCH --gres=gpu:1\n")
     seeds = tuple(Structure(id=i, atoms=Atoms("H", positions=[[0, 0, 0]])) for i in ids)
     return StepContext(
-        step_cfg=StepConfig(step=1, engine="fake-batch", operation="opt_sp"),
+        step_cfg=StepConfig(step=1, engine="fake-job", operation="opt_sp"),
         step_dir=tmp_path / "outputs" / "step1",
         template_dir=template_dir,
         scratch_dir=tmp_path / "scratch",
@@ -73,10 +75,10 @@ def _ctx(tmp_path: Path, *, ids=("0",), max_gpus=None) -> StepContext:
 def test_run_batch_submits_one_job_per_structure(submit_mock, _is_finished, tmp_path: Path):
     """One SLURM script + one submission per input, all mapped in the returned batch."""
     submit_mock.side_effect = ["1001", "1002"]
-    engine = _FakeBatchEngine()
+    engine = _FakeJobEngine()
     ctx = _ctx(tmp_path, ids=("0", "1"))
     inputs = engine.prepare(ctx)
-    batch = submit.run_batch(engine, inputs, ctx)
+    batch = _execution.run_batch(engine, inputs, ctx)
     assert isinstance(batch, JobBatch)
     assert set(batch.jobs.values()) == {"1001", "1002"}
     for inp, _out, _sid in inputs.files:
@@ -85,24 +87,22 @@ def test_run_batch_submits_one_job_per_structure(submit_mock, _is_finished, tmp_
 
 def test_header_name_picks_cuda_for_a_gpu_step(tmp_path: Path):
     """A GPU-demanding engine auto-selects the cuda header; a per-step override wins."""
-    engine = _FakeBatchEngine()
+    engine = _FakeJobEngine()
     ctx = _ctx(tmp_path)
-    assert submit._header_name(engine, ctx) == "cpu.slurm.header"
-    engine.gpus = 1
-    assert submit._header_name(engine, ctx) == slurm.header_name_for_device("cuda")
+    assert _execution._header_name(engine, ctx) == "cpu.slurm.header"
+    engine.gpu_count = 1
+    assert _execution._header_name(engine, ctx) == slurm.header_name_for_device("cuda")
     override = ctx.step_cfg.model_copy(update={"slurm_template": "special.header"})
-    from dataclasses import replace
-
-    assert submit._header_name(engine, replace(ctx, step_cfg=override)) == "special.header"
+    assert _execution._header_name(engine, replace(ctx, step_cfg=override)) == "special.header"
 
 
 @patch.object(slurm, "is_finished", return_value=True)
 @patch.object(slurm, "submit", return_value="9001")
 def test_run_batch_rejects_a_gpu_step_over_the_budget(_submit, _is_finished, tmp_path: Path):
     """Demanding more GPUs than the budget is a ConfigError, not a throttler traceback."""
-    engine = _FakeBatchEngine()
-    engine.gpus = 2
+    engine = _FakeJobEngine()
+    engine.gpu_count = 2
     ctx = _ctx(tmp_path, max_gpus=1)
     inputs = engine.prepare(ctx)
     with pytest.raises(ConfigError, match="GPU"):
-        submit.run_batch(engine, inputs, ctx)
+        _execution.run_batch(engine, inputs, ctx)

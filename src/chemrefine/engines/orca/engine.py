@@ -1,10 +1,10 @@
 """``OrcaEngine`` — the standard DFT engine, driven from ORCA inputs.
 
-A :class:`~chemrefine.engines._batch.BatchEngine`: it supplies only ORCA-specific
+A :class:`~chemrefine.engines._job.JobEngine`: it supplies only ORCA-specific
 primitives — write the ``.inp`` (:mod:`engines.orca.input`), give the run command, and
 parse the ``.out`` (:mod:`engines.orca.output`) into ``ParsedResult`` — while the shared
-base handles ``prepare`` / ``submit`` / ``parse`` and :mod:`chemrefine.submit` runs the
-batch under the budget.
+base handles ``prepare`` / ``submit`` / ``parse`` and :mod:`chemrefine.engines._execution`
+runs the batch under the budget.
 
 NMS is engine-independent (:mod:`chemrefine.nms`); ORCA supplies its two hooks —
 :meth:`nms_input_info` (read the template keywords) and :meth:`read_frequencies` (parse
@@ -19,9 +19,8 @@ import logging
 from pathlib import Path
 from typing import ClassVar
 
-from chemrefine.engines._assemble import ParsedResult
-from chemrefine.engines._batch import BatchEngine
-from chemrefine.engines.base import FrequencyData, NmsInputInfo, register
+from chemrefine.engines._job import JobEngine
+from chemrefine.engines.api import FrequencyData, NmsInputInfo, ParsedResult, register
 from chemrefine.engines.orca import frequencies, inspect, output
 from chemrefine.engines.orca import input as orca_input
 from chemrefine.errors import OutputParseError
@@ -32,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 @register("orca")
-class OrcaEngine(BatchEngine):
+class OrcaEngine(JobEngine):
     """Standard ORCA DFT engine (also the base for the ExtOpt engines)."""
 
     name: ClassVar[str] = "orca"
@@ -43,7 +42,7 @@ class OrcaEngine(BatchEngine):
 
     # -- input -------------------------------------------------------------
 
-    def _build_input(
+    def build_input(
         self,
         *,
         xyz_path: Path,
@@ -71,16 +70,16 @@ class OrcaEngine(BatchEngine):
 
     # -- run ---------------------------------------------------------------
 
-    def _pal(self, ctx: StepContext) -> int:
+    def pal(self, ctx: StepContext) -> int:
         """PAL is a property of the template (one ``%pal`` for the step), read once."""
         return orca_input.parse_pal(self._resolve_template(ctx))
 
-    def _run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
+    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
         """Engine-specific bash that runs inside ``$WORK_DIR``."""
         orca = ctx.executables.get("orca", "orca")
         return f"export OMP_NUM_THREADS=1\n{orca} {inp_path.name} > $OUTPUT_DIR/{out_path.name}"
 
-    def _extra_header_fields(self, ctx: StepContext) -> tuple[tuple[str, object], ...]:
+    def extra_header_fields(self, ctx: StepContext) -> tuple[tuple[str, object], ...]:
         """Record which ORCA binary ran in the runlog header."""
         return (("orca_executable", ctx.executables.get("orca", "orca")),)
 
@@ -96,7 +95,7 @@ class OrcaEngine(BatchEngine):
             return ctx.step_cfg.operation
         return inspect.inspect_template(self._resolve_template(ctx)).operation
 
-    def _parse_one(
+    def parse_one(
         self, output_path: Path, structure_id: str, ctx: StepContext
     ) -> list[ParsedResult]:
         """Parse one ORCA output — a ``.out`` (1:1) or its ensemble sidecar (fan-out)."""

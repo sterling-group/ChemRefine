@@ -1,4 +1,4 @@
-"""Tests for the shared template renderer + ``TemplateScriptEngine`` helpers.
+"""Tests for the shared template renderer + ``ScriptEngine`` helpers.
 
 The per-engine ``test_engines_pyscf.py`` and ``test_engines_mlip.py``
 exercise the lifecycle end-to-end with their backend labels. The
@@ -16,15 +16,15 @@ import numpy as np
 import pytest
 from ase import Atoms
 
-from chemrefine.engines import _template_render
-from chemrefine.engines._template_engine import TemplateScriptEngine
-from chemrefine.engines._template_output import _atoms_from_output, _forces_from_gradient
+from chemrefine.engines._script import render as _template_render
+from chemrefine.engines._script.engine import ScriptEngine
+from chemrefine.engines._script.output import _atoms_from_output, _forces_from_gradient
 from chemrefine.errors import OutputParseError
 
 
 def test_base_template_vars_default_is_empty():
     """The base ``_template_vars`` injects nothing; subclasses (mlip/pyscf) override it."""
-    assert TemplateScriptEngine()._template_vars(None) == {}  # type: ignore[arg-type]
+    assert ScriptEngine()._template_vars(None) == {}  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

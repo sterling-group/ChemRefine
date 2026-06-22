@@ -3,7 +3,7 @@
 NMS is a generic capability, not an engine feature. This module owns the whole
 two-round algorithm — read each structure's imaginary modes, displace along them,
 re-optimise the ± children, resolve to a stationary point — and drives the compute
-engine *only* through :class:`chemrefine.engines.base.NmsCapableEngine` (its two
+engine *only* through :class:`chemrefine.engines.api.NmsCapableEngine` (its two
 hooks ``nms_input_info`` + ``read_frequencies`` plus the standard lifecycle). It
 imports no engine package, so a new NMS-capable engine needs only those two hooks.
 
@@ -34,7 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from chemrefine import __version__, cache, io, step_failures
 from chemrefine.config import StepConfig
-from chemrefine.engines.base import NmsCapableEngine
+from chemrefine.engines.api import NmsCapableEngine
 from chemrefine.errors import CacheError
 from chemrefine.ids import latest_attempt_dir, next_attempt_dir, structure_artifact_path
 from chemrefine.state import PipelineState, StepContext, StepInputs, StepResults, Structure

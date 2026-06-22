@@ -99,16 +99,16 @@ def test_throttler_assign_device_raises_when_all_taken():
 # --- base: the abstract SLURM hooks -----------------------------------------
 
 
-def test_batch_engine_primitive_hooks_are_abstract():
-    from chemrefine.engines._batch import BatchEngine
+def test_job_engine_primitive_hooks_are_abstract():
+    from chemrefine.engines._job import JobEngine
 
-    eng = BatchEngine()
+    eng = JobEngine()
     with pytest.raises(NotImplementedError):
-        eng._pal(None)  # type: ignore[arg-type]
+        eng.pal(None)  # type: ignore[arg-type]
     with pytest.raises(NotImplementedError):
-        eng._run_block(None, Path("i"), Path("o"))  # type: ignore[arg-type]
+        eng.run_block(None, Path("i"), Path("o"))  # type: ignore[arg-type]
     with pytest.raises(NotImplementedError):
-        eng._build_input(  # type: ignore[arg-type]
+        eng.build_input(  # type: ignore[arg-type]
             xyz_path=Path("x"),
             template_path=Path("t"),
             input_path=Path("i"),
@@ -116,7 +116,7 @@ def test_batch_engine_primitive_hooks_are_abstract():
             ctx=None,
         )
     with pytest.raises(NotImplementedError):
-        eng._parse_one(Path("o"), "0", None)  # type: ignore[arg-type]
+        eng.parse_one(Path("o"), "0", None)  # type: ignore[arg-type]
 
 
 # --- cache: corrupt failed-jobs ledger --------------------------------------
@@ -193,7 +193,7 @@ def test_parse_text_rejects_non_text_operation():
 
 
 def test_mlip_train_engine_not_nms_capable(tmp_path: Path):
-    from chemrefine.engines.base import NmsCapableEngine, get_engine
+    from chemrefine.engines.api import NmsCapableEngine, get_engine
 
     eng = get_engine("mlip-train")
     # mlip-train is a pass-through: it doesn't satisfy the NMS hook contract.
@@ -363,7 +363,7 @@ def test_rebuild_cache_step_raises_without_manifest(tmp_path: Path):
 
 def test_resubmit_failed_raises_without_manifest(tmp_path: Path):
     from chemrefine import step
-    from chemrefine.engines.base import get_engine
+    from chemrefine.engines.api import get_engine
 
     ctx = _ctx(tmp_path)
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
@@ -373,7 +373,7 @@ def test_resubmit_failed_raises_without_manifest(tmp_path: Path):
 
 def test_reattempt_nms_raises_without_manifest(tmp_path: Path):
     from chemrefine import nms
-    from chemrefine.engines.base import get_engine
+    from chemrefine.engines.api import get_engine
 
     ctx = _ctx(tmp_path, nms=True, engine="orca")
     ctx.step_dir.mkdir(parents=True, exist_ok=True)  # no manifest written
@@ -467,7 +467,7 @@ def _save_reuse_cache(ctx, reuse_fp: str):
 
 def test_nms_reuse_outcome_none_without_cache(tmp_path: Path, monkeypatch):
     from chemrefine import step
-    from chemrefine.engines.base import get_engine
+    from chemrefine.engines.api import get_engine
 
     _pin_nms(monkeypatch)
     ctx = _ctx(tmp_path, nms=True, engine="orca")
@@ -477,7 +477,7 @@ def test_nms_reuse_outcome_none_without_cache(tmp_path: Path, monkeypatch):
 
 def test_nms_reuse_outcome_none_on_corrupt_cache(tmp_path: Path, monkeypatch):
     from chemrefine import cache, step
-    from chemrefine.engines.base import get_engine
+    from chemrefine.engines.api import get_engine
 
     _pin_nms(monkeypatch)
     ctx = _ctx(tmp_path, nms=True, engine="orca")
@@ -489,7 +489,7 @@ def test_nms_reuse_outcome_none_on_corrupt_cache(tmp_path: Path, monkeypatch):
 
 def test_nms_reuse_outcome_restamps_when_all_resolved(tmp_path: Path, monkeypatch):
     from chemrefine import step
-    from chemrefine.engines.base import get_engine
+    from chemrefine.engines.api import get_engine
 
     _pin_nms(monkeypatch, "FP")
     ctx = _ctx(tmp_path, nms=True, engine="orca")
@@ -500,7 +500,7 @@ def test_nms_reuse_outcome_restamps_when_all_resolved(tmp_path: Path, monkeypatc
 
 def test_nms_reuse_outcome_reattempts_when_ledger_present(tmp_path: Path, monkeypatch):
     from chemrefine import cache, step
-    from chemrefine.engines.base import get_engine
+    from chemrefine.engines.api import get_engine
 
     _pin_nms(monkeypatch, "FP")
     ctx = _ctx(tmp_path, nms=True, engine="orca")

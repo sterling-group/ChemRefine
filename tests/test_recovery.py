@@ -142,7 +142,7 @@ def _register_flaky():
 
     import numpy as np
 
-    from chemrefine.engines.base import register
+    from chemrefine.engines.api import register
     from chemrefine.ids import structure_artifact_path
     from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
 
@@ -199,7 +199,7 @@ def test_resume_is_incremental_resubmits_only_failed(tmp_path: Path):
     """An `on_failure: stop` step fails "1" (ledgered, "0" cached) and halts; after
     the engine recovers, `resume` resubmits ONLY "1" (incremental) and clears it."""
     from chemrefine import cache
-    from chemrefine.engines.base import ENGINES
+    from chemrefine.engines.api import ENGINES
     from chemrefine.errors import ChemRefineError
 
     eng = _register_flaky()
@@ -231,7 +231,7 @@ def test_resume_is_incremental_resubmits_only_failed(tmp_path: Path):
 
 def test_rerun_redoes_whole_step(tmp_path: Path):
     """`rerun` invalidates the step and re-executes it end-to-end (all structures)."""
-    from chemrefine.engines.base import ENGINES
+    from chemrefine.engines.api import ENGINES
 
     eng = _register_flaky()
     try:
@@ -250,7 +250,7 @@ def test_rerun_redoes_whole_step(tmp_path: Path):
 def test_rerun_errors_reattempts_only_the_target_step_failures(tmp_path: Path):
     """`rerun-errors N` re-attempts only step N's pending (stop) failures."""
     from chemrefine import cache
-    from chemrefine.engines.base import ENGINES
+    from chemrefine.engines.api import ENGINES
     from chemrefine.errors import ChemRefineError
 
     eng = _register_flaky()
@@ -281,7 +281,7 @@ def test_rerun_errors_on_skip_step_reports_nothing_pending(tmp_path: Path, caplo
     """
     import logging
 
-    from chemrefine.engines.base import ENGINES
+    from chemrefine.engines.api import ENGINES
 
     eng = _register_flaky()
     try:
@@ -306,7 +306,7 @@ def test_resume_does_not_reattempt_skip_step(tmp_path: Path):
     """A `skip` step records its failures (visible) but `resume` cache-hits it —
     skipped failures are intentional, not pending."""
     from chemrefine import cache
-    from chemrefine.engines.base import ENGINES
+    from chemrefine.engines.api import ENGINES
 
     eng = _register_flaky()
     try:
@@ -340,7 +340,7 @@ def _register_fake_nms():
     import numpy as np
     from ase import Atoms
 
-    from chemrefine.engines.base import FrequencyData, NmsInputInfo, register
+    from chemrefine.engines.api import FrequencyData, NmsInputInfo, register
     from chemrefine.ids import structure_artifact_path
     from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
 
@@ -425,7 +425,7 @@ def test_resume_after_tuning_reattempts_only_unresolved(tmp_path: Path):
     """Tuning displacement_value (reuse fingerprint unchanged) + resume reuses
     round-1 and re-runs NMS for ONLY the previously-unresolved parent."""
     from chemrefine import cache
-    from chemrefine.engines.base import ENGINES
+    from chemrefine.engines.api import ENGINES
 
     eng = _register_fake_nms()
     try:
@@ -455,7 +455,7 @@ def test_reattempt_resubmits_missing_round1(tmp_path: Path):
     """A parent whose round-1 output is missing gets its round-1 resubmitted on
     the next resume (NMS-unresolved parents do not)."""
     from chemrefine import cache
-    from chemrefine.engines.base import ENGINES
+    from chemrefine.engines.api import ENGINES
     from chemrefine.errors import ChemRefineError
 
     eng = _register_fake_nms()
@@ -484,7 +484,7 @@ def test_reattempt_resubmits_missing_round1(tmp_path: Path):
 def test_rebuild_cache_reparses_without_submitting(tmp_path: Path):
     """`rebuild-cache` rebuilds a step's cache from existing outputs — no submit."""
     from chemrefine import cache
-    from chemrefine.engines.base import ENGINES
+    from chemrefine.engines.api import ENGINES
 
     eng = _register_flaky()
     try:

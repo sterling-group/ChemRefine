@@ -1,60 +1,65 @@
 """Shared base class for ORCA-driven ExtOpt engines (MLIP, PySCF, …).
 
-The MLIP and PySCF engines both run an external HTTP server for the
-gradient evaluation and use ORCA itself as the optimizer. They differ
-only in what server they spin up and which ``%method`` block ORCA gets.
-This base class wires up the common bash ``run_block`` and the per-step
-wrapper-path convention so subclasses only implement ``_server_cmd``
-and declare a ``wrapper_filename``.
+The MLIP and PySCF ExtOpt engines both run an external HTTP server for the gradient
+evaluation and use ORCA itself as the optimizer. They differ only in *which* server they
+spin up and which option/calculator classes describe it — so this base owns everything
+shared (the ``%method ProgExt`` block, the server-launch ``run_block``, the per-step wrapper,
+the ``_server_cmd`` template) and a concrete subclass declares just four ClassVars:
+``backend`` / ``wrapper_filename`` / ``options_cls`` / ``calculator_cls``.
+
+ExtOpt engines are **NMS-capable**: they inherit ORCA's ``nms_input_info`` /
+``read_frequencies`` hooks, because ORCA computes the Hessian numerically over the backend's
+gradients — so a ``Freq`` template yields real frequencies.
 """
 
 from __future__ import annotations
 
-from abc import abstractmethod
 from pathlib import Path
 from typing import ClassVar
 
-from chemrefine.engines._backend_server.base import SERVER_URL_FILENAME
-from chemrefine.engines._batch import gpus_from_device_options
+from chemrefine.engines._backend_server.base import SERVER_URL_FILENAME, ComputeBackend
+from chemrefine.engines._job import gpus_from_device_options
+from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.engines.orca.extopt import protocol, run_block
 from chemrefine.state import StepContext, StepInputs
 
 
 class ExtOptOrcaEngine(OrcaEngine):
-    """ORCA driven by an ExtOpt HTTP server.
-
-    Subclasses set ``backend`` (the registry key the server / client load,
-    e.g. ``"mlip"``) and ``wrapper_filename`` (the per-step ``ProgExt``
-    script name), and implement :meth:`_server_cmd` to return the shell
-    command that launches their backend's server. The base wires the
-    shared SLURM ``run_block``, the per-step wrapper-path lookup, and the
-    per-step generation of that wrapper.
-
-    ExtOpt engines are **NMS-capable**: they inherit ORCA's ``nms_input_info`` /
-    ``read_frequencies`` hooks, because ORCA computes the Hessian numerically over
-    the backend's gradients — so a ``Freq`` template yields real frequencies.
-    """
+    """ORCA driven by an ExtOpt HTTP server; subclasses declare four ClassVars."""
 
     backend: ClassVar[str]
     wrapper_filename: ClassVar[str]
+    options_cls: ClassVar[type[EngineOptions]]
+    calculator_cls: ClassVar[type[ComputeBackend]]
 
-    def _gpus(self, ctx: StepContext) -> int:
+    def gpus(self, ctx: StepContext) -> int:
         """A GPU when the backend's options request one (``device: cuda``); else CPU."""
         return gpus_from_device_options(ctx.step_cfg.options)
 
-    @abstractmethod
+    def _extra_blocks(self, ctx: StepContext) -> str:
+        """Emit the ``%method ProgExt "<wrapper>"`` block tying ORCA to this step's wrapper."""
+        return f'%method\n  ProgExt "{self._wrapper_path(ctx)}"\nend'
+
     def _server_cmd(self, ctx: StepContext) -> str:
-        """Return the shell command that launches this backend's ExtOpt server."""
+        """Build the ``python -m ..._backend_server.server --backend <name> …`` command.
+
+        Validates ``ctx.step_cfg.options`` through ``options_cls`` (so the step fails fast on a
+        typoed/unknown YAML knob), then asks ``calculator_cls`` to turn the validated options
+        into the matching server CLI tokens — the single source of truth for the backend's
+        configuration. The wrapper and per-call POST carry nothing (single-channel).
+        """
+        options = self.options_cls.from_raw(ctx.step_cfg.options).model_dump()
+        tokens = self.calculator_cls.server_cli_from_options(options)
+        return run_block._server_command(backend=self.backend, extra_tokens=tokens)
 
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Write the per-structure ORCA ``.inp`` files plus the ``ProgExt`` wrapper.
 
         :class:`~chemrefine.engines.orca.engine.OrcaEngine.prepare` writes the
-        ``.inp`` files whose ``%method`` block points at
-        :meth:`_wrapper_path`; this override then materialises that wrapper so
-        ORCA finds it at optimisation time. The wrapper reads the sidecar URL
-        file the server writes to ``$WORK_DIR`` and relays each call to the
+        ``.inp`` files whose ``%method`` block points at :meth:`_wrapper_path`; this override
+        then materialises that wrapper so ORCA finds it at optimisation time. The wrapper reads
+        the sidecar URL file the server writes to ``$WORK_DIR`` and relays each call to the
         shared ExtOpt client.
         """
         inputs = super().prepare(ctx)
@@ -77,7 +82,7 @@ class ExtOptOrcaEngine(OrcaEngine):
         """
         return ""
 
-    def _run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
+    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
         """Combine the engine's server command with the shared lifecycle bash."""
         return run_block._build_extopt_run_block(
             server_cmd=self._server_cmd(ctx),

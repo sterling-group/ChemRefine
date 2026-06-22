@@ -26,6 +26,7 @@ from typing import Any
 from chemrefine.engines._backend_server.base import (
     CalculationData,
     ComputeBackend,
+    tokens_from_options,
 )
 from chemrefine.engines.pyscf import _runtime
 from chemrefine.engines.pyscf.options import PyscfOptions
@@ -126,32 +127,17 @@ class PyscfExtOptCalculator(ComputeBackend):
         )
 
     @classmethod
-    def settings_from_args(cls, args: argparse.Namespace) -> dict[str, Any]:
-        """No per-call client knobs — PySCF is single-channel like MLIP.
-
-        The calculator is constructed from the server CLI (:meth:`from_args`),
-        so the wrapper's POST carries no settings; the server still injects the
-        correlation ``tag`` on its own.
-        """
-        return {}
-
-    @classmethod
     def server_cli_from_options(cls, options: dict[str, Any]) -> list[str]:
-        """Translate validated YAML options into a list of ``--flag value`` tokens.
+        """Translate validated YAML options into ``--flag value`` / ``--flag`` tokens.
 
-        Falsy values (``None``, empty string, ``False``) are omitted so
-        the engine's ``run_block`` only emits flags the user explicitly
-        set.
+        PySCF flag spelling == YAML key, so each value flag maps to ``--{key}``; the server
+        still injects the per-call correlation ``tag`` itself (single-channel, like MLIP).
         """
-        tokens: list[str] = []
-        for key in _KEY_VALUE_FLAGS:
-            value = options.get(key)
-            if value:
-                tokens.extend([f"--{key}", str(value)])
-        for flag in _BOOL_FLAGS:
-            if options.get(flag):
-                tokens.append(f"--{flag}")
-        return tokens
+        return tokens_from_options(
+            options,
+            value_flags=tuple((key, f"--{key}") for key in _KEY_VALUE_FLAGS),
+            bool_flags=_BOOL_FLAGS,
+        )
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> PyscfExtOptCalculator:

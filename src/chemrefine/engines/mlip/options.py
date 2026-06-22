@@ -10,12 +10,12 @@ reading the raw YAML dict.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from pydantic import AliasChoices, ConfigDict, Field
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from chemrefine.engines._options import EngineOptions
 
 
-class MlipOptions(BaseModel):
+class MlipOptions(EngineOptions):
     """Validated knobs for the MLIP backend.
 
     Two axes, mapped the same way across libraries (the mace↔fairchem
@@ -23,10 +23,11 @@ class MlipOptions(BaseModel):
     (see the table in :mod:`chemrefine.engines.mlip.calculator`), and
     ``model_name`` is the **weights** handed to it. Backend-natural YAML aliases
     are accepted (``task`` for ``task_name``; ``model``/``size`` for
-    ``model_name``) so each backend reads naturally.
+    ``model_name``) so each backend reads naturally. ``device`` + ``from_raw`` come
+    from :class:`~chemrefine.engines._options.EngineOptions`.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True)
 
     model_name: str = Field(
         "uma-s-1p1",
@@ -54,13 +55,5 @@ class MlipOptions(BaseModel):
     model_path: str | None = None
     """Custom MACE checkpoint path (selects the ``custom_mace`` backend)."""
 
-    device: Literal["cuda", "cpu"] = "cuda"
-    """Compute device for the MLIP model."""
-
     cores: int = Field(1, ge=1)
     """Per-structure core budget (passed to the throttler when applicable)."""
-
-    @classmethod
-    def from_raw(cls, raw: dict[str, Any] | None) -> MlipOptions:
-        """Validate a raw ``step.options`` dict; empty/None yields defaults."""
-        return cls(**(raw or {}))

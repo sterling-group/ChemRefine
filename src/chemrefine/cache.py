@@ -123,7 +123,7 @@ def fingerprint(
     cache reuse. ``parents_digest`` (see :func:`parents_digest`) ties the
     fingerprint to the parent structures' content so a changed seed file or
     changed upstream result invalidates the step even when the IDs match.
-    ``template_digest`` (see :meth:`chemrefine.engines.base.CalculationEngine.input_digest`)
+    ``template_digest`` (see :meth:`chemrefine.engines.api.CalculationEngine.input_digest`)
     ties it to the *contents* of the resolved template — editing the template
     in place (which now also drives ORCA's run-type detection when ``operation``
     is omitted) re-runs the step, where the template basename alone could not.

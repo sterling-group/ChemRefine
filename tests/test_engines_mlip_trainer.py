@@ -289,7 +289,7 @@ def test_run_training_drives_pipeline_and_returns_results_unchanged(tmp_path: Pa
 
 
 def test_mlip_train_engine_is_registered():
-    from chemrefine.engines.base import ENGINES, get_engine
+    from chemrefine.engines.api import ENGINES, get_engine
 
     assert "mlip-train" in ENGINES
     assert get_engine("mlip-train").name == "mlip-train"
@@ -297,7 +297,7 @@ def test_mlip_train_engine_is_registered():
 
 def test_mlip_train_engine_has_no_input_digest(tmp_path: Path):
     """Training is a pass-through, so it contributes nothing to the cache fingerprint."""
-    from chemrefine.engines.base import get_engine
+    from chemrefine.engines.api import get_engine
 
     assert get_engine("mlip-train").input_digest(_ctx(tmp_path)) == ""
 
@@ -305,7 +305,7 @@ def test_mlip_train_engine_has_no_input_digest(tmp_path: Path):
 def test_mlip_train_engine_trains_on_prev_and_passes_structures_through(tmp_path: Path):
     """submit() calls trainer.run_training on the previous step's structures;
     parse() passes those structures through unchanged (model is the artifact)."""
-    from chemrefine.engines.base import get_engine
+    from chemrefine.engines.api import get_engine
 
     structs = tuple(_struct(str(i)) for i in range(3))
     ctx = _ctx(tmp_path)

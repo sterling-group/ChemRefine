@@ -13,7 +13,7 @@ from ase import Atoms
 from synthetic import FREQUENCY_BLOCK, NORMAL_MODES_BLOCK_2_ATOMS, synthetic_dft_output
 
 from chemrefine.config import StepConfig
-from chemrefine.engines.base import get_engine
+from chemrefine.engines.api import get_engine
 from chemrefine.ids import structure_artifact_path
 from chemrefine.state import PipelineState, StepContext, Structure
 

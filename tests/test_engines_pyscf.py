@@ -19,7 +19,7 @@ import pytest
 from ase import Atoms
 
 from chemrefine.config import StepConfig
-from chemrefine.engines.base import get_engine
+from chemrefine.engines.api import get_engine
 from chemrefine.errors import OutputParseError
 from chemrefine.state import JobBatch, PipelineState, StepContext, Structure
 
@@ -200,7 +200,7 @@ def test_template_run_block_caps_threads_to_cores(tmp_path: Path):
     """pyscf/mlip direct runs are OpenMP/MKL-threaded → the run block pins them to cores."""
     ctx = _ctx(tmp_path, structures=(_seed(),), options={"cores": 4})
     engine = get_engine("pyscf")
-    run_block = engine._run_block(
+    run_block = engine.run_block(
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.py",
         out_path=ctx.step_dir / "step1_structure_0.out",
@@ -231,7 +231,7 @@ def test_submit_respects_cores_option(tmp_path: Path):
 
 
 def test_submit_uses_template_engine_output_globs(tmp_path: Path):
-    """The direct engine's ``output_globs`` ClassVar flows through the BatchEngine base."""
+    """The direct engine's ``output_globs`` ClassVar flows through the JobEngine base."""
     ctx = _ctx(tmp_path, structures=(_seed(),))
     engine = get_engine("pyscf")
     inputs = engine.prepare(ctx)
@@ -328,7 +328,7 @@ def test_parse_raises_when_energy_missing(tmp_path: Path):
 
 
 def test_pyscf_direct_is_not_nms_capable():
-    from chemrefine.engines.base import NmsCapableEngine
+    from chemrefine.engines.api import NmsCapableEngine
 
     engine = get_engine("pyscf")
     assert not isinstance(engine, NmsCapableEngine)  # provides neither NMS hook

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-# Importing from ``chemrefine.engines.base`` triggers the parent package's
+# Importing from ``chemrefine.engines.api`` triggers the parent package's
 # ``__init__``, which self-registers every bundled engine into ``ENGINES``.
-from chemrefine.engines.base import (
+from chemrefine.engines.api import (
     ENGINES,
     CalculationEngine,
     get_engine,

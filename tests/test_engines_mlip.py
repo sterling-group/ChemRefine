@@ -24,9 +24,9 @@ from unittest.mock import patch
 import pytest
 from ase import Atoms
 
-from chemrefine import submit
 from chemrefine.config import StepConfig
-from chemrefine.engines.base import ENGINES, NmsCapableEngine, get_engine
+from chemrefine.engines import _execution as submit
+from chemrefine.engines.api import ENGINES, NmsCapableEngine, get_engine
 from chemrefine.engines.mlip import calculator as mlip_calculator
 from chemrefine.engines.mlip.calculator import MlipCalculator, build_calculator
 from chemrefine.errors import OutputParseError
@@ -183,21 +183,21 @@ def test_mlip_extopt_cuda_step_selects_cuda_header(tmp_path: Path):
     """device: cuda → the whole ORCA-driven job lands on a GPU node (cuda header)."""
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path)  # device: cuda by default
-    assert engine._gpus(ctx) == 1
+    assert engine.gpus(ctx) == 1
     assert submit._header_name(engine, ctx) == "cuda.slurm.header"
 
 
 def test_mlip_extopt_cpu_step_keeps_global_header(tmp_path: Path):
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path, device="cpu")
-    assert engine._gpus(ctx) == 0
+    assert engine.gpus(ctx) == 0
     assert submit._header_name(engine, ctx) == ctx.slurm_template
 
 
 def test_mlip_direct_cuda_step_selects_cuda_header(tmp_path: Path):
     engine = get_engine("mlip")
     ctx = _mlip_direct_ctx(tmp_path, structures=(_seed(),), options={"device": "cuda"})
-    assert engine._gpus(ctx) == 1
+    assert engine.gpus(ctx) == 1
     assert submit._header_name(engine, ctx) == "cuda.slurm.header"
 
 
@@ -207,7 +207,7 @@ def test_per_step_slurm_template_overrides_device_pick(tmp_path: Path):
     ctx0 = _mlip_extopt_ctx(tmp_path)  # device: cuda
     step_cfg = ctx0.step_cfg.model_copy(update={"slurm_template": "special.header"})
     ctx = replace(ctx0, step_cfg=step_cfg)
-    assert engine._gpus(ctx) == 1  # still a GPU job
+    assert engine.gpus(ctx) == 1  # still a GPU job
     assert submit._header_name(engine, ctx) == "special.header"
 
 
@@ -281,7 +281,7 @@ def test_mlip_extopt_extra_blocks_contains_progext_pointing_to_wrapper(tmp_path:
 def test_mlip_extopt_run_block_starts_shared_extopt_server(tmp_path: Path):
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path)
-    run_block = engine._run_block(
+    run_block = engine.run_block(
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
@@ -296,7 +296,7 @@ def test_mlip_extopt_run_block_starts_shared_extopt_server(tmp_path: Path):
 def test_mlip_extopt_run_block_includes_readiness_loop_and_trap(tmp_path: Path):
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path)
-    run_block = engine._run_block(
+    run_block = engine.run_block(
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",

@@ -18,7 +18,7 @@ from ase import Atoms
 
 from chemrefine import nms
 from chemrefine.config import Config, StepConfig
-from chemrefine.engines.base import FrequencyData, NmsInputInfo
+from chemrefine.engines.api import FrequencyData, NmsInputInfo
 from chemrefine.ids import structure_artifact_path
 from chemrefine.state import (
     JobBatch,

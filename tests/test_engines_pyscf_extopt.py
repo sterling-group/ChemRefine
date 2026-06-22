@@ -16,7 +16,7 @@ from ase import Atoms
 from pydantic import ValidationError
 
 from chemrefine.config import StepConfig
-from chemrefine.engines.base import ENGINES, NmsCapableEngine, get_engine
+from chemrefine.engines.api import ENGINES, NmsCapableEngine, get_engine
 from chemrefine.state import PipelineState, StepContext, Structure
 
 # ---------------------------------------------------------------------------
@@ -95,7 +95,7 @@ def test_pyscf_wrapper_carries_no_per_call_flags(tmp_path: Path):
     assert "--df" not in text
     assert "--gpu" not in text
     # ... they reach the backend via the server construction instead.
-    run_block = engine._run_block(
+    run_block = engine.run_block(
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
@@ -107,7 +107,7 @@ def test_pyscf_wrapper_carries_no_per_call_flags(tmp_path: Path):
 def test_pyscf_run_block_starts_shared_extopt_server(tmp_path: Path):
     engine = get_engine("pyscf-extopt")
     ctx = _pyscf_ctx(tmp_path)
-    run_block = engine._run_block(
+    run_block = engine.run_block(
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
@@ -122,7 +122,7 @@ def test_pyscf_run_block_starts_shared_extopt_server(tmp_path: Path):
 def test_pyscf_run_block_emits_gpu_and_df_when_set(tmp_path: Path):
     engine = get_engine("pyscf-extopt")
     ctx = _pyscf_ctx(tmp_path, gpu=True, df=True)
-    run_block = engine._run_block(
+    run_block = engine.run_block(
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
@@ -140,7 +140,7 @@ def test_pyscf_save_tensors_reaches_server_cmd(tmp_path: Path):
     # A relative tensor_folder is fine now — it's copied back into the structure
     # dir on exit (see _output_dirs); no absolute path required.
     ctx = _pyscf_ctx(tmp_path, save_tensors=True, localized=True, tensor_folder="td")
-    run_block = engine._run_block(
+    run_block = engine.run_block(
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
@@ -159,21 +159,20 @@ def test_pyscf_save_tensors_reaches_server_cmd(tmp_path: Path):
 def test_pyscf_extopt_output_dirs_copies_relative_tensor_folder(tmp_path: Path):
     """A relative tensor_folder is copied back wholesale; absolute / off → nothing."""
     engine = get_engine("pyscf-extopt")
-    assert engine._output_dirs(
-        _pyscf_ctx(tmp_path, save_tensors=True, tensor_folder="tensors")
-    ) == ("tensors",)
-    assert (
-        engine._output_dirs(_pyscf_ctx(tmp_path, save_tensors=True, tensor_folder="/abs/keep"))
-        == ()
+    assert engine.output_dirs(_pyscf_ctx(tmp_path, save_tensors=True, tensor_folder="tensors")) == (
+        "tensors",
     )
-    assert engine._output_dirs(_pyscf_ctx(tmp_path, save_tensors=False)) == ()
+    assert (
+        engine.output_dirs(_pyscf_ctx(tmp_path, save_tensors=True, tensor_folder="/abs/keep")) == ()
+    )
+    assert engine.output_dirs(_pyscf_ctx(tmp_path, save_tensors=False)) == ()
 
 
 def test_pyscf_run_block_omits_bool_flags_when_unset(tmp_path: Path):
     """Bool flags stay gated on their option; key-value knobs carry validated values."""
     engine = get_engine("pyscf-extopt")
     ctx = _pyscf_ctx(tmp_path, df=False, gpu=False)
-    run_block = engine._run_block(
+    run_block = engine.run_block(
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
@@ -195,7 +194,7 @@ def test_pyscf_unknown_option_fails_fast(tmp_path: Path):
     engine = get_engine("pyscf-extopt")
     ctx = _pyscf_ctx(tmp_path, basis_set="def2-tzvp")
     with pytest.raises(ValidationError, match="basis_set"):
-        engine._run_block(
+        engine.run_block(
             ctx,
             inp_path=ctx.step_dir / "step1_structure_0.inp",
             out_path=ctx.step_dir / "step1_structure_0.out",
@@ -205,7 +204,7 @@ def test_pyscf_unknown_option_fails_fast(tmp_path: Path):
 def test_pyscf_run_block_includes_readiness_loop(tmp_path: Path):
     engine = get_engine("pyscf-extopt")
     ctx = _pyscf_ctx(tmp_path)
-    run_block = engine._run_block(
+    run_block = engine.run_block(
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",

@@ -15,7 +15,7 @@ syntax — collision-free with Python's ``{`` / ``}`` brackets):
 * ``$MULTIPLICITY`` — integer spin multiplicity (``= 2S + 1``).
 * engine ``extra_vars`` — per-engine option placeholders so the YAML can drive
   the template. The MLIP engine passes ``$MODEL_NAME`` / ``$TASK_NAME`` /
-  ``$DEVICE`` from ``step.options`` (see :meth:`TemplateScriptEngine._template_vars`).
+  ``$DEVICE`` from ``step.options`` (see :meth:`ScriptEngine._template_vars`).
 
 Output contract (the appended footer harvests these names if present):
 
@@ -98,7 +98,7 @@ def build_input(
     lands in ``$WORK_DIR`` / scratch).
 
     Engines call this through
-    :class:`chemrefine.engines._template_engine.TemplateScriptEngine`,
+    :class:`chemrefine.engines._script.engine.ScriptEngine`,
     which already raises a backend-specific ``FileNotFoundError`` for
     a missing template; the same check is kept here as a defensive
     guard for any direct caller.

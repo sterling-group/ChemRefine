@@ -11,7 +11,7 @@ Two functions are enough:
   yields no survivors.
 
 Side-effect import of :mod:`chemrefine.engines` at module top
-populates the :data:`~chemrefine.engines.base.ENGINES` registry so the
+populates the :data:`~chemrefine.engines.api.ENGINES` registry so the
 orchestrator never imports a concrete engine directly.
 """
 
@@ -30,7 +30,7 @@ from chemrefine.errors import ConfigError
 from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 from chemrefine.state import PipelineState, Structure
 
-# Importing :mod:`chemrefine.step` pulls in :mod:`chemrefine.engines.base`,
+# Importing :mod:`chemrefine.step` pulls in :mod:`chemrefine.engines.api`,
 # which runs :mod:`chemrefine.engines`'s ``__init__`` and self-registers every
 # bundled engine. No explicit ``import chemrefine.engines`` needed.
 from chemrefine.step import (

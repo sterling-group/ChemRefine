@@ -11,13 +11,13 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
+
+from chemrefine.engines._options import EngineOptions
 
 
-class PyscfOptions(BaseModel):
-    """Validated knobs for the PySCF backend."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
+class PyscfOptions(EngineOptions):
+    """Validated knobs for the PySCF backend (``device`` comes from :class:`EngineOptions`)."""
 
     method: Literal["dft", "hf"] = "dft"
     """Electronic-structure method to run."""
@@ -35,10 +35,6 @@ class PyscfOptions(BaseModel):
     df: bool = True
     """Enable density fitting / RI. Defaults **on** — DF is a large speed-up at
     negligible accuracy cost for the gradient-server use case."""
-
-    device: Literal["cuda", "cpu"] = "cuda"
-    """Compute device. Drives ``gpu`` when ``gpu`` is not set explicitly:
-    ``cuda`` ⇒ attempt GPU, ``cpu`` ⇒ CPU only (see :meth:`_derive_gpu_from_device`)."""
 
     gpu: bool = False
     """Attempt :mod:`gpu4pyscf` if installed. When omitted it is derived from

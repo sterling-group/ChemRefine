@@ -22,7 +22,8 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Collection, Sequence
 from pathlib import Path
 from typing import TextIO
 
@@ -621,3 +622,24 @@ def is_finished(job_id: str, *, squeue_cmd: str = "squeue") -> bool:
     # First line is the header ("JOBID"); drop it before checking membership.
     running = lines[1:] if lines else []
     return not any(line == job_id or line.startswith(f"{job_id}_") for line in running)
+
+
+def wait_for_jobs(
+    job_ids: Collection[str],
+    *,
+    poll_interval: float,
+    is_finished: Callable[[str], bool],
+) -> None:
+    """Block until every id in ``job_ids`` reports finished, polling at ``poll_interval``.
+
+    The single canonical "wait for these SLURM jobs to drain" loop — used by the job-array
+    path in :mod:`chemrefine.engines._execution` (the per-job path uses the budget-aware
+    :class:`chemrefine.throttle.Throttler` instead, which reaps as it waits). ``is_finished``
+    is injected (the caller passes :func:`is_finished`) so it stays mockable, mirroring the
+    throttler.
+    """
+    pending = set(job_ids)
+    while pending:
+        pending = {jid for jid in pending if not is_finished(jid)}
+        if pending:
+            time.sleep(poll_interval)

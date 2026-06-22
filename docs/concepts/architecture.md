@@ -9,8 +9,9 @@ forward as immutable `PipelineState` values.
 
 ```
 cli → recovery → pipeline → step → {cache, filtering, step_failures, nms}
-                                  → engines.base (Protocol + ENGINES registry)
+                                  → engines.api (Protocols + ENGINES registry)
                                        → engines/* (orca, mlip, pyscf, _fake)
+                                            → engines/{_job, _execution, _script} (building blocks)
                                             → slurm, throttle, io, ids, job_log, quantities
 ```
 
@@ -44,14 +45,14 @@ flowchart TD
 
 ## Submit / compute flow
 
-A batch engine's `submit` delegates to the flat `chemrefine.submit.run_batch`, which
+A `JobEngine`'s `submit` delegates to `chemrefine.engines._execution.run_batch`, which
 generates jobs and throttles them against the CPU+GPU budget using the engine's
-primitives (`_run_block` / `_pal` / `_gpus` / `output_globs`). The ExtOpt engines
+primitives (`run_block` / `pal` / `gpus` / `output_globs`). The ExtOpt engines
 additionally stand up a gradient server that ORCA talks to per optimisation step:
 
 ```mermaid
 flowchart TD
-  SUB["chemrefine.submit.run_batch"] --> BUILD["slurm.build_script /\nbuild_array_script"]
+  SUB["engines._execution.run_batch"] --> BUILD["slurm.build_script /\nbuild_array_script"]
   BUILD --> SUBMIT["slurm.submit"]
   SUBMIT -- sbatch present --> SBATCH["sbatch (SLURM)"]
   SUBMIT -- local --> POPEN["bash Popen (background)"]

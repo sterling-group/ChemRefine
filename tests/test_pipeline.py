@@ -136,7 +136,7 @@ def test_bootstrap_from_smiles_csv_empty_raises(tmp_path: Path):
 
 def test_run_stops_early_when_a_step_produces_no_survivors(tmp_path: Path):
     """A step whose sample method filters every survivor must halt the pipeline."""
-    from chemrefine.engines.base import ENGINES, register
+    from chemrefine.engines.api import ENGINES, register
     from chemrefine.state import PipelineState, StepResults
 
     @register("empty-fake")

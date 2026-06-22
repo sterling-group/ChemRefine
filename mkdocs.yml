@@ -116,13 +116,12 @@ nav:
           - Filtering: api/filtering.md
           - Recovery Actions: api/recovery.md
       - Engines:
-          - Contract & Registry: api/engines_base.md
-          - Batch Base & Assembly: api/engines_batch.md
+          - Contract & Registry: api/engines_api.md
+          - Job & Script Engines: api/engines_job.md
           - ORCA: api/engines_orca.md
           - MLIP: api/engines_mlip.md
           - PySCF: api/engines_pyscf.md
       - Infrastructure:
-          - Submit: api/submit.md
           - SLURM: api/slurm.md
           - Throttle: api/throttle.md
           - Cache: api/cache.md

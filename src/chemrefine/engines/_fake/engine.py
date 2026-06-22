@@ -18,7 +18,7 @@ from typing import ClassVar
 import numpy as np
 from ase import Atoms
 
-from chemrefine.engines.base import register
+from chemrefine.engines.api import register
 from chemrefine.ids import structure_artifact_path
 from chemrefine.state import (
     JobBatch,
@@ -43,7 +43,7 @@ def _fake_energy(structure_id: str) -> float:
 
 @register("fake")
 class FakeEngine:
-    """Test stub satisfying :class:`~chemrefine.engines.base.CalculationEngine`."""
+    """Test stub satisfying :class:`~chemrefine.engines.api.CalculationEngine`."""
 
     name: ClassVar[str] = "fake"
 

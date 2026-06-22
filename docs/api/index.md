@@ -27,17 +27,16 @@ Config → bootstrap → run_step (cache | engine lifecycle) → filtering → P
 
 ## Engines
 
-- [Contract & Registry](engines_base.md) — the `CalculationEngine` /
-  `NmsCapableEngine` Protocols and the `ENGINES` registry
-- [Batch Base & Assembly](engines_batch.md) — the `BatchEngine` template-method base
-  and the `ParsedResult` → `Structure` assembler
+- [Contract & Registry](engines_api.md) — the `CalculationEngine` / `NmsCapableEngine` /
+  `JobExecutable` Protocols, the DTOs, and the `ENGINES` registry
+- [Job & Script Engines](engines_job.md) — the `JobEngine` lifecycle + `build_structures`
+  assembler, the `_execution` scheduler, and the `ScriptEngine` kind
 - [ORCA](engines_orca.md) — input generation, output parsing, frequencies, the NMS hooks, ExtOpt
 - [MLIP](engines_mlip.md) — direct / ExtOpt / training engines + backend dispatcher
 - [PySCF](engines_pyscf.md) — direct / ExtOpt engines + the SCF runtime
 
 ## Infrastructure
 
-- [Submit](submit.md) — the engine-independent batch submitter (`run_batch`)
 - [SLURM](slurm.md) — script generation, submission, array jobs, polling
 - [Throttle](throttle.md) — the CPU+GPU budget throttler
 - [Cache](cache.md) — the per-step fingerprint cache, manifest, and failed-job ledger

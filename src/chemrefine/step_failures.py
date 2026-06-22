@@ -22,7 +22,7 @@ from pathlib import Path
 
 from chemrefine import cache, ids
 from chemrefine.config import StepConfig
-from chemrefine.engines.base import CalculationEngine
+from chemrefine.engines.api import CalculationEngine
 from chemrefine.errors import OutputParseError
 from chemrefine.state import PipelineState, StepContext, StepInputs, StepResults, Structure
 

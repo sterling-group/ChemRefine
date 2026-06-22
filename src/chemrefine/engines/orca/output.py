@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
-from chemrefine.engines._assemble import ParsedResult
+from chemrefine.engines.api import ParsedResult
 from chemrefine.engines.orca import frequencies
 from chemrefine.errors import OutputParseError
 from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A

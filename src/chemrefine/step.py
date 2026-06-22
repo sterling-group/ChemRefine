@@ -6,7 +6,7 @@ lifecycle methods are called. :func:`run_step` is intentionally short
 
 * Caching + manifest:  :mod:`chemrefine.cache`
 * Filtering:           :mod:`chemrefine.filtering`
-* Engine lookup:  :mod:`chemrefine.engines.base`
+* Engine lookup:  :mod:`chemrefine.engines.api`
 * Failure vocabulary + ``on_failure`` policy:  :mod:`chemrefine.step_failures`
 * NMS resolution / recovery (engine-independent):  :mod:`chemrefine.nms`
 """
@@ -20,7 +20,7 @@ from typing import cast
 
 from chemrefine import __version__, cache, filtering, nms, step_failures
 from chemrefine.config import Config, StepConfig
-from chemrefine.engines.base import CalculationEngine, NmsCapableEngine, get_engine
+from chemrefine.engines.api import CalculationEngine, NmsCapableEngine, get_engine
 from chemrefine.errors import CacheError, ChemRefineError, ConfigError
 from chemrefine.state import PipelineState, StepContext, StepInputs, StepResults
 

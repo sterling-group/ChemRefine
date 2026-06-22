@@ -164,7 +164,7 @@ class StepConfig(BaseModel):
     """Optional human label. Appears in logs/CSV and may target CLI subcommands."""
 
     engine: str
-    """Engine key looked up in :data:`chemrefine.engines.base.ENGINES`."""
+    """Engine key looked up in :data:`chemrefine.engines.api.ENGINES`."""
 
     operation: str | None = None
     """Engine-defined operation (``opt_sp``, ``goat``, ``pes``, ``docker``,
