@@ -149,7 +149,6 @@ def _register_flaky():
     @register("flaky")
     class _Flaky:
         name = "flaky"
-        supports_nms = False
         fail_ids: ClassVar[set[str]] = set()
         submitted: ClassVar[list[str]] = []
 
@@ -172,9 +171,6 @@ def _register_flaky():
                     out.parent.mkdir(parents=True, exist_ok=True)
                     out.write_text(f"FINAL ENERGY: {-1.0 - int(sid) * 1e-3}\n", encoding="utf-8")
             return JobBatch(jobs={})
-
-        def wait(self, batch):
-            return None
 
         def parse(self, inputs, ctx):
             seeds = {s.id: s for s in ctx.prev_state.structures}
@@ -351,7 +347,6 @@ def _register_fake_nms():
     @register("fake-nms2")
     class _FakeNms2:
         name = "fake-nms2"
-        supports_nms = True
         resolved: ClassVar[set[str]] = set()
         fail_round1: ClassVar[set[str]] = set()
         submitted: ClassVar[list[str]] = []
@@ -377,9 +372,6 @@ def _register_fake_nms():
                     out.parent.mkdir(parents=True, exist_ok=True)
                     out.write_text("E -1.0\n", encoding="utf-8")
             return JobBatch(jobs={})
-
-        def wait(self, batch):
-            return None
 
         def parse(self, inputs, ctx):
             seeds = {s.id: s for s in ctx.prev_state.structures}

@@ -194,7 +194,7 @@ class StepConfig(BaseModel):
     """How to filter survivors at the end of the step. ``None`` = keep all."""
 
     nms: bool = False
-    """Opt-in normal-mode sampling (only honored if the engine ``supports_nms``)."""
+    """Opt-in normal-mode sampling (only honored for an NMS-capable engine: ORCA / ExtOpt)."""
 
     on_failure: Literal["stop", "skip", "best"] = "stop"
     """What to do when some structures fail this step (job error / no valid output,

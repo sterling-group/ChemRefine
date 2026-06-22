@@ -3,8 +3,9 @@
 Normal-mode sampling (NMS) cleans up stationary points: it removes spurious
 imaginary frequencies to reach a true minimum, or keeps exactly one to confirm a
 first-order saddle (transition state). It is opt-in per step (`nms: true`) and
-only runs on engines that report `supports_nms` (today: ORCA, which produces a
-frequency table).
+only runs on NMS-capable engines — ORCA and the ExtOpt engines (`mlip-extopt` /
+`pyscf-extopt`), where ORCA computes the Hessian numerically over the backend's
+gradients, so a `Freq` template yields a real frequency table.
 
 Because NMS acts on imaginary modes, the step's input **must** compute frequencies:
 an NMS step whose input computes none is rejected before any job is submitted with a
@@ -20,8 +21,9 @@ drives any NMS-capable engine through just two hooks and imports no engine packa
 - `read_frequencies(structure_id, step_dir, ctx)` — a structure's imaginary modes +
   normal-mode tensor, read from its output.
 
-A new engine becomes NMS-capable by setting `supports_nms = True` and implementing
-those two methods; everything else is shared. (Today: ORCA.)
+A new engine becomes NMS-capable simply by implementing those two methods — capability
+is detected via `isinstance(engine, NmsCapableEngine)`, with no flag to keep in sync;
+everything else is shared. (Today: ORCA + the ExtOpt engines.)
 
 ## Two rounds + the unified "attempt" model
 

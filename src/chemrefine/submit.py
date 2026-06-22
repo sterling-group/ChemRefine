@@ -1,0 +1,177 @@
+"""Run a batch of per-structure jobs under the CPU + GPU budget.
+
+Engine-independent submission: given an engine's per-structure inputs plus the few
+primitives it exposes (``_run_block`` / ``_pal`` / ``_gpus`` / ``output_globs`` /
+``_output_dirs`` / ``_extra_header_fields``), build one SLURM script per structure —
+or a single job array — and run them locally or via ``sbatch`` under
+:mod:`chemrefine.throttle`. This is the flat orchestration that composes
+:mod:`chemrefine.slurm` + :mod:`chemrefine.throttle`; the engine layer (a
+:class:`chemrefine.engines._batch.BatchEngine`) provides only the primitives, so
+``submit`` is **not** an engine responsibility — every batch engine delegates here.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from chemrefine import slurm, throttle
+from chemrefine.errors import ConfigError
+from chemrefine.state import JobBatch, StepContext, StepInputs
+
+if TYPE_CHECKING:
+    from chemrefine.engines._batch import BatchEngine
+
+logger = logging.getLogger(__name__)
+
+# Throttler poll cadence. SLURM ``squeue`` is expensive and jobs are minutes-long, so
+# poll slowly; background local processes finish in well under a second, so poll fast.
+_SLURM_POLL_SECONDS = 10.0
+_LOCAL_POLL_SECONDS = 0.25
+
+
+def _header_name(engine: BatchEngine, ctx: StepContext) -> str:
+    """Pick the SLURM header for this step.
+
+    An explicit per-step ``slurm_template`` wins; otherwise a GPU step
+    (``engine._gpus`` > 0) auto-selects the cuda header so the job lands on a GPU
+    node, and everything else uses the global ``Config.slurm_template``.
+    """
+    if ctx.step_cfg.slurm_template:
+        return ctx.step_cfg.slurm_template
+    if engine._gpus(ctx) > 0:
+        return slurm.header_name_for_device("cuda")
+    return ctx.slurm_template
+
+
+def _header_path(engine: BatchEngine, ctx: StepContext) -> Path:
+    """Resolve + validate the SLURM header template path for this step."""
+    header_path = ctx.template_dir / _header_name(engine, ctx)
+    if not header_path.is_file():
+        raise FileNotFoundError(f"SLURM header template not found: {header_path}")
+    return header_path
+
+
+def run_batch(engine: BatchEngine, inputs: StepInputs, ctx: StepContext) -> JobBatch:
+    """Submit one SLURM job per structure under the CPU+GPU budget, then block.
+
+    Blocks until every job finishes (success or failure). With ``slurm_array`` set
+    (and a real SLURM host) the whole batch goes out as job array(s) — see
+    :func:`_run_array`.
+    """
+    local = not slurm.sbatch_available()
+    if ctx.slurm_array and not local:
+        return _run_array(engine, inputs, ctx)
+    throttler = throttle.Throttler(
+        max_cores=ctx.max_cores,
+        max_gpus=slurm.resolve_gpu_budget(ctx.max_gpus),
+        poll_interval=_LOCAL_POLL_SECONDS if local else _SLURM_POLL_SECONDS,
+    )
+    header_path = _header_path(engine, ctx)
+    pal = min(engine._pal(ctx), ctx.max_cores)
+    gpus = engine._gpus(ctx)
+    if gpus > throttler.max_gpus:
+        # Surface a config mistake (e.g. `max_gpus: 0` with a CUDA step) as a
+        # ConfigError with its documented exit code, not the throttler's traceback.
+        raise ConfigError(
+            f"step {ctx.step_cfg.step} needs {gpus} GPU(s) but the budget is "
+            f"{throttler.max_gpus}; raise `max_gpus` or set `options.device: cpu`"
+        )
+    step_label = ctx.step_cfg.dir_name()
+    operation = ctx.step_cfg.operation or ""
+    jobs: dict[Path, str] = {}
+    for inp, out, sid in inputs.files:
+        throttler.wait_for_room(pal, is_finished=slurm.is_finished, gpus_needed=gpus)
+        # Pin a free GPU per local job so concurrent CUDA jobs don't collide on device
+        # 0; under SLURM the scheduler sets CUDA_VISIBLE_DEVICES itself.
+        device = throttler.assign_device() if (local and gpus) else None
+        env = {"CUDA_VISIBLE_DEVICES": str(device)} if device is not None else None
+        script_path = inp.with_suffix(".slurm")
+        slurm.build_script(
+            job_name=inp.stem,
+            pal=pal,
+            template_path=header_path,
+            script_path=script_path,
+            input_path=inp,
+            output_dir=out.parent,
+            scratch_dir=ctx.scratch_dir,
+            run_block=engine._run_block(ctx, inp, out),
+            engine=ctx.step_cfg.engine,
+            operation=operation,
+            step=ctx.step_cfg.step,
+            structure_id=sid,
+            step_label=step_label,
+            output_globs=engine.output_globs,
+            output_dirs=engine._output_dirs(ctx),
+            extra_header_fields=engine._extra_header_fields(ctx),
+        )
+        job_id = slurm.submit(script_path, env=env)
+        throttler.register(job_id, pal, gpus=gpus, device=device)
+        jobs[inp] = job_id
+        logger.info("submitted %s as job %s (pal=%d, gpus=%d)", inp.name, job_id, pal, gpus)
+
+    throttler.wait_all(is_finished=slurm.is_finished)
+    return JobBatch(jobs=jobs)
+
+
+def _run_array(engine: BatchEngine, inputs: StepInputs, ctx: StepContext) -> JobBatch:
+    """Submit the whole batch as SLURM job array(s); block until they drain.
+
+    One script + one manifest per chunk; the scheduler enforces the core budget
+    natively via ``--array=...%{max_cores // pal}``, so no Python-side throttling runs.
+    The run block is rendered **once** against sentinel paths whose *names* are the bash
+    variables the script resolves per task — every engine's ``_run_block`` uses only
+    ``.name``, so it composes unchanged. GPU placement is the scheduler's (``--gres`` in
+    the cuda header), as on the per-job path.
+    """
+    if not inputs.files:
+        return JobBatch(jobs={})
+    header_path = _header_path(engine, ctx)
+    pal = min(engine._pal(ctx), ctx.max_cores)
+    step_label = ctx.step_cfg.dir_name()
+    # The shared array script + manifests live at the step dir; each task resolves its
+    # own per-structure dir (dirname of its output) at runtime.
+    output_dir = ctx.step_dir
+    script_path = output_dir / f"{step_label}_array.slurm"
+    slurm.build_array_script(
+        step_label=step_label,
+        pal=pal,
+        template_path=header_path,
+        script_path=script_path,
+        output_dir=output_dir,
+        scratch_dir=ctx.scratch_dir,
+        run_block=engine._run_block(ctx, Path("$INP_NAME"), Path("$OUT_NAME")),
+        engine=ctx.step_cfg.engine,
+        operation=ctx.step_cfg.operation or "",
+        step=ctx.step_cfg.step,
+        output_globs=engine.output_globs,
+        output_dirs=engine._output_dirs(ctx),
+        extra_header_fields=engine._extra_header_fields(ctx),
+    )
+
+    manifests = slurm.write_array_manifests(inputs.files, output_dir, step_label=step_label)
+    max_concurrent = max(1, ctx.max_cores // pal)
+    jobs: dict[Path, str] = {}
+    for manifest, chunk in manifests:
+        parent_id = slurm.submit_array(
+            script_path, n_tasks=len(chunk), max_concurrent=max_concurrent, manifest=manifest
+        )
+        for inp, _out, _sid in chunk:
+            jobs[inp] = parent_id
+        logger.info(
+            "submitted %s as array %s (%d tasks, pal=%d, max %d concurrent)",
+            step_label,
+            parent_id,
+            len(chunk),
+            pal,
+            max_concurrent,
+        )
+
+    pending = set(jobs.values())
+    while pending:
+        pending = {j for j in pending if not slurm.is_finished(j)}
+        if pending:
+            time.sleep(_SLURM_POLL_SECONDS)
+    return JobBatch(jobs=jobs)

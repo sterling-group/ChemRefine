@@ -142,7 +142,6 @@ def test_run_stops_early_when_a_step_produces_no_survivors(tmp_path: Path):
     @register("empty-fake")
     class _EmptyEngine:
         name = "empty-fake"
-        supports_nms = False
 
         def prepare(self, ctx):
             ctx.step_dir.mkdir(parents=True, exist_ok=True)
@@ -154,9 +153,6 @@ def test_run_stops_early_when_a_step_produces_no_survivors(tmp_path: Path):
             from chemrefine.state import JobBatch
 
             return JobBatch(jobs={})
-
-        def wait(self, batch):
-            return None
 
         def parse(self, inputs, ctx):
             return StepResults(structures=())  # no survivors

@@ -3,8 +3,8 @@
 The per-engine ``test_engines_pyscf.py`` and ``test_engines_mlip.py``
 exercise the lifecycle end-to-end with their backend labels. The
 tests here exercise the *shared* surface area — the renderer
-(``_template_render.build_input``) and the top-level output-parsing
-helpers (``_atoms_from_output`` / ``_forces_from_gradient``) — once,
+(``_template_render.build_input``) and the output-parsing helpers
+(``_template_output._atoms_from_output`` / ``_forces_from_gradient``) — once,
 not twice.
 """
 
@@ -17,11 +17,8 @@ import pytest
 from ase import Atoms
 
 from chemrefine.engines import _template_render
-from chemrefine.engines._template_engine import (
-    TemplateScriptEngine,
-    _atoms_from_output,
-    _forces_from_gradient,
-)
+from chemrefine.engines._template_engine import TemplateScriptEngine
+from chemrefine.engines._template_output import _atoms_from_output, _forces_from_gradient
 from chemrefine.errors import OutputParseError
 
 

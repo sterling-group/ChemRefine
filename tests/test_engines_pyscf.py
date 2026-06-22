@@ -93,7 +93,6 @@ def _seed(sid: str = "0") -> Structure:
 def test_pyscf_direct_engine_is_registered():
     engine = get_engine("pyscf")
     assert engine.name == "pyscf"
-    assert engine.supports_nms is False
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +231,7 @@ def test_submit_respects_cores_option(tmp_path: Path):
 
 
 def test_submit_uses_template_engine_output_globs(tmp_path: Path):
-    """The direct engine's ``output_globs`` ClassVar flows through SlurmBatchEngine."""
+    """The direct engine's ``output_globs`` ClassVar flows through the BatchEngine base."""
     ctx = _ctx(tmp_path, structures=(_seed(),))
     engine = get_engine("pyscf")
     inputs = engine.prepare(ctx)
@@ -247,11 +246,6 @@ def test_submit_uses_template_engine_output_globs(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # wait
 # ---------------------------------------------------------------------------
-
-
-def test_wait_is_noop():
-    engine = get_engine("pyscf")
-    engine.wait(JobBatch(jobs={}))
 
 
 # ---------------------------------------------------------------------------
@@ -333,9 +327,8 @@ def test_parse_raises_when_energy_missing(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_normal_mode_sample_not_supported():
+def test_pyscf_direct_is_not_nms_capable():
     from chemrefine.engines.base import NmsCapableEngine
 
     engine = get_engine("pyscf")
-    assert engine.supports_nms is False
     assert not isinstance(engine, NmsCapableEngine)  # provides neither NMS hook

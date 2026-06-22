@@ -24,8 +24,9 @@ from unittest.mock import patch
 import pytest
 from ase import Atoms
 
+from chemrefine import submit
 from chemrefine.config import StepConfig
-from chemrefine.engines.base import ENGINES, get_engine
+from chemrefine.engines.base import ENGINES, NmsCapableEngine, get_engine
 from chemrefine.engines.mlip import calculator as mlip_calculator
 from chemrefine.engines.mlip.calculator import MlipCalculator, build_calculator
 from chemrefine.errors import OutputParseError
@@ -58,12 +59,13 @@ def test_mlff_engine_keys_normalize_to_mlip_at_config_layer():
     assert get_engine(cfg.steps[1].engine).name == "mlip-extopt"
 
 
-def test_mlip_engine_supports_nms_is_false():
-    assert get_engine("mlip").supports_nms is False
+def test_mlip_direct_engine_is_not_nms_capable():
+    assert not isinstance(get_engine("mlip"), NmsCapableEngine)
 
 
-def test_mlip_extopt_engine_supports_nms_is_false():
-    assert get_engine("mlip-extopt").supports_nms is False
+def test_mlip_extopt_engine_is_nms_capable():
+    """ExtOpt inherits ORCA's NMS hooks — ORCA computes the Hessian over MLIP gradients."""
+    assert isinstance(get_engine("mlip-extopt"), NmsCapableEngine)
 
 
 # ---------------------------------------------------------------------------
@@ -182,21 +184,21 @@ def test_mlip_extopt_cuda_step_selects_cuda_header(tmp_path: Path):
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path)  # device: cuda by default
     assert engine._gpus(ctx) == 1
-    assert engine._slurm_header_name(ctx) == "cuda.slurm.header"
+    assert submit._header_name(engine, ctx) == "cuda.slurm.header"
 
 
 def test_mlip_extopt_cpu_step_keeps_global_header(tmp_path: Path):
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path, device="cpu")
     assert engine._gpus(ctx) == 0
-    assert engine._slurm_header_name(ctx) == ctx.slurm_template
+    assert submit._header_name(engine, ctx) == ctx.slurm_template
 
 
 def test_mlip_direct_cuda_step_selects_cuda_header(tmp_path: Path):
     engine = get_engine("mlip")
     ctx = _mlip_direct_ctx(tmp_path, structures=(_seed(),), options={"device": "cuda"})
     assert engine._gpus(ctx) == 1
-    assert engine._slurm_header_name(ctx) == "cuda.slurm.header"
+    assert submit._header_name(engine, ctx) == "cuda.slurm.header"
 
 
 def test_per_step_slurm_template_overrides_device_pick(tmp_path: Path):
@@ -206,7 +208,7 @@ def test_per_step_slurm_template_overrides_device_pick(tmp_path: Path):
     step_cfg = ctx0.step_cfg.model_copy(update={"slurm_template": "special.header"})
     ctx = replace(ctx0, step_cfg=step_cfg)
     assert engine._gpus(ctx) == 1  # still a GPU job
-    assert engine._slurm_header_name(ctx) == "special.header"
+    assert submit._header_name(engine, ctx) == "special.header"
 
 
 def test_local_gpu_jobs_get_distinct_cuda_visible_devices(tmp_path: Path, monkeypatch):
@@ -532,17 +534,6 @@ def _seed(sid: str = "0") -> Structure:
     )
 
 
-def test_mlip_effective_operation_uses_explicit_or_blank(tmp_path: Path):
-    """A template engine's operation label is the explicit value, or '' when omitted."""
-    import dataclasses
-
-    engine = get_engine("mlip")
-    ctx = _mlip_direct_ctx(tmp_path, structures=(_seed(),))
-    assert engine._effective_operation(ctx) == "opt_sp"
-    blank = dataclasses.replace(ctx, step_cfg=ctx.step_cfg.model_copy(update={"operation": None}))
-    assert engine._effective_operation(blank) == ""
-
-
 def test_mlip_direct_prepare_renders_one_py_and_xyz_per_structure(tmp_path: Path):
     ctx = _mlip_direct_ctx(tmp_path, structures=(_seed("0"), _seed("1")))
     engine = get_engine("mlip")
@@ -733,18 +724,3 @@ def test_mlip_direct_submit_respects_cores_option(tmp_path: Path):
         engine.submit(inputs, ctx)
     script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
     assert "#SBATCH --ntasks=2" in script_text
-
-
-def test_mlip_direct_does_not_support_nms():
-    from chemrefine.engines.base import NmsCapableEngine
-
-    engine = get_engine("mlip")
-    assert engine.supports_nms is False
-    assert not isinstance(engine, NmsCapableEngine)  # provides neither NMS hook
-
-
-def test_mlip_direct_wait_is_noop():
-    from chemrefine.state import JobBatch
-
-    engine = get_engine("mlip")
-    engine.wait(JobBatch(jobs={}))  # must not raise

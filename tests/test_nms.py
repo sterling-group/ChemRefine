@@ -212,7 +212,6 @@ class _FakeNms:
     """
 
     name = "fake-nms"
-    supports_nms = True
 
     def __init__(
         self,
@@ -245,9 +244,6 @@ class _FakeNms:
 
     def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
         return JobBatch(jobs={})
-
-    def wait(self, batch: JobBatch) -> None:
-        return None
 
     def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
         seeds = {s.id: s for s in ctx.prev_state.structures}

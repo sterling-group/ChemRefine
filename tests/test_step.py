@@ -204,7 +204,6 @@ def _register_fail_engine():
     @register("fake-fail")
     class _FailEngine:
         name = "fake-fail"
-        supports_nms = False
         fail: ClassVar[dict[str, str]] = {}
 
         def prepare(self, ctx):
@@ -223,9 +222,6 @@ def _register_fail_engine():
 
         def submit(self, inputs, ctx):
             return JobBatch(jobs={})
-
-        def wait(self, batch):
-            return None
 
         def parse(self, inputs, ctx):
             seeds = {s.id: s for s in ctx.prev_state.structures}
@@ -346,7 +342,6 @@ def _register_conv_engine():
     @register("conv-retry")
     class _ConvEngine:
         name = "conv-retry"
-        supports_nms = False
         never: ClassVar[set[str]] = set()  # ids that never converge (even on retry)
         parse_count: ClassVar[dict[str, int]] = {}
 
@@ -365,9 +360,6 @@ def _register_conv_engine():
 
         def submit(self, inputs, ctx):
             return JobBatch(jobs={})
-
-        def wait(self, batch):
-            return None
 
         def parse(self, inputs, ctx):
             seeds = {s.id: s for s in ctx.prev_state.structures}
@@ -537,7 +529,6 @@ def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypa
     @register("fake-nms")
     class _NmsEngine:
         name = "fake-nms"
-        supports_nms = True
 
         def prepare(self, ctx):
             ctx.step_dir.mkdir(parents=True, exist_ok=True)
@@ -545,9 +536,6 @@ def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypa
 
         def submit(self, inputs, ctx):
             return JobBatch(jobs={})
-
-        def wait(self, batch):
-            return None
 
         def parse(self, inputs, ctx):
             return StepResults(structures=())

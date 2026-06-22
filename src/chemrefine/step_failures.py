@@ -145,7 +145,7 @@ def retry_from_best(
     seed = Structure(id=best.id, atoms=best.atoms)
     retry_ctx = replace(ctx_for_prepare, prev_state=PipelineState(structures=(seed,)))
     inputs = engine.prepare(retry_ctx)
-    engine.wait(engine.submit(inputs, retry_ctx))
+    engine.submit(inputs, retry_ctx)
     return parse_with_failures(engine, inputs, retry_ctx)
 
 

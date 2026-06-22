@@ -55,7 +55,7 @@ def test_fake_engine_parse_returns_structures_with_energy(tmp_path: Path):
     ctx = _ctx_with_seeds(tmp_path, ["0", "1", "2"])
     inputs = engine.prepare(ctx)
     engine.submit(inputs, ctx)
-    engine.wait(engine.submit(inputs, ctx))  # idempotent
+    engine.submit(inputs, ctx)  # idempotent — submit blocks, runs inline
     results = engine.parse(inputs, ctx)
     assert len(results.structures) == 3
     for struct in results.structures:
@@ -81,11 +81,10 @@ def test_fake_engine_energy_is_deterministic(tmp_path: Path):
     assert e_a == e_b
 
 
-def test_fake_engine_does_not_support_nms():
+def test_fake_engine_is_not_nms_capable():
     from chemrefine.engines.base import NmsCapableEngine
 
     engine = get_engine("fake")
-    assert engine.supports_nms is False
     assert not isinstance(engine, NmsCapableEngine)  # provides neither NMS hook
 
 

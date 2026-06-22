@@ -26,7 +26,6 @@ class MlipTrainEngine:
     """Train an MLIP on the previous step's structures; pass the structures through."""
 
     name: ClassVar[str] = "mlip-train"
-    supports_nms: ClassVar[bool] = False
 
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Training operates on the whole prior ensemble, not per-structure inputs."""
@@ -41,10 +40,6 @@ class MlipTrainEngine:
         )
         trainer.run_training(StepResults(structures=ctx.prev_state.structures), ctx)
         return JobBatch(jobs={})
-
-    def wait(self, batch: JobBatch) -> None:
-        """No-op: :meth:`submit` blocks until the training job finishes."""
-        return None
 
     def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
         """Pass the prior structures through unchanged (the model is the artifact)."""

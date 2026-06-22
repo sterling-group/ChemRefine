@@ -46,15 +46,11 @@ def test_register_decorator_adds_entry_and_returns_class():
     @register("temp-test-engine")
     class _TempEngine:
         name = "temp-test-engine"
-        supports_nms = False
 
         def prepare(self, ctx):
             return None
 
         def submit(self, inputs, ctx):
-            return None
-
-        def wait(self, batch):
             return None
 
         def parse(self, inputs, ctx):

@@ -10,105 +10,86 @@ plus the :data:`ENGINES` dict. ORCA-specific imports, MLIP imports, etc.
 never reach :mod:`chemrefine.pipeline` — that's how the orchestrator
 stays engine-agnostic.
 
+An engine is a **plugin**: it provides only engine-specific things. The generic
+machinery is flat in ``chemrefine/`` — submission + budget
+(:mod:`chemrefine.submit` + :mod:`chemrefine.slurm` + :mod:`chemrefine.throttle`),
+structure assembly (:mod:`chemrefine.engines._assemble`), caching, and the step
+lifecycle. Capability is declared by which Protocol an engine satisfies.
+
 Adding a new engine
 ---------------------------------------------
-Everything engine-specific lives in a new ``engines/<name>/`` package; shared,
-engine-neutral infrastructure stays in ``engines/`` (this module, the SLURM
-batch base, the template renderer, the ``_backend_server`` gradient service).
+**1. Pick a base** for ``engines/<name>/engine.py`` (decorate with ``@register("<name>")``):
 
-**1. Pick a base** for ``engines/<name>/engine.py`` (decorate the class with
-``@register("<name>")``):
-
-* **The user supplies a ``step{N}.py``** they want run per structure → subclass
-  :class:`~chemrefine.engines._template_engine.TemplateScriptEngine`. You inherit
-  ``prepare`` / ``submit`` / ``parse`` / ``_pal`` / ``_run_block``; override only
-  ``_template_vars`` to inject ``$VAR`` placeholders from ``step.options``. (See
-  ``engines/mlip/engine.py`` — 20 lines.)
-* **A real binary / custom SLURM job** → subclass :class:`SlurmBatchEngine`:
-  implement ``prepare`` + ``parse``, the required hooks ``_pal`` + ``_run_block``,
-  and the ClassVars ``label`` / ``template_suffix`` / ``output_globs``. (See
-  ``engines/orca/engine.py``.)
+* **Runs one job per structure** (a binary, or a user ``step{N}.py``) → subclass
+  :class:`~chemrefine.engines._batch.BatchEngine`. You inherit ``prepare`` / ``submit``
+  / ``parse``; supply only the primitives ``_build_input``, ``_parse_one``,
+  ``_run_block``, ``_pal`` (+ ``_gpus`` if GPU-capable) and the ClassVars
+  ``label`` / ``template_suffix`` / ``output_suffix`` / ``output_globs``. (ORCA;
+  the template-driven engines subclass
+  :class:`~chemrefine.engines._template_engine.TemplateScriptEngine`, itself a thin
+  ``BatchEngine``.)
 * **ORCA optimises using this engine's gradients** → subclass
-  :class:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine`: set the
-  ClassVars ``backend`` / ``wrapper_filename``, implement ``_server_cmd``, and
-  add a :class:`~chemrefine.engines._backend_server.base.ComputeBackend` in
-  ``engines/<name>/extopt_calc.py`` registered in
+  :class:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine`: set the ClassVars
+  ``backend`` / ``wrapper_filename`` and implement ``_server_cmd``, plus a
+  :class:`~chemrefine.engines._backend_server.base.ComputeBackend` registered in
   ``engines/_backend_server/registry.py``. (See ``engines/pyscf/extopt_engine.py``.)
-* **Local / orchestration-only** (no SLURM compute) → implement the
-  :class:`CalculationEngine` Protocol directly (the five lifecycle methods). (See
-  ``engines/mlip/train_engine.py`` / ``engines/_fake/engine.py``.)
+* **Not a per-structure batch** (the fake engine, ``mlip-train``) → implement the
+  :class:`CalculationEngine` Protocol directly (``prepare`` / ``submit`` / ``parse`` /
+  ``input_digest``).
 
-**2. Metadata** — declare ``name`` and ``supports_nms`` (plus any base-required
-ClassVars) as ``ClassVar[...]`` annotations, matching the other engines.
+**2. Capabilities** — NMS support is **not** a flag: implement
+:class:`NmsCapableEngine`'s two hooks (``nms_input_info`` + ``read_frequencies``) and the
+generic coordinator (:mod:`chemrefine.nms`) drives it; capability is detected via
+``isinstance``.
 
-**3. YAML knobs** → a Pydantic model in ``engines/<name>/options.py`` with a
-``from_raw`` classmethod (mirror ``engines/mlip/options.py`` /
-``engines/pyscf/options.py``); read it in ``prepare`` / ``_template_vars``.
+**3. YAML knobs** → a Pydantic model in ``engines/<name>/options.py`` with a ``from_raw``
+classmethod (mirror ``engines/mlip/options.py``); read it in the primitives.
 
-**4. Register** by importing the class in ``engines/<name>/__init__.py`` and
-listing the package in ``engines/__init__.py`` (registration is a side effect of
-that import). Legacy YAML spellings map to the canonical name in the config
-normalizer, not here — see :func:`chemrefine.config._normalize_legacy`.
+**4. Register** by importing the class in ``engines/<name>/__init__.py`` and listing the
+package in ``engines/__init__.py`` (registration is a side effect of that import). Legacy
+YAML spellings map to the canonical name in :func:`chemrefine.config._normalize_legacy`.
 
-**5. Resources** — an external binary reads its path from
-``ctx.executables.get("<name>")``; an importable backend ships as a
-``pip install chemrefine[<name>]`` extra and is imported in-process (lazily).
+**5. Resources** — an external binary reads its path from ``ctx.executables.get("<name>")``;
+an importable backend ships as a ``pip install chemrefine[<name>]`` extra (imported lazily).
 
 **6. Tests** go in ``tests/test_engines_<name>*.py``.
 """
 
 from __future__ import annotations
 
-import hashlib
-import logging
-import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
 
-from chemrefine import slurm, throttle
-from chemrefine.errors import ConfigError, EngineNotFoundError
-from chemrefine.ids import resolve_step_template
+from chemrefine.errors import EngineNotFoundError
 from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
-
-logger = logging.getLogger(__name__)
-
-# Throttler poll cadence. SLURM ``squeue`` is expensive and jobs are minutes-long,
-# so poll slowly; background local processes are right here and often finish in
-# well under a second, so poll fast or every local step would stall for a full
-# SLURM interval.
-_SLURM_POLL_SECONDS = 10.0
-_LOCAL_POLL_SECONDS = 0.25
 
 
 @runtime_checkable
 class CalculationEngine(Protocol):
     """Structural contract every engine must satisfy.
 
-    The four lifecycle methods mirror the stages :func:`chemrefine.step.run_step`
-    calls in order. ``supports_nms`` is a class-level boolean gate: when ``True``
-    (and the step sets ``nms: true``), the generic NMS coordinator
-    (:mod:`chemrefine.nms`) drives the engine through the two extra hooks of
-    :class:`NmsCapableEngine` between :meth:`parse` and filtering.
+    The lifecycle methods mirror the stages :func:`chemrefine.step.run_step` calls in
+    order: :meth:`prepare` → :meth:`submit` (which blocks until the jobs finish) →
+    :meth:`parse`. ``input_digest`` feeds the cache fingerprint. NMS is a *separate
+    capability*: an engine that supports it also satisfies :class:`NmsCapableEngine`
+    (detected via ``isinstance``), so there is no ``supports_nms`` flag to keep in sync.
+    Per-structure batch engines get all of this from
+    :class:`chemrefine.engines._batch.BatchEngine` and supply only primitives.
     """
 
     name: str
-    supports_nms: bool
 
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Write engine-specific input files for this step's seed structures."""
         ...
 
     def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
-        """Submit a batch of jobs (SLURM or local); return their handles."""
-        ...
-
-    def wait(self, batch: JobBatch) -> None:
-        """Block until every job in the batch finishes (success or failure)."""
+        """Run the prepared inputs (locally or via SLURM); block until all finish."""
         ...
 
     def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
@@ -116,12 +97,10 @@ class CalculationEngine(Protocol):
         ...
 
     def input_digest(self, ctx: StepContext) -> str:
-        """Digest of this step's resolved input template, or ``""`` if it has none.
+        """Digest of this step's input (e.g. the resolved template), or ``""``.
 
-        Folded into the cache fingerprint so editing the template in place
-        re-runs the step — the template *basename* alone never changes the
-        fingerprint, yet the template now also drives ORCA's run-type
-        detection when ``operation`` is omitted.
+        Folded into the cache fingerprint so editing the input in place re-runs the
+        step — the template *basename* alone never changes the fingerprint.
         """
         ...
 
@@ -160,8 +139,8 @@ class NmsCapableEngine(CalculationEngine, Protocol):
 
     The two-round NMS algorithm — displacement, round-2 submission, resolution, retry —
     is engine-independent and lives in :mod:`chemrefine.nms`, which drives any engine
-    through these two hooks plus the standard lifecycle. A new NMS-capable engine sets
-    ``supports_nms = True`` and implements only these.
+    through these two hooks plus the standard lifecycle. A new NMS-capable engine just
+    implements these two methods; capability is detected with ``isinstance``.
     """
 
     def nms_input_info(self, ctx: StepContext) -> NmsInputInfo:
@@ -208,240 +187,3 @@ def get_engine(name: str) -> CalculationEngine:
     if engine_cls is None:
         raise EngineNotFoundError(f"unknown engine {name!r}; registered: {sorted(ENGINES)}")
     return engine_cls()
-
-
-class SlurmBatchEngine:
-    """Shared base for engines that submit one SLURM job per structure.
-
-    Owns the throttler-bounded submit loop, the no-op :meth:`wait` (submit
-    already blocks until every job finishes), and per-step template
-    resolution. Subclasses supply only the parts that differ:
-
-    * :meth:`_pal` — the per-job core count (PAL) before clamping.
-    * :meth:`_run_block` — the bash that runs inside ``$WORK_DIR``.
-    * :meth:`_extra_header_fields` — optional runlog header rows.
-    * ``output_globs`` / ``template_suffix`` / ``label`` ClassVars.
-
-    ``prepare`` / ``parse`` stay engine-specific, so a subclass still satisfies
-    :class:`CalculationEngine` structurally.
-    """
-
-    output_globs: ClassVar[tuple[str, ...]]
-    template_suffix: ClassVar[str]
-    label: ClassVar[str]
-
-    def _resolve_template(self, ctx: StepContext) -> Path:
-        """Resolve this step's input template (override or ``step{N}.{suffix}``)."""
-        return resolve_step_template(
-            ctx.template_dir,
-            ctx.step_cfg.step,
-            template=ctx.step_cfg.template,
-            suffix=self.template_suffix,
-            label=self.label,
-        )
-
-    def input_digest(self, ctx: StepContext) -> str:
-        """SHA-1 (16 hex) of the resolved template's bytes; ``""`` if it's missing.
-
-        Cheap to recompute and folded into the cache fingerprint, so editing a
-        template in place invalidates that step (see
-        :func:`chemrefine.cache.fingerprint`).
-        """
-        try:
-            template = self._resolve_template(ctx)
-        except FileNotFoundError:
-            return ""
-        return hashlib.sha1(template.read_bytes()).hexdigest()[:16]
-
-    def _pal(self, ctx: StepContext) -> int:
-        """Return the per-job core count (PAL); the base clamps it to ``max_cores``."""
-        raise NotImplementedError
-
-    def _gpus(self, ctx: StepContext) -> int:
-        """GPUs this job needs: 1 for a CUDA/GPU step, else 0.
-
-        Reads the device knobs every GPU-capable engine already exposes —
-        ``options.device == "cuda"`` (mlip) or a truthy ``options.gpu`` (pyscf).
-        ORCA-only steps have neither (ORCA is CPU/MPI), so they request no GPU.
-        Also drives :meth:`_slurm_header_name` (a GPU job → the cuda header).
-        """
-        options = ctx.step_cfg.options or {}
-        if str(options.get("device", "")).lower() == "cuda" or options.get("gpu"):
-            return 1
-        return 0
-
-    def _slurm_header_name(self, ctx: StepContext) -> str:
-        """Pick the SLURM header for this step.
-
-        An explicit per-step ``slurm_template`` wins; otherwise a GPU step
-        (:meth:`_gpus` > 0) auto-selects ``cuda.slurm.header`` so the job lands on
-        a GPU node, and everything else uses the global ``Config.slurm_template``.
-        ORCA-only steps never report a GPU, so they keep the global header.
-        """
-        if ctx.step_cfg.slurm_template:
-            return ctx.step_cfg.slurm_template
-        if self._gpus(ctx) > 0:
-            return slurm.header_name_for_device("cuda")
-        return ctx.slurm_template
-
-    def _run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
-        """Return the engine-specific bash that runs inside ``$WORK_DIR``."""
-        raise NotImplementedError
-
-    def _extra_header_fields(self, ctx: StepContext) -> tuple[tuple[str, object], ...]:
-        """Engine-specific ``(key, value)`` rows appended to the runlog header."""
-        return ()
-
-    def _output_dirs(self, ctx: StepContext) -> tuple[str, ...]:
-        """Scratch sub-directories to copy back wholesale (``cp -r``) on exit.
-
-        Empty for most engines (curated file globs in ``output_globs`` suffice).
-        An engine that produces a *directory* of artifacts in ``$WORK_DIR`` —
-        e.g. pyscf's ``tensors/`` from ``save_tensors`` — overrides this so the
-        whole directory lands in the per-structure output dir.
-        """
-        return ()
-
-    def _effective_operation(self, ctx: StepContext) -> str:
-        """The operation label used for the runlog header (and ORCA's parser).
-
-        ``operation`` is optional; engines that can infer the run type from their
-        input (ORCA reads the template keywords) override this to fill the blank.
-        The base just passes the explicit value through (``""`` when unset).
-        """
-        return ctx.step_cfg.operation or ""
-
-    def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
-        """Generate a SLURM script per structure, submit under the CPU+GPU budget, then block.
-
-        Blocks until every job in the batch finishes (success or failure).
-        With ``slurm_array`` set (and a real SLURM host), the whole batch goes
-        out as job array(s) instead — see :meth:`_submit_array`.
-        """
-        local = not slurm.sbatch_available()
-        if ctx.slurm_array and not local:
-            return self._submit_array(inputs, ctx)
-        throttler = throttle.Throttler(
-            max_cores=ctx.max_cores,
-            max_gpus=slurm.resolve_gpu_budget(ctx.max_gpus),
-            poll_interval=_LOCAL_POLL_SECONDS if local else _SLURM_POLL_SECONDS,
-        )
-        header_path = ctx.template_dir / self._slurm_header_name(ctx)
-        if not header_path.is_file():
-            raise FileNotFoundError(f"SLURM header template not found: {header_path}")
-
-        pal = min(self._pal(ctx), ctx.max_cores)
-        gpus = self._gpus(ctx)
-        if gpus > throttler.max_gpus:
-            # Surface a config mistake (e.g. `max_gpus: 0` with a CUDA step) as
-            # a ConfigError with its documented exit code, not as the
-            # throttler's internal ValueError traceback.
-            raise ConfigError(
-                f"step {ctx.step_cfg.step} needs {gpus} GPU(s) but the budget is "
-                f"{throttler.max_gpus}; raise `max_gpus` or set `options.device: cpu`"
-            )
-        step_label = ctx.step_cfg.dir_name()
-        jobs: dict[Path, str] = {}
-        for inp, out, sid in inputs.files:
-            throttler.wait_for_room(pal, is_finished=slurm.is_finished, gpus_needed=gpus)
-            # Pin a free GPU per local job so concurrent CUDA jobs don't collide on
-            # device 0; under SLURM the scheduler sets CUDA_VISIBLE_DEVICES itself.
-            device = throttler.assign_device() if (local and gpus) else None
-            env = {"CUDA_VISIBLE_DEVICES": str(device)} if device is not None else None
-            script_path = inp.with_suffix(".slurm")
-            slurm.build_script(
-                job_name=inp.stem,
-                pal=pal,
-                template_path=header_path,
-                script_path=script_path,
-                input_path=inp,
-                output_dir=out.parent,
-                scratch_dir=ctx.scratch_dir,
-                run_block=self._run_block(ctx, inp, out),
-                engine=ctx.step_cfg.engine,
-                operation=self._effective_operation(ctx),
-                step=ctx.step_cfg.step,
-                structure_id=sid,
-                step_label=step_label,
-                output_globs=self.output_globs,
-                output_dirs=self._output_dirs(ctx),
-                extra_header_fields=self._extra_header_fields(ctx),
-            )
-            job_id = slurm.submit(script_path, env=env)
-            throttler.register(job_id, pal, gpus=gpus, device=device)
-            jobs[inp] = job_id
-            logger.info("submitted %s as job %s (pal=%d, gpus=%d)", inp.name, job_id, pal, gpus)
-
-        throttler.wait_all(is_finished=slurm.is_finished)
-        return JobBatch(jobs=jobs)
-
-    def _submit_array(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
-        """Submit the whole batch as SLURM job array(s); block until they drain.
-
-        One script + one manifest per chunk; the scheduler enforces the core
-        budget natively via ``--array=...%{max_cores // pal}``, so no
-        Python-side throttling runs. The run block is rendered **once**
-        against sentinel paths whose *names* are the bash variables the
-        script resolves per task — every engine's ``_run_block`` uses only
-        ``.name``, so it composes unchanged. GPU placement is the scheduler's
-        (``--gres`` in the cuda header), as on the per-job SLURM path.
-        """
-        if not inputs.files:
-            return JobBatch(jobs={})
-        header_path = ctx.template_dir / self._slurm_header_name(ctx)
-        if not header_path.is_file():
-            raise FileNotFoundError(f"SLURM header template not found: {header_path}")
-
-        pal = min(self._pal(ctx), ctx.max_cores)
-        step_label = ctx.step_cfg.dir_name()
-        # The shared array script + manifests live at the step dir; each task
-        # resolves its own per-structure dir (dirname of its output) at runtime.
-        output_dir = ctx.step_dir
-        script_path = output_dir / f"{step_label}_array.slurm"
-        slurm.build_array_script(
-            step_label=step_label,
-            pal=pal,
-            template_path=header_path,
-            script_path=script_path,
-            output_dir=output_dir,
-            scratch_dir=ctx.scratch_dir,
-            run_block=self._run_block(ctx, Path("$INP_NAME"), Path("$OUT_NAME")),
-            engine=ctx.step_cfg.engine,
-            operation=self._effective_operation(ctx),
-            step=ctx.step_cfg.step,
-            output_globs=self.output_globs,
-            output_dirs=self._output_dirs(ctx),
-            extra_header_fields=self._extra_header_fields(ctx),
-        )
-
-        manifests = slurm.write_array_manifests(inputs.files, output_dir, step_label=step_label)
-        max_concurrent = max(1, ctx.max_cores // pal)
-        jobs: dict[Path, str] = {}
-        for manifest, chunk in manifests:
-            parent_id = slurm.submit_array(
-                script_path,
-                n_tasks=len(chunk),
-                max_concurrent=max_concurrent,
-                manifest=manifest,
-            )
-            for inp, _out, _sid in chunk:
-                jobs[inp] = parent_id
-            logger.info(
-                "submitted %s as array %s (%d tasks, pal=%d, max %d concurrent)",
-                step_label,
-                parent_id,
-                len(chunk),
-                pal,
-                max_concurrent,
-            )
-
-        pending = set(jobs.values())
-        while pending:
-            pending = {j for j in pending if not slurm.is_finished(j)}
-            if pending:
-                time.sleep(_SLURM_POLL_SECONDS)
-        return JobBatch(jobs=jobs)
-
-    def wait(self, batch: JobBatch) -> None:
-        """No-op: :meth:`submit` already blocked until every job finished."""
-        return None

@@ -19,7 +19,6 @@ from ase import Atoms
 from chemrefine.config import Config, StepConfig
 from chemrefine.errors import CacheError, ChemRefineError, OutputParseError
 from chemrefine.state import (
-    JobBatch,
     PipelineState,
     StepContext,
     StepInputs,
@@ -100,14 +99,24 @@ def test_throttler_assign_device_raises_when_all_taken():
 # --- base: the abstract SLURM hooks -----------------------------------------
 
 
-def test_slurm_batch_engine_hooks_are_abstract():
-    from chemrefine.engines.base import SlurmBatchEngine
+def test_batch_engine_primitive_hooks_are_abstract():
+    from chemrefine.engines._batch import BatchEngine
 
-    eng = SlurmBatchEngine()
+    eng = BatchEngine()
     with pytest.raises(NotImplementedError):
         eng._pal(None)  # type: ignore[arg-type]
     with pytest.raises(NotImplementedError):
         eng._run_block(None, Path("i"), Path("o"))  # type: ignore[arg-type]
+    with pytest.raises(NotImplementedError):
+        eng._build_input(  # type: ignore[arg-type]
+            xyz_path=Path("x"),
+            template_path=Path("t"),
+            input_path=Path("i"),
+            output_path=Path("o"),
+            ctx=None,
+        )
+    with pytest.raises(NotImplementedError):
+        eng._parse_one(Path("o"), "0", None)  # type: ignore[arg-type]
 
 
 # --- cache: corrupt failed-jobs ledger --------------------------------------
@@ -183,13 +192,11 @@ def test_parse_text_rejects_non_text_operation():
 # --- mlip-train engine no-op / unsupported ----------------------------------
 
 
-def test_mlip_train_engine_wait_and_not_nms_capable(tmp_path: Path):
+def test_mlip_train_engine_not_nms_capable(tmp_path: Path):
     from chemrefine.engines.base import NmsCapableEngine, get_engine
 
     eng = get_engine("mlip-train")
-    assert eng.wait(JobBatch(jobs={})) is None
-    # mlip-train is a pass-through: it neither supports NMS nor satisfies the hook contract.
-    assert eng.supports_nms is False
+    # mlip-train is a pass-through: it doesn't satisfy the NMS hook contract.
     assert not isinstance(eng, NmsCapableEngine)
 
 

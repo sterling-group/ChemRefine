@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from chemrefine.engines._backend_server.base import SERVER_URL_FILENAME
+from chemrefine.engines._batch import gpus_from_device_options
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.engines.orca.extopt import protocol, run_block
 from chemrefine.state import StepContext, StepInputs
@@ -29,11 +30,18 @@ class ExtOptOrcaEngine(OrcaEngine):
     command that launches their backend's server. The base wires the
     shared SLURM ``run_block``, the per-step wrapper-path lookup, and the
     per-step generation of that wrapper.
+
+    ExtOpt engines are **NMS-capable**: they inherit ORCA's ``nms_input_info`` /
+    ``read_frequencies`` hooks, because ORCA computes the Hessian numerically over
+    the backend's gradients — so a ``Freq`` template yields real frequencies.
     """
 
-    supports_nms: ClassVar[bool] = False
     backend: ClassVar[str]
     wrapper_filename: ClassVar[str]
+
+    def _gpus(self, ctx: StepContext) -> int:
+        """A GPU when the backend's options request one (``device: cuda``); else CPU."""
+        return gpus_from_device_options(ctx.step_cfg.options)
 
     @abstractmethod
     def _server_cmd(self, ctx: StepContext) -> str:

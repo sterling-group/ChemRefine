@@ -1,4 +1,4 @@
-"""Tests for ``OrcaEngine`` — prepare/parse paths; submit/wait via SLURM mocks."""
+"""Tests for ``OrcaEngine`` — prepare/parse paths; submission via SLURM mocks."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from unittest.mock import patch
 import pytest
 from ase import Atoms
 
-from chemrefine import slurm
+from chemrefine import slurm, submit
 from chemrefine.config import StepConfig
-from chemrefine.engines.base import get_engine
+from chemrefine.engines.base import NmsCapableEngine, get_engine
 from chemrefine.state import JobBatch, PipelineState, StepContext, Structure
 
 FIXTURE = Path(__file__).parent / "data" / "orca.out"
@@ -128,7 +128,7 @@ def test_orca_step_requests_no_gpu_and_keeps_global_header(tmp_path: Path):
     engine = get_engine("orca")
     ctx = _ctx(tmp_path, structures=(_seed_structure(),))
     assert engine._gpus(ctx) == 0
-    assert engine._slurm_header_name(ctx) == ctx.slurm_template
+    assert submit._header_name(engine, ctx) == ctx.slurm_template
 
 
 def test_prepare_missing_template_raises(tmp_path: Path):
@@ -182,7 +182,7 @@ def test_submit_script_contains_orca_executable_invocation(_submit, _is_finished
     script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
     assert "orca step1_0.inp" in script_text
     assert "$OUTPUT_DIR/step1_0.out" in script_text
-    # ORCA's output_globs ClassVar flows through the shared SlurmBatchEngine.
+    # ORCA's output_globs ClassVar flows through chemrefine.submit.run_batch.
     assert "*.gbw" in script_text
     assert "*.hess" in script_text
 
@@ -269,7 +269,7 @@ def test_submit_array_polls_until_the_array_drains(_submit_array, _sbatch, tmp_p
     inputs = engine.prepare(ctx)
     with (
         patch.object(slurm, "is_finished", side_effect=[False, True]) as finished_mock,
-        patch("chemrefine.engines.base.time.sleep") as sleep_mock,
+        patch("chemrefine.submit.time.sleep") as sleep_mock,
     ):
         engine.submit(inputs, ctx)
     assert finished_mock.call_count == 2
@@ -286,12 +286,6 @@ def test_submit_array_missing_header_raises(_sbatch, tmp_path: Path):
     (ctx.template_dir / "cpu.slurm.header").unlink()
     with pytest.raises(FileNotFoundError):
         engine.submit(inputs, ctx)
-
-
-def test_wait_is_noop(tmp_path: Path):
-    """``submit`` already blocks until finished; ``wait`` should not error."""
-    engine = get_engine("orca")
-    engine.wait(JobBatch(jobs={}))  # no jobs to wait for
 
 
 # ---------------------------------------------------------------------------
@@ -356,7 +350,7 @@ def test_effective_operation_explicit_wins_over_template(tmp_path: Path):
         step_cfg=StepConfig(step=1, engine="orca", operation="opt_sp"),
     )
     (ctx.template_dir / "step1.inp").write_text("! GOAT XTB\n", encoding="utf-8")
-    assert engine._effective_operation(ctx) == "opt_sp"
+    assert engine._resolve_operation(ctx) == "opt_sp"
 
 
 def test_effective_operation_falls_back_to_inspection(tmp_path: Path):
@@ -368,7 +362,7 @@ def test_effective_operation_falls_back_to_inspection(tmp_path: Path):
         step_cfg=StepConfig(step=1, engine="orca"),  # operation omitted
     )
     (ctx.template_dir / "step1.inp").write_text("! GOAT XTB\n", encoding="utf-8")
-    assert engine._effective_operation(ctx) == "goat"
+    assert engine._resolve_operation(ctx) == "goat"
 
 
 def test_input_digest_tracks_template_contents(tmp_path: Path):
@@ -394,5 +388,5 @@ def test_orca_engine_registered():
     assert "orca" in ENGINES
 
 
-def test_orca_engine_supports_nms_flag_is_true():
-    assert get_engine("orca").supports_nms is True
+def test_orca_engine_is_nms_capable():
+    assert isinstance(get_engine("orca"), NmsCapableEngine)

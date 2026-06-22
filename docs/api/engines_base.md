@@ -1,8 +1,9 @@
 # Engine Contract & Registry
 
-The structural contract every engine satisfies, the `ENGINES` registry, and the
-shared `SlurmBatchEngine` base (the throttled submit loop + per-step template
-resolution). See [Adding an Engine](../developer/adding-an-engine.md) for the
+The structural contracts every engine satisfies — the `CalculationEngine` Protocol and
+the `NmsCapableEngine` capability Protocol — plus the `ENGINES` registry. The shared
+batch base lives in [Batch Base & Assembly](engines_batch.md); submission is flat in
+[Submit](submit.md). See [Adding an Engine](../developer/adding-an-engine.md) for the
 authoring recipe.
 
 ::: chemrefine.engines.base

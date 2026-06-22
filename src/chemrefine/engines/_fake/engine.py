@@ -1,11 +1,11 @@
 """In-memory engine that drives the pipeline tests without any external tool.
 
 Real engines invoke SLURM and a quantum-chemistry binary. The fake engine
-short-circuits both: ``submit`` writes a synthetic output file with a
-deterministic energy derived from the structure ID, and ``wait`` is a
-no-op. ``parse`` reads the same file the engine just wrote, so it still
-exercises the full prepare → submit → wait → parse → filter → cache
-pipeline through realistic file I/O.
+short-circuits both: ``submit`` writes a synthetic output file (inline, so it
+also "blocks") with a deterministic energy derived from the structure ID.
+``parse`` reads the same file the engine just wrote, so it still exercises the
+full prepare → submit → parse → filter → cache pipeline through realistic
+file I/O.
 
 The energy formula is monotonic in the integer part of the structure ID
 so tests can assert ordering without depending on Python's hash seed.
@@ -46,7 +46,6 @@ class FakeEngine:
     """Test stub satisfying :class:`~chemrefine.engines.base.CalculationEngine`."""
 
     name: ClassVar[str] = "fake"
-    supports_nms: ClassVar[bool] = False
 
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Write one trivial ``.inp`` per seed structure."""
@@ -72,10 +71,6 @@ class FakeEngine:
             )
             jobs[inp] = f"fake-{ctx.step_cfg.step}-{index}"
         return JobBatch(jobs=jobs)
-
-    def wait(self, batch: JobBatch) -> None:
-        """No-op — submit ran inline."""
-        return None
 
     def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
         """Read each output file's energy and return reconstructed structures."""

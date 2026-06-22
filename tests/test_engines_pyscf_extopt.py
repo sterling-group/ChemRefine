@@ -16,7 +16,7 @@ from ase import Atoms
 from pydantic import ValidationError
 
 from chemrefine.config import StepConfig
-from chemrefine.engines.base import ENGINES, get_engine
+from chemrefine.engines.base import ENGINES, NmsCapableEngine, get_engine
 from chemrefine.state import PipelineState, StepContext, Structure
 
 # ---------------------------------------------------------------------------
@@ -29,8 +29,9 @@ def test_pyscf_engines_are_registered():
     assert "pyscf-extopt" in ENGINES
 
 
-def test_pyscf_engine_supports_nms_is_false():
-    assert get_engine("pyscf-extopt").supports_nms is False
+def test_pyscf_extopt_engine_is_nms_capable():
+    """ExtOpt inherits ORCA's NMS hooks — ORCA computes the Hessian over PySCF gradients."""
+    assert isinstance(get_engine("pyscf-extopt"), NmsCapableEngine)
 
 
 # ---------------------------------------------------------------------------

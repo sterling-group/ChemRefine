@@ -292,7 +292,7 @@ def test_mlip_train_engine_is_registered():
     from chemrefine.engines.base import ENGINES, get_engine
 
     assert "mlip-train" in ENGINES
-    assert get_engine("mlip-train").supports_nms is False
+    assert get_engine("mlip-train").name == "mlip-train"
 
 
 def test_mlip_train_engine_has_no_input_digest(tmp_path: Path):

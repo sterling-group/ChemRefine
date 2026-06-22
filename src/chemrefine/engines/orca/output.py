@@ -19,12 +19,12 @@ ExtOpt ``.extinp.tmp`` / ``.engrad`` round-trip helpers live in
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
 
+from chemrefine.engines._assemble import ParsedResult
 from chemrefine.engines.orca import frequencies
 from chemrefine.errors import OutputParseError
 from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
@@ -63,32 +63,12 @@ _TERMINATED_RE = re.compile(r"ORCA TERMINATED NORMALLY")
 _NOT_CONVERGED_RE = re.compile(r"NOT CONVERGED", re.IGNORECASE)
 
 
-@dataclass(frozen=True)
-class ParsedStructure:
-    """One structure extracted from an ORCA output file.
-
-    ``terminated`` / ``converged`` are the run-status flags read in the same
-    pass (``None`` when not applicable, e.g. sidecar ensemble frames); a
-    structure is a *failure* only when one is explicitly ``False``.
-    """
-
-    symbols: tuple[str, ...]
-    positions: NDArray[np.float64]
-    energy_hartree: float
-    forces_ev_per_a: NDArray[np.float64] | None
-    converged: bool | None = None
-    terminated: bool | None = None
-    gibbs_hartree: float | None = None
-    enthalpy_hartree: float | None = None
-    energy_zpe_hartree: float | None = None
-
-
 # ---------------------------------------------------------------------------
 # DFT (opt_sp) — verified against the fixture
 # ---------------------------------------------------------------------------
 
 
-def parse_dft(path: str | Path) -> list[ParsedStructure]:
+def parse_dft(path: str | Path) -> list[ParsedResult]:
     """Parse a DFT ``opt_sp`` output. Returns a single-element list.
 
     Raises :class:`OutputParseError` if the energy or coordinates block
@@ -99,7 +79,7 @@ def parse_dft(path: str | Path) -> list[ParsedStructure]:
     )
 
 
-def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedStructure]:
+def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]:
     """Parse a DFT ``opt_sp`` output from already-read text (single pass).
 
     ``src`` only labels error messages. Callers that also need the
@@ -125,7 +105,7 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedStructu
     # Thermochemistry rides along when the output has a freq block (else None).
     thermo = frequencies.parse_thermochemistry_from_text(text, electronic_hartree=energy)
     return [
-        ParsedStructure(
+        ParsedResult(
             symbols=symbols,
             positions=positions,
             energy_hartree=energy,
@@ -191,7 +171,7 @@ def _parse_xyz_ensemble(
     header_re: re.Pattern[str],
     *,
     fmt_name: str,
-) -> list[ParsedStructure]:
+) -> list[ParsedResult]:
     """Walk a multi-frame XYZ file, extracting one structure per frame.
 
     Each frame is shaped as::
@@ -206,7 +186,7 @@ def _parse_xyz_ensemble(
     frame at the end of an ensemble.
     """
     lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
-    structures: list[ParsedStructure] = []
+    structures: list[ParsedResult] = []
     i = 0
     while i < len(lines):
         structure, i = _parse_xyz_frame(lines, i, header_re)
@@ -219,7 +199,7 @@ def _parse_xyz_ensemble(
 
 def _parse_xyz_frame(
     lines: list[str], i: int, header_re: re.Pattern[str]
-) -> tuple[ParsedStructure | None, int]:
+) -> tuple[ParsedResult | None, int]:
     """Parse one XYZ frame at ``lines[i]``; return ``(structure_or_None, next_index)``.
 
     ``None`` means "nothing here, advance past it": a non-count line (``+1``), a
@@ -249,7 +229,7 @@ def _parse_xyz_frame(
             return None, i + 2 + n_atoms
         symbols.append(parts[0])
         positions.append(row)
-    structure = ParsedStructure(
+    structure = ParsedResult(
         symbols=tuple(symbols),
         positions=np.array(positions, dtype=np.float64),
         energy_hartree=float(m.group(1)),
@@ -258,21 +238,21 @@ def _parse_xyz_frame(
     return structure, i + 2 + n_atoms
 
 
-def parse_goat_ensemble(path: str | Path) -> list[ParsedStructure]:
+def parse_goat_ensemble(path: str | Path) -> list[ParsedResult]:
     """Parse a GOAT ``.finalensemble.xyz`` file.
 
     Header layout: ``<energy_hartree> converged=<bool>``. Returns one
-    :class:`ParsedStructure` per frame. Forces are not available in
+    :class:`ParsedResult` per frame. Forces are not available in
     this format (set to ``None``).
     """
     return _parse_xyz_ensemble(path, _GOAT_HEADER_RE, fmt_name="GOAT")
 
 
-def parse_docker(path: str | Path) -> list[ParsedStructure]:
+def parse_docker(path: str | Path) -> list[ParsedResult]:
     """Parse an ORCA Docker ``.docker.struc1.allopt.xyz`` ensemble.
 
     Header layout: ``<idx> Eopt=<energy_hartree> (Eh) Einter=<inter> (kcal/mol)``.
-    Returns one :class:`ParsedStructure` per frame, **dropping the
+    Returns one :class:`ParsedResult` per frame, **dropping the
     final frame** because the upstream tool's last structure is
     flagged as non-sensible there.
     """
@@ -285,11 +265,11 @@ def parse_docker(path: str | Path) -> list[ParsedStructure]:
     return structures[:-1]
 
 
-def parse_solvator(path: str | Path) -> list[ParsedStructure]:
+def parse_solvator(path: str | Path) -> list[ParsedResult]:
     """Parse an ORCA Solvator ``.solventbuild.xyz`` ensemble.
 
     Header layout: ``Energy <energy_hartree>``. Returns one
-    :class:`ParsedStructure` per frame.
+    :class:`ParsedResult` per frame.
     """
     return _parse_xyz_ensemble(path, _SOLVATOR_HEADER_RE, fmt_name="Solvator")
 
@@ -304,7 +284,7 @@ _PES_COORD_HEADER_RE = re.compile(r"^\s*CARTESIAN COORDINATES\s*\(ANGSTROEM\)\s*
 _PES_DASH_RE = re.compile(r"^\s*-{3,}\s*$")
 
 
-def parse_pes(path: str | Path) -> list[ParsedStructure]:
+def parse_pes(path: str | Path) -> list[ParsedResult]:
     """Parse an ORCA PES-scan output (one frame per converged scan point).
 
     The file is split on ``*** OPTIMIZATION RUN DONE ***``. For each
@@ -317,12 +297,12 @@ def parse_pes(path: str | Path) -> list[ParsedStructure]:
     )
 
 
-def parse_pes_from_text(text: str, *, src: str = "<text>") -> list[ParsedStructure]:
+def parse_pes_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]:
     """Parse a PES-scan output from already-read text (single pass)."""
     segments = _PES_SEGMENT_RE.split(text)[:-1]  # last fragment has no DONE marker
     terminated = bool(_TERMINATED_RE.search(text))
 
-    structures: list[ParsedStructure] = []
+    structures: list[ParsedResult] = []
     for seg in segments:
         atoms = _parse_last_pes_coord_block(seg)
         if not atoms:
@@ -333,7 +313,7 @@ def parse_pes_from_text(text: str, *, src: str = "<text>") -> list[ParsedStructu
         symbols = tuple(sym for sym, *_ in atoms)
         positions = np.array([[x, y, z] for _, x, y, z in atoms], dtype=np.float64)
         structures.append(
-            ParsedStructure(
+            ParsedResult(
                 symbols=symbols,
                 positions=positions,
                 energy_hartree=energy,
@@ -426,7 +406,7 @@ _DFT_OPERATIONS = frozenset({"opt_sp", "dft", "sp", "freq"})
 TEXT_BASED_OPERATIONS = _DFT_OPERATIONS | {"pes"}
 
 
-def parse_text(text: str, operation: str, *, src: str = "<text>") -> list[ParsedStructure]:
+def parse_text(text: str, operation: str, *, src: str = "<text>") -> list[ParsedResult]:
     """Parse a ``.out``-based operation from already-read text (parse-once).
 
     Only the :data:`TEXT_BASED_OPERATIONS` (the ones that read the ``.out``
@@ -441,7 +421,7 @@ def parse_text(text: str, operation: str, *, src: str = "<text>") -> list[Parsed
     raise OutputParseError(f"{operation!r} is not a text-based ORCA operation")
 
 
-def parse_output(path: str | Path, operation: str) -> list[ParsedStructure]:
+def parse_output(path: str | Path, operation: str) -> list[ParsedResult]:
     """Pick the right parser based on the YAML ``operation`` string.
 
     ``opt_sp`` / ``sp`` / ``freq`` / ``pes`` read the ``.out`` directly; the

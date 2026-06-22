@@ -281,7 +281,7 @@ def _run_round_two(
         ctx, step_dir=attempt_dir, prev_state=PipelineState(structures=tuple(children))
     )
     inputs = engine.prepare(child_ctx)
-    engine.wait(engine.submit(inputs, child_ctx))
+    engine.submit(inputs, child_ctx)
     succ, fail = step_failures.parse_with_failures(engine, inputs, child_ctx)
     succ, _fail = step_failures.retry_unconverged(engine, child_ctx, succ, fail)
     return succ
@@ -455,7 +455,7 @@ def reattempt_nms(
             step_cfg.step,
             len(missing_inputs.files),
         )
-        engine.wait(engine.submit(missing_inputs, ctx))
+        engine.submit(missing_inputs, ctx)
 
     r1_succ, r1_fail = step_failures.parse_with_failures(engine, failed_manifest, ctx)
     r1_succ, r1_fail = step_failures.retry_unconverged(engine, ctx, r1_succ, r1_fail)

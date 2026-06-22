@@ -32,7 +32,7 @@ flowchart TD
   LOOP --> STEP["step.run_step"]
   STEP --> CACHE{"cache.load_if_valid\nfingerprint match?"}
   CACHE -- hit --> FILT["filtering.apply"]
-  CACHE -- miss --> LIFE["engine lifecycle:\nprepare → submit → wait → parse"]
+  CACHE -- miss --> LIFE["engine lifecycle:\nprepare → submit → parse"]
   LIFE --> POL["step_failures.apply_failure_policy\n(+ nms.run_nms for nms steps)"]
   POL --> SAVE["cache.save"]
   SAVE --> FILT
@@ -44,13 +44,14 @@ flowchart TD
 
 ## Submit / compute flow
 
-Inside `engine.submit`, jobs are generated and throttled against the CPU+GPU
-budget. The ExtOpt engines additionally stand up a gradient server that ORCA
-talks to per optimisation step:
+A batch engine's `submit` delegates to the flat `chemrefine.submit.run_batch`, which
+generates jobs and throttles them against the CPU+GPU budget using the engine's
+primitives (`_run_block` / `_pal` / `_gpus` / `output_globs`). The ExtOpt engines
+additionally stand up a gradient server that ORCA talks to per optimisation step:
 
 ```mermaid
 flowchart TD
-  SUB["SlurmBatchEngine.submit"] --> BUILD["slurm.build_script /\nbuild_array_script"]
+  SUB["chemrefine.submit.run_batch"] --> BUILD["slurm.build_script /\nbuild_array_script"]
   BUILD --> SUBMIT["slurm.submit"]
   SUBMIT -- sbatch present --> SBATCH["sbatch (SLURM)"]
   SUBMIT -- local --> POPEN["bash Popen (background)"]

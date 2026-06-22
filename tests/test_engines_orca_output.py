@@ -8,7 +8,7 @@ import pytest
 from synthetic import THERMOCHEMISTRY_BLOCK, synthetic_dft_output
 
 from chemrefine.engines.orca.output import (
-    ParsedStructure,
+    ParsedResult,
     parse_dft,
     parse_dft_from_text,
     parse_docker,
@@ -104,7 +104,7 @@ def test_parse_dft_returns_single_structure():
     parsed = parse_dft(FIXTURE)
     assert isinstance(parsed, list)
     assert len(parsed) == 1
-    assert isinstance(parsed[0], ParsedStructure)
+    assert isinstance(parsed[0], ParsedResult)
 
 
 def test_parse_dft_final_energy_matches_fixture():

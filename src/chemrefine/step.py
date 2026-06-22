@@ -1,4 +1,4 @@
-"""Per-step lifecycle: prepare → submit → wait → parse → (nms) → filter → cache.
+"""Per-step lifecycle: prepare → submit → parse → (nms) → filter → cache.
 
 This is the only place that knows the order in which an engine's
 lifecycle methods are called. :func:`run_step` is intentionally short
@@ -104,7 +104,7 @@ def run_step(
     parent_ids = tuple(s.id for s in prev_state.structures)
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     engine = engine if engine is not None else get_engine(step_cfg.engine)
-    is_nms = step_cfg.nms and engine.supports_nms
+    is_nms = step_cfg.nms and isinstance(engine, NmsCapableEngine)
 
     if use_cache:
         cached = _cached_outcome(
@@ -233,8 +233,7 @@ def _run_full_step(
     cache.save_manifest(inputs, ctx.step_dir, operation=step_cfg.operation, engine=step_cfg.engine)
 
     logger.info("step %d: submitting %d jobs", step_cfg.step, len(inputs.files))
-    batch = engine.submit(inputs, ctx)
-    engine.wait(batch)
+    engine.submit(inputs, ctx)
 
     logger.info("step %d: parsing outputs", step_cfg.step)
     successes, failures = step_failures.parse_with_failures(engine, inputs, ctx)
@@ -328,9 +327,9 @@ def rebuild_cache_step(
         raise CacheError(f"step {step_cfg.step}: cannot rebuild-cache — no manifest on disk")
     logger.info("step %d: rebuilding cache from existing outputs", step_cfg.step)
     successes, failures = step_failures.parse_with_failures(engine, manifest, ctx)
-    if step_cfg.nms and engine.supports_nms:
+    if step_cfg.nms and isinstance(engine, NmsCapableEngine):
         resolution = nms.rebuild_nms(
-            cast(NmsCapableEngine, engine),
+            engine,
             StepResults(structures=tuple(successes)),
             failures,
             ctx,
@@ -385,7 +384,7 @@ def _resubmit_failed(
             step_cfg.step,
             len(failed_inputs.files),
         )
-        engine.wait(engine.submit(failed_inputs, ctx))
+        engine.submit(failed_inputs, ctx)
 
     successes, failures = step_failures.parse_with_failures(engine, manifest, ctx)
     successes, failures = step_failures.retry_unconverged(engine, ctx, successes, failures)
