@@ -1,30 +1,42 @@
 # ORCA Engine
 
-The standard DFT engine and its supporting modules: input generation, output
-parsing, frequency parsing, template inspection, and the ORCA-driven ExtOpt base.
-NMS itself is engine-independent ([Normal-Mode Sampling](nms.md)); this engine only
-supplies the two NMS hooks (`nms_input_info` + `read_frequencies`) on the engine
-class below.
+The standard DFT engine and its supporting modules. The input file has a **writer**
+(`input`, builds the `.inp`) and a **reader** (`inspect`, reads run-type + PAL). Output
+parsing is **one section per module** (`geometry` / `energy` / `forces` / `frequencies` /
+`status`, plus `ensembles` for multi-structure results), with `output` the read-once
+coordinator that assembles each `ParsedResult` in a single pass. NMS is engine-independent
+([Normal-Mode Sampling](nms.md)); this engine supplies only the `nms_input_info` hook and
+carries the frequency values on each parsed structure.
 
 ## Engine
 
 ::: chemrefine.engines.orca.engine
 
-## Input generation
+## Input generation (writer)
 
 ::: chemrefine.engines.orca.input
 
-## Output parsing
+## Template inspection (reader)
+
+::: chemrefine.engines.orca.inspect
+
+## Output coordinator
 
 ::: chemrefine.engines.orca.output
 
-## Frequencies
+## Output sections
+
+::: chemrefine.engines.orca.geometry
+
+::: chemrefine.engines.orca.energy
+
+::: chemrefine.engines.orca.forces
 
 ::: chemrefine.engines.orca.frequencies
 
-## Template inspection
+::: chemrefine.engines.orca.status
 
-::: chemrefine.engines.orca.inspect
+::: chemrefine.engines.orca.ensembles
 
 ## ExtOpt base + protocol
 

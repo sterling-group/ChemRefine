@@ -6,28 +6,24 @@ parse the ``.out`` (:mod:`engines.orca.output`) into ``ParsedResult`` — while 
 base handles ``prepare`` / ``submit`` / ``parse`` and :mod:`chemrefine.engines._execution`
 runs the batch under the budget.
 
-NMS is engine-independent (:mod:`chemrefine.nms`); ORCA supplies its two hooks —
-:meth:`nms_input_info` (read the template keywords) and :meth:`read_frequencies` (parse
-the ``.out``'s imaginary modes + tensor). The ExtOpt engines subclass this and inherit
-them, so they are NMS-capable too (ORCA computes the Hessian numerically over the backend
-gradients).
+NMS is engine-independent (:mod:`chemrefine.nms`). ORCA supplies only :meth:`nms_input_info`
+(read the template keywords); the *frequency values* it provides are carried on each parsed
+``Structure`` (``imaginary_freqs`` + ``normal_modes``, filled in the single ``.out`` parse —
+see :mod:`engines.orca.output`), so there is no separate frequency-reading hook. The ExtOpt
+engines subclass this and are NMS-capable too (ORCA computes the Hessian numerically over the
+backend gradients).
 """
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import ClassVar
 
 from chemrefine.engines._job import JobEngine
-from chemrefine.engines.api import FrequencyData, NmsInputInfo, ParsedResult, register
-from chemrefine.engines.orca import frequencies, inspect, output
+from chemrefine.engines.api import NmsInputInfo, ParsedResult, register
 from chemrefine.engines.orca import input as orca_input
-from chemrefine.errors import OutputParseError
-from chemrefine.ids import structure_artifact_path
+from chemrefine.engines.orca import inspect, output
 from chemrefine.state import StepContext
-
-logger = logging.getLogger(__name__)
 
 
 @register("orca")
@@ -72,7 +68,7 @@ class OrcaEngine(JobEngine):
 
     def pal(self, ctx: StepContext) -> int:
         """PAL is a property of the template (one ``%pal`` for the step), read once."""
-        return orca_input.parse_pal(self._resolve_template(ctx))
+        return inspect.inspect_template(self._resolve_template(ctx)).pal
 
     def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
         """Engine-specific bash that runs inside ``$WORK_DIR``."""
@@ -98,7 +94,12 @@ class OrcaEngine(JobEngine):
     def parse_one(
         self, output_path: Path, structure_id: str, ctx: StepContext
     ) -> list[ParsedResult]:
-        """Parse one ORCA output — a ``.out`` (1:1) or its ensemble sidecar (fan-out)."""
+        """Parse one ORCA output in a single pass — geometry/energy/forces/thermo + frequencies.
+
+        For a single-structure ``.out`` the frequency values (``imaginary_freqs`` /
+        ``normal_modes``) ride on the returned ``ParsedResult`` (and thus on the ``Structure``),
+        so NMS never re-parses the file.
+        """
         operation = self._resolve_operation(ctx)
         if operation.lower().replace("+", "_") in output.TEXT_BASED_OPERATIONS:
             return output.parse_text(
@@ -108,43 +109,9 @@ class OrcaEngine(JobEngine):
             )
         return output.parse_output(output_path, operation)
 
-    # -- nms hooks (the engine-specific half of chemrefine.nms) ------------
+    # -- nms hook (the only engine-specific half of chemrefine.nms) --------
 
     def nms_input_info(self, ctx: StepContext) -> NmsInputInfo:
         """Whether the template runs a TS search and computes frequencies (keyword scan)."""
         run = inspect.inspect_template(self._resolve_template(ctx))
         return NmsInputInfo(is_transition_state=run.is_ts, computes_frequencies=run.has_freq)
-
-    def read_frequencies(
-        self, structure_id: str, step_dir: Path, ctx: StepContext
-    ) -> FrequencyData:
-        """Parse a structure's imaginary frequencies + normal-mode tensor from its ``.out``.
-
-        ``imaginary`` is ``None`` when the output has **no** frequency table at all
-        (distinct from ``{}`` = zero imaginary modes); ``modes`` is ``None`` when the
-        displacement tensor is absent / unparseable.
-        """
-        out_path = structure_artifact_path(step_dir, ctx.step_cfg.step, structure_id, "out")
-        if not out_path.is_file():
-            return FrequencyData(imaginary=None, modes=None)
-        text = out_path.read_text(encoding="utf-8", errors="replace")
-        if "VIBRATIONAL FREQUENCIES" not in text:
-            logger.warning(
-                "NMS: %s produced no frequency table — the template must request a "
-                "frequency calc (e.g. opt+freq); the structure is left unresolved",
-                structure_id,
-            )
-            return FrequencyData(imaginary=None, modes=None)
-        try:
-            parsed = output.parse_dft_from_text(text, src=str(out_path))
-            n_atoms = len(parsed[0].symbols) if parsed else 0
-            modes = (
-                frequencies.parse_normal_modes_tensor_from_text(text, num_atoms=n_atoms)
-                if n_atoms
-                else None
-            )
-        except (OutputParseError, ValueError):
-            modes = None
-        return FrequencyData(
-            imaginary=frequencies.parse_imaginary_frequencies_from_text(text), modes=modes
-        )

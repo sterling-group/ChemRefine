@@ -330,17 +330,17 @@ def test_resume_does_not_reattempt_skip_step(tmp_path: Path):
 
 
 def _register_fake_nms():
-    """A two-round NMS fake driven through the engine hooks (``nms_input_info`` +
-    ``read_frequencies``); the generic coordinator does the displacement. ``resolved``
-    controls which parents' displaced children resolve; ``fail_round1`` produce no
-    round-1 output; ``submitted`` logs round-1 (parent) submissions and ``nms_seen``
-    the parents that reached the NMS stage."""
+    """A two-round NMS fake driven through the engine hook (``nms_input_info``) + the
+    frequency values its ``parse`` attaches to each structure; the generic coordinator does
+    the displacement. ``resolved`` controls which parents' displaced children resolve;
+    ``fail_round1`` produce no round-1 output; ``submitted`` logs round-1 (parent) submissions
+    and ``nms_seen`` the parents that reached the NMS stage."""
     from typing import ClassVar
 
     import numpy as np
     from ase import Atoms
 
-    from chemrefine.engines.api import FrequencyData, NmsInputInfo, register
+    from chemrefine.engines.api import NmsInputInfo, register
     from chemrefine.ids import structure_artifact_path
     from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
 
@@ -378,6 +378,16 @@ def _register_fake_nms():
             out = []
             for _inp, _o, sid in inputs.files:
                 seed = seeds.get(sid)
+                # Frequency values ride on the parsed structure (one pass); NMS reads them.
+                if "_m" in sid:  # a displaced child: resolved iff its parent is
+                    parent = sid.split("_m")[0]
+                    imaginary = {} if parent in _FakeNms2.resolved else {3: -9.0}
+                    modes = None
+                else:  # a round-1 parent reaching NMS
+                    _FakeNms2.nms_seen.append(sid)
+                    modes = np.zeros((1, 3, 6))
+                    modes[0, 0, 5] = 0.1
+                    imaginary = {5: -42.0}
                 out.append(
                     Structure(
                         id=sid,
@@ -385,6 +395,8 @@ def _register_fake_nms():
                         energy_hartree=-1.0,
                         terminated=True,
                         converged=True,
+                        imaginary_freqs=imaginary,
+                        normal_modes=modes,
                     )
                 )
             return StepResults(structures=tuple(out))
@@ -394,17 +406,6 @@ def _register_fake_nms():
 
         def nms_input_info(self, ctx):
             return NmsInputInfo(is_transition_state=False, computes_frequencies=True)
-
-        def read_frequencies(self, structure_id, step_dir, ctx):
-            if "_m" in structure_id:  # a displaced child: resolved iff its parent is
-                parent = structure_id.split("_m")[0]
-                return FrequencyData(
-                    imaginary={} if parent in _FakeNms2.resolved else {3: -9.0}, modes=None
-                )
-            _FakeNms2.nms_seen.append(structure_id)  # a round-1 parent reaching NMS
-            modes = np.zeros((1, 3, 6))
-            modes[0, 0, 5] = 0.1
-            return FrequencyData(imaginary={5: -42.0}, modes=modes)
 
     return _FakeNms2
 

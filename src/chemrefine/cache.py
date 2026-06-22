@@ -182,12 +182,20 @@ def _structure_to_dict(s: Structure) -> dict[str, Any]:
             if s.forces_ev_per_a is None
             else np.asarray(s.forces_ev_per_a, dtype=np.float64).tolist()
         ),
+        # Imaginary modes round-trip (small, useful metadata); JSON keys must be strings.
+        # ``normal_modes`` is deliberately NOT persisted — it's a transient displacement tensor
+        # only used during an active NMS run (which always re-parses), so a cache-reloaded
+        # structure carries ``None`` (never read).
+        "imaginary_freqs": (
+            None if s.imaginary_freqs is None else {str(k): v for k, v in s.imaginary_freqs.items()}
+        ),
     }
 
 
 def _structure_from_dict(d: dict[str, Any]) -> Structure:
     """Rebuild a :class:`Structure` from its JSON cache entry (inverse of the above)."""
     forces = d["forces_ev_per_a"]
+    imaginary = d.get("imaginary_freqs")
     return Structure(
         id=d["id"],
         atoms=Atoms(symbols=d["symbols"], positions=d["positions"]),
@@ -196,10 +204,11 @@ def _structure_from_dict(d: dict[str, Any]) -> Structure:
         forces_ev_per_a=None if forces is None else np.asarray(forces, dtype=np.float64),
         converged=d["converged"],
         terminated=d["terminated"],
-        # Thermochemistry is additive — caches written before it lack these keys.
+        # Thermochemistry + imaginary modes are additive — older caches lack these keys.
         gibbs_hartree=d.get("gibbs_hartree"),
         enthalpy_hartree=d.get("enthalpy_hartree"),
         energy_zpe_hartree=d.get("energy_zpe_hartree"),
+        imaginary_freqs=None if imaginary is None else {int(k): v for k, v in imaginary.items()},
     )
 
 

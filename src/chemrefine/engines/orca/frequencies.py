@@ -1,6 +1,10 @@
-"""ORCA frequency-block parsing.
+"""ORCA frequency-block parsing: the vibrational table + the normal-mode tensor.
 
-The ``VIBRATIONAL FREQUENCIES`` table in an ORCA output looks like::
+One section, one module. (Thermochemistry — Gibbs / enthalpy / ZPE — moved to
+:mod:`chemrefine.engines.orca.energy`, since those are energies.) The
+:mod:`chemrefine.engines.orca.output` coordinator calls these over the text it already read.
+
+The ``VIBRATIONAL FREQUENCIES`` table looks like::
 
     -----------------------
     VIBRATIONAL FREQUENCIES
@@ -9,22 +13,16 @@ The ``VIBRATIONAL FREQUENCIES`` table in an ORCA output looks like::
     Scaling factor for frequencies =  1.000000000  (already applied!)
 
          0:       0.00 cm**-1
-         1:       0.00 cm**-1
          ...
-         6:      15.11 cm**-1
-       ...
         37:   -118.27 cm**-1  ***imaginary mode***
 
-We parse the mode-index → frequency mapping and let the caller decide
-which subset they want (imaginary modes for NMS, all modes for
-spectrum extraction, etc.).
+We parse the mode-index → frequency mapping and let the caller pick the subset (imaginary
+modes for NMS, all modes for a spectrum, …).
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
@@ -35,45 +33,17 @@ _MODE_COL_HEADER_RE = re.compile(r"^\s*(\d+\s+)+\d+\s*$")
 _MODE_ROW_RE = re.compile(r"^\s*\d+\s+[-\d.Ee\s]+$")
 
 
-def parse_frequencies(
-    path: str | Path,
-    *,
-    only_imaginary: bool = False,
-    skip_first_real: int = 5,
-) -> dict[int, float]:
-    """Return ``{mode_index: frequency_cm_inverse}`` from an ORCA output.
-
-    Parameters
-    ----------
-    path:
-        Path to an ORCA ``.out`` from a frequency calculation
-        (``! ... FREQ``).
-    only_imaginary:
-        When ``True`` return only modes ORCA flagged with
-        ``***imaginary mode***`` — this is the NMS-targeting subset.
-    skip_first_real:
-        Number of low-index translational / rotational modes to drop
-        when ``only_imaginary`` is ``False``. ORCA always prints six
-        zero modes (five for linear molecules); the default drops the
-        first five.
-    """
-    text = Path(path).read_text(encoding="utf-8", errors="replace")
-    return parse_frequencies_from_text(
-        text, only_imaginary=only_imaginary, skip_first_real=skip_first_real
-    )
-
-
 def parse_frequencies_from_text(
     text: str,
     *,
     only_imaginary: bool = False,
     skip_first_real: int = 5,
 ) -> dict[int, float]:
-    """Parse a frequency table from already-read ORCA output text.
+    """Return ``{mode_index: frequency_cm_inverse}`` from already-read ORCA output text.
 
-    Same contract as :func:`parse_frequencies`, but accepts the file
-    contents directly so callers (e.g. NMS) that need to parse
-    multiple sections of the same output avoid re-reading.
+    ``only_imaginary`` keeps only the modes ORCA flagged ``***imaginary mode***`` (the
+    NMS-targeting subset); otherwise ``skip_first_real`` low-index translation/rotation modes
+    are dropped (ORCA prints six zero modes, five for linear molecules; default drops five).
     """
     in_block = False
     after_scaling = False
@@ -110,41 +80,20 @@ def parse_frequencies_from_text(
     return out
 
 
-def parse_imaginary_frequencies(path: str | Path) -> dict[int, float]:
-    """Convenience wrapper — return only the imaginary modes."""
-    return parse_imaginary_frequencies_from_text(
-        Path(path).read_text(encoding="utf-8", errors="replace")
-    )
-
-
 def parse_imaginary_frequencies_from_text(text: str) -> dict[int, float]:
     """Imaginary-modes subset, operating on already-read output text."""
     return parse_frequencies_from_text(text, only_imaginary=True)
 
 
-# ---------------------------------------------------------------------------
-# Normal-mode displacement tensor
-# ---------------------------------------------------------------------------
-
-
-def parse_normal_modes_tensor(path: str | Path, *, num_atoms: int) -> NDArray[np.float64]:
-    """Return the per-mode displacement tensor for an ORCA frequency output.
-
-    The returned array has shape ``(num_atoms, 3, n_modes)`` — each
-    ``[atom, axis, mode]`` slice gives one Cartesian-displacement
-    component for one normal mode.
-
-    ORCA prints the tensor in column-major blocks (header line with
-    the mode indices, then ``3 N`` rows). We collect each block as a
-    matrix and ``hstack`` them to recover the full ``(3N, n_modes)``
-    matrix before reshaping.
-    """
-    text = Path(path).read_text(encoding="utf-8", errors="replace")
-    return parse_normal_modes_tensor_from_text(text, num_atoms=num_atoms)
-
-
 def parse_normal_modes_tensor_from_text(text: str, *, num_atoms: int) -> NDArray[np.float64]:
-    """Same contract as :func:`parse_normal_modes_tensor` but on already-read text."""
+    """Return the per-mode displacement tensor ``(num_atoms, 3, n_modes)`` from output text.
+
+    Each ``[atom, axis, mode]`` slice is one Cartesian-displacement component for one normal
+    mode. ORCA prints the tensor in column-major blocks (a header line with the mode indices,
+    then ``3 N`` rows); we collect each block and ``hstack`` them to recover the full
+    ``(3N, n_modes)`` matrix before reshaping. Raises :class:`ValueError` if no mode blocks are
+    present or the shape doesn't match ``3·num_atoms``.
+    """
     collecting = False
     block_rows: list[list[float]] = []
     blocks: list[NDArray[np.float64]] = []
@@ -179,51 +128,3 @@ def parse_normal_modes_tensor_from_text(text: str, *, num_atoms: int) -> NDArray
             f"expected {3 * num_atoms} (3 axes by {num_atoms} atoms)"
         )
     return full.reshape(num_atoms, 3, -1)
-
-
-# ---------------------------------------------------------------------------
-# Thermochemistry (Gibbs / enthalpy / electronic+ZPE) from a freq output
-# ---------------------------------------------------------------------------
-
-_THERMO_MARKER = "THERMOCHEMISTRY"
-# ORCA prints "<label>   ...   <value> Eh"; tolerate the dotted padding.
-_GIBBS_RE = re.compile(r"Final Gibbs free energy\s*\.*\s*(-?\d+\.\d+)")
-_ENTHALPY_RE = re.compile(r"Total Enthalpy\s*\.*\s*(-?\d+\.\d+)")
-_ZPE_RE = re.compile(r"Zero point energy\s*\.*\s*(-?\d+\.\d+)")
-
-
-@dataclass(frozen=True)
-class Thermochemistry:
-    """Absolute thermochemistry (Hartree) extracted from an ORCA freq output.
-
-    Any quantity whose line is absent from the block is ``None``.
-    """
-
-    gibbs_hartree: float | None
-    enthalpy_hartree: float | None
-    energy_zpe_hartree: float | None
-
-
-def parse_thermochemistry_from_text(
-    text: str, *, electronic_hartree: float
-) -> Thermochemistry | None:
-    """Return Gibbs / enthalpy / electronic+ZPE (Hartree), or ``None`` if no block.
-
-    ORCA's ``THERMOCHEMISTRY`` section prints an absolute ``Final Gibbs free
-    energy`` and ``Total Enthalpy``; ``Zero point energy`` is the (positive) ZPE
-    *correction*, so electronic+ZPE = ``electronic_hartree`` + that correction.
-    Returns ``None`` when the output has no thermochemistry block at all (e.g. a
-    plain ``opt_sp`` with no frequencies).
-    """
-    if _THERMO_MARKER not in text:
-        return None
-    # Take the last of each (a compound job may print thermochemistry more than
-    # once; the final block is the one we want), matching the energy parser.
-    gibbs = _GIBBS_RE.findall(text)
-    enthalpy = _ENTHALPY_RE.findall(text)
-    zpe = _ZPE_RE.findall(text)
-    return Thermochemistry(
-        gibbs_hartree=float(gibbs[-1]) if gibbs else None,
-        enthalpy_hartree=float(enthalpy[-1]) if enthalpy else None,
-        energy_zpe_hartree=(electronic_hartree + float(zpe[-1])) if zpe else None,
-    )

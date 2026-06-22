@@ -15,14 +15,15 @@ uses a spelling the inspector doesn't recognise).
 ## A generic capability, not an engine feature
 
 The two-round algorithm lives in `chemrefine.nms` and is **engine-independent** — it
-drives any NMS-capable engine through just two hooks and imports no engine package:
+drives any NMS-capable engine through one input hook and imports no engine package:
 
 - `nms_input_info(ctx)` — does the input target a TS, and does it compute frequencies?
-- `read_frequencies(structure_id, step_dir, ctx)` — a structure's imaginary modes +
-  normal-mode tensor, read from its output.
+- the frequency *values* (`imaginary_freqs` mode→cm⁻¹ + the `normal_modes` tensor) ride on
+  each parsed `Structure`, filled in the same single pass as geometry/energy — so NMS reads
+  them off the structures it already holds, never re-parsing an output.
 
-A new engine becomes NMS-capable simply by implementing those two methods — capability
-is detected via `isinstance(engine, NmsCapableEngine)`, with no flag to keep in sync;
+A new engine becomes NMS-capable by implementing `nms_input_info` and populating those two
+structure fields — capability is detected via `isinstance(engine, NmsCapableEngine)`, with no flag to keep in sync;
 everything else is shared. (Today: ORCA + the ExtOpt engines.)
 
 ## Two rounds + the unified "attempt" model

@@ -1,8 +1,9 @@
-"""Tests for ORCA's two NMS hooks — ``nms_input_info`` (read the template's
-keywords) and ``read_frequencies`` (parse a ``.out``'s imaginary modes + tensor).
+"""Tests for ORCA's NMS surface: ``nms_input_info`` (read the template's keywords) and the
+frequency values its parse carries on each structure (``imaginary_freqs`` / ``normal_modes``,
+parsed in the same single pass as geometry — there is no separate ``read_frequencies`` hook).
 
-The engine-independent two-round algorithm + displacement maths are tested against a
-fake engine in ``tests/test_nms.py``; here we only exercise the ORCA-specific half.
+The engine-independent two-round algorithm + displacement maths are tested against a fake
+engine in ``tests/test_nms.py``; here we only exercise the ORCA-specific half.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from synthetic import FREQUENCY_BLOCK, NORMAL_MODES_BLOCK_2_ATOMS, synthetic_dft
 
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import get_engine
-from chemrefine.ids import structure_artifact_path
+from chemrefine.engines.orca import output
 from chemrefine.state import PipelineState, StepContext, Structure
 
 
@@ -71,52 +72,29 @@ def test_nms_input_info_no_freq_keyword(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# read_frequencies — parse a structure's .out
+# frequency values carried on the parsed structure (one pass — no re-parse)
 # ---------------------------------------------------------------------------
 
 
-def test_read_frequencies_parses_imaginary_and_modes(tmp_path: Path):
-    engine = get_engine("orca")
-    ctx = _ctx(tmp_path, "! B3LYP def2-SVP Opt Freq\n")
-    out = structure_artifact_path(ctx.step_dir, 1, "0", "out")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(_freq_output(), encoding="utf-8")
-    freq = engine.read_frequencies("0", ctx.step_dir, ctx)
-    assert freq.imaginary == {37: -118.27, 38: -42.10}
-    assert freq.modes is not None
-    assert freq.modes.shape == (2, 3, 6)  # 2 atoms by 3 axes by 6 modes
+def test_parse_attaches_imaginary_and_modes():
+    """An opt+freq ``.out`` parses geometry/energy AND the frequency block in one pass."""
+    parsed = output.parse_dft_from_text(_freq_output())[0]
+    assert parsed.imaginary_freqs == {37: -118.27, 38: -42.10}
+    assert parsed.normal_modes is not None
+    assert parsed.normal_modes.shape == (2, 3, 6)  # 2 atoms by 3 axes by 6 modes
 
 
-def test_read_frequencies_none_without_freq_table(tmp_path: Path):
-    """An output with no VIBRATIONAL FREQUENCIES table reports None (not {})."""
-    engine = get_engine("orca")
-    ctx = _ctx(tmp_path, "! B3LYP def2-SVP Opt Freq\n")
-    out = structure_artifact_path(ctx.step_dir, 1, "0", "out")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(
-        synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)]), encoding="utf-8"
-    )
-    freq = engine.read_frequencies("0", ctx.step_dir, ctx)
-    assert freq.imaginary is None
-    assert freq.modes is None
+def test_parse_leaves_freqs_none_without_freq_table():
+    """A plain opt ``.out`` (no VIBRATIONAL FREQUENCIES) carries None (not {}) for both."""
+    text = synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)])
+    parsed = output.parse_dft_from_text(text)[0]
+    assert parsed.imaginary_freqs is None
+    assert parsed.normal_modes is None
 
 
-def test_read_frequencies_none_when_output_missing(tmp_path: Path):
-    engine = get_engine("orca")
-    ctx = _ctx(tmp_path, "! B3LYP def2-SVP Opt Freq\n")
-    freq = engine.read_frequencies("0", ctx.step_dir, ctx)  # no .out written
-    assert freq.imaginary is None
-    assert freq.modes is None
-
-
-def test_read_frequencies_modes_none_on_unparseable_geometry(tmp_path: Path):
-    """A freq table with no parseable geometry → imaginary parsed, modes None."""
-    engine = get_engine("orca")
-    ctx = _ctx(tmp_path, "! B3LYP def2-SVP Opt Freq\n")
-    out = structure_artifact_path(ctx.step_dir, 1, "0", "out")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    # FREQUENCY_BLOCK alone: a VIBRATIONAL FREQUENCIES table but no coordinates.
-    out.write_text(FREQUENCY_BLOCK, encoding="utf-8")
-    freq = engine.read_frequencies("0", ctx.step_dir, ctx)
-    assert freq.imaginary == {37: -118.27, 38: -42.10}
-    assert freq.modes is None
+def test_parse_modes_none_when_mode_block_unparseable():
+    """A freq table present but no parseable normal-mode block → imaginary set, modes None."""
+    text = synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)]) + FREQUENCY_BLOCK
+    parsed = output.parse_dft_from_text(text)[0]
+    assert parsed.imaginary_freqs == {37: -118.27, 38: -42.10}
+    assert parsed.normal_modes is None

@@ -1,7 +1,8 @@
 """Tests for the engine-independent NMS coordinator (``chemrefine.nms``).
 
 Everything here is driven by a **fake** ``NmsCapableEngine`` that implements only the
-two hooks (``nms_input_info`` + ``read_frequencies``) plus the standard lifecycle —
+``nms_input_info`` hook + the standard lifecycle (attaching ``imaginary_freqs`` /
+``normal_modes`` to each parsed structure, as the real engine does in its single parse) —
 proving NMS is engine-agnostic. Covers the pure displacement maths, the reuse
 fingerprint, and the unified "attempt" model (winner at the canonical id, no duplicate
 minima, ``random`` fan-out, round-1/round-2 auto-retry, rebuild + reattempt).
@@ -9,6 +10,7 @@ minima, ``random`` fan-out, round-1/round-2 auto-retry, rebuild + reattempt).
 
 from __future__ import annotations
 
+from collections import namedtuple
 from dataclasses import replace
 from pathlib import Path
 
@@ -18,7 +20,7 @@ from ase import Atoms
 
 from chemrefine import nms
 from chemrefine.config import Config, StepConfig
-from chemrefine.engines.api import FrequencyData, NmsInputInfo
+from chemrefine.engines.api import NmsInputInfo
 from chemrefine.ids import structure_artifact_path
 from chemrefine.state import (
     JobBatch,
@@ -29,6 +31,11 @@ from chemrefine.state import (
     Structure,
 )
 from chemrefine.step_failures import Failure
+
+# Frequency data the fake engine attaches to each parsed structure (imaginary modes + the
+# normal-mode tensor) — the real engine sets ``Structure.imaginary_freqs`` / ``normal_modes``
+# in its single parse pass; NMS reads them off the structure (no ``read_frequencies`` hook).
+_Freq = namedtuple("_Freq", ["imaginary", "modes"])
 
 
 def _modes(n_modes: int = 6) -> np.ndarray:
@@ -164,11 +171,9 @@ def test_best_returns_fallback_when_empty():
     assert nms._best([], fallback) is fallback
 
 
-def test_is_resolved_false_for_non_terminated_child(tmp_path: Path):
-    engine = _FakeNms(freqs={})
-    ctx = _ctx(tmp_path, ())
+def test_is_resolved_false_for_non_terminated_child():
     child = Structure(id="c", atoms=Atoms("H"), terminated=False)
-    assert nms._is_resolved(engine, child, ctx.step_dir, ctx, 0) is False
+    assert nms._is_resolved(child, 0) is False
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +211,7 @@ def test_nms_reuse_fingerprint_empty_for_non_nms():
 class _FakeNms:
     """A minimal NMS-capable engine: lifecycle via files + the two NMS hooks.
 
-    ``freqs`` maps a structure id → :class:`FrequencyData`; ``converge_on_retry`` ids
+    ``freqs`` maps a structure id → ``_Freq`` (imaginary, modes); ``converge_on_retry`` ids
     parse unconverged on the first pass and converged on the second (drives the retry);
     ``fail`` ids never converge.
     """
@@ -216,7 +221,7 @@ class _FakeNms:
     def __init__(
         self,
         *,
-        freqs: dict[str, FrequencyData],
+        freqs: dict[str, _Freq],
         is_ts: bool = False,
         computes_freq: bool = True,
         converge_on_retry: set[str] | None = None,
@@ -257,8 +262,19 @@ class _FakeNms:
             else:
                 converged = True
             seed = seeds[sid]
+            # The frequency values ride on the parsed structure (parsed in one pass with
+            # geometry/energy in the real engine); NMS reads them off the structure.
+            freq = self.freqs.get(sid, _Freq(imaginary=None, modes=None))
             out.append(
-                replace(seed, id=sid, converged=converged, terminated=True, energy_hartree=-1.0)
+                replace(
+                    seed,
+                    id=sid,
+                    converged=converged,
+                    terminated=True,
+                    energy_hartree=-1.0,
+                    imaginary_freqs=freq.imaginary,
+                    normal_modes=freq.modes,
+                )
             )
         return StepResults(structures=tuple(out))
 
@@ -267,11 +283,6 @@ class _FakeNms:
 
     def nms_input_info(self, ctx: StepContext) -> NmsInputInfo:
         return NmsInputInfo(is_transition_state=self.is_ts, computes_frequencies=self.computes_freq)
-
-    def read_frequencies(
-        self, structure_id: str, step_dir: Path, ctx: StepContext
-    ) -> FrequencyData:
-        return self.freqs.get(structure_id, FrequencyData(imaginary=None, modes=None))
 
 
 def _ctx(tmp_path: Path, structures: tuple[Structure, ...], **over) -> StepContext:
@@ -306,9 +317,9 @@ def test_run_nms_winner_at_canonical_id_stays(tmp_path: Path):
     geometry written to the canonical dir; the exploration is archived under attempt1/."""
     engine = _FakeNms(
         freqs={
-            "0": FrequencyData(imaginary={5: -42.0}, modes=_modes(6)),  # round-1: one imaginary
-            "0_m5_pos": FrequencyData(imaginary={}, modes=None),  # children resolve (0 imaginary)
-            "0_m5_neg": FrequencyData(imaginary={}, modes=None),
+            "0": _Freq(imaginary={5: -42.0}, modes=_modes(6)),  # round-1: one imaginary
+            "0_m5_pos": _Freq(imaginary={}, modes=None),  # children resolve (0 imaginary)
+            "0_m5_neg": _Freq(imaginary={}, modes=None),
         }
     )
     ctx = _ctx(tmp_path, (_h2("0"),))
@@ -321,7 +332,7 @@ def test_run_nms_winner_at_canonical_id_stays(tmp_path: Path):
 
 
 def test_run_nms_already_at_target_passes_through(tmp_path: Path):
-    engine = _FakeNms(freqs={"0": FrequencyData(imaginary={}, modes=None)})  # already a minimum
+    engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=None)})  # already a minimum
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)
     res = nms.run_nms(engine, round1, [], ctx, ctx.step_cfg)
@@ -332,7 +343,7 @@ def test_run_nms_already_at_target_passes_through(tmp_path: Path):
 
 def test_run_nms_random_fans_out_to_children(tmp_path: Path):
     engine = _FakeNms(
-        freqs={"0": FrequencyData(imaginary={}, modes=_modes(8))},  # random ignores imaginary
+        freqs={"0": _Freq(imaginary={}, modes=_modes(8))},  # random ignores imaginary
     )
     ctx = _ctx(tmp_path, (_h2("0"),), options={"target": "random", "num_random_displacements": 1})
     round1 = _seed_round1(engine, ctx)
@@ -345,9 +356,9 @@ def test_run_nms_ts_target_inferred_from_input(tmp_path: Path):
     """No options.target + a TS input → ts target (keep one imaginary, displace the rest)."""
     engine = _FakeNms(
         freqs={
-            "0": FrequencyData(imaginary={4: -10.0, 5: -99.0}, modes=_modes(6)),
-            "0_m4_pos": FrequencyData(imaginary={5: -50.0}, modes=None),  # one imaginary left = ts
-            "0_m4_neg": FrequencyData(imaginary={5: -50.0}, modes=None),
+            "0": _Freq(imaginary={4: -10.0, 5: -99.0}, modes=_modes(6)),
+            "0_m4_pos": _Freq(imaginary={5: -50.0}, modes=None),  # one imaginary left = ts
+            "0_m4_neg": _Freq(imaginary={5: -50.0}, modes=None),
         },
         is_ts=True,
     )
@@ -360,9 +371,9 @@ def test_run_nms_ts_target_inferred_from_input(tmp_path: Path):
 def test_run_nms_unresolved_becomes_failure(tmp_path: Path):
     engine = _FakeNms(
         freqs={
-            "0": FrequencyData(imaginary={5: -42.0}, modes=_modes(6)),
-            "0_m5_pos": FrequencyData(imaginary={3: -9.0}, modes=None),  # still imaginary
-            "0_m5_neg": FrequencyData(imaginary={3: -9.0}, modes=None),
+            "0": _Freq(imaginary={5: -42.0}, modes=_modes(6)),
+            "0_m5_pos": _Freq(imaginary={3: -9.0}, modes=None),  # still imaginary
+            "0_m5_neg": _Freq(imaginary={3: -9.0}, modes=None),
         }
     )
     ctx = _ctx(tmp_path, (_h2("0"),))
@@ -374,7 +385,7 @@ def test_run_nms_unresolved_becomes_failure(tmp_path: Path):
 
 
 def test_run_nms_no_modes_is_failure(tmp_path: Path):
-    engine = _FakeNms(freqs={"0": FrequencyData(imaginary={5: -42.0}, modes=None)})
+    engine = _FakeNms(freqs={"0": _Freq(imaginary={5: -42.0}, modes=None)})
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)
     res = nms.run_nms(engine, round1, [], ctx, ctx.step_cfg)
@@ -383,7 +394,7 @@ def test_run_nms_no_modes_is_failure(tmp_path: Path):
 
 def test_run_nms_no_displacements_is_failure(tmp_path: Path):
     """An imaginary mode beyond the tensor → no children → unresolved failure."""
-    engine = _FakeNms(freqs={"0": FrequencyData(imaginary={37: -118.0}, modes=_modes(6))})
+    engine = _FakeNms(freqs={"0": _Freq(imaginary={37: -118.0}, modes=_modes(6))})
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)
     res = nms.run_nms(engine, round1, [], ctx, ctx.step_cfg)
@@ -392,7 +403,7 @@ def test_run_nms_no_displacements_is_failure(tmp_path: Path):
 
 def test_run_nms_random_all_children_fail_is_failure(tmp_path: Path):
     """random with every displaced child failing to converge → the parent is a failure."""
-    engine = _FakeNms(freqs={"0": FrequencyData(imaginary={}, modes=_modes(8))}, fail_children=True)
+    engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=_modes(8))}, fail_children=True)
     ctx = _ctx(tmp_path, (_h2("0"),), options={"target": "random", "num_random_displacements": 1})
     round1 = _seed_round1(engine, ctx)
     res = nms.run_nms(engine, round1, [], ctx, ctx.step_cfg)
@@ -401,7 +412,7 @@ def test_run_nms_random_all_children_fail_is_failure(tmp_path: Path):
 
 
 def test_run_nms_carries_round1_failures(tmp_path: Path):
-    engine = _FakeNms(freqs={"0": FrequencyData(imaginary={}, modes=None)})
+    engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=None)})
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)
     prior = [Failure("9", "output missing", None)]
@@ -413,9 +424,9 @@ def test_run_nms_retries_unconverged_child(tmp_path: Path):
     """An unconverged round-2 child is retried from best (its own attempt dir) and resolves."""
     engine = _FakeNms(
         freqs={
-            "0": FrequencyData(imaginary={5: -42.0}, modes=_modes(6)),
-            "0_m5_pos": FrequencyData(imaginary={}, modes=None),
-            "0_m5_neg": FrequencyData(imaginary={}, modes=None),
+            "0": _Freq(imaginary={5: -42.0}, modes=_modes(6)),
+            "0_m5_pos": _Freq(imaginary={}, modes=None),
+            "0_m5_neg": _Freq(imaginary={}, modes=None),
         },
         converge_on_retry={"0_m5_pos", "0_m5_neg"},
     )
@@ -430,9 +441,9 @@ def test_rebuild_nms_reads_existing_children(tmp_path: Path):
     """rebuild reuses the children on disk from a prior run (no new submission)."""
     engine = _FakeNms(
         freqs={
-            "0": FrequencyData(imaginary={5: -42.0}, modes=_modes(6)),
-            "0_m5_pos": FrequencyData(imaginary={}, modes=None),
-            "0_m5_neg": FrequencyData(imaginary={}, modes=None),
+            "0": _Freq(imaginary={5: -42.0}, modes=_modes(6)),
+            "0_m5_pos": _Freq(imaginary={}, modes=None),
+            "0_m5_neg": _Freq(imaginary={}, modes=None),
         }
     )
     ctx = _ctx(tmp_path, (_h2("0"),))
@@ -443,7 +454,7 @@ def test_rebuild_nms_reads_existing_children(tmp_path: Path):
 
 
 def test_rebuild_nms_unresolved_when_no_attempt_on_disk(tmp_path: Path):
-    engine = _FakeNms(freqs={"0": FrequencyData(imaginary={5: -42.0}, modes=_modes(6))})
+    engine = _FakeNms(freqs={"0": _Freq(imaginary={5: -42.0}, modes=_modes(6))})
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)  # round-1 only, no attempt dir
     res = nms.rebuild_nms(engine, round1, [], ctx, ctx.step_cfg)

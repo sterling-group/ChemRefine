@@ -2,7 +2,7 @@
 
 This is the one module the flat pipeline imports from the engine subsystem: the
 :class:`CalculationEngine` / :class:`NmsCapableEngine` Protocols, the :class:`JobExecutable`
-provision contract, the DTOs (:class:`ParsedResult`, :class:`FrequencyData`,
+provision contract, the DTOs (:class:`ParsedResult`,
 :class:`NmsInputInfo`), and the registry (:data:`ENGINES` / :func:`register` /
 :func:`get_engine`). Importing :mod:`chemrefine.engines` registers every bundled engine, so the
 orchestrator looks engines up by name and never imports a concrete engine module.
@@ -29,9 +29,10 @@ Custom / non-job              :class:`CalculationEngine`       ``prepare`` / ``s
 (mlip-train, fake)            directly                        / ``input_digest``
 ============================  ==============================  =====================================
 
-* **Capabilities** — NMS is **not** a flag: implement :class:`NmsCapableEngine`'s two hooks
-  (``nms_input_info`` + ``read_frequencies``) and the generic coordinator (:mod:`chemrefine.nms`)
-  drives it; capability is detected via ``isinstance``.
+* **Capabilities** — NMS is **not** a flag: implement :class:`NmsCapableEngine`'s
+  ``nms_input_info`` hook and populate ``imaginary_freqs`` / ``normal_modes`` on each parsed
+  ``Structure``; the generic coordinator (:mod:`chemrefine.nms`) drives it and capability is
+  detected via ``isinstance``.
 * **YAML knobs** — a Pydantic model in ``engines/<name>/options.py`` subclassing
   :class:`~chemrefine.engines._options.EngineOptions`; read it in the primitives.
 * **Register** — import the class in ``engines/<name>/__init__.py`` and add the package to
@@ -93,21 +94,6 @@ class CalculationEngine(Protocol):
 
 
 @dataclass(frozen=True)
-class FrequencyData:
-    """Imaginary frequencies + normal-mode tensor parsed from one output.
-
-    The engine-specific half of NMS (see :class:`NmsCapableEngine`): ``imaginary`` maps
-    a mode index to its frequency (cm⁻¹); ``None`` means the output had **no** frequency
-    table at all — distinct from ``{}`` (a parsed table with zero imaginary modes), so a
-    run that never produced frequencies can't be mistaken for a verified minimum.
-    ``modes`` is the normal-mode displacement tensor (``None`` if absent).
-    """
-
-    imaginary: dict[int, float] | None
-    modes: NDArray[np.float64] | None
-
-
-@dataclass(frozen=True)
 class NmsInputInfo:
     """What an engine's configured input does, for the generic NMS coordinator.
 
@@ -129,8 +115,11 @@ class ParsedResult:
     ``ParsedResult``s into :class:`~chemrefine.state.Structure` objects with IDs +
     parents. ``terminated`` / ``converged`` are run-status flags (``None`` when the
     engine doesn't report them, e.g. sidecar ensemble frames); a structure is a
-    *failure* only when one is explicitly ``False``. The thermochemistry fields are
-    populated only by a frequency run.
+    *failure* only when one is explicitly ``False``. The thermochemistry + frequency
+    fields are populated only by a frequency run: ``imaginary_freqs`` maps a mode index to
+    its frequency (cm⁻¹) — ``None`` = no frequency table at all (distinct from ``{}`` = a
+    table with zero imaginary modes) — and ``normal_modes`` is the displacement tensor NMS
+    displaces along.
     """
 
     symbols: tuple[str, ...]
@@ -142,6 +131,8 @@ class ParsedResult:
     gibbs_hartree: float | None = None
     enthalpy_hartree: float | None = None
     energy_zpe_hartree: float | None = None
+    imaginary_freqs: dict[int, float] | None = None
+    normal_modes: NDArray[np.float64] | None = None
 
 
 @runtime_checkable
@@ -179,22 +170,20 @@ class JobExecutable(Protocol):
 
 @runtime_checkable
 class NmsCapableEngine(CalculationEngine, Protocol):
-    """An engine that supports normal-mode sampling, via just two hooks.
+    """An engine that supports normal-mode sampling, via one input-introspection hook.
 
-    The two-round NMS algorithm — displacement, round-2 submission, resolution, retry —
-    is engine-independent and lives in :mod:`chemrefine.nms`, which drives any engine
-    through these two hooks plus the standard lifecycle. A new NMS-capable engine just
-    implements these two methods; capability is detected with ``isinstance``.
+    The two-round NMS algorithm — displacement, round-2 submission, resolution, retry — is
+    engine-independent and lives in :mod:`chemrefine.nms`, which drives any engine through this
+    hook plus the standard lifecycle. The *output* half is no hook at all: the engine's
+    :meth:`parse` already carries ``imaginary_freqs`` + ``normal_modes`` on each
+    :class:`~chemrefine.state.Structure` (parsed in the same single pass as energy/geometry),
+    so NMS reads them off the structures it already holds. A new NMS-capable engine implements
+    only ``nms_input_info`` and populates those two structure fields; capability is detected
+    with ``isinstance``.
     """
 
     def nms_input_info(self, ctx: StepContext) -> NmsInputInfo:
         """Introspect this step's configured input (TS search? computes frequencies?)."""
-        ...
-
-    def read_frequencies(
-        self, structure_id: str, step_dir: Path, ctx: StepContext
-    ) -> FrequencyData:
-        """Read a structure's imaginary frequencies + normal modes from its output."""
         ...
 
 

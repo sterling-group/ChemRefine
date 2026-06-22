@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from chemrefine.engines.orca.input import build_input, clamp_pal, parse_pal
+from chemrefine.engines.orca.input import build_input, clamp_pal
+from chemrefine.engines.orca.inspect import parse_pal
 
 
 def _template(tmp_path: Path, body: str) -> Path:

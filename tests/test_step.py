@@ -514,7 +514,7 @@ def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypa
     """run_step routes an `nms: true` step through the generic coordinator (nms.run_nms),
     then applies the on_failure policy to its survivors/failures."""
     from chemrefine import nms as nms_mod
-    from chemrefine.engines.api import ENGINES, FrequencyData, NmsInputInfo, register
+    from chemrefine.engines.api import ENGINES, NmsInputInfo, register
     from chemrefine.state import JobBatch, StepInputs, StepResults
     from chemrefine.step_failures import NmsResolution
 
@@ -545,9 +545,6 @@ def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypa
 
         def nms_input_info(self, ctx):
             return NmsInputInfo(is_transition_state=False, computes_frequencies=True)
-
-        def read_frequencies(self, structure_id, step_dir, ctx):
-            return FrequencyData(imaginary={}, modes=None)
 
     try:
         cfg = _config(tmp_path, engine="fake-nms", nms=True)

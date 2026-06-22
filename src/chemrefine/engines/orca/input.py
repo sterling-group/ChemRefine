@@ -1,4 +1,4 @@
-"""ORCA input file generation from a template + XYZ geometry.
+"""ORCA input file generation from a template + XYZ geometry (the writer half).
 
 The template is a user-provided ORCA ``.inp`` file (e.g. ``step1.inp``)
 that declares the method, basis, and any ``%pal`` / ``%scf`` blocks.
@@ -12,13 +12,11 @@ Engines that drive ORCA from an external program (MLIP, PySCF) pass
 their own ``extra_blocks`` argument — typically a ``%method ... end``
 block that points to the external server wrapper.
 
-The :func:`parse_pal` / :func:`clamp_pal` helpers also live here so
-PAL-budget extraction and enforcement are co-located with the rest of
-the ORCA input vocabulary — generic SLURM machinery is engine-agnostic
-and must not parse ORCA's ``%pal`` directive itself. ``build_input``
-clamps any template PAL declaration to the caller's ``max_pal`` so the
-generated input never requests more MPI ranks than its SLURM
-allocation grants.
+*Reading* facts from a template (run type, PAL count) is the reader half,
+:mod:`chemrefine.engines.orca.inspect`. ``build_input`` clamps any template PAL
+declaration to the caller's ``max_pal`` (via :func:`clamp_pal`, reusing the inspect
+module's PAL grammar) so the generated input never requests more MPI ranks than its
+SLURM allocation grants.
 """
 
 from __future__ import annotations
@@ -26,32 +24,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from chemrefine.engines.orca.inspect import _PAL_PATTERNS
+
 _XYZFILE_DIRECTIVE_RE = re.compile(r"^\s*\*\s+xyzfile.*$", re.MULTILINE)
-
-# Every spelling of an ORCA PAL declaration, as ``(prefix)(count)`` pairs so
-# :func:`parse_pal` reads the count and :func:`clamp_pal` rewrites it in place.
-_PAL_PATTERNS = (
-    re.compile(r"(nprocs\s+)(\d+)", re.IGNORECASE),
-    re.compile(r"\b(PAL)(\d+)\b", re.IGNORECASE),
-    re.compile(r"(^\s*PAL\s+)(\d+)\b", re.IGNORECASE | re.MULTILINE),
-)
-
-
-def parse_pal(input_file: str | Path) -> int:
-    """Return the PAL / ``nprocs`` value declared in an ORCA input or template.
-
-    Per-structure ``.inp`` files inherit their ``%pal`` block from the
-    step template, so callers typically pass the template path once
-    per step rather than re-reading every generated copy. Falls back
-    to ``1`` when no PAL directive is found, matching ORCA's own
-    default for serial runs.
-    """
-    text = Path(input_file).read_text(encoding="utf-8")
-    for pattern in _PAL_PATTERNS:
-        m = pattern.search(text)
-        if m:
-            return int(m.group(2))
-    return 1
 
 
 def clamp_pal(text: str, max_pal: int) -> str:

@@ -3,9 +3,10 @@
 NMS is a generic capability, not an engine feature. This module owns the whole
 two-round algorithm — read each structure's imaginary modes, displace along them,
 re-optimise the ± children, resolve to a stationary point — and drives the compute
-engine *only* through :class:`chemrefine.engines.api.NmsCapableEngine` (its two
-hooks ``nms_input_info`` + ``read_frequencies`` plus the standard lifecycle). It
-imports no engine package, so a new NMS-capable engine needs only those two hooks.
+engine *only* through :class:`chemrefine.engines.api.NmsCapableEngine` (its one
+``nms_input_info`` hook plus the standard lifecycle). The frequency *values* it reads come
+off each ``Structure`` (``imaginary_freqs`` / ``normal_modes``, parsed in the same pass as
+geometry), so it imports no engine package and never re-parses an output.
 
 Unified "attempt" model (shared with the on_failure convergence retry): a structure
 lives at ``stepN/<id>/``; resolving it is an *attempt* whose displaced ± re-opts run
@@ -238,25 +239,20 @@ def _best(structures: list[Structure], fallback: Structure) -> Structure:
     return min(structures, key=lambda s: (s.energy_hartree is None, s.energy_hartree or 0.0))
 
 
-def _is_resolved(
-    engine: NmsCapableEngine,
-    child: Structure,
-    attempt_dir: Path,
-    ctx: StepContext,
-    target: int | None,
-) -> bool:
+def _is_resolved(child: Structure, target: int | None) -> bool:
     """Whether a round-2 child reached the target (terminated + matching imaginary count).
 
-    ``target is None`` (random) accepts any terminated child. A child whose output has
-    no frequency table is never resolved — without freq evidence, zero imaginary modes
-    can't be claimed (only counted-and-zero is a verified minimum).
+    ``target is None`` (random) accepts any terminated child. A child whose parse found no
+    frequency table (``imaginary_freqs is None``) is never resolved — without freq evidence,
+    zero imaginary modes can't be claimed (only counted-and-zero is a verified minimum). The
+    frequencies were parsed onto the child in the same pass as its geometry, so this is a
+    field read — no second parse of the ``.out``.
     """
     if child.terminated is False:
         return False
     if target is None:
         return True
-    freq = engine.read_frequencies(child.id, attempt_dir, ctx)
-    return freq.imaginary is not None and len(freq.imaginary) == target
+    return child.imaginary_freqs is not None and len(child.imaginary_freqs) == target
 
 
 def _children_of(
@@ -363,23 +359,26 @@ def run_nms(
     survivors: list[Structure] = []
     failures: list[step_failures.Failure] = list(round1_failures)
     for s in round1.structures:
-        freq = engine.read_frequencies(s.id, ctx.step_dir, ctx)
-        if target is not None and freq.imaginary is not None and len(freq.imaginary) == target:
+        if (
+            target is not None
+            and s.imaginary_freqs is not None
+            and len(s.imaginary_freqs) == target
+        ):
             survivors.append(replace(s, converged=True))  # already at the target, in place
             continue
-        if freq.modes is None:
+        if s.normal_modes is None:
             logger.warning("NMS %s: no normal-mode tensor; cannot displace (unresolved)", s.id)
             failures.append(step_failures.Failure(s.id, _UNRESOLVED, s))
             continue
         children = _children_of(
-            s, select_displacements(s, freq.imaginary or {}, freq.modes, opts, rng)
+            s, select_displacements(s, s.imaginary_freqs or {}, s.normal_modes, opts, rng)
         )
         if not children:
             failures.append(step_failures.Failure(s.id, _UNRESOLVED, s))
             continue
         attempt = next_attempt_dir(ctx.step_dir / s.id)
         round2 = _run_round_two(engine, children, ctx, attempt)
-        resolved = [c for c in round2 if _is_resolved(engine, c, attempt, ctx, target)]
+        resolved = [c for c in round2 if _is_resolved(c, target)]
         s_surv, s_fail = _accept(resolved, round2, s, ctx, target, write_winner=True)
         survivors.extend(s_surv)
         failures.extend(s_fail)
@@ -405,19 +404,22 @@ def rebuild_nms(
     survivors: list[Structure] = []
     failures: list[step_failures.Failure] = list(round1_failures)
     for s in round1.structures:
-        freq = engine.read_frequencies(s.id, ctx.step_dir, ctx)
-        if target is not None and freq.imaginary is not None and len(freq.imaginary) == target:
+        if (
+            target is not None
+            and s.imaginary_freqs is not None
+            and len(s.imaginary_freqs) == target
+        ):
             survivors.append(replace(s, converged=True))
             continue
         attempt = latest_attempt_dir(ctx.step_dir / s.id)
-        if freq.modes is None or attempt is None:
+        if s.normal_modes is None or attempt is None:
             failures.append(step_failures.Failure(s.id, _UNRESOLVED, s))
             continue
         children = _children_of(
-            s, select_displacements(s, freq.imaginary or {}, freq.modes, opts, rng)
+            s, select_displacements(s, s.imaginary_freqs or {}, s.normal_modes, opts, rng)
         )
         round2 = _parse_round_two(engine, children, ctx, attempt)
-        resolved = [c for c in round2 if _is_resolved(engine, c, attempt, ctx, target)]
+        resolved = [c for c in round2 if _is_resolved(c, target)]
         s_surv, s_fail = _accept(resolved, round2, s, ctx, target, write_winner=False)
         survivors.extend(s_surv)
         failures.extend(s_fail)

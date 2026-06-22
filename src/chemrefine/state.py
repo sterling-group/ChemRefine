@@ -60,6 +60,15 @@ class Structure:
     energy_zpe_hartree: float | None = None
     """Electronic energy + zero-point correction (Hartree); ``None`` when no
     thermochemistry was computed. Used by ``sample.energy_type: electronic_zero_point``."""
+    imaginary_freqs: dict[int, float] | None = None
+    """Imaginary normal modes (mode index → cm⁻¹) from a frequency calc, read in the same
+    pass as energy/geometry; ``None`` = no frequency table (distinct from ``{}`` = a verified
+    minimum). The engine-independent NMS coordinator reads this off the structure."""
+    normal_modes: NDArray[np.float64] | None = None
+    """Normal-mode displacement tensor ``(n_atoms, 3, n_modes)`` from a frequency calc; ``None``
+    when absent. A **transient** artifact used by NMS to displace along imaginary modes — it is
+    *not* persisted to the cache (an active NMS run always re-parses), so a cache-reloaded
+    structure carries ``None``."""
 
 
 @dataclass(frozen=True)

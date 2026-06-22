@@ -7,9 +7,9 @@ shared (the ``%method ProgExt`` block, the server-launch ``run_block``, the per-
 the ``_server_cmd`` template) and a concrete subclass declares just four ClassVars:
 ``backend`` / ``wrapper_filename`` / ``options_cls`` / ``calculator_cls``.
 
-ExtOpt engines are **NMS-capable**: they inherit ORCA's ``nms_input_info`` /
-``read_frequencies`` hooks, because ORCA computes the Hessian numerically over the backend's
-gradients — so a ``Freq`` template yields real frequencies.
+ExtOpt engines are **NMS-capable**: they inherit ORCA's ``nms_input_info`` hook and its
+frequency-carrying parse, because ORCA computes the Hessian numerically over the backend's
+gradients — so a ``Freq`` template yields real frequencies on each parsed structure.
 """
 
 from __future__ import annotations

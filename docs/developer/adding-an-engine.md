@@ -96,14 +96,15 @@ prepare → submit → parse
 ## Supporting NMS
 
 Normal-mode sampling is **engine-independent**: the two-round algorithm lives in
-`chemrefine.nms` and drives any engine through *two* hooks. NMS is a capability, not a flag —
-implement the [`NmsCapableEngine`](../api/engines_api.md) Protocol's two methods and capability
-is detected with `isinstance` (the ExtOpt engines get it for free by inheriting ORCA's hooks):
+`chemrefine.nms`. NMS is a capability, not a flag — implement the
+[`NmsCapableEngine`](../api/engines_api.md) Protocol's one hook and populate two structure
+fields; capability is detected with `isinstance` (the ExtOpt engines get it for free from ORCA):
 
 - `nms_input_info(ctx) -> NmsInputInfo` — introspect the step's input (is it a TS search? does it
   compute frequencies?), driving the default target and the freq gate.
-- `read_frequencies(structure_id, step_dir, ctx) -> FrequencyData` — read a structure's imaginary
-  frequencies + normal-mode tensor from its output.
+- set `imaginary_freqs` (mode → cm⁻¹) and `normal_modes` (the displacement tensor) on each parsed
+  `Structure`, in the *same* pass that reads geometry/energy — NMS reads them off the structure, so
+  there is no separate output-reading hook and the file is parsed once.
 
 Everything else — displacement, round-2 submission, resolution, retry — is generic.
 

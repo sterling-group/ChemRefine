@@ -92,6 +92,8 @@ def build_structures(
                     gibbs_hartree=ps.gibbs_hartree,
                     enthalpy_hartree=ps.enthalpy_hartree,
                     energy_zpe_hartree=ps.energy_zpe_hartree,
+                    imaginary_freqs=ps.imaginary_freqs,
+                    normal_modes=ps.normal_modes,
                 )
             )
     return StepResults(structures=tuple(out))
