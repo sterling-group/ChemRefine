@@ -4,8 +4,8 @@ These parsers yield a **list** of structures (vs the single-structure ``.out`` a
 :mod:`chemrefine.engines.orca.output`). GOAT / Docker / Solvator are multi-frame ``.xyz``
 sidecars (``<base>.<suffix>`` next to the ``.out``); PES is a scan whose converged points are
 segments of the ``.out`` text itself. PES reuses the shared energy reader
-(:mod:`chemrefine.engines.orca.energy`) + the run-status reader
-(:mod:`chemrefine.engines.orca.status`); the ``.xyz`` walkers are self-contained.
+(:mod:`chemrefine.engines.orca.output.energy`) + the run-status reader
+(:mod:`chemrefine.engines.orca.output.status`); the ``.xyz`` walkers are self-contained.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from chemrefine.engines.api import ParsedResult
-from chemrefine.engines.orca import energy, status
+from chemrefine.engines.orca.output import energy, status
 from chemrefine.errors import OutputParseError
 
 # Per-frame energy-header regex + the ``<base>.<suffix>`` sidecar filename ORCA writes the

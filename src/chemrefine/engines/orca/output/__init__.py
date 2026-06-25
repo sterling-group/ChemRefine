@@ -20,7 +20,14 @@ import numpy as np
 from numpy.typing import NDArray
 
 from chemrefine.engines.api import ParsedResult
-from chemrefine.engines.orca import energy, ensembles, forces, frequencies, geometry, status
+from chemrefine.engines.orca.output import (
+    energy,
+    ensembles,
+    forces,
+    frequencies,
+    geometry,
+    status,
+)
 from chemrefine.errors import OutputParseError
 
 # Operations whose structure comes from the ``.out`` itself (not a sidecar). ``freq`` is an

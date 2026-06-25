@@ -2,7 +2,7 @@
 
 A tiny shared concern read by both the single-structure coordinator
 (:mod:`chemrefine.engines.orca.output`) and the PES parser
-(:mod:`chemrefine.engines.orca.ensembles`), so it lives in its own module rather than inline
+(:mod:`chemrefine.engines.orca.output.ensembles`), so it lives in its own module rather than inline
 in either. ORCA prints ``****ORCA TERMINATED NORMALLY****`` only on a clean exit; any
 ``... NOT CONVERGED ...`` (SCF or geometry/MaxIter) marks a failed stationary point.
 """

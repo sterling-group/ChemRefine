@@ -7,7 +7,7 @@ from synthetic import (
     THERMOCHEMISTRY_BLOCK as _SYNTH_THERMO,
 )
 
-from chemrefine.engines.orca.energy import (
+from chemrefine.engines.orca.output.energy import (
     parse_final_energy_from_text,
     parse_thermochemistry_from_text,
 )

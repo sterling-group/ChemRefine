@@ -11,7 +11,7 @@ from synthetic import (
     NORMAL_MODES_BLOCK_2_ATOMS as _SYNTH_MODES,
 )
 
-from chemrefine.engines.orca.frequencies import (
+from chemrefine.engines.orca.output.frequencies import (
     parse_frequencies_from_text,
     parse_imaginary_frequencies_from_text,
     parse_normal_modes_tensor_from_text,

@@ -8,14 +8,14 @@ import pytest
 from synthetic import THERMOCHEMISTRY_BLOCK, synthetic_dft_output
 
 from chemrefine.engines.api import ParsedResult
-from chemrefine.engines.orca.ensembles import (
+from chemrefine.engines.orca.output import parse_dft, parse_dft_from_text, parse_output
+from chemrefine.engines.orca.output.ensembles import (
     parse_docker,
     parse_goat_ensemble,
     parse_pes,
     parse_solvator,
 )
-from chemrefine.engines.orca.forces import parse_forces_from_text as parse_forces
-from chemrefine.engines.orca.output import parse_dft, parse_dft_from_text, parse_output
+from chemrefine.engines.orca.output.forces import parse_forces_from_text as parse_forces
 from chemrefine.errors import OutputParseError
 
 _WATER = [("O", 0.0, 0.0, 0.0), ("H", 0.0, 0.0, 1.0), ("H", 0.0, 1.0, 0.0)]
@@ -671,7 +671,7 @@ def test_xyz_ensemble_breaks_on_truncated_file(tmp_path: Path):
 def test_pes_coord_block_at_end_of_segment_is_parsed():
     """A coordinate block that runs to the very end of its segment (no trailing
     blank line) still yields its atoms — the row loop must exit cleanly at EOF."""
-    from chemrefine.engines.orca.ensembles import _parse_last_pes_coord_block
+    from chemrefine.engines.orca.output.ensembles import _parse_last_pes_coord_block
 
     segment = (
         "CARTESIAN COORDINATES (ANGSTROEM)\n"

@@ -1,7 +1,7 @@
 """ORCA frequency-block parsing: the vibrational table + the normal-mode tensor.
 
 One section, one module. (Thermochemistry — Gibbs / enthalpy / ZPE — moved to
-:mod:`chemrefine.engines.orca.energy`, since those are energies.) The
+:mod:`chemrefine.engines.orca.output.energy`, since those are energies.) The
 :mod:`chemrefine.engines.orca.output` coordinator calls these over the text it already read.
 
 The ``VIBRATIONAL FREQUENCIES`` table looks like::
