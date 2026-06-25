@@ -1,4 +1,4 @@
-# Migrating from v1.3.1 (main) YAML
+# Migrating from v1 to v2
 
 ChemRefine v2 loads your existing v1.3.1 workflow YAML **unchanged** — the config
 loader rewrites the old keys to the current schema at parse time (you'll see a

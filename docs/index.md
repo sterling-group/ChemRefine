@@ -85,7 +85,7 @@ chemrefine run input.yaml --dry-run         # validate + describe; no jobs
 - **[Concepts](concepts/index.md)** — the architecture & code flow, the
   fingerprint cache, filtering, and normal-mode sampling.
 - **[API Reference](api/index.md)** — the orchestration core and the engine contract.
-- **[Migrating from v1.3.1](migrating-from-main.md)** — old keys/flags map to v2.
+- **[Migrating from v1 to v2](migrating-v1-to-v2.md)** — old keys/flags map to v2.
 
 Requires **Python 3.11–3.13** and **ORCA 6+**; SLURM is optional (the generated
 `.slurm` script runs unchanged under `bash` locally).

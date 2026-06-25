@@ -11,12 +11,13 @@ version is tagged.
 A ground-up rewrite of the v1.3.1 pipeline. Legacy YAML configs and
 flag-style CLI invocations keep working through a translation layer that
 warns once per deprecated spelling — see
-[migrating from v1.3.1](docs/migrating-from-main.md) for the full map.
+[migrating from v1 to v2](https://sterling-group.github.io/ChemRefine/migrating-v1-to-v2/)
+for the full map.
 
 ### Added
 
 - Engine plugin system: a `CalculationEngine` protocol plus a registry, with
-  four documented base shapes for new engines (`engines/base.py`). Bundled
+  four documented base shapes for new engines (`engines/api.py`). Bundled
   engines: `orca`, `mlip`, `mlip-extopt`, `mlip-train`, `pyscf`,
   `pyscf-extopt`.
 - Subcommand CLI — `run`, `resume`, `rerun [step]`, `rerun-errors [step]`,

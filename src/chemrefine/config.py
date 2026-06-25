@@ -353,7 +353,7 @@ def _normalize_step(step: Any) -> Any:
     if "calculation_type" in s:
         raise ConfigError(
             "`calculation_type` is no longer supported; use `engine:` + `operation:` "
-            "(see docs/migrating-from-main.md)"
+            "(see docs/migrating-v1-to-v2.md)"
         )
 
     # Engine name: a moved engine-config block decides it, else the rename map.

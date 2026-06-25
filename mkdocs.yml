@@ -72,12 +72,16 @@ markdown_extensions:
   - attr_list
   - md_in_html
   - def_list
+  - pymdownx.snippets:
+      # Lets docs/changelog.md include the repo-root CHANGELOG.md (single source).
+      base_path: ["."]
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
 
 extra_javascript:
   - javascripts/mathjax.js
+  - javascripts/site-title.js
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 nav:
@@ -128,8 +132,9 @@ nav:
           - Filesystem I/O: api/io.md
           - Identifiers: api/ids.md
           - Job Log: api/job_log.md
-  - Migrating from v1.3.1: migrating-from-main.md
+  - Migrating from v1 to v2: migrating-v1-to-v2.md
   - Developer Guide:
       - developer/index.md
       - Contributing: developer/contributing.md
       - Adding an Engine: developer/adding-an-engine.md
+  - Changelog: changelog.md

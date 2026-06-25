@@ -15,6 +15,26 @@ place:
 Adding an engine touches exactly two things: a new `engines/<name>/` package, and one line in
 `engines/__init__.py`'s import list. You never edit a building block to make a new engine exist.
 
+## The steps
+
+Adding an engine is the same handful of moves every time. Walk them in order — each has a section
+below with the detail, and the [worked example](#worked-example-a-minimal-engine) at the end
+strings them into one engine you can read top to bottom:
+
+1. **Scaffold the package** — make `engines/<name>/` with `engine.py`, `options.py`, and an
+   `__init__.py`.
+2. **Pick a kind and write `engine.py`** — choose the base whose shape matches your backend
+   ([Pick a kind](#pick-a-kind-and-provide-its-pieces)), decorate the class with
+   `@register("<name>")`, declare its [ClassVars](#declare-the-metadata-classvars), and implement
+   only the primitives that kind asks for.
+3. **Validate the YAML knobs** in `options.py` ([Validate the YAML knobs](#validate-the-yaml-knobs)).
+4. **Register it** — the [two import lines](#wire-registration) that make `@register` run.
+5. **Wire resources** — a binary path or an optional `pip` extra ([Resources](#resources)).
+6. **Support NMS** only if the engine computes frequencies ([Supporting NMS](#supporting-nms)).
+7. **Add tests** at 100% coverage ([Tests](#tests)).
+
+The sections that follow are those steps in detail.
+
 ## Pick a kind and provide its pieces
 
 Decorate the class with `@register("<name>")` and choose the **kind** that matches the backend:
@@ -112,6 +132,133 @@ Everything else — displacement, round-2 submission, resolution, retry — is g
 
 Add `tests/test_engines_<name>*.py`, mirroring the existing engine tests. New code ships at 100%
 line+branch coverage with a docstring on every public symbol.
+
+## Worked example: a minimal engine
+
+To see the steps as one unit, here is a complete *illustrative* engine — `demoqm`, a fictional
+quantum-chemistry program with its own `.inp` format and a `demoqm` binary. It's a `JobEngine`
+(one job per structure, its own input file). This code is **not shipped** — don't look for
+`engines/demoqm/` — but every signature matches the real base, so it reads exactly like the
+shipped `orca/`.
+
+The package is three files:
+
+```text
+engines/demoqm/
+  __init__.py     # registration import
+  engine.py       # the engine + its primitives
+  options.py      # the YAML knobs
+```
+
+**Step 1 + 3 — `options.py`** validates `step.options`, reusing the shared `device` field and
+frozen config from `EngineOptions`:
+
+```python
+from __future__ import annotations
+
+from pydantic import Field
+
+from chemrefine.engines._options import EngineOptions
+
+
+class DemoqmOptions(EngineOptions):
+    """Validated ``step.options`` for the demoqm engine."""
+
+    basis: str = Field("sto-3g", min_length=1)
+    """Orbital basis set, written into the input."""
+```
+
+**Step 2 — `engine.py`** picks `JobEngine`, declares the ClassVars, and implements only the
+per-structure primitives (`prepare` / `submit` / `parse` come from the base — you don't write them):
+
+```python
+from __future__ import annotations
+
+from pathlib import Path
+from typing import ClassVar
+
+from chemrefine.engines._job import JobEngine
+from chemrefine.engines.api import ParsedResult, register
+from chemrefine.engines.demoqm.options import DemoqmOptions
+from chemrefine.state import StepContext
+
+
+@register("demoqm")
+class DemoqmEngine(JobEngine):
+    """Illustrative QM engine: runs the ``demoqm`` binary once per structure."""
+
+    name: ClassVar[str] = "demoqm"
+    label: ClassVar[str] = "DemoQM"
+    template_suffix: ClassVar[str] = "inp"  # input-file extension
+    output_suffix: ClassVar[str] = "out"  # output-file extension
+    output_globs: ClassVar[tuple[str, ...]] = ("*.out",)
+
+    def build_input(
+        self,
+        *,
+        xyz_path: Path,
+        template_path: Path,
+        input_path: Path,
+        output_path: Path,
+        ctx: StepContext,
+    ) -> None:
+        """Render this structure's ``.inp`` from the step template + its geometry."""
+        opts = DemoqmOptions.from_raw(ctx.step_cfg.options)
+        body = template_path.read_text(encoding="utf-8")
+        input_path.write_text(
+            body.replace("$BASIS", opts.basis).replace("$XYZ", xyz_path.name),
+            encoding="utf-8",
+        )
+
+    def pal(self, ctx: StepContext) -> int:
+        """Cores per job, before the scheduler clamps it to ``max_cores``."""
+        return 1
+
+    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
+        """The bash that runs inside the job's work dir."""
+        demoqm = ctx.executables.get("demoqm", "demoqm")
+        return f"{demoqm} {inp_path.name} > $OUTPUT_DIR/{out_path.name}"
+
+    def parse_one(
+        self, output_path: Path, structure_id: str, ctx: StepContext
+    ) -> list[ParsedResult]:
+        """Parse one ``.out`` into a ``ParsedResult`` (return ≥2 to fan out to an ensemble)."""
+        text = output_path.read_text(encoding="utf-8", errors="replace")
+        symbols, positions, energy = _read_demoqm_out(text)  # your regexes; cf. engines/orca/output/
+        return [
+            ParsedResult(
+                symbols=symbols,
+                positions=positions,
+                energy_hartree=energy,
+                forces_ev_per_a=None,
+                terminated=True,
+            )
+        ]
+```
+
+`gpus` defaults to `0` (CPU); a GPU engine overrides it.
+
+**Step 4 — register** with `__init__.py` plus one line in `engines/__init__.py`:
+
+```python
+# engines/demoqm/__init__.py
+from chemrefine.engines.demoqm.engine import DemoqmEngine
+
+__all__ = ["DemoqmEngine"]
+```
+
+```python
+# engines/__init__.py  — add demoqm to the import + __all__
+from chemrefine.engines import _fake, demoqm, mlip, orca, pyscf
+```
+
+That's a working engine: `engine: demoqm` in a step now renders `step{N}.inp` per structure, runs
+`demoqm`, and parses each result back into the pipeline.
+
+For the real, shipped versions to copy: **`orca/`** is the `JobEngine` for an own-input-format
+program; **`pyscf/`** is a `ScriptEngine` (it overrides only `_template_vars`); **`mlip/`** adds a
+backend server. A library-only backend (e.g. a future `tblite` engine) is a `ScriptEngine` or a
+`_backend_server` backend — not a binary wrapper like this one.
 
 See the [Engine Contract & Registry API](../api/engines_api.md) for the exact signatures, and
 [Architecture & Code Flow](../concepts/architecture.md) for where the lifecycle sits in the run.
