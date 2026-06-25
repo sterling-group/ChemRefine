@@ -23,7 +23,7 @@ carries the frequency values on each parsed structure.
 
 ## Output coordinator
 
-::: chemrefine.engines.orca.output
+::: chemrefine.engines.orca.output.coordinator
 
 ## Output sections
 

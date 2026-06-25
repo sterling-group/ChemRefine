@@ -1,9 +1,9 @@
 """Multi-structure ORCA outputs: GOAT / Docker / Solvator ensembles + PES scans.
 
 These parsers yield a **list** of structures (vs the single-structure ``.out`` assembled by
-:mod:`chemrefine.engines.orca.output`). GOAT / Docker / Solvator are multi-frame ``.xyz``
-sidecars (``<base>.<suffix>`` next to the ``.out``); PES is a scan whose converged points are
-segments of the ``.out`` text itself. PES reuses the shared energy reader
+:mod:`chemrefine.engines.orca.output.coordinator`). GOAT / Docker / Solvator are multi-frame
+``.xyz`` sidecars (``<base>.<suffix>`` next to the ``.out``); PES is a scan whose converged
+points are segments of the ``.out`` text itself. PES reuses the shared energy reader
 (:mod:`chemrefine.engines.orca.output.energy`) + the run-status reader
 (:mod:`chemrefine.engines.orca.output.status`); the ``.xyz`` walkers are self-contained.
 """
