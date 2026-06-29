@@ -10,6 +10,7 @@ a ``ComputeBackend``-conforming class, then add one line here.
 from __future__ import annotations
 
 import importlib
+from typing import cast
 
 from chemrefine.engines._backend_server.base import ComputeBackend
 
@@ -29,4 +30,4 @@ def load_calculator(name: str) -> type[ComputeBackend]:
     target = CALCULATORS[name]
     module_path, class_name = target.split(":", 1)
     module = importlib.import_module(module_path)
-    return getattr(module, class_name)
+    return cast(type[ComputeBackend], getattr(module, class_name))

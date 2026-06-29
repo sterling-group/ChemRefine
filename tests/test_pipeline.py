@@ -17,12 +17,12 @@ def _h2() -> Atoms:
 
 
 def _config(tmp_path: Path, **overrides) -> Config:
-    base = dict(
-        template_dir=tmp_path / "templates",
-        scratch_dir=tmp_path / "scratch",
-        output_dir=tmp_path / "outputs",
-        steps=[StepConfig(step=1, engine="fake", operation="opt_sp")],
-    )
+    base = {
+        "template_dir": tmp_path / "templates",
+        "scratch_dir": tmp_path / "scratch",
+        "output_dir": tmp_path / "outputs",
+        "steps": [StepConfig(step=1, engine="fake", operation="opt_sp")],
+    }
     base.update(overrides)
     return Config(**base)
 

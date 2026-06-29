@@ -35,11 +35,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from ase import Atoms
@@ -217,7 +218,7 @@ def _atomic_write(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp_", suffix=".part")
     try:
-        with open(fd, "wb") as fh:
+        with os.fdopen(fd, "wb") as fh:
             fh.write(data)
         Path(tmp).replace(path)
     finally:
@@ -446,14 +447,17 @@ def failed_jobs_path(step_dir: Path) -> Path:
     return step_dir / "_cache" / "failed_jobs.json"
 
 
-def save_failed_jobs(step_dir: Path, failed: list[dict]) -> None:
+def save_failed_jobs(step_dir: Path, failed: list[dict[str, Any]]) -> None:
     """Persist the list of failed-job records (``{"structure_id", "reason"}``)."""
     _write_json(failed_jobs_path(step_dir), failed)
 
 
-def load_failed_jobs(step_dir: Path) -> list[dict]:
+def load_failed_jobs(step_dir: Path) -> list[dict[str, Any]]:
     """Return the failed-job records for ``step_dir`` (``[]`` if none)."""
-    return _read_json(failed_jobs_path(step_dir), [], label="failed-jobs ledger")
+    return cast(
+        list[dict[str, Any]],
+        _read_json(failed_jobs_path(step_dir), [], label="failed-jobs ledger"),
+    )
 
 
 def clear_failed_jobs(step_dir: Path) -> None:

@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 from ase import Atoms
+from numpy.typing import NDArray
 
 from chemrefine.engines.api import ParsedResult
 from chemrefine.errors import OutputParseError
@@ -39,12 +41,12 @@ def parse_output(output_path: Path, *, label: str, fallback: Atoms | None) -> li
     ]
 
 
-def _load_output_json(out_path: Path, *, label: str) -> dict:
+def _load_output_json(out_path: Path, *, label: str) -> dict[str, Any]:
     """Read the user's script output JSON; raise :class:`OutputParseError` if malformed."""
     if not out_path.is_file():
         raise OutputParseError(f"{label} output not found: {out_path}")
     try:
-        data = json.loads(out_path.read_text(encoding="utf-8"))
+        data: dict[str, Any] = json.loads(out_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise OutputParseError(f"{label} output {out_path} is not valid JSON: {e}") from e
     if "energy_hartree" not in data:
@@ -52,7 +54,7 @@ def _load_output_json(out_path: Path, *, label: str) -> dict:
     return data
 
 
-def _atoms_from_output(data: dict, *, fallback: Atoms | None) -> Atoms:
+def _atoms_from_output(data: dict[str, Any], *, fallback: Atoms | None) -> Atoms:
     """Return ASE ``Atoms`` from the output JSON, falling back to the seed geometry.
 
     If the script wrote a ``positions_angstrom`` block (an optimised geometry), the
@@ -65,13 +67,13 @@ def _atoms_from_output(data: dict, *, fallback: Atoms | None) -> Atoms:
             raise OutputParseError(
                 "output lacks positions_angstrom and no seed atoms are available"
             )
-        return fallback.copy()
-    updated = fallback.copy()
+        return cast(Atoms, fallback.copy())
+    updated: Atoms = fallback.copy()
     updated.set_positions(np.asarray(positions, dtype=float))
     return updated
 
 
-def _forces_from_gradient(gradient: list[list[float]] | None) -> np.ndarray | None:
+def _forces_from_gradient(gradient: list[list[float]] | None) -> NDArray[np.float64] | None:
     """Convert a template gradient (Hartree/Bohr) to ASE forces (eV/Å)."""
     if not gradient:
         return None

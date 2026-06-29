@@ -16,6 +16,7 @@ from typing import Any
 
 import numpy as np
 from ase import Atoms
+from numpy.typing import NDArray
 
 from chemrefine.quantities import (
     DEFAULT_TEMPERATURE_K,
@@ -185,7 +186,9 @@ def smiles_to_xyz(
 # ---------------------------------------------------------------------------
 
 
-def _boltzmann_columns(energy_kcal: np.ndarray, temperature_k: float) -> dict[str, np.ndarray]:
+def _boltzmann_columns(
+    energy_kcal: NDArray[np.float64], temperature_k: float
+) -> dict[str, NDArray[np.float64]]:
     """Return the four Boltzmann-derived report columns for a sorted energy array."""
     dE = energy_kcal - energy_kcal.min()
     weights = boltzmann_weights(dE, temperature_k)

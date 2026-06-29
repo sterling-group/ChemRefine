@@ -9,6 +9,7 @@ client pair can use these.
 
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 
@@ -23,7 +24,7 @@ def _write_atomic(target: Path, content: str, *, prefix: str) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=prefix, dir=target.parent)
     try:
-        with open(fd, "w", encoding="utf-8") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(content)
         Path(tmp_name).replace(target)
     except Exception:

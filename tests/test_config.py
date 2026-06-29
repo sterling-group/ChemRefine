@@ -642,10 +642,8 @@ def test_normalizer_is_idempotent_on_new_style():
 
 def test_every_shipped_example_yaml_loads():
     """Every Example (all v1.3.1-style) must load through the normalizer."""
-    import glob
-
     root = Path(__file__).resolve().parent.parent
-    files = sorted(glob.glob(str(root / "Examples/**/input.yaml"), recursive=True))
+    files = sorted(root.glob("Examples/**/input.yaml"))
     assert files, "no Example YAMLs found"
     for f in files:
         load_config(f)  # raises ConfigError on any failure

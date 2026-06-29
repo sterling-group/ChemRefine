@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from chemrefine import __version__, cache, filtering, nms, step_failures
 from chemrefine.config import Config, StepConfig
@@ -358,7 +358,7 @@ def _resubmit_failed(
     engine: CalculationEngine,
     ctx: StepContext,
     step_cfg: StepConfig,
-    failed: list[dict],
+    failed: list[dict[str, Any]],
     parent_ids: tuple[str, ...],
 ) -> StepResults:
     """Resubmit only the failed structures, then re-parse + re-cache the full step.

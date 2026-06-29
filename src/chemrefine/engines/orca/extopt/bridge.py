@@ -17,7 +17,7 @@ import argparse
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -156,7 +156,7 @@ def _tag_for(inputfile: str) -> str:
 def resolve_server_url(args: argparse.Namespace) -> str:
     """Determine the server URL from ``--bind`` (explicit) or ``--url-file``."""
     if args.bind:
-        return args.bind
+        return cast(str, args.bind)
     import os
 
     default_dir = Path(os.environ.get("WORK_DIR", "."))

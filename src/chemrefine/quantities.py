@@ -21,7 +21,7 @@ output.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Final, TypeVar
+from typing import Final, TypeVar, cast
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -177,4 +177,4 @@ def boltzmann_weights(
     total = weights.sum()
     if total == 0.0:
         return weights
-    return weights / total
+    return cast(NDArray[np.float64], weights / total)

@@ -227,7 +227,7 @@ def _resolved_options(engine: NmsCapableEngine, ctx: StepContext) -> NmsOptions:
 
 def _displaced(structure: Structure, positions: NDArray[np.float64]) -> Atoms:
     """A copy of ``structure``'s atoms moved to ``positions`` (a displaced child geometry)."""
-    atoms = structure.atoms.copy()
+    atoms: Atoms = structure.atoms.copy()
     atoms.set_positions(positions)
     return atoms
 

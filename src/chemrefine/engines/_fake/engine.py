@@ -13,6 +13,7 @@ so tests can assert ordering without depending on Python's hash seed.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import ClassVar
 
 import numpy as np
@@ -50,7 +51,7 @@ class FakeEngine:
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Write one trivial ``.inp`` per seed structure."""
         ctx.step_dir.mkdir(parents=True, exist_ok=True)
-        files: list[tuple] = []
+        files: list[tuple[Path, Path, str]] = []
         step = ctx.step_cfg.step
         for struct in ctx.prev_state.structures:
             inp = structure_artifact_path(ctx.step_dir, step, struct.id, "inp")
@@ -62,7 +63,7 @@ class FakeEngine:
 
     def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
         """Run the fake "calculation" inline — write each output file now."""
-        jobs: dict = {}
+        jobs: dict[Path, str] = {}
         for index, (inp, out, sid) in enumerate(inputs.files):
             energy = _fake_energy(sid)
             out.write_text(

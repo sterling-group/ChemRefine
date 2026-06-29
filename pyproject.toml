@@ -165,9 +165,12 @@ files = ["src/chemrefine"]
 plugins = ["pydantic.mypy"]
 check_untyped_defs = true
 disallow_untyped_defs = true
+disallow_any_generics = true
 no_implicit_optional = true
 warn_redundant_casts = true
+warn_return_any = true
 warn_unused_ignores = true
+strict_equality = true
 
 [[tool.mypy.overrides]]
 # Untyped scientific stack — no stubs published; their objects cross our
@@ -193,7 +196,7 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PTH", "RET", "C4", "TID"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

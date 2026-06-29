@@ -17,7 +17,7 @@ match the rest of ChemRefine.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from chemrefine.engines._backend_server.base import CalculationData
 
@@ -34,7 +34,7 @@ ENGRAD_SUFFIX = ".engrad"
 def read_extinp(
     inpfile: str | Path,
     *,
-    settings: dict | None = None,
+    settings: dict[str, Any] | None = None,
 ) -> CalculationData:
     """Parse an ORCA-written ``.extinp.tmp`` and its referenced ``.xyz``.
 

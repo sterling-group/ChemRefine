@@ -274,7 +274,7 @@ _SAMPLE_KEY_RENAMES = {
 }
 
 
-def _normalize_legacy(raw: dict) -> dict:
+def _normalize_legacy(raw: dict[str, Any]) -> dict[str, Any]:
     """Rewrite legacy (v1.3.1 / ``mlff``-named) YAML keys to the current schema.
 
     The single place that knows the old vocabulary. Idempotent — new-style input
@@ -298,7 +298,7 @@ def _normalize_legacy(raw: dict) -> dict:
     return out
 
 
-def _move_engine_block(s: dict) -> str | None:
+def _move_engine_block(s: dict[str, Any]) -> str | None:
     """Fold a legacy engine block (``mlff:``/``pyscf:``/``trainer:``) into ``options``.
 
     Mutates ``s`` (pops the block, merges its keys into ``options``) and returns the
@@ -318,7 +318,7 @@ def _move_engine_block(s: dict) -> str | None:
     return block_engine
 
 
-def _normalize_nms_keys(s: dict) -> None:
+def _normalize_nms_keys(s: dict[str, Any]) -> None:
     """Rewrite legacy ``normal_mode_sampling{,_parameters}`` into ``nms`` + ``options``.
 
     main's knobs are renamed: ``calc_type`` → ``target`` (``rm_imag`` → ``ts``, the
