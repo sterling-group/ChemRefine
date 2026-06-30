@@ -156,7 +156,7 @@ def _mlip_extopt_ctx(tmp_path: Path, **option_overrides) -> StepContext:
         "#!/bin/bash\n#SBATCH --partition=normal\n",
         encoding="utf-8",
     )
-    options = {"model_name": "uma-s-1p1", "task_name": "omol", "device": "cuda"}
+    options = {"model_name": "uma-s-1p2", "task_name": "omol", "device": "cuda"}
     options.update(option_overrides)
     step_cfg = StepConfig(
         step=1,
@@ -474,7 +474,7 @@ def test_mlip_extopt_calculator_calc_stamps_charge_and_spin():
         ),
         patch.object(MlipCalculator, "single_point", _capture),
     ):
-        calc = MlipExtOptCalculator(model_name="uma-s-1p1", task_name="omol", device="cpu")
+        calc = MlipExtOptCalculator(model_name="uma-s-1p2", task_name="omol", device="cpu")
         calc.calc(_calc_data(charge=-1, multiplicity=2))
     assert seen == {"charge": -1, "spin": 2}
 

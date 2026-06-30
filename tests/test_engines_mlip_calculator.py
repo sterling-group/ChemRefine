@@ -124,8 +124,8 @@ def _install_fake_fairchem(monkeypatch) -> tuple[MagicMock, MagicMock]:
 def test_build_fairchem_routes_through_predictor(monkeypatch):
     """The builder loads the checkpoint then constructs a ``FAIRChemCalculator``."""
     get_predict_unit, fairchem_calc = _install_fake_fairchem(monkeypatch)
-    calc = MlipCalculator(task_name="omol", model_name="uma-s-1p1", device="cuda")
-    get_predict_unit.assert_called_once_with(model_name="uma-s-1p1", device="cuda")
+    calc = MlipCalculator(task_name="omol", model_name="uma-s-1p2", device="cuda")
+    get_predict_unit.assert_called_once_with(model_name="uma-s-1p2", device="cuda")
     fairchem_calc.assert_called_once_with("PREDICTOR", task_name="omol")
     assert calc.calculator == "FAIRCHEM_CALC"
 
@@ -134,7 +134,7 @@ def test_build_fairchem_routes_through_predictor(monkeypatch):
 def test_build_fairchem_passes_non_omol_head_through(monkeypatch, head):
     """The regression fix: ``task_name: omat`` builds the omat head, not omol."""
     _get_predict_unit, fairchem_calc = _install_fake_fairchem(monkeypatch)
-    MlipCalculator(task_name=head, model_name="uma-s-1p1", device="cpu")
+    MlipCalculator(task_name=head, model_name="uma-s-1p2", device="cpu")
     fairchem_calc.assert_called_once_with("PREDICTOR", task_name=head)
 
 
@@ -142,7 +142,7 @@ def test_build_fairchem_defaults_model_name(monkeypatch):
     """An empty ``model_name`` falls back to the default UMA checkpoint."""
     get_predict_unit, _calc = _install_fake_fairchem(monkeypatch)
     MlipCalculator(task_name="omol", model_name="", device="cpu")
-    get_predict_unit.assert_called_once_with(model_name="uma-s-1p1", device="cpu")
+    get_predict_unit.assert_called_once_with(model_name="uma-s-1p2", device="cpu")
 
 
 # ---------------------------------------------------------------------------

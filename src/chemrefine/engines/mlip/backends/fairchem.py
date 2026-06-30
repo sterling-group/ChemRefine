@@ -15,9 +15,9 @@ from typing import Any
 
 from chemrefine.engines.mlip.calculator import optional_backend, register_backend
 
-#: Default checkpoint when ``model_name`` is unset (latest in the pinned
-#: fairchem build; ``uma-s-1p2`` = UMA-1.2 is newer but needs a newer fairchem).
-_DEFAULT_MODEL = "uma-s-1p1"
+#: Default checkpoint when ``model_name`` is unset — UMA-1.2, the latest small UMA
+#: model (fastest while still SOTA on most benchmarks); ships with ``fairchem-core>=2.18``.
+_DEFAULT_MODEL = "uma-s-1p2"
 
 
 @register_backend("omol")  # molecules & polymers (needs charge + spin)

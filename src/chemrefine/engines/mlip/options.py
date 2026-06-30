@@ -30,15 +30,15 @@ class MlipOptions(EngineOptions):
     model_config = ConfigDict(populate_by_name=True)
 
     model_name: str = Field(
-        "uma-s-1p1",
+        "uma-s-1p2",
         validation_alias=AliasChoices("model_name", "model", "size"),
     )
     """The model *weights* for the chosen backend.
 
     A MACE size (``small``/``medium``/``large``), a FAIRChem checkpoint
-    (``uma-s-1``/``uma-s-1p1``/``esen-…``), a SevenNet id (``7net-0``), an ORB
+    (``uma-s-1p2``/``uma-s-1p1``/``esen-…``), a SevenNet id (``7net-0``), an ORB
     loader (``orb_v3_…``), or a local path. YAML aliases: ``model``, ``size``.
-    ``uma-s-1p2`` (UMA-1.2) is newer but needs an updated fairchem.
+    Defaults to ``uma-s-1p2`` (UMA-1.2, ships with ``fairchem-core>=2.18``).
     """
 
     task_name: str = Field(

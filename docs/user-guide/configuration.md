@@ -100,7 +100,7 @@ raises a clear error if the chosen energy wasn't computed.
 
     | Key | Default | Description |
     |-----|---------|-------------|
-    | `model_name` (aliases `model`, `size`) | `uma-s-1p1` | Model weights (a MACE size, a FAIRChem checkpoint, a SevenNet/ORB id). |
+    | `model_name` (aliases `model`, `size`) | `uma-s-1p2` | Model weights (a MACE size, a FAIRChem checkpoint, a SevenNet/ORB id). |
     | `task_name` (alias `task`) | `omol` | Method/head — selects the backend builder. |
     | `model_path` | `None` | Custom MACE checkpoint (selects the `custom_mace` backend). |
     | `device` | `cuda` | `cuda` or `cpu`. |

@@ -36,8 +36,11 @@ for the full map.
 - Shared ExtOpt HTTP server: ORCA optimises on gradients served by an MLIP
   or PySCF backend in the same SLURM job (kernel-assigned ports, health
   probe, clean teardown).
-- Per-backend MLIP extras (`mlip-mace`, `mlip-fairchem`, `mlip-sevenn`,
-  `mlip-orb`, `mlip-chgnet`) and a backend-agnostic calculator factory.
+- Per-backend MLIP extras (`mlip-fairchem`, `mlip-mace`, `mlip-sevenn`,
+  `mlip-orb`, `mlip-chgnet`) and a backend-agnostic calculator factory. Each
+  backend installs into its own dedicated environment (their torch/e3nn trees
+  conflict); `[mlip]` defaults to FAIRChem / UMA (`uma-s-1p2`, from upstream
+  `fairchem-core >= 2.18` on PyPI).
 - SLURM-optional execution: the generated scripts run unchanged under
   `bash` with the same core/GPU throttling, runlogs, and artifacts.
 - Opt-in job-array submission (`slurm_array: true`): each step goes out as
