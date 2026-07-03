@@ -332,3 +332,20 @@ def test_pyscf_direct_is_not_nms_capable():
 
     engine = get_engine("pyscf")
     assert not isinstance(engine, NmsCapableEngine)  # provides neither NMS hook
+
+
+# ---------------------------------------------------------------------------
+# Provisioning capability
+# ---------------------------------------------------------------------------
+
+
+def test_pyscf_engines_are_provisionable_with_the_pyscf_env():
+    """Both PySCF engines require the ``pyscf`` extra/env, whatever the options say."""
+    from chemrefine.engines.api import BackendRequirement, ProvisionableEngine
+
+    for name in ("pyscf", "pyscf-extopt"):
+        engine = get_engine(name)
+        assert isinstance(engine, ProvisionableEngine)
+        assert engine.backend_requirement({"basis": "def2-svp"}) == BackendRequirement(
+            extra="pyscf", import_name="pyscf"
+        )

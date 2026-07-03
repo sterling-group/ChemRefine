@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from chemrefine.engines.mlip.calculator import optional_backend, register_backend
+from chemrefine.engines.mlip.calculator import register_backend
 
 
-@register_backend("chgnet")
+@register_backend("chgnet", extra="mlip-chgnet", package="chgnet", import_name="chgnet")
 def _build_chgnet(*, model_path: str | Path | None = None, device: str = "cuda", **_: Any) -> Any:
     """CHGNet universal potential (a local checkpoint via ``model_path``).
 
@@ -17,8 +17,7 @@ def _build_chgnet(*, model_path: str | Path | None = None, device: str = "cuda",
     ``custom_mace`` (matching main). The canonical import is
     ``from chgnet.model import CHGNet, CHGNetCalculator``.
     """
-    with optional_backend(package="chgnet", extra="mlip-chgnet"):
-        from chgnet.model import CHGNet, CHGNetCalculator
+    from chgnet.model import CHGNet, CHGNetCalculator
 
     model = CHGNet.load(str(model_path)) if model_path else CHGNet.load()
     return CHGNetCalculator(model=model, use_device=device)

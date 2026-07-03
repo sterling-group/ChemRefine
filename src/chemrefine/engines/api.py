@@ -1,11 +1,12 @@
 """The engine plugin contract + the ``ENGINES`` registry — the public face of ``engines/``.
 
 This is the one module the flat pipeline imports from the engine subsystem: the
-:class:`CalculationEngine` / :class:`NmsCapableEngine` Protocols, the :class:`JobExecutable`
-provision contract, the DTOs (:class:`ParsedResult`,
-:class:`NmsInputInfo`), and the registry (:data:`ENGINES` / :func:`register` /
-:func:`get_engine`). Importing :mod:`chemrefine.engines` registers every bundled engine, so the
-orchestrator looks engines up by name and never imports a concrete engine module.
+:class:`CalculationEngine` / :class:`NmsCapableEngine` / :class:`ProvisionableEngine` Protocols,
+the :class:`JobExecutable` provision contract, the DTOs (:class:`ParsedResult`,
+:class:`NmsInputInfo`, :class:`BackendRequirement`), and the registry (:data:`ENGINES` /
+:func:`register` / :func:`get_engine`). Importing :mod:`chemrefine.engines` registers every
+bundled engine, so the orchestrator looks engines up by name and never imports a concrete
+engine module.
 
 chemrefine **declares** a small contract; an engine **provides** it. Reusable building blocks
 (underscored, never edited to add an engine) live in the subsystem: :class:`._job.JobEngine`
@@ -29,10 +30,11 @@ Custom / non-job              :class:`CalculationEngine`       ``prepare`` / ``s
 (mlip-train, fake)            directly                        / ``input_digest``
 ============================  ==============================  =====================================
 
-* **Capabilities** — NMS is **not** a flag: implement :class:`NmsCapableEngine`'s
-  ``nms_input_info`` hook and populate ``imaginary_freqs`` / ``normal_modes`` on each parsed
-  ``Structure``; the generic coordinator (:mod:`chemrefine.nms`) drives it and capability is
-  detected via ``isinstance``.
+* **Capabilities** — never a flag, always a Protocol detected via ``isinstance``. NMS:
+  implement :class:`NmsCapableEngine`'s ``nms_input_info`` hook and populate
+  ``imaginary_freqs`` / ``normal_modes`` on each parsed ``Structure`` (the generic coordinator
+  is :mod:`chemrefine.nms`). Managed backend envs: implement :class:`ProvisionableEngine`'s
+  ``backend_requirement`` (the generic provisioner is :mod:`chemrefine.engines._provision`).
 * **YAML knobs** — a Pydantic model in ``engines/<name>/options.py`` subclassing
   :class:`~chemrefine.engines._options.EngineOptions`; read it in the primitives.
 * **Register** — import the class in ``engines/<name>/__init__.py`` and add the package to
@@ -48,7 +50,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar, Protocol, runtime_checkable
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -184,6 +186,37 @@ class NmsCapableEngine(CalculationEngine, Protocol):
 
     def nms_input_info(self, ctx: StepContext) -> NmsInputInfo:
         """Introspect this step's configured input (TS search? computes frequencies?)."""
+        ...
+
+
+@dataclass(frozen=True)
+class BackendRequirement:
+    """The environment a step's compute backend needs, for the provisioner.
+
+    ``extra`` is the pip extra (= the managed-env name) that provides the backend —
+    ``chemrefine[<extra>]`` installs it; ``import_name`` is the backend's top-level module,
+    probed cheaply (:func:`importlib.util.find_spec`) to detect the single-env case where the
+    backend is already importable alongside the orchestrator.
+    """
+
+    extra: str
+    import_name: str
+
+
+@runtime_checkable
+class ProvisionableEngine(CalculationEngine, Protocol):
+    """An engine whose compute backend can live in its own managed environment.
+
+    The MLIP libraries' torch/e3nn trees conflict, so one Python process can host only one
+    backend family; a *provisionable* engine names the environment it needs
+    (:class:`BackendRequirement`) and the generic provisioner
+    (:mod:`chemrefine.engines._provision`) checks it before any job submits and launches the
+    step's Python from the matching managed env. Like NMS, this is a capability detected via
+    ``isinstance`` — ORCA (a binary, not a Python backend) simply doesn't implement it.
+    """
+
+    def backend_requirement(self, options: dict[str, Any] | None) -> BackendRequirement:
+        """The backend env this step needs, derived from its ``step.options``."""
         ...
 
 

@@ -17,10 +17,11 @@ see :mod:`chemrefine.engines.mlip.extopt_engine`.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from chemrefine.engines._script import ScriptEngine
-from chemrefine.engines.api import register
+from chemrefine.engines.api import BackendRequirement, register
+from chemrefine.engines.mlip.calculator import requirement_from_options
 from chemrefine.engines.mlip.options import MlipOptions
 from chemrefine.state import StepContext
 
@@ -31,6 +32,10 @@ class MlipEngine(ScriptEngine):
 
     name: ClassVar[str] = "mlip"
     label: ClassVar[str] = "MLIP"
+
+    def backend_requirement(self, options: dict[str, Any] | None) -> BackendRequirement:
+        """The backend env this step needs — derived from its task/model selection."""
+        return requirement_from_options(options)
 
     def _template_vars(self, ctx: StepContext) -> dict[str, object]:
         """Expose the MLIP options as template placeholders.

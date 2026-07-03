@@ -100,8 +100,9 @@ Legacy YAML engine spellings are rewritten to the canonical name by `config._nor
 
 An external binary reads its path from `ctx.executables.get("<name>")`. An importable backend
 ships as a `pip install chemrefine[<name>]` extra and is imported **lazily** (inside the function
-that needs it) so the package imports cleanly when the optional dependency is absent — wrap the
-import so a missing library reports the extra to install (see `mlip.calculator.optional_backend`).
+that needs it) so the package imports cleanly when the optional dependency is absent — declare
+the extra + pip package + import name at registration so a missing library reports the extra to
+install (see `mlip.calculator.register_backend`).
 
 ## The lifecycle
 

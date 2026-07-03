@@ -11,10 +11,10 @@ see :mod:`chemrefine.engines.pyscf.extopt_engine`.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from chemrefine.engines._script import ScriptEngine
-from chemrefine.engines.api import register
+from chemrefine.engines.api import BackendRequirement, register
 from chemrefine.state import StepContext
 
 
@@ -24,6 +24,10 @@ class PyscfEngine(ScriptEngine):
 
     name: ClassVar[str] = "pyscf"
     label: ClassVar[str] = "PySCF"
+
+    def backend_requirement(self, options: dict[str, Any] | None) -> BackendRequirement:
+        """The backend env this step needs — PySCF, whatever the options say."""
+        return BackendRequirement(extra="pyscf", import_name="pyscf")
 
     def _template_vars(self, ctx: StepContext) -> dict[str, object]:
         """Expose the SCF knobs as template placeholders, for parity with direct MLIP.

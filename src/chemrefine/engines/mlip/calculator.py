@@ -30,78 +30,119 @@ the **weights** handed to that builder.
 
 The 7 FAIRChem heads (``omol``/``omat``/``odac``/``oc20``/``oc22``/``oc25``/
 ``omc``) all register the one ``_build_fairchem`` and pass the head straight
-through to ``FAIRChemCalculator``. Backend imports happen inside each builder
-(wrapped in :func:`optional_backend`) so this module imports cleanly even when
-the optional MLIP deps aren't installed, and a missing one reports the
-``chemrefine[mlip-<backend>]`` extra to install (mace/fairchem ship in ``[mlip]``;
-sevenn/orb/chgnet are dedicated-env extras — see ``docs/INSTALL.md``).
+through to ``FAIRChemCalculator``. Backend imports happen inside each builder so
+this module imports cleanly even when the optional MLIP deps aren't installed;
+:func:`build_calculator` converts a missing library into an error naming the
+``chemrefine[mlip-<backend>]`` extra to install (every backend is a dedicated-env
+extra — their torch/e3nn trees conflict; ``[mlip]`` = FAIRChem/UMA).
 
 Adding a new backend = a new ``backends/<name>.py`` (decorated builder) listed in
-``backends/__init__.py``::
+``backends/__init__.py``. The decorator carries the backend's packaging metadata — the pip
+extra that provides it, the pip distribution named in the actionable import error, and the
+top-level module the provisioner probes — so the backend module is the **single** declaration
+point (no central table anywhere) and a missing library is reported with the extra to
+install::
 
-    from chemrefine.engines.mlip.calculator import optional_backend, register_backend
+    from chemrefine.engines.mlip.calculator import register_backend
 
-    @register_backend("my_mlip")
+    @register_backend(
+        "my_mlip", extra="mlip-my_mlip", package="my-mlip-lib", import_name="my_mlip_library"
+    )
     def _build_my_mlip(*, model_name="", device="cuda", **_):
-        with optional_backend(package="my-mlip-lib", extra="mlip-my_mlip"):
-            from my_mlip_library import MyCalculator
+        from my_mlip_library import MyCalculator
+
         return MyCalculator(model=model_name, device=device)
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ase import Atoms
 
+from chemrefine.engines.api import BackendRequirement
+from chemrefine.engines.mlip.options import MlipOptions
+
 logger = logging.getLogger(__name__)
-
-
-@contextmanager
-def optional_backend(*, package: str, extra: str) -> Iterator[None]:
-    """Turn a missing optional-backend import into an actionable error.
-
-    Wrap a backend builder's lazy ``import`` so an absent library reports the
-    package to install (via the matching extra) instead of a bare
-    ``ModuleNotFoundError``. Each MLIP backend ships its deps in its own
-    ``chemrefine[mlip-<name>]`` extra — ``sevenn``/``orb``/``chgnet`` pull a
-    torch/e3nn that conflicts with the MACE+FAIRChem ``[mlip]`` stack, so they
-    need a dedicated environment.
-    """
-    try:
-        yield
-    except ImportError as exc:
-        raise ImportError(
-            f"this MLIP backend needs '{package}' — install it with "
-            f"`pip install chemrefine[{extra}]` (in its own environment)."
-        ) from exc
 
 
 # ---------------------------------------------------------------------------
 # Backend registry
 # ---------------------------------------------------------------------------
 
-_BACKEND_BUILDERS: dict[str, Callable[..., Any]] = {}
+
+@dataclass(frozen=True)
+class BackendSpec:
+    """One registered MLIP backend: its builder plus the packaging metadata.
+
+    ``extra`` is the pip extra that provides the backend (``chemrefine[<extra>]`` — also the
+    managed-env name the provisioner uses); ``package`` is the pip distribution named in the
+    actionable import error; ``import_name`` is the top-level module the provisioner probes
+    with :func:`importlib.util.find_spec`. Declared once, at ``@register_backend`` in the
+    backend's own module — there is no central backend table.
+    """
+
+    builder: Callable[..., Any]
+    extra: str
+    package: str
+    import_name: str
 
 
-def register_backend(name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Register a builder under ``name``; return the unchanged function.
+_BACKENDS: dict[str, BackendSpec] = {}
 
-    The builder takes keyword arguments (``task_name``, ``model_name``,
-    ``device``, ``model_path``, plus a catch-all ``**_``) and returns an ASE
-    calculator. Stackable: applying the decorator twice registers one function
-    under two keys (the FAIRChem builder uses this — one function, every head).
+
+def register_backend(
+    name: str, *, extra: str, package: str, import_name: str
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Register a builder + its packaging metadata under ``name``; return the function.
+
+    The builder takes keyword arguments (``task_name``, ``model_name``, ``device``,
+    ``model_path``, plus a catch-all ``**_``) and returns an ASE calculator; its lazy backend
+    import needs no guard — :func:`build_calculator` converts an ``ImportError`` into the
+    actionable install hint from this metadata. Stackable: applying the decorator twice
+    registers one function under two keys (the FAIRChem builder uses this — one function,
+    every head).
     """
 
     def _wrap(fn: Callable[..., Any]) -> Callable[..., Any]:
-        _BACKEND_BUILDERS[name] = fn
+        _BACKENDS[name] = BackendSpec(fn, extra=extra, package=package, import_name=import_name)
         return fn
 
     return _wrap
+
+
+def backend_spec(task_name: str, model_path: str | Path | None = None) -> BackendSpec:
+    """The :class:`BackendSpec` a task/model selection dispatches to.
+
+    The one dispatch rule, shared by :func:`build_calculator` and the provisioner: a
+    ``model_path`` selects ``custom_mace`` (a local checkpoint), else ``task_name`` keys the
+    registry. Raises :class:`ValueError` listing known keys if nothing is registered.
+    """
+    key = "custom_mace" if model_path is not None else task_name
+    spec = _BACKENDS.get(key)
+    if spec is None:
+        raise ValueError(
+            f"unsupported MLIP backend: task_name={task_name!r} (known: {sorted(_BACKENDS)})"
+        )
+    return spec
+
+
+def requirement_from_options(options: dict[str, Any] | None) -> BackendRequirement:
+    """The :class:`BackendRequirement` a step's raw ``options`` imply.
+
+    Reads the task/model selection tolerantly (same aliases the direct engine's template
+    vars accept, defaults from :class:`~chemrefine.engines.mlip.options.MlipOptions`) and maps
+    it through :func:`backend_spec` — so the env requirement always matches what
+    :func:`build_calculator` would actually load.
+    """
+    raw = options or {}
+    task = str(raw.get("task_name") or raw.get("task") or MlipOptions().task_name)
+    spec = backend_spec(task, raw.get("model_path"))
+    return BackendRequirement(extra=spec.extra, import_name=spec.import_name)
 
 
 def build_calculator(
@@ -117,22 +158,23 @@ def build_calculator(
     ``task_name`` is the registry key (the method/head — a FAIRChem head,
     ``mace_off``…, ``chgnet``, ``sevenn``, ``orb``). ``model_name`` is the weights
     handed to it. A ``model_path`` selects ``custom_mace`` (a local checkpoint).
-    Raises :class:`ValueError` listing known keys if nothing is registered.
+    Raises :class:`ValueError` listing known keys if nothing is registered; a missing
+    backend library surfaces as an ``ImportError`` naming the extra to install.
     """
-    key = "custom_mace" if model_path is not None else task_name
-    builder = _BACKEND_BUILDERS.get(key)
-    if builder is None:
-        raise ValueError(
-            f"unsupported MLIP backend: task_name={task_name!r} "
-            f"model_name={model_name!r} (known: {sorted(_BACKEND_BUILDERS)})"
+    spec = backend_spec(task_name, model_path)
+    try:
+        return spec.builder(
+            task_name=task_name,
+            model_name=model_name,
+            device=device,
+            model_path=model_path,
+            **extra,
         )
-    return builder(
-        task_name=task_name,
-        model_name=model_name,
-        device=device,
-        model_path=model_path,
-        **extra,
-    )
+    except ImportError as exc:
+        raise ImportError(
+            f"this MLIP backend needs '{spec.package}' — install it with "
+            f"`pip install chemrefine[{spec.extra}]` (in its own environment)."
+        ) from exc
 
 
 # ---------------------------------------------------------------------------

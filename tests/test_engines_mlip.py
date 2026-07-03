@@ -28,9 +28,15 @@ from chemrefine.config import StepConfig
 from chemrefine.engines import _execution as submit
 from chemrefine.engines.api import ENGINES, NmsCapableEngine, get_engine
 from chemrefine.engines.mlip import calculator as mlip_calculator
-from chemrefine.engines.mlip.calculator import MlipCalculator, build_calculator
+from chemrefine.engines.mlip.calculator import BackendSpec, MlipCalculator, build_calculator
 from chemrefine.errors import OutputParseError
 from chemrefine.state import PipelineState, StepContext, Structure
+
+
+def _spec(fn) -> BackendSpec:
+    """Wrap a fake builder in a ``BackendSpec`` with placeholder packaging metadata."""
+    return BackendSpec(fn, extra="mlip-test", package="test-pkg", import_name="test_mod")
+
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -69,6 +75,47 @@ def test_mlip_extopt_engine_is_nms_capable():
 
 
 # ---------------------------------------------------------------------------
+# Provisioning capability — backend_requirement derives the env from the options
+# ---------------------------------------------------------------------------
+
+
+def test_mlip_engines_are_provisionable():
+    """Both MLIP engines expose ``backend_requirement`` (capability by Protocol)."""
+    from chemrefine.engines.api import ProvisionableEngine
+
+    for name in ("mlip", "mlip-extopt"):
+        engine = get_engine(name)
+        assert isinstance(engine, ProvisionableEngine)
+        req = engine.backend_requirement({"task_name": "mace_off"})
+        assert (req.extra, req.import_name) == ("mlip-mace", "mace")
+
+
+def test_orca_and_fake_are_not_provisionable():
+    """Engines without a Python backend don't satisfy the Protocol."""
+    from chemrefine.engines.api import ProvisionableEngine
+
+    assert not isinstance(get_engine("orca"), ProvisionableEngine)
+    assert not isinstance(get_engine("fake"), ProvisionableEngine)
+
+
+def test_requirement_from_options_maps_the_task_family():
+    """task/task_name aliases resolve; the default (omol) is the FAIRChem env."""
+    from chemrefine.engines.mlip.calculator import requirement_from_options
+
+    assert requirement_from_options({"task_name": "sevenn"}).extra == "mlip-sevenn"
+    assert requirement_from_options({"task": "chgnet"}).extra == "mlip-chgnet"
+    assert requirement_from_options(None).extra == "mlip-fairchem"
+
+
+def test_requirement_from_options_model_path_routes_to_mace():
+    """A ``model_path`` selects custom_mace — same rule as ``build_calculator``."""
+    from chemrefine.engines.mlip.calculator import requirement_from_options
+
+    req = requirement_from_options({"task_name": "omol", "model_path": "/some/ckpt.model"})
+    assert (req.extra, req.import_name) == ("mlip-mace", "mace")
+
+
+# ---------------------------------------------------------------------------
 # Backend registry dispatch — task_name keys the registry, model_name = weights
 # (the per-builder behaviour is covered in test_engines_mlip_calculator.py)
 # ---------------------------------------------------------------------------
@@ -83,8 +130,8 @@ def test_build_calculator_dispatches_by_task_name():
     """``task_name`` keys the registry and forwards task_name/model_name."""
     seen: list[dict] = []
     with patch.dict(
-        mlip_calculator._BACKEND_BUILDERS,
-        {"mace_off": lambda **kw: seen.append(kw) or "MACE_OFF_CALC"},
+        mlip_calculator._BACKENDS,
+        {"mace_off": _spec(lambda **kw: seen.append(kw) or "MACE_OFF_CALC")},
         clear=False,
     ):
         result = build_calculator(task_name="mace_off", model_name="medium")
@@ -99,8 +146,8 @@ def test_build_calculator_routes_custom_mace_when_model_path_given(tmp_path: Pat
     model_file.touch()
     seen = []
     with patch.dict(
-        mlip_calculator._BACKEND_BUILDERS,
-        {"custom_mace": lambda **kw: seen.append(kw) or "CUSTOM_MACE_CALC"},
+        mlip_calculator._BACKENDS,
+        {"custom_mace": _spec(lambda **kw: seen.append(kw) or "CUSTOM_MACE_CALC")},
         clear=False,
     ):
         result = build_calculator(
@@ -111,20 +158,27 @@ def test_build_calculator_routes_custom_mace_when_model_path_given(tmp_path: Pat
 
 
 def test_register_backend_appends_to_registry():
-    """A new ``@register_backend`` is reachable by its ``task_name`` key."""
-    mlip_calculator.register_backend("test_new_backend")(lambda **_kw: "NEW")
+    """A new ``@register_backend`` is reachable by its ``task_name`` key with its metadata."""
+    mlip_calculator.register_backend(
+        "test_new_backend", extra="mlip-test", package="test-pkg", import_name="test_mod"
+    )(lambda **_kw: "NEW")
     try:
-        assert "test_new_backend" in mlip_calculator._BACKEND_BUILDERS
+        spec = mlip_calculator.backend_spec("test_new_backend")
+        assert (spec.extra, spec.package, spec.import_name) == (
+            "mlip-test",
+            "test-pkg",
+            "test_mod",
+        )
         assert build_calculator(task_name="test_new_backend", model_name="x") == "NEW"
     finally:
-        mlip_calculator._BACKEND_BUILDERS.pop("test_new_backend", None)
+        mlip_calculator._BACKENDS.pop("test_new_backend", None)
 
 
 def test_mlip_calculator_wrapper_routes_through_build_calculator():
     """``MlipCalculator`` is a thin alias — exercises the registry indirectly."""
     with patch.dict(
-        mlip_calculator._BACKEND_BUILDERS,
-        {"mace_off": lambda **_kw: "WRAP_CALC"},
+        mlip_calculator._BACKENDS,
+        {"mace_off": _spec(lambda **_kw: "WRAP_CALC")},
         clear=False,
     ):
         calc = MlipCalculator(task_name="mace_off", model_name="small")
@@ -346,8 +400,8 @@ def test_mlip_extopt_calculator_from_args_builds_instance():
 
     args = parse_args(["--backend", "mlip", "--model", "small", "--task-name", "mace_off"])
     with patch.dict(
-        mlip_calculator._BACKEND_BUILDERS,
-        {"mace_off": lambda **_kw: "MACE_CALC"},
+        mlip_calculator._BACKENDS,
+        {"mace_off": _spec(lambda **_kw: "MACE_CALC")},
         clear=False,
     ):
         calc = MlipExtOptCalculator.from_args(args)
@@ -438,8 +492,8 @@ def test_mlip_extopt_calculator_calc_converts_units():
 
     with (
         patch.dict(
-            mlip_calculator._BACKEND_BUILDERS,
-            {"mace_off": lambda **_kw: object()},  # sentinel calculator
+            mlip_calculator._BACKENDS,
+            {"mace_off": _spec(lambda **_kw: object())},  # sentinel calculator
             clear=False,
         ),
         # 1 eV/Å on x (the gradient already in eV/Å)
@@ -468,8 +522,8 @@ def test_mlip_extopt_calculator_calc_stamps_charge_and_spin():
 
     with (
         patch.dict(
-            mlip_calculator._BACKEND_BUILDERS,
-            {"omol": lambda **_kw: object()},
+            mlip_calculator._BACKENDS,
+            {"omol": _spec(lambda **_kw: object())},
             clear=False,
         ),
         patch.object(MlipCalculator, "single_point", _capture),

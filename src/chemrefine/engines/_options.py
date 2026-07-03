@@ -22,6 +22,13 @@ class EngineOptions(BaseModel):
     device: Literal["cuda", "cpu"] = "cuda"
     """Compute device for this engine (``cuda`` ⇒ GPU, ``cpu`` ⇒ CPU)."""
 
+    backend_python: str | None = None
+    """Explicit Python interpreter for this step's compute backend (escape hatch).
+
+    Normally unset: the provisioner (:mod:`chemrefine.engines._provision`) resolves the
+    backend's managed env by *name* — no paths in the YAML. Set this only to force a
+    specific interpreter (e.g. a hand-built env the provisioner doesn't manage)."""
+
     @classmethod
     def from_raw(cls, raw: dict[str, Any] | None) -> Self:
         """Validate a raw ``step.options`` dict; empty/``None`` yields defaults.

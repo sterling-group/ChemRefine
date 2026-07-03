@@ -12,43 +12,45 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from chemrefine.engines.mlip.calculator import optional_backend, register_backend
+from chemrefine.engines.mlip.calculator import register_backend
+
+# One declaration per module: the extra that provides this backend, the pip distribution
+# named in the actionable import error, and the module the provisioner probes.
+_EXTRA = "mlip-mace"
+_PACKAGE = "mace-torch"
+_IMPORT = "mace"
 
 
-@register_backend("mace_off")
+@register_backend("mace_off", extra=_EXTRA, package=_PACKAGE, import_name=_IMPORT)
 def _build_mace_off(*, model_name: str = "", device: str = "cuda", **_: Any) -> Any:
     """MACE-OFF foundation model (organic molecules); ``model_name`` = the size."""
-    with optional_backend(package="mace-torch", extra="mlip-mace"):
-        from mace.calculators import mace_off
+    from mace.calculators import mace_off
 
     return mace_off(model=model_name or None, device=device)
 
 
-@register_backend("mace_mp")
+@register_backend("mace_mp", extra=_EXTRA, package=_PACKAGE, import_name=_IMPORT)
 def _build_mace_mp(*, model_name: str = "", device: str = "cuda", **_: Any) -> Any:
     """MACE-MP foundation model (Materials Project); ``model_name`` = the size/model."""
-    with optional_backend(package="mace-torch", extra="mlip-mace"):
-        from mace.calculators import mace_mp
+    from mace.calculators import mace_mp
 
     return mace_mp(model=model_name or None, device=device)
 
 
-@register_backend("mace_omol")
+@register_backend("mace_omol", extra=_EXTRA, package=_PACKAGE, import_name=_IMPORT)
 def _build_mace_omol(*, model_name: str = "", device: str = "cuda", **_: Any) -> Any:
     """MACE-OMOL foundation model (charge/spin embeddings); ``model_name`` = the size."""
-    with optional_backend(package="mace-torch", extra="mlip-mace"):
-        from mace.calculators import mace_omol
+    from mace.calculators import mace_omol
 
     return mace_omol(model=model_name or None, device=device)
 
 
-@register_backend("custom_mace")
+@register_backend("custom_mace", extra=_EXTRA, package=_PACKAGE, import_name=_IMPORT)
 def _build_custom_mace(*, model_path: str | Path, device: str = "cuda", **_: Any) -> Any:
     """User-supplied MACE checkpoint at ``model_path``."""
     path = Path(model_path)
     if not path.is_file():
         raise FileNotFoundError(f"custom MACE model not found: {path}")
-    with optional_backend(package="mace-torch", extra="mlip-mace"):
-        from mace.calculators import MACECalculator
+    from mace.calculators import MACECalculator
 
     return MACECalculator(model_paths=str(path), device=device)

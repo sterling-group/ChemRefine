@@ -10,11 +10,11 @@ directory back into each structure's dir.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from chemrefine.engines._backend_server.base import ComputeBackend
 from chemrefine.engines._options import EngineOptions
-from chemrefine.engines.api import register
+from chemrefine.engines.api import BackendRequirement, register
 from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
 from chemrefine.engines.pyscf.extopt_calc import PyscfExtOptCalculator
 from chemrefine.engines.pyscf.options import PyscfOptions
@@ -30,6 +30,10 @@ class PyscfExtOptEngine(ExtOptOrcaEngine):
     wrapper_filename: ClassVar[str] = "pyscf_extopt.sh"
     options_cls: ClassVar[type[EngineOptions]] = PyscfOptions
     calculator_cls: ClassVar[type[ComputeBackend]] = PyscfExtOptCalculator
+
+    def backend_requirement(self, options: dict[str, Any] | None) -> BackendRequirement:
+        """The env the PySCF gradient server needs — PySCF, whatever the options say."""
+        return BackendRequirement(extra="pyscf", import_name="pyscf")
 
     def output_dirs(self, ctx: StepContext) -> tuple[str, ...]:
         """Copy the ``save_tensors`` output directory back into the structure dir.
