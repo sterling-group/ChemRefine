@@ -213,10 +213,15 @@ class ProvisionableEngine(CalculationEngine, Protocol):
     (:mod:`chemrefine.engines._provision`) checks it before any job submits and launches the
     step's Python from the matching managed env. Like NMS, this is a capability detected via
     ``isinstance`` — ORCA (a binary, not a Python backend) simply doesn't implement it.
+    Both methods are required for the capability to be detected.
     """
 
     def backend_requirement(self, options: dict[str, Any] | None) -> BackendRequirement:
         """The backend env this step needs, derived from its ``step.options``."""
+        ...
+
+    def backend_extras(self) -> frozenset[str]:
+        """Every extra this engine can require (drives ``chemrefine backends`` listing)."""
         ...
 
 

@@ -11,13 +11,30 @@ is built from are the underscored modules (:mod:`._job`, :mod:`._execution`, :mo
 :mod:`._backend_server`, :mod:`._provision`). Add a new engine by creating a bare-named
 ``engines/<name>/`` package and adding it to the import below — nothing else here changes.
 
-:func:`preflight_backends` is re-exported here (with :func:`get_engine` / :func:`register`) as
-part of the subsystem's public face, so the flat pipeline validates every step's backend env
-before any job submits without importing a building block directly.
+The provisioning entry points (:func:`preflight_backends`, :func:`build_backend_env`,
+:func:`backend_env_path`, :func:`known_backend_extras`) are re-exported here (with
+:func:`get_engine` / :func:`register`) as part of the subsystem's public face, so the flat
+pipeline + CLI never import a building block directly.
 """
 
 from chemrefine.engines import _fake, mlip, orca, pyscf
-from chemrefine.engines._provision import preflight_backends
+from chemrefine.engines._provision import (
+    backend_env_path,
+    build_backend_env,
+    known_backend_extras,
+    preflight_backends,
+)
 from chemrefine.engines.api import get_engine, register
 
-__all__ = ["_fake", "get_engine", "mlip", "orca", "preflight_backends", "pyscf", "register"]
+__all__ = [
+    "_fake",
+    "backend_env_path",
+    "build_backend_env",
+    "get_engine",
+    "known_backend_extras",
+    "mlip",
+    "orca",
+    "preflight_backends",
+    "pyscf",
+    "register",
+]

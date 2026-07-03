@@ -15,7 +15,7 @@ from typing import Any, ClassVar
 from chemrefine.engines._backend_server.base import ComputeBackend
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import BackendRequirement, register
-from chemrefine.engines.mlip.calculator import requirement_from_options
+from chemrefine.engines.mlip.calculator import registered_extras, requirement_from_options
 from chemrefine.engines.mlip.extopt_calc import MlipExtOptCalculator
 from chemrefine.engines.mlip.options import MlipOptions
 from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
@@ -34,3 +34,7 @@ class MlipExtOptEngine(ExtOptOrcaEngine):
     def backend_requirement(self, options: dict[str, Any] | None) -> BackendRequirement:
         """The env the MLIP gradient server needs — from the step's task/model selection."""
         return requirement_from_options(options)
+
+    def backend_extras(self) -> frozenset[str]:
+        """Every extra a registered MLIP backend declares."""
+        return registered_extras()

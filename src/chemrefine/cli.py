@@ -16,6 +16,10 @@ This is the **only** module that calls :func:`sys.exit` or reads
 * ``chemrefine rebuild-nms CONFIG [STEP]`` — re-run the NMS step with the
   current options (a named alias of ``rerun``).
 
+``chemrefine backends {install,list,path}`` manages the per-backend environments
+(conflicting MLIP stacks live in one managed env each, resolved by name — see
+:mod:`chemrefine.engines._provision`).
+
 Per-step ``on_failure: stop | skip | best`` (in the YAML) decides in-run
 behaviour: ``stop`` (default) halts the run after caching the step's successes,
 ``skip`` drops the failures and continues, ``best`` keeps all (backfilling the
@@ -317,10 +321,71 @@ def rerun_errors(
 
 
 # ---------------------------------------------------------------------------
+# backends — manage per-backend environments (provision once, reuse every run)
+# ---------------------------------------------------------------------------
+
+backends_app = typer.Typer(
+    no_args_is_help=True,
+    help="Manage per-backend environments (conflicting MLIP stacks, one env each).",
+)
+app.add_typer(backends_app, name="backends")
+
+
+@backends_app.command("install")
+def backends_install(
+    extras: Annotated[
+        list[str], typer.Argument(help="Backend extra(s), e.g. mlip-mace mlip-fairchem pyscf.")
+    ],
+) -> None:
+    """Provision managed env(s) so steps can run these backends side by side.
+
+    Each env is built with the same tool that created the current environment
+    (conda / uv / venv) under ``$CHEMREFINE_HOME`` and reused by every later run;
+    run this once (on HPC: on a login node with internet) per backend you use.
+    """
+    from chemrefine.engines import build_backend_env, known_backend_extras
+
+    known = known_backend_extras()
+    unknown = [e for e in extras if e not in known]
+    if unknown:
+        raise typer.BadParameter(f"unknown backend(s) {unknown}; known: {sorted(known)}")
+    for extra in extras:
+        typer.echo(f"provisioning {extra} …")
+        python = build_backend_env(extra)
+        typer.echo(f"{extra}: {python}")
+
+
+@backends_app.command("list")
+def backends_list() -> None:
+    """List every known backend extra and whether its managed env is provisioned."""
+    from chemrefine.engines import backend_env_path, known_backend_extras
+
+    for extra in sorted(known_backend_extras()):
+        python = backend_env_path(extra) / "bin" / "python"
+        status = str(python) if python.is_file() else "not provisioned"
+        typer.echo(f"{extra:16} {status}")
+
+
+@backends_app.command("path")
+def backends_path(
+    extra: Annotated[str, typer.Argument(help="Backend extra, e.g. mlip-fairchem.")],
+) -> None:
+    """Print the managed env's python for one backend (exit 1 if not provisioned)."""
+    from chemrefine.engines import backend_env_path
+
+    python = backend_env_path(extra) / "bin" / "python"
+    typer.echo(str(python))
+    if not python.is_file():
+        raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
 # Legacy (v1.3.1) flag-style CLI → subcommand translation
 # ---------------------------------------------------------------------------
 
-_SUBCOMMANDS = frozenset({"run", "resume", "rerun", "rerun-errors", "rebuild-cache", "rebuild-nms"})
+_SUBCOMMANDS = frozenset(
+    {"run", "resume", "rerun", "rerun-errors", "rebuild-cache", "rebuild-nms", "backends"}
+)
 
 
 def _translate_legacy_argv(argv: list[str]) -> list[str]:

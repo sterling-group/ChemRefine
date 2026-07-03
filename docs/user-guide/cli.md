@@ -26,6 +26,18 @@ chemrefine run input.yaml --dry-run          # validate + describe; submit nothi
 | `rebuild-cache` | `CONFIG [TARGET]` | Rebuild one step's cache from outputs already on disk (parse only, no submission). |
 | `rebuild-nms` | `CONFIG [TARGET]` | Re-run the NMS step with the current options (a named alias of `rerun`). |
 
+## Backend environments (`chemrefine backends`)
+
+Conflicting MLIP stacks each live in one managed environment, provisioned once and
+resolved **by name** at run time (see
+[Installation → MLIP backends](installation.md#mlip-backends)):
+
+| Command | Argument(s) | What it does |
+|---------|-------------|--------------|
+| `backends install` | `EXTRA…` | Provision managed env(s) (e.g. `mlip-mace mlip-fairchem pyscf`), built with the same tool that created the current env (conda / uv / venv). |
+| `backends list` | — | Every known backend extra and whether its env is provisioned. |
+| `backends path` | `EXTRA` | Print the managed env's `python` (exit 1 if not provisioned). |
+
 ## Global flags
 
 | Flag | Applies to | Effect |

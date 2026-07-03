@@ -41,6 +41,11 @@ for the full map.
   backend installs into its own dedicated environment (their torch/e3nn trees
   conflict); `[mlip]` defaults to FAIRChem / UMA (`uma-s-1p2`, from upstream
   `fairchem-core >= 2.18` on PyPI).
+- Managed backend environments: `chemrefine backends {install,list,path}`
+  provisions one env per backend (built with the same tool that created the
+  current env — conda / uv / venv) and steps resolve them **by name**, so
+  conflicting MLIP stacks (e.g. MACE + UMA) run side by side in one pipeline.
+  Every run validates its steps' backends before any job submits.
 - SLURM-optional execution: the generated scripts run unchanged under
   `bash` with the same core/GPU throttling, runlogs, and artifacts.
 - Opt-in job-array submission (`slurm_array: true`): each step goes out as

@@ -131,6 +131,11 @@ def backend_spec(task_name: str, model_path: str | Path | None = None) -> Backen
     return spec
 
 
+def registered_extras() -> frozenset[str]:
+    """Every pip extra a registered MLIP backend declares (drives CLI listing/validation)."""
+    return frozenset(spec.extra for spec in _BACKENDS.values())
+
+
 def requirement_from_options(options: dict[str, Any] | None) -> BackendRequirement:
     """The :class:`BackendRequirement` a step's raw ``options`` imply.
 

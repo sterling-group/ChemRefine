@@ -312,3 +312,62 @@ def test_non_provisionable_extopt_engine_keeps_plain_python(monkeypatch, tmp_pat
     ctx = _ctx(tmp_path, engine="mlip-extopt", options={})
     cmd = _PlainExtOpt()._server_cmd(ctx)
     assert cmd.startswith("python -m chemrefine.engines._backend_server.server")
+
+
+# ---------------------------------------------------------------------------
+# known_backend_extras + the `chemrefine backends` CLI group
+# ---------------------------------------------------------------------------
+
+
+def test_known_backend_extras_is_registration_driven():
+    """The union of every provisionable engine's declared extras — no hardcoded list."""
+    from chemrefine.engines import known_backend_extras
+
+    extras = known_backend_extras()
+    assert {"mlip-fairchem", "mlip-mace", "mlip-sevenn", "mlip-orb", "mlip-chgnet", "pyscf"} <= (
+        extras
+    )
+
+
+def test_backends_cli_list_and_path(monkeypatch, tmp_path: Path):
+    from typer.testing import CliRunner
+
+    from chemrefine.cli import app
+
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    py = _provisioned(tmp_path, "pyscf")
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["backends", "list"])
+    assert result.exit_code == 0
+    assert str(py) in result.output  # provisioned → shows the env python
+    assert "not provisioned" in result.output  # the others aren't
+
+    ok = runner.invoke(app, ["backends", "path", "pyscf"])
+    assert ok.exit_code == 0 and ok.output.strip() == str(py)
+    missing = runner.invoke(app, ["backends", "path", "mlip-mace"])
+    assert missing.exit_code == 1
+
+
+def test_backends_cli_install_validates_and_builds(monkeypatch, tmp_path: Path):
+    from typer.testing import CliRunner
+
+    import chemrefine.engines as engines_pkg
+    from chemrefine.cli import app
+
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    runner = CliRunner()
+
+    bad = runner.invoke(app, ["backends", "install", "not-a-backend"])
+    assert bad.exit_code != 0
+
+    built: list[str] = []
+
+    def _fake_build(extra: str):
+        built.append(extra)
+        return _provisioned(tmp_path, extra)
+
+    monkeypatch.setattr(engines_pkg, "build_backend_env", _fake_build)
+    ok = runner.invoke(app, ["backends", "install", "mlip-mace", "pyscf"])
+    assert ok.exit_code == 0
+    assert built == ["mlip-mace", "pyscf"]

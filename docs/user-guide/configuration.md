@@ -105,6 +105,7 @@ raises a clear error if the chosen energy wasn't computed.
     | `model_path` | `None` | Custom MACE checkpoint (selects the `custom_mace` backend). |
     | `device` | `cuda` | `cuda` or `cpu`. |
     | `cores` | `1` | Per-structure core budget. |
+    | `backend_python` | `None` | Explicit interpreter for the backend (escape hatch). Normally unset: the step's managed env is resolved by name — see [Installation → MLIP backends](installation.md#mlip-backends). |
 
 === "pyscf / pyscf-extopt"
 
@@ -120,6 +121,7 @@ raises a clear error if the chosen energy wasn't computed.
     | `localized` | `False` | Boys-localize before tensor extraction. |
     | `tensor_folder` | `tensors` | Output dir for `save_tensors` `.npz`. A relative path (the default) is copied back into the structure's own dir (`outputs/stepN/<id>/tensors/`); an absolute path writes there directly. |
     | `cores` | `1` | Per-structure core budget. |
+    | `backend_python` | `None` | Explicit interpreter for the backend (escape hatch). Normally unset: the `pyscf` managed env is resolved by name. |
 
 === "nms (when nms: true)"
 

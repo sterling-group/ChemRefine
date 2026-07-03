@@ -35,10 +35,30 @@ from typing import Literal
 
 from chemrefine import __version__
 from chemrefine.config import StepConfig
-from chemrefine.engines.api import BackendRequirement, ProvisionableEngine, get_engine
+from chemrefine.engines.api import (
+    ENGINES,
+    BackendRequirement,
+    ProvisionableEngine,
+    get_engine,
+)
 from chemrefine.errors import ConfigError
 
 EnvTool = Literal["conda", "uv", "venv"]
+
+
+def known_backend_extras() -> frozenset[str]:
+    """Every backend extra the registered engines can require.
+
+    The union of each provisionable engine's ``backend_extras()`` — registration-driven
+    (the MLIP extras come from the backend specs, PySCF's from its engines), never a
+    hardcoded list. Drives ``chemrefine backends`` listing + name validation.
+    """
+    extras: set[str] = set()
+    for name in ENGINES:
+        engine = get_engine(name)
+        if isinstance(engine, ProvisionableEngine):
+            extras.update(engine.backend_extras())
+    return frozenset(extras)
 
 
 def chemrefine_home() -> Path:

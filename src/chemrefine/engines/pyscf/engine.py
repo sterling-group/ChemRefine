@@ -29,6 +29,10 @@ class PyscfEngine(ScriptEngine):
         """The backend env this step needs — PySCF, whatever the options say."""
         return BackendRequirement(extra="pyscf", import_name="pyscf")
 
+    def backend_extras(self) -> frozenset[str]:
+        """The one extra this engine can require."""
+        return frozenset({"pyscf"})
+
     def _template_vars(self, ctx: StepContext) -> dict[str, object]:
         """Expose the SCF knobs as template placeholders, for parity with direct MLIP.
 

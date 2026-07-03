@@ -35,6 +35,10 @@ class PyscfExtOptEngine(ExtOptOrcaEngine):
         """The env the PySCF gradient server needs — PySCF, whatever the options say."""
         return BackendRequirement(extra="pyscf", import_name="pyscf")
 
+    def backend_extras(self) -> frozenset[str]:
+        """The one extra this engine can require."""
+        return frozenset({"pyscf"})
+
     def output_dirs(self, ctx: StepContext) -> tuple[str, ...]:
         """Copy the ``save_tensors`` output directory back into the structure dir.
 
