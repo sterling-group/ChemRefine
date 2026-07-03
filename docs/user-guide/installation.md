@@ -1,98 +1,107 @@
 # Installation
 
-ChemRefine is a **light orchestrator core** plus optional **backend environments**. The
-core (pipeline, ORCA driving, SLURM) installs anywhere; each MLIP backend lives in its own
-environment because their torch/e3nn stacks conflict (MACE pins `e3nn==0.4.4`,
-FAIRChem/SevenNet need `e3nn>=0.5`, …) — one Python process can only hold one family.
-Two ways to get a backend:
-
-- **single backend** — install its extra straight into the ChemRefine env
-  (`pip install "chemrefine[mlip]"` = FAIRChem/UMA) and run as usual;
-- **several (conflicting) backends** — keep the core light and provision one *managed env*
-  per backend with `chemrefine backends install <extra>`. Envs are resolved **by name** at
-  run time — no interpreter paths in your YAML — and reused by every later run.
-
-## Python already installed (pip / venv)
-
-```bash
-pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git"   # core
-chemrefine backends install mlip-fairchem      # provision the backends you use (once)
-```
-
-## From scratch (no Python on the system)
-
-[`uv`](https://docs.astral.sh/uv/) is a single binary that needs no pre-installed Python
-and can bootstrap one:
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-uv python install 3.13
-uv tool install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git"
-chemrefine backends install mlip-fairchem
-```
-
-## Conda
-
-```bash
-conda create -n chemrefine python=3.13 -y && conda activate chemrefine
-pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git"
-chemrefine backends install mlip-fairchem      # backend envs are built WITH conda too
-```
-
-`chemrefine backends install` always builds the managed envs with the **same tool that
-created the current env** (conda / uv / venv, detected automatically), so everything stays
-in the ecosystem you already use.
-
-## HPC
-
-Provision on a **login node** (needs internet), run anywhere: a managed env is a plain
-directory of files — offline compute nodes just execute its `python`. Envs live under
-`$CHEMREFINE_HOME` (default: alongside the install when writable, else `~/.chemrefine`);
-point it at a project/shared filesystem to share provisioned backends across machines:
-
-```bash
-export CHEMREFINE_HOME=/projects/mygroup/chemrefine   # optional; put it on shared storage
-chemrefine backends install mlip-mace mlip-fairchem   # once, on the login node
-```
-
-## From source
-
-```bash
-git clone https://github.com/sterling-group/ChemRefine.git
-cd ChemRefine
-pip install -e .[dev,test,docs]
-pre-commit install   # optional: run ruff + interrogate on every commit
-```
+ChemRefine is a **light orchestrator core** plus optional **compute backends**. The core
+(pipeline, ORCA driving, SLURM) installs anywhere in seconds; backends (MLIPs, PySCF) are
+added afterwards — either into the same environment or as isolated
+[managed environments](#compute-backends) when you use several.
 
 ## Requirements
 
 - **Python 3.11–3.13**
 - **ORCA 6.0+** — quantum-chemistry calculations
-- **SLURM** — HPC job scheduler (optional for local runs; the same
-  `.slurm` script can be executed with `bash` directly)
+- **SLURM** — HPC job scheduler (optional for local runs; the same `.slurm` script can be
+  executed with `bash` directly)
 
-The base install pulls `numpy`, `pyyaml`, `pandas`, `ase`, `rdkit`,
-`pydantic >= 2`, and `typer >= 0.12`. Optional extras layer backends on top.
+The base install pulls `numpy`, `pyyaml`, `pandas`, `ase`, `rdkit`, `pydantic >= 2`, and
+`typer >= 0.12`. Optional extras layer backends on top.
+
+## Install ChemRefine
+
+!!! note "PyPI release pending"
+    The `chemrefine` package name below refers to the upcoming **v2.0.0 PyPI release**.
+    Until it is published, substitute the [Git form](#from-git-until-the-pypi-release)
+    wherever `chemrefine` appears as an install target — everything else is identical.
+
+=== "pip"
+
+    ```bash
+    python -m venv ~/chemrefine-env && source ~/chemrefine-env/bin/activate
+    pip install chemrefine
+    ```
+
+=== "uv"
+
+    [`uv`](https://docs.astral.sh/uv/) is a single binary that needs no pre-installed
+    Python and can bootstrap one — the fastest path on a bare system:
+
+    ```bash
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    uv python install 3.13        # only if the system has no Python
+    uv tool install chemrefine    # isolated install, `chemrefine` on PATH
+    ```
+
+=== "conda"
+
+    ```bash
+    conda create -n chemrefine python=3.13 -y
+    conda activate chemrefine
+    pip install chemrefine
+    ```
+
+### From Git (until the PyPI release)
+
+The current development version installs straight from GitHub — a drop-in replacement for
+`chemrefine` in any command above:
+
+```bash
+pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git"
+```
+
+### From source (contributors)
+
+```bash
+git clone https://github.com/sterling-group/ChemRefine.git
+cd ChemRefine
+pip install -e ".[dev]"
+pre-commit install   # optional: run ruff + interrogate on every commit
+```
+
+## Compute backends
+
+The MLIP libraries have mutually incompatible dependency stacks, so one Python process can
+only host one backend family. Two ways to add one:
+
+- **Single backend** — install its extra straight into the ChemRefine env and run as usual:
+
+    ```bash
+    pip install "chemrefine[mlip]"        # FAIRChem / UMA (the default backend)
+    ```
+
+- **Several (conflicting) backends** — keep the core light and provision one *managed
+  environment* per backend:
+
+    ```bash
+    chemrefine backends install mlip-mace mlip-fairchem
+    ```
+
+    Each env is built once with the **same tool that created the current env** (conda / uv
+    / venv, detected automatically), reused by every later run, and resolved **by name** at
+    run time — no interpreter paths in your YAML. `chemrefine backends list` shows what is
+    provisioned. Every run validates its steps' backends **up front**: a step whose backend
+    is neither importable nor provisioned fails before any job submits, naming the fix.
 
 ### MLIP backends
 
-Each MLIP backend ships in its own extra and its own environment (their torch/e3nn trees
-conflict — none co-install). `chemrefine backends install <extra>` provisions the managed
-env; alternatively install exactly one extra into the main env for the single-backend case.
-
 | Extra | `task_name`(s) it enables | Pulls |
 |-------|---------------------------|-------|
-| `[mlip]` = `[mlip-fairchem]` | `omol`, `omat`, `odac`, `oc20`, `oc22`, `oc25`, `omc` | `fairchem-core` (→ `torch`, `e3nn>=0.5`); UMA / eSEN checkpoints, default `uma-s-1p2` |
-| `[mlip-mace]` | `mace_off`, `mace_mp`, `mace_omol`, `custom_mace` | `torch`, `e3nn==0.4.4`, `mace-torch` |
-| `[mlip-sevenn]` | `sevenn` | `sevenn` (→ `e3nn>=0.5`, `torch-geometric`) |
-| `[mlip-orb]` | `orb` | `orb-models` (→ `torch>=2.8`); needs **Python ≥ 3.12** |
-| `[mlip-chgnet]` | `chgnet` | `chgnet` (→ `torch`, `pymatgen`) |
+| `[mlip]` = `[mlip-fairchem]` | `omol`, `omat`, `odac`, `oc20`, `oc22`, `oc25`, `omc` | `fairchem-core`; UMA / eSEN checkpoints, default `uma-s-1p2` |
+| `[mlip-mace]` | `mace_off`, `mace_mp`, `mace_omol`, `custom_mace` | `mace-torch` |
+| `[mlip-sevenn]` | `sevenn` | `sevenn` |
+| `[mlip-orb]` | `orb` | `orb-models`; needs **Python ≥ 3.12** |
+| `[mlip-chgnet]` | `chgnet` | `chgnet` |
 
 `[mlff]` remains an alias of `[mlip]`. The backends don't pin a CUDA build of `torch`, so
 for GPU install the matching `torch` first (or let the extra resolve the default build).
-Every run validates its steps' backends **up front**: a step whose backend is neither
-importable nor provisioned fails before any job submits, naming the
-`chemrefine backends install <extra>` fix.
 
 ### Multiple MLIP backends in one run
 
@@ -105,13 +114,13 @@ chemrefine backends install mlip-mace mlip-fairchem   # once
 
 ```yaml
 steps:
-  - step: 1                       # broad screen — MACE (e3nn 0.4.4)
+  - step: 1                       # broad screen — MACE
     engine: mlip
     operation: opt_sp
     options: { task_name: mace_off, model_name: medium }
     sample: { method: boltzmann, percent_cumulative: 99 }
 
-  - step: 2                       # refine — UMA (e3nn >= 0.5)
+  - step: 2                       # refine — UMA
     engine: mlip
     operation: opt_sp
     options: { task_name: omol, model_name: uma-s-1p2 }
@@ -126,11 +135,23 @@ The `options.backend_python` knob overrides the resolution with an explicit inte
 
 ### Other extras
 
-- `[pyscf]` — `pyscf` for the PySCF engine / PySCF-ExtOpt gradients
-  (plus `[server]`); `[pyscf-gpu]` adds `gpu4pyscf-cuda12x` + `cutensor-cu12`
-  (CUDA 12; CUDA-11 hosts swap in the `-cuda11x` wheels).
-- `[server]` — just `flask` + `waitress` (the ExtOpt HTTP server);
-  pulled in automatically by every MLIP extra and `[pyscf]`.
+- `[pyscf]` — `pyscf` for the PySCF engine / PySCF-ExtOpt gradients (plus `[server]`);
+  `[pyscf-gpu]` adds `gpu4pyscf-cuda12x` + `cutensor-cu12` (CUDA 12; CUDA-11 hosts swap in
+  the `-cuda11x` wheels).
+- `[server]` — just `flask` + `waitress` (the ExtOpt HTTP server); pulled in automatically
+  by every MLIP extra and `[pyscf]`.
+
+## HPC
+
+Provision on a **login node** (needs internet), run anywhere: a managed env is a plain
+directory of files — offline compute nodes just execute its `python`. Envs live under
+`$CHEMREFINE_HOME` (default: alongside the install when writable, else `~/.chemrefine`);
+point it at a project/shared filesystem to share provisioned backends across machines:
+
+```bash
+export CHEMREFINE_HOME=/projects/mygroup/chemrefine   # optional; put it on shared storage
+chemrefine backends install mlip-mace mlip-fairchem   # once, on the login node
+```
 
 ## Verification
 
@@ -143,15 +164,11 @@ chemrefine run Examples/input.yaml --dry-run    # validates the YAML, no jobs ru
 
 ## FAIRChem model access
 
-The UMA / OMol models on Hugging Face require manual access approval
-(allow ~10 minutes). Apply at the
-[UMA repository](https://huggingface.co/facebook/UMA) and the
-[OMol25 repository](https://huggingface.co/facebook/OMol25), then
-authenticate locally:
-
-```bash
-huggingface-cli login
-```
+The UMA / OMol checkpoints are gated on Hugging Face: request access to the
+[UMA repository](https://huggingface.co/facebook/UMA) and authenticate your machine with a
+Hugging Face token. Follow the
+[FAIRChem documentation](https://fair-chem.github.io/) for the current access +
+authentication steps — they are defined upstream and may change.
 
 ## Troubleshooting
 
@@ -166,7 +183,8 @@ huggingface-cli login
 
 ## License
 
-ChemRefine is released under [AGPL v3](https://github.com/sterling-group/ChemRefine/blob/main/LICENSE).
+ChemRefine is released under
+[AGPL v3](https://github.com/sterling-group/ChemRefine/blob/main/LICENSE).
 
 ## Getting help
 
