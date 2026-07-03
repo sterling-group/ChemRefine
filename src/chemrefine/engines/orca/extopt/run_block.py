@@ -20,16 +20,20 @@ def _server_command(
     *,
     backend: str,
     extra_tokens: list[str],
+    interpreter: str = "python",
 ) -> str:
-    """Build the ``python -m chemrefine.engines._backend_server.server ...`` command.
+    """Build the ``<python> -m chemrefine.engines._backend_server.server ...`` command.
 
-    ``extra_tokens`` is a flat list of CLI tokens (e.g.
-    ``["--foo", "bar", "--baz"]``) emitted by the backend's
-    :meth:`ComputeBackend.server_cli_from_options`. Keeping them
-    as one list keeps key-value flags and bool flags symmetric.
+    ``interpreter`` is the Python that hosts the backend server — the orchestrator's
+    ``python`` by default, or a managed backend env's interpreter resolved by
+    :func:`chemrefine.engines._provision.resolve_launcher` (that env just needs
+    ``chemrefine[<backend extra>]`` installed). ``extra_tokens`` is a flat list of CLI
+    tokens (e.g. ``["--foo", "bar", "--baz"]``) emitted by the backend's
+    :meth:`ComputeBackend.server_cli_from_options`. Keeping them as one list keeps
+    key-value flags and bool flags symmetric.
     """
     parts = [
-        "python -m chemrefine.engines._backend_server.server",
+        f"{shlex.quote(interpreter)} -m chemrefine.engines._backend_server.server",
         f"--backend {shlex.quote(backend)}",
         f"--bind {DEFAULT_BIND_HOST}:0",
         '--url-file "$URL_FILE"',

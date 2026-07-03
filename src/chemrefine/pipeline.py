@@ -26,6 +26,7 @@ from ase.io import read as ase_read
 
 from chemrefine import io
 from chemrefine.config import Config, StepConfig
+from chemrefine.engines import preflight_backends
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 from chemrefine.state import PipelineState, Structure
@@ -172,6 +173,8 @@ def run(
         config.max_gpus if config.max_gpus is not None else "auto",
         config.output_dir,
     )
+    # Fail fast: every step's backend env must be resolvable before ANY job submits.
+    preflight_backends(config.steps)
     state = bootstrap(config)
     logger.info("bootstrapped pipeline with %d seed structure(s)", len(state.structures))
 

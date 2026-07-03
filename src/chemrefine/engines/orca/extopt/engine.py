@@ -17,9 +17,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import ClassVar
 
+from chemrefine.engines import _provision
 from chemrefine.engines._backend_server.base import SERVER_URL_FILENAME, ComputeBackend
 from chemrefine.engines._job import gpus_from_device_options
 from chemrefine.engines._options import EngineOptions
+from chemrefine.engines.api import ProvisionableEngine
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.engines.orca.extopt import protocol, run_block
 from chemrefine.state import StepContext, StepInputs
@@ -42,16 +44,25 @@ class ExtOptOrcaEngine(OrcaEngine):
         return f'%method\n  ProgExt "{self._wrapper_path(ctx)}"\nend'
 
     def _server_cmd(self, ctx: StepContext) -> str:
-        """Build the ``python -m ..._backend_server.server --backend <name> …`` command.
+        """Build the ``<python> -m ..._backend_server.server --backend <name> …`` command.
 
         Validates ``ctx.step_cfg.options`` through ``options_cls`` (so the step fails fast on a
         typoed/unknown YAML knob), then asks ``calculator_cls`` to turn the validated options
         into the matching server CLI tokens — the single source of truth for the backend's
-        configuration. The wrapper and per-call POST carry nothing (single-channel).
+        configuration. The wrapper and per-call POST carry nothing (single-channel). The
+        server's interpreter comes from the provisioner (managed backend env when one exists),
+        so conflicting backends can serve side by side in one run.
         """
-        options = self.options_cls.from_raw(ctx.step_cfg.options).model_dump()
-        tokens = self.calculator_cls.server_cli_from_options(options)
-        return run_block._server_command(backend=self.backend, extra_tokens=tokens)
+        validated = self.options_cls.from_raw(ctx.step_cfg.options)
+        tokens = self.calculator_cls.server_cli_from_options(validated.model_dump())
+        interpreter = "python"
+        if isinstance(self, ProvisionableEngine):
+            interpreter = _provision.resolve_launcher(
+                self.backend_requirement(ctx.step_cfg.options), validated.backend_python
+            )
+        return run_block._server_command(
+            backend=self.backend, extra_tokens=tokens, interpreter=interpreter
+        )
 
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Write the per-structure ORCA ``.inp`` files plus the ``ProgExt`` wrapper.

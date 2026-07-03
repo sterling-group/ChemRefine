@@ -14,13 +14,15 @@ This is the ``.py``-format sibling of :mod:`chemrefine.engines.orca.input` /
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from typing import ClassVar
 
+from chemrefine.engines import _provision
 from chemrefine.engines._job import JobEngine, gpus_from_device_options
 from chemrefine.engines._script import output as script_output
 from chemrefine.engines._script import render as script_render
-from chemrefine.engines.api import ParsedResult
+from chemrefine.engines.api import ParsedResult, ProvisionableEngine
 from chemrefine.state import StepContext
 
 
@@ -79,14 +81,22 @@ class ScriptEngine(JobEngine):
         Script engines (pyscf / mlip direct) are OpenMP/MKL/torch-threaded with no MPI, so the
         thread count is pinned to the step's ``options.cores`` (= :meth:`pal`) — the real
         oversubscription guard on a laptop where jobs run concurrently, and harmless under
-        SLURM. (ORCA is the opposite — MPI ranks, ``OMP=1``.)
+        SLURM. (ORCA is the opposite — MPI ranks, ``OMP=1``.) The script's interpreter comes
+        from the provisioner (a managed backend env when one exists), so conflicting backends
+        can run side by side in one pipeline.
         """
         cores = self.pal(ctx)
+        interpreter = "python"
+        if isinstance(self, ProvisionableEngine):
+            raw = ctx.step_cfg.options or {}
+            interpreter = _provision.resolve_launcher(
+                self.backend_requirement(raw), raw.get("backend_python")
+            )
         return (
             f"export OMP_NUM_THREADS={cores}\n"
             f"export MKL_NUM_THREADS={cores}\n"
             f"export OPENBLAS_NUM_THREADS={cores}\n"
-            f"python {inp_path.name}"
+            f"{shlex.quote(interpreter)} {inp_path.name}"
         )
 
     # -- parse -------------------------------------------------------------
