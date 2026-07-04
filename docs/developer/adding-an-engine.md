@@ -12,8 +12,10 @@ place:
   `_backend_server/` (the ExtOpt server).
 - **the plugins** (bare names) — `orca/`, `mlip/`, `pyscf/`.
 
-Adding an engine touches exactly two things: a new `engines/<name>/` package, and one line in
-`engines/__init__.py`'s import list. You never edit a building block to make a new engine exist.
+Adding an engine touches exactly **one** thing: a new bare-named `engines/<name>/` package.
+Plugins are auto-discovered — every bare-named subpackage is imported when
+`chemrefine.engines` loads, so the addition is fully self-contained. You never edit a building
+block (or any central list) to make a new engine exist.
 
 ## The steps
 
@@ -28,7 +30,8 @@ strings them into one engine you can read top to bottom:
    `@register("<name>")`, declare its [ClassVars](#declare-the-metadata-classvars), and implement
    only the primitives that kind asks for.
 3. **Validate the YAML knobs** in `options.py` ([Validate the YAML knobs](#validate-the-yaml-knobs)).
-4. **Register it** — the [two import lines](#wire-registration) that make `@register` run.
+4. **Register it** — [one import line in *your own* `__init__.py`](#wire-registration); the
+   package itself is auto-discovered.
 5. **Wire resources** — a binary path or an optional `pip` extra ([Resources](#resources)).
 6. **Support NMS** only if the engine computes frequencies ([Supporting NMS](#supporting-nms)).
 7. **Add tests** at 100% coverage ([Tests](#tests)).
@@ -69,12 +72,14 @@ validation.
 
 ## Wire registration
 
-Registration is an **import side effect** of `@register("<name>")`. Import the class in
-`engines/<name>/__init__.py`, then add the package to `engines/__init__.py`'s import list:
+Registration is an **import side effect** of `@register("<name>")`, and discovery is automatic:
+importing `chemrefine.engines` imports every bare-named subpackage under `engines/`. The only
+wiring you write is inside your own package — import the class in `engines/<name>/__init__.py`
+so the discovery import runs your decorator:
 
 ```mermaid
 flowchart LR
-  A["import chemrefine.engines"] --> B["engines/__init__ imports\n_fake, mlip, orca, pyscf, <name>"]
+  A["import chemrefine.engines"] --> B["auto-discovers every\nbare-named engines/&lt;pkg&gt;/"]
   B --> C["each engine module runs\n@register('name')"]
   C --> D["ENGINES['name'] = EngineClass"]
   E["step.run_step"] --> F["get_engine('name')"]
@@ -88,13 +93,10 @@ from chemrefine.engines.<name>.engine import MyEngine
 __all__ = ["MyEngine"]
 ```
 
-```python
-# engines/__init__.py  (add <name> to the import + __all__)
-from chemrefine.engines import _fake, mlip, orca, pyscf, <name>
-```
-
-Legacy YAML engine spellings are rewritten to the canonical name by `config._normalize_legacy`
-(the single place that knows the legacy vocabulary) — never the registry.
+Nothing outside `engines/<name>/` changes — underscored packages (building blocks) and plain
+modules are never treated as plugins. Legacy YAML engine spellings are rewritten to the
+canonical name by `config._normalize_legacy` (the single place that knows the legacy
+vocabulary) — never the registry.
 
 ## Resources
 
@@ -239,18 +241,14 @@ class DemoqmEngine(JobEngine):
 
 `gpus` defaults to `0` (CPU); a GPU engine overrides it.
 
-**Step 4 — register** with `__init__.py` plus one line in `engines/__init__.py`:
+**Step 4 — register** with your own `__init__.py` — the bare-named package is auto-discovered,
+so nothing outside `engines/demoqm/` changes:
 
 ```python
 # engines/demoqm/__init__.py
 from chemrefine.engines.demoqm.engine import DemoqmEngine
 
 __all__ = ["DemoqmEngine"]
-```
-
-```python
-# engines/__init__.py  — add demoqm to the import + __all__
-from chemrefine.engines import _fake, demoqm, mlip, orca, pyscf
 ```
 
 That's a working engine: `engine: demoqm` in a step now renders `step{N}.inp` per structure, runs

@@ -37,9 +37,10 @@ Custom / non-job              :class:`CalculationEngine`       ``prepare`` / ``s
   ``backend_requirement`` (the generic provisioner is :mod:`chemrefine.engines._provision`).
 * **YAML knobs** — a Pydantic model in ``engines/<name>/options.py`` subclassing
   :class:`~chemrefine.engines._options.EngineOptions`; read it in the primitives.
-* **Register** — import the class in ``engines/<name>/__init__.py`` and add the package to
-  :mod:`chemrefine.engines`'s import list (registration is a side effect). Legacy YAML spellings
-  map to the canonical name in :func:`chemrefine.config._normalize_legacy`.
+* **Register** — import the class in ``engines/<name>/__init__.py``; the bare-named package is
+  **auto-discovered** when :mod:`chemrefine.engines` loads (registration is a side effect), so
+  nothing outside the new package changes. Legacy YAML spellings map to the canonical name in
+  :func:`chemrefine.config._normalize_legacy`.
 * **Resources** — an external binary reads its path from ``ctx.executables.get("<name>")``; an
   importable backend ships as a ``pip install chemrefine[<name>]`` extra (imported lazily).
 * **Tests** go in ``tests/test_engines_<name>*.py``.

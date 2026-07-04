@@ -17,9 +17,11 @@ for the full map.
 ### Added
 
 - Engine plugin system: a `CalculationEngine` protocol plus a registry, with
-  four documented base shapes for new engines (`engines/api.py`). Bundled
-  engines: `orca`, `mlip`, `mlip-extopt`, `mlip-train`, `pyscf`,
-  `pyscf-extopt`.
+  four documented base shapes for new engines (`engines/api.py`). Plugins and
+  MLIP backends are **auto-discovered** — a new engine package or backend
+  module is dropped in and registers itself, with no central import list to
+  edit. Bundled engines: `orca`, `mlip`, `mlip-extopt`, `mlip-train`,
+  `pyscf`, `pyscf-extopt`.
 - Subcommand CLI — `run`, `resume`, `rerun [step]`, `rerun-errors [step]`,
   `rebuild-cache [step]`, `rebuild-nms [step]` — with documented process
   exit codes per failure class.

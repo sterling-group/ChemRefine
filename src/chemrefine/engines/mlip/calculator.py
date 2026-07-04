@@ -4,7 +4,7 @@ A *registry of small builders* pattern: each supported MLIP library
 contributes a tiny ``_build_<name>`` function decorated with
 :func:`register_backend`, living in its own module under
 :mod:`chemrefine.engines.mlip.backends`. Adding a new MLIP backend is
-**one small module plus one import line** — no edits to a god-class.
+**one small dropped-in module** — auto-discovered, no edits anywhere else.
 
 The public entry point is :func:`build_calculator` (used by users'
 templates and by the ExtOpt server adapter). The :class:`MlipCalculator`
@@ -36,8 +36,8 @@ this module imports cleanly even when the optional MLIP deps aren't installed;
 ``chemrefine[mlip-<backend>]`` extra to install (every backend is a dedicated-env
 extra — their torch/e3nn trees conflict; ``[mlip]`` = FAIRChem/UMA).
 
-Adding a new backend = a new ``backends/<name>.py`` (decorated builder) listed in
-``backends/__init__.py``. The decorator carries the backend's packaging metadata — the pip
+Adding a new backend = a new ``backends/<name>.py`` (decorated builder) — dropped in and
+auto-discovered. The decorator carries the backend's packaging metadata — the pip
 extra that provides it, the pip distribution named in the actionable import error, and the
 top-level module the provisioner probes — so the backend module is the **single** declaration
 point (no central table anywhere) and a missing library is reported with the extra to
