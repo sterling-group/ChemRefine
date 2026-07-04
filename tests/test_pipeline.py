@@ -229,9 +229,9 @@ def test_run_aligns_csv_and_cache_for_more_than_ten_structures(tmp_path: Path):
     both the cache and ``steps.csv`` — no v1-style lexical-sort mismatch (where "10"
     sorted before "2" and rows desynced from their energies)."""
     import pandas as pd
+    from fake_engine import _fake_energy
 
     from chemrefine import cache
-    from chemrefine.engines._fake.engine import _fake_energy
 
     seed_dir = tmp_path / "seeds"
     io.write_xyz(

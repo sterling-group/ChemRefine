@@ -17,7 +17,7 @@ The provisioning entry points (:func:`preflight_backends`, :func:`build_backend_
 pipeline + CLI never import a building block directly.
 """
 
-from chemrefine.engines import _fake, mlip, orca, pyscf
+from chemrefine.engines import mlip, orca, pyscf
 from chemrefine.engines._provision import (
     backend_env_path,
     build_backend_env,
@@ -27,7 +27,6 @@ from chemrefine.engines._provision import (
 from chemrefine.engines.api import get_engine, register
 
 __all__ = [
-    "_fake",
     "backend_env_path",
     "build_backend_env",
     "get_engine",

@@ -27,7 +27,7 @@ User Python script            :class:`._script.ScriptEngine`  usually only ``_te
 ORCA-driven gradients         :class:`.orca.extopt.engine.    ``backend`` / ``wrapper_filename`` /
                               ExtOptOrcaEngine`               ``options_cls`` / ``calculator_cls``
 Custom / non-job              :class:`CalculationEngine`       ``prepare`` / ``submit`` / ``parse``
-(mlip-train, fake)            directly                        / ``input_digest``
+(mlip-train)                  directly                        / ``input_digest``
 ============================  ==============================  =====================================
 
 * **Capabilities** — never a flag, always a Protocol detected via ``isinstance``. NMS:

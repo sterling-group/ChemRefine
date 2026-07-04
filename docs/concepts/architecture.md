@@ -10,7 +10,7 @@ forward as immutable `PipelineState` values.
 ```
 cli → recovery → pipeline → step → {cache, filtering, step_failures, nms}
                                   → engines.api (Protocols + ENGINES registry)
-                                       → engines/* (orca, mlip, pyscf, _fake)
+                                       → engines/* (orca, mlip, pyscf)
                                             → engines/{_job, _execution, _script} (building blocks)
                                             → slurm, throttle, io, ids, job_log, quantities
 ```
