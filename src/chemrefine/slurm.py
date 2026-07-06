@@ -11,7 +11,6 @@ The :func:`submit` and :func:`is_finished` functions shell out to real
 binaries. Tests patch ``subprocess.run`` to avoid needing a live SLURM
 cluster.
 """
-print("hello markus")
 from __future__ import annotations
 
 import functools
