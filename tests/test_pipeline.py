@@ -60,6 +60,21 @@ def test_bootstrap_from_multiframe_xyz_seeds_every_frame(tmp_path: Path):
     assert state.structures[2].atoms.get_positions()[1][0] == pytest.approx(0.74)
 
 
+def test_bootstrap_from_xyz_with_trailing_blank_lines(tmp_path: Path):
+    """Editors and ORCA leave trailing blank lines on real .xyz files.
+
+    Regression: seeding forced ASE's naive ``format="xyz"`` parser, which loops
+    ``int(lines.pop(0))`` over every remaining line and dies on the blank tail
+    with ``invalid literal for int(): '\\n'``. ``extxyz`` tolerates it.
+    """
+    seed = tmp_path / "trailing.xyz"
+    seed.write_text("2\nsymmetry c1\nH 0.0 0.0 0.0\nH 0.74 0.0 0.0\n\n\n", encoding="utf-8")
+    cfg = _config(tmp_path, input=seed)
+    state = pipeline.bootstrap(cfg)
+    assert [s.id for s in state.structures] == ["0"]
+    assert state.structures[0].atoms.get_chemical_formula() == "H2"
+
+
 def test_bootstrap_from_directory(tmp_path: Path):
     seed_dir = tmp_path / "seeds"
     io.write_xyz([_h2(), _h2()], ["a", "b"], step_number=0, output_dir=seed_dir)

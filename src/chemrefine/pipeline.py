@@ -18,11 +18,11 @@ orchestrator never imports a concrete engine directly.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 from typing import cast
 
 from ase import Atoms
-from ase.io import read as ase_read
 
 from chemrefine import io
 from chemrefine.config import Config, StepConfig
@@ -79,34 +79,40 @@ def bootstrap(config: Config) -> PipelineState:
     raise ConfigError(f"unsupported input format: {path}")
 
 
-def _seed_from_xyz(path: Path) -> PipelineState:
-    """Seed the pipeline from an XYZ file — one structure **per frame**, in file order.
+def _state_from_frames(frames: Iterable[Atoms]) -> PipelineState:
+    """Number a sequence of frames into a :class:`PipelineState` — IDs ``"0"``, ``"1"``, ….
 
-    ``index=":"`` reads every frame; ASE's default would silently keep only
-    the *last* one, losing the rest of a multi-conformer seed file. A
-    single-frame file still yields exactly one structure with ID ``"0"``.
+    The shared tail of every seeder: continuous IDs in iteration order, so a
+    directory's frames number straight on from the previous file's.
     """
-    frames = ase_read(str(path), index=":", format="xyz")
     return PipelineState(
         structures=tuple(Structure(id=str(i), atoms=atoms) for i, atoms in enumerate(frames))
     )
+
+
+def _seed_from_xyz(path: Path) -> PipelineState:
+    """Seed the pipeline from an XYZ file — one structure **per frame**, in file order.
+
+    :func:`chemrefine.io.read_xyz_frames` reads every frame; ASE's default
+    would silently keep only the *last* one, losing the rest of a
+    multi-conformer seed file. A single-frame file still yields exactly one
+    structure with ID ``"0"``.
+    """
+    return _state_from_frames(io.read_xyz_frames(path))
 
 
 def _seed_from_directory(directory: Path) -> PipelineState:
     """Seed the pipeline from every ``*.xyz`` under ``directory``, sorted naturally.
 
-    Every **frame** of every file becomes a structure (``index=":"`` —
-    like :func:`_seed_from_xyz`, ASE's default would silently keep only
-    the last frame of a multi-conformer file). IDs number continuously
-    across files in natural-sort order.
+    Every **frame** of every file becomes a structure (via
+    :func:`chemrefine.io.read_xyz_frames` — like :func:`_seed_from_xyz`,
+    ASE's default would silently keep only the last frame of a multi-conformer
+    file). IDs number continuously across files in natural-sort order.
     """
     xyz_files = io.gather_output_files(directory, "*.xyz")
     if not xyz_files:
         raise ConfigError(f"no .xyz files found under {directory}")
-    frames = [atoms for f in xyz_files for atoms in ase_read(str(f), index=":", format="xyz")]
-    return PipelineState(
-        structures=tuple(Structure(id=str(i), atoms=atoms) for i, atoms in enumerate(frames))
-    )
+    return _state_from_frames(atoms for f in xyz_files for atoms in io.read_xyz_frames(f))
 
 
 def _seed_from_smiles_csv(csv_path: Path, out_dir: Path) -> PipelineState:
@@ -114,13 +120,8 @@ def _seed_from_smiles_csv(csv_path: Path, out_dir: Path) -> PipelineState:
     xyz_files = io.smiles_to_xyz(csv_path, out_dir)
     if not xyz_files:
         raise ConfigError(f"no SMILES in {csv_path} converted to 3D structures")
-    structures = tuple(
-        # Each file holds exactly one embedded conformer, so the read is a
-        # single Atoms — ase types it as a frame-list union.
-        Structure(id=str(i), atoms=cast(Atoms, ase_read(str(f), format="xyz")))
-        for i, f in enumerate(xyz_files)
-    )
-    return PipelineState(structures=structures)
+    # Each converted file holds exactly one embedded conformer — take its sole frame.
+    return _state_from_frames(io.read_xyz_frames(f)[0] for f in xyz_files)
 
 
 # ---------------------------------------------------------------------------

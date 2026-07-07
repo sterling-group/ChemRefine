@@ -12,10 +12,11 @@ import logging
 import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from ase import Atoms
+from ase.io import read as ase_read
 from numpy.typing import NDArray
 
 from chemrefine.quantities import (
@@ -112,6 +113,18 @@ def gather_output_files(directory: str | Path, pattern: str) -> list[Path]:
         return []
     matches = sorted(d.glob(pattern), key=natural_key)
     return list(matches)
+
+
+def read_xyz_frames(path: str | Path) -> list[Atoms]:
+    """Read every frame of an XYZ file into ASE ``Atoms`` — the one place we parse XYZ.
+
+    ``format="extxyz"`` selects ASE's robust reader: the naive ``"xyz"`` parser
+    loops ``int(lines.pop(0))`` over every line and dies (``invalid literal for
+    int(): '\\n'``) on the trailing blank lines that editors and ORCA routinely
+    leave on real files. ``index=":"`` returns all frames; a single-frame file
+    yields a one-element list, so callers never special-case frame count.
+    """
+    return cast("list[Atoms]", ase_read(str(path), index=":", format="extxyz"))
 
 
 # ---------------------------------------------------------------------------
