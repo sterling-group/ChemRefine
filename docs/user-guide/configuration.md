@@ -54,6 +54,7 @@ steps:
 | `max_gpus` | int ≥ 0 / `None` | `None` (auto) | Concurrent-GPU budget. `None` auto-resolves: unlimited under SLURM (the scheduler places GPUs via `--gres`), the detected device count (`nvidia-smi -L`) locally. The `--maxgpus` flag overrides this. |
 | `slurm_template` | str | `cpu.slurm.header` | Default SLURM header basename in `template_dir`. A GPU step auto-picks `cuda.slurm.header`. |
 | `slurm_array` | bool | `False` | Submit each step as SLURM job array(s) instead of one job per structure (ignored when running locally). |
+| `dispatch` | `auto` / `local` / `slurm` | `auto` | How jobs are executed. `auto` submits via `sbatch` when it is on PATH and runs the generated scripts locally via `bash` otherwise. `local` forces the local runner even when an `sbatch` binary exists (e.g. a workstation with SLURM client tools but no reachable cluster); `slurm` requires `sbatch` and fails fast when it is missing. |
 | `executables` | map | `{}` | Tool → binary-path map for external-binary engines, e.g. `{ orca: /opt/orca/orca }`. Importable backends (mlip, pyscf) need no entry. |
 | `steps` | list | — | **Required.** The ordered pipeline stages; `step:` numbers must form a contiguous `1..N`. |
 

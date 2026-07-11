@@ -57,12 +57,12 @@ def run_batch(engine: JobExecutable, inputs: StepInputs, ctx: StepContext) -> Jo
     (and a real SLURM host) the whole batch goes out as job array(s) — see
     :func:`_run_array`.
     """
-    local = not slurm.sbatch_available()
+    local = slurm.dispatch_locally(ctx.dispatch)
     if ctx.slurm_array and not local:
         return _run_array(engine, inputs, ctx)
     throttler = throttle.Throttler(
         max_cores=ctx.max_cores,
-        max_gpus=slurm.resolve_gpu_budget(ctx.max_gpus),
+        max_gpus=slurm.resolve_gpu_budget(ctx.max_gpus, dispatch=ctx.dispatch),
         poll_interval=_LOCAL_POLL_SECONDS if local else _SLURM_POLL_SECONDS,
     )
     header_path = _header_path(engine, ctx)
@@ -103,7 +103,7 @@ def run_batch(engine: JobExecutable, inputs: StepInputs, ctx: StepContext) -> Jo
             output_dirs=engine.output_dirs(ctx),
             extra_header_fields=engine.extra_header_fields(ctx),
         )
-        job_id = slurm.submit(script_path, env=env)
+        job_id = slurm.submit(script_path, env=env, dispatch=ctx.dispatch)
         throttler.register(job_id, pal, gpus=gpus, device=device)
         jobs[inp] = job_id
         logger.info("submitted %s as job %s (pal=%d, gpus=%d)", inp.name, job_id, pal, gpus)

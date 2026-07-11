@@ -18,7 +18,7 @@ import numpy as np
 from ase import Atoms
 from numpy.typing import NDArray
 
-from chemrefine.config import StepConfig
+from chemrefine.config import Dispatch, StepConfig
 
 
 @dataclass(frozen=True)
@@ -116,6 +116,8 @@ class StepContext:
     slurm_array: bool = False
     """Submit this step as SLURM job array(s) (``Config.slurm_array``);
     ignored when running locally."""
+    dispatch: Dispatch = "auto"
+    """Job dispatch mode (``Config.dispatch``): auto / local / slurm."""
 
 
 @dataclass(frozen=True)

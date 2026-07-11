@@ -24,7 +24,7 @@ from typing import cast
 
 from ase import Atoms
 
-from chemrefine import io
+from chemrefine import io, slurm
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines import preflight_backends
 from chemrefine.errors import ConfigError
@@ -174,8 +174,10 @@ def run(
         config.max_gpus if config.max_gpus is not None else "auto",
         config.output_dir,
     )
-    # Fail fast: every step's backend env must be resolvable before ANY job submits.
+    # Fail fast: every step's backend env must be resolvable before ANY job submits,
+    # and `dispatch: slurm` must actually have sbatch available.
     preflight_backends(config.steps)
+    slurm.dispatch_locally(config.dispatch)
     state = bootstrap(config)
     logger.info("bootstrapped pipeline with %d seed structure(s)", len(state.structures))
 

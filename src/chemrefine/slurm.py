@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TextIO
 
 from chemrefine import job_log
-from chemrefine.errors import JobSubmissionError
+from chemrefine.errors import ConfigError, JobSubmissionError
 
 logger = logging.getLogger(__name__)
 
@@ -74,13 +74,31 @@ run gets — many scripts run at once under the PAL budget instead of one-at-a-t
 
 
 def sbatch_available(*, sbatch_cmd: str = "sbatch") -> bool:
-    """Return True when ``sbatch`` is on ``PATH`` (i.e. we're on a real SLURM host).
+    """Return True when ``sbatch`` is on ``PATH``.
 
-    The single source of truth for "SLURM vs local": :func:`submit` uses it to
-    pick ``sbatch`` over the local-bash fallback, and the batch engine uses it to
-    pick the poll cadence and GPU budget.
+    The raw PATH probe that :func:`dispatch_locally` — the actual SLURM-vs-local
+    decision — builds on.
     """
     return shutil.which(sbatch_cmd) is not None
+
+
+def dispatch_locally(dispatch: str = "auto", *, sbatch_cmd: str = "sbatch") -> bool:
+    """Resolve SLURM-vs-local for this run — the single source of truth.
+
+    ``local`` always uses the background bash runner (even when an ``sbatch``
+    binary is on PATH); ``slurm`` requires ``sbatch`` and raises
+    :class:`~chemrefine.errors.ConfigError` when it is missing — never silently
+    local; ``auto`` picks ``sbatch`` when available, the local runner when not.
+    """
+    if dispatch == "local":
+        return True
+    available = sbatch_available(sbatch_cmd=sbatch_cmd)
+    if dispatch == "slurm" and not available:
+        raise ConfigError(
+            "`dispatch: slurm` is set but `sbatch` is not on PATH; "
+            "use `dispatch: auto`/`local` or run on a SLURM host"
+        )
+    return not available
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +138,7 @@ def _detect_local_gpus() -> int:
     return max(1, len(mig) or len(gpus))
 
 
-def resolve_gpu_budget(configured: int | None) -> int:
+def resolve_gpu_budget(configured: int | None, *, dispatch: str = "auto") -> int:
     """Resolve the concurrent-GPU budget for the throttler.
 
     An explicit ``Config.max_gpus`` wins. Otherwise: **unlimited under SLURM**
@@ -129,7 +147,7 @@ def resolve_gpu_budget(configured: int | None) -> int:
     """
     if configured is not None:
         return configured
-    return _UNLIMITED_GPUS if sbatch_available() else _detect_local_gpus()
+    return _detect_local_gpus() if dispatch_locally(dispatch) else _UNLIMITED_GPUS
 
 
 def _compute_work_dir_expr(output_dir: Path | str, scratch_dir: Path | None) -> str:
@@ -484,7 +502,12 @@ def submit_array(
             check=True,
         )
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        raise JobSubmissionError(f"sbatch --array failed for {script_path}: {e}") from e
+        detail = (getattr(e, "stderr", None) or "").strip()  # FileNotFoundError has no stderr
+        raise JobSubmissionError(
+            f"sbatch --array failed for {script_path}: {e}"
+            + (f"\nsbatch said: {detail}" if detail else "")
+            + "\n(to run without SLURM set `dispatch: local` in the YAML)"
+        ) from e
     m = _JOB_ID_RE.search(result.stdout)
     if not m:
         raise JobSubmissionError(f"could not parse job ID from sbatch output: {result.stdout!r}")
@@ -560,11 +583,13 @@ def submit(
     *,
     sbatch_cmd: str = "sbatch",
     env: dict[str, str] | None = None,
+    dispatch: str = "auto",
 ) -> str:
     """Submit a SLURM script and return the assigned job ID.
 
     Falls back to running the generated script directly via ``bash``
-    when ``sbatch_cmd`` is not on ``PATH``, so a user can run
+    when :func:`dispatch_locally` says so (``dispatch: local``, or
+    ``auto`` with no ``sbatch_cmd`` on ``PATH``), so a user can run
     ChemRefine on a laptop without SLURM the same way it runs on an
     HPC node. The local fallback executes synchronously and returns a
     synthetic ``"local-N"`` job ID; :func:`is_finished` treats that
@@ -578,7 +603,7 @@ def submit(
     ``env`` (e.g. ``{"CUDA_VISIBLE_DEVICES": "1"}``) is applied only on the
     local fallback; under SLURM the scheduler sets the per-job GPU environment.
     """
-    if not sbatch_available(sbatch_cmd=sbatch_cmd):
+    if dispatch_locally(dispatch, sbatch_cmd=sbatch_cmd):
         return _submit_local(script_path, env=env)
     try:
         result = subprocess.run(
@@ -588,7 +613,12 @@ def submit(
             check=True,
         )
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        raise JobSubmissionError(f"sbatch failed for {script_path}: {e}") from e
+        detail = (getattr(e, "stderr", None) or "").strip()  # FileNotFoundError has no stderr
+        raise JobSubmissionError(
+            f"sbatch failed for {script_path}: {e}"
+            + (f"\nsbatch said: {detail}" if detail else "")
+            + "\n(to run without SLURM set `dispatch: local` in the YAML)"
+        ) from e
     m = _JOB_ID_RE.search(result.stdout)
     if not m:
         raise JobSubmissionError(f"could not parse job ID from sbatch output: {result.stdout!r}")

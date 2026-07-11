@@ -48,7 +48,9 @@ class _FakeJobEngine(JobEngine):
         return self.gpu_count
 
 
-def _ctx(tmp_path: Path, *, ids=("0",), max_gpus=None) -> StepContext:
+def _ctx(
+    tmp_path: Path, *, ids=("0",), max_gpus=None, slurm_array=False, dispatch="auto"
+) -> StepContext:
     template_dir = tmp_path / "templates"
     template_dir.mkdir(parents=True, exist_ok=True)
     (template_dir / "step1.inp").write_text("template\n", encoding="utf-8")
@@ -67,6 +69,8 @@ def _ctx(tmp_path: Path, *, ids=("0",), max_gpus=None) -> StepContext:
         max_gpus=max_gpus,
         slurm_template="cpu.slurm.header",
         executables={},
+        slurm_array=slurm_array,
+        dispatch=dispatch,
     )
 
 
@@ -94,6 +98,22 @@ def test_header_name_picks_cuda_for_a_gpu_step(tmp_path: Path):
     assert _execution._header_name(engine, ctx) == slurm.header_name_for_device("cuda")
     override = ctx.step_cfg.model_copy(update={"slurm_template": "special.header"})
     assert _execution._header_name(engine, replace(ctx, step_cfg=override)) == "special.header"
+
+
+@patch.object(slurm, "is_finished", return_value=True)
+@patch.object(slurm, "submit", return_value="local-1")
+def test_run_batch_dispatch_local_skips_array_and_submits_locally(
+    submit_mock, _is_finished, tmp_path: Path
+):
+    """`dispatch: local` takes the per-job path (no sbatch --array) even with
+    slurm_array set and an sbatch binary on PATH, and threads the mode to submit."""
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path, slurm_array=True, dispatch="local")
+    inputs = engine.prepare(ctx)
+    with patch.object(slurm, "sbatch_available", return_value=True):
+        batch = _execution.run_batch(engine, inputs, ctx)
+    assert set(batch.jobs.values()) == {"local-1"}
+    assert submit_mock.call_args.kwargs["dispatch"] == "local"
 
 
 @patch.object(slurm, "is_finished", return_value=True)

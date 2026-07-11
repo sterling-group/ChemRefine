@@ -436,6 +436,9 @@ def _normalize_sample_block(sample: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
+Dispatch: TypeAlias = Literal["auto", "local", "slurm"]
+
+
 class Config(BaseModel):
     """Top-level YAML config."""
 
@@ -483,6 +486,13 @@ class Config(BaseModel):
     per-array task cap are split into chunks. Per-structure outputs, runlogs,
     and the failure ledger are identical to the per-job path. Ignored when
     running locally (no ``sbatch`` on PATH)."""
+    dispatch: Dispatch = "auto"
+    """How jobs are executed. ``auto`` (default) submits via ``sbatch`` when it
+    is on PATH and runs the generated scripts locally via ``bash`` otherwise.
+    ``local`` forces the local runner even when an ``sbatch`` binary exists
+    (e.g. a workstation with SLURM client tools but no reachable cluster);
+    ``slurm`` requires ``sbatch`` and fails fast when it is missing instead of
+    silently running locally."""
     executables: dict[str, str] = Field(default_factory=dict)
     """Global tool-name → binary-path map for external-binary engines (e.g.
     ``{"orca": "/opt/orca/orca"}``). Set once and shared by every step using

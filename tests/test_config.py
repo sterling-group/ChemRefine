@@ -655,3 +655,14 @@ def test_slurm_array_knob_defaults_off_and_loads(tmp_path: Path):
     data = _minimal_config()
     data["slurm_array"] = True
     assert load_config(_write_yaml(tmp_path, data)).slurm_array is True
+
+
+def test_dispatch_knob_defaults_auto_and_validates(tmp_path: Path):
+    """`dispatch` defaults to auto, loads local/slurm, and rejects anything else."""
+    assert load_config(_write_yaml(tmp_path, _minimal_config())).dispatch == "auto"
+    data = _minimal_config()
+    data["dispatch"] = "local"
+    assert load_config(_write_yaml(tmp_path, data)).dispatch == "local"
+    data["dispatch"] = "bogus"
+    with pytest.raises(ConfigError):
+        load_config(_write_yaml(tmp_path, data))

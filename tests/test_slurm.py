@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from chemrefine import slurm
-from chemrefine.errors import JobSubmissionError
+from chemrefine.errors import ConfigError, JobSubmissionError
 
 
 def _drain_local(job_id: str, *, timeout: float = 5.0) -> None:
@@ -221,14 +221,16 @@ def test_submit_parses_job_id_from_sbatch_output():
         assert slurm.submit("script.slurm") == "12345"
 
 
-def test_submit_raises_on_sbatch_failure():
+def test_submit_raises_on_sbatch_failure_with_stderr_and_hint():
+    """sbatch's own diagnostic and the `dispatch: local` escape hatch reach the user."""
     err = subprocess.CalledProcessError(1, ["sbatch"], stderr="permission denied")
     with (
         patch("chemrefine.slurm.shutil.which", return_value="/usr/bin/sbatch"),
         patch.object(subprocess, "run", side_effect=err),
-        pytest.raises(JobSubmissionError),
+        pytest.raises(JobSubmissionError, match="permission denied") as excinfo,
     ):
         slurm.submit("script.slurm")
+    assert "dispatch: local" in str(excinfo.value)
 
 
 def test_submit_raises_when_output_lacks_job_id():
@@ -436,6 +438,47 @@ def test_resolve_gpu_budget_uses_detected_count_locally():
         assert slurm.resolve_gpu_budget(None) == 2
 
 
+def test_resolve_gpu_budget_respects_forced_local():
+    """`dispatch: local` uses the detected device count even with sbatch on PATH."""
+    with (
+        patch("chemrefine.slurm.shutil.which", return_value="/usr/bin/sbatch"),
+        patch("chemrefine.slurm._detect_local_gpus", return_value=2),
+    ):
+        assert slurm.resolve_gpu_budget(None, dispatch="local") == 2
+
+
+# ---------------------------------------------------------------------------
+# dispatch_locally — the SLURM-vs-local decision
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_auto_follows_sbatch_availability():
+    with patch("chemrefine.slurm.shutil.which", return_value="/usr/bin/sbatch"):
+        assert slurm.dispatch_locally("auto") is False
+    with patch("chemrefine.slurm.shutil.which", return_value=None):
+        assert slurm.dispatch_locally("auto") is True
+
+
+def test_dispatch_local_forces_local_runner_despite_sbatch(tmp_path: Path):
+    """A stray sbatch on PATH must not hijack a `dispatch: local` run."""
+    script = tmp_path / "script.slurm"
+    script.write_text("#!/bin/bash\ntrue\n", encoding="utf-8")
+    with patch("chemrefine.slurm.shutil.which", return_value="/usr/bin/sbatch"):
+        job_id = slurm.submit(script, dispatch="local")
+    assert job_id.startswith("local-")
+    _drain_local(job_id)
+    assert slurm.is_finished(job_id) is True
+
+
+def test_dispatch_slurm_requires_sbatch():
+    """`dispatch: slurm` never silently runs locally — it fails fast instead."""
+    with (
+        patch("chemrefine.slurm.shutil.which", return_value=None),
+        pytest.raises(ConfigError, match="sbatch"),
+    ):
+        slurm.dispatch_locally("slurm")
+
+
 def test_detect_local_gpus_counts_mig_instances(monkeypatch):
     """nvidia-smi -L lists MIG instances when the card is MIG-partitioned → count those."""
     out = (
@@ -537,10 +580,10 @@ def test_submit_array_passes_array_and_export_flags(tmp_path: Path):
 
 
 def test_submit_array_raises_on_sbatch_failure(tmp_path: Path):
-    err = subprocess.CalledProcessError(1, ["sbatch"])
+    err = subprocess.CalledProcessError(1, ["sbatch"], stderr="invalid partition specified")
     with (
         patch.object(subprocess, "run", side_effect=err),
-        pytest.raises(JobSubmissionError, match="sbatch --array failed"),
+        pytest.raises(JobSubmissionError, match="invalid partition specified"),
     ):
         slurm.submit_array(tmp_path / "a.slurm", n_tasks=1, max_concurrent=1, manifest=tmp_path)
 

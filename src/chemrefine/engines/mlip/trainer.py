@@ -169,9 +169,11 @@ def write_training_slurm(*, ctx: StepContext, config_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def submit_training(*, script_path: Path, poll_seconds: float = 30.0) -> str:
+def submit_training(
+    *, script_path: Path, poll_seconds: float = 30.0, dispatch: str = "auto"
+) -> str:
     """Submit the MLIP training SLURM job and block until it finishes."""
-    job_id = slurm.submit(script_path)
+    job_id = slurm.submit(script_path, dispatch=dispatch)
     logger.info("MLIP training submitted as job %s", job_id)
     while not slurm.is_finished(job_id):
         time.sleep(poll_seconds)
@@ -195,5 +197,5 @@ def run_training(results: StepResults, ctx: StepContext) -> StepResults:
     train_path, test_path = prepare_inputs(results, ctx)
     config_path = write_training_config(train_path=train_path, test_path=test_path, ctx=ctx)
     script_path = write_training_slurm(ctx=ctx, config_path=config_path)
-    submit_training(script_path=script_path)
+    submit_training(script_path=script_path, dispatch=ctx.dispatch)
     return results

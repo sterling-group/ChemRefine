@@ -183,6 +183,7 @@ authentication steps — they are defined upstream and may change.
 | `Server crashed during startup` (MLIP) | Check the per-job `server_${SLURM_JOB_ID}.log`; common causes are out-of-memory at model load or a missing HuggingFace token for FAIRChem. |
 | `backend '…' is not available` at run start | The step's backend is neither importable nor provisioned — run `chemrefine backends install <extra>` (on HPC: on a login node), or install `chemrefine[<extra>]` into the main env. |
 | `No matching distribution found for chemrefine==…` during `backends install` | Upgrade ChemRefine — older versions could only provision backends from a published PyPI release; current ones reinstall from the same Git/source install as the orchestrator. |
+| `sbatch failed …` on a machine that isn't a cluster | An `sbatch` binary on PATH made auto-detection pick SLURM; set `dispatch: local` in the YAML to force the local runner. |
 | `PackageNotFoundError: ChemRefine` at runtime | `pip install -e .` again — the editable install was removed. |
 
 ## License
