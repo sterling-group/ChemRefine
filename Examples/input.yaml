@@ -18,6 +18,7 @@ steps:
   - step: 1
     name: screen
     engine: mlip
+    template: goat.inp
     operation: opt_sp
     options:
       model_name: medium
