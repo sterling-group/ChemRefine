@@ -274,11 +274,34 @@ def test_install_target_git_install_pins_commit(monkeypatch):
         lambda: {
             "url": "https://github.com/sterling-group/ChemRefine.git",
             "vcs_info": {"vcs": "git", "commit_id": "abc123"},
+            "subdirectory": "pkg",
         },
     )
     assert provision._install_target("pyscf") == (
-        "chemrefine[pyscf] @ git+https://github.com/sterling-group/ChemRefine.git@abc123"
+        "chemrefine[pyscf] @ git+https://github.com/sterling-group/ChemRefine.git"
+        "@abc123#subdirectory=pkg"
     )
+
+
+def test_install_target_git_install_without_ref(monkeypatch):
+    direct = {"url": "https://example.com/repo.git", "vcs_info": {"vcs": "git"}}
+    monkeypatch.setattr(provision, "_direct_url", lambda: direct)
+    assert (
+        provision._install_target("pyscf") == "chemrefine[pyscf] @ git+https://example.com/repo.git"
+    )
+
+
+def test_install_target_remote_archive_passes_url_through(monkeypatch):
+    direct = {"url": "https://example.com/chemrefine.tar.gz", "archive_info": {}}
+    monkeypatch.setattr(provision, "_direct_url", lambda: direct)
+    assert provision._install_target("pyscf") == (
+        "chemrefine[pyscf] @ https://example.com/chemrefine.tar.gz"
+    )
+
+
+def test_install_target_metadata_without_url_pins_version(monkeypatch):
+    monkeypatch.setattr(provision, "_direct_url", lambda: {"dir_info": {}})
+    assert provision._install_target("pyscf") == f"chemrefine[pyscf]=={provision.__version__}"
 
 
 def test_direct_url_none_when_dist_missing(monkeypatch):
@@ -295,6 +318,29 @@ def test_direct_url_none_without_metadata_file(monkeypatch):
             return None  # direct_url.json absent → index install
 
     monkeypatch.setattr(provision.importlib.metadata, "distribution", lambda _n: _Dist())
+    assert provision._direct_url() is None
+
+
+def _dist_with(monkeypatch, raw: str) -> None:
+    class _Dist:
+        def read_text(self, _name):
+            return raw
+
+    monkeypatch.setattr(provision.importlib.metadata, "distribution", lambda _n: _Dist())
+
+
+def test_direct_url_parses_the_metadata(monkeypatch):
+    _dist_with(monkeypatch, '{"url": "file:///src", "dir_info": {"editable": true}}')
+    assert provision._direct_url() == {"url": "file:///src", "dir_info": {"editable": True}}
+
+
+def test_direct_url_none_on_corrupt_metadata(monkeypatch):
+    _dist_with(monkeypatch, "{not json")
+    assert provision._direct_url() is None
+
+
+def test_direct_url_none_on_non_dict_metadata(monkeypatch):
+    _dist_with(monkeypatch, "[1, 2]")
     assert provision._direct_url() is None
 
 
@@ -430,3 +476,21 @@ def test_backends_cli_install_validates_and_builds(monkeypatch, tmp_path: Path):
     ok = runner.invoke(app, ["backends", "install", "mlip-mace", "pyscf"])
     assert ok.exit_code == 0
     assert built == ["mlip-mace", "pyscf"]
+
+
+def test_backends_cli_install_surfaces_chemrefine_errors(monkeypatch, tmp_path: Path):
+    """A ConfigError from provisioning (e.g. vanished source tree) exits cleanly, no traceback."""
+    from typer.testing import CliRunner
+
+    import chemrefine.engines as engines_pkg
+    from chemrefine.cli import app
+
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+
+    def _fail(extra: str):
+        raise ConfigError("ChemRefine was installed from /gone, which no longer exists")
+
+    monkeypatch.setattr(engines_pkg, "build_backend_env", _fail)
+    result = CliRunner().invoke(app, ["backends", "install", "pyscf"])
+    assert result.exit_code == ConfigError.exit_code
+    assert "no longer exists" in result.output
