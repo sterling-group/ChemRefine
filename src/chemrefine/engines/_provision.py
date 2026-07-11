@@ -15,7 +15,8 @@ works off that DTO — no backend names, tasks, or tables.
   script): override → managed-env python → the orchestrator's ``python``.
 * :func:`build_backend_env` — create a managed env under :func:`chemrefine_home`, using the
   **same tool that created the current env** (:func:`detect_env_tool`: conda / uv / venv), and
-  install ``chemrefine[<extra>]`` into it pinned to the orchestrator's version.
+  install ``chemrefine[<extra>]`` into it matched to the orchestrator's own install (same
+  index version, or the same local/git source for direct installs).
 
 A managed env is a plain venv/conda env; *running* it needs only ``<env>/bin/python`` — the
 provisioning tool is needed only at build time (e.g. once on a login node; offline compute
@@ -24,14 +25,18 @@ nodes just run the resolved interpreter).
 
 from __future__ import annotations
 
+import importlib.metadata
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 from chemrefine import __version__
 from chemrefine.config import StepConfig
@@ -152,13 +157,65 @@ def detect_env_tool() -> EnvTool:
     return "venv"
 
 
+def _direct_url() -> dict[str, Any] | None:
+    """Parsed PEP 610 ``direct_url.json`` for the installed ChemRefine dist, or ``None``.
+
+    ``None`` means a normal index (PyPI) install — or no/corrupt metadata — so the
+    caller falls back to the version-pinned spec.
+    """
+    try:
+        raw = importlib.metadata.distribution("ChemRefine").read_text("direct_url.json")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    if raw is None:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _install_target(extra: str) -> str:
+    """The pip requirement that reproduces this orchestrator's install with ``extra``.
+
+    Keeps the managed env matched to the ChemRefine that drives it — by *source*, not
+    just version: an index install pins ``==__version__``; a PEP 610 direct install
+    (``pip install -e .``, a local path, a git URL) reinstalls from the same source,
+    since that version is typically not published on any index.
+    """
+    direct = _direct_url()
+    if direct is None or "url" not in direct:
+        return f"chemrefine[{extra}]=={__version__}"
+    url = direct["url"]
+    vcs = direct.get("vcs_info")
+    if vcs:
+        spec = f"{vcs['vcs']}+{url}"
+        ref = vcs.get("commit_id") or vcs.get("requested_revision")
+        if ref:
+            spec += f"@{ref}"
+        if direct.get("subdirectory"):
+            spec += f"#subdirectory={direct['subdirectory']}"
+        return f"chemrefine[{extra}] @ {spec}"
+    if url.startswith("file://"):
+        path = Path(url2pathname(urlsplit(url).path))
+        if not path.exists():
+            raise ConfigError(
+                f"ChemRefine was installed from {path}, which no longer exists; the "
+                f"managed env for '{extra}' must be built from the same source. "
+                f"Reinstall ChemRefine, then re-run `chemrefine backends install {extra}`."
+            )
+    return f"chemrefine[{extra}] @ {url}"
+
+
 def _build_commands(tool: EnvTool, path: Path, extra: str) -> list[list[str]]:
     """The argv sequence that creates the env at ``path`` and installs ``chemrefine[extra]``.
 
-    The install target is pinned to the orchestrator's own version so a managed env always
-    matches the ChemRefine that drives it.
+    The install target is matched to the orchestrator's own install — see
+    :func:`_install_target` — so a managed env always matches the ChemRefine
+    that drives it.
     """
-    target = f"chemrefine[{extra}]=={__version__}"
+    target = _install_target(extra)
     env_python = str(path / "bin" / "python")
     if tool == "uv":
         return [

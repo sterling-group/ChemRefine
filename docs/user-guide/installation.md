@@ -86,9 +86,12 @@ only host one backend family. Two ways to add one:
 
     Each env is built once with the **same tool that created the current env** (conda / uv
     / venv, detected automatically), reused by every later run, and resolved **by name** at
-    run time — no interpreter paths in your YAML. `chemrefine backends list` shows what is
-    provisioned. Every run validates its steps' backends **up front**: a step whose backend
-    is neither importable nor provisioned fails before any job submits, naming the fix.
+    run time — no interpreter paths in your YAML. Managed envs are built **from the same
+    source as the orchestrator**: a PyPI install pins the version, a Git or
+    `pip install -e .` install reinstalls from that same repo/checkout. `chemrefine backends
+    list` shows what is provisioned. Every run validates its steps' backends **up front**: a
+    step whose backend is neither importable nor provisioned fails before any job submits,
+    naming the fix.
 
 ### MLIP backends
 
@@ -179,6 +182,7 @@ authentication steps — they are defined upstream and may change.
 | `sbatch: command not found` | Either SLURM isn't installed locally — run the generated `.slurm` script with `bash` instead — or activate the cluster's SLURM module. |
 | `Server crashed during startup` (MLIP) | Check the per-job `server_${SLURM_JOB_ID}.log`; common causes are out-of-memory at model load or a missing HuggingFace token for FAIRChem. |
 | `backend '…' is not available` at run start | The step's backend is neither importable nor provisioned — run `chemrefine backends install <extra>` (on HPC: on a login node), or install `chemrefine[<extra>]` into the main env. |
+| `No matching distribution found for chemrefine==…` during `backends install` | Upgrade ChemRefine — older versions could only provision backends from a published PyPI release; current ones reinstall from the same Git/source install as the orchestrator. |
 | `PackageNotFoundError: ChemRefine` at runtime | `pip install -e .` again — the editable install was removed. |
 
 ## License

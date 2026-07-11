@@ -197,7 +197,8 @@ def test_detect_env_tool_venv_without_uv_marker(monkeypatch, tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_build_commands_per_tool(tmp_path: Path):
+def test_build_commands_per_tool(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(provision, "_direct_url", lambda: None)  # index install
     env = tmp_path / "e"
     uv = provision._build_commands("uv", env, "mlip-mace")
     assert uv[0] == ["uv", "venv", str(env)]
@@ -223,6 +224,7 @@ def test_build_backend_env_is_idempotent(monkeypatch, tmp_path: Path):
 
 def test_build_backend_env_runs_the_detected_tool(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    monkeypatch.setattr(provision, "_direct_url", lambda: None)
     monkeypatch.setattr(provision, "detect_env_tool", lambda: "venv")
     calls: list[list[str]] = []
     monkeypatch.setattr(provision.subprocess, "run", lambda argv, **_k: calls.append(argv))
@@ -233,10 +235,67 @@ def test_build_backend_env_runs_the_detected_tool(monkeypatch, tmp_path: Path):
 
 def test_build_backend_env_explicit_tool(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    monkeypatch.setattr(provision, "_direct_url", lambda: None)
     calls: list[list[str]] = []
     monkeypatch.setattr(provision.subprocess, "run", lambda argv, **_k: calls.append(argv))
     provision.build_backend_env("pyscf", tool="uv")
     assert calls[0][0] == "uv"
+
+
+# ---------------------------------------------------------------------------
+# _install_target — PEP 610 source-matching
+# ---------------------------------------------------------------------------
+
+
+def test_install_target_index_install_pins_version(monkeypatch):
+    monkeypatch.setattr(provision, "_direct_url", lambda: None)
+    assert provision._install_target("pyscf") == f"chemrefine[pyscf]=={provision.__version__}"
+
+
+def test_install_target_editable_local_dir(monkeypatch, tmp_path: Path):
+    url = tmp_path.as_uri()
+    direct = {"url": url, "dir_info": {"editable": True}}
+    monkeypatch.setattr(provision, "_direct_url", lambda: direct)
+    assert provision._install_target("mlip-mace") == f"chemrefine[mlip-mace] @ {url}"
+
+
+def test_install_target_missing_source_dir_raises(monkeypatch, tmp_path: Path):
+    url = (tmp_path / "gone").as_uri()
+    direct = {"url": url, "dir_info": {"editable": True}}
+    monkeypatch.setattr(provision, "_direct_url", lambda: direct)
+    with pytest.raises(ConfigError, match="no longer exists"):
+        provision._install_target("mlip-mace")
+
+
+def test_install_target_git_install_pins_commit(monkeypatch):
+    monkeypatch.setattr(
+        provision,
+        "_direct_url",
+        lambda: {
+            "url": "https://github.com/sterling-group/ChemRefine.git",
+            "vcs_info": {"vcs": "git", "commit_id": "abc123"},
+        },
+    )
+    assert provision._install_target("pyscf") == (
+        "chemrefine[pyscf] @ git+https://github.com/sterling-group/ChemRefine.git@abc123"
+    )
+
+
+def test_direct_url_none_when_dist_missing(monkeypatch):
+    def _raise(_name):
+        raise provision.importlib.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(provision.importlib.metadata, "distribution", _raise)
+    assert provision._direct_url() is None
+
+
+def test_direct_url_none_without_metadata_file(monkeypatch):
+    class _Dist:
+        def read_text(self, _name):
+            return None  # direct_url.json absent → index install
+
+    monkeypatch.setattr(provision.importlib.metadata, "distribution", lambda _n: _Dist())
+    assert provision._direct_url() is None
 
 
 # ---------------------------------------------------------------------------

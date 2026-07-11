@@ -351,7 +351,11 @@ def backends_install(
         raise typer.BadParameter(f"unknown backend(s) {unknown}; known: {sorted(known)}")
     for extra in extras:
         typer.echo(f"provisioning {extra} …")
-        python = build_backend_env(extra)
+        try:
+            python = build_backend_env(extra)
+        except ChemRefineError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(code=e.exit_code) from e
         typer.echo(f"{extra}: {python}")
 
 
