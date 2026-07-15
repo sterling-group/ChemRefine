@@ -463,7 +463,7 @@ def test_resume_retries_unconverged_again_into_next_attempt(tmp_path: Path):
 
 
 def test_check_nms_freq_gate_rejects_when_input_computes_no_frequencies(tmp_path: Path):
-    """B9 (generic): nms + no explicit operation + an input that computes no frequencies."""
+    """B9 (generic): nms + an input that computes no frequencies is rejected up front."""
     import pytest
 
     from chemrefine.engines.api import NmsInputInfo
@@ -474,7 +474,7 @@ def test_check_nms_freq_gate_rejects_when_input_computes_no_frequencies(tmp_path
         def nms_input_info(self, ctx):
             return NmsInputInfo(is_transition_state=False, computes_frequencies=False)
 
-    cfg = _config(tmp_path, engine="orca", nms=True, operation=None)  # no explicit operation
+    cfg = _config(tmp_path, engine="orca", nms=True, operation=None)
     ctx = build_context(cfg, cfg.steps[0], _seed_state([]))
     with pytest.raises(ConfigError, match="frequency"):
         _check_nms_freq_gate(_NoFreqEngine(), ctx, cfg.steps[0])  # type: ignore[arg-type]
@@ -484,6 +484,26 @@ def test_check_nms_freq_gate_rejects_when_input_computes_no_frequencies(tmp_path
             return NmsInputInfo(is_transition_state=False, computes_frequencies=True)
 
     assert _check_nms_freq_gate(_FreqEngine(), ctx, cfg.steps[0]) is None  # type: ignore[arg-type]
+
+
+def test_check_nms_freq_gate_not_bypassed_by_explicit_operation(tmp_path: Path):
+    """An explicit `operation` only picks the parser — it never adds frequencies to
+    the input, so it must not bypass the gate (a doomed NMS step would otherwise run
+    to completion and leave every structure unresolved)."""
+    import pytest
+
+    from chemrefine.engines.api import NmsInputInfo
+    from chemrefine.errors import ConfigError
+    from chemrefine.step import _check_nms_freq_gate, build_context
+
+    class _NoFreqEngine:
+        def nms_input_info(self, ctx):
+            return NmsInputInfo(is_transition_state=False, computes_frequencies=False)
+
+    cfg = _config(tmp_path, engine="orca", nms=True, operation="opt_sp")
+    ctx = build_context(cfg, cfg.steps[0], _seed_state([]))
+    with pytest.raises(ConfigError, match="drop `nms: true`"):
+        _check_nms_freq_gate(_NoFreqEngine(), ctx, cfg.steps[0])  # type: ignore[arg-type]
 
 
 def test_archive_failed_attempt_numbers_sequentially(tmp_path: Path):

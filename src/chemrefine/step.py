@@ -275,16 +275,14 @@ def _check_nms_freq_gate(engine: NmsCapableEngine, ctx: StepContext, step_cfg: S
 
     NMS acts on imaginary modes, so a step that won't produce frequencies can only
     ever leave every structure unresolved — caught here before any job is submitted.
-    An explicit ``operation`` bypasses the check (the user's override for when input
-    inspection misreads the template).
+    ``operation`` never changes the generated input (it only picks the parser), so an
+    explicit one cannot rescue a frequency-less input and does not bypass this check.
     """
-    if step_cfg.operation is not None:
-        return
     if not engine.nms_input_info(ctx).computes_frequencies:
         raise ConfigError(
             f"step {step_cfg.step}: `nms: true` needs a frequency calculation, but the "
-            f"input computes none. Request frequencies (e.g. ORCA `! Opt Freq`), or set "
-            f"`operation` explicitly to override."
+            f"input computes none. Request frequencies (e.g. ORCA `! Opt Freq`), or drop "
+            f"`nms: true` if you don't want normal-mode sampling."
         )
 
 
