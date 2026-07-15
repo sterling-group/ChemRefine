@@ -649,6 +649,27 @@ def test_every_shipped_example_yaml_loads():
         load_config(f)  # raises ConfigError on any failure
 
 
+def test_every_shipped_example_references_existing_templates():
+    """A step's explicit `template:` must exist in the template dir and carry the
+    engine's input suffix — catches example templates renamed out from under the YAML."""
+    from chemrefine.engines.api import get_engine
+
+    root = Path(__file__).resolve().parent.parent
+    for f in sorted(root.glob("Examples/**/input.yaml")):
+        cfg = load_config(f)
+        for step in cfg.steps:
+            if step.template is None:
+                continue
+            path = cfg.template_dir / step.template
+            assert path.is_file(), f"{f}: step {step.step} references missing template {path}"
+            suffix = getattr(get_engine(step.engine), "template_suffix", None)
+            if suffix:
+                assert step.template.endswith(f".{suffix}"), (
+                    f"{f}: step {step.step} ({step.engine}) template {step.template} "
+                    f"should be a .{suffix} file"
+                )
+
+
 def test_slurm_array_knob_defaults_off_and_loads(tmp_path: Path):
     """`slurm_array: true` opts a run into array submission; absent = today's path."""
     assert load_config(_write_yaml(tmp_path, _minimal_config())).slurm_array is False

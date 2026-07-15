@@ -14,11 +14,11 @@ max_cores: 64
 slurm_template: cpu.slurm.header
 
 steps:
-  # Step 1 — cheap conformer generation with an MLFF surrogate.
+  # Step 1 — cheap screening relaxation with an MLIP surrogate.
   - step: 1
     name: screen
     engine: mlip
-    template: goat.inp
+    template: screen.py
     operation: opt_sp
     options:
       model_name: medium
@@ -33,7 +33,7 @@ steps:
     name: dft_refine
     engine: orca
     operation: opt_sp
-    template: dft_opt.inp
+    template: dft_refine.inp
     sample:
       method: min
       window_kcalmol: 3.0
@@ -43,7 +43,7 @@ steps:
     name: high_level
     engine: orca
     operation: opt_sp
-    template: dft_high.inp
+    template: high_level.inp
     sample:
       method: min
       count: 5
