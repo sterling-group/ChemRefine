@@ -7,7 +7,7 @@ executables: { orca: /orca }
 charge: 0
 multiplicity: 1
 
-input: ./templates/step1.xyz
+input: ./step1.xyz
 
 steps:
   # Generate docking poses of the guest in the host cavity.
