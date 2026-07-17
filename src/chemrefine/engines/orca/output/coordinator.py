@@ -136,7 +136,13 @@ def parse_output(path: str | Path, operation: str) -> list[ParsedResult]:
             ensembles.ensemble_sidecar(path, ensembles.GOAT_SUFFIX)
         )
     if op == "docker":
-        return ensembles.parse_docker(ensembles.ensemble_sidecar(path, ensembles.DOCKER_SUFFIX))
+        return ensembles.parse_docker(
+            ensembles.ensemble_sidecar(path, ensembles.DOCKER_SUFFIX, ensembles.DOCKER_SUFFIX_611)
+        )
     if op == "solvator":
-        return ensembles.parse_solvator(ensembles.ensemble_sidecar(path, ensembles.SOLVATOR_SUFFIX))
+        return ensembles.parse_solvator(
+            ensembles.ensemble_sidecar(
+                path, ensembles.SOLVATOR_SUFFIX, ensembles.SOLVATOR_SUFFIX_611
+            )
+        )
     raise OutputParseError(f"unknown ORCA operation: {operation!r}")

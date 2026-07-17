@@ -26,25 +26,31 @@ _DOCKER_HEADER_RE = re.compile(r"Eopt\s*=\s*(-?\d+\.\d+)\s*\(Eh\)", re.IGNORECAS
 _SOLVATOR_HEADER_RE = re.compile(r"Energy\s+(-?\d+\.\d+)", re.IGNORECASE)
 GOAT_SUFFIX = "finalensemble.xyz"
 DOCKER_SUFFIX = "docker.struc1.allopt.xyz"
+DOCKER_SUFFIX_611 = "docker.struc1.all.optimized.xyz"
 SOLVATOR_SUFFIX = "solventbuild.xyz"
+SOLVATOR_SUFFIX_611 = "solvator.solventbuild.xyz"
 
 
-def ensemble_sidecar(out_path: str | Path, suffix: str) -> Path:
+def ensemble_sidecar(out_path: str | Path, suffix: str, *fallbacks: str) -> Path:
     """Return the ORCA ensemble sidecar ``<base>.<suffix>`` next to the ``.out``.
 
     Multi-structure operations write their ensemble to a file named after ORCA's ``%base``
     (the ``.out`` stem), not into the ``.out`` log — e.g. ``step1_0.finalensemble.xyz``. The
-    SLURM ``*.xyz`` glob copies it back beside the ``.out``. Raises :class:`OutputParseError`
-    if it is absent.
+    SLURM ``*.xyz`` glob copies it back beside the ``.out``. ``fallbacks`` are alternative
+    suffixes for operations whose filename changed across ORCA releases (e.g. Docker's
+    ``allopt`` → ``all.optimized`` in 6.1.1); the first existing candidate wins. Raises
+    :class:`OutputParseError` naming every candidate if none exists.
     """
     out_path = Path(out_path)
-    sidecar = out_path.with_name(f"{out_path.stem}.{suffix}")
-    if not sidecar.is_file():
-        raise OutputParseError(
-            f"expected ORCA ensemble file {sidecar.name} next to {out_path.name}; "
-            "not found (did the run produce it?)"
-        )
-    return sidecar
+    candidates = [out_path.with_name(f"{out_path.stem}.{s}") for s in (suffix, *fallbacks)]
+    for sidecar in candidates:
+        if sidecar.is_file():
+            return sidecar
+    names = " or ".join(c.name for c in candidates)
+    raise OutputParseError(
+        f"expected ORCA ensemble file {names} next to {out_path.name}; "
+        "not found (did the run produce it?)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -118,12 +124,16 @@ def parse_goat_ensemble(path: str | Path) -> list[ParsedResult]:
 
 
 def parse_docker(path: str | Path) -> list[ParsedResult]:
-    """Parse an ORCA Docker ``.docker.struc1.allopt.xyz`` ensemble.
+    """Parse an ORCA Docker pose ensemble (``allopt`` or 6.1.1's ``all.optimized``).
 
-    Header layout: ``<idx> Eopt=<energy_hartree> (Eh) …``. Returns one structure per frame,
-    **dropping the final frame** (the upstream tool flags its last structure as non-sensible).
+    Header layout: ``<idx> Eopt=<energy_hartree> (Eh) …``. Returns one structure per frame.
+    Only the legacy ``allopt.xyz`` layout **drops the final frame** (that writer flagged its
+    last structure as non-sensible); 6.1.1's ``all.optimized.xyz`` holds only real poses.
     """
+    path = Path(path)
     structures = _parse_xyz_ensemble(path, _DOCKER_HEADER_RE, fmt_name="Docker")
+    if not path.name.endswith(DOCKER_SUFFIX):
+        return structures
     if len(structures) <= 1:
         raise OutputParseError(
             f"Docker output {path} has {len(structures)} frame(s); "
@@ -133,7 +143,11 @@ def parse_docker(path: str | Path) -> list[ParsedResult]:
 
 
 def parse_solvator(path: str | Path) -> list[ParsedResult]:
-    """Parse an ORCA Solvator ``.solventbuild.xyz`` ensemble (header ``Energy <e_hartree>``)."""
+    """Parse an ORCA Solvator ensemble (header ``Energy <e_hartree>``).
+
+    Same frame layout under both filenames — ``solventbuild.xyz`` (legacy) and
+    6.1.1's ``solvator.solventbuild.xyz``.
+    """
     return _parse_xyz_ensemble(path, _SOLVATOR_HEADER_RE, fmt_name="Solvator")
 
 

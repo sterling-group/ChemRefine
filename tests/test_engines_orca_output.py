@@ -39,7 +39,9 @@ def test_parse_dft_without_thermochemistry_leaves_none():
 DATA = Path(__file__).parent / "data"
 FIXTURE = DATA / "orca.out"
 GOAT_FIXTURE = DATA / "goat_finalensemble.xyz"
-DOCKER_FIXTURE = DATA / "docker_allopt.xyz"
+# Named exactly like ORCA's sidecar so the legacy drop-last-frame rule applies.
+DOCKER_FIXTURE = DATA / "docker.struc1.allopt.xyz"
+DOCKER_611_FIXTURE = DATA / "docker_all_optimized_611.xyz"
 SOLVATOR_FIXTURE = DATA / "solvator_solventbuild.xyz"
 
 
@@ -376,11 +378,20 @@ def test_parse_docker_atom_count_is_46():
 
 
 def test_parse_docker_too_few_frames_raises(tmp_path: Path):
-    """A single-frame docker output is unusable (last is always dropped)."""
-    f = tmp_path / "tiny.xyz"
+    """A single-frame legacy docker output is unusable (its last is always dropped)."""
+    f = tmp_path / "tiny.docker.struc1.allopt.xyz"
     f.write_text("1\n0 Eopt=-1.0 (Eh)\nH 0.0 0.0 0.0\n", encoding="utf-8")
     with pytest.raises(OutputParseError):
         parse_docker(f)
+
+
+def test_parse_docker_611_layout_keeps_every_frame():
+    """ORCA 6.1.1's ``all.optimized.xyz`` holds only real poses — nothing is dropped."""
+    parsed = parse_docker(DOCKER_611_FIXTURE)
+    assert len(parsed) == 3
+    assert abs(parsed[0].energy_hartree - (-13.0314929160)) < 1e-9
+    for p in parsed:
+        assert p.positions.shape == (7, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -443,8 +454,28 @@ def test_parse_output_dispatches_docker(tmp_path: Path):
     assert len(parse_output(out, "docker")) == 3  # 4 frames - 1 (last dropped)
 
 
+def test_parse_output_falls_back_to_the_611_docker_sidecar(tmp_path: Path):
+    """With no legacy ``allopt`` file, dispatch finds 6.1.1's renamed pose file."""
+    out = _with_sidecar(tmp_path, "docker.struc1.all.optimized.xyz", DOCKER_611_FIXTURE)
+    assert len(parse_output(out, "docker")) == 3  # nothing dropped
+
+
+def test_missing_ensemble_sidecar_error_names_every_candidate(tmp_path: Path):
+    """The error for a missing docker sidecar lists both accepted filenames."""
+    out = tmp_path / "step1_0.out"
+    out.write_text("ORCA log\n", encoding="utf-8")
+    with pytest.raises(OutputParseError, match=r"allopt\.xyz or .*all\.optimized\.xyz"):
+        parse_output(out, "docker")
+
+
 def test_parse_output_dispatches_solvator(tmp_path: Path):
     out = _with_sidecar(tmp_path, "solventbuild.xyz", SOLVATOR_FIXTURE)
+    assert len(parse_output(out, "solvator")) == 3
+
+
+def test_parse_output_falls_back_to_the_611_solvator_sidecar(tmp_path: Path):
+    """With no legacy file, dispatch finds 6.1.1's ``solvator.solventbuild.xyz``."""
+    out = _with_sidecar(tmp_path, "solvator.solventbuild.xyz", SOLVATOR_FIXTURE)
     assert len(parse_output(out, "solvator")) == 3
 
 
