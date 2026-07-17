@@ -1,32 +1,49 @@
-# ChemRefine v2 example workflow
+# ChemRefine v2 example workflow — the annotated tour of the config schema.
 # Replace the path placeholders with paths on your system.
+
+# Directory holding the step templates (stepN.inp / stepN.py) and SLURM headers.
 template_dir: ./templates
+# Fast node-local storage for the actual computation; must differ from output_dir.
 scratch_dir:  ./scratch
+# Where step results, caches, and steps.csv land.
 output_dir:   ./outputs
+# Absolute paths to external binaries; a bare name relies on PATH / module load.
 executables: { orca: orca }
 
-# Initial seed: either an .xyz, a directory of .xyz files, or a CSV of SMILES.
+# Initial seed: a single .xyz (may hold several frames), a directory of .xyz
+# files, or a CSV of SMILES with a `smiles` column. Default: templates/step1.xyz.
 input: ./templates/step1.xyz
 
 charge: 0
 multiplicity: 1
+
+# Global core budget: PAL per job is clamped to this, and local dispatch
+# never runs more cores than this at once.
 max_cores: 64
+# max_gpus: 1          # GPU budget; default: unlimited on SLURM, autodetected locally.
+# dispatch: auto       # auto | local | slurm — auto uses sbatch when available.
+# slurm_array: true    # submit each step as one SLURM job array instead of N jobs.
+
+# Default SLURM header; steps that need a GPU pick cuda.slurm.header automatically.
 slurm_template: cpu.slurm.header
 
 steps:
   # Step 1 — cheap screening relaxation with an MLIP surrogate.
   - step: 1
-    name: screen
-    engine: mlip
-    template: screen.py
-    operation: opt_sp
+    name: screen               # optional label; the step dir becomes step1_screen/
+    engine: mlip               # orca | mlip | mlip-extopt | mlip-train | pyscf | pyscf-extopt
+    template: screen.py        # default would be step1.py for a script engine
+    operation: opt_sp          # optional for orca (inferred from the template keywords)
     options:
-      model_name: medium
-      task_name: mace_off
-      device: cuda
+      model_name: medium       # alias: model / size
+      task_name: mace_off      # alias: task — mace_off | mace_mp | omol | omat | ...
+      device: cuda             # cuda | cpu
     sample:
-      method: boltzmann
-      percent_cumulative: 99
+      method: boltzmann        # boltzmann | min | max
+      percent_cumulative: 99   # keep conformers up to 99 % cumulative Boltzmann weight
+      # temperature_k: 298.15  # temperature for the Boltzmann weights
+      # energy_type: electronic  # or gibbs | enthalpy | electronic_zero_point (needs a freq step)
+      # by_parent: true        # apply the filter within each parent's conformers
 
   # Step 2 — refine survivors with DFT.
   - step: 2
@@ -34,17 +51,25 @@ steps:
     engine: orca
     operation: opt_sp
     template: dft_refine.inp
+    # charge: -1               # per-step override of the global charge
+    # multiplicity: 2          # per-step override of the global multiplicity
+    # slurm_template: cuda.slurm.header  # per-step SLURM header override
+    # on_failure: stop         # stop | skip | best — what to do with failed structures
     sample:
-      method: min
-      window_kcalmol: 3.0
+      method: min              # keep the lowest-energy structures ...
+      window_kcalmol: 3.0      # ... within 3 kcal/mol of the minimum (or use count: N)
 
   # Step 3 — high-precision DFT on the survivors of step 2.
   - step: 3
     name: high_level
     engine: orca
     operation: opt_sp
-    template: high_level.inp
+    template: high_level.inp   # runs OPT FREQ, so imaginary modes are available
     sample:
       method: min
-      count: 5
+      count: 5                 # keep the 5 lowest (count: 0 keeps everything)
+    # Normal-mode sampling: displace along imaginary modes and re-optimize until
+    # a true minimum is reached. Options (in `options:`): target (minimum | ts |
+    # random, inferred from the template), displacement_value, seed,
+    # num_random_displacements, ts_mode_index.
     nms: true

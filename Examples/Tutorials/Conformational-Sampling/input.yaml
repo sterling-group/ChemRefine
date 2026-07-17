@@ -11,6 +11,7 @@ multiplicity: 1
 input: ./step1.xyz
 
 steps:
+  # GOAT conformer search (XTB); keep the 15 lowest-energy conformers.
   - step: 1
     operation: goat
     engine: orca
@@ -23,6 +24,7 @@ steps:
     options: { model_name: uma-s-1, task_name: omol, device: cuda }
     sample: { method: min, count: 15 }
 
+  # Level-of-theory ladder: each step re-optimises with a better functional/basis.
   - step: 3
     operation: opt_sp
     engine: orca

@@ -23,6 +23,7 @@ steps:
     options: { model_name: uma-s-1, task_name: omol, device: cuda }
     sample: { method: min, window_kcalmol: 10 }
 
+  # DFT refinement of the complex; charge: -1 accounts for the chloride guest.
   - step: 3
     operation: opt_sp
     engine: orca
@@ -30,6 +31,8 @@ steps:
     multiplicity: 1
     sample: { method: min, count: 1 }
 
+  # Explicit microsolvation (the template's %solvator adds water molecules);
+  # count: 0 keeps every solvated pose.
   - step: 4
     operation: solvator
     engine: orca

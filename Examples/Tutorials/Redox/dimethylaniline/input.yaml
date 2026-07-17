@@ -11,16 +11,19 @@ multiplicity: 1
 input: ./templates/step1.xyz
 
 steps:
+  # GOAT conformer search; keep up to 95 % cumulative Boltzmann weight.
   - step: 1
     operation: goat
     engine: orca
     sample: { method: boltzmann, percent_cumulative: 95 }
 
+  # DFT re-optimisation; keep everything within 10 kcal/mol of the minimum.
   - step: 2
     operation: opt_sp
     engine: orca
     sample: { method: min, window_kcalmol: 10 }
 
+  # Steps 3-8: the -1/0/+1 redox ladder on the MLIP surface, then on DFT.
   - step: 3
     operation: opt_sp
     engine: mlip-extopt

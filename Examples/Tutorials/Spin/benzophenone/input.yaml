@@ -11,6 +11,8 @@ multiplicity: 1
 input: ./templates/step1.xyz
 
 steps:
+  # Conformer generation (the template runs XTB GOAT); keep everything
+  # within 10 kcal/mol of the minimum.
   - step: 1
     engine: orca
     operation: opt_sp
@@ -33,6 +35,8 @@ steps:
     operation: opt_sp
     sample: { method: min, count: 1 }
 
+  # Steps 5-6 score singlet vs triplet via per-step multiplicity overrides;
+  # step 7 runs TDDFT on the singlet (see step7.inp).
   - step: 5
     engine: orca
     operation: opt_sp

@@ -11,11 +11,16 @@ multiplicity: 1
 input: ./templates/oxidation_smiles.csv
 
 steps:
+  # Conformers per amine (the template runs XTB GOAT); keep up to 99 %
+  # cumulative Boltzmann weight per molecule.
   - step: 1
     operation: opt_sp
     engine: orca
     sample: { method: boltzmann, percent_cumulative: 99 }
 
+  # Steps 2-8 walk the redox ladder: per-step charge/multiplicity overrides
+  # give the reduced (-1, doublet), neutral (0, singlet) and oxidised
+  # (+1, doublet) states on both the MLIP and DFT surfaces. count: 0 keeps all.
   - step: 2
     operation: opt_sp
     engine: mlip-extopt

@@ -11,11 +11,13 @@ multiplicity: 1
 input: ./step1.xyz
 
 steps:
+  # Relaxed PES scan; `max` keeps the 5 highest-energy points (TS candidates).
   - step: 1
     operation: pes
     engine: orca
     sample: { method: max, count: 5 }
 
+  # Saddle-point optimisation (the template runs OptTS).
   - step: 2
     operation: opt_sp
     engine: orca

@@ -11,12 +11,14 @@ multiplicity: 1
 input: ./templates/step1.xyz
 
 steps:
+  # GOAT conformer search; keep the 15 lowest as the training-set backbone.
   - step: 1
     operation: goat
     engine: orca
     sample: { method: min, count: 15 }
 
-  # Augment the dataset with normal-mode-sampled geometries.
+  # Augment the dataset with normal-mode-sampled geometries: `target: random`
+  # draws displacements along real modes. count: 0 keeps every structure.
   - step: 2
     operation: opt_sp
     engine: orca
@@ -30,7 +32,7 @@ steps:
     engine: orca
     sample: { method: min, count: 0 }
 
-  # Train a MACE model on the labelled structures.
+  # Train a MACE model; the step4.inp template is the raw MACE training YAML.
   - step: 4
     engine: mlip-train
     operation: mlip_train

@@ -11,11 +11,14 @@ multiplicity: 5
 input: ./templates/step1.xyz
 
 steps:
+  # Geometry optimisation in the global quintet state (multiplicity: 5 above).
   - step: 1
     operation: opt_sp
     engine: orca
     sample: { method: min, count: 0 }
 
+  # Steps 2-4 (DFT) and 5-7 (MLIP) score the quintet/triplet/singlet ladder
+  # via per-step multiplicity overrides; count: 0 keeps every structure.
   - step: 2
     operation: opt_sp
     engine: orca
