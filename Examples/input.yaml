@@ -38,6 +38,7 @@ steps:
       model_name: medium       # alias: model / size
       task_name: mace_off      # alias: task — mace_off | mace_mp | omol | omat | ...
       device: cuda             # cuda | cpu
+      cores: 4                 # thread budget per structure for script engines
     sample:
       method: boltzmann        # boltzmann | min | max
       percent_cumulative: 99   # keep conformers up to 99 % cumulative Boltzmann weight

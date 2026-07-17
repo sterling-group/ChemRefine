@@ -640,34 +640,7 @@ def test_normalizer_is_idempotent_on_new_style():
     assert cfg.steps[0].options == {"model_name": "uma-s-1", "task_name": "omol"}
 
 
-def test_every_shipped_example_yaml_loads():
-    """Every Example (all v1.3.1-style) must load through the normalizer."""
-    root = Path(__file__).resolve().parent.parent
-    files = sorted(root.glob("Examples/**/input.yaml"))
-    assert files, "no Example YAMLs found"
-    for f in files:
-        load_config(f)  # raises ConfigError on any failure
-
-
-def test_every_shipped_example_references_existing_templates():
-    """A step's explicit `template:` must exist in the template dir and carry the
-    engine's input suffix — catches example templates renamed out from under the YAML."""
-    from chemrefine.engines.api import get_engine
-
-    root = Path(__file__).resolve().parent.parent
-    for f in sorted(root.glob("Examples/**/input.yaml")):
-        cfg = load_config(f)
-        for step in cfg.steps:
-            if step.template is None:
-                continue
-            path = cfg.template_dir / step.template
-            assert path.is_file(), f"{f}: step {step.step} references missing template {path}"
-            suffix = getattr(get_engine(step.engine), "template_suffix", None)
-            if suffix:
-                assert step.template.endswith(f".{suffix}"), (
-                    f"{f}: step {step.step} ({step.engine}) template {step.template} "
-                    f"should be a .{suffix} file"
-                )
+# The shipped-example sweeps live in tests/test_examples.py.
 
 
 def test_slurm_array_knob_defaults_off_and_loads(tmp_path: Path):
