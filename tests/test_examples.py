@@ -241,8 +241,7 @@ def test_knob_universe_is_fully_filed() -> None:
         tests_only = TESTS_ONLY.get(section, set())
         assert required.isdisjoint(tests_only), f"{section}: knob filed in both sets"
         assert required | tests_only == universe, (
-            f"{section}: unfiled or stale knobs: "
-            f"{sorted(universe ^ (required | tests_only))}"
+            f"{section}: unfiled or stale knobs: {sorted(universe ^ (required | tests_only))}"
         )
 
 
