@@ -1,0 +1,20 @@
+# Minimal direct-PySCF workflow (a v2 addition, not part of the v1 paper set):
+# single-point refinement of a small molecule via a step1.py PySCF template.
+template_dir: ./templates
+scratch_dir: /scratch/
+output_dir: ./outputs
+
+charge: 0
+multiplicity: 1
+
+input: ./step1.xyz
+
+steps:
+  # The $METHOD / $XC / $BASIS placeholders in step1.py are filled from these
+  # options. The script runs in the pyscf backend env when one is provisioned
+  # (`chemrefine backends install pyscf`); `cores` pins its thread count.
+  - step: 1
+    engine: pyscf
+    operation: sp
+    options: { method: dft, xc: pbe, basis: def2-svp, device: cpu, cores: 4 }
+    sample: { method: min, count: 1 }
