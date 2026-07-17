@@ -28,6 +28,30 @@ from chemrefine.engines.orca.inspect import _PAL_PATTERNS
 
 _XYZFILE_DIRECTIVE_RE = re.compile(r"^\s*\*\s+xyzfile.*$", re.MULTILINE)
 
+_QUOTED_PATH_RE = re.compile(r'"([^"\n]+)"')
+
+
+def _absolutize_template_paths(text: str, template_dir: Path) -> str:
+    """Rewrite quoted relative file references to absolute paths.
+
+    Templates name auxiliary files relative to their own directory (e.g.
+    ``%DOCKER GUEST "../templates/cl.xyz"``), but ORCA runs inside a scratch
+    work dir where those paths cannot resolve. Any quoted path that exists
+    relative to the template's directory is pinned to its absolute location;
+    everything else (absolute paths, non-path strings, files created at run
+    time) passes through untouched.
+    """
+
+    def _sub(m: re.Match[str]) -> str:
+        candidate = Path(m.group(1))
+        if not candidate.is_absolute():
+            resolved = (template_dir / candidate).resolve()
+            if resolved.is_file():
+                return f'"{resolved}"'
+        return m.group(0)
+
+    return _QUOTED_PATH_RE.sub(_sub, text)
+
 
 def clamp_pal(text: str, max_pal: int) -> str:
     """Rewrite every PAL / ``nprocs`` declaration above ``max_pal`` down to ``max_pal``.
@@ -72,6 +96,7 @@ def build_input(
 
     template = template_path.read_text(encoding="utf-8")
     cleaned = _XYZFILE_DIRECTIVE_RE.sub("", template).rstrip()
+    cleaned = _absolutize_template_paths(cleaned, template_path.parent)
     if max_pal is not None:
         cleaned = clamp_pal(cleaned, max_pal)
 

@@ -165,3 +165,50 @@ def test_build_input_clamps_template_pal_to_max_pal(tmp_path: Path):
     assert "nprocs 8" in text
     assert "nprocs 16" not in text
     assert parse_pal(out) == 8
+
+
+def test_build_input_absolutizes_relative_template_paths(tmp_path: Path):
+    """A quoted path that exists relative to the template dir is pinned absolute.
+
+    Regression: ``%DOCKER GUEST "../templates/cl.xyz"`` resolved against the
+    scratch work dir at run time, so ORCA died with CANNOT OPEN FILE.
+    """
+    templates = tmp_path / "templates"
+    templates.mkdir()
+    guest = templates / "cl.xyz"
+    guest.write_text("1\nchloride\nCl 0.0 0.0 0.0\n", encoding="utf-8")
+    template = templates / "step1.inp"
+    template.write_text(
+        '! XTB\n%DOCKER\n\tGUEST "../templates/cl.xyz"\n\tGuestCharge -1\nEND\n',
+        encoding="utf-8",
+    )
+    out = tmp_path / "step1_0.inp"
+    build_input(
+        xyz_path=tmp_path / "step1_0.xyz",
+        template_path=template,
+        output_path=out,
+        charge=0,
+        multiplicity=1,
+    )
+    text = out.read_text()
+    assert f'GUEST "{guest.resolve()}"' in text
+    assert '"../templates/cl.xyz"' not in text
+
+
+def test_build_input_leaves_absolute_and_unresolvable_paths_alone(tmp_path: Path):
+    """Absolute paths and quoted strings that match no file pass through untouched."""
+    template = _template(
+        tmp_path,
+        '! XTB\n%DOCKER\n\tGUEST "/abs/cl.xyz"\nEND\n%foo BAR "not-a-file.xyz" end\n',
+    )
+    out = tmp_path / "step1_0.inp"
+    build_input(
+        xyz_path=tmp_path / "step1_0.xyz",
+        template_path=template,
+        output_path=out,
+        charge=0,
+        multiplicity=1,
+    )
+    text = out.read_text()
+    assert 'GUEST "/abs/cl.xyz"' in text
+    assert '"not-a-file.xyz"' in text
