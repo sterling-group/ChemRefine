@@ -1,0 +1,6 @@
+! XTB
+
+%DOCKER
+	GUEST "../templates/cl.xyz"
+	GuestCharge -1
+END

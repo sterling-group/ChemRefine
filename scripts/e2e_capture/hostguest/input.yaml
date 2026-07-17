@@ -1,0 +1,24 @@
+# Capture case: dock Cl- onto methanol, then microsolvate the complex.
+template_dir: ./templates
+output_dir: ./outputs
+executables: { orca: /home/markus/opt/orca/6.1.1/orca }
+dispatch: auto
+max_cores: 8
+
+input: ./methanol.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  # DOCKER poses of the chloride guest around the neutral host.
+  - step: 1
+    engine: orca
+    operation: docker
+    sample: { method: min, count: 3 }
+
+  # Explicit microsolvation of the anionic complex (per-step charge override).
+  - step: 2
+    engine: orca
+    operation: solvator
+    charge: -1
+    sample: { method: min, count: 2 }

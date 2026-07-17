@@ -1,0 +1,17 @@
+# Capture case: direct-MLIP screen of a 2-frame seed with MACE-OFF on CPU.
+# Exercises the option aliases (task/model) and the cores thread budget.
+template_dir: ./templates
+output_dir: ./outputs
+dispatch: auto
+max_cores: 8
+
+input: ./glycol2.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  - step: 1
+    engine: mlip
+    operation: opt_sp
+    options: { task: mace_off, model: small, device: cpu, cores: 2 }
+    sample: { method: min, count: 1 }

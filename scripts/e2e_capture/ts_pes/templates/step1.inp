@@ -1,0 +1,8 @@
+!OPT PBE def2-SVP TightSCF
+
+%pal nprocs 4 end
+%maxcore 1500
+
+%geom
+   Scan A 0 1 2 = 160, 70, 7 end
+end

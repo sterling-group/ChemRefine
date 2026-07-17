@@ -1,0 +1,25 @@
+# Capture case: HCN -> HNC bend scan, then a TS optimisation gated by NMS.
+template_dir: ./templates
+output_dir: ./outputs
+executables: { orca: /home/markus/opt/orca/6.1.1/orca }
+dispatch: auto
+max_cores: 8
+
+input: ./hcn.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  # Relaxed scan of the H-C-N angle; `max` keeps the highest point (the TS guess).
+  - step: 1
+    engine: orca
+    operation: pes
+    sample: { method: max, count: 1 }
+
+  # OptTS + Freq: the `ts` NMS target is inferred from the template; a clean
+  # first-order saddle (one imaginary mode) passes through unchanged.
+  - step: 2
+    engine: orca
+    operation: opt_sp
+    nms: true
+    sample: { method: min, count: 1 }

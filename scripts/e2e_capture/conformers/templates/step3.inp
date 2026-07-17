@@ -1,0 +1,4 @@
+!SP PBE def2-SVP TightSCF
+
+%pal nprocs 2 end
+%maxcore 1500

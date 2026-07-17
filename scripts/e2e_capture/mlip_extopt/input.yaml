@@ -1,0 +1,17 @@
+# Capture case: ORCA ExtOpt optimisation of ethanol over a CPU MACE server.
+template_dir: ./templates
+output_dir: ./outputs
+executables: { orca: /home/markus/opt/orca/6.1.1/orca }
+dispatch: auto
+max_cores: 8
+
+input: ./ethanol.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  - step: 1
+    engine: mlip-extopt
+    operation: opt_sp
+    options: { task_name: mace_off, model_name: small, device: cpu }
+    sample: { method: min, count: 1 }

@@ -1,0 +1,32 @@
+# Capture case: GOAT ensemble -> DFT opt+freq with Gibbs sorting -> final SP.
+template_dir: ./templates
+output_dir: ./outputs
+executables: { orca: /home/markus/opt/orca/6.1.1/orca }
+dispatch: auto
+# 4 = the physical cores of the capture machine; OpenMPI refuses ranks beyond
+# physical cores, and the step-1 template's nprocs 16 must clamp to this.
+max_cores: 4
+
+input: ./glycol.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  # GOAT conformer search (XTB); the template asks for 16 cores to prove the
+  # max_cores clamp.
+  - step: 1
+    engine: orca
+    operation: goat
+    sample: { method: boltzmann, percent_cumulative: 99 }
+
+  # Opt + freq, then keep the 3 lowest by Gibbs free energy (not electronic).
+  - step: 2
+    engine: orca
+    operation: opt_sp
+    sample: { method: min, count: 3, energy_type: gibbs }
+
+  # Final single point on the Gibbs-ranked survivors.
+  - step: 3
+    engine: orca
+    operation: sp
+    sample: { method: min, count: 1 }

@@ -1,0 +1,26 @@
+# Capture case: NMS resolves a planar-NH3 saddle to the pyramidal minimum.
+template_dir: ./templates
+output_dir: ./outputs
+executables: { orca: /home/markus/opt/orca/6.1.1/orca }
+dispatch: auto
+max_cores: 8
+
+input: ./nh3_planar.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  # The exactly-planar seed optimises to the D3h saddle (symmetric forces keep
+  # it planar); the freq run finds one imaginary umbrella mode, NMS displaces
+  # +/- 0.5 A along it, and round 2 lands in the pyramidal C3v minimum.
+  - step: 1
+    engine: orca
+    operation: opt_sp
+    nms: true
+    options: { displacement_value: 0.5, seed: 42 }
+    sample: { method: min, count: 1 }
+
+  - step: 2
+    engine: orca
+    operation: sp
+    sample: { method: min, count: 1 }
