@@ -16,6 +16,8 @@ match the rest of ChemRefine.
 
 from __future__ import annotations
 
+import shlex
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -147,7 +149,10 @@ def write_wrapper_script(
 
     The script reads the sidecar URL file (so the wrapper picks up the
     kernel-assigned port the server bound to), then execs the shared
-    ``orca.extopt.bridge`` module to relay the call.
+    ``orca.extopt.bridge`` module to relay the call. The bridge runs with the
+    orchestrator's own interpreter (``sys.executable``) — it needs chemrefine
+    but no backend stack, and a bare ``python`` on PATH may be a system
+    interpreter without chemrefine installed.
     """
     path = Path(path)
     extra = f" {extra_args}" if extra_args else ""
@@ -160,7 +165,7 @@ def write_wrapper_script(
         "  exit 1\n"
         "fi\n"
         'SERVER_URL=$(cat "$URL_FILE")\n'
-        "exec python -m chemrefine.engines.orca.extopt.bridge "
+        f"exec {shlex.quote(sys.executable)} -m chemrefine.engines.orca.extopt.bridge "
         f'--backend {backend} --bind "$SERVER_URL"{extra} "$1"\n'
     )
     path.write_text(script, encoding="utf-8")

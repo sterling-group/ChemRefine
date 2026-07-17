@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
+import sys
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -168,6 +170,9 @@ def test_write_wrapper_script_emits_exec_call_and_is_executable(tmp_path: Path):
     assert 'URL_FILE="' + str(url_file) + '"' in text
     assert "chemrefine.engines.orca.extopt.bridge" in text
     assert "--backend mlip" in text
+    # The bridge must run with the orchestrator's interpreter, not a bare
+    # ``python`` that may resolve to a system interpreter without chemrefine.
+    assert f"exec {shlex.quote(sys.executable)} -m" in text
     assert out.stat().st_mode & 0o100  # owner-execute bit
 
 
@@ -260,8 +265,9 @@ def test_server_token_file_is_owner_readable_only(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_registry_contains_mlip_and_pyscf():
-    assert set(registry.CALCULATORS) == {"mlip", "pyscf"}
+def test_registry_discovers_mlip_and_pyscf():
+    """The registry finds the ExtOpt backends from the engine registry — no central list."""
+    assert registry.known_backends() == ["mlip", "pyscf"]
 
 
 def test_load_calculator_returns_class():
@@ -281,7 +287,7 @@ def test_every_registered_backend_conforms_to_base_protocol():
     here — real instantiation requires backend dependencies (torch /
     pyscf) the test env doesn't install.
     """
-    for name in registry.CALCULATORS:
+    for name in registry.known_backends():
         cls = registry.load_calculator(name)
         assert hasattr(cls, "name")
         assert callable(cls.calc)

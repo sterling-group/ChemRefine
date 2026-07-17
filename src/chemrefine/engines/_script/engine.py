@@ -22,7 +22,7 @@ from chemrefine.engines import _provision
 from chemrefine.engines._job import JobEngine, gpus_from_device_options
 from chemrefine.engines._script import output as script_output
 from chemrefine.engines._script import render as script_render
-from chemrefine.engines.api import ParsedResult, ProvisionableEngine
+from chemrefine.engines.api import ParsedResult
 from chemrefine.state import StepContext
 
 
@@ -86,12 +86,7 @@ class ScriptEngine(JobEngine):
         can run side by side in one pipeline.
         """
         cores = self.pal(ctx)
-        interpreter = "python"
-        if isinstance(self, ProvisionableEngine):
-            raw = ctx.step_cfg.options or {}
-            interpreter = _provision.resolve_launcher(
-                self.backend_requirement(raw), raw.get("backend_python")
-            )
+        interpreter = _provision.launcher_for(self, ctx.step_cfg.options)
         return (
             f"export OMP_NUM_THREADS={cores}\n"
             f"export MKL_NUM_THREADS={cores}\n"

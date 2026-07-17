@@ -13,9 +13,9 @@ discovery. Adding a new engine is **fully self-contained**: drop a bare-named
 ``engines/<name>/`` package in and it is discovered; nothing here (or anywhere else) changes.
 
 The provisioning entry points (:func:`preflight_backends`, :func:`build_backend_env`,
-:func:`backend_env_path`, :func:`known_backend_extras`) are re-exported here (with
-:func:`get_engine` / :func:`register`) as part of the subsystem's public face, so the flat
-pipeline + CLI never import a building block directly.
+:func:`backend_env_path`, :func:`backend_env_python`, :func:`known_backend_extras`) are
+re-exported here (with :func:`get_engine` / :func:`register`) as part of the subsystem's
+public face, so the flat pipeline + CLI never import a building block directly.
 """
 
 import importlib
@@ -23,6 +23,7 @@ import pkgutil
 
 from chemrefine.engines._provision import (
     backend_env_path,
+    backend_env_python,
     build_backend_env,
     known_backend_extras,
     preflight_backends,
@@ -31,6 +32,7 @@ from chemrefine.engines.api import get_engine, register
 
 __all__ = [
     "backend_env_path",
+    "backend_env_python",
     "build_backend_env",
     "get_engine",
     "known_backend_extras",

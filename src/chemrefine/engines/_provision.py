@@ -11,8 +11,8 @@ works off that DTO — no backend names, tasks, or tables.
   runnable if an explicit ``backend_python`` override is set, a managed env exists, or the
   backend is importable in the current env (the single-env case). Otherwise it raises
   :class:`~chemrefine.errors.ConfigError` naming the ``chemrefine backends install`` fix.
-* :func:`resolve_launcher` — the interpreter that runs a step's backend (server or direct
-  script): override → managed-env python → the orchestrator's ``python``.
+* :func:`resolve_launcher` / :func:`launcher_for` — the interpreter that runs a step's
+  backend (server or direct script): override → managed-env python → ``sys.executable``.
 * :func:`build_backend_env` — create a managed env under :func:`chemrefine_home`, using the
   **same tool that created the current env** (:func:`detect_env_tool`: conda / uv / venv), and
   install ``chemrefine[<extra>]`` into it matched to the orchestrator's own install (same
@@ -86,24 +86,38 @@ def backend_env_path(extra: str) -> Path:
     return chemrefine_home() / "backends" / extra
 
 
-def _env_python(extra: str) -> Path:
+def backend_env_python(extra: str) -> Path:
     """``<managed env>/bin/python`` for ``extra`` (whether or not it exists yet)."""
     return backend_env_path(extra) / "bin" / "python"
 
 
 def resolve_launcher(requirement: BackendRequirement, override: str | None = None) -> str:
-    """The interpreter that runs this backend: override → managed env → ``python``.
+    """The interpreter that runs this backend: override → managed env → this interpreter.
 
     Availability is guaranteed earlier by :func:`preflight_backends`, so this never errors —
-    the bare ``python`` fallback is the single-env case where the backend is importable
-    alongside the orchestrator.
+    the ``sys.executable`` fallback is the single-env case, where the backend is importable
+    alongside the orchestrator and the orchestrator's own interpreter is the right launcher
+    (a bare ``python`` may not exist on a compute node's PATH).
     """
     if override:
         return override
-    env_python = _env_python(requirement.extra)
+    env_python = backend_env_python(requirement.extra)
     if env_python.is_file():
         return str(env_python)
-    return "python"
+    return sys.executable
+
+
+def launcher_for(engine: object, options: dict[str, Any] | None) -> str:
+    """The interpreter that runs ``engine``'s backend for a step with ``options``.
+
+    The one home for the "is this engine provisionable, and what does it need?"
+    dance shared by the script engines and the ExtOpt server launch. Engines
+    without a backend run with the orchestrator's own interpreter.
+    """
+    if isinstance(engine, ProvisionableEngine):
+        raw = options or {}
+        return resolve_launcher(engine.backend_requirement(raw), raw.get("backend_python"))
+    return sys.executable
 
 
 def require_backend(requirement: BackendRequirement, override: str | None = None) -> None:
@@ -115,7 +129,7 @@ def require_backend(requirement: BackendRequirement, override: str | None = None
     """
     if override:
         return
-    if _env_python(requirement.extra).is_file():
+    if backend_env_python(requirement.extra).is_file():
         return
     if importlib.util.find_spec(requirement.import_name) is not None:
         return
@@ -240,7 +254,7 @@ def build_backend_env(extra: str, *, tool: EnvTool | None = None) -> Path:
     Idempotent — returns immediately when the env's ``python`` already exists. Builds with
     ``tool`` (default: :func:`detect_env_tool`); every subprocess must succeed.
     """
-    python = _env_python(extra)
+    python = backend_env_python(extra)
     if python.is_file():
         return python
     backend_env_path(extra).parent.mkdir(parents=True, exist_ok=True)

@@ -7,6 +7,7 @@ so these tests also pin the end-to-end wiring: managed env → server command / 
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -93,9 +94,10 @@ def test_resolve_launcher_managed_env(monkeypatch, tmp_path: Path):
     assert provision.resolve_launcher(_REQ) == str(py)
 
 
-def test_resolve_launcher_falls_back_to_python(monkeypatch, tmp_path: Path):
+def test_resolve_launcher_falls_back_to_sys_executable(monkeypatch, tmp_path: Path):
+    """Single-env case: the orchestrator's own interpreter runs the backend."""
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
-    assert provision.resolve_launcher(_REQ) == "python"
+    assert provision.resolve_launcher(_REQ) == sys.executable
 
 
 def test_require_backend_override_ok(monkeypatch, tmp_path: Path):
@@ -357,11 +359,11 @@ def test_extopt_server_cmd_uses_managed_env(monkeypatch, tmp_path: Path):
     assert cmd.startswith(f"{py} -m chemrefine.engines._backend_server.server")
 
 
-def test_extopt_server_cmd_defaults_to_python(monkeypatch, tmp_path: Path):
+def test_extopt_server_cmd_defaults_to_sys_executable(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
     ctx = _ctx(tmp_path, engine="mlip-extopt", options={"task_name": "mace_off"})
     cmd = get_engine("mlip-extopt")._server_cmd(ctx)
-    assert cmd.startswith("python -m chemrefine.engines._backend_server.server")
+    assert cmd.startswith(f"{sys.executable} -m chemrefine.engines._backend_server.server")
 
 
 def test_script_run_block_uses_managed_env(monkeypatch, tmp_path: Path):
@@ -372,11 +374,11 @@ def test_script_run_block_uses_managed_env(monkeypatch, tmp_path: Path):
     assert block.splitlines()[-1] == f"{py} step1_0.py"
 
 
-def test_script_run_block_defaults_to_python(monkeypatch, tmp_path: Path):
+def test_script_run_block_defaults_to_sys_executable(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
     ctx = _ctx(tmp_path, engine="mlip", options=None)
     block = get_engine("mlip").run_block(ctx, Path("step1_0.py"), Path("step1_0.json"))
-    assert block.splitlines()[-1] == "python step1_0.py"
+    assert block.splitlines()[-1] == f"{sys.executable} step1_0.py"
 
 
 def test_script_run_block_honours_backend_python_override(monkeypatch, tmp_path: Path):
@@ -386,8 +388,8 @@ def test_script_run_block_honours_backend_python_override(monkeypatch, tmp_path:
     assert block.splitlines()[-1] == "/envs/x/bin/python step1_0.py"
 
 
-def test_non_provisionable_script_engine_keeps_plain_python(monkeypatch, tmp_path: Path):
-    """A third-party ScriptEngine without ``backend_requirement`` runs today's ``python``."""
+def test_non_provisionable_script_engine_uses_own_interpreter(monkeypatch, tmp_path: Path):
+    """A third-party ScriptEngine without ``backend_requirement`` runs this interpreter."""
     from chemrefine.engines._script import ScriptEngine
 
     class _PlainScript(ScriptEngine):
@@ -397,11 +399,11 @@ def test_non_provisionable_script_engine_keeps_plain_python(monkeypatch, tmp_pat
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
     ctx = _ctx(tmp_path, engine="mlip", options={})
     block = _PlainScript().run_block(ctx, Path("step1_0.py"), Path("step1_0.json"))
-    assert block.splitlines()[-1] == "python step1_0.py"
+    assert block.splitlines()[-1] == f"{sys.executable} step1_0.py"
 
 
-def test_non_provisionable_extopt_engine_keeps_plain_python(monkeypatch, tmp_path: Path):
-    """A third-party ExtOpt engine without ``backend_requirement`` serves from ``python``."""
+def test_non_provisionable_extopt_engine_uses_own_interpreter(monkeypatch, tmp_path: Path):
+    """A third-party ExtOpt engine without ``backend_requirement`` serves from this interpreter."""
     from chemrefine.engines._options import EngineOptions
     from chemrefine.engines.mlip.extopt_calc import MlipExtOptCalculator
     from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
@@ -416,7 +418,7 @@ def test_non_provisionable_extopt_engine_keeps_plain_python(monkeypatch, tmp_pat
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
     ctx = _ctx(tmp_path, engine="mlip-extopt", options={})
     cmd = _PlainExtOpt()._server_cmd(ctx)
-    assert cmd.startswith("python -m chemrefine.engines._backend_server.server")
+    assert cmd.startswith(f"{sys.executable} -m chemrefine.engines._backend_server.server")
 
 
 # ---------------------------------------------------------------------------

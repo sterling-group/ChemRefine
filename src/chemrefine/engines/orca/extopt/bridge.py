@@ -23,7 +23,7 @@ from urllib.request import Request, urlopen
 
 from chemrefine.engines._backend_server import sidecar
 from chemrefine.engines._backend_server.base import SERVER_TOKEN_FILENAME, SERVER_URL_FILENAME
-from chemrefine.engines._backend_server.registry import CALCULATORS, load_calculator
+from chemrefine.engines._backend_server.registry import known_backends, load_calculator
 from chemrefine.engines.orca.extopt import protocol
 from chemrefine.errors import JobFailureError
 
@@ -45,7 +45,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--backend",
         required=True,
-        choices=sorted(CALCULATORS),
+        choices=known_backends(),
         help="which ComputeBackend the server is running",
     )
     parser.add_argument(
@@ -64,7 +64,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help=f"sidecar auth-token file (default: $WORK_DIR/{SERVER_TOKEN_FILENAME})",
     )
     parser.add_argument("--tag", default=None, help="optional correlation tag for server log")
-    for backend_name in sorted(CALCULATORS):
+    for backend_name in known_backends():
         load_calculator(backend_name).add_cli_args(parser)
     # ``inputfile`` is the positional; register it last so backend
     # contributions don't interleave with it.

@@ -30,7 +30,7 @@ from chemrefine.engines._backend_server.base import (
     CalculationData,
     ComputeBackend,
 )
-from chemrefine.engines._backend_server.registry import CALCULATORS, load_calculator
+from chemrefine.engines._backend_server.registry import known_backends, load_calculator
 
 if TYPE_CHECKING:
     from flask import Flask
@@ -49,7 +49,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--backend",
         required=True,
-        choices=sorted(CALCULATORS),
+        choices=known_backends(),
         help="which ComputeBackend to load",
     )
     parser.add_argument(
@@ -69,7 +69,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
-    for backend_name in sorted(CALCULATORS):
+    for backend_name in known_backends():
         load_calculator(backend_name).add_cli_args(parser)
     return parser.parse_args(argv)
 

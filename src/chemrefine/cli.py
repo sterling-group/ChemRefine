@@ -362,10 +362,10 @@ def backends_install(
 @backends_app.command("list")
 def backends_list() -> None:
     """List every known backend extra and whether its managed env is provisioned."""
-    from chemrefine.engines import backend_env_path, known_backend_extras
+    from chemrefine.engines import backend_env_python, known_backend_extras
 
     for extra in sorted(known_backend_extras()):
-        python = backend_env_path(extra) / "bin" / "python"
+        python = backend_env_python(extra)
         status = str(python) if python.is_file() else "not provisioned"
         typer.echo(f"{extra:16} {status}")
 
@@ -375,9 +375,9 @@ def backends_path(
     extra: Annotated[str, typer.Argument(help="Backend extra, e.g. mlip-fairchem.")],
 ) -> None:
     """Print the managed env's python for one backend (exit 1 if not provisioned)."""
-    from chemrefine.engines import backend_env_path
+    from chemrefine.engines import backend_env_python
 
-    python = backend_env_path(extra) / "bin" / "python"
+    python = backend_env_python(extra)
     typer.echo(str(python))
     if not python.is_file():
         raise typer.Exit(code=1)

@@ -21,7 +21,6 @@ from chemrefine.engines import _provision
 from chemrefine.engines._backend_server.base import SERVER_URL_FILENAME, ComputeBackend
 from chemrefine.engines._job import gpus_from_device_options
 from chemrefine.engines._options import EngineOptions
-from chemrefine.engines.api import ProvisionableEngine
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.engines.orca.extopt import protocol, run_block
 from chemrefine.state import StepContext, StepInputs
@@ -55,11 +54,7 @@ class ExtOptOrcaEngine(OrcaEngine):
         """
         validated = self.options_cls.from_raw(ctx.step_cfg.options)
         tokens = self.calculator_cls.server_cli_from_options(validated.model_dump())
-        interpreter = "python"
-        if isinstance(self, ProvisionableEngine):
-            interpreter = _provision.resolve_launcher(
-                self.backend_requirement(ctx.step_cfg.options), validated.backend_python
-            )
+        interpreter = _provision.launcher_for(self, ctx.step_cfg.options)
         return run_block._server_command(
             backend=self.backend, extra_tokens=tokens, interpreter=interpreter
         )
