@@ -20,10 +20,12 @@ SLURM submission, caching, and resumable runs built in.
 ```bash
 pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git@main"
 
-# With the default MLIP backends (MACE + FAIRChem):
+# With the default MLIP backend (FAIRChem / UMA):
 pip install "chemrefine[mlip] @ git+https://github.com/sterling-group/ChemRefine.git@main"
-pip install "fairchem-core @ git+https://github.com/sterling-group/fairchem-patched.git@main#subdirectory=packages/fairchem-core"
 ```
+
+Further MLIP backends (MACE, SevenNet, ORB, CHGNet) are separate extras;
+`chemrefine backends install <extra>` provisions each in its own managed env.
 
 Requires Python 3.11–3.13 and ORCA 6+. SLURM is optional — the generated
 `.slurm` script runs unchanged under `bash` for local execution. The
@@ -59,13 +61,13 @@ steps:
     engine: orca
     operation: opt_sp
     template: dft_opt.inp
-    sample: { method: energy_window, window_kcal: 3.0 }
+    sample: { method: min, window_kcalmol: 3.0 }
 ```
 
 ```bash
 chemrefine run input.yaml                  # full pipeline from step 1
 chemrefine resume input.yaml               # honor cache where valid
-chemrefine rebuild-cache input.yaml refine # invalidate one step, resume
+chemrefine rebuild-cache input.yaml refine # re-parse one step's outputs from disk
 chemrefine --help                          # full subcommand list
 ```
 
