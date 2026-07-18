@@ -50,7 +50,7 @@ _REQUIRES = {
     "conformers": {"orca"},
     "nms_minimum": {"orca"},
     "ts_pes": {"orca"},
-    "hostguest": {"orca"},
+    "host_guest": {"orca"},
     "mlip_screen": {"mace"},
     "mlip_extopt": {"orca", "mace"},
 }
@@ -99,7 +99,7 @@ def test_live_case(name: str, tmp_path: Path, request: pytest.FixtureRequest) ->
     elif name == "ts_pes":
         (ts,) = outcomes[1].state.structures
         assert ts.imaginary_freqs is not None and len(ts.imaginary_freqs) == 1
-    elif name == "hostguest":
+    elif name == "host_guest":
         assert outcomes[1].state.structures, "solvator output must parse"
 
     if request.config.getoption("--record"):

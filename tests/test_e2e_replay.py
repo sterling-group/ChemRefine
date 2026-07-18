@@ -168,12 +168,12 @@ def test_ts_pes_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 # ---------------------------------------------------------------------------
-# hostguest: docker fan-out, per-step charge override, solvator parse
+# host_guest: docker fan-out, per-step charge override, solvator parse
 # ---------------------------------------------------------------------------
 
 
-def test_hostguest_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    case, submitter, config = _replay("hostguest", tmp_path, monkeypatch)
+def test_host_guest_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    case, submitter, config = _replay("host_guest", tmp_path, monkeypatch)
     poses = parse_output(case.captured / "step1" / "0" / "step1_0.out", "docker")
     assert len(poses) >= 2, "docking must produce poses to filter"
 

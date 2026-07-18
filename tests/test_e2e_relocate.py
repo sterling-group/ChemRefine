@@ -20,7 +20,7 @@ from chemrefine.errors import ChemRefineError
 
 RUN_BATCH = "chemrefine.engines._execution.run_batch"
 
-ORCA_CASES = ["conformers", "nms_minimum", "ts_pes", "hostguest"]
+ORCA_CASES = ["conformers", "nms_minimum", "ts_pes", "host_guest"]
 
 
 def _with_step_update(config: Config, step_number: int, **updates: object) -> Config:
