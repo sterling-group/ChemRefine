@@ -34,7 +34,13 @@ class OrcaEngine(JobEngine):
     label: ClassVar[str] = "ORCA"
     template_suffix: ClassVar[str] = "inp"
     output_suffix: ClassVar[str] = "out"
-    output_globs: ClassVar[tuple[str, ...]] = ("*.out", "*.xyz", "*.gbw", "*.hess")
+    output_globs: ClassVar[tuple[str, ...]] = (
+        "*.out",
+        "*.xyz",
+        "*.gbw",
+        "*.hess",
+        "*.property.json",
+    )
 
     # -- input -------------------------------------------------------------
 

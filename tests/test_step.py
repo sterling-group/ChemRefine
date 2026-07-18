@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from ase import Atoms
@@ -588,3 +589,17 @@ def test_on_failure_best_drops_failure_with_no_fallback(tmp_path: Path):
     assert cache.load_failed_jobs(ctx.step_dir) == [
         {"structure_id": "ghost", "reason": "output missing"}
     ]
+
+
+def test_run_step_writes_canonical_result_records(tmp_path: Path):
+    """Every parsed job leaves its engine-independent ``*.result.json`` behind."""
+    cfg = _config(tmp_path)
+    run_step(cfg, cfg.steps[0], _seed_state(["0", "1"]))
+    step_dir = cfg.output_dir.resolve() / "step1"
+    for sid in ("0", "1"):
+        record_path = step_dir / sid / f"step1_{sid}.result.json"
+        assert record_path.is_file()
+        record = json.loads(record_path.read_text())
+        assert record["result_format"] == cache.RESULT_FORMAT_VERSION
+        assert record["id"] == sid
+        assert record["energy_hartree"] is not None

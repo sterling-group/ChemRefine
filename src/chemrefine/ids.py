@@ -75,6 +75,19 @@ def structure_artifact_path(step_dir: Path, step: int, structure_id: str, ext: s
     return step_dir / structure_id / f"step{step}_{structure_id}.{ext}"
 
 
+def result_record_path(job_dir: Path, step: int, structure_id: str) -> Path:
+    """Canonical parsed-result record path for one structure of a job.
+
+    Takes the **job** directory (an output file's parent), not the step dir:
+    fan-out children of an ensemble job have no directory of their own, so
+    their records land beside the sidecar that produced them
+    (``step1/0/step1_0-3.result.json``), and NMS round-2 children get
+    ``attemptK/<child>/…`` for free. Distinct from the script engines'
+    native ``step{N}_{id}.json`` output.
+    """
+    return job_dir / f"step{step}_{structure_id}.result.json"
+
+
 def input_geometry_path(step_dir: Path, step: int, structure_id: str) -> Path:
     """Path of a structure's **input** geometry, distinct from any output xyz.
 

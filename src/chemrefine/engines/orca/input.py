@@ -30,6 +30,13 @@ _XYZFILE_DIRECTIVE_RE = re.compile(r"^\s*\*\s+xyzfile.*$", re.MULTILINE)
 
 _QUOTED_PATH_RE = re.compile(r'"([^"\n]+)"')
 
+_JSON_PROP_BLOCK = "%output\n  JSONPropFile True\nend"
+"""Ask ORCA (≥ 6) to drop its native ``basename.property.json`` next to the run.
+
+A convenience artifact for users and tooling — chemrefine itself parses the
+``.out`` (and writes its own canonical ``*.result.json``). Omitted when the
+template already sets ``JSONPropFile`` so a user override wins."""
+
 
 def _absolutize_template_paths(text: str, template_dir: Path) -> str:
     """Rewrite quoted relative file references to absolute paths.
@@ -101,6 +108,8 @@ def build_input(
         cleaned = clamp_pal(cleaned, max_pal)
 
     lines = [cleaned, ""]
+    if "jsonpropfile" not in cleaned.lower():
+        lines.extend([_JSON_PROP_BLOCK, ""])
     extra = extra_blocks.strip()
     if extra:
         lines.extend([extra, ""])

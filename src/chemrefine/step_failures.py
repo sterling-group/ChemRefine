@@ -97,6 +97,10 @@ def parse_with_failures(
         except OutputParseError as e:
             failures.append(Failure(sid, f"unparseable: {e}", None))
             continue
+        # Drop the canonical parsed-result record next to the native output —
+        # the engine-independent JSON every calculation leaves behind, for
+        # failures too (an unconverged result is still a parsed result).
+        cache.save_result_records(parsed, out.parent, ctx.step_cfg.step)
         successes.extend(s for s in parsed if succeeded(s))
         bad = [s for s in parsed if not succeeded(s)]
         if bad:

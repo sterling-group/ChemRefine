@@ -136,6 +136,8 @@ def test_nms_resolves_saddle_via_round_two(tmp_path: Path, monkeypatch: pytest.M
     children = sorted(p.name for p in (case.output_dir / "step1" / "0" / "attempt1").iterdir())
     assert children and all(name.startswith("0_m") for name in children)
     assert {sid for c in submitter.calls for _i, _o, sid in c.files} >= set(children)
+    child_records = list((case.output_dir / "step1" / "0" / "attempt1").glob("*/*.result.json"))
+    assert child_records, "round-2 children leave canonical result records too"
     (survivor,) = outcomes[0].state.structures
     assert survivor.id == "0", "the resolved child is written back under the parent id"
     assert survivor.converged

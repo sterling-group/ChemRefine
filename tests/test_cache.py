@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +11,7 @@ from ase import Atoms
 
 from chemrefine.cache import (
     CACHE_FORMAT_VERSION,
+    RESULT_FORMAT_VERSION,
     fingerprint,
     invalidate,
     is_valid,
@@ -20,6 +22,8 @@ from chemrefine.cache import (
     parents_digest,
     save,
     save_manifest,
+    save_result_records,
+    structure_from_record,
 )
 from chemrefine.config import StepConfig
 from chemrefine.errors import CacheError
@@ -519,3 +523,55 @@ def test_manifest_load_missing_files_key_raises_cache_error(tmp_path: Path):
     path.write_text('{"operation": "opt_sp", "engine": "orca"}', encoding="utf-8")
     with pytest.raises(CacheError):
         load_manifest(tmp_path / "step1")
+
+
+# ---------------------------------------------------------------------------
+# Canonical result records
+# ---------------------------------------------------------------------------
+
+
+def test_save_result_records_writes_versioned_canonical_records(tmp_path: Path):
+    """Each structure gets a ``*.result.json`` wrapping its structure_record."""
+    structure = Structure(
+        id="0-1",
+        atoms=Atoms("OH", positions=[[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]]),
+        parent_id="0",
+        energy_hartree=-75.5,
+        gibbs_hartree=-75.4,
+        converged=True,
+        imaginary_freqs={3: -101.5},
+    )
+    save_result_records([structure], tmp_path, step=2)
+
+    path = tmp_path / "step2_0-1.result.json"
+    assert path.is_file()
+    record = json.loads(path.read_text())
+    assert record["result_format"] == RESULT_FORMAT_VERSION
+    assert record["id"] == "0-1"
+    assert record["parent_id"] == "0"
+    assert record["energy_hartree"] == -75.5
+    assert record["gibbs_hartree"] == -75.4
+    assert record["imaginary_freqs"] == {"3": -101.5}
+    assert record["symbols"] == ["O", "H"]
+
+
+def test_result_record_round_trips_through_structure_from_record(tmp_path: Path):
+    """The record body is the one canonical schema — the cache reader accepts it."""
+    structure = Structure(
+        id="0",
+        atoms=Atoms("H2", positions=[[0.0, 0.0, 0.0], [0.0, 0.0, 0.74]]),
+        energy_hartree=-1.17,
+        forces_ev_per_a=np.zeros((2, 3)),
+        converged=True,
+        terminated=True,
+    )
+    save_result_records([structure], tmp_path, step=1)
+    record = json.loads((tmp_path / "step1_0.result.json").read_text())
+    record.pop("result_format")
+
+    rebuilt = structure_from_record(record)
+
+    assert rebuilt.id == structure.id
+    assert rebuilt.energy_hartree == structure.energy_hartree
+    assert rebuilt.converged is True
+    assert rebuilt.atoms.get_chemical_symbols() == ["H", "H"]

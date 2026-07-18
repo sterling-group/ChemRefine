@@ -45,6 +45,7 @@ from typing import Any, cast
 import numpy as np
 from ase import Atoms
 
+from chemrefine import ids
 from chemrefine.config import StepConfig
 from chemrefine.errors import CacheError
 from chemrefine.state import StepInputs, StepResults, Structure
@@ -59,6 +60,15 @@ which looks like a silent mass invalidation); :func:`load` rejects any
 cache whose ``cache_format`` differs, forcing a clean rebuild rather
 than a wrong read."""
 
+RESULT_FORMAT_VERSION = "v1.0"
+"""Schema version of the per-calculation ``*.result.json`` records.
+
+The record body is :func:`structure_record` — the same schema the cache
+document's ``structures`` entries use — wrapped in a ``result_format``
+envelope. Bump when a key is renamed/removed or its semantics change;
+purely additive keys need no bump (:func:`structure_from_record` reads
+the optional ones with ``.get``)."""
+
 logger = logging.getLogger(__name__)
 
 
@@ -67,7 +77,7 @@ class StepCache:
     """In-memory snapshot of one step's parsed results.
 
     :func:`save` serializes it to the ``step.json`` document (structures
-    via :func:`_structure_to_dict`); :func:`load` rebuilds it.
+    via :func:`structure_record`); :func:`load` rebuilds it.
     """
 
     cache_format: str
@@ -160,12 +170,30 @@ def _cache_path(step_dir: Path) -> Path:
     return step_dir / "_cache" / "step.json"
 
 
-def _structure_to_dict(s: Structure) -> dict[str, Any]:
-    """Serialize one :class:`Structure` to its JSON cache entry.
+def structure_record(s: Structure) -> dict[str, Any]:
+    """Serialize one :class:`Structure` to the canonical parsed-result record.
+
+    **This is the one schema for a parsed calculation result.** It feeds the
+    ``structures`` entries of the ``_cache/step.json`` document, the per-job
+    ``step{N}_{id}.result.json`` artifacts (:func:`save_result_records`), and
+    the per-engine contract-test goldens (``tests/data/engines/``) — every
+    engine's parse must land in this shape.
+
+    Keys (null when the calculation didn't report the value):
+
+    - ``id`` / ``parent_id`` — lineage
+    - ``energy_hartree``, ``gibbs_hartree``, ``enthalpy_hartree``,
+      ``energy_zpe_hartree`` — energies [Hartree]
+    - ``converged`` / ``terminated`` — run status (``None`` = not reported)
+    - ``symbols``, ``positions`` — the geometry [Å]
+    - ``forces_ev_per_a`` — forces [eV/Å]
+    - ``imaginary_freqs`` — mode index (JSON string) → frequency [cm⁻¹]
 
     Only symbols + positions of the ``Atoms`` are stored — that is all the
-    pipeline ever reads back from a cached structure (and all that
-    :func:`parents_digest` hashes).
+    pipeline ever reads back (and all that :func:`parents_digest` hashes).
+    ``normal_modes`` is deliberately excluded: a transient displacement
+    tensor used only during an active NMS run, which always re-parses the
+    native output.
     """
     return {
         "id": s.id,
@@ -193,8 +221,8 @@ def _structure_to_dict(s: Structure) -> dict[str, Any]:
     }
 
 
-def _structure_from_dict(d: dict[str, Any]) -> Structure:
-    """Rebuild a :class:`Structure` from its JSON cache entry (inverse of the above)."""
+def structure_from_record(d: dict[str, Any]) -> Structure:
+    """Rebuild a :class:`Structure` from its canonical record (inverse of the above)."""
     forces = d["forces_ev_per_a"]
     imaginary = d.get("imaginary_freqs")
     return Structure(
@@ -211,6 +239,20 @@ def _structure_from_dict(d: dict[str, Any]) -> Structure:
         energy_zpe_hartree=d.get("energy_zpe_hartree"),
         imaginary_freqs=None if imaginary is None else {int(k): v for k, v in imaginary.items()},
     )
+
+
+def save_result_records(structures: Sequence[Structure], job_dir: Path, step: int) -> None:
+    """Write each structure's canonical ``*.result.json`` record into ``job_dir``.
+
+    The engine-independent parsed-result artifact: whatever native output a
+    backend produced (ORCA ``.out``, a script footer JSON, …), the pipeline
+    drops the normalized :func:`structure_record` next to it after parsing.
+    A derived artifact — inspection, tooling, and contract goldens read it;
+    the pipeline itself never does (rebuilds re-parse the native output).
+    """
+    for s in structures:
+        record = {"result_format": RESULT_FORMAT_VERSION, **structure_record(s)}
+        _write_json(ids.result_record_path(job_dir, step, s.id), record)
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
@@ -280,7 +322,7 @@ def save(
         "engine": step_cfg.engine,
         "operation": step_cfg.operation,
         "parent_ids": list(parent_ids),
-        "structures": [_structure_to_dict(s) for s in results.structures],
+        "structures": [structure_record(s) for s in results.structures],
     }
     _write_json(_cache_path(step_dir), document)
     logger.info("saved step %d cache (fingerprint %s)", step_cfg.step, fp)
@@ -315,7 +357,7 @@ def load(step_dir: Path) -> StepCache | None:
             operation=data["operation"],
             parent_ids=tuple(data["parent_ids"]),
             results=StepResults(
-                structures=tuple(_structure_from_dict(d) for d in data["structures"])
+                structures=tuple(structure_from_record(d) for d in data["structures"])
             ),
             reuse_fingerprint=data.get("reuse_fingerprint", ""),
         )

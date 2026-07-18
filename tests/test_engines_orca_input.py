@@ -212,3 +212,35 @@ def test_build_input_leaves_absolute_and_unresolvable_paths_alone(tmp_path: Path
     text = out.read_text()
     assert 'GUEST "/abs/cl.xyz"' in text
     assert '"not-a-file.xyz"' in text
+
+
+def test_build_input_requests_orca_property_json(tmp_path: Path):
+    """Generated inputs ask ORCA (>= 6) for its native property.json artifact."""
+    template = _template(tmp_path, "! B3LYP def2-SVP\n")
+    out = tmp_path / "step1_0.inp"
+    build_input(
+        xyz_path=tmp_path / "step1_0.xyz",
+        template_path=template,
+        output_path=out,
+        charge=0,
+        multiplicity=1,
+    )
+    assert "JSONPropFile True" in out.read_text()
+
+
+def test_build_input_respects_template_jsonpropfile_override(tmp_path: Path):
+    """A template that already sets JSONPropFile wins — no second %output block."""
+    template = _template(
+        tmp_path, "! B3LYP def2-SVP\n%output\n  JSONPropFile False\nend\n"
+    )
+    out = tmp_path / "step1_0.inp"
+    build_input(
+        xyz_path=tmp_path / "step1_0.xyz",
+        template_path=template,
+        output_path=out,
+        charge=0,
+        multiplicity=1,
+    )
+    text = out.read_text()
+    assert "JSONPropFile False" in text
+    assert "JSONPropFile True" not in text
