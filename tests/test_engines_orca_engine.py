@@ -15,7 +15,7 @@ from chemrefine.engines import _execution as submit
 from chemrefine.engines.api import NmsCapableEngine, get_engine
 from chemrefine.state import JobBatch, PipelineState, StepContext, Structure
 
-FIXTURE = Path(__file__).parent / "data" / "orca.out"
+FIXTURE = Path(__file__).parent / "data" / "engines" / "orca" / "dft" / "step1_0.out"
 
 
 # ---------------------------------------------------------------------------

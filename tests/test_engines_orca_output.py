@@ -37,12 +37,14 @@ def test_parse_dft_without_thermochemistry_leaves_none():
 
 
 DATA = Path(__file__).parent / "data"
-FIXTURE = DATA / "orca.out"
-GOAT_FIXTURE = DATA / "goat_finalensemble.xyz"
+FIXTURE = DATA / "engines" / "orca" / "dft" / "step1_0.out"
+GOAT_FIXTURE = DATA / "engines" / "orca" / "goat" / "step1_0.finalensemble.xyz"
 # Named exactly like ORCA's sidecar so the legacy drop-last-frame rule applies.
-DOCKER_FIXTURE = DATA / "docker.struc1.allopt.xyz"
-DOCKER_611_FIXTURE = DATA / "docker_all_optimized_611.xyz"
-SOLVATOR_FIXTURE = DATA / "solvator_solventbuild.xyz"
+DOCKER_FIXTURE = DATA / "engines" / "orca" / "docker" / "step1_0.docker.struc1.allopt.xyz"
+DOCKER_611_FIXTURE = (
+    DATA / "engines" / "orca" / "docker_611" / "step1_0.docker.struc1.all.optimized.xyz"
+)
+SOLVATOR_FIXTURE = DATA / "engines" / "orca" / "solvator" / "step1_0.solventbuild.xyz"
 
 
 # ---------------------------------------------------------------------------
