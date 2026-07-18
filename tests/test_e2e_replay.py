@@ -2,7 +2,7 @@
 
 Every test drives ``chemrefine.pipeline.run`` with the shipped engines doing
 their real prepare / parse / NMS / filter / cache work; only the compute is
-satisfied from a ``tests/data/e2e`` archive. Assertions are data-driven —
+satisfied from a ``tests/data/e2e/recordings`` archive. Assertions are data-driven —
 recomputed from the archive with the real parsers — so re-capturing the
 fixtures never stales them.
 """

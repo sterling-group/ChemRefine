@@ -1,9 +1,10 @@
 """Replay captured real runs through the live pipeline.
 
-The fixtures under ``tests/data/e2e/`` are trimmed, compressed outputs of
-real ORCA / MLIP runs (built by ``scripts/e2e_capture/capture.py``). Tests
-extract one into a tmp dir and drive the real pipeline against it in two
-modes:
+The recordings under ``tests/data/e2e/recordings/`` are trimmed, compressed
+outputs of real runs of the case definitions in ``tests/data/e2e/cases/``
+(re-packed by :func:`pack_case` via ``pytest -m integration --record``).
+Tests extract one into a tmp dir and drive the real pipeline against it in
+two modes:
 
 * **fresh replay** — monkeypatch :func:`chemrefine.engines._execution.run_batch`
   with :func:`replay_run_batch`, so the shipped engines run their real
@@ -14,7 +15,7 @@ modes:
   the ``rebuild-cache`` path) survive a move to a different machine/path.
 
 ``@OUTPUT_DIR@`` tokens in the archived ``_cache`` documents are rewritten
-to the extraction-specific output dir, mirroring what ``capture.py`` did.
+to the extraction-specific output dir, mirroring what :func:`pack_case` did.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ from pathlib import Path
 
 from chemrefine.state import JobBatch, StepContext, StepInputs
 
-DATA_DIR = Path(__file__).resolve().parent / "data" / "e2e"
+DATA_DIR = Path(__file__).resolve().parent / "data" / "e2e" / "recordings"
 OUTPUT_DIR_TOKEN = "@OUTPUT_DIR@"
 
 
@@ -53,7 +54,7 @@ class ReplayCase:
 
 
 def extract_case(name: str, dest: Path) -> ReplayCase:
-    """Extract ``tests/data/e2e/<name>.tar.xz`` into ``dest``."""
+    """Extract ``tests/data/e2e/recordings/<name>.tar.xz`` into ``dest``."""
     with tarfile.open(DATA_DIR / f"{name}.tar.xz") as tar:
         tar.extractall(dest, filter="data")
     case = ReplayCase(root=dest, captured=dest / "captured_outputs")

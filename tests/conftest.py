@@ -21,5 +21,5 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--record",
         action="store_true",
         default=False,
-        help="re-pack the tests/data/e2e archives from passing live (-m integration) runs",
+        help="re-pack the e2e recordings from passing live (-m integration) runs",
     )

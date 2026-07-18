@@ -1,6 +1,6 @@
 """Tier-3 live integration: the e2e cases run against the real binaries.
 
-The same case definitions the recorded tier replays (``tests/data/e2e_cases``)
+The same case definitions the recordings were made from (``tests/data/e2e/cases``)
 run here for real — ORCA local dispatch, MLIP backends via their managed envs.
 Deselected by default (``addopts = "-m 'not integration'"``); opt in with
 ``pytest -m integration`` on a machine with the binaries (ORCA ≥ 6 on PATH,
@@ -24,7 +24,7 @@ from chemrefine.engines import backend_env_python
 
 pytestmark = pytest.mark.integration
 
-CASES_DIR = Path(__file__).resolve().parent / "data" / "e2e_cases"
+CASES_DIR = Path(__file__).resolve().parent / "data" / "e2e" / "cases"
 
 
 def _real_orca() -> str | None:
