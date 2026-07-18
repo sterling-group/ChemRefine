@@ -183,13 +183,14 @@ ignore_missing_imports = true
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-# Transient run artifacts of the e2e capture cases (never committed).
-extend-exclude = ["scripts/e2e_capture/*/outputs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PTH", "RET", "C4", "TID"]
 
 [tool.pytest.ini_options]
+# Tier-3 live-integration tests need real binaries (ORCA, an MLIP stack) and
+# real runtime; opt in explicitly with `pytest -m integration`.
+addopts = "-m 'not integration'"
 testpaths = ["tests"]
 # Add `tests/` to sys.path so test files can `from synthetic import …`
 # without making the tests directory a package.
@@ -214,5 +215,4 @@ ignore-init-method = true
 ignore-magic = true
 ignore-nested-functions = true
 fail-under = 100
-# scripts/e2e_capture holds rendered script templates + run artifacts, not modules.
-exclude = ["tests", "Examples", "build", "dist", "scripts/e2e_capture"]
+exclude = ["tests", "Examples", "build", "dist"]

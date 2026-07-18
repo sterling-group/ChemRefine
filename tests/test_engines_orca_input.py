@@ -230,9 +230,7 @@ def test_build_input_requests_orca_property_json(tmp_path: Path):
 
 def test_build_input_respects_template_jsonpropfile_override(tmp_path: Path):
     """A template that already sets JSONPropFile wins — no second %output block."""
-    template = _template(
-        tmp_path, "! B3LYP def2-SVP\n%output\n  JSONPropFile False\nend\n"
-    )
+    template = _template(tmp_path, "! B3LYP def2-SVP\n%output\n  JSONPropFile False\nend\n")
     out = tmp_path / "step1_0.inp"
     build_input(
         xyz_path=tmp_path / "step1_0.xyz",

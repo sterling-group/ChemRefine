@@ -1,7 +1,7 @@
 # Capture case: dock Cl- onto methanol, then microsolvate the complex.
 template_dir: ./templates
 output_dir: ./outputs
-executables: { orca: /home/markus/opt/orca/6.1.1/orca }
+executables: { orca: orca }  # the live harness injects the resolved absolute path
 dispatch: auto
 max_cores: 8
 

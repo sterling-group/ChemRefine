@@ -1,7 +1,7 @@
 # Capture case: GOAT ensemble -> DFT opt+freq with Gibbs sorting -> final SP.
 template_dir: ./templates
 output_dir: ./outputs
-executables: { orca: /home/markus/opt/orca/6.1.1/orca }
+executables: { orca: orca }  # the live harness injects the resolved absolute path
 dispatch: auto
 # 4 = the physical cores of the capture machine; OpenMPI refuses ranks beyond
 # physical cores, and the step-1 template's nprocs 16 must clamp to this.

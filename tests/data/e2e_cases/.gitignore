@@ -1,0 +1,2 @@
+# Live-run artifacts; run tier-3 tests in tmp dirs instead.
+*/outputs/

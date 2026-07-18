@@ -19,6 +19,7 @@ to the extraction-specific output dir, mirroring what ``capture.py`` did.
 
 from __future__ import annotations
 
+import fnmatch
 import shutil
 import tarfile
 from dataclasses import dataclass, field
@@ -117,3 +118,88 @@ def forbid_run_batch(engine: object, inputs: StepInputs, ctx: StepContext) -> Jo
 def relocate(case: ReplayCase) -> None:
     """Stage the captured output tree as the config's live output dir."""
     shutil.copytree(case.captured, case.output_dir)
+
+
+# ---------------------------------------------------------------------------
+# Recording (tier 3 → tier 2): pack a finished live run into an archive
+# ---------------------------------------------------------------------------
+
+MAX_ARCHIVE_BYTES = 1_000_000
+
+KEEP_PATTERNS = (
+    "*.out",
+    "*.finalensemble.xyz",
+    "*.docker.struc1.allopt.xyz",
+    "*.docker.struc1.all.optimized.xyz",  # ORCA 6.1.1's docker sidecar name
+    "*.solventbuild.xyz",  # also matches 6.1.1's *.solvator.solventbuild.xyz
+    "*.json",
+)
+
+# Derived / native-convenience artifacts a fresh replay must re-create itself —
+# the generic *.json keep-pattern must not swallow them into the archive.
+DROP_SUFFIXES = (".result.json", ".property.json")
+
+
+def _kept(path: Path) -> bool:
+    if path.name.endswith(DROP_SUFFIXES):
+        return False
+    if path.parent.name == "_cache":
+        return path.suffix == ".json"
+    return any(fnmatch.fnmatch(path.name, pattern) for pattern in KEEP_PATTERNS)
+
+
+def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
+    """Pack a finished live run into ``dest_dir/<name>.tar.xz`` (the recording).
+
+    Trims ``run_dir/outputs`` to what the parsers read (see ``KEEP_PATTERNS``),
+    tokenizes the absolute output prefix in the ``_cache`` documents, and
+    stages ``input.yaml`` + ``templates/`` + the seed alongside the trimmed
+    ``captured_outputs/`` tree. Fails when the archive would exceed
+    ``MAX_ARCHIVE_BYTES`` — recordings stay light by construction.
+    """
+    import tempfile
+
+    import yaml
+
+    run_dir = run_dir.resolve()
+    config = yaml.safe_load((run_dir / "input.yaml").read_text())
+    outputs = (run_dir / config.get("output_dir", "outputs")).resolve()
+    if not outputs.is_dir():
+        raise AssertionError(f"no outputs to pack in {run_dir}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        staging = Path(tmp) / "staging"
+        staging.mkdir()
+        shutil.copy2(run_dir / "input.yaml", staging / "input.yaml")
+        shutil.copytree(run_dir / "templates", staging / "templates")
+        seed = config.get("input")
+        if seed is not None and not Path(seed).is_absolute():
+            seed_path = (run_dir / seed).resolve()
+            if seed_path.is_relative_to(run_dir) and not seed_path.is_relative_to(
+                run_dir / "templates"
+            ):
+                shutil.copy2(seed_path, staging / seed_path.name)
+
+        captured = staging / "captured_outputs"
+        kept = 0
+        for path in sorted(outputs.rglob("*")):
+            if not path.is_file() or not _kept(path):
+                continue
+            target = captured / path.relative_to(outputs)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if path.parent.name == "_cache":
+                target.write_text(path.read_text().replace(str(outputs), OUTPUT_DIR_TOKEN))
+            else:
+                shutil.copy2(path, target)
+            kept += 1
+        assert kept, f"nothing matched the keep patterns under {outputs}"
+
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        archive = dest_dir / f"{name}.tar.xz"
+        with tarfile.open(archive, "w:xz") as tar:
+            for path in sorted(staging.rglob("*")):
+                tar.add(path, arcname=str(path.relative_to(staging)))
+
+    size = archive.stat().st_size
+    assert size <= MAX_ARCHIVE_BYTES, f"{archive} exceeds {MAX_ARCHIVE_BYTES} bytes — trim the case"
+    return archive
