@@ -1,7 +1,7 @@
 # Host–Guest Docking Tutorial
 
 !!! note "Schema note"
-    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [Examples/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/input.yaml).
+    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [examples/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/input.yaml).
 
 
 This tutorial demonstrates how to use **ChemRefine** for a host–guest docking workflow, followed by machine-learning refinement, DFT validation, and explicit solvation.  
@@ -34,12 +34,12 @@ We will start with an initial structure (`step1.xyz`) and progressively refine d
 
 We start with an initial structure located in the templates folder:
 
-- 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/Host-Guest/input.yaml)  
-- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/Host-Guest/step1.xyz)  
+- 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/host_guest/input.yaml)  
+- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/host_guest/step1.xyz)  
 
 ## Orca Input Files
 
-You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/main/Examples/Tutorials/Host-Guest/templates)
+You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/main/examples/tutorials/host_guest/templates)
 
 ---
 
@@ -51,7 +51,7 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 <script>
   let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
 
-  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Tutorials/Host-Guest/step1.xyz")
+  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/main/examples/tutorials/host_guest/step1.xyz")
     .then(r => r.text())
     .then(data => {
       viewer.addModel(data, "xyz");   // force XYZ format
@@ -128,10 +128,11 @@ chemrefine run input.yaml --maxcores 16
 
 This runs the workflow locally with up to 16 parallel jobs.  
 
-On an HPC cluster with SLURM:
+On an HPC cluster with SLURM, the same command submits each calculation as its own job
+(`dispatch: auto` detects `sbatch`; no wrapper script is needed):
 
 ```bash
-sbatch ./Examples/Templates/chemrefine.slurm
+chemrefine run input.yaml
 ```
 
 ---

@@ -1,7 +1,7 @@
 # Redox Reaction Tutorial
 
 !!! note "Schema note"
-    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [Examples/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/input.yaml).
+    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [examples/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/input.yaml).
 
 
 This tutorial demonstrates how to use **ChemRefine** to study **redox processes**, including electron transfer reactions, charge-state changes, and energy evaluation with both MLIP and DFT levels of theory.
@@ -33,11 +33,11 @@ ChemRefine automates redox workflows by allowing you to:
 
 We start with an initial structure located in the templates folder:
 
-- 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/Redox/dimethylaniline/input.yaml)  
-- 📄 [View Input XYZ](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/Redox/dimethylaniline/step1.xyz)  
+- 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/redox/dimethylaniline/input.yaml)  
+- 📄 [View Input XYZ](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/redox/dimethylaniline/step1.xyz)  
 ## Orca Input Files
 
-You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/main/Examples/Tutorials/Redox/dimethylaniline/templates)
+You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/main/examples/tutorials/redox/dimethylaniline/templates)
 
 ### Interactive 3D Viewer
 
@@ -47,7 +47,7 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 <script>
   let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
 
-  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Tutorials/Redox/dimethylaniline/step1.xyz")
+  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/main/examples/tutorials/redox/dimethylaniline/step1.xyz")
     .then(r => r.text())
     .then(data => {
       viewer.addModel(data, "xyz");   // force XYZ format
@@ -62,7 +62,7 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 
 ## YAML Configuration
 
-➡️ [Examples/Tutorials/Redox/dimethylaniline/input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Tutorials/Redox/dimethylaniline/input.yaml)
+➡️ [examples/tutorials/redox/dimethylaniline/input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/main/examples/tutorials/redox/dimethylaniline/input.yaml)
 
 Example content:
 
@@ -157,13 +157,13 @@ Here `<N>` is the maximum number of simultaneous cores.
 
 ### Option 2: Run with SLURM
 
-On HPC systems with SLURM:
+On HPC systems with SLURM, the same command submits each calculation as its own job
+(`dispatch: auto` detects `sbatch`; no wrapper script is needed):
 
 ```bash
-sbatch ./Examples/Templates/chemrefine.slurm
+chemrefine run input.yaml
 ```
 
-➡️ [Example ChemRefine SLURM script](https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Templates/chemrefine.slurm)
 
 ---
 

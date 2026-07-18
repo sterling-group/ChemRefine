@@ -5,7 +5,7 @@ from here, never from `sys.argv` reads in the pipeline, never from
 mutable module-level state. The loader raises :class:`ConfigError` on
 any malformed file so the CLI can map it to a single non-zero exit code.
 
-Schema shape (see ``Examples/`` for full examples):
+Schema shape (see ``examples/`` for full examples):
 
 .. code-block:: yaml
 

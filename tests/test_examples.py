@@ -1,6 +1,6 @@
 """Static end-to-end validation of every shipped example.
 
-Each test sweeps ``Examples/**/input.yaml`` so a broken example — missing
+Each test sweeps ``examples/**/input.yaml`` so a broken example — missing
 seed, renamed template dir, stale scan indices, a template without the
 frequencies its NMS step needs — fails CI instead of a user's first run.
 The knob-matrix test at the bottom pins the deliberate split between the
@@ -34,8 +34,8 @@ from chemrefine.io import read_xyz_frames
 from chemrefine.nms import NmsOptions
 
 REPO = Path(__file__).resolve().parent.parent
-EXAMPLES = sorted(REPO.glob("Examples/**/input.yaml"))
-IDS = [str(p.parent.relative_to(REPO / "Examples")) or "canonical" for p in EXAMPLES]
+EXAMPLES = sorted(REPO.glob("examples/**/input.yaml"))
+IDS = [str(p.parent.relative_to(REPO / "examples")) or "canonical" for p in EXAMPLES]
 
 _ORCA_FAMILY = {"orca", "mlip-extopt", "pyscf-extopt"}
 

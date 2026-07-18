@@ -1,7 +1,7 @@
 # Transition State (TS) Finding Tutorial
 
 !!! note "Schema note"
-    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [Examples/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/input.yaml).
+    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [examples/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/input.yaml).
 
 
 This tutorial demonstrates how to use **ChemRefine** to locate and validate **transition states (TS)** using a stepwise pipeline that combines a **PES scan, optimizations, and normal-mode sampling**.
@@ -33,12 +33,12 @@ ChemRefine automates TS exploration with the following workflow:
 
 We start with an initial structure located in the templates folder:
 
-- 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/Transition-State/input.yaml)  
-- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/Transition-State/step1.xyz)  
+- 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/transition_state/input.yaml)  
+- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/transition_state/step1.xyz)  
 
  ## Orca Input Files
 
-You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/main/Examples/Tutorials/Transition-State/templates)
+You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/main/examples/tutorials/transition_state/templates)
 
 ### Interactive 3D Viewer
 
@@ -48,7 +48,7 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 <script>
   let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
 
-  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Tutorials/Transition-State/step1.xyz")
+  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/main/examples/tutorials/transition_state/step1.xyz")
     .then(r => r.text())
     .then(data => {
       viewer.addModel(data, "xyz");   // force XYZ format
@@ -63,7 +63,7 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 
 ## YAML Configuration
 
-➡️ [Examples/Tutorials/Transition-State/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/Transition-State/input.yaml)
+➡️ [examples/tutorials/transition_state/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/transition_state/input.yaml)
 
 The scan coordinates and any geometry constraints live in the step's ORCA `.inp`
 template (e.g. a `%geom Scan ... end` block), not in the YAML.
@@ -131,13 +131,13 @@ Here `<N>` is the maximum number of simultaneous jobs.
 
 ### Option 2: Run with SLURM
 
-On HPC systems with SLURM:
+On HPC systems with SLURM, the same command submits each calculation as its own job
+(`dispatch: auto` detects `sbatch`; no wrapper script is needed):
 
 ```bash
-sbatch ./Examples/Templates/chemrefine.slurm
+chemrefine run input.yaml
 ```
 
-➡️ [Example ChemRefine SLURM script](https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Templates/chemrefine.slurm)
 
 ---
 

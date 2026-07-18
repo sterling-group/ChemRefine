@@ -1,7 +1,7 @@
 # Conformer Sampling Tutorial
 
 !!! note "Schema note"
-    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [Examples/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/input.yaml).
+    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [examples/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/input.yaml).
 
 
 This tutorial demonstrates how to use **ChemRefine** for conformational sampling with an initial **global geometry optimization (GOAT)** and ensemble generation.
@@ -34,12 +34,12 @@ The workflow:
 
 For this tutorial, we will use **Pd(PPh₃)₄**.
 
-- 📄 [View Input YAML](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/Conformational-Sampling/input.yaml)  
-- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/Conformational-Sampling/step1.xyz)  
+- 📄 [View Input YAML](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/conformational_sampling/input.yaml)  
+- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/conformational_sampling/step1.xyz)  
 
 ## Orca Input Files
 
-You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/main/Examples/Tutorials/Conformational-Sampling/templates)
+You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/main/examples/tutorials/conformational_sampling/templates)
 
 ### Interactive 3D Viewer
 
@@ -49,7 +49,7 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 <script>
   let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
 
-  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Tutorials/Conformational-Sampling/step1.xyz")
+  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/main/examples/tutorials/conformational_sampling/step1.xyz")
     .then(r => r.text())
     .then(data => {
       viewer.addModel(data, "xyz");   // force XYZ format
@@ -69,7 +69,7 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 
 The YAML input for conformer sampling is also included in the tutorial folder:
 
-➡️ [Examples/Tutorials/Conformational-Sampling/input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Tutorials/Conformational-Sampling/input.yaml)
+➡️ [examples/tutorials/conformational_sampling/input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/main/examples/tutorials/conformational_sampling/input.yaml)
 
 
 
@@ -139,7 +139,6 @@ Here N is the max number of simultaneous cores you want to use.
 On HPC systems with SLURM, you can submit ChemRefine as a batch job.
 A ready-to-use SLURM script template is available at:
 
-[➡️Example ChemRefine SLURM script](https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Templates/chemrefine.slurm)
 
 ```bash
 #!/bin/bash

@@ -1,7 +1,7 @@
 # MLIP Training Tutorial
 
 !!! note "Schema note"
-    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [Examples/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/input.yaml).
+    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [examples/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/input.yaml).
 
 
 This tutorial demonstrates how to use **ChemRefine** to train a **Machine Learning Interatomic Potential (MLIP)** using DFT data generated during the workflow.
@@ -40,12 +40,12 @@ ChemRefine automates this multi-step process:
 
 We start with an initial structure located in the templates folder:
 
-- 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/MLIPTraining/input.yaml)  
-- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/main/Examples/Tutorials/MLIPTraining/step1.xyz)  
+- 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/mlip_training/input.yaml)  
+- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/mlip_training/step1.xyz)  
 
 ## Orca Input Files
 
-You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/main/Examples/Tutorials/MLIPTraining/templates)
+You can find the ORCA input files [here](https://github.com/sterling-group/ChemRefine/tree/main/examples/tutorials/mlip_training/templates)
 
 ---
 
@@ -57,7 +57,7 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 <script>
   let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
 
-  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Tutorials/MLIPTraining/step1.xyz")
+  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/main/examples/tutorials/mlip_training/step1.xyz")
     .then(r => r.text())
     .then(data => {
       viewer.addModel(data, "xyz");   // force XYZ format
@@ -75,9 +75,9 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 
 The full YAML input for this MLIP training workflow is included:
 
-➡️ [Examples/Tutorials/MLIPTraining/input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Tutorials/MLIPTraining/input.yaml)
+➡️ [examples/tutorials/mlip_training/input.yaml](https://raw.githubusercontent.com/sterling-group/ChemRefine/main/examples/tutorials/mlip_training/input.yaml)
 
-Download the template files [here](https://github.com/sterling-group/ChemRefine/tree/main/Examples/Tutorials/MLIPTraining/templates)
+Download the template files [here](https://github.com/sterling-group/ChemRefine/tree/main/examples/tutorials/mlip_training/templates)
 
 Example content:
 
@@ -152,7 +152,6 @@ Here N is the number of simultaneous cores you want to use.
 
 On HPC systems with SLURM, submit the training workflow as a batch script:
 
-➡️ [Example ChemRefine SLURM script](https://raw.githubusercontent.com/sterling-group/ChemRefine/main/Examples/Templates/chemrefine.slurm)
 
 ```bash
 #!/bin/bash
