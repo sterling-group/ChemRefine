@@ -26,7 +26,24 @@ pytestmark = pytest.mark.integration
 
 CASES_DIR = Path(__file__).resolve().parent / "data" / "e2e_cases"
 
-_ORCA = shutil.which("orca")
+
+def _real_orca() -> str | None:
+    """The quantum-chemistry ORCA, or None.
+
+    `which("orca")` alone is not enough: desktop Linux ships /usr/bin/orca —
+    the GNOME screen reader. Real ORCA installs keep their helper binaries
+    (orca_2json, otool_xtb, …) beside the main executable, so require one.
+    """
+    found = shutil.which("orca")
+    if found is None:
+        return None
+    install_dir = Path(found).resolve().parent
+    if not (install_dir / "orca_2json").exists():
+        return None
+    return found
+
+
+_ORCA = _real_orca()
 _MACE = importlib.util.find_spec("mace") is not None or backend_env_python("mlip-mace").is_file()
 
 _REQUIRES = {
