@@ -1,7 +1,7 @@
 # Spin State Tutorial
 
 !!! note "Schema note"
-    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [examples/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/input.yaml).
+    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [examples/quickstart/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/quickstart/input.yaml).
 
 
 This tutorial demonstrates how to use **ChemRefine** to investigate different **spin states** of a molecule and compare predictions between **DFT** and **machine-learned interatomic potentials (MLIPs)**.
@@ -33,7 +33,7 @@ ChemRefine automates spin exploration with the following workflow:
 We start with an initial structure located in the templates folder:
 
 - 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/spin/heme_catalyst/input.yaml)  
-- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/spin/heme_catalyst/templates/step1.xyz)  
+- 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/spin/heme_catalyst/step1.xyz)  
 
 
   ## Orca Input Files
@@ -76,7 +76,7 @@ executables: { orca: /orca }
 charge: 0
 multiplicity: 5
 
-input: ./templates/step1.xyz
+input: ./step1.xyz
 
 steps:
   - step: 1

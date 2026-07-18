@@ -162,7 +162,7 @@ chemrefine backends install mlip-mace mlip-fairchem   # once, on the login node
 chemrefine --version
 chemrefine --help
 chemrefine backends list                        # known backends + provisioned envs
-chemrefine run examples/input.yaml --dry-run    # validates the YAML, no jobs run
+chemrefine run examples/quickstart/input.yaml --dry-run    # validates the YAML, no jobs run
 ```
 
 ## FAIRChem model access

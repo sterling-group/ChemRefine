@@ -8,7 +8,7 @@ charge: 0
 multiplicity: 1
 
 # Initial structures come from a CSV of SMILES (one column named `smiles`).
-input: ./templates/oxidation_smiles.csv
+input: ./oxidation_smiles.csv
 
 steps:
   # Conformers per amine (the template runs XTB GOAT); keep up to 99 %

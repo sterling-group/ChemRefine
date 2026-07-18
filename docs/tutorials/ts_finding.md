@@ -1,7 +1,7 @@
 # Transition State (TS) Finding Tutorial
 
 !!! note "Schema note"
-    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [examples/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/input.yaml).
+    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [examples/quickstart/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/quickstart/input.yaml).
 
 
 This tutorial demonstrates how to use **ChemRefine** to locate and validate **transition states (TS)** using a stepwise pipeline that combines a **PES scan, optimizations, and normal-mode sampling**.
@@ -79,7 +79,7 @@ executables: { orca: /orca/orca_6_1_0_avx2/orca }
 charge: 0
 multiplicity: 1
 
-input: ./templates/step1.xyz
+input: ./step1.xyz
 
 steps:
   # Step 1 — PES scan; keep the highest-energy frames as TS guesses.

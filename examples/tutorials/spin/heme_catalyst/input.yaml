@@ -8,7 +8,7 @@ charge: 0
 multiplicity: 5
 
 # Optional: override the default initial structure (default: template_dir/step1.xyz).
-input: ./templates/step1.xyz
+input: ./step1.xyz
 
 steps:
   # Geometry optimisation in the global quintet state (multiplicity: 5 above).

@@ -11,8 +11,9 @@ output_dir:   ./outputs
 executables: { orca: orca }
 
 # Initial seed: a single .xyz (may hold several frames), a directory of .xyz
-# files, or a CSV of SMILES with a `smiles` column. Default: templates/step1.xyz.
-input: ./templates/step1.xyz
+# files, or a CSV of SMILES with a `smiles` column. Omitting `input:` falls
+# back to templates/step1.xyz.
+input: ./step1.xyz
 
 charge: 0
 multiplicity: 1
