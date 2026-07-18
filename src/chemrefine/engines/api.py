@@ -43,7 +43,9 @@ Custom / non-job              :class:`CalculationEngine`       ``prepare`` / ``s
   :func:`chemrefine.config._normalize_legacy`.
 * **Resources** — an external binary reads its path from ``ctx.executables.get("<name>")``; an
   importable backend ships as a ``pip install chemrefine[<name>]`` extra (imported lazily).
-* **Tests** go in ``tests/test_engines_<name>*.py``.
+* **Tests** go in ``tests/test_engines_<name>*.py``, and every engine ships a trimmed
+  real-output contract fixture under ``tests/data/engines/<name>/`` (enforced by
+  ``test_every_registered_engine_ships_a_contract_case``).
 """
 
 from __future__ import annotations

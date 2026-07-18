@@ -34,7 +34,7 @@ strings them into one engine you can read top to bottom:
    package itself is auto-discovered.
 5. **Wire resources** — a binary path or an optional `pip` extra ([Resources](#resources)).
 6. **Support NMS** only if the engine computes frequencies ([Supporting NMS](#supporting-nms)).
-7. **Add tests** at 100% coverage ([Tests](#tests)).
+7. **Add tests and a contract fixture** ([Tests](#tests)).
 
 The sections that follow are those steps in detail.
 
@@ -135,6 +135,30 @@ Everything else — displacement, round-2 submission, resolution, retry — is g
 
 Add `tests/test_engines_<name>*.py`, mirroring the existing engine tests. New code ships at 100%
 line+branch coverage with a docstring on every public symbol.
+
+The suite is tiered: unit tests (hermetic), **recorded** end-to-end tests that replay real
+outputs without any binary installed, and **live** integration tests (`pytest -m integration`,
+deselected by default) that run the real binaries and re-record the fixtures with `--record`.
+
+### The parsed-result contract
+
+Every engine's parse lands in one canonical, engine-independent record —
+`chemrefine.cache.structure_record` is the normative schema (energies in Hartree, forces in
+eV/Å, positions in Å, run-status flags, string-keyed imaginary modes). The pipeline writes it
+as `step{N}_{id}.result.json` beside every parsed output, whatever native format the backend
+produced.
+
+A new engine **must ship at least one contract case** under
+`tests/data/engines/<name>/<case>/`: a *shortened real* native output (trim it to the blocks
+your parser reads), the seed geometry (`step1_0_inp.xyz`), a `case.json` meta, and the golden
+`expected.json`. Generate the golden with
+
+```bash
+pytest tests/test_engines_contract.py --update-goldens
+```
+
+and review the diff. The suite fails until every registered engine ships a case
+(`test_every_registered_engine_ships_a_contract_case`).
 
 ## Worked example: a minimal engine
 

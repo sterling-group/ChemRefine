@@ -54,6 +54,16 @@ support recovery:
 Writes are atomic (temp file + rename), so an interrupted write never leaves a
 half-baked cache.
 
+## Result records
+
+Beside every parsed output the pipeline drops `step{N}_{id}.result.json` — the
+canonical, engine-independent parsed result. Its body is the exact schema the
+cache document's `structures` entries use (`structure_record`: one schema, two
+envelopes), wrapped in a `result_format` version. A derived artifact for users
+and tooling: the pipeline itself re-parses native outputs on rebuild, and ORCA
+runs additionally leave ORCA's own `basename.property.json` (requested via
+`%output JSONPropFile`) next to the `.out`.
+
 ## Cache format version
 
 `step.json` records a `cache_format` version. A document written by an older,
