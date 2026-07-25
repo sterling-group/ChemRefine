@@ -89,7 +89,25 @@ def test_boltzmann_weights_uses_default_temperature():
     np.testing.assert_allclose(w1, w2)
 
 
-def test_boltzmann_weights_returns_zeros_when_all_underflow():
-    """At absurdly high relative energies all exponentials underflow to 0."""
-    weights = boltzmann_weights([1e9, 1e9, 1e9])
-    np.testing.assert_array_equal(weights, [0.0, 0.0, 0.0])
+def test_boltzmann_weights_are_scale_invariant_at_absurd_energies():
+    """Degenerate states weight equally however large the absolute energies are.
+
+    The internal min-shift is what makes this hold: without it every exponential
+    underflowed to zero and three equal-energy states came back weighted 0.0
+    instead of 1/3 each.
+    """
+    np.testing.assert_allclose(boltzmann_weights([1e9, 1e9, 1e9]), [1 / 3, 1 / 3, 1 / 3])
+
+
+def test_boltzmann_weights_handle_raw_negative_absolute_energies():
+    """Un-shifted (large negative) absolute energies must not overflow to inf/nan."""
+    weights = boltzmann_weights([-1.5e6, -1.5e6 + 1.0])
+    assert np.all(np.isfinite(weights))
+    assert weights.sum() == pytest.approx(1.0)
+    # The lower-energy state is the more populated one.
+    assert weights[0] > weights[1]
+
+
+def test_boltzmann_weights_empty_input_returns_empty():
+    """No energies in, no weights out — the zero-total guard."""
+    np.testing.assert_array_equal(boltzmann_weights([]), [])

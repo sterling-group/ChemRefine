@@ -168,11 +168,17 @@ def boltzmann_weights(
 ) -> NDArray[np.float64]:
     """Return normalized Boltzmann weights for energies in kcal/mol.
 
-    The input is used as-is — callers that want *relative* energies
-    should subtract the minimum first. Output sums to ``1.0`` (or to
-    ``0.0`` if every weight underflows to zero).
+    Absolute or relative energies both work: the minimum is subtracted
+    internally before exponentiating. That shift cancels in the normalization,
+    so it never changes the result — it only keeps ``exp`` in range. Passing
+    raw (large negative) absolute energies would otherwise overflow to ``inf``
+    and normalize to ``nan``.
+
+    Output sums to ``1.0`` (or to ``0.0`` if every weight underflows to zero).
     """
     arr = np.asarray(energies_kcal, dtype=np.float64)
+    if arr.size:
+        arr = arr - arr.min()
     weights = np.exp(-arr / (R_KCALMOL_K * temperature_k))
     total = weights.sum()
     if total == 0.0:
