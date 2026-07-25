@@ -68,6 +68,16 @@ def run_batch(engine: JobExecutable, inputs: StepInputs, ctx: StepContext) -> Jo
     header_path = _header_path(engine, ctx)
     pal = min(engine.pal(ctx), ctx.max_cores)
     gpus = engine.gpus(ctx)
+    if local and gpus > 1:
+        # `Throttler.assign_device` hands out a single device index per job and
+        # `run_batch` exports it as one `CUDA_VISIBLE_DEVICES` value, so a job
+        # asking for several local GPUs would be charged for all of them but
+        # pinned to one. No bundled engine requests >1 today; fail loudly rather
+        # than silently under-provisioning if one starts to.
+        raise ConfigError(
+            f"step {ctx.step_cfg.step} requests {gpus} GPUs, but local dispatch pins one "
+            f"device per job; run this step under SLURM or set `options.device: cpu`"
+        )
     if gpus > throttler.max_gpus:
         # Surface a config mistake (e.g. `max_gpus: 0` with a CUDA step) as a
         # ConfigError with its documented exit code, not the throttler's traceback.

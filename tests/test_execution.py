@@ -119,10 +119,45 @@ def test_run_batch_dispatch_local_skips_array_and_submits_locally(
 @patch.object(slurm, "is_finished", return_value=True)
 @patch.object(slurm, "submit", return_value="9001")
 def test_run_batch_rejects_a_gpu_step_over_the_budget(_submit, _is_finished, tmp_path: Path):
-    """Demanding more GPUs than the budget is a ConfigError, not a throttler traceback."""
+    """Demanding more GPUs than the budget is a ConfigError, not a throttler traceback.
+
+    Uses a single-GPU step against ``max_gpus=0`` so this exercises the *budget*
+    check specifically — a >1-GPU step would trip the local-pinning guard first
+    (see :func:`test_run_batch_rejects_multi_gpu_step_locally`).
+    """
+    engine = _FakeJobEngine()
+    engine.gpu_count = 1
+    ctx = _ctx(tmp_path, max_gpus=0)
+    inputs = engine.prepare(ctx)
+    with pytest.raises(ConfigError, match="budget"):
+        _execution.run_batch(engine, inputs, ctx)
+
+
+@patch.object(slurm, "is_finished", return_value=True)
+@patch.object(slurm, "submit", return_value="9001")
+def test_run_batch_rejects_multi_gpu_step_locally(_submit, _is_finished, tmp_path: Path):
+    """Local dispatch pins exactly one device per job, so >1 GPU must fail loudly.
+
+    ``Throttler.assign_device`` hands out a single index and ``run_batch`` exports
+    it as one ``CUDA_VISIBLE_DEVICES`` value; without this guard the job would be
+    charged for N GPUs but pinned to one.
+    """
     engine = _FakeJobEngine()
     engine.gpu_count = 2
-    ctx = _ctx(tmp_path, max_gpus=1)
+    ctx = _ctx(tmp_path, max_gpus=4, dispatch="local")
     inputs = engine.prepare(ctx)
-    with pytest.raises(ConfigError, match="GPU"):
+    with pytest.raises(ConfigError, match="pins one device"):
         _execution.run_batch(engine, inputs, ctx)
+
+
+@patch.object(slurm, "is_finished", return_value=True)
+@patch.object(slurm, "submit", return_value="9001")
+def test_run_batch_allows_multi_gpu_step_under_slurm(_submit, _is_finished, tmp_path: Path):
+    """Under SLURM the scheduler places the GPUs, so >1 per job is fine."""
+    engine = _FakeJobEngine()
+    engine.gpu_count = 2
+    ctx = _ctx(tmp_path, max_gpus=4, dispatch="slurm")
+    inputs = engine.prepare(ctx)
+    with patch.object(slurm, "sbatch_available", return_value=True):
+        batch = _execution.run_batch(engine, inputs, ctx)
+    assert batch.jobs
