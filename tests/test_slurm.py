@@ -336,14 +336,48 @@ def test_submit_local_closes_handles_and_reraises_when_spawn_fails(tmp_path: Pat
 # ---------------------------------------------------------------------------
 
 
+def test_is_finished_passes_noheader_to_squeue():
+    """``--noheader`` must be requested, not assumed.
+
+    The output is consumed line-for-line with no header slice, so the flag is
+    what keeps ``JOBID`` out of the job-id list. See
+    :func:`test_is_finished_false_for_the_only_queued_job`.
+    """
+    fake = MagicMock(returncode=0, stdout="", stderr="")
+    with patch.object(subprocess, "run", return_value=fake) as run:
+        slurm.is_finished("12345")
+    assert "--noheader" in run.call_args.args[0]
+
+
+def test_is_finished_false_for_the_only_queued_job():
+    """Regression: the sole queued job must not be mistaken for a header row.
+
+    The previous implementation dropped ``lines[0]`` as a header. On a site whose
+    ``squeue`` already suppresses the header, that discarded the first *real*
+    job id — reporting a still-running job as finished, which then parsed as a
+    missing-output failure.
+    """
+    fake = MagicMock(returncode=0, stdout="12345\n", stderr="")
+    with patch.object(subprocess, "run", return_value=fake):
+        assert slurm.is_finished("12345") is False
+
+
+def test_is_finished_true_when_queue_is_empty():
+    """An empty queue (no header, no rows) means every job is finished."""
+    for stdout in ("", "\n"):
+        fake = MagicMock(returncode=0, stdout=stdout, stderr="")
+        with patch.object(subprocess, "run", return_value=fake):
+            assert slurm.is_finished("12345") is True
+
+
 def test_is_finished_true_when_job_absent():
-    fake = MagicMock(returncode=0, stdout="JOBID\n9999\n", stderr="")
+    fake = MagicMock(returncode=0, stdout="9999\n", stderr="")
     with patch.object(subprocess, "run", return_value=fake):
         assert slurm.is_finished("12345") is True
 
 
 def test_is_finished_false_when_job_still_running():
-    fake = MagicMock(returncode=0, stdout="JOBID\n12345\n", stderr="")
+    fake = MagicMock(returncode=0, stdout="9999\n12345\n", stderr="")
     with patch.object(subprocess, "run", return_value=fake):
         assert slurm.is_finished("12345") is False
 
@@ -351,17 +385,17 @@ def test_is_finished_false_when_job_still_running():
 def test_is_finished_false_while_array_tasks_run():
     """An array's parent id never appears bare in squeue — running tasks print
     as ``12345_0`` and pending ones as ``12345_[5-99%4]``; both must count."""
-    fake = MagicMock(returncode=0, stdout="JOBID\n12345_3\n", stderr="")
+    fake = MagicMock(returncode=0, stdout="12345_3\n", stderr="")
     with patch.object(subprocess, "run", return_value=fake):
         assert slurm.is_finished("12345") is False
-    fake = MagicMock(returncode=0, stdout="JOBID\n12345_[4-99%4]\n", stderr="")
+    fake = MagicMock(returncode=0, stdout="12345_[4-99%4]\n", stderr="")
     with patch.object(subprocess, "run", return_value=fake):
         assert slurm.is_finished("12345") is False
 
 
 def test_is_finished_array_prefix_does_not_match_other_jobs():
     """``123`` must not be held back by an unrelated ``1234`` or ``1234_0``."""
-    fake = MagicMock(returncode=0, stdout="JOBID\n1234\n1234_0\n", stderr="")
+    fake = MagicMock(returncode=0, stdout="1234\n1234_0\n", stderr="")
     with patch.object(subprocess, "run", return_value=fake):
         assert slurm.is_finished("123") is True
 

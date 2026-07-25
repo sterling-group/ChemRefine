@@ -635,12 +635,18 @@ def is_finished(job_id: str, *, squeue_cmd: str = "squeue") -> bool:
     current user's ``squeue``. An array's parent id matches its task rows by
     prefix — ``squeue`` prints running tasks as ``12345_0`` and pending ones
     as ``12345_[5-999]``, never the bare parent id.
+
+    ``--noheader`` is requested explicitly rather than slicing the first line
+    off the output: a site that injects ``--noheader`` (via a ``squeue``
+    wrapper or ``SQUEUE_FORMAT``) would otherwise have its first *real* job id
+    discarded as if it were the header, reporting a still-running job as
+    finished and misclassifying it as a failure.
     """
     if job_id.startswith(_LOCAL_JOB_PREFIX):
         return _local_is_finished(job_id)
     try:
         result = subprocess.run(
-            [squeue_cmd, "-u", _current_user(), "-o", "%i"],
+            [squeue_cmd, "--noheader", "-u", _current_user(), "-o", "%i"],
             capture_output=True,
             text=True,
             check=True,
@@ -648,9 +654,7 @@ def is_finished(job_id: str, *, squeue_cmd: str = "squeue") -> bool:
     except subprocess.CalledProcessError:
         # squeue is transient on busy clusters; treat as "not finished" and try again later.
         return False
-    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    # First line is the header ("JOBID"); drop it before checking membership.
-    running = lines[1:] if lines else []
+    running = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     return not any(line == job_id or line.startswith(f"{job_id}_") for line in running)
 
 
