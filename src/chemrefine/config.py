@@ -500,6 +500,28 @@ class Config(BaseModel):
     and need no entry here; conda/module activation belongs in the SLURM header."""
     steps: list[StepConfig]
 
+    @field_validator("template_dir", "output_dir", "scratch_dir")
+    @classmethod
+    def _reject_shell_metacharacters(cls, v: Path | None) -> Path | None:
+        """Reject directory paths carrying characters that break the generated bash.
+
+        These three paths are interpolated into the generated SLURM script (see
+        :func:`chemrefine.slurm._run_body_lines`), which exports them inside
+        double quotes. A path containing ``"``, ``$``, or a backtick would end
+        the quoted string or introduce a command substitution, so it is refused
+        at config-load time rather than producing a corrupt — or actively
+        dangerous — job script much later.
+        """
+        if v is None:
+            return v
+        bad = {c for c in ('"', "$", "`") if c in str(v)}
+        if bad:
+            raise ValueError(
+                f"path {str(v)!r} contains {sorted(bad)}, which cannot be safely embedded "
+                f"in the generated SLURM script; rename the directory"
+            )
+        return v
+
     @model_validator(mode="after")
     def _reject_scratch_equal_output(self) -> Config:
         """``scratch_dir == output_dir`` is ambiguous; require ``None`` instead."""

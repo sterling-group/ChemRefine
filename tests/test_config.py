@@ -370,6 +370,27 @@ def test_scratch_dir_equal_output_dir_rejected(tmp_path: Path):
         load_config(_write_yaml(tmp_path, data))
 
 
+@pytest.mark.parametrize("field", ["template_dir", "output_dir", "scratch_dir"])
+@pytest.mark.parametrize("bad", ['./out"dir', "./out$dir", "./out`dir"])
+def test_directory_paths_with_shell_metacharacters_rejected(tmp_path: Path, field: str, bad: str):
+    """These paths are interpolated into the generated SLURM script.
+
+    ``"`` / ``$`` / backtick would close the quoted string or open a command
+    substitution, so they are refused at load time rather than producing a
+    broken — or dangerous — job script at submit time.
+    """
+    data = _minimal_config(**{field: bad})
+    with pytest.raises(ConfigError):
+        load_config(_write_yaml(tmp_path, data))
+
+
+def test_explicit_null_scratch_dir_is_accepted(tmp_path: Path):
+    """An explicit ``scratch_dir: null`` still means "auto-derive under output_dir"."""
+    data = _minimal_config(scratch_dir=None)
+    cfg = load_config(_write_yaml(tmp_path, data))
+    assert cfg.scratch_dir is None
+
+
 # ---------------------------------------------------------------------------
 # Path resolution: relative paths resolve against the config file's directory
 # ---------------------------------------------------------------------------
