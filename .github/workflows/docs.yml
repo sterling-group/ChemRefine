@@ -5,22 +5,34 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Least privilege for the GitHub Actions Pages deployment: read the repo, write
+# the Pages artifact, and mint the OIDC token `deploy-pages` needs. This replaces
+# `mkdocs gh-deploy --force`, which needed `contents: write` — an over-broad grant
+# here, because the docs build runs mkdocstrings, which imports chemrefine and its
+# dependencies. That executed repo + dependency code under a token allowed to push
+# to any branch.
+#
+# Requires the repository's Pages source to be set to "GitHub Actions"
+# (Settings → Pages), not the legacy gh-pages branch.
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
-# Serialise deploys (two concurrent `gh-deploy --force` runs race on the
-# gh-pages branch); don't cancel one mid-push.
+# Allow one concurrent deployment; don't cancel an in-progress one mid-publish.
 concurrency:
-  group: docs-deploy
+  group: pages
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
           cache: pip
@@ -28,5 +40,21 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[docs]"
 
-      - name: Deploy to GitHub Pages
-        run: mkdocs gh-deploy --force
+      - name: Build site
+        run: mkdocs build --strict
+
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
