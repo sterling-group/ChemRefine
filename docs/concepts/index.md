@@ -9,6 +9,8 @@ predict its behaviour and extend it confidently.
   re-runs skip unchanged work.
 - [Filtering](filtering.md) — how survivors are selected at the end of each step.
 - [Normal-Mode Sampling](nms.md) — the two-round imaginary-mode removal / TS search.
+- [Security & Trust Boundaries](security.md) — which inputs run as code, and what
+  the ExtOpt server and cache formats do defend against.
 
 The guiding ideas:
 

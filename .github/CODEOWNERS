@@ -1,0 +1,6 @@
+# Default owner for everything — auto-requested as reviewer on every PR.
+#
+# A team rather than a name list, so membership is managed in one place and
+# shared with the org's other repos. The team must be visible (`closed`, not
+# secret) and hold write access here, or GitHub silently skips the request.
+* @sterling-group/maintainers

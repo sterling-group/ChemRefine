@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://sterling-group.github.io/ChemRefine/
+    about: User guide, tutorials, concepts, and API reference.

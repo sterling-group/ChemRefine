@@ -105,6 +105,7 @@ nav:
       - Caching & Resume: concepts/caching.md
       - Filtering: concepts/filtering.md
       - Normal-Mode Sampling: concepts/nms.md
+      - Security & Trust Boundaries: concepts/security.md
   - API Reference:
       - api/index.md
       - Core:
