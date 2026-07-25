@@ -10,8 +10,12 @@ readme = "README.md"
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
+# The group is the package author; individual authorship + ORCIDs live in
+# CITATION.cff, which is what the paper and GitHub's "Cite this repository"
+# button serve. No email here on purpose: PyPI metadata is immutable once
+# uploaded, and contact is routed via [project.urls] Issues and SECURITY.md.
 authors = [
-    {name = "Sterling Group", email = "ignaciomigliaro@outlook.com"},
+    {name = "Sterling Group"},
 ]
 keywords = [
     "computational chemistry",
@@ -183,6 +187,10 @@ ignore_missing_imports = true
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Engine step templates are rendered through `string.Template` before they are
+# executed, so they legitimately contain bare `$PLACEHOLDER` tokens (e.g.
+# `charge=$CHARGE`) and are not parseable Python on their own.
+extend-exclude = ["examples/*/templates/*.py", "examples/*/*/templates/*.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PTH", "RET", "C4", "TID"]
