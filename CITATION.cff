@@ -1,0 +1,53 @@
+cff-version: 1.2.0
+title: ChemRefine
+message: >-
+  If you use ChemRefine, please cite the JCTC paper. To pin the exact build,
+  additionally cite the Zenodo DOI of the version you used.
+type: software
+authors:
+  - given-names: Ignacio
+    family-names: Migliaro
+    orcid: "https://orcid.org/0000-0003-2678-7713"
+  - given-names: Markus G. S.
+    family-names: Weiss
+    orcid: "https://orcid.org/0009-0002-2682-262X"
+  - given-names: Alistair J.
+    family-names: Sterling
+    orcid: "https://orcid.org/0000-0002-3571-1094"
+repository-code: "https://github.com/sterling-group/ChemRefine"
+url: "https://sterling-group.github.io/ChemRefine/"
+license: AGPL-3.0-or-later
+# Concept (all-versions) DOI: always resolves to the latest release, so cutting a
+# tag never requires touching this file. `version:` and `date-released:` are
+# deliberately omitted for the same reason — the only edit this file should ever
+# need is a new paper (update preferred-citation and the author order to match).
+doi: 10.5281/zenodo.17187168
+keywords:
+  - computational chemistry
+  - machine-learned interatomic potentials
+  - quantum chemistry
+  - conformer sampling
+  - workflow automation
+preferred-citation:
+  type: article
+  title: >-
+    ChemRefine: An Open-Source Automated and Interoperable Platform for Machine
+    Learning and Quantum Chemistry Simulations
+  authors:
+    - given-names: Ignacio
+      family-names: Migliaro
+      orcid: "https://orcid.org/0000-0003-2678-7713"
+    - given-names: Markus G. S.
+      family-names: Weiss
+      orcid: "https://orcid.org/0009-0002-2682-262X"
+    - given-names: Alistair J.
+      family-names: Sterling
+      orcid: "https://orcid.org/0000-0002-3571-1094"
+  journal: Journal of Chemical Theory and Computation
+  year: 2026
+  volume: 22
+  issue: 4
+  start: 1736
+  end: 1747
+  doi: 10.1021/acs.jctc.5c01881
+  issn: "1549-9618"

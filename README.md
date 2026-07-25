@@ -1,8 +1,8 @@
 [![GitHub release](https://img.shields.io/github/v/release/sterling-group/ChemRefine.svg)](https://github.com/sterling-group/ChemRefine/releases/)
-[![Paper](https://img.shields.io/badge/Paper-ChemRefine-blue)](https://doi.org/10.26434/chemrxiv-2025-cvg1x)
+[![Paper](https://img.shields.io/badge/Paper-JCTC%202026-blue)](https://doi.org/10.1021/acs.jctc.5c01881)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg)](https://sterling-group.github.io/ChemRefine/)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17187169.svg)](https://doi.org/10.5281/zenodo.17187169)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17187168.svg)](https://doi.org/10.5281/zenodo.17187168)
 
 ![chemrefinelogo](https://github.com/user-attachments/assets/ae7b1ad5-0d90-445c-be83-ddcb76fa85c3)
 
@@ -77,10 +77,19 @@ and redox/spin workflows.
 
 ## Citation
 
-If you use ChemRefine in published work, please cite the
-[ChemRxiv preprint](https://doi.org/10.26434/chemrxiv-2025-cvg1x) and
-the [Zenodo DOI](https://doi.org/10.5281/zenodo.17187169) of the version
-you used.
+If you use ChemRefine in published work, please cite the paper:
+
+> Migliaro, I.; Weiss, M. G. S.; Sterling, A. J. ChemRefine: An Open-Source
+> Automated and Interoperable Platform for Machine Learning and Quantum
+> Chemistry Simulations. *J. Chem. Theory Comput.* **2026**, *22* (4), 1736–1747.
+> DOI: [10.1021/acs.jctc.5c01881](https://doi.org/10.1021/acs.jctc.5c01881)
+
+To pin the exact build you ran, additionally cite the Zenodo DOI of that
+release (the [concept DOI](https://doi.org/10.5281/zenodo.17187168) always
+resolves to the latest version; each release also has its own).
+
+GitHub's **Cite this repository** button serves both from
+[`CITATION.cff`](CITATION.cff).
 
 ## License
 
