@@ -1,5 +1,12 @@
 # Weekly dependency-freshness PRs. The pip ecosystem watches pyproject.toml
-# floors; github-actions watches the action tags in .github/workflows/.
+# floors; github-actions watches the SHA-pinned actions in .github/workflows/.
+#
+# Every `uses:` is pinned to a full commit SHA with the release tag in a trailing
+# comment (`@<sha> # v1.2.3`). Dependabot reads that comment to know the current
+# version and rewrites both the SHA and the comment on an update, so pinning
+# costs nothing in freshness — and it is the only form it can bump for actions
+# that publish a moving branch (pypa/gh-action-pypi-publish, re-actors/alls-green
+# ship `release/v1`, which has no version for Dependabot to compare against).
 version: 2
 updates:
   - package-ecosystem: pip

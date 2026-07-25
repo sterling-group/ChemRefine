@@ -17,12 +17,25 @@ jobs:
     name: Build & verify package
     runs-on: ubuntu-latest
 
+    # Signed build provenance for the artifacts we publish: `attestations: write`
+    # + `id-token: write` let build-and-inspect run actions/attest-build-provenance,
+    # so a consumer can verify with `gh attestation verify` that these files were
+    # built by this workflow from this commit. (PyPI's own PEP 740 attestations are
+    # separate and already automatic — gh-action-pypi-publish defaults them on.)
+    permissions:
+      contents: read
+      attestations: write
+      id-token: write
+
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: hynek/build-and-inspect-python-package@v2
+      - uses: hynek/build-and-inspect-python-package@d44ca7d91762de7a7d5436ddae667c6da6d1c3df # v2.18.0
+        with:
+          attest-build-provenance-github: true
 
   # Create a GitHub Release automatically when a non-dev tag is pushed
   create-release:
@@ -33,9 +46,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      # persist-credentials: false is safe here — action-gh-release authenticates
+      # to the API with GITHUB_TOKEN, it does not push over the git remote.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           generate_release_notes: true
 
@@ -50,7 +67,7 @@ jobs:
 
     steps:
       - name: Download packages built by build-and-inspect-python-package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: Packages
           path: dist
@@ -66,7 +83,7 @@ jobs:
           fi
 
       - name: Upload package to Test PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
         with:
           repository-url: https://test.pypi.org/legacy/
 
@@ -87,7 +104,7 @@ jobs:
 
     steps:
       - name: Download packages built by build-and-inspect-python-package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: Packages
           path: dist
@@ -106,4 +123,4 @@ jobs:
           fi
 
       - name: Upload package to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
