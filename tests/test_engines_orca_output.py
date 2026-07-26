@@ -71,7 +71,10 @@ def _minimal_out(*, terminated: bool, not_converged: bool) -> str:
         "----------------\n"
     )
     if not_converged:
-        body += "\nThe optimization HAS NOT CONVERGED\n"
+        # ORCA's real wording for an optimisation that has not finished. The previous
+        # fixture said "The optimization HAS NOT CONVERGED", which ORCA never prints —
+        # a fabricated fixture agreeing with a fabricated regex is why the gap survived.
+        body += "\nThe optimization has not yet converged - more geometry cycles are needed\n"
     if terminated:
         body += "\n                  ****ORCA TERMINATED NORMALLY****\n"
     return body
@@ -101,10 +104,16 @@ def test_parse_dft_marks_not_converged(tmp_path: Path):
 # Convergence is the LAST verdict, not "did the file ever say NOT CONVERGED" (B4)
 # ---------------------------------------------------------------------------
 
-_SCF_FAIL = "     SCF NOT CONVERGED AFTER  125 CYCLES"
-_SCF_OK = "     *           SCF CONVERGED AFTER   6 CYCLES          *"
-_GEOM_FAIL = "     ***        THE OPTIMIZATION HAS NOT CONVERGED     ***"
-_GEOM_OK = "     ***        THE OPTIMIZATION HAS CONVERGED     ***"
+# Verbatim ORCA 6.1.1 wording — taken from its binaries and the recorded outputs, not
+# invented. `_GEOM_PENDING` is what a geometry optimisation prints after every non-final
+# cycle; it is also all it leaves behind when it runs out of them.
+_SCF_FAIL = "               *        SCF NOT CONVERGED AFTER 125 CYCLES         *"
+_SCF_OK = "               *           SCF CONVERGED AFTER   6 CYCLES          *"
+_GEOM_PENDING = "The optimization has not yet converged - more geometry cycles are needed"
+_GEOM_OK = "                    ***        THE OPTIMIZATION HAS CONVERGED     ***"
+# Real ORCA strings that must NOT be read as run failures.
+_LOCALIZATION_FAIL = "LOCALIZATION HAS NOT CONVERGED."
+_OPT_RECOVERY = "Not converged! We will rebuild the internal coordinates and try again."
 
 
 def test_converged_true_when_an_early_scf_failure_recovers():
@@ -118,9 +127,39 @@ def test_converged_true_when_an_early_scf_failure_recovers():
     assert status.parse_converged("\n".join([_SCF_FAIL, _SCF_OK, _GEOM_OK])) is True
 
 
-def test_converged_false_when_geometry_gives_up_after_a_good_scf():
-    """MaxIter on the geometry is a failure even though every SCF converged."""
-    assert status.parse_converged("\n".join([_SCF_OK, _SCF_OK, _GEOM_FAIL])) is False
+def test_converged_false_when_the_optimisation_runs_out_of_cycles():
+    """A geometry optimisation that exhausts MaxIter is a failure.
+
+    ORCA has no "optimisation failed" banner: it prints "has not yet converged" after
+    every non-final cycle and, when the cycles run out, simply stops — so that line is
+    the last word. Nothing matched it before, which meant a cycle-exhausted optimisation
+    was reported converged and its unfinished geometry flowed downstream.
+    """
+    assert status.parse_converged("\n".join([_SCF_OK, _GEOM_PENDING])) is False
+
+
+def test_converged_true_when_the_optimisation_finishes_after_pending_cycles():
+    """The common case: 72 of the 108 recorded outputs contain the pending line, and in
+    every one of them the success banner follows it."""
+    assert (
+        status.parse_converged("\n".join([_GEOM_PENDING, _GEOM_PENDING, _GEOM_OK, _SCF_OK])) is True
+    )
+
+
+def test_converged_true_when_only_orbital_localisation_failed():
+    """Localisation is post-processing for printing — it says nothing about the result.
+
+    A bare "NOT CONVERGED" catch-all matched ORCA's real LOCALIZATION HAS NOT CONVERGED
+    and failed an otherwise perfect run. Localisation also runs near the end of a job, so
+    it would usually be the *last* verdict and win.
+    """
+    assert status.parse_converged("\n".join([_SCF_OK, _GEOM_OK, _LOCALIZATION_FAIL])) is True
+
+
+def test_converged_true_when_the_optimiser_recovers_its_coordinates():
+    """ "Not converged! We will rebuild the internal coordinates and try again." is the
+    optimiser recovering, not failing."""
+    assert status.parse_converged("\n".join([_OPT_RECOVERY, _SCF_OK, _GEOM_OK])) is True
 
 
 def test_converged_true_when_a_final_single_point_follows_a_converged_opt():
