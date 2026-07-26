@@ -60,14 +60,22 @@ _ENERGY_ATTR = {
 def apply(results: StepResults, sample: SampleConfig | None) -> PipelineState:
     """Return the survivors of ``results`` under ``sample``.
 
-    ``sample is None`` is the identity filter: every structure (with a
-    computed electronic energy) passes through. Otherwise structures are sorted
-    and filtered on ``sample.energy_type`` — a non-``electronic`` type requires a
-    frequency calc to have populated that energy, else :class:`ConfigError`.
+    ``sample is None`` is the **identity** filter: every structure passes through
+    untouched, including one with no computed energy. That matters for
+    ``on_failure: best``, which backfills a failed structure from its submitted
+    input — on step 1 those are bootstrap seeds, which carry no energy yet, so
+    dropping them here would silently turn ``best`` into ``skip``.
+
+    With a ``sample`` set, structures without a computed electronic energy are
+    dropped (they cannot be sorted or weighted), then sorted and filtered on
+    ``sample.energy_type`` — a non-``electronic`` type requires a frequency calc
+    to have populated that energy, else :class:`ConfigError`.
     """
+    if sample is None:
+        return PipelineState(structures=tuple(results.structures))
     structures = [s for s in results.structures if s.energy_hartree is not None]
-    if sample is None or not structures:
-        return PipelineState(structures=tuple(structures))
+    if not structures:
+        return PipelineState(structures=())
 
     energy_attr = _ENERGY_ATTR[sample.energy_type]
     if energy_attr != "energy_hartree":

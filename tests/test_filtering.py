@@ -40,6 +40,23 @@ def test_apply_with_none_sample_keeps_everything():
     assert [s.id for s in state.structures] == ["0", "1"]
 
 
+def test_apply_with_none_sample_keeps_energyless_structures():
+    """The identity filter is the identity — energy-less structures survive it.
+
+    ``on_failure: best`` backfills a failed structure from its submitted input. On
+    step 1 those are bootstrap seeds, which have no energy yet; dropping them here
+    would silently turn ``best`` into ``skip`` (B5).
+    """
+    r = StepResults(
+        structures=(
+            Structure(id="0", atoms=Atoms("H"), energy_hartree=-1.0),
+            Structure(id="1", atoms=Atoms("H"), energy_hartree=None),
+        )
+    )
+    state = apply(r, None)
+    assert [s.id for s in state.structures] == ["0", "1"]
+
+
 def test_apply_drops_structures_with_no_energy():
     r = StepResults(
         structures=(

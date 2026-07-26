@@ -302,12 +302,11 @@ def test_on_failure_best_backfills_all(tmp_path: Path):
     from chemrefine import cache
     from chemrefine.engines.api import ENGINES
 
-    # Seeds carry an energy (as a real prior step would), so a missing-output
-    # backfill (the submitted input) still survives energy filtering.
+    # Real step-1 seeds: bootstrapped from the input .xyz, so they carry NO energy
+    # yet. A missing-output backfill is the submitted input, and it must survive
+    # the (identity) filter — this is the case B5 silently turned into `skip`.
     seeds = PipelineState(
-        structures=tuple(
-            Structure(id=i, atoms=Atoms("H"), energy_hartree=-1.0) for i in ["0", "1", "2"]
-        )
+        structures=tuple(Structure(id=i, atoms=Atoms("H")) for i in ["0", "1", "2"])
     )
     eng = _register_fail_engine()
     try:
@@ -603,3 +602,4 @@ def test_run_step_writes_canonical_result_records(tmp_path: Path):
         assert record["result_format"] == cache.RESULT_FORMAT_VERSION
         assert record["id"] == sid
         assert record["energy_hartree"] is not None
+
