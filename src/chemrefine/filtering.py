@@ -25,8 +25,7 @@ from __future__ import annotations
 import logging
 import operator
 from collections import defaultdict
-from collections.abc import Callable
-from typing import Any, cast
+from typing import cast
 
 import numpy as np
 
@@ -127,26 +126,27 @@ def _filter_by_parent(
 # ---------------------------------------------------------------------------
 
 
-# The second lambda argument is the *matching* variant (keyed by type), a
-# per-key correlation a dict value type can't express — hence ``Any``; the
-# third is the ``Structure`` energy attribute the filter sorts/selects on.
-_DISPATCHERS: dict[type, Callable[[list[Structure], Any, str], list[Structure]]] = {
-    MinSample: lambda s, c, ea: _filter_min(s, c, ea),
-    MaxSample: lambda s, c, ea: _filter_max(s, c, ea),
-    BoltzmannSample: lambda s, c, ea: _filter_boltzmann(
-        s, c.percent_cumulative, c.temperature_k, ea
-    ),
-}
-
-
 def _dispatch(
     sorted_structures: list[Structure], sample: SampleConfig, energy_attr: str
 ) -> list[Structure]:
-    """Pick the per-method filter implementation for ``sample``."""
-    handler = _DISPATCHERS.get(type(sample))
-    if handler is None:
-        raise TypeError(f"unsupported sample config: {type(sample).__name__}")
-    return handler(sorted_structures, sample, energy_attr)
+    """Pick the per-method filter implementation for ``sample``.
+
+    Matched on the closed union rather than looked up in a ``dict[type, ...]``. The
+    dict could not express that each key selects a handler taking *that* variant, so
+    its value type was ``Any`` and the correlation went unchecked; it also needed a
+    "no handler registered" branch that the discriminated union made unreachable.
+    ``match`` gives mypy the exhaustiveness instead — add a fourth ``SampleConfig``
+    variant and it fails here rather than at runtime.
+    """
+    match sample:
+        case MinSample():
+            return _filter_min(sorted_structures, sample, energy_attr)
+        case MaxSample():
+            return _filter_max(sorted_structures, sample, energy_attr)
+        case BoltzmannSample():
+            return _filter_boltzmann(
+                sorted_structures, sample.percent_cumulative, sample.temperature_k, energy_attr
+            )
 
 
 def _filter_min(

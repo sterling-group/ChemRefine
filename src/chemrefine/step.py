@@ -18,7 +18,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import cast
 
 from chemrefine import __version__, cache, filtering, nms, step_failures
 from chemrefine.config import Config, StepConfig
@@ -153,22 +152,30 @@ def run_step(
     parent_ids = tuple(s.id for s in prev_state.structures)
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     engine = engine if engine is not None else get_engine(step_cfg.engine)
-    is_nms = step_cfg.nms and isinstance(engine, NmsCapableEngine)
+    # Narrow once, here, instead of asserting the capability again with a cast at
+    # each of the four places that need it. `nms_engine is not None` then carries
+    # both facts — the step asked for NMS, and this engine can do it — and mypy
+    # checks the calls rather than being told to trust them.
+    nms_engine: NmsCapableEngine | None = None
+    if step_cfg.nms and isinstance(engine, NmsCapableEngine):
+        nms_engine = engine
 
     if mode is not StepMode.EXECUTE:
-        cached = _cached_outcome(ctx, step_cfg, parent_ids, engine, is_nms=is_nms, mode=mode)
+        cached = _cached_outcome(
+            ctx, step_cfg, parent_ids, engine, nms_engine=nms_engine, mode=mode
+        )
         if cached is not None:
             return cached
         # Full fingerprint invalid. For an NMS step whose *search* params changed
         # but whose round-1 + criterion are unchanged (reuse fingerprint matches),
         # reuse the round-1 freq + already-resolved children and re-attempt only
         # the ledgered-unresolved parents — instead of re-running the whole step.
-        if is_nms:
-            reused = _nms_reuse_outcome(ctx, step_cfg, parent_ids, engine)
+        if nms_engine is not None:
+            reused = _nms_reuse_outcome(ctx, step_cfg, parent_ids, nms_engine)
             if reused is not None:
                 return reused
 
-    return _run_full_step(ctx, step_cfg, parent_ids, engine, is_nms=is_nms)
+    return _run_full_step(ctx, step_cfg, parent_ids, engine, nms_engine=nms_engine)
 
 
 def _cached_outcome(
@@ -177,7 +184,7 @@ def _cached_outcome(
     parent_ids: tuple[str, ...],
     engine: CalculationEngine,
     *,
-    is_nms: bool,
+    nms_engine: NmsCapableEngine | None,
     mode: StepMode,
 ) -> StepOutcome | None:
     """Outcome from a valid on-disk cache, or ``None`` if the cache is invalid.
@@ -197,8 +204,8 @@ def _cached_outcome(
     failed = step_failures.load_failure_records(ctx.step_dir)
     if failed and step_cfg.on_failure == "stop" and mode is StepMode.RESUME:
         results = (
-            nms.reattempt_nms(cast(NmsCapableEngine, engine), ctx, step_cfg, cached, parent_ids)
-            if is_nms
+            nms.reattempt_nms(nms_engine, ctx, step_cfg, cached, parent_ids)
+            if nms_engine is not None
             else _resubmit_failed(engine, ctx, step_cfg, failed, parent_ids)
         )
         return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
@@ -214,7 +221,7 @@ def _nms_reuse_outcome(
     ctx: StepContext,
     step_cfg: StepConfig,
     parent_ids: tuple[str, ...],
-    engine: CalculationEngine,
+    engine: NmsCapableEngine,
 ) -> StepOutcome | None:
     """Reuse a cached NMS round-1 when only the *search* params changed.
 
@@ -234,9 +241,7 @@ def _nms_reuse_outcome(
     if cached is None or getattr(cached, "reuse_fingerprint", "") != fingerprint:
         return None
     if cache.load_failed_jobs(ctx.step_dir):
-        results = nms.reattempt_nms(
-            cast(NmsCapableEngine, engine), ctx, step_cfg, cached, parent_ids
-        )
+        results = nms.reattempt_nms(engine, ctx, step_cfg, cached, parent_ids)
     else:
         logger.info(
             "step %d: NMS search params changed, all resolved — reusing cache", step_cfg.step
@@ -259,11 +264,11 @@ def _run_full_step(
     parent_ids: tuple[str, ...],
     engine: CalculationEngine,
     *,
-    is_nms: bool,
+    nms_engine: NmsCapableEngine | None,
 ) -> StepOutcome:
     """Run the engine's full lifecycle (prepare → submit → parse → retry → nms/policy → cache)."""
-    if is_nms:
-        _check_nms_freq_gate(cast(NmsCapableEngine, engine), ctx, step_cfg)
+    if nms_engine is not None:
+        _check_nms_freq_gate(nms_engine, ctx, step_cfg)
     logger.info("step %d (%s): preparing inputs", step_cfg.step, step_cfg.engine)
     # Anything already in these structure dirs is a previous run's work. Move it aside
     # before writing new inputs, so a job that dies without producing output is seen as
@@ -282,10 +287,10 @@ def _run_full_step(
     # Round-1 convergence failures are retried from best before NMS / the policy.
     successes, failures = step_failures.retry_unconverged(engine, ctx, successes, failures)
 
-    if is_nms:
+    if nms_engine is not None:
         logger.info("step %d: running normal-mode sampling", step_cfg.step)
         resolution = nms.run_nms(
-            cast(NmsCapableEngine, engine),
+            nms_engine,
             StepResults(structures=tuple(successes)),
             failures,
             ctx,

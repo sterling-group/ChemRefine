@@ -259,10 +259,20 @@ def test_unknown_sample_type_raises():
         apply(r, BogusSample())  # type: ignore[arg-type]
 
 
-def test_all_sample_variants_have_a_dispatcher():
-    """Catches the "added a new SampleConfig variant but forgot to register it" bug."""
-    from chemrefine.filtering import _DISPATCHERS
+def test_every_sample_variant_dispatches_to_its_own_filter():
+    """Each variant reaches the filter that implements it.
 
-    assert MinSample in _DISPATCHERS
-    assert MaxSample in _DISPATCHERS
-    assert BoltzmannSample in _DISPATCHERS
+    "Added a variant but forgot to wire it up" is now a mypy exhaustiveness error at
+    the ``match`` rather than a runtime one, so what is worth asserting here is that
+    the three existing variants each do their own distinct thing.
+    """
+    r = _results(("0", -3.0), ("1", -2.0), ("2", -1.0))
+
+    lowest = apply(r, MinSample(method="min", count=1))
+    highest = apply(r, MaxSample(method="max", count=1))
+    boltzmann = apply(r, BoltzmannSample(method="boltzmann", percent_cumulative=1.0))
+
+    assert [s.id for s in lowest.structures] == ["0"]
+    assert [s.id for s in highest.structures] == ["2"]
+    # At 1% cumulative only the lowest-energy structure carries enough weight.
+    assert [s.id for s in boltzmann.structures] == ["0"]
