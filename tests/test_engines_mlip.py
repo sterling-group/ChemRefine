@@ -43,6 +43,16 @@ def _spec(fn) -> BackendSpec:
 # ---------------------------------------------------------------------------
 
 
+def _recording_builder(seen, result):
+    """A backend builder that records the kwargs it was called with."""
+
+    def build(**kwargs):
+        seen.append(kwargs)
+        return result
+
+    return build
+
+
 def test_mlip_engines_are_registered():
     assert "mlip" in ENGINES
     assert "mlip-extopt" in ENGINES
@@ -131,7 +141,7 @@ def test_build_calculator_dispatches_by_task_name():
     seen: list[dict] = []
     with patch.dict(
         mlip_calculator._BACKENDS,
-        {"mace_off": _spec(lambda **kw: seen.append(kw) or "MACE_OFF_CALC")},
+        {"mace_off": _spec(_recording_builder(seen, "MACE_OFF_CALC"))},
         clear=False,
     ):
         result = build_calculator(task_name="mace_off", model_name="medium")
@@ -144,10 +154,10 @@ def test_build_calculator_routes_custom_mace_when_model_path_given(tmp_path: Pat
     """A ``model_path`` selects the custom_mace builder regardless of task_name."""
     model_file = tmp_path / "fake.model"
     model_file.touch()
-    seen = []
+    seen: list[dict] = []
     with patch.dict(
         mlip_calculator._BACKENDS,
-        {"custom_mace": _spec(lambda **kw: seen.append(kw) or "CUSTOM_MACE_CALC")},
+        {"custom_mace": _spec(_recording_builder(seen, "CUSTOM_MACE_CALC"))},
         clear=False,
     ):
         result = build_calculator(
@@ -299,7 +309,7 @@ def test_local_gpu_jobs_get_distinct_cuda_visible_devices(tmp_path: Path, monkey
     monkeypatch.setattr("chemrefine.slurm.finished_jobs", fake_finished)
 
     engine.submit(inputs, ctx)
-    devices = sorted(env["CUDA_VISIBLE_DEVICES"] for env in captured)
+    devices = sorted(env["CUDA_VISIBLE_DEVICES"] for env in captured if env)
     assert devices == ["0", "1"]
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 import types
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -40,7 +41,7 @@ def _data(*, multiplicity: int = 1, dograd: bool = True, **settings) -> Calculat
 
 def _install_fake_pyscf(monkeypatch, *, mol_spin: int = 0) -> dict[str, MagicMock]:
     """Insert a fake ``pyscf`` package into sys.modules; return the mocks."""
-    mocks: dict[str, MagicMock] = {}
+    mocks: dict[str, Any] = {}
 
     mol = MagicMock()
     mol.spin = mol_spin
@@ -152,7 +153,7 @@ def test_pyscf_options_rejects_whitespace_tensor_folder():
 
 def test_pyscf_options_rejects_unknown_field():
     with pytest.raises(ValueError):
-        PyscfOptions(unknown_field=True)  # type: ignore[arg-type]
+        PyscfOptions(unknown_field=True)  # type: ignore[call-arg]
 
 
 def test_pyscf_options_from_raw_requires_basis():

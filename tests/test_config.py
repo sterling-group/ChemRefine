@@ -436,7 +436,7 @@ def test_load_config_leaves_absolute_paths_unchanged(tmp_path: Path):
 def test_legacy_top_level_renames():
     cfg = Config(
         template_dir="./t",
-        orca_executable="/orca",
+        orca_executable="/orca",  # type: ignore[call-arg]
         initial_xyz="./seed.xyz",
         steps=[{"step": 1, "engine": "orca", "operation": "opt_sp"}],
     )
@@ -589,7 +589,7 @@ def test_legacy_initial_xyz_does_not_override_existing_input():
     cfg = Config(
         template_dir="./t",
         input="./new.xyz",
-        initial_xyz="./old.xyz",
+        initial_xyz="./old.xyz",  # type: ignore[call-arg]
         steps=[{"step": 1, "engine": "orca", "operation": "opt_sp"}],
     )
     assert cfg.input == Path("new.xyz")

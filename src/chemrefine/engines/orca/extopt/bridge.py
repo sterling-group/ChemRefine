@@ -22,7 +22,11 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from chemrefine.engines._backend_server import sidecar
-from chemrefine.engines._backend_server.base import SERVER_TOKEN_FILENAME, SERVER_URL_FILENAME
+from chemrefine.engines._backend_server.base import (
+    SERVER_TOKEN_FILENAME,
+    SERVER_URL_FILENAME,
+    CalculationData,
+)
 from chemrefine.engines._backend_server.registry import known_backends, load_calculator
 from chemrefine.engines.orca.extopt import protocol
 from chemrefine.errors import JobFailureError
@@ -80,7 +84,7 @@ def settings_from_args(args: argparse.Namespace) -> dict[str, Any]:
 def submit_calculation(
     *,
     server_url: str,
-    data: protocol.CalculationData,
+    data: CalculationData,
     tag: str | None = None,
     token: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,

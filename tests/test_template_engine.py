@@ -24,7 +24,7 @@ from chemrefine.errors import OutputParseError
 
 def test_base_template_vars_default_is_empty():
     """The base ``_template_vars`` injects nothing; subclasses (mlip/pyscf) override it."""
-    assert ScriptEngine()._template_vars(None) == {}  # type: ignore[arg-type]
+    assert ScriptEngine()._template_vars(None) == {}
 
 
 # ---------------------------------------------------------------------------

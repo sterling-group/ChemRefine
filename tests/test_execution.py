@@ -33,7 +33,8 @@ class _FakeJobEngine(JobEngine):
     template_suffix: ClassVar[str] = "inp"
     output_suffix: ClassVar[str] = "out"
     output_globs: ClassVar[tuple[str, ...]] = ("*.out",)
-    gpu_count: ClassVar[int] = 0
+    # Not a ClassVar: the tests set it per instance to vary GPU demand.
+    gpu_count: int = 0
 
     def build_input(self, *, xyz_path, template_path, input_path, output_path, ctx) -> None:
         input_path.write_text("fake input\n", encoding="utf-8")

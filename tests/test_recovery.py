@@ -127,7 +127,7 @@ def test_invalidate_step_removes_cache(tmp_path: Path):
 def test_execute_unknown_action_raises(tmp_path: Path):
     cfg = _two_step_config(tmp_path)
     with pytest.raises(ChemRefineError):
-        execute(cfg, "not-an-action")  # type: ignore[arg-type]
+        execute(cfg, "not-an-action")
 
 
 # ---------------------------------------------------------------------------

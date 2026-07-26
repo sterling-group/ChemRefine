@@ -182,10 +182,10 @@ def smiles_to_xyz(
             continue
         mol = Chem.AddHs(mol)
         # rdkit populates AllChem dynamically; mypy can't see these attributes.
-        if AllChem.EmbedMolecule(mol, maxAttempts=max_attempts, randomSeed=random_seed) != 0:  # type: ignore[attr-defined]
+        if AllChem.EmbedMolecule(mol, maxAttempts=max_attempts, randomSeed=random_seed) != 0:
             logger.warning("failed 3D embedding for SMILES: %s", raw)
             continue
-        AllChem.UFFOptimizeMolecule(mol)  # type: ignore[attr-defined]
+        AllChem.UFFOptimizeMolecule(mol)
 
         lines = _conformer_to_xyz_lines(mol, f"SMILES: {raw}")
         xyz_path = out / f"structure_{idx}.xyz"

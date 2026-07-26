@@ -30,7 +30,7 @@ from chemrefine.state import (
     StepResults,
     Structure,
 )
-from chemrefine.step_failures import Failure
+from chemrefine.step_failures import Failure, FailureKind
 
 # Frequency data the fake engine attaches to each parsed structure (imaginary modes + the
 # normal-mode tensor) — the real engine sets ``Structure.imaginary_freqs`` / ``normal_modes``
@@ -66,7 +66,7 @@ def test_nms_options_default_and_from_raw():
 
 def test_nms_options_rejects_bad_target():
     with pytest.raises(ValueError):
-        nms.NmsOptions(target="saddle")  # type: ignore[arg-type]
+        nms.NmsOptions(target="saddle")
 
 
 def test_target_imaginary_count():
@@ -415,7 +415,7 @@ def test_run_nms_carries_round1_failures(tmp_path: Path):
     engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=None)})
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)
-    prior = [Failure("9", "output missing", None)]
+    prior = [Failure("9", FailureKind.MISSING_OUTPUT, None)]
     res = nms.run_nms(engine, round1, prior, ctx, ctx.step_cfg)
     assert "9" in {f.sid for f in res.failures}
 

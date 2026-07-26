@@ -256,7 +256,7 @@ def test_unknown_sample_type_raises():
 
     r = _results(("a", -1.0))
     with pytest.raises(TypeError):
-        apply(r, BogusSample())  # type: ignore[arg-type]
+        apply(r, BogusSample())
 
 
 def test_every_sample_variant_dispatches_to_its_own_filter():

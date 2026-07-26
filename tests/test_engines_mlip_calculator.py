@@ -259,7 +259,7 @@ def test_single_point_returns_energy_and_negative_gradient(monkeypatch):
             return fake_forces
 
     atoms = _StubAtoms()
-    energy, gradient = calc.single_point(atoms)  # type: ignore[arg-type]
+    energy, gradient = calc.single_point(atoms)
     assert energy == -42.0
     assert gradient == [[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
     assert atoms.calc is calc.calculator

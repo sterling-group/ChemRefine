@@ -476,13 +476,14 @@ def test_check_nms_freq_gate_rejects_when_input_computes_no_frequencies(tmp_path
     cfg = _config(tmp_path, engine="orca", nms=True, operation=None)
     ctx = build_context(cfg, cfg.steps[0], _seed_state([]))
     with pytest.raises(ConfigError, match="frequency"):
-        _check_nms_freq_gate(_NoFreqEngine(), ctx, cfg.steps[0])  # type: ignore[arg-type]
+        _check_nms_freq_gate(_NoFreqEngine(), ctx, cfg.steps[0])
 
     class _FreqEngine:
         def nms_input_info(self, ctx):
             return NmsInputInfo(is_transition_state=False, computes_frequencies=True)
 
-    assert _check_nms_freq_gate(_FreqEngine(), ctx, cfg.steps[0]) is None  # type: ignore[arg-type]
+    # Returns None; calling it without raising is the assertion.
+    _check_nms_freq_gate(_FreqEngine(), ctx, cfg.steps[0])
 
 
 def test_check_nms_freq_gate_not_bypassed_by_explicit_operation(tmp_path: Path):
@@ -502,7 +503,7 @@ def test_check_nms_freq_gate_not_bypassed_by_explicit_operation(tmp_path: Path):
     cfg = _config(tmp_path, engine="orca", nms=True, operation="opt_sp")
     ctx = build_context(cfg, cfg.steps[0], _seed_state([]))
     with pytest.raises(ConfigError, match="drop `nms: true`"):
-        _check_nms_freq_gate(_NoFreqEngine(), ctx, cfg.steps[0])  # type: ignore[arg-type]
+        _check_nms_freq_gate(_NoFreqEngine(), ctx, cfg.steps[0])
 
 
 def test_archive_failed_attempt_numbers_sequentially(tmp_path: Path):

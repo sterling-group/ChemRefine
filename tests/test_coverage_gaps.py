@@ -26,6 +26,7 @@ from chemrefine.state import (
     Structure,
 )
 from chemrefine.step import StepMode
+from chemrefine.step_failures import FailureKind, FailureRecord
 
 
 def _ctx(tmp_path: Path, *, options=None, nms: bool = False, engine: str = "fake") -> StepContext:
@@ -105,11 +106,11 @@ def test_job_engine_primitive_hooks_are_abstract():
 
     eng = JobEngine()
     with pytest.raises(NotImplementedError):
-        eng.pal(None)  # type: ignore[arg-type]
+        eng.pal(None)
     with pytest.raises(NotImplementedError):
-        eng.run_block(None, Path("i"), Path("o"))  # type: ignore[arg-type]
+        eng.run_block(None, Path("i"), Path("o"))
     with pytest.raises(NotImplementedError):
-        eng.build_input(  # type: ignore[arg-type]
+        eng.build_input(
             xyz_path=Path("x"),
             template_path=Path("t"),
             input_path=Path("i"),
@@ -117,7 +118,7 @@ def test_job_engine_primitive_hooks_are_abstract():
             ctx=None,
         )
     with pytest.raises(NotImplementedError):
-        eng.parse_one(Path("o"), "0", None)  # type: ignore[arg-type]
+        eng.parse_one(Path("o"), "0", None)
 
 
 # --- cache: corrupt failed-jobs ledger --------------------------------------
@@ -390,7 +391,13 @@ def test_resubmit_failed_raises_without_manifest(tmp_path: Path):
     ctx = _ctx(tmp_path)
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     with pytest.raises(CacheError, match="no manifest to rehydrate"):
-        step._resubmit_failed(get_engine("fake"), ctx, ctx.step_cfg, [{"structure_id": "0"}], ())
+        step._resubmit_failed(
+            get_engine("fake"),
+            ctx,
+            ctx.step_cfg,
+            [FailureRecord("0", FailureKind.MISSING_OUTPUT, "output missing")],
+            (),
+        )
 
 
 def test_reattempt_nms_raises_without_manifest(tmp_path: Path):
@@ -400,7 +407,7 @@ def test_reattempt_nms_raises_without_manifest(tmp_path: Path):
     ctx = _ctx(tmp_path, nms=True, engine="orca")
     ctx.step_dir.mkdir(parents=True, exist_ok=True)  # no manifest written
     with pytest.raises(CacheError, match="no manifest"):
-        nms.reattempt_nms(get_engine("orca"), ctx, ctx.step_cfg, None, ())  # type: ignore[arg-type]
+        nms.reattempt_nms(get_engine("orca"), ctx, ctx.step_cfg, None, ())
 
 
 def test_rebuild_cache_step_nms_branch(tmp_path: Path):

@@ -165,16 +165,53 @@ include = [
 
 [tool.mypy]
 python_version = "3.11"
-files = ["src/chemrefine"]
+files = ["src/chemrefine", "tests"]
 plugins = ["pydantic.mypy"]
-check_untyped_defs = true
+strict = true
+# The scientific stack publishes no stubs, so every call into it reads as an "untyped
+# call". Excluding those packages keeps `disallow_untyped_calls` meaningful for our own
+# code — where it catches a genuinely unannotated helper — without turning every
+# `atoms.get_positions()` into an error.
+untyped_calls_exclude = ["ase", "rdkit", "pyscf", "gpu4pyscf", "pandas"]
+# Annotation requirements are relaxed here and re-imposed on `chemrefine.*` below, rather
+# than the other way round. Tests are worth type-checking for the calls they make *into*
+# the package — a wrong argument, a renamed keyword, a field that moved — and that needs
+# no annotations on the test functions themselves. Doing it in this direction means a new
+# test file is covered automatically; mypy's module wildcards match whole components, so
+# there is no `test_*` pattern that would catch them the other way round.
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_untyped_decorators = false
+# `attr-defined` is noise in tests rather than signal, for two reasons that are both
+# deliberate technique: `get_engine` returns the narrow `CalculationEngine` protocol, so a
+# test exercising a `JobEngine` primitive is legitimately reaching past it; and
+# monkeypatching an imported module (`patch.object(slurm, "subprocess", ...)`) trips
+# `no_implicit_reexport`. A genuinely misspelled attribute in a test fails the test.
+disable_error_code = [
+    # Two deliberate test techniques, not defects. `get_engine` returns the narrow
+    # `CalculationEngine` protocol, so a test exercising a `JobEngine` primitive reaches
+    # past it on purpose; and monkeypatching an imported module
+    # (`patch.object(slurm, "subprocess", ...)`) trips `no_implicit_reexport`.
+    "attr-defined",
+    # Fakes and stubs stand in for Protocols structurally. They satisfy the contract at
+    # runtime — that is what the tests prove — but their unannotated methods cannot be
+    # matched against the Protocol statically without annotating every fake.
+    "arg-type",
+    # ase's `read` is typed `Atoms | list[Atoms]`; tests that know which one they asked
+    # for would otherwise need a narrowing assert on every line.
+    "union-attr",
+    # Bare generics in test-local helper annotations.
+    "type-arg",
+]
+
+[[tool.mypy.overrides]]
+# Full strictness for the package itself.
+module = ["chemrefine.*"]
 disallow_untyped_defs = true
-disallow_any_generics = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_return_any = true
-warn_unused_ignores = true
-strict_equality = true
+disallow_incomplete_defs = true
+disallow_untyped_calls = true
+disallow_untyped_decorators = true
 
 [[tool.mypy.overrides]]
 # Untyped scientific stack — no stubs published; their objects cross our
@@ -224,11 +261,15 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PTH", "RET", "C4", "TID"
 [tool.pytest.ini_options]
 # Tier-3 live-integration tests need real binaries (ORCA, an MLIP stack) and
 # real runtime; opt in explicitly with `pytest -m integration`.
-addopts = "-m 'not integration'"
+addopts = "-m 'not integration' --strict-markers --strict-config"
 testpaths = ["tests"]
 # Add `tests/` to sys.path so test files can `from synthetic import …`
 # without making the tests directory a package.
 pythonpath = ["tests"]
+# A warning from a dependency is how a deprecation reaches us before it becomes a
+# breakage; failing on it means we hear about it on the release that introduces it
+# rather than the one that removes the API. The suite is clean under this today.
+filterwarnings = ["error"]
 markers = [
     "slow: tests that take longer than 1 second",
     "gpu: tests that require CUDA",
