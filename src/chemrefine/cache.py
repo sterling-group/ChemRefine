@@ -537,15 +537,23 @@ def failed_jobs_path(step_dir: Path) -> Path:
     return step_dir / "_cache" / "failed_jobs.json"
 
 
-def save_failed_jobs(step_dir: Path, failed: list[dict[str, Any]]) -> None:
-    """Persist the list of failed-job records (``{"structure_id", "reason"}``)."""
+def save_failed_jobs(step_dir: Path, failed: list[dict[str, str]]) -> None:
+    """Persist the failed-job ledger (serialized
+    :class:`chemrefine.step_failures.FailureRecord` entries)."""
     _write_json(failed_jobs_path(step_dir), failed)
 
 
-def load_failed_jobs(step_dir: Path) -> list[dict[str, Any]]:
-    """Return the failed-job records for ``step_dir`` (``[]`` if none)."""
+def load_failed_jobs(step_dir: Path) -> list[dict[str, str]]:
+    """Return the raw failed-job ledger entries for ``step_dir`` (``[]`` if none).
+
+    Deliberately untyped at this layer: this module owns bytes-to-JSON, and the
+    domain meaning of an entry belongs to
+    :func:`chemrefine.step_failures.load_failure_records`, which reads it back into
+    :class:`~chemrefine.step_failures.FailureRecord`. Typing it here would mean
+    importing the policy module that already imports this one.
+    """
     return cast(
-        list[dict[str, Any]],
+        list[dict[str, str]],
         _read_json(failed_jobs_path(step_dir), [], label="failed-jobs ledger"),
     )
 

@@ -19,6 +19,7 @@ import logging
 import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
+from enum import StrEnum
 from pathlib import Path
 
 from chemrefine import cache, ids
@@ -30,13 +31,96 @@ from chemrefine.state import PipelineState, StepContext, StepInputs, StepResults
 logger = logging.getLogger(__name__)
 
 
+class FailureKind(StrEnum):
+    """Why a structure failed — the classification recovery branches on.
+
+    A closed vocabulary rather than free text. ``retry_unconverged``,
+    ``_resubmit_failed`` and ``reattempt_nms`` all route on *which* kind of failure
+    this is, and they used to do that by comparing against the exact wording of a
+    human-readable message. Rewording one — the sort of thing that looks like a docs
+    change — silently disabled a recovery path.
+
+    The values are the wording, so the ledger on disk stays readable and messages
+    stay unchanged; what moved is that the comparison is now against a name.
+    """
+
+    MISSING_OUTPUT = "output missing"
+    """The job produced no output file at all — crashed, killed, never started."""
+
+    UNPARSEABLE = "unparseable"
+    """An output exists but the engine could not read it (truncated, corrupt)."""
+
+    NOT_TERMINATED = "did not terminate normally"
+    """The program ran but did not exit cleanly."""
+
+    NOT_CONVERGED = "did not converge"
+    """It finished, but the SCF or the geometry did not converge. The only kind
+    that is retried from its best geometry — resubmitting the identical input for
+    any of the others would just fail the same way."""
+
+    UNRESOLVED_NMS = "NMS: target stationary point not reached"
+    """Normal-mode sampling could not reach the requested stationary point."""
+
+    FAILED = "failed"
+    """The engine set a failure flag we don't have a more specific name for."""
+
+
 @dataclass(frozen=True)
 class Failure:
     """One failed structure: its id, why, and the best geometry obtained (if any)."""
 
     sid: str
-    reason: str
+    kind: FailureKind
     best: Structure | None
+    detail: str = ""
+    """Extra context for kinds that have some (the parser message for
+    ``UNPARSEABLE``); empty otherwise."""
+
+    @property
+    def reason(self) -> str:
+        """The human-readable reason, as written to the ledger and the logs."""
+        return f"{self.kind.value}: {self.detail}" if self.detail else self.kind.value
+
+
+@dataclass(frozen=True)
+class FailureRecord:
+    """A ledger entry — one failed structure, as persisted to ``failed_jobs.json``.
+
+    The recovery paths read this back to decide what to re-attempt, so it is a typed
+    record rather than a bare dict indexed with string literals at four call sites.
+    """
+
+    structure_id: str
+    kind: FailureKind
+    reason: str
+
+    @classmethod
+    def of(cls, failure: Failure) -> FailureRecord:
+        """The ledger entry for an in-flight :class:`Failure`."""
+        return cls(structure_id=failure.sid, kind=failure.kind, reason=failure.reason)
+
+    def to_json(self) -> dict[str, str]:
+        """Serialize for ``failed_jobs.json``."""
+        return {"structure_id": self.structure_id, "kind": self.kind.value, "reason": self.reason}
+
+    @classmethod
+    def from_json(cls, data: dict[str, str]) -> FailureRecord:
+        """Rebuild from a ``failed_jobs.json`` entry."""
+        return cls(
+            structure_id=data["structure_id"],
+            kind=FailureKind(data["kind"]),
+            reason=data.get("reason", ""),
+        )
+
+
+def load_failure_records(step_dir: Path) -> list[FailureRecord]:
+    """Read a step's failure ledger back into typed records.
+
+    The JSON↔domain half of the ledger; :func:`chemrefine.cache.load_failed_jobs` is
+    the bytes↔JSON half. Split that way because this module already depends on
+    ``cache``, so the typing has to live on this side of the boundary.
+    """
+    return [FailureRecord.from_json(rec) for rec in cache.load_failed_jobs(step_dir)]
 
 
 @dataclass(frozen=True)
@@ -61,18 +145,18 @@ def succeeded(s: Structure) -> bool:
     return s.terminated is not False and s.converged is not False
 
 
-def failure_reason(s: Structure) -> str:
-    """Human-readable reason a parsed structure counts as a failure.
+def failure_kind(s: Structure) -> FailureKind:
+    """Classify why a parsed structure counts as a failure.
 
     ``terminated is False`` → the engine crashed / didn't finish cleanly;
     ``converged is False`` → it finished but the SCF/geometry didn't converge;
-    otherwise a generic ``"failed"`` (a flag the engine set we don't name).
+    otherwise :attr:`FailureKind.FAILED` (a flag the engine set we don't name).
     """
     if s.terminated is False:
-        return "did not terminate normally"
+        return FailureKind.NOT_TERMINATED
     if s.converged is False:
-        return "did not converge"
-    return "failed"
+        return FailureKind.NOT_CONVERGED
+    return FailureKind.FAILED
 
 
 def parse_with_failures(
@@ -91,12 +175,12 @@ def parse_with_failures(
     for triple in inputs.files:
         _inp, out, sid = triple
         if not out.is_file():
-            failures.append(Failure(sid, "output missing", None))
+            failures.append(Failure(sid, FailureKind.MISSING_OUTPUT, None))
             continue
         try:
             parsed = list(engine.parse(StepInputs(files=(triple,)), ctx).structures)
         except OutputParseError as e:
-            failures.append(Failure(sid, f"unparseable: {e}", None))
+            failures.append(Failure(sid, FailureKind.UNPARSEABLE, None, detail=str(e)))
             continue
         # Drop the canonical parsed-result record next to the native output —
         # the engine-independent JSON every calculation leaves behind, for
@@ -115,7 +199,7 @@ def parse_with_failures(
             # ledger "did not terminate normally" against frame 3's geometry, and
             # `retry_unconverged` keys on that exact string, so the mismatch routes the
             # structure to the wrong recovery.
-            failures.append(Failure(sid, failure_reason(best), best))
+            failures.append(Failure(sid, failure_kind(best), best))
     return successes, failures
 
 
@@ -201,7 +285,7 @@ def retry_unconverged(
     kept = list(successes)
     remaining: list[Failure] = []
     for f in failures:
-        if f.reason != "did not converge" or f.best is None:
+        if f.kind is not FailureKind.NOT_CONVERGED or f.best is None:
             remaining.append(f)
             continue
         logger.info("structure %s did not converge — retrying from its best geometry", f.sid)
@@ -234,7 +318,7 @@ def apply_failure_policy(
 
     cache.save_failed_jobs(
         ctx.step_dir,
-        [{"structure_id": f.sid, "reason": f.reason} for f in failures],
+        [FailureRecord.of(f).to_json() for f in failures],
     )
     for f in failures:
         logger.debug("step %d: structure %s failed — %s", step_cfg.step, f.sid, f.reason)

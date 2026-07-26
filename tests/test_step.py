@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ase import Atoms
 
-from chemrefine import cache
+from chemrefine import cache, step_failures
 from chemrefine.config import Config, StepConfig
 from chemrefine.state import PipelineState, Structure
 from chemrefine.step import StepMode, StepOutcome, build_context, run_step
@@ -248,7 +248,6 @@ def _register_fail_engine():
 
 
 def test_on_failure_skip_drops_failed_keeps_successes(tmp_path: Path):
-    from chemrefine import cache
     from chemrefine.engines.api import ENGINES
 
     eng = _register_fail_engine()
@@ -258,8 +257,8 @@ def test_on_failure_skip_drops_failed_keeps_successes(tmp_path: Path):
         outcome = run_step(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]))
         assert {s.id for s in outcome.state.structures} == {"0", "2"}
         step_dir = cfg.output_dir.resolve() / "step1"
-        assert cache.load_failed_jobs(step_dir) == [
-            {"structure_id": "1", "reason": "did not terminate normally"}
+        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
+            ("1", step_failures.FailureKind.NOT_TERMINATED)
         ]
     finally:
         eng.fail = {}
@@ -287,8 +286,8 @@ def test_on_failure_stop_caches_successes_then_halts(tmp_path: Path):
         cached = cache.load(step_dir)
         assert cached is not None
         assert {s.id for s in cached.results.structures} == {"0", "2"}
-        assert cache.load_failed_jobs(step_dir) == [
-            {"structure_id": "1", "reason": "output missing"}
+        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
+            ("1", step_failures.FailureKind.MISSING_OUTPUT)
         ]
         # … and the run is halted by the single pipeline-level check.
         with pytest.raises(ChemRefineError):
@@ -424,8 +423,8 @@ def test_run_step_unconverged_retry_still_fails_is_ledgered(tmp_path: Path):
         step_dir = cfg.output_dir.resolve() / "step1"
         assert (step_dir / "0" / "attempt1").is_dir()  # one retry attempt, then stop
         assert not (step_dir / "0" / "attempt2").exists()  # only once per run
-        assert cache.load_failed_jobs(step_dir) == [
-            {"structure_id": "0", "reason": "did not converge"}
+        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
+            ("0", step_failures.FailureKind.NOT_CONVERGED)
         ]
     finally:
         eng.never = set()
@@ -453,8 +452,8 @@ def test_resume_retries_unconverged_again_into_next_attempt(tmp_path: Path):
         # _resubmit_failed retries it again — into attempt2 (never blocked by attempt1).
         run_step(cfg, cfg.steps[0], state)
         assert (step_dir / "0" / "attempt2").is_dir()
-        assert cache.load_failed_jobs(step_dir) == [
-            {"structure_id": "0", "reason": "did not converge"}
+        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
+            ("0", step_failures.FailureKind.NOT_CONVERGED)
         ]
     finally:
         eng.never = set()
@@ -582,11 +581,11 @@ def test_on_failure_best_drops_failure_with_no_fallback(tmp_path: Path):
     cfg = _config(tmp_path, on_failure="best")
     ctx = build_context(cfg, cfg.steps[0], _seed_state(["0"]))
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
-    failures = [Failure(sid="ghost", reason="output missing", best=None)]
+    failures = [Failure(sid="ghost", kind=step_failures.FailureKind.MISSING_OUTPUT, best=None)]
     results = apply_failure_policy([], failures, ctx, cfg.steps[0])
     assert results.structures == ()
-    assert cache.load_failed_jobs(ctx.step_dir) == [
-        {"structure_id": "ghost", "reason": "output missing"}
+    assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(ctx.step_dir)] == [
+        ("ghost", step_failures.FailureKind.MISSING_OUTPUT)
     ]
 
 
@@ -636,8 +635,8 @@ def test_rerun_does_not_read_a_previous_runs_output(tmp_path: Path):
         second = run_step(cfg, cfg.steps[0], state, mode=StepMode.EXECUTE)
 
         assert second.state.structures == ()  # not the stale success
-        assert cache.load_failed_jobs(step_dir) == [
-            {"structure_id": "0", "reason": "output missing"}
+        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
+            ("0", step_failures.FailureKind.MISSING_OUTPUT)
         ]
         # The previous run's work is archived, not destroyed — full provenance.
         assert (step_dir / "0" / "attempt1" / "step1_0.out").is_file()

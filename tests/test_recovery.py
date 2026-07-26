@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from ase import Atoms
 
-from chemrefine import io
+from chemrefine import io, step_failures
 from chemrefine.config import Config, StepConfig
 from chemrefine.errors import ChemRefineError
 from chemrefine.recovery import Action, execute, invalidate_step, resolve_target
@@ -213,8 +213,8 @@ def test_resume_is_incremental_resubmits_only_failed(tmp_path: Path):
         eng.fail_ids = {"1"}
         with pytest.raises(ChemRefineError):  # stop halts after caching "0"
             execute(cfg, Action.RESUME)
-        assert cache.load_failed_jobs(step_dir) == [
-            {"structure_id": "1", "reason": "output missing"}
+        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
+            ("1", step_failures.FailureKind.MISSING_OUTPUT)
         ]
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0"}
 
@@ -317,8 +317,8 @@ def test_resume_does_not_reattempt_skip_step(tmp_path: Path):
         step_dir = (cfg.output_dir / "step1_s").resolve()
         eng.fail_ids = {"1"}
         assert execute(cfg, Action.RESUME) == 0  # skip → continues, no halt
-        assert cache.load_failed_jobs(step_dir) == [
-            {"structure_id": "1", "reason": "output missing"}
+        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
+            ("1", step_failures.FailureKind.MISSING_OUTPUT)
         ]  # failure is visible
         eng.fail_ids, eng.submitted = set(), []
         assert execute(cfg, Action.RESUME) == 0
@@ -434,8 +434,8 @@ def test_resume_after_tuning_reattempts_only_unresolved(tmp_path: Path):
         cfg1 = _seeded_config(tmp_path, [_nms_step(1.0)])
         step_dir = (cfg1.output_dir / "step1_s").resolve()
         execute(cfg1, Action.RESUME)
-        assert cache.load_failed_jobs(step_dir) == [
-            {"structure_id": "1", "reason": "NMS: target stationary point not reached"}
+        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
+            ("1", step_failures.FailureKind.UNRESOLVED_NMS)
         ]
         # Unified model: the survivor keeps the parent's id (resolved geometry), not a child id.
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0"}
@@ -467,8 +467,8 @@ def test_reattempt_resubmits_missing_round1(tmp_path: Path):
         step_dir = (cfg.output_dir / "step1_s").resolve()
         with pytest.raises(ChemRefineError):  # stop halts on the missing round-1
             execute(cfg, Action.RESUME)
-        assert cache.load_failed_jobs(step_dir) == [
-            {"structure_id": "1", "reason": "output missing"}
+        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
+            ("1", step_failures.FailureKind.MISSING_OUTPUT)
         ]
 
         eng.fail_round1 = set()  # round-1 recovers

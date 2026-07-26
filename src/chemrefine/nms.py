@@ -46,8 +46,6 @@ logger = logging.getLogger(__name__)
 # modes at low index; ``random`` sampling skips them.
 _TRIVIAL_MODES = 6
 
-_UNRESOLVED = "NMS: target stationary point not reached"
-
 
 # ---------------------------------------------------------------------------
 # Options + pure displacement maths (engine-independent)
@@ -289,7 +287,11 @@ def _accept(
     if target is None:  # random: the children are the (fan-out) results
         if resolved:
             return resolved, []
-        return [], [step_failures.Failure(parent.id, _UNRESOLVED, _best(round2, parent))]
+        return [], [
+            step_failures.Failure(
+                parent.id, step_failures.FailureKind.UNRESOLVED_NMS, _best(round2, parent)
+            )
+        ]
     if resolved:
         winner = _best(resolved, parent)
         if write_winner:
@@ -299,7 +301,11 @@ def _accept(
                 comment=f"NMS-resolved {parent.id}",
             )
         return [replace(winner, id=parent.id, parent_id=parent.parent_id)], []
-    return [], [step_failures.Failure(parent.id, _UNRESOLVED, _best(round2, parent))]
+    return [], [
+        step_failures.Failure(
+            parent.id, step_failures.FailureKind.UNRESOLVED_NMS, _best(round2, parent)
+        )
+    ]
 
 
 def run_nms(
@@ -332,13 +338,17 @@ def run_nms(
             continue
         if s.normal_modes is None:
             logger.warning("NMS %s: no normal-mode tensor; cannot displace (unresolved)", s.id)
-            failures.append(step_failures.Failure(s.id, _UNRESOLVED, s))
+            failures.append(
+                step_failures.Failure(s.id, step_failures.FailureKind.UNRESOLVED_NMS, s)
+            )
             continue
         children = _children_of(
             s, select_displacements(s, s.imaginary_freqs or {}, s.normal_modes, opts, rng)
         )
         if not children:
-            failures.append(step_failures.Failure(s.id, _UNRESOLVED, s))
+            failures.append(
+                step_failures.Failure(s.id, step_failures.FailureKind.UNRESOLVED_NMS, s)
+            )
             continue
         attempt = next_attempt_dir(ctx.step_dir / s.id)
         round2 = _run_round_two(engine, children, ctx, attempt)
@@ -377,7 +387,9 @@ def rebuild_nms(
             continue
         attempt = latest_attempt_dir(ctx.step_dir / s.id)
         if s.normal_modes is None or attempt is None:
-            failures.append(step_failures.Failure(s.id, _UNRESOLVED, s))
+            failures.append(
+                step_failures.Failure(s.id, step_failures.FailureKind.UNRESOLVED_NMS, s)
+            )
             continue
         children = _children_of(
             s, select_displacements(s, s.imaginary_freqs or {}, s.normal_modes, opts, rng)
@@ -407,9 +419,11 @@ def reattempt_nms(
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
         raise CacheError(f"step {step_cfg.step}: cannot re-attempt NMS — no manifest on disk")
-    failed = cache.load_failed_jobs(ctx.step_dir)
-    failed_ids = {f["structure_id"] for f in failed}
-    missing_ids = {f["structure_id"] for f in failed if f.get("reason") == "output missing"}
+    failed = step_failures.load_failure_records(ctx.step_dir)
+    failed_ids = {f.structure_id for f in failed}
+    missing_ids = {
+        f.structure_id for f in failed if f.kind is step_failures.FailureKind.MISSING_OUTPUT
+    }
 
     failed_manifest = StepInputs(files=tuple(f for f in manifest.files if f[2] in failed_ids))
     missing_inputs = StepInputs(

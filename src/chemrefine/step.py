@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 from chemrefine import __version__, cache, filtering, nms, step_failures
 from chemrefine.config import Config, StepConfig
@@ -194,7 +194,7 @@ def _cached_outcome(
     )
     if cached is None:
         return None
-    failed = cache.load_failed_jobs(ctx.step_dir)
+    failed = step_failures.load_failure_records(ctx.step_dir)
     if failed and step_cfg.on_failure == "stop" and mode is StepMode.RESUME:
         results = (
             nms.reattempt_nms(cast(NmsCapableEngine, engine), ctx, step_cfg, cached, parent_ids)
@@ -389,7 +389,7 @@ def _resubmit_failed(
     engine: CalculationEngine,
     ctx: StepContext,
     step_cfg: StepConfig,
-    failed: list[dict[str, Any]],
+    failed: list[step_failures.FailureRecord],
     parent_ids: tuple[str, ...],
 ) -> StepResults:
     """Re-prepare and resubmit only the failed structures, then re-parse + re-cache the step.
@@ -412,7 +412,9 @@ def _resubmit_failed(
     # Convergence failures are re-attempted from their best geometry by the retry
     # pass below (resubmitting the identical input would just fail again); the
     # plain resubmit handles crashed / missing-output jobs.
-    failed_ids = {f["structure_id"] for f in failed if f.get("reason") != "did not converge"}
+    failed_ids = {
+        f.structure_id for f in failed if f.kind is not step_failures.FailureKind.NOT_CONVERGED
+    }
     failed_seeds = tuple(s for s in ctx.prev_state.structures if s.id in failed_ids)
     if failed_seeds:
         logger.info(
