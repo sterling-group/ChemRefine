@@ -29,6 +29,13 @@ from pathlib import Path
 # A ``%geom … Scan … end`` block (a relaxed surface scan) → the ``pes`` parser.
 _GEOM_SCAN_RE = re.compile(r"%geom\b.*?\bscan\b.*?\bend\b", re.IGNORECASE | re.DOTALL)
 
+# Whole-token spellings of the two run-type keywords we key on. ORCA prefixes
+# convergence tightness (``TightOpt``) and Cartesian/TS variants (``COpt``, ``OptTS``),
+# and frequencies come as ``Freq`` / ``NumFreq`` / ``AnFreq``. Matched against whole
+# tokens, so a keyword that merely contains one of these substrings cannot trip them.
+_OPT_TOKEN_RE = re.compile(r"(?:very|tight|normal|loose|c)?opt(?:ts)?", re.IGNORECASE)
+_FREQ_TOKEN_RE = re.compile(r"(?:num|an)?freq", re.IGNORECASE)
+
 # Every spelling of an ORCA PAL declaration, as ``(prefix)(count)`` pairs so :func:`_read_pal`
 # reads the count and :func:`chemrefine.engines.orca.input.clamp_pal` rewrites it in place.
 _PAL_PATTERNS = (
@@ -88,10 +95,17 @@ def inspect_template(template_path: str | Path) -> OrcaInputInfo:
     """
     text = Path(template_path).read_text(encoding="utf-8", errors="replace")
     decommented = _strip_orca_comments(text)
-    # The keyword surface is the set of ``!`` simple-input lines (comments removed).
-    keywords = " ".join(
-        ln for ln in decommented.lower().splitlines() if ln.lstrip().startswith("!")
-    )
+    # The keyword surface is the set of ``!`` simple-input lines (comments removed),
+    # split into whole tokens. Matching substrings against the joined line instead
+    # would let any future ORCA keyword that merely *contains* "opt" or "freq" — or a
+    # basis-set or functional name that does — silently pick the wrong parser, and via
+    # the NMS frequency gate, reject or admit a step for the wrong reason.
+    keywords = {
+        token
+        for line in decommented.lower().splitlines()
+        if line.lstrip().startswith("!")
+        for token in line.lstrip().lstrip("!").split()
+    }
     if "goat" in keywords:
         operation = "goat"
     elif "docker" in keywords:
@@ -100,13 +114,13 @@ def inspect_template(template_path: str | Path) -> OrcaInputInfo:
         operation = "solvator"
     elif _GEOM_SCAN_RE.search(decommented):
         operation = "pes"
-    elif "opt" in keywords:  # Opt or OptTS — an optimization
+    elif any(_OPT_TOKEN_RE.fullmatch(token) for token in keywords):
         operation = "opt_sp"
     else:
         operation = "sp"  # ORCA's own fallback: a single point
     return OrcaInputInfo(
         operation=operation,
         is_ts="optts" in keywords,
-        has_freq="freq" in keywords,  # matches freq / numfreq / anfreq
+        has_freq=any(_FREQ_TOKEN_RE.fullmatch(token) for token in keywords),
         pal=_read_pal(decommented),
     )

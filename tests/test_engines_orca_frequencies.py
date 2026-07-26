@@ -77,8 +77,9 @@ def test_parse_normal_modes_tensor_shape_and_values():
 
 
 def test_parse_normal_modes_tensor_raises_when_no_block():
+    """The banner is present but carries no column blocks under it."""
     with pytest.raises(ValueError, match="no normal-mode blocks"):
-        parse_normal_modes_tensor_from_text("no normal modes here\n", num_atoms=3)
+        parse_normal_modes_tensor_from_text("NORMAL MODES\nnothing tabular here\n", num_atoms=3)
 
 
 def test_parse_normal_modes_tensor_raises_on_wrong_atom_count():
@@ -127,4 +128,44 @@ def test_parse_normal_modes_tensor_tolerates_blank_line_inside_block():
 def test_parse_normal_modes_tensor_raises_when_header_has_no_rows():
     """A column header followed directly by a separator carries no mode data."""
     with pytest.raises(ValueError, match="no normal-mode blocks"):
-        parse_normal_modes_tensor_from_text("                  0          1\n-----\n", num_atoms=1)
+        parse_normal_modes_tensor_from_text(
+            "NORMAL MODES\n                  0          1\n-----\n", num_atoms=1
+        )
+
+
+def test_parse_normal_modes_tensor_ignores_numeric_tables_before_the_banner():
+    """The scan is anchored on ``NORMAL MODES``, not on the first table of integers.
+
+    Unanchored, the column-header pattern (two or more integers on a line) matched
+    plenty of earlier ORCA tables — symmetry, basis-set summaries, internal
+    coordinates. Latching onto one and stopping at its separator gave a
+    wrongly-shaped array, which the coordinator swallows into ``modes=None``; every
+    structure then failed NMS with "no normal-mode tensor", blaming the frequency job
+    instead of the parser.
+    """
+    decoy = (
+        "INTERNAL COORDINATES\n"
+        "                  1          2          3\n"
+        "      0       9.900000   9.900000   9.900000\n"
+        "      1       9.900000   9.900000   9.900000\n"
+        "-----\n"
+    )
+    real = (
+        "NORMAL MODES\n"
+        "                  0          1          2          3          4          5\n"
+        "      0       0.100000   0.000000   0.000000   0.000000   0.000000   0.000000\n"
+        "      1       0.000000   0.200000   0.000000   0.000000   0.000000   0.000000\n"
+        "      2       0.000000   0.000000   0.300000   0.000000   0.000000   0.000000\n"
+        "-----\n"
+    )
+    tensor = parse_normal_modes_tensor_from_text(decoy + real, num_atoms=1)
+    assert tensor.shape == (1, 3, 6)
+    assert tensor[0, 0, 0] == 0.1  # the real block, not the decoy's 9.9
+
+
+def test_parse_normal_modes_tensor_raises_without_the_banner():
+    """No ``NORMAL MODES`` section at all is a clear error, not a silent misparse."""
+    with pytest.raises(ValueError, match="NORMAL MODES"):
+        parse_normal_modes_tensor_from_text(
+            "VIBRATIONAL FREQUENCIES\n  0: 1.0 cm**-1\n", num_atoms=1
+        )

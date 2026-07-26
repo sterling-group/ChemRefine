@@ -27,6 +27,10 @@ import re
 import numpy as np
 from numpy.typing import NDArray
 
+_NORMAL_MODES_MARKER = "NORMAL MODES"
+"""Banner the displacement-tensor scan anchors on (see
+:func:`parse_normal_modes_tensor_from_text`)."""
+
 _FREQ_LINE_RE = re.compile(r"^\s*(?P<index>\d+):\s+(?P<value>-?\d+\.\d+)\s*cm\*\*-1(?P<rest>.*)$")
 _IMAG_TAG_RE = re.compile(r"imaginary mode", re.IGNORECASE)
 _MODE_COL_HEADER_RE = re.compile(r"^\s*(\d+\s+)+\d+\s*$")
@@ -42,8 +46,10 @@ def parse_frequencies_from_text(
     """Return ``{mode_index: frequency_cm_inverse}`` from already-read ORCA output text.
 
     ``only_imaginary`` keeps only the modes ORCA flagged ``***imaginary mode***`` (the
-    NMS-targeting subset); otherwise ``skip_first_real`` low-index translation/rotation modes
-    are dropped (ORCA prints six zero modes, five for linear molecules; default drops five).
+    NMS-targeting subset); otherwise every mode with an index **greater than**
+    ``skip_first_real`` is kept, so the default of ``5`` drops indices 0-5 — the six
+    translation/rotation modes ORCA prints for a non-linear molecule (a linear one has
+    five, and its sixth mode is discarded with them).
     """
     in_block = False
     after_scaling = False
@@ -93,11 +99,22 @@ def parse_normal_modes_tensor_from_text(text: str, *, num_atoms: int) -> NDArray
     then ``3 N`` rows); we collect each block and ``hstack`` them to recover the full
     ``(3N, n_modes)`` matrix before reshaping. Raises :class:`ValueError` if no mode blocks are
     present or the shape doesn't match ``3·num_atoms``.
+
+    The scan is anchored on the ``NORMAL MODES`` banner. Without that anchor it started at
+    the top of the file, and the column-header pattern — a line of two or more integers —
+    matches plenty of earlier ORCA tables (symmetry, basis-set summaries, internal
+    coordinates). Latching onto one of those and stopping at its separator produced a
+    wrongly-shaped array, which the coordinator swallows into ``modes=None``, at which point
+    every structure fails NMS with "no normal-mode tensor" — a message pointing at the
+    frequency job rather than at the parser.
     """
+    _, _, tail = text.partition(_NORMAL_MODES_MARKER)
+    if not tail:
+        raise ValueError(f"no {_NORMAL_MODES_MARKER!r} section; is this a frequency output?")
     collecting = False
     block_rows: list[list[float]] = []
     blocks: list[NDArray[np.float64]] = []
-    for line in text.splitlines():
+    for line in tail.splitlines():
         if _MODE_COL_HEADER_RE.match(line):
             collecting = True
             if block_rows:
