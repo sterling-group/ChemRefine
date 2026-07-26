@@ -112,7 +112,7 @@ def test_pyscf_run_block_starts_shared_extopt_server(tmp_path: Path):
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
     )
-    assert "python -m chemrefine.engines._backend_server.server" in run_block
+    assert "-m chemrefine.engines._backend_server.server" in run_block
     assert "--backend pyscf" in run_block
     assert "--method dft" in run_block
     assert "--xc pbe" in run_block

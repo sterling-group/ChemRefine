@@ -11,6 +11,8 @@ lifecycle end-to-end.
 from __future__ import annotations
 
 import json
+import shlex
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -207,7 +209,10 @@ def test_template_run_block_caps_threads_to_cores(tmp_path: Path):
     )
     assert "export OMP_NUM_THREADS=4" in run_block
     assert "export MKL_NUM_THREADS=4" in run_block
-    assert "python step1_structure_0.py" in run_block
+    # The launcher is the *resolved* interpreter, whose basename depends on how
+    # Python was invoked (``bin/python`` directly vs ``bin/python3.13`` via a
+    # console-script shebang) — assert the real path, not a "python" substring.
+    assert f"{shlex.quote(sys.executable)} step1_structure_0.py" in run_block
 
 
 def test_submit_missing_slurm_header_raises(tmp_path: Path):
