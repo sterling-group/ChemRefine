@@ -34,6 +34,8 @@ from chemrefine.state import PipelineState, Structure
 # which runs :mod:`chemrefine.engines`'s ``__init__`` and self-registers every
 # bundled engine. No explicit ``import chemrefine.engines`` needed.
 from chemrefine.step import (
+    RunPlan,
+    StepMode,
     StepOutcome,
     halt_if_pending,
     rebuild_cache_step,
@@ -156,22 +158,18 @@ def _write_step_csv(config: Config, step_cfg: StepConfig, state: PipelineState) 
     )
 
 
-def run(
-    config: Config,
-    *,
-    use_cache: bool = True,
-    rebuild_step: int | None = None,
-    resubmit_step: int | None = None,
-) -> list[StepOutcome]:
+def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
     """Run every step in order; return the per-step outcomes.
 
-    If a step produces no survivors the pipeline stops early — there is
-    nothing to feed the next step. ``resume`` (``use_cache=True``) re-attempts
-    the failed jobs of any pending ``on_failure: stop`` step; ``resubmit_step``
-    (set by ``rerun-errors``) scopes that re-attempt to one step. When
-    ``rebuild_step`` is set, that one step is rebuilt **from outputs already on
-    disk** (parse only, no submission) instead of executing.
+    ``plan`` says which :class:`~chemrefine.recovery.StepMode` each step runs in —
+    already resolved by :mod:`chemrefine.recovery` from the requested action, so
+    nothing here has to re-derive it. The default plan is a plain cache-honouring
+    pass, which is what a caller with no recovery intent wants.
+
+    If a step produces no survivors the pipeline stops early — there is nothing to
+    feed the next step.
     """
+    plan = plan if plan is not None else RunPlan()
     logger.info(
         "config: max_cores=%d, max_gpus=%s, output_dir=%s",
         config.max_cores,
@@ -193,24 +191,23 @@ def run(
             step_cfg.dir_name(),
             step_cfg.engine,
         )
-        if rebuild_step == step_cfg.step:
+        mode = plan.for_step(step_cfg.step)
+        if mode is StepMode.REBUILD:
             outcome = rebuild_cache_step(config, step_cfg, state)
         else:
-            outcome = run_step(
-                config, step_cfg, state, use_cache=use_cache, resubmit_step=resubmit_step
-            )
+            outcome = run_step(config, step_cfg, state, mode=mode)
         outcomes.append(outcome)
         # Summarise before halting, so a run that stops still reports the work it
         # actually completed — otherwise the halted step's cached successes are
-        # missing from steps.csv (B15).
+        # missing from steps.csv.
         _write_step_csv(config, step_cfg, outcome.state)
         state = outcome.state
-        # Single halt point, reached by both branches: an on_failure=stop step with
+        # Single halt point, reached by every mode: an on_failure=stop step with
         # pending failures stops the run here, after its successes are cached and
-        # summarised. `rebuild-cache` is included on purpose (B9) — re-parsing from
-        # disk does not make a failed structure succeed, and continuing would run
-        # the next step against a partial survivor set the user asked to stop on.
-        halt_if_pending(config, step_cfg, resubmit_step)
+        # summarised. `rebuild` is included on purpose — re-parsing from disk does
+        # not make a failed structure succeed, and continuing would run the next
+        # step against a partial survivor set the user asked to stop on.
+        halt_if_pending(config, step_cfg, mode)
         if not state:
             logger.warning(
                 "step %d produced no survivors; stopping pipeline early",

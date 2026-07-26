@@ -25,6 +25,7 @@ from chemrefine.state import (
     StepResults,
     Structure,
 )
+from chemrefine.step import StepMode
 
 
 def _ctx(tmp_path: Path, *, options=None, nms: bool = False, engine: str = "fake") -> StepContext:
@@ -270,12 +271,13 @@ def test_parse_with_failures_records_unparseable(tmp_path: Path):
     assert failures[0].reason.startswith("unparseable")
 
 
-def test_halt_if_pending_skips_non_target_step(tmp_path: Path):
+def test_halt_if_pending_skips_a_cache_only_step(tmp_path: Path):
     from chemrefine import step
 
     cfg = _cfg(tmp_path, on_failure="stop")
-    # resubmit_step targets a *different* step → never halts (it owns only step N).
-    step.halt_if_pending(cfg, cfg.steps[0], resubmit_step=99)
+    # CACHE_ONLY is the mode every step a scoped action isn't targeting runs in;
+    # halting there would stop `rerun-errors N` before it ever reached step N.
+    step.halt_if_pending(cfg, cfg.steps[0], StepMode.CACHE_ONLY)
 
 
 def test_halt_if_pending_raises_when_stop_step_has_pending(tmp_path: Path):
@@ -285,7 +287,7 @@ def test_halt_if_pending_raises_when_stop_step_has_pending(tmp_path: Path):
     step_dir = step.step_dir_for(cfg, cfg.steps[0])
     cache.save_failed_jobs(step_dir, [{"structure_id": "1", "reason": "x"}])
     with pytest.raises(ChemRefineError, match="halted"):
-        step.halt_if_pending(cfg, cfg.steps[0], None)
+        step.halt_if_pending(cfg, cfg.steps[0], StepMode.RESUME)
 
 
 def test_halt_if_pending_no_pending_returns(tmp_path: Path):
@@ -293,7 +295,7 @@ def test_halt_if_pending_no_pending_returns(tmp_path: Path):
 
     cfg = _cfg(tmp_path, on_failure="stop")
     step.step_dir_for(cfg, cfg.steps[0]).mkdir(parents=True, exist_ok=True)
-    step.halt_if_pending(cfg, cfg.steps[0], None)  # no ledger → no raise
+    step.halt_if_pending(cfg, cfg.steps[0], StepMode.RESUME)  # no ledger → no raise
 
 
 # --- recovery: rerun-errors with nothing pending ----------------------------

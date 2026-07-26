@@ -10,7 +10,7 @@ from ase import Atoms
 from chemrefine import cache
 from chemrefine.config import Config, StepConfig
 from chemrefine.state import PipelineState, Structure
-from chemrefine.step import StepOutcome, build_context, run_step
+from chemrefine.step import StepMode, StepOutcome, build_context, run_step
 
 
 def _config(tmp_path: Path, **step_overrides) -> Config:
@@ -136,7 +136,7 @@ def test_run_step_disable_cache_re_executes(tmp_path: Path):
     cfg = _config(tmp_path)
     seeds = _seed_state(["0"])
     run_step(cfg, cfg.steps[0], seeds)
-    outcome = run_step(cfg, cfg.steps[0], seeds, use_cache=False)
+    outcome = run_step(cfg, cfg.steps[0], seeds, mode=StepMode.EXECUTE)
     assert outcome.cache_hit is False
 
 
@@ -292,7 +292,7 @@ def test_on_failure_stop_caches_successes_then_halts(tmp_path: Path):
         ]
         # … and the run is halted by the single pipeline-level check.
         with pytest.raises(ChemRefineError):
-            step_mod.halt_if_pending(cfg, cfg.steps[0], None)
+            step_mod.halt_if_pending(cfg, cfg.steps[0], StepMode.RESUME)
     finally:
         eng.fail = {}
         ENGINES.pop("fake-fail", None)
@@ -627,13 +627,13 @@ def test_rerun_does_not_read_a_previous_runs_output(tmp_path: Path):
         state = _seed_state(["0"])
         step_dir = cfg.output_dir.resolve() / "step1"
 
-        first = run_step(cfg, cfg.steps[0], state, use_cache=False)
+        first = run_step(cfg, cfg.steps[0], state, mode=StepMode.EXECUTE)
         assert {s.id for s in first.state.structures} == {"0"}
         assert (step_dir / "0" / "step1_0.out").is_file()
 
         # Re-execute; this time the job dies without producing an output.
         eng.fail = {"0": "missing"}
-        second = run_step(cfg, cfg.steps[0], state, use_cache=False)
+        second = run_step(cfg, cfg.steps[0], state, mode=StepMode.EXECUTE)
 
         assert second.state.structures == ()  # not the stale success
         assert cache.load_failed_jobs(step_dir) == [
@@ -658,7 +658,7 @@ def test_rerun_archives_each_run_into_its_own_attempt_dir(tmp_path: Path):
         step_dir = cfg.output_dir.resolve() / "step1"
 
         for _ in range(3):
-            run_step(cfg, cfg.steps[0], state, use_cache=False)
+            run_step(cfg, cfg.steps[0], state, mode=StepMode.EXECUTE)
 
         # Run 1 left the dir bare; runs 2 and 3 each archived the run before them.
         assert (step_dir / "0" / "attempt1").is_dir()
@@ -673,5 +673,5 @@ def test_rerun_archives_each_run_into_its_own_attempt_dir(tmp_path: Path):
 def test_first_run_over_a_clean_tree_archives_nothing(tmp_path: Path):
     """Archiving is conditional on prior artifacts — a fresh run makes no attempt dir."""
     cfg = _config(tmp_path)
-    run_step(cfg, cfg.steps[0], _seed_state(["0"]), use_cache=False)
+    run_step(cfg, cfg.steps[0], _seed_state(["0"]), mode=StepMode.EXECUTE)
     assert not list((cfg.output_dir.resolve() / "step1" / "0").glob("attempt*"))

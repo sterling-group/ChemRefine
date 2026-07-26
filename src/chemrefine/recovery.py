@@ -29,6 +29,7 @@ from enum import StrEnum
 from chemrefine import cache, pipeline
 from chemrefine.config import Config, StepConfig
 from chemrefine.errors import ChemRefineError
+from chemrefine.step import RunPlan, StepMode
 
 logger = logging.getLogger(__name__)
 
@@ -70,12 +71,16 @@ def _action_run(config: Config, _target: str | int | None) -> None:
     """Invalidate every step's cache, then run from scratch."""
     for step_cfg in config.steps:
         invalidate_step(config, step_cfg)
-    pipeline.run(config, use_cache=False)
+    pipeline.run(config, RunPlan(default=StepMode.EXECUTE))
 
 
 def _action_resume(config: Config, _target: str | int | None) -> None:
-    """Run the pipeline honoring whatever caches are on disk."""
-    pipeline.run(config, use_cache=True)
+    """Run the pipeline honoring whatever caches are on disk.
+
+    Every step is in ``RESUME`` mode, so whichever ``on_failure: stop`` step is
+    pending gets its failures re-attempted.
+    """
+    pipeline.run(config, RunPlan(default=StepMode.RESUME))
 
 
 def _action_rerun(config: Config, target: str | int | None) -> None:
@@ -87,7 +92,7 @@ def _action_rerun(config: Config, target: str | int | None) -> None:
     """
     target_step = _resolve_target_or_last(config, target)
     invalidate_step(config, target_step)
-    pipeline.run(config, use_cache=True)
+    pipeline.run(config, RunPlan(default=StepMode.RESUME))
 
 
 def _action_rerun_errors(config: Config, target: str | int | None) -> None:
@@ -122,7 +127,10 @@ def _action_rerun_errors(config: Config, target: str | int | None) -> None:
             target_step.on_failure,
             target_step.step,
         )
-    pipeline.run(config, use_cache=True, resubmit_step=target_step.step)
+    pipeline.run(
+        config,
+        RunPlan(default=StepMode.CACHE_ONLY, overrides={target_step.step: StepMode.RESUME}),
+    )
 
 
 def _action_rebuild_cache(config: Config, target: str | int | None) -> None:
@@ -134,7 +142,10 @@ def _action_rebuild_cache(config: Config, target: str | int | None) -> None:
     finished jobs.
     """
     target_step = _resolve_target_or_last(config, target)
-    pipeline.run(config, use_cache=True, rebuild_step=target_step.step)
+    pipeline.run(
+        config,
+        RunPlan(default=StepMode.CACHE_ONLY, overrides={target_step.step: StepMode.REBUILD}),
+    )
 
 
 _HANDLERS: dict[Action, Callable[[Config, str | int | None], None]] = {

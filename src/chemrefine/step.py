@@ -14,7 +14,9 @@ lifecycle methods are called. :func:`run_step` is intentionally short
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, cast
 
@@ -62,6 +64,51 @@ def build_context(config: Config, step_cfg: StepConfig, prev_state: PipelineStat
     )
 
 
+class StepMode(StrEnum):
+    """How one step is to be handled on this run.
+
+    Resolved **once**, here, from the requested :class:`Action` — rather than
+    re-derived at each layer from nullable step numbers, which is how the same
+    question ended up being asked at three different depths.
+    """
+
+    EXECUTE = "execute"
+    """Ignore any cache and run the engine's full lifecycle."""
+
+    RESUME = "resume"
+    """Honour a valid cache, but re-attempt an ``on_failure: stop`` step's pending
+    failures rather than serving them from it."""
+
+    CACHE_ONLY = "cache-only"
+    """Honour a valid cache and leave pending failures alone — the mode every step
+    that isn't the target of a scoped action runs in."""
+
+    REBUILD = "rebuild"
+    """Re-parse the outputs already on disk and rewrite the cache. Never submits."""
+
+
+@dataclass(frozen=True)
+class RunPlan:
+    """Which :class:`StepMode` each step runs in.
+
+    ``default`` covers the whole pipeline; ``overrides`` scopes a different mode to
+    individual steps, which is what the step-targeted actions (``rerun-errors``,
+    ``rebuild-cache``) need and all that distinguishes them from a plain resume.
+    """
+
+    default: StepMode = StepMode.RESUME
+    """``RESUME`` so a bare ``pipeline.run(config)`` behaves the way "run the
+    pipeline" reads: honour the caches, repair whatever is pending, halt on a
+    ``stop`` step. ``CACHE_ONLY`` is opted into by the scoped actions for the steps
+    they are *not* targeting."""
+
+    overrides: Mapping[int, StepMode] = field(default_factory=dict)
+
+    def for_step(self, step: int) -> StepMode:
+        """The mode this step runs in."""
+        return self.overrides.get(step, self.default)
+
+
 # ---------------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------------
@@ -81,25 +128,26 @@ def run_step(
     prev_state: PipelineState,
     *,
     engine: CalculationEngine | None = None,
-    use_cache: bool = True,
-    resubmit_step: int | None = None,
+    mode: StepMode = StepMode.RESUME,
 ) -> StepOutcome:
     """Execute one step end-to-end and return its surviving state.
 
-    * If ``use_cache`` is true and the on-disk cache fingerprint matches the
-      current step config + parent structures (IDs and content), the cached
-      :class:`~chemrefine.state.StepResults` are reused and only filtering runs
-      again — **unless** the step is ``on_failure: stop`` and has a failed-jobs
-      ledger, in which case ``resume`` re-attempts only the still-failed
-      structures (see :func:`_resubmit_failed`). ``skip`` / ``best`` steps keep
-      their ledger for visibility but are never re-attempted. ``resubmit_step``
-      (set by ``rerun-errors``) scopes the re-attempt to one step; ``None``
-      re-attempts whichever ``stop`` step is pending. ``rerun`` (redo a whole
-      step) is the caller invalidating the cache first.
-    * Otherwise the engine's full lifecycle runs and the result is cached. An
-      ``on_failure: stop`` step that ends with failures caches its successes and
-      ledgers the failures; the pipeline then halts the run once via
-      :func:`halt_if_pending` (this function never raises).
+    ``mode`` decides how the cache is treated — see :class:`StepMode`:
+
+    * ``EXECUTE`` ignores any cache outright.
+    * ``CACHE_ONLY`` and ``RESUME`` both reuse a cache whose fingerprint matches the
+      current step config + parent structures (IDs and content), re-running only the
+      filter. They differ on a pending ledger: ``RESUME`` re-attempts an
+      ``on_failure: stop`` step's still-failed structures (see
+      :func:`_resubmit_failed`), ``CACHE_ONLY`` leaves them alone. ``skip`` / ``best``
+      steps keep their ledger for visibility but are never re-attempted under either.
+    * ``rerun`` needs no mode of its own: the caller invalidates the target's cache,
+      so it misses and executes.
+
+    On a miss the engine's full lifecycle runs and the result is cached. An
+    ``on_failure: stop`` step that ends with failures caches its successes and ledgers
+    the failures; the pipeline then halts the run once via :func:`halt_if_pending`
+    (this function never raises).
     """
     ctx = build_context(config, step_cfg, prev_state)
     parent_ids = tuple(s.id for s in prev_state.structures)
@@ -107,15 +155,8 @@ def run_step(
     engine = engine if engine is not None else get_engine(step_cfg.engine)
     is_nms = step_cfg.nms and isinstance(engine, NmsCapableEngine)
 
-    if use_cache:
-        cached = _cached_outcome(
-            ctx,
-            step_cfg,
-            parent_ids,
-            engine,
-            is_nms=is_nms,
-            resubmit_step=resubmit_step,
-        )
+    if mode is not StepMode.EXECUTE:
+        cached = _cached_outcome(ctx, step_cfg, parent_ids, engine, is_nms=is_nms, mode=mode)
         if cached is not None:
             return cached
         # Full fingerprint invalid. For an NMS step whose *search* params changed
@@ -137,12 +178,12 @@ def _cached_outcome(
     engine: CalculationEngine,
     *,
     is_nms: bool,
-    resubmit_step: int | None,
+    mode: StepMode,
 ) -> StepOutcome | None:
     """Outcome from a valid on-disk cache, or ``None`` if the cache is invalid.
 
-    A pending ``on_failure: stop`` ledger (scoped by ``resubmit_step``) re-attempts
-    only the still-failed structures; otherwise it's a plain cache hit (refilter).
+    Under ``RESUME`` a pending ``on_failure: stop`` ledger re-attempts only the
+    still-failed structures; otherwise it's a plain cache hit (refilter).
     """
     cached = cache.load_if_valid(
         step_cfg=step_cfg,
@@ -154,11 +195,7 @@ def _cached_outcome(
     if cached is None:
         return None
     failed = cache.load_failed_jobs(ctx.step_dir)
-    if (
-        failed
-        and step_cfg.on_failure == "stop"
-        and (resubmit_step is None or resubmit_step == step_cfg.step)
-    ):
+    if failed and step_cfg.on_failure == "stop" and mode is StepMode.RESUME:
         results = (
             nms.reattempt_nms(cast(NmsCapableEngine, engine), ctx, step_cfg, cached, parent_ids)
             if is_nms
@@ -284,7 +321,7 @@ def _check_nms_freq_gate(engine: NmsCapableEngine, ctx: StepContext, step_cfg: S
         )
 
 
-def halt_if_pending(config: Config, step_cfg: StepConfig, resubmit_step: int | None) -> None:
+def halt_if_pending(config: Config, step_cfg: StepConfig, mode: StepMode) -> None:
     """Halt the run when an ``on_failure: stop`` step still has failed jobs.
 
     Called **once** from the pipeline after a step executes — including after a
@@ -292,13 +329,14 @@ def halt_if_pending(config: Config, step_cfg: StepConfig, resubmit_step: int | N
     succeed and continuing would run the next step against the partial survivor set the
     user asked to stop on — so the step's successes are already cached. Only
     ``stop`` turns its ledgered failures into a hard stop; ``skip`` / ``best``
-    keep their ledger for visibility but never halt. The ``resubmit_step`` gate
-    lets ``rerun-errors N`` cache-hit past a *different* step's pending failures
-    (it re-attempts only step N), matching the per-step scoping of ``run_step``.
+    keep their ledger for visibility but never halt. A ``CACHE_ONLY`` step does not
+    halt either: that is the mode every *non-target* step runs in under a scoped
+    action, and ``rerun-errors N`` must be able to reach step N past an earlier
+    step's pending failures.
     """
     if step_cfg.on_failure != "stop":
         return
-    if resubmit_step is not None and resubmit_step != step_cfg.step:
+    if mode is StepMode.CACHE_ONLY:
         return
     if cache.load_failed_jobs(step_dir_for(config, step_cfg)):
         raise ChemRefineError(

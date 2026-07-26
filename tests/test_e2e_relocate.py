@@ -17,6 +17,7 @@ from replay import extract_case, forbid_run_batch, relocate, replay_run_batch
 from chemrefine import pipeline
 from chemrefine.config import Config, MinSample, load_config
 from chemrefine.errors import ChemRefineError
+from chemrefine.step import RunPlan, StepMode
 
 RUN_BATCH = "chemrefine.engines._execution.run_batch"
 
@@ -59,7 +60,10 @@ def test_rebuild_cache_reparses_outputs_without_submitting(
     for step_number in range(1, len(baseline) + 1):
         case = extract_case(name, tmp_path / f"rebuild{step_number}")
         relocate(case)
-        outcomes = pipeline.run(load_config(case.config_path), rebuild_step=step_number)
+        outcomes = pipeline.run(
+            load_config(case.config_path),
+            RunPlan(default=StepMode.CACHE_ONLY, overrides={step_number: StepMode.REBUILD}),
+        )
         assert [s.id for s in outcomes[-1].state.structures] == [
             s.id for s in baseline[-1].state.structures
         ], f"rebuilding step {step_number} changed the survivors"
