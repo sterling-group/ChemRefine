@@ -109,7 +109,13 @@ def parse_with_failures(
                 bad,
                 key=lambda s: (s.energy_hartree is None, s.energy_hartree or 0.0),
             )
-            failures.append(Failure(sid, failure_reason(bad[0]), best))
+            # The reason must describe the geometry we carry forward, not some other
+            # frame of the same job. For a fan-out — a GOAT ensemble, a PES scan —
+            # frame 0 crashing while frame 3 merely failed to converge would otherwise
+            # ledger "did not terminate normally" against frame 3's geometry, and
+            # `retry_unconverged` keys on that exact string, so the mismatch routes the
+            # structure to the wrong recovery.
+            failures.append(Failure(sid, failure_reason(best), best))
     return successes, failures
 
 
