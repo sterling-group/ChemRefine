@@ -153,6 +153,52 @@ def test_parse_dft_recovered_scf_is_a_success(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Ensemble frames take their run status from the .out beside the sidecar (B2)
+# ---------------------------------------------------------------------------
+
+
+def _goat_case(tmp_path: Path, *, terminated: bool) -> Path:
+    """A minimal GOAT job on disk: the ``.out`` plus its ensemble sidecar."""
+    out = tmp_path / "step1_0.out"
+    body = "GOAT                             ...       75.347 sec\n"
+    if terminated:
+        body += "                             ****ORCA TERMINATED NORMALLY****\n"
+    out.write_text(body, encoding="utf-8")
+    (tmp_path / "step1_0.finalensemble.xyz").write_text(
+        "1\n  -40.123456   converged=true\n  C   0.000000   0.000000   0.000000\n"
+        "1\n  -40.100000   converged=true\n  C   0.100000   0.000000   0.000000\n",
+        encoding="utf-8",
+    )
+    return out
+
+
+def test_goat_frames_inherit_normal_termination(tmp_path: Path):
+    frames = parse_output(_goat_case(tmp_path, terminated=True), "goat")
+    assert len(frames) == 2
+    assert all(f.terminated is True for f in frames)
+
+
+def test_goat_frames_are_flagged_when_the_job_never_terminated(tmp_path: Path):
+    """A crashed GOAT run must not read as success.
+
+    The sidecar carries no run status, so frames parsed straight out of it default
+    to ``terminated=None`` — which ``succeeded()`` reads as "not a failure signal".
+    A job killed after writing a partial ensemble was therefore an unconditional
+    success with an empty ledger (B2).
+    """
+    frames = parse_output(_goat_case(tmp_path, terminated=False), "goat")
+    assert len(frames) == 2
+    assert all(f.terminated is False for f in frames)
+
+
+def test_ensemble_frames_leave_converged_unreported(tmp_path: Path):
+    """An ensemble is a *set* of stationary points — one stubborn pose must not
+    condemn the rest, so the whole-run convergence verdict is not stamped."""
+    frames = parse_output(_goat_case(tmp_path, terminated=True), "goat")
+    assert all(f.converged is None for f in frames)
+
+
+# ---------------------------------------------------------------------------
 # parse_dft — verified against the real fixture
 # ---------------------------------------------------------------------------
 

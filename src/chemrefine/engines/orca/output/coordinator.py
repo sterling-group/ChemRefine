@@ -14,6 +14,7 @@ ExtOpt ``.extinp.tmp`` / ``.engrad`` round-trip helpers live in
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -120,29 +121,54 @@ def parse_text(text: str, operation: str, *, src: str = "<text>") -> list[Parsed
     raise OutputParseError(f"{operation!r} is not a text-based ORCA operation")
 
 
+def _stamp_run_status(frames: list[ParsedResult], out_path: Path) -> list[ParsedResult]:
+    """Copy the ``.out``'s termination verdict onto every sidecar frame (B2).
+
+    The ensemble sidecar carries geometries and energies but no run status, so frames
+    parsed straight out of it default to ``terminated=None`` — and
+    :func:`chemrefine.step_failures.succeeded` reads ``None`` as "not a failure signal".
+    A GOAT job killed mid-run after writing a partial ensemble was therefore an
+    unconditional success: no ledger entry, no ``on_failure``, no signal to the user.
+
+    Only ``terminated`` is stamped. A whole-run ``NOT CONVERGED`` says nothing reliable
+    about an individual pose — an ensemble is a *set* of stationary points, and one
+    stubborn conformer must not condemn the rest — so ``converged`` stays ``None``
+    (not reported per frame). :func:`ensembles.parse_pes_from_text` already does the
+    same for scan points.
+    """
+    terminated = status.parse_terminated(out_path.read_text(encoding="utf-8", errors="replace"))
+    return [replace(frame, terminated=terminated) for frame in frames]
+
+
 def parse_output(path: str | Path, operation: str) -> list[ParsedResult]:
     """Pick the right parser based on the YAML ``operation`` string.
 
     ``opt_sp`` / ``sp`` / ``freq`` / ``pes`` read the ``.out`` directly; the multi-frame
-    ensemble operations read their ``<base>.<suffix>`` sidecar (via :mod:`ensembles`).
+    ensemble operations read their ``<base>.<suffix>`` sidecar (via :mod:`ensembles`) and
+    then take their run status from the ``.out`` beside it (:func:`_stamp_run_status`).
     """
     op = operation.lower().replace("+", "_")
     if op in _DFT_OPERATIONS:
         return parse_dft(path)
     if op == "pes":
         return ensembles.parse_pes(path)
+    out_path = Path(path)
     if op == "goat":
-        return ensembles.parse_goat_ensemble(
-            ensembles.ensemble_sidecar(path, ensembles.GOAT_SUFFIX)
+        frames = ensembles.parse_goat_ensemble(
+            ensembles.ensemble_sidecar(out_path, ensembles.GOAT_SUFFIX)
         )
-    if op == "docker":
-        return ensembles.parse_docker(
-            ensembles.ensemble_sidecar(path, ensembles.DOCKER_SUFFIX, ensembles.DOCKER_SUFFIX_611)
-        )
-    if op == "solvator":
-        return ensembles.parse_solvator(
+    elif op == "docker":
+        frames = ensembles.parse_docker(
             ensembles.ensemble_sidecar(
-                path, ensembles.SOLVATOR_SUFFIX, ensembles.SOLVATOR_SUFFIX_611
+                out_path, ensembles.DOCKER_SUFFIX, ensembles.DOCKER_SUFFIX_611
             )
         )
-    raise OutputParseError(f"unknown ORCA operation: {operation!r}")
+    elif op == "solvator":
+        frames = ensembles.parse_solvator(
+            ensembles.ensemble_sidecar(
+                out_path, ensembles.SOLVATOR_SUFFIX, ensembles.SOLVATOR_SUFFIX_611
+            )
+        )
+    else:
+        raise OutputParseError(f"unknown ORCA operation: {operation!r}")
+    return _stamp_run_status(frames, out_path)
