@@ -116,8 +116,19 @@ def create_app(calculator: ComputeBackend, *, token: str | None = None) -> Flask
                 )
             energy, gradient = calculator.calc(data)
         except Exception as e:
-            logger.exception("calculate failed: %s", e)
-            return jsonify({"error": str(e)}), 500
+            # The full exception — message, paths, backend internals — goes to the
+            # server log, which only the job owner can read. The response carries a
+            # correlation id instead: the client is ORCA's wrapper script, which does
+            # nothing with the text beyond surfacing it, and the server is reachable
+            # by any same-host user who gets hold of the token.
+            request_id = secrets.token_hex(8)
+            logger.exception("[req=%s] calculate failed: %s", request_id, e)
+            return jsonify(
+                {
+                    "error": f"backend calculation failed (request {request_id}); "
+                    f"see the ExtOpt server log for details"
+                }
+            ), 500
         return jsonify({"energy": float(energy), "gradient": gradient})
 
     return app

@@ -65,11 +65,21 @@ def test_chemrefine_home_alongside_writable_prefix(monkeypatch, tmp_path: Path):
 
 
 def test_chemrefine_home_falls_back_to_user_home(monkeypatch, tmp_path: Path):
+    """The $HOME fallback is namespaced by interpreter tag.
+
+    $HOME is routinely shared across machines on HPC, so two clusters running
+    different Pythons would otherwise resolve the same managed-env interpreter
+    and one would silently run the other's env.
+    """
+    import sys
+
     monkeypatch.delenv("CHEMREFINE_HOME", raising=False)
     monkeypatch.setattr(provision.sys, "prefix", str(tmp_path))
     monkeypatch.setattr(provision.os, "access", lambda _p, _m: False)
     monkeypatch.setattr(provision.Path, "home", classmethod(lambda _cls: tmp_path / "home"))
-    assert provision.chemrefine_home() == tmp_path / "home" / ".chemrefine"
+    home = provision.chemrefine_home()
+    assert home == tmp_path / "home" / ".chemrefine" / sys.implementation.cache_tag
+    assert home.parent.name == ".chemrefine"
 
 
 def test_backend_env_path(monkeypatch, tmp_path: Path):

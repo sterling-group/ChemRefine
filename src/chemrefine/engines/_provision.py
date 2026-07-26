@@ -71,14 +71,20 @@ def chemrefine_home() -> Path:
 
     ``$CHEMREFINE_HOME`` if set; else alongside the install —
     ``<sys.prefix>/share/chemrefine`` — when that prefix is writable (removed with the env);
-    else ``~/.chemrefine`` (read-only / shared / system installs).
+    else ``~/.chemrefine/<interpreter tag>`` (read-only / shared / system installs).
+
+    The home-directory fallback is namespaced by interpreter tag (``cpython-312``) because
+    ``$HOME`` is routinely shared across machines on HPC. Two clusters with different
+    Python versions would otherwise resolve the same
+    ``~/.chemrefine/backends/<extra>/bin/python`` and one would silently run the other's
+    env. The ``sys.prefix`` branch needs no tag: it is already inside one interpreter.
     """
     env = os.environ.get("CHEMREFINE_HOME")
     if env:
         return Path(env)
     if os.access(Path(sys.prefix), os.W_OK):
         return Path(sys.prefix) / "share" / "chemrefine"
-    return Path.home() / ".chemrefine"
+    return Path.home() / ".chemrefine" / sys.implementation.cache_tag
 
 
 def backend_env_path(extra: str) -> Path:

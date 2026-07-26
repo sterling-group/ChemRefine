@@ -477,7 +477,41 @@ def test_create_app_calculate_route_returns_500_on_calculator_error():
         },
     )
     assert resp.status_code == 500
-    assert "backend exploded" in resp.get_json()["error"]
+    # The backend's own message stays in the server log (readable only by the job
+    # owner); the response carries a correlation id to find it by.
+    body = resp.get_json()["error"]
+    assert "backend exploded" not in body
+    assert "request " in body
+    assert "see the ExtOpt server log" in body
+
+
+def test_create_app_logs_the_real_error_with_its_correlation_id(caplog):
+    """The detail is not discarded — it is logged against the id the client was given."""
+    import logging
+    import re
+
+    class _Boom:
+        name = "boom"
+
+        def calc(self, data):
+            raise RuntimeError("backend exploded")
+
+    caplog.set_level(logging.ERROR, logger="chemrefine.engines._backend_server.server")
+    app = server.create_app(_Boom())
+    resp = app.test_client().post(
+        "/calculate",
+        json={
+            "atom_types": ["H"],
+            "coordinates": [[0, 0, 0]],
+            "charge": 0,
+            "mult": 1,
+            "nthreads": 1,
+        },
+    )
+    request_id = re.search(r"request ([0-9a-f]+)", resp.get_json()["error"]).group(1)
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert request_id in logged
+    assert "backend exploded" in logged
 
 
 def test_create_app_logs_with_correlation_tag(caplog):

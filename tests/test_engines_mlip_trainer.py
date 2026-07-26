@@ -331,3 +331,26 @@ def test_mlip_train_engine_trains_on_prev_and_passes_structures_through(tmp_path
     assert passed.structures == structs
     # parse passes the same structures forward.
     assert engine.parse(inputs, ctx).structures == structs
+
+
+# ---------------------------------------------------------------------------
+# job_name is interpolated into an #SBATCH directive
+# ---------------------------------------------------------------------------
+
+
+def test_write_training_slurm_rejects_a_job_name_with_a_newline(tmp_path: Path):
+    """A newline in job_name would start an arbitrary extra #SBATCH directive."""
+    import pytest
+
+    from chemrefine.errors import ConfigError
+
+    ctx = _ctx(tmp_path, device="cpu", job_name="ok\n#SBATCH --account=someone")
+    with pytest.raises(ConfigError, match="job_name"):
+        trainer.write_training_slurm(ctx=ctx, config_path=tmp_path / "input.yaml")
+
+
+def test_write_training_slurm_accepts_ordinary_job_names(tmp_path: Path):
+    ctx = _ctx(tmp_path, device="cpu", job_name="mace-run_1.0")
+    ctx.step_dir.mkdir(parents=True, exist_ok=True)
+    script = trainer.write_training_slurm(ctx=ctx, config_path=tmp_path / "input.yaml")
+    assert "#SBATCH --job-name=mace-run_1.0" in script.read_text()

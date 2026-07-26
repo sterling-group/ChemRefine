@@ -16,6 +16,7 @@ integration suite that runs against a real CUDA stack.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from math import ceil
 from pathlib import Path
@@ -26,10 +27,14 @@ from ase import Atoms
 from ase.io import write as ase_write
 
 from chemrefine import ids, slurm
+from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import StepContext, StepResults
 
 logger = logging.getLogger(__name__)
+
+_JOB_NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
+"""Characters allowed in a ``job_name`` that is interpolated into an ``#SBATCH`` line."""
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +153,15 @@ def write_training_slurm(*, ctx: StepContext, config_path: Path) -> Path:
     if not header_path.is_file():
         raise FileNotFoundError(f"SLURM header template not found: {header_path}")
 
-    job_name = options.get("job_name", "mlip_train")
+    # A raw job_name lands inside an #SBATCH directive, where a newline would start
+    # an arbitrary extra directive and whitespace would split the value. SLURM job
+    # names are a restricted vocabulary anyway, so reject rather than mangle.
+    job_name = str(options.get("job_name", "mlip_train"))
+    if not _JOB_NAME_RE.fullmatch(job_name):
+        raise ConfigError(
+            f"invalid mlip-train `job_name` {job_name!r}: use only letters, digits, "
+            f"underscores, dots and hyphens"
+        )
     script_path = ctx.step_dir / "train.slurm"
     header_text = header_path.read_text(encoding="utf-8").rstrip()
     body = (

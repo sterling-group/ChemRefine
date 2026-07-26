@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from chemrefine.config import (
     BoltzmannSample,
@@ -681,3 +682,22 @@ def test_dispatch_knob_defaults_auto_and_validates(tmp_path: Path):
     data["dispatch"] = "bogus"
     with pytest.raises(ConfigError):
         load_config(_write_yaml(tmp_path, data))
+
+
+def test_config_rejects_a_newline_in_a_directory_path():
+    """A newline ends the generated `export DIR="..."` and makes the rest a command."""
+    with pytest.raises(ValidationError):
+        Config(
+            output_dir=Path("outputs\nrm -rf /tmp/x"),
+            steps=[StepConfig(step=1, engine="fake", operation="opt_sp")],
+        )
+
+
+def test_config_rejects_a_backslash_in_a_directory_path():
+    """Inside double quotes a backslash escapes the very characters we screen for,
+    which is enough to smuggle one past the check."""
+    with pytest.raises(ValidationError):
+        Config(
+            scratch_dir=Path("scratch\\"),
+            steps=[StepConfig(step=1, engine="fake", operation="opt_sp")],
+        )

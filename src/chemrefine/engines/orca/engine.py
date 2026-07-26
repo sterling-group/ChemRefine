@@ -16,6 +16,7 @@ backend gradients).
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from typing import ClassVar
 
@@ -77,8 +78,16 @@ class OrcaEngine(JobEngine):
         return inspect.inspect_template(self._resolve_template(ctx)).pal
 
     def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
-        """Engine-specific bash that runs inside ``$WORK_DIR``."""
-        orca = ctx.executables.get("orca", "orca")
+        """Engine-specific bash that runs inside ``$WORK_DIR``.
+
+        The executable is quoted: it comes from the YAML, and an unquoted path with a
+        space in it silently becomes two words, while one with a shell metacharacter
+        becomes something else entirely. The script engines already quote their
+        interpreter, and the config validator already refuses metacharacters in the
+        directory paths — this closes the same hole on the one remaining
+        config-supplied value that reaches generated bash.
+        """
+        orca = shlex.quote(ctx.executables.get("orca", "orca"))
         return f"export OMP_NUM_THREADS=1\n{orca} {inp_path.name} > $OUTPUT_DIR/{out_path.name}"
 
     def extra_header_fields(self, ctx: StepContext) -> tuple[tuple[str, object], ...]:

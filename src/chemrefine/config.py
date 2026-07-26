@@ -511,13 +511,21 @@ class Config(BaseModel):
         the quoted string or introduce a command substitution, so it is refused
         at config-load time rather than producing a corrupt — or actively
         dangerous — job script much later.
+
+        A newline is refused for the same reason one line up: it ends the ``export``
+        statement and makes whatever follows a command of its own. A backslash is
+        refused because inside double quotes it escapes the very characters above,
+        which is enough to smuggle one past this check.
         """
         if v is None:
             return v
-        bad = {c for c in ('"', "$", "`") if c in str(v)}
+        text = str(v)
+        bad = {c for c in ('"', "$", "`", "\\") if c in text}
+        if "\n" in text or "\r" in text:
+            bad.add("newline")
         if bad:
             raise ValueError(
-                f"path {str(v)!r} contains {sorted(bad)}, which cannot be safely embedded "
+                f"path {text!r} contains {sorted(bad)}, which cannot be safely embedded "
                 f"in the generated SLURM script; rename the directory"
             )
         return v

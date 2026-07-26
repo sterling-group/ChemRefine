@@ -434,3 +434,43 @@ def test_crashed_goat_job_is_ledgered_not_silently_accepted(tmp_path: Path):
     successes, failures = step_failures.parse_with_failures(get_engine("orca"), inputs, ctx)
     assert successes == []
     assert [(f.sid, f.reason) for f in failures] == [("0", "did not terminate normally")]
+
+
+# ---------------------------------------------------------------------------
+# The configured executable reaches bash as one word
+# ---------------------------------------------------------------------------
+
+
+def test_run_block_quotes_an_executable_path_with_spaces(tmp_path: Path):
+    """An unquoted path with a space silently becomes two words to bash."""
+    from dataclasses import replace
+
+    engine = get_engine("orca")
+    ctx = replace(
+        _ctx(tmp_path, structures=(_seed_structure(),)),
+        executables={"orca": "/opt/ORCA 6.1.1/orca"},
+    )
+    run_block = engine.run_block(ctx, tmp_path / "step1_0.inp", tmp_path / "step1_0.out")
+    assert "'/opt/ORCA 6.1.1/orca' step1_0.inp" in run_block
+
+
+def test_run_block_neutralises_shell_metacharacters_in_the_executable(tmp_path: Path):
+    """The YAML is the user's own, but a stray metacharacter must not become a command."""
+    from dataclasses import replace
+
+    engine = get_engine("orca")
+    ctx = replace(
+        _ctx(tmp_path, structures=(_seed_structure(),)),
+        executables={"orca": "/opt/orca; rm -rf /tmp/x"},
+    )
+    run_block = engine.run_block(ctx, tmp_path / "step1_0.inp", tmp_path / "step1_0.out")
+    assert "; rm -rf" not in run_block.replace("'/opt/orca; rm -rf /tmp/x'", "")
+    assert "'/opt/orca; rm -rf /tmp/x'" in run_block
+
+
+def test_plain_executable_name_is_not_needlessly_quoted(tmp_path: Path):
+    engine = get_engine("orca")
+    ctx = _ctx(tmp_path, structures=(_seed_structure(),))
+    assert "orca step1_0.inp" in engine.run_block(
+        ctx, tmp_path / "step1_0.inp", tmp_path / "step1_0.out"
+    )
