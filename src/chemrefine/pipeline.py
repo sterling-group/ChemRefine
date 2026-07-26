@@ -195,12 +195,18 @@ def run(
             outcome = run_step(
                 config, step_cfg, state, use_cache=use_cache, resubmit_step=resubmit_step
             )
-            # Single halt point: an on_failure=stop step that still has pending
-            # failures stops the run here (after its successes were cached).
-            halt_if_pending(config, step_cfg, resubmit_step)
         outcomes.append(outcome)
+        # Summarise before halting, so a run that stops still reports the work it
+        # actually completed — otherwise the halted step's cached successes are
+        # missing from steps.csv (B15).
         _write_step_csv(config, step_cfg, outcome.state)
         state = outcome.state
+        # Single halt point, reached by both branches: an on_failure=stop step with
+        # pending failures stops the run here, after its successes are cached and
+        # summarised. `rebuild-cache` is included on purpose (B9) — re-parsing from
+        # disk does not make a failed structure succeed, and continuing would run
+        # the next step against a partial survivor set the user asked to stop on.
+        halt_if_pending(config, step_cfg, resubmit_step)
         if not state:
             logger.warning(
                 "step %d produced no survivors; stopping pipeline early",

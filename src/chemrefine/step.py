@@ -295,8 +295,10 @@ def _check_nms_freq_gate(engine: NmsCapableEngine, ctx: StepContext, step_cfg: S
 def halt_if_pending(config: Config, step_cfg: StepConfig, resubmit_step: int | None) -> None:
     """Halt the run when an ``on_failure: stop`` step still has failed jobs.
 
-    Called **once** from the pipeline after a step executes (never after a
-    ``rebuild_cache_step``), so the step's successes are already cached. Only
+    Called **once** from the pipeline after a step executes — including after a
+    ``rebuild_cache_step``, since re-parsing from disk cannot make a failed structure
+    succeed and continuing would run the next step against the partial survivor set the
+    user asked to stop on — so the step's successes are already cached. Only
     ``stop`` turns its ledgered failures into a hard stop; ``skip`` / ``best``
     keep their ledger for visibility but never halt. The ``resubmit_step`` gate
     lets ``rerun-errors N`` cache-hit past a *different* step's pending failures
