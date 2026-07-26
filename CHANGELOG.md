@@ -14,6 +14,14 @@ warns once per deprecated spelling — see
 [migrating from v1 to v2](https://sterling-group.github.io/ChemRefine/migrating-v1-to-v2/)
 for the full map.
 
+### Deprecated
+
+- The v1.3.1 compatibility layer — legacy YAML keys (`calculation_type` aside,
+  which already raises), the `mlff*`/`dft` engine spellings, the `sample_type`
+  block, and the flag-style CLI (`chemrefine CONFIG --rebuild_cache N`) — is
+  scheduled for removal in **3.0.0**. It warns once per rewritten feature today.
+  See [migrating from v1 to v2](https://sterling-group.github.io/ChemRefine/migrating-v1-to-v2/).
+
 ### Added
 
 - Engine plugin system: a `CalculationEngine` protocol plus a registry, with

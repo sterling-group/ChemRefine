@@ -72,7 +72,7 @@ steps:
 | `options` | map | `{}` | Engine-specific knobs (see below). |
 | `sample` | map | `None` | Survivor filter (see below). `None` keeps every structure. |
 | `nms` | bool | `False` | Opt-in normal-mode sampling (honoured only for an NMS-capable engine: ORCA / ExtOpt). Requires a frequency calc: an ORCA NMS step whose template has no `Freq` keyword is rejected at prepare time (set `operation` explicitly to override). The `target` (`minimum`/`ts`) is inferred from the template — `OptTS` → `ts`, else `minimum` — unless `options.target` is set. |
-| `on_failure` | `stop`/`skip`/`best` | `stop` | What to do when some structures fail (after the convergence auto-retry below): `stop` (default) caches the successes then halts so failures are never silently dropped; `skip` drops them and continues; `best` keeps all (backfilling the best geometry). A structure that *did not converge* is first retried once from its best geometry — the failed attempt is archived under `stepN/<id>/attemptK/` — before this policy applies. |
+| `on_failure` | `stop`/`skip`/`best` | `stop` | What to do when some structures fail (after the convergence auto-retry below): `stop` (default) caches the successes then halts so failures are never silently dropped; `skip` drops them and continues; `best` keeps all, backfilling a failed structure with the best geometry obtained for it or, failing that, the input it was submitted with — including on step 1, where that input is a seed with no energy computed yet. A structure that *did not converge* is first retried once from its best geometry — the failed attempt is archived under `stepN/<id>/attemptK/` — before this policy applies. |
 
 ## Sample (survivor filter)
 

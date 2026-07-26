@@ -91,6 +91,7 @@ nav:
       - Installation: user-guide/installation.md
       - Configuration: user-guide/configuration.md
       - CLI Reference: user-guide/cli.md
+      - Troubleshooting: user-guide/troubleshooting.md
   - Tutorials:
       - tutorials/index.md
       - Conformer Sampling: tutorials/conformer_sampling.md

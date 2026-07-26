@@ -19,6 +19,35 @@ Only `cli` touches `sys.argv` / process exit; only `slurm` shells out to
 `sbatch` / `squeue`; only `io` and `cache` own the on-disk formats. Engines
 receive a focused `StepContext`, never the whole `Config`.
 
+## The recovery matrix
+
+Every CLI action resolves, once, to a `RunPlan`: a default `StepMode` for the
+pipeline plus per-step overrides. `pipeline.run` then asks `plan.for_step(n)` and
+`step.run_step` acts on the answer — nothing re-derives it further down.
+
+| Action | Cache invalidated first | Plan | What each step does |
+| --- | --- | --- | --- |
+| `run` | every step | default `EXECUTE` | every step re-runs its engine |
+| `resume` | none | default `RESUME` | caches are honoured; the pending `on_failure: stop` step has its failures re-attempted |
+| `rerun [N]` | step N (default: last) | default `RESUME` | step N misses its cache and re-executes end to end; the rest hit theirs |
+| `rebuild-nms [N]` | step N | default `RESUME` | a named alias of `rerun`, for the NMS-tuning workflow |
+| `rerun-errors [N]` | none | default `CACHE_ONLY`, `{N: RESUME}` | only step N re-attempts its pending failures; every other step is served from cache and cannot halt the run before N is reached |
+| `rebuild-cache [N]` | none | default `CACHE_ONLY`, `{N: REBUILD}` | step N is re-parsed from the outputs already on disk and its cache rewritten — no submission |
+
+The four modes:
+
+| `StepMode` | Cache | Pending `stop` failures | Submits? |
+| --- | --- | --- | --- |
+| `EXECUTE` | ignored | n/a | yes |
+| `RESUME` | honoured | re-attempted | only for the failures |
+| `CACHE_ONLY` | honoured | left alone | no |
+| `REBUILD` | rewritten | re-derived from disk | no |
+
+`rerun` needs no mode of its own: invalidating the target's cache is enough to make
+it miss and execute. The mapping is asserted end to end by
+`test_recovery_matrix` — that test is the specification, and a new `Action` has to
+be given a row in it.
+
 ## Run flow
 
 What happens when you run `chemrefine run input.yaml`:
