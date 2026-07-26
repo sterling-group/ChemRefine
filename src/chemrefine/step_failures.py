@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -131,6 +132,30 @@ def archive_failed_attempt(structure_dir: Path) -> Path:
             continue  # leave attempt*/ (and any nested) sub-directories in place
         shutil.move(str(item), str(dest / item.name))
     return dest
+
+
+def archive_previous_attempts(step_dir: Path, structure_ids: Iterable[str]) -> list[Path]:
+    """Archive any prior artifacts of ``structure_ids`` before they are re-executed (B1).
+
+    The invariant this protects: **a parsed output must have been produced by this run's
+    submission of that job.** :func:`parse_with_failures` decides success by
+    ``out.is_file()``, which cannot tell this run's output from a leftover — so without
+    this, a re-executed step whose job dies before writing anything silently re-reads the
+    *previous* run's result and reports it as current. The exposed paths are the ones that
+    do not truncate their output in place: the script engines (whose JSON is written in
+    ``$WORK_DIR`` and only copied back on success) and every ORCA ensemble operation
+    (which reads a ``*.finalensemble.xyz``-style sidecar, not the ``.out``).
+
+    Only structures with loose files are touched, so a first run is a no-op. Reuses
+    :func:`archive_failed_attempt`, so an ``attemptK/`` from an earlier run is preserved
+    rather than clobbered and the whole history stays recoverable.
+    """
+    archived: list[Path] = []
+    for sid in structure_ids:
+        struct_dir = step_dir / sid
+        if struct_dir.is_dir() and any(p.is_file() for p in struct_dir.iterdir()):
+            archived.append(archive_failed_attempt(struct_dir))
+    return archived
 
 
 def retry_from_best(

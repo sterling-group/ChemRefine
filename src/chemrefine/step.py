@@ -14,7 +14,7 @@ lifecycle methods are called. :func:`run_step` is intentionally short
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -22,7 +22,7 @@ from chemrefine import __version__, cache, filtering, nms, step_failures
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.api import CalculationEngine, NmsCapableEngine, get_engine
 from chemrefine.errors import CacheError, ChemRefineError, ConfigError
-from chemrefine.state import PipelineState, StepContext, StepInputs, StepResults
+from chemrefine.state import PipelineState, StepContext, StepResults
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +230,12 @@ def _run_full_step(
     if is_nms:
         _check_nms_freq_gate(cast(NmsCapableEngine, engine), ctx, step_cfg)
     logger.info("step %d (%s): preparing inputs", step_cfg.step, step_cfg.engine)
+    # Anything already in these structure dirs is a previous run's work. Move it aside
+    # before writing new inputs, so a job that dies without producing output is seen as
+    # a failure rather than re-reading the old result (B1). Done here, at the lifecycle
+    # owner, rather than inside ``prepare`` — the retry and NMS paths call ``prepare``
+    # too and already manage their own attempt dirs.
+    step_failures.archive_previous_attempts(ctx.step_dir, (s.id for s in ctx.prev_state.structures))
     inputs = engine.prepare(ctx)
     cache.save_manifest(inputs, ctx.step_dir, operation=step_cfg.operation, engine=step_cfg.engine)
 
@@ -360,14 +366,19 @@ def _resubmit_failed(
     failed: list[dict[str, Any]],
     parent_ids: tuple[str, ...],
 ) -> StepResults:
-    """Resubmit only the failed structures, then re-parse + re-cache the full step.
+    """Re-prepare and resubmit only the failed structures, then re-parse + re-cache the step.
 
-    Rehydrates the per-structure inputs from the manifest, resubmits the failed
-    subset (their input files already exist on disk from the original prepare),
-    then re-parses the *whole* step so fan-out lineage stays consistent and the
-    ledger is refreshed (cleared if all now succeeded). NMS steps use
-    :func:`chemrefine.nms.reattempt_nms` instead (they reuse round-1
-    rather than resubmit it).
+    The failed structures' prior artifacts are archived into ``attemptK/`` and their
+    inputs **regenerated** before resubmission, rather than reusing the input files the
+    original prepare left on disk. Two reasons: archiving is what stops a job that dies
+    without producing output from re-reading the old result (B1), and regenerating means
+    a ``rerun-errors`` after a template edit actually runs the edited template — the
+    on-disk input would otherwise contradict the fingerprint the cache is keyed on.
+
+    The *whole* step is then re-parsed from the manifest so fan-out lineage stays
+    consistent and the ledger is refreshed (cleared if all now succeeded). NMS steps use
+    :func:`chemrefine.nms.reattempt_nms` instead (they reuse round-1 rather than
+    resubmit it).
     """
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
@@ -376,14 +387,16 @@ def _resubmit_failed(
     # pass below (resubmitting the identical input would just fail again); the
     # plain resubmit handles crashed / missing-output jobs.
     failed_ids = {f["structure_id"] for f in failed if f.get("reason") != "did not converge"}
-    failed_inputs = StepInputs(files=tuple(f for f in manifest.files if f[2] in failed_ids))
-    if failed_inputs.files:
+    failed_seeds = tuple(s for s in ctx.prev_state.structures if s.id in failed_ids)
+    if failed_seeds:
         logger.info(
             "step %d: rerun — resubmitting %d failed job(s)",
             step_cfg.step,
-            len(failed_inputs.files),
+            len(failed_seeds),
         )
-        engine.submit(failed_inputs, ctx)
+        step_failures.archive_previous_attempts(ctx.step_dir, (s.id for s in failed_seeds))
+        retry_ctx = replace(ctx, prev_state=PipelineState(structures=failed_seeds))
+        engine.submit(engine.prepare(retry_ctx), retry_ctx)
 
     successes, failures = step_failures.parse_with_failures(engine, manifest, ctx)
     successes, failures = step_failures.retry_unconverged(engine, ctx, successes, failures)

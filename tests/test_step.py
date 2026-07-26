@@ -603,3 +603,75 @@ def test_run_step_writes_canonical_result_records(tmp_path: Path):
         assert record["id"] == sid
         assert record["energy_hartree"] is not None
 
+
+# ---------------------------------------------------------------------------
+# B1 — a re-executed step never re-reads the previous run's output
+# ---------------------------------------------------------------------------
+
+
+def test_rerun_does_not_read_a_previous_runs_output(tmp_path: Path):
+    """The invariant: a parsed output must come from *this* run's submission.
+
+    ``parse_with_failures`` decides success by ``out.is_file()``, which cannot tell
+    this run's output from a leftover. Without archiving, a re-executed step whose
+    job dies before writing anything silently re-reads the previous run's result and
+    reports it as current — the worst failure mode for a tool whose output feeds a
+    publication.
+    """
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fail_engine()
+    try:
+        eng.fail = {}
+        cfg = _config(tmp_path, engine="fake-fail", on_failure="skip")
+        state = _seed_state(["0"])
+        step_dir = cfg.output_dir.resolve() / "step1"
+
+        first = run_step(cfg, cfg.steps[0], state, use_cache=False)
+        assert {s.id for s in first.state.structures} == {"0"}
+        assert (step_dir / "0" / "step1_0.out").is_file()
+
+        # Re-execute; this time the job dies without producing an output.
+        eng.fail = {"0": "missing"}
+        second = run_step(cfg, cfg.steps[0], state, use_cache=False)
+
+        assert second.state.structures == ()  # not the stale success
+        assert cache.load_failed_jobs(step_dir) == [
+            {"structure_id": "0", "reason": "output missing"}
+        ]
+        # The previous run's work is archived, not destroyed — full provenance.
+        assert (step_dir / "0" / "attempt1" / "step1_0.out").is_file()
+    finally:
+        eng.fail = {}
+        ENGINES.pop("fake-fail", None)
+
+
+def test_rerun_archives_each_run_into_its_own_attempt_dir(tmp_path: Path):
+    """Repeated re-execution keeps every attempt, numbered — never clobbers."""
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fail_engine()
+    try:
+        eng.fail = {}
+        cfg = _config(tmp_path, engine="fake-fail")
+        state = _seed_state(["0"])
+        step_dir = cfg.output_dir.resolve() / "step1"
+
+        for _ in range(3):
+            run_step(cfg, cfg.steps[0], state, use_cache=False)
+
+        # Run 1 left the dir bare; runs 2 and 3 each archived the run before them.
+        assert (step_dir / "0" / "attempt1").is_dir()
+        assert (step_dir / "0" / "attempt2").is_dir()
+        assert not (step_dir / "0" / "attempt3").exists()
+        assert (step_dir / "0" / "step1_0.out").is_file()  # newest run stays put
+    finally:
+        eng.fail = {}
+        ENGINES.pop("fake-fail", None)
+
+
+def test_first_run_over_a_clean_tree_archives_nothing(tmp_path: Path):
+    """Archiving is conditional on prior artifacts — a fresh run makes no attempt dir."""
+    cfg = _config(tmp_path)
+    run_step(cfg, cfg.steps[0], _seed_state(["0"]), use_cache=False)
+    assert not list((cfg.output_dir.resolve() / "step1" / "0").glob("attempt*"))
