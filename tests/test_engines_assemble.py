@@ -91,3 +91,49 @@ def test_unknown_input_id_yields_none_parent():
     child = build_structures([("missing", [_result()])], prev).structures[0]
     assert child.id == "missing"
     assert child.parent_id is None
+
+
+# ---------------------------------------------------------------------------
+# EngineOptions.from_raw_lenient — the option models are the alias authority
+# ---------------------------------------------------------------------------
+
+
+def test_from_raw_lenient_ignores_keys_the_model_does_not_declare():
+    """A direct step{N}.py template may carry knobs no engine model declares;
+    rendering it must not fail over them."""
+    from chemrefine.engines.mlip.options import MlipOptions
+
+    opts = MlipOptions.from_raw_lenient({"model": "medium", "some_template_knob": 3})
+    assert opts.model_name == "medium"
+
+
+def test_from_raw_lenient_honours_the_models_own_aliases():
+    """The alias rules live on the model, not spelled out again at the call site."""
+    from chemrefine.engines.mlip.options import MlipOptions
+
+    assert MlipOptions.from_raw_lenient({"size": "large"}).model_name == "large"
+    assert MlipOptions.from_raw_lenient({"task": "mace_off"}).task_name == "mace_off"
+    assert MlipOptions.from_raw_lenient(None).model_name == MlipOptions().model_name
+
+
+def test_from_raw_lenient_accepts_a_plain_string_alias():
+    """Aliases may be a single string as well as an AliasChoices set."""
+    from pydantic import Field
+
+    from chemrefine.engines._options import EngineOptions
+
+    class _Aliased(EngineOptions):
+        threads: int = Field(1, validation_alias="nthreads")
+
+    assert _Aliased.from_raw_lenient({"nthreads": 8, "unknown": 1}).threads == 8
+
+
+def test_from_raw_stays_strict_about_unknown_keys():
+    """Only the lenient reader is lenient — a typoed knob still fails the step."""
+    import pytest
+    from pydantic import ValidationError
+
+    from chemrefine.engines.mlip.options import MlipOptions
+
+    with pytest.raises(ValidationError):
+        MlipOptions.from_raw({"modle_name": "typo"})

@@ -20,6 +20,7 @@ from typing import ClassVar
 
 from chemrefine.engines import _provision
 from chemrefine.engines._job import JobEngine, gpus_from_device_options
+from chemrefine.engines._options import EngineOptions
 from chemrefine.engines._script import output as script_output
 from chemrefine.engines._script import render as script_render
 from chemrefine.engines.api import ParsedResult
@@ -68,8 +69,12 @@ class ScriptEngine(JobEngine):
     # -- run ---------------------------------------------------------------
 
     def pal(self, ctx: StepContext) -> int:
-        """Direct scripts take their core count from ``options.cores`` (default 1)."""
-        return int((ctx.step_cfg.options or {}).get("cores", 1))
+        """Direct scripts take their core count from ``options.cores`` (default 1).
+
+        Read through :class:`~chemrefine.engines._options.EngineOptions`, which
+        declares and bounds the field, rather than off the raw dict.
+        """
+        return EngineOptions.from_raw_lenient(ctx.step_cfg.options).cores
 
     def gpus(self, ctx: StepContext) -> int:
         """A GPU if ``options.device: cuda`` (or a truthy ``gpu``); else CPU."""

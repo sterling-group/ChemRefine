@@ -46,16 +46,14 @@ class MlipEngine(ScriptEngine):
 
         Lets a direct ``step{N}.py`` read ``$MODEL_NAME`` / ``$TASK_NAME`` /
         ``$DEVICE`` from the YAML ``step.options`` instead of hardcoding them.
-        Reads tolerantly (alias-aware, ignoring unknown keys) so a template's
-        extra knobs never fail the render; the ExtOpt path validates strictly.
+        Read leniently, through :class:`MlipOptions` itself: a template may carry
+        knobs no engine model declares and rendering must not fail over them, but
+        the alias rules (``model`` / ``size`` for ``model_name``) belong to the
+        model rather than being spelled out a second time here.
         """
-        raw = ctx.step_cfg.options or {}
-        defaults = MlipOptions()
+        opts = MlipOptions.from_raw_lenient(ctx.step_cfg.options)
         return {
-            "MODEL_NAME": raw.get("model_name")
-            or raw.get("model")
-            or raw.get("size")
-            or defaults.model_name,
-            "TASK_NAME": raw.get("task_name") or raw.get("task") or defaults.task_name,
-            "DEVICE": raw.get("device") or defaults.device,
+            "MODEL_NAME": opts.model_name,
+            "TASK_NAME": opts.task_name,
+            "DEVICE": opts.device,
         }

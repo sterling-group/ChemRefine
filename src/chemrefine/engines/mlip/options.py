@@ -54,6 +54,3 @@ class MlipOptions(EngineOptions):
 
     model_path: str | None = None
     """Custom MACE checkpoint path (selects the ``custom_mace`` backend)."""
-
-    cores: int = Field(1, ge=1)
-    """Per-structure core budget (passed to the throttler when applicable)."""
