@@ -48,8 +48,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-# ``sample.energy_type`` → the ``Structure`` attribute the filter reads.
-_ENERGY_ATTR = {
+# ``sample.energy_type`` → the ``Structure`` attribute the filter reads. Public because
+# the per-step CSV report reads it too — the report must summarise the same energy the
+# step filtered on, and that mapping has one home.
+ENERGY_ATTR = {
     "electronic": "energy_hartree",
     "gibbs": "gibbs_hartree",
     "enthalpy": "enthalpy_hartree",
@@ -77,7 +79,7 @@ def apply(results: StepResults, sample: SampleConfig | None) -> PipelineState:
     if not structures:
         return PipelineState(structures=())
 
-    energy_attr = _ENERGY_ATTR[sample.energy_type]
+    energy_attr = ENERGY_ATTR[sample.energy_type]
     if energy_attr != "energy_hartree":
         missing = [s.id for s in structures if getattr(s, energy_attr) is None]
         if missing:

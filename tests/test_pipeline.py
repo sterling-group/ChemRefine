@@ -340,3 +340,121 @@ def test_run_stops_when_no_survivors(tmp_path: Path):
     cfg = _config(tmp_path, input=seed_dir)
     with pytest.raises(ConfigError):
         pipeline.run(cfg)
+
+
+# ---------------------------------------------------------------------------
+# B8 — steps.csv reports the energy the step actually filtered on
+# ---------------------------------------------------------------------------
+
+
+def _register_thermo_engine():
+    """A fake engine whose Gibbs energies rank the structures *opposite* to electronic.
+
+    The inversion is the point: if the report were still reading the electronic
+    energy, its ordering and weights would visibly disagree with the survivors.
+    """
+    from typing import ClassVar
+
+    import numpy as np
+
+    from chemrefine.engines.api import register
+    from chemrefine.ids import structure_artifact_path
+    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+
+    @register("fake-thermo")
+    class _ThermoEngine:
+        name: ClassVar[str] = "fake-thermo"
+
+        def prepare(self, ctx):
+            ctx.step_dir.mkdir(parents=True, exist_ok=True)
+            files = []
+            for s in ctx.prev_state.structures:
+                step = ctx.step_cfg.step
+                inp = structure_artifact_path(ctx.step_dir, step, s.id, "inp")
+                out = structure_artifact_path(ctx.step_dir, step, s.id, "out")
+                inp.parent.mkdir(parents=True, exist_ok=True)
+                inp.write_text("in\n", encoding="utf-8")
+                out.write_text("out\n", encoding="utf-8")
+                files.append((inp, out, s.id))
+            return StepInputs(files=tuple(files))
+
+        def submit(self, inputs, ctx):
+            return JobBatch(jobs={})
+
+        def parse(self, inputs, ctx):
+            seeds = {s.id: s for s in ctx.prev_state.structures}
+            out = []
+            for _inp, _o, sid in inputs.files:
+                n = int(sid)
+                seed = seeds[sid]
+                out.append(
+                    Structure(
+                        id=sid,
+                        atoms=seed.atoms,
+                        parent_id=seed.parent_id,
+                        energy_hartree=-1.0 - n,  # "2" is lowest electronic
+                        gibbs_hartree=-10.0 + n,  # "0" is lowest Gibbs
+                        forces_ev_per_a=np.zeros((len(seed.atoms), 3)),
+                    )
+                )
+            return StepResults(structures=tuple(out))
+
+        def input_digest(self, ctx):
+            return ""
+
+    return _ThermoEngine
+
+
+def test_steps_csv_reports_the_energy_the_step_filtered_on(tmp_path: Path):
+    """A Gibbs-filtered step must not be summarised with electronic energies.
+
+    Before the fix the report always read ``energy_hartree`` while honouring the
+    step's ``temperature_k`` — so a ``energy_type: gibbs`` step produced Boltzmann
+    weights over electronic energies, a table that silently contradicted the
+    survivor set it claimed to describe.
+    """
+    import pandas as pd
+
+    from chemrefine.engines.api import ENGINES
+
+    _register_thermo_engine()
+    try:
+        cfg = _config(
+            tmp_path,
+            input=None,
+            steps=[
+                StepConfig(
+                    step=1,
+                    engine="fake-thermo",
+                    operation="opt_sp",
+                    sample={"method": "min", "count": 2, "energy_type": "gibbs"},
+                )
+            ],
+        )
+        seed_dir = tmp_path / "seeds"
+        io.write_xyz([_h2() for _ in range(3)], ["0", "1", "2"], 0, seed_dir)
+        cfg = cfg.model_copy(update={"input": seed_dir})
+
+        pipeline.run(cfg)
+
+        df = pd.read_csv(cfg.output_dir / "steps.csv")
+        assert list(df["Energy type"]) == ["gibbs", "gibbs"]
+        # Survivors are the two lowest *Gibbs* structures, and the reported
+        # energies are their Gibbs values — not -1.0/-2.0/-3.0.
+        assert sorted(df["Conformer"].astype(str)) == ["0", "1"]
+        assert sorted(df["Energy (Hartree)"]) == pytest.approx([-10.0, -9.0])
+        # dE is measured in the same currency, so the lowest row is the zero.
+        assert min(df["dE (kcal/mol)"]) == pytest.approx(0.0)
+    finally:
+        ENGINES.pop("fake-thermo", None)
+
+
+def test_steps_csv_defaults_to_electronic_without_a_sample(tmp_path: Path):
+    import pandas as pd
+
+    seed_dir = tmp_path / "seeds"
+    io.write_xyz([_h2()], ["0"], 0, seed_dir)
+    cfg = _config(tmp_path, input=seed_dir)
+    pipeline.run(cfg)
+    df = pd.read_csv(cfg.output_dir / "steps.csv")
+    assert set(df["Energy type"]) == {"electronic"}

@@ -20,11 +20,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from pathlib import Path
-from typing import cast
 
 from ase import Atoms
 
-from chemrefine import io, slurm
+from chemrefine import filtering, io, slurm
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines import preflight_backends
 from chemrefine.errors import ConfigError
@@ -132,23 +131,28 @@ def _seed_from_smiles_csv(csv_path: Path, out_dir: Path) -> PipelineState:
 def _write_step_csv(config: Config, step_cfg: StepConfig, state: PipelineState) -> None:
     """Append this step's survivor energies to the cumulative ``steps.csv``.
 
-    Uses the step's own ``sample.temperature_k`` when a sample filter is set
-    so the report's Boltzmann weights match the temperature the step filtered
-    at; otherwise the standard reference temperature. A step with no survivors
-    has nothing to summarise, so no row is written.
+    The report summarises **the same energy the step filtered on**: a step sampling
+    on ``gibbs`` gets Gibbs energies and Gibbs-derived Boltzmann weights, at that
+    step's own ``sample.temperature_k``. Reporting electronic energies for a
+    thermochemistry-filtered step produced a table that silently contradicted the
+    survivor set it was describing. With no sample filter, the electronic energy
+    at the standard reference temperature.
+
+    A step with no survivors has nothing to summarise, so no row is written.
     """
     if not state.structures:
         return
-    temperature_k = (
-        step_cfg.sample.temperature_k if step_cfg.sample is not None else DEFAULT_TEMPERATURE_K
-    )
+    sample = step_cfg.sample
+    temperature_k = sample.temperature_k if sample is not None else DEFAULT_TEMPERATURE_K
+    energy_type = sample.energy_type if sample is not None else "electronic"
+    energy_attr = filtering.ENERGY_ATTR[energy_type]
     io.save_step_csv(
-        # filtering.apply drops None-energy structures, so survivors all carry one.
-        energies_hartree=cast("list[float]", [s.energy_hartree for s in state.structures]),
+        energies_hartree=[getattr(s, energy_attr) for s in state.structures],
         structure_ids=[s.id for s in state.structures],
         step_number=step_cfg.step,
         output_dir=config.output_dir,
         temperature_k=temperature_k,
+        energy_type=energy_type,
     )
 
 

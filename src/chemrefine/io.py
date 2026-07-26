@@ -215,20 +215,31 @@ def _boltzmann_columns(
 
 
 def save_step_csv(
-    energies_hartree: Iterable[float],
+    energies_hartree: Iterable[float | None],
     structure_ids: Iterable[str],
     step_number: int,
     output_dir: str | Path,
     *,
     filename: str = "steps.csv",
     temperature_k: float = DEFAULT_TEMPERATURE_K,
+    energy_type: str = "electronic",
 ) -> Path:
     """Append a per-structure summary row for ``step_number`` to a cumulative CSV.
 
     Columns: ``Step, Conformer, Energy (Hartree), Energy (kcal/mol),
-    dE (kcal/mol), Boltzmann Weight, % Total, % Cumulative``.
+    dE (kcal/mol), Boltzmann Weight, % Total, % Cumulative, Energy type``.
     Sorted by energy ascending. Step 1 writes the header; later steps
     append without a header.
+
+    ``energy_type`` names which energy the caller passed (``electronic`` / ``gibbs`` /
+    ``enthalpy`` / ``electronic_zero_point``) and is recorded verbatim in the last
+    column. It is a column rather than a rename of the energy headers because
+    ``steps.csv`` is cumulative across steps that may filter on different energies —
+    one header has to serve them all.
+
+    Structures whose energy is ``None`` are dropped from the report (nothing to
+    summarise), which is how a backfilled ``on_failure: best`` structure with no
+    computed energy passes through without breaking the Boltzmann columns.
     """
     import pandas as pd
 
@@ -273,6 +284,8 @@ def save_step_csv(
             "% Cumulative": _CSV_PRECISION,
         }
     )
+    # Last column, so the historic header prefix is unchanged for existing tooling.
+    df["Energy type"] = energy_type
 
     mode = "w" if step_number == 1 else "a"
     header = step_number == 1
