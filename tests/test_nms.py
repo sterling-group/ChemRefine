@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 from ase import Atoms
 
-from chemrefine import nms
+from chemrefine import cache, nms
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.api import NmsInputInfo
 from chemrefine.ids import structure_artifact_path
@@ -190,17 +190,17 @@ def _cfg(**over) -> StepConfig:
 def test_nms_reuse_fingerprint_ignores_search_params():
     base = _cfg(options={"target": "minimum", "displacement_value": 1.0})
     tuned = _cfg(options={"target": "minimum", "displacement_value": 2.0})
-    assert nms.nms_reuse_fingerprint(base, ("0",)) == nms.nms_reuse_fingerprint(tuned, ("0",))
+    assert cache.reuse_fingerprint(base, ("0",)) == cache.reuse_fingerprint(tuned, ("0",))
 
 
 def test_nms_reuse_fingerprint_changes_on_criterion():
     mn = _cfg(options={"target": "minimum"})
     ts = _cfg(options={"target": "ts"})
-    assert nms.nms_reuse_fingerprint(mn, ("0",)) != nms.nms_reuse_fingerprint(ts, ("0",))
+    assert cache.reuse_fingerprint(mn, ("0",)) != cache.reuse_fingerprint(ts, ("0",))
 
 
 def test_nms_reuse_fingerprint_empty_for_non_nms():
-    assert nms.nms_reuse_fingerprint(_cfg(nms=False), ("0",)) == ""
+    assert cache.reuse_fingerprint(_cfg(nms=False), ("0",)) == ""
 
 
 # ---------------------------------------------------------------------------

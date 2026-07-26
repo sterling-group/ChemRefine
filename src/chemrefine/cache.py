@@ -48,7 +48,7 @@ from ase import Atoms
 from chemrefine import ids
 from chemrefine.config import StepConfig
 from chemrefine.errors import CacheError
-from chemrefine.state import StepInputs, StepResults, Structure
+from chemrefine.state import StepContext, StepInputs, StepResults, Structure
 
 CACHE_FORMAT_VERSION = "v2.0"
 """On-disk cache schema version, tracking the 2.0.0 release line.
@@ -93,7 +93,7 @@ class StepCache:
     """Coarser fingerprint (NMS steps only) that's stable across search-param
     tuning but not across the resolution criterion — lets ``resume`` re-attempt
     only the unresolved parents and reuse the round-1 freq. ``""`` for steps
-    that don't use it. See :func:`chemrefine.nms.nms_reuse_fingerprint`."""
+    that don't use it. See :func:`reuse_fingerprint`."""
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +326,75 @@ def save(
     }
     _write_json(_cache_path(step_dir), document)
     logger.info("saved step %d cache (fingerprint %s)", step_cfg.step, fp)
+
+
+#: ``step.options`` keys that tune an NMS *search* without changing what counts as
+#: resolved. Stripped from :func:`reuse_fingerprint` so raising ``displacement_value``
+#: reuses round-1 instead of re-running it; the resolution criterion (``target`` /
+#: ``ts_mode_index``) stays in, because changing that changes the answer.
+_NMS_SEARCH_KEYS = frozenset({"displacement_value", "num_random_displacements", "seed"})
+
+
+def reuse_fingerprint(
+    step_cfg: StepConfig,
+    parent_ids: tuple[str, ...],
+    *,
+    parents_digest: str = "",
+    template_digest: str = "",
+) -> str:
+    """A coarser :func:`fingerprint` that survives NMS search-param tuning.
+
+    Identical to :func:`fingerprint` — same content keys — but with the NMS search
+    parameters stripped from ``options``, so bumping one leaves it unchanged and
+    ``resume`` can reuse the round-1 frequencies plus the already-resolved children and
+    re-attempt only the unresolved parents. Returns ``""`` for non-NMS steps, which
+    never take that path.
+
+    Lives here rather than in :mod:`chemrefine.nms` because it is a cache-validity key,
+    and this module owns those.
+    """
+    if not step_cfg.nms:
+        return ""
+    trimmed = {k: v for k, v in (step_cfg.options or {}).items() if k not in _NMS_SEARCH_KEYS}
+    return fingerprint(
+        step_cfg.model_copy(update={"options": trimmed}),
+        parent_ids,
+        parents_digest=parents_digest,
+        template_digest=template_digest,
+    )
+
+
+def save_step_results(
+    *,
+    step_cfg: StepConfig,
+    parent_ids: tuple[str, ...],
+    results: StepResults,
+    ctx: StepContext,
+    template_digest: str,
+    chemrefine_version: str,
+) -> None:
+    """Persist a step's results, deriving every digest and fingerprint from ``ctx``.
+
+    The one place a completed step is written. Five call sites used to spell out the
+    same tail — hash the parents, take the template digest, compute the plain and the
+    reuse fingerprint, call :func:`save` — and one of them had already drifted, omitting
+    the reuse fingerprint. That is the failure mode this exists to prevent: a cache
+    written with an inconsistent key is not a crash, it is a silent re-run or a silent
+    reuse much later.
+    """
+    digest = parents_digest(ctx.prev_state.structures)
+    save(
+        step_cfg=step_cfg,
+        parent_ids=parent_ids,
+        results=results,
+        step_dir=ctx.step_dir,
+        chemrefine_version=chemrefine_version,
+        reuse_fingerprint=reuse_fingerprint(
+            step_cfg, parent_ids, parents_digest=digest, template_digest=template_digest
+        ),
+        parents_digest=digest,
+        template_digest=template_digest,
+    )
 
 
 def load(step_dir: Path) -> StepCache | None:

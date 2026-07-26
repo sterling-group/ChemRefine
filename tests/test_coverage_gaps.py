@@ -428,14 +428,15 @@ def test_rebuild_cache_step_nms_branch(tmp_path: Path):
 def _pin_nms(monkeypatch, fp: str = "FP") -> None:
     """Pin the NMS reuse fingerprint + re-attempt result for these tests.
 
-    ``step.py`` calls through the :mod:`chemrefine.nms` module object, so patching the
-    module attributes redirects the orchestrator without touching its code.
+    ``step.py`` calls through the :mod:`chemrefine.cache` and :mod:`chemrefine.nms`
+    module objects, so patching the module attributes redirects the orchestrator
+    without touching its code.
     """
-    from chemrefine import nms
+    from chemrefine import cache, nms
 
     monkeypatch.setattr(
-        nms,
-        "nms_reuse_fingerprint",
+        cache,
+        "reuse_fingerprint",
         lambda step_cfg, parent_ids, *, parents_digest="", template_digest="": fp,
     )
     monkeypatch.setattr(

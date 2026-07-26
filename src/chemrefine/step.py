@@ -191,7 +191,7 @@ def _nms_reuse_outcome(
         cached = None
     digest = cache.parents_digest(ctx.prev_state.structures)
     template_digest = engine.input_digest(ctx)
-    fingerprint = nms.nms_reuse_fingerprint(
+    fingerprint = cache.reuse_fingerprint(
         step_cfg, parent_ids, parents_digest=digest, template_digest=template_digest
     )
     if cached is None or getattr(cached, "reuse_fingerprint", "") != fingerprint:
@@ -204,15 +204,13 @@ def _nms_reuse_outcome(
         logger.info(
             "step %d: NMS search params changed, all resolved — reusing cache", step_cfg.step
         )
-        cache.save(
+        cache.save_step_results(
             step_cfg=step_cfg,
             parent_ids=parent_ids,
             results=cached.results,
-            step_dir=ctx.step_dir,
-            chemrefine_version=__version__,
-            reuse_fingerprint=fingerprint,
-            parents_digest=digest,
+            ctx=ctx,
             template_digest=template_digest,
+            chemrefine_version=__version__,
         )
         results = cached.results
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
@@ -259,19 +257,13 @@ def _run_full_step(
         successes, failures = list(resolution.survivors), list(resolution.failures)
     results = step_failures.apply_failure_policy(successes, failures, ctx, step_cfg)
 
-    digest = cache.parents_digest(ctx.prev_state.structures)
-    template_digest = engine.input_digest(ctx)
-    cache.save(
+    cache.save_step_results(
         step_cfg=step_cfg,
         parent_ids=parent_ids,
         results=results,
-        step_dir=ctx.step_dir,
+        ctx=ctx,
+        template_digest=engine.input_digest(ctx),
         chemrefine_version=__version__,
-        reuse_fingerprint=nms.nms_reuse_fingerprint(
-            step_cfg, parent_ids, parents_digest=digest, template_digest=template_digest
-        ),
-        parents_digest=digest,
-        template_digest=template_digest,
     )
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
@@ -344,19 +336,13 @@ def rebuild_cache_step(
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
     results = step_failures.apply_failure_policy(successes, failures, ctx, step_cfg)
-    digest = cache.parents_digest(ctx.prev_state.structures)
-    template_digest = engine.input_digest(ctx)
-    cache.save(
+    cache.save_step_results(
         step_cfg=step_cfg,
         parent_ids=parent_ids,
         results=results,
-        step_dir=ctx.step_dir,
+        ctx=ctx,
+        template_digest=engine.input_digest(ctx),
         chemrefine_version=__version__,
-        reuse_fingerprint=nms.nms_reuse_fingerprint(
-            step_cfg, parent_ids, parents_digest=digest, template_digest=template_digest
-        ),
-        parents_digest=digest,
-        template_digest=template_digest,
     )
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
@@ -403,13 +389,12 @@ def _resubmit_failed(
     successes, failures = step_failures.parse_with_failures(engine, manifest, ctx)
     successes, failures = step_failures.retry_unconverged(engine, ctx, successes, failures)
     results = step_failures.apply_failure_policy(successes, failures, ctx, step_cfg)
-    cache.save(
+    cache.save_step_results(
         step_cfg=step_cfg,
         parent_ids=parent_ids,
         results=results,
-        step_dir=ctx.step_dir,
-        chemrefine_version=__version__,
-        parents_digest=cache.parents_digest(ctx.prev_state.structures),
+        ctx=ctx,
         template_digest=engine.input_digest(ctx),
+        chemrefine_version=__version__,
     )
     return results

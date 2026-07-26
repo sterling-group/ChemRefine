@@ -48,11 +48,6 @@ _TRIVIAL_MODES = 6
 
 _UNRESOLVED = "NMS: target stationary point not reached"
 
-# NMS *search* params: tuning these doesn't change what counts as resolved, so changing
-# them reuses round-1 (the reuse fingerprint ignores them). The resolution *criterion*
-# (target / ts_mode_index) stays in, so changing it forces a full re-run.
-_NMS_SEARCH_KEYS = frozenset({"displacement_value", "num_random_displacements", "seed"})
-
 
 # ---------------------------------------------------------------------------
 # Options + pure displacement maths (engine-independent)
@@ -173,37 +168,6 @@ def select_displacements(
         out.append((f"m{idx}_pos", pos))
         out.append((f"m{idx}_neg", neg))
     return out
-
-
-# ---------------------------------------------------------------------------
-# Cache fingerprint (NMS reuse path)
-# ---------------------------------------------------------------------------
-
-
-def nms_reuse_fingerprint(
-    step_cfg: StepConfig,
-    parent_ids: tuple[str, ...],
-    *,
-    parents_digest: str = "",
-    template_digest: str = "",
-) -> str:
-    """Fingerprint that's stable across NMS search-param tuning.
-
-    Same as :func:`chemrefine.cache.fingerprint` (including the ``parents_digest`` and
-    ``template_digest`` content keys) but with the NMS search parameters stripped from
-    ``options`` — so bumping ``displacement_value`` leaves it unchanged (reuse round-1
-    + resolved, re-attempt only the unresolved), while changing the criterion /
-    template / parents changes it. Returns ``""`` for non-NMS steps.
-    """
-    if not step_cfg.nms:
-        return ""
-    trimmed = {k: v for k, v in (step_cfg.options or {}).items() if k not in _NMS_SEARCH_KEYS}
-    return cache.fingerprint(
-        step_cfg.model_copy(update={"options": trimmed}),
-        parent_ids,
-        parents_digest=parents_digest,
-        template_digest=template_digest,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -470,18 +434,12 @@ def reattempt_nms(
     results = step_failures.apply_failure_policy(
         list(kept + reattempt.survivors), list(reattempt.failures), ctx, step_cfg
     )
-    digest = cache.parents_digest(ctx.prev_state.structures)
-    template_digest = engine.input_digest(ctx)
-    cache.save(
+    cache.save_step_results(
         step_cfg=step_cfg,
         parent_ids=parent_ids,
         results=results,
-        step_dir=ctx.step_dir,
+        ctx=ctx,
+        template_digest=engine.input_digest(ctx),
         chemrefine_version=__version__,
-        reuse_fingerprint=nms_reuse_fingerprint(
-            step_cfg, parent_ids, parents_digest=digest, template_digest=template_digest
-        ),
-        parents_digest=digest,
-        template_digest=template_digest,
     )
     return results
