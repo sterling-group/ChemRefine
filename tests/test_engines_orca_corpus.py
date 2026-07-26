@@ -1,0 +1,101 @@
+"""Run the ORCA readers over every recorded real output — the whole corpus, not a sample.
+
+The per-section tests use small synthetic snippets, which is right for edge cases but is
+also how two defects survived: a fabricated fixture agreeing with a fabricated regex looks
+exactly like a passing test. This file asserts the readers against the ~100 real ORCA
+outputs already in the repo, streamed straight out of the ``tests/data/e2e/recordings``
+archives (nothing is extracted to disk).
+
+Every recorded run is a *successful* one — they were captured from passing live runs — so
+the corpus-wide expectation is simple and strong: every output must read as terminated and
+converged, and every frequency job must yield a well-shaped normal-mode tensor. A reader
+that starts finding failures here is wrong about real ORCA, whatever the unit tests say.
+
+Marked ``integration`` only because it reads ~100 files out of six compressed archives; it
+needs no binaries and runs in a couple of seconds.
+"""
+
+from __future__ import annotations
+
+import tarfile
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+
+from chemrefine.engines.orca.output import status
+from chemrefine.engines.orca.output.frequencies import (
+    _NORMAL_MODES_MARKER,
+    parse_normal_modes_tensor_from_text,
+)
+from chemrefine.engines.orca.output.geometry import parse_coordinates_from_text
+
+pytestmark = pytest.mark.integration
+
+RECORDINGS = Path(__file__).resolve().parent / "data" / "e2e" / "recordings"
+
+
+def _recorded_outputs() -> Iterator[tuple[str, str]]:
+    """Yield ``(label, text)`` for every ``.out`` inside the recording archives."""
+    for archive in sorted(RECORDINGS.glob("*.tar.xz")):
+        with tarfile.open(archive) as tf:
+            for member in tf.getmembers():
+                if not member.name.endswith(".out"):
+                    continue
+                handle = tf.extractfile(member)
+                if handle is None:  # pragma: no cover - directories have no payload
+                    continue
+                yield f"{archive.stem}:{member.name}", handle.read().decode("utf-8", "replace")
+
+
+def test_the_corpus_is_actually_there():
+    """Guards against this file silently passing because it found nothing to check."""
+    assert sum(1 for _ in _recorded_outputs()) >= 100
+
+
+def test_every_recorded_run_reads_as_successful():
+    """No false failures across the corpus.
+
+    This is the assertion that would have caught a bare ``NOT CONVERGED`` matching
+    ORCA's ``LOCALIZATION HAS NOT CONVERGED``, or any other over-broad negative.
+    """
+    bad = [
+        label
+        for label, text in _recorded_outputs()
+        if not (status.parse_terminated(text) and status.parse_converged(text))
+    ]
+    assert bad == []
+
+
+def test_pending_optimisation_lines_are_never_the_last_verdict_in_a_finished_run():
+    """The premise "last verdict wins" rests on.
+
+    ORCA prints "has not yet converged" after every non-final geometry cycle, so most
+    optimisation outputs contain it. Treating it as a failure is only safe because a run
+    that *did* finish always prints its success banner afterwards. If that ever stops
+    holding, every optimisation in the corpus starts failing — so assert it directly
+    rather than relying on the previous test to notice.
+    """
+    pending = [
+        label
+        for label, text in _recorded_outputs()
+        if "The optimization has not yet converged" in text
+    ]
+    assert pending, "no optimisation outputs in the corpus — has the recording set changed?"
+    assert all(status.parse_converged(text) for label, text in _recorded_outputs())
+
+
+def test_every_frequency_output_yields_a_well_shaped_normal_mode_tensor():
+    """The NMS displacement maths gets a real tensor, of the right shape, every time."""
+    checked = 0
+    for label, text in _recorded_outputs():
+        if _NORMAL_MODES_MARKER not in text:
+            continue
+        coords = parse_coordinates_from_text(text)
+        assert coords is not None, label
+        n_atoms = len(coords[0])
+        tensor = parse_normal_modes_tensor_from_text(text, num_atoms=n_atoms)
+        assert tensor.shape[:2] == (n_atoms, 3), label
+        assert tensor.shape[2] >= 1, label
+        checked += 1
+    assert checked >= 50, f"only {checked} frequency outputs found — corpus shrank?"

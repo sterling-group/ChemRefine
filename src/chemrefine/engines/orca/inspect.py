@@ -33,7 +33,12 @@ _GEOM_SCAN_RE = re.compile(r"%geom\b.*?\bscan\b.*?\bend\b", re.IGNORECASE | re.D
 # convergence tightness (``TightOpt``) and Cartesian/TS variants (``COpt``, ``OptTS``),
 # and frequencies come as ``Freq`` / ``NumFreq`` / ``AnFreq``. Matched against whole
 # tokens, so a keyword that merely contains one of these substrings cannot trip them.
-_OPT_TOKEN_RE = re.compile(r"(?:very|tight|normal|loose|c)?opt(?:ts)?", re.IGNORECASE)
+#
+# ``ExtOpt`` is in the list because it *is* an optimisation — ORCA runs its own optimiser
+# over gradients supplied by an external program, which is exactly what the ExtOpt engines
+# (``mlip-extopt`` / ``pyscf-extopt``) do. Tokenising without it silently reclassified
+# every ExtOpt step as a single point.
+_OPT_TOKEN_RE = re.compile(r"(?:very|tight|normal|loose|c|ext)?opt(?:ts)?", re.IGNORECASE)
 _FREQ_TOKEN_RE = re.compile(r"(?:num|an)?freq", re.IGNORECASE)
 
 # Every spelling of an ORCA PAL declaration, as ``(prefix)(count)`` pairs so :func:`_read_pal`

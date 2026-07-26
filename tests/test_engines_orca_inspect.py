@@ -81,3 +81,45 @@ def test_inspect_ignores_commented_out_scan_block(tmp_path: Path):
     """A ``%geom Scan`` hidden behind comments is not treated as a PES scan."""
     body = "! B3LYP def2-SVP Opt\n# %geom Scan B 0 1 = 1.0, 2.0, 10 end end\n"
     assert inspect_template(_write(tmp_path, body)).operation == "opt_sp"
+
+
+# ---------------------------------------------------------------------------
+# Keyword matching is by whole token, checked against the real templates
+# ---------------------------------------------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_extopt_is_an_optimisation():
+    """ORCA's ``ExtOpt`` runs its optimiser over an external program's gradients.
+
+    Read from a real tutorial template rather than a fabricated one: this is the
+    keyword every ``mlip-extopt`` / ``pyscf-extopt`` step uses, and tokenising the
+    keyword line without allowing for it reclassified all of them as single points.
+    """
+    template = REPO_ROOT / "examples/tutorials/redox/amines/templates/step2.inp"
+    assert "!ExtOpt" in template.read_text()
+    assert inspect_template(template).operation == "opt_sp"
+
+
+def test_every_shipped_extopt_template_is_an_optimisation():
+    """Whatever the tutorials use, the classification has to hold for all of it."""
+    templates = sorted(
+        p
+        for root in ("tests/data/e2e/cases", "examples")
+        for p in (REPO_ROOT / root).rglob("templates/*.inp")
+        if any(
+            line.lstrip().lstrip("!").split()[:1] == ["ExtOpt"]
+            for line in p.read_text(errors="replace").splitlines()
+            if line.lstrip().startswith("!")
+        )
+    )
+    assert templates, "no ExtOpt templates found — has the layout moved?"
+    assert {inspect_template(p).operation for p in templates} == {"opt_sp"}
+
+
+def test_a_keyword_merely_containing_opt_is_not_an_optimisation(tmp_path: Path):
+    """The point of matching whole tokens: substrings must not decide the run type."""
+    template = tmp_path / "step1.inp"
+    template.write_text("! B3LYP def2-SVP Optimizer-Is-Not-A-Keyword\n", encoding="utf-8")
+    assert inspect_template(template).operation == "sp"
