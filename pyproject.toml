@@ -45,6 +45,9 @@ dependencies = [
     # both numpy 1.26 and 2.x, so the matrix is internally consistent.
     "numpy>=1.26",
     "pyyaml>=6.0.2",
+    # pandas is a hard requirement — every run writes steps.csv — but it is imported
+    # lazily inside the two functions that use it (io.save_step_csv, io.smiles_to_xyz)
+    # so `chemrefine --version` and `--help` stay fast. Same for rdkit below.
     "pandas>=2.2.3",
     "ase>=3.26.0",
     "rdkit>=2024.9",
@@ -82,7 +85,10 @@ mlip-mace = [
 # downloads: sevenn (→ e3nn>=0.5, torch_geometric, torch), + server (heavy)
 mlip-sevenn = ["sevenn", "chemrefine[server]"]
 # downloads: orb-models (→ torch>=2.8); needs Python >= 3.12, + server (heavy)
-mlip-orb = ["orb-models", "chemrefine[server]"]
+# The marker is load-bearing: without it, `pip install chemrefine[mlip-orb]` on 3.11
+# backtracks through every orb-models release looking for a compatible one and ends in
+# a resolver wall of text instead of "requires a different Python".
+mlip-orb = ["orb-models; python_version >= '3.12'", "chemrefine[server]"]
 # downloads: chgnet (→ torch, pymatgen), + server (heavy)
 mlip-chgnet = ["chgnet", "chemrefine[server]"]
 # The default MLIP install = FAIRChem / UMA (`uma-s-1p2`).
@@ -145,10 +151,15 @@ chemrefine = "chemrefine.cli:main"
 packages = ["src/chemrefine"]
 
 [tool.hatch.build.targets.sdist]
+# `tests` ships so a distro packager can actually run the suite from the sdist —
+# the fixtures are ~1.3 MB, most of it trimmed real ORCA output and the compressed
+# e2e recordings, which is what makes the tests meaningful in the first place.
 include = [
     "src/chemrefine",
+    "tests",
     "README.md",
     "LICENSE",
+    "CHANGELOG.md",
     "pyproject.toml",
 ]
 
@@ -193,7 +204,22 @@ target-version = "py311"
 extend-exclude = ["examples/*/templates/*.py", "examples/*/*/templates/*.py"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PTH", "RET", "C4", "TID"]
+# `S` (bandit) is on so every shell-out and subprocess call has to be either safe by
+# construction or carry a `# noqa: S...` naming why it is fine — which turns the
+# security review into something a diff can show rather than something a reader has to
+# reconstruct. `ERA` catches commented-out code left behind.
+#
+# `ARG` is deliberately NOT selected: this codebase is Protocol- and base-class-heavy by
+# design, so unused parameters are usually the *contract* (an engine hook that ignores
+# `ctx`, a `ComputeBackend` classmethod that takes args it doesn't need). Enabling it
+# would mean ~15 noqa comments on interface methods, which makes the code worse.
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PTH", "RET", "C4", "TID", "S", "ERA"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately assert on subprocess plumbing, bind throwaway sockets, and use
+# assert as their whole purpose. ERA reads their `# section name` dividers as
+# commented-out code.
+"tests/**" = ["S", "ERA"]
 
 [tool.pytest.ini_options]
 # Tier-3 live-integration tests need real binaries (ORCA, an MLIP stack) and

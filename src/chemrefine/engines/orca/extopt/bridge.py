@@ -112,7 +112,8 @@ def submit_calculation(
         method="POST",
     )
     try:
-        with urlopen(request, timeout=timeout) as response:
+        # server wrote to its own sidecar; no user-supplied scheme can reach it.
+        with urlopen(request, timeout=timeout) as response:  # noqa: S310
             body = response.read()
     except HTTPError as e:
         raise JobFailureError(f"ExtOpt server returned HTTP {e.code}: {e.reason}") from e

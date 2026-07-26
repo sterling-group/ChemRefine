@@ -30,7 +30,7 @@ DEFAULT_BIND_PORT: int = 0
 SERVER_URL_FILENAME: str = "server.url"
 """Filename of the sidecar that records ``host:port`` once the server is ready."""
 
-SERVER_TOKEN_FILENAME: str = "server.token"
+SERVER_TOKEN_FILENAME: str = "server.token"  # noqa: S105 — a filename, not a secret
 """Filename of the sidecar holding the per-run bearer token (written ``0600``).
 
 The server binds loopback, but on a multi-tenant HPC node any same-host

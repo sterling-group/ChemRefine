@@ -169,7 +169,7 @@ class JobEngine:
             template = self._resolve_template(ctx)
         except FileNotFoundError:
             return ""
-        return hashlib.sha1(template.read_bytes()).hexdigest()[:16]
+        return hashlib.sha1(template.read_bytes(), usedforsecurity=False).hexdigest()[:16]
 
     # -- engine primitives (the public provision surface) ------------------
 

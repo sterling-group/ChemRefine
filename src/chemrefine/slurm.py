@@ -134,7 +134,14 @@ def _detect_local_gpus() -> int:
     engine's availability guard reports a genuinely missing GPU separately.
     """
     try:
-        result = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, check=True)
+        # Resolved via PATH on purpose: nvidia-smi lives in different places per driver
+        # packaging, so a hardcoded path would be more brittle, not less.
+        result = subprocess.run(
+            ["nvidia-smi", "-L"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+        )
     except (OSError, subprocess.CalledProcessError):
         return 1
     lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
@@ -495,7 +502,8 @@ def submit_array(
     There is no local fallback — the engine only takes this path under SLURM.
     """
     try:
-        result = subprocess.run(
+        # remaining argv entries are paths we generated.
+        result = subprocess.run(  # noqa: S603
             [
                 sbatch_cmd,
                 f"--export=ALL,CR_MANIFEST={manifest}",
@@ -551,8 +559,10 @@ def _submit_local(script_path: str | Path, *, env: dict[str, str] | None = None)
     out_handle = script_path.with_suffix(".runlog").open("w", encoding="utf-8")
     err_handle = script_path.with_suffix(".err").open("w", encoding="utf-8")
     try:
-        proc = subprocess.Popen(
-            ["bash", str(script_path)],
+        # `bash` from PATH is the point — this is the no-SLURM fallback — and
+        # script_path is a script this process generated moments ago.
+        proc = subprocess.Popen(  # noqa: S603
+            ["bash", str(script_path)],  # noqa: S607
             stdout=out_handle,
             stderr=err_handle,
             env={**os.environ, **env} if env else None,
@@ -644,7 +654,7 @@ def submit(
     if dispatch_locally(dispatch, sbatch_cmd=sbatch_cmd):
         return _submit_local(script_path, env=env)
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603
             [sbatch_cmd, str(script_path)],
             capture_output=True,
             text=True,
@@ -697,7 +707,7 @@ def finished_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> se
     if not scheduled:
         return done
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603
             [squeue_cmd, "--noheader", "-u", _current_user(), "-o", "%i"],
             capture_output=True,
             text=True,

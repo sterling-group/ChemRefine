@@ -265,5 +265,6 @@ def build_backend_env(extra: str, *, tool: EnvTool | None = None) -> Path:
         return python
     backend_env_path(extra).parent.mkdir(parents=True, exist_ok=True)
     for argv in _build_commands(tool or detect_env_tool(), backend_env_path(extra), extra):
-        subprocess.run(argv, check=True)
+        # this install's own metadata; no shell, no user-supplied string.
+        subprocess.run(argv, check=True)  # noqa: S603
     return python

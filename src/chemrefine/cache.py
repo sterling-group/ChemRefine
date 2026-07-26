@@ -112,7 +112,7 @@ def parents_digest(structures: Sequence[Structure]) -> str:
     a parent's geometry/energy must invalidate the step, or ``resume`` would
     silently reuse results computed from the old geometry.
     """
-    h = hashlib.sha1()
+    h = hashlib.sha1(usedforsecurity=False)  # a content fingerprint, not a digest
     for s in structures:
         h.update(s.id.encode())
         h.update("".join(s.atoms.get_chemical_symbols()).encode())
@@ -157,7 +157,7 @@ def fingerprint(
         "parents_digest": parents_digest,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha1(encoded).hexdigest()[:16]
+    return hashlib.sha1(encoded, usedforsecurity=False).hexdigest()[:16]
 
 
 # ---------------------------------------------------------------------------
