@@ -14,6 +14,7 @@ cluster.
 
 from __future__ import annotations
 
+import atexit
 import functools
 import getpass
 import itertools
@@ -61,6 +62,10 @@ _LOCAL_JOB_PREFIX = "local-"
 starting with this prefix.
 """
 _LOCAL_JOB_COUNTER = itertools.count(1)
+
+_LOCAL_TERMINATE_GRACE_SECONDS = 5.0
+"""How long a local job gets to exit on SIGTERM before :func:`terminate_local_jobs`
+escalates to SIGKILL."""
 
 _LOCAL_PROCS: dict[str, tuple[subprocess.Popen[bytes], TextIO, TextIO]] = {}
 """Background local jobs, keyed by ``local-N`` id → ``(proc, out_fh, err_fh)``.
@@ -576,6 +581,39 @@ def _local_is_finished(job_id: str) -> bool:
     if proc.returncode != 0:
         logger.warning("local job %s exited %d (see %s)", job_id, proc.returncode, out_handle.name)
     return True
+
+
+def terminate_local_jobs(job_ids: Collection[str] = ()) -> None:
+    """Kill and reap background local jobs, closing their log handles.
+
+    Called from the scheduler's ``finally`` so an abnormal exit — a throttle timeout,
+    a mid-batch submission failure, Ctrl-C — doesn't orphan the ``bash`` children this
+    interpreter launched. Left running they keep burning the cores the user's next
+    attempt needs, and their ``.runlog`` / ``.err`` handles stay open.
+
+    ``job_ids`` limits the sweep to one batch; the default empty tuple means *every*
+    registered local job, which is what the interpreter-exit hook wants. Already-finished
+    jobs are simply absent from the registry, so this is safe to call unconditionally.
+    """
+    targets = list(job_ids) if job_ids else list(_LOCAL_PROCS)
+    for job_id in targets:
+        entry = _LOCAL_PROCS.pop(job_id, None)
+        if entry is None:
+            continue
+        proc, out_handle, err_handle = entry
+        if proc.poll() is None:
+            logger.warning("terminating local job %s (pid %s)", job_id, proc.pid)
+            proc.terminate()
+            try:
+                proc.wait(timeout=_LOCAL_TERMINATE_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+        out_handle.close()
+        err_handle.close()
+
+
+atexit.register(terminate_local_jobs)
 
 
 def submit(

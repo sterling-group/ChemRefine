@@ -21,7 +21,7 @@ from chemrefine import slurm
 from chemrefine.config import StepConfig
 from chemrefine.engines import _execution
 from chemrefine.engines._job import JobEngine
-from chemrefine.errors import ConfigError
+from chemrefine.errors import ConfigError, JobSubmissionError
 from chemrefine.state import JobBatch, PipelineState, StepContext, Structure
 
 
@@ -161,3 +161,60 @@ def test_run_batch_allows_multi_gpu_step_under_slurm(_submit, _finished_jobs, tm
     with patch.object(slurm, "sbatch_available", return_value=True):
         batch = _execution.run_batch(engine, inputs, ctx)
     assert batch.jobs
+
+
+# ---------------------------------------------------------------------------
+# An abnormal exit must not orphan local jobs (B7)
+# ---------------------------------------------------------------------------
+
+
+def test_run_batch_terminates_local_jobs_when_a_submission_fails(tmp_path: Path):
+    """A mid-batch failure unwinds through the cleanup, not past it.
+
+    _LOCAL_PROCS is module-global and run_batch had no try/finally, so any
+    exception between the first submit and wait_all — a throttle timeout, a
+    submission error, Ctrl-C — left real background children running. They keep
+    competing for the cores of whatever the user runs next, and their log
+    handles stay open.
+    """
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path, ids=("0", "1", "2"))
+    inputs = engine.prepare(ctx)
+    terminated: list[tuple[str, ...]] = []
+
+    def failing_submit(script_path, *, env=None, dispatch="auto"):
+        if len(terminated) or script_path.stem.endswith("_1"):
+            raise JobSubmissionError("sbatch refused the job")
+        return "local-1"
+
+    with (
+        patch.object(slurm, "submit", side_effect=failing_submit),
+        patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set()),
+        patch.object(
+            slurm, "terminate_local_jobs", side_effect=lambda ids=(): terminated.append(tuple(ids))
+        ),
+        pytest.raises(JobSubmissionError),
+    ):
+        _execution.run_batch(engine, inputs, ctx)
+
+    assert terminated, "the cleanup never ran — local jobs would be orphaned"
+    assert "local-1" in terminated[0], "the already-submitted job must be swept up"
+
+
+def test_run_batch_cleanup_runs_on_the_happy_path_too(tmp_path: Path):
+    """The sweep is unconditional; with everything reaped it has nothing to do."""
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path, ids=("0",))
+    inputs = engine.prepare(ctx)
+    seen: list[tuple[str, ...]] = []
+
+    with (
+        patch.object(slurm, "submit", return_value="local-1"),
+        patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids)),
+        patch.object(
+            slurm, "terminate_local_jobs", side_effect=lambda ids=(): seen.append(tuple(ids))
+        ),
+    ):
+        _execution.run_batch(engine, inputs, ctx)
+
+    assert seen == [()]  # wait_all reaped everything; nothing left to terminate

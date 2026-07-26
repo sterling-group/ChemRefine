@@ -85,9 +85,35 @@ def run_batch(engine: JobExecutable, inputs: StepInputs, ctx: StepContext) -> Jo
             f"step {ctx.step_cfg.step} needs {gpus} GPU(s) but the budget is "
             f"{throttler.max_gpus}; raise `max_gpus` or set `options.device: cpu`"
         )
+    jobs: dict[Path, str] = {}
+    try:
+        _submit_all(engine, inputs, ctx, throttler, header_path, pal, gpus, local, jobs)
+        throttler.wait_all(finished=slurm.finished_jobs)
+    finally:
+        # Any job still active here means we are unwinding on an exception — a
+        # ThrottleTimeoutError, a mid-batch JobSubmissionError, a KeyboardInterrupt.
+        # Local jobs are real background processes owned by this interpreter, so
+        # leaving them running would orphan compute that keeps competing for the
+        # cores of whatever the user runs next. (SLURM jobs are the scheduler's;
+        # cancelling them here would be presumptuous.)
+        slurm.terminate_local_jobs(throttler.active_jobs)
+    return JobBatch(jobs=jobs)
+
+
+def _submit_all(
+    engine: JobExecutable,
+    inputs: StepInputs,
+    ctx: StepContext,
+    throttler: throttle.Throttler,
+    header_path: Path,
+    pal: int,
+    gpus: int,
+    local: bool,
+    jobs: dict[Path, str],
+) -> None:
+    """Submit every prepared input under the budget, recording ids into ``jobs``."""
     step_label = ctx.step_cfg.dir_name()
     operation = ctx.step_cfg.operation or ""
-    jobs: dict[Path, str] = {}
     for inp, out, sid in inputs.files:
         throttler.wait_for_room(pal, finished=slurm.finished_jobs, gpus_needed=gpus)
         # Pin a free GPU per local job so concurrent CUDA jobs don't collide on device
@@ -117,9 +143,6 @@ def run_batch(engine: JobExecutable, inputs: StepInputs, ctx: StepContext) -> Jo
         throttler.register(job_id, pal, gpus=gpus, device=device)
         jobs[inp] = job_id
         logger.info("submitted %s as job %s (pal=%d, gpus=%d)", inp.name, job_id, pal, gpus)
-
-    throttler.wait_all(finished=slurm.finished_jobs)
-    return JobBatch(jobs=jobs)
 
 
 def _run_array(engine: JobExecutable, inputs: StepInputs, ctx: StepContext) -> JobBatch:

@@ -677,3 +677,103 @@ def test_finished_jobs_of_an_empty_batch_asks_nothing():
     with patch.object(subprocess, "run") as run:
         assert slurm.finished_jobs([]) == set()
     run.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# terminate_local_jobs — no orphaned compute on an abnormal exit
+# ---------------------------------------------------------------------------
+
+
+def test_terminate_local_jobs_kills_and_reaps_a_running_job(tmp_path: Path):
+    """An abnormal exit must not leave background children burning cores.
+
+    They are real processes owned by this interpreter; left running they keep
+    competing with whatever the user runs next, and their log handles stay open.
+    """
+    script = tmp_path / "sleeper.slurm"
+    script.write_text("#!/bin/bash\nsleep 60\n", encoding="utf-8")
+    job_id = slurm._submit_local(script)
+    proc, out_handle, err_handle = slurm._LOCAL_PROCS[job_id]
+
+    slurm.terminate_local_jobs([job_id])
+
+    assert proc.poll() is not None  # reaped, not left running
+    assert out_handle.closed and err_handle.closed
+    assert job_id not in slurm._LOCAL_PROCS
+
+
+def test_terminate_local_jobs_defaults_to_every_registered_job(tmp_path: Path):
+    """The no-argument form is what the interpreter-exit hook uses."""
+    script = tmp_path / "sleeper.slurm"
+    script.write_text("#!/bin/bash\nsleep 60\n", encoding="utf-8")
+    ids = [slurm._submit_local(script), slurm._submit_local(script)]
+    slurm.terminate_local_jobs()
+    assert all(i not in slurm._LOCAL_PROCS for i in ids)
+
+
+def test_terminate_local_jobs_ignores_unknown_and_finished_ids():
+    """Safe to call unconditionally — reaped jobs are simply absent from the registry."""
+    slurm.terminate_local_jobs(["local-does-not-exist", "12345"])
+
+
+def test_terminate_local_jobs_closes_handles_of_an_already_exited_job(tmp_path: Path):
+    """A job that finished on its own gets no signal — only its handles closed.
+
+    This is the common shape on the unwind path: some of the batch completed
+    normally before the exception, and signalling a dead process would be wrong.
+    """
+    script = tmp_path / "quick.slurm"
+    script.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    job_id = slurm._submit_local(script)
+    proc, out_handle, err_handle = slurm._LOCAL_PROCS[job_id]
+    proc.wait()  # it exits immediately; poll() is now non-None
+
+    with patch.object(proc, "terminate") as terminate:
+        slurm.terminate_local_jobs([job_id])
+
+    terminate.assert_not_called()
+    assert out_handle.closed and err_handle.closed
+    assert job_id not in slurm._LOCAL_PROCS
+
+
+def test_terminate_local_jobs_escalates_to_kill_when_sigterm_is_ignored(tmp_path: Path):
+    """A job that ignores SIGTERM still gets reaped — the grace period is bounded.
+
+    Quantum-chemistry binaries do install signal handlers, so a terminate that
+    politely waits forever would hang the interpreter on exit. Driven through a
+    stub rather than a real signal-trapping shell: whether a given shell forwards
+    or ignores SIGTERM is platform behaviour, and this is a test of the escalation
+    logic, not of bash.
+    """
+
+    class _Stubborn:
+        pid = 4242
+
+        def __init__(self) -> None:
+            self.terminated = False
+            self.killed = False
+
+        def poll(self) -> int | None:
+            return None if not self.killed else -9
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def wait(self, timeout: float | None = None) -> int:
+            if timeout is not None and not self.killed:
+                raise subprocess.TimeoutExpired("bash", timeout)
+            return -9
+
+        def kill(self) -> None:
+            self.killed = True
+
+    proc = _Stubborn()
+    out_handle = (tmp_path / "j.runlog").open("w", encoding="utf-8")
+    err_handle = (tmp_path / "j.err").open("w", encoding="utf-8")
+    slurm._LOCAL_PROCS["local-stubborn"] = (proc, out_handle, err_handle)  # type: ignore[assignment]
+
+    slurm.terminate_local_jobs(["local-stubborn"])
+
+    assert proc.terminated and proc.killed  # asked nicely first, then insisted
+    assert out_handle.closed and err_handle.closed
+    assert "local-stubborn" not in slurm._LOCAL_PROCS
