@@ -307,7 +307,7 @@ def save(
 
     ``parents_digest`` (the parent structures' content digest) and
     ``template_digest`` (the resolved template's content digest) are folded
-    into the stored fingerprint; pass the same values to :func:`is_valid`.
+    into the stored fingerprint; pass the same values to :func:`load_if_valid`.
     """
     fp = fingerprint(
         step_cfg, parent_ids, parents_digest=parents_digest, template_digest=template_digest
@@ -462,27 +462,6 @@ def load_if_valid(
     if cached.fingerprint != current:
         return None
     return cached
-
-
-def is_valid(
-    *,
-    step_cfg: StepConfig,
-    parent_ids: tuple[str, ...],
-    step_dir: Path,
-    parents_digest: str = "",
-    template_digest: str = "",
-) -> bool:
-    """True iff a cache exists and its fingerprint matches the current step config."""
-    return (
-        load_if_valid(
-            step_cfg=step_cfg,
-            parent_ids=parent_ids,
-            step_dir=step_dir,
-            parents_digest=parents_digest,
-            template_digest=template_digest,
-        )
-        is not None
-    )
 
 
 def invalidate(step_dir: Path) -> None:

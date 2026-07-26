@@ -14,7 +14,6 @@ from chemrefine.cache import (
     RESULT_FORMAT_VERSION,
     fingerprint,
     invalidate,
-    is_valid,
     load,
     load_if_valid,
     load_manifest,
@@ -158,8 +157,10 @@ def test_template_digest_round_trips_through_validity(tmp_path: Path):
         chemrefine_version="2.0.0",
         template_digest="orig",
     )
-    assert is_valid(step_cfg=_cfg(), parent_ids=("0",), step_dir=step_dir, template_digest="orig")
-    assert not is_valid(
+    assert load_if_valid(
+        step_cfg=_cfg(), parent_ids=("0",), step_dir=step_dir, template_digest="orig"
+    )
+    assert not load_if_valid(
         step_cfg=_cfg(), parent_ids=("0",), step_dir=step_dir, template_digest="edited"
     )
 
@@ -322,7 +323,7 @@ def test_load_rejects_old_cache_format(tmp_path: Path):
 def test_load_rejects_legacy_summary_sidecar(tmp_path: Path):
     """The pickle-era ``step.json`` was a summary without ``structures``.
 
-    Loading one must raise (→ ``is_valid`` False → clean rebuild), never
+    Loading one must raise (→ ``load_if_valid`` None → clean rebuild), never
     misread the summary as a complete cache.
     """
     step_dir = tmp_path / "step1"
@@ -337,15 +338,15 @@ def test_load_rejects_legacy_summary_sidecar(tmp_path: Path):
     )
     with pytest.raises(CacheError, match="stale or corrupt"):
         load(step_dir)
-    assert not is_valid(step_cfg=_cfg(), parent_ids=("0",), step_dir=step_dir)
+    assert not load_if_valid(step_cfg=_cfg(), parent_ids=("0",), step_dir=step_dir)
 
 
 # ---------------------------------------------------------------------------
-# is_valid
+# load_if_valid
 # ---------------------------------------------------------------------------
 
 
-def test_is_valid_true_when_cache_matches(tmp_path: Path):
+def test_load_if_valid_true_when_cache_matches(tmp_path: Path):
     step_dir = tmp_path / "step1"
     cfg = _cfg()
     save(
@@ -355,10 +356,10 @@ def test_is_valid_true_when_cache_matches(tmp_path: Path):
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
-    assert is_valid(step_cfg=cfg, parent_ids=("0",), step_dir=step_dir)
+    assert load_if_valid(step_cfg=cfg, parent_ids=("0",), step_dir=step_dir)
 
 
-def test_is_valid_false_when_config_changes(tmp_path: Path):
+def test_load_if_valid_false_when_config_changes(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(charge=0),
@@ -367,19 +368,19 @@ def test_is_valid_false_when_config_changes(tmp_path: Path):
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
-    assert not is_valid(step_cfg=_cfg(charge=-1), parent_ids=("0",), step_dir=step_dir)
+    assert not load_if_valid(step_cfg=_cfg(charge=-1), parent_ids=("0",), step_dir=step_dir)
 
 
-def test_is_valid_false_when_cache_is_corrupt(tmp_path: Path):
-    """A corrupt pickle should make ``is_valid`` return False, not raise."""
+def test_load_if_valid_false_when_cache_is_corrupt(tmp_path: Path):
+    """A corrupt pickle should make ``load_if_valid`` return None, not raise."""
     step_dir = tmp_path / "step1"
     cache_dir = step_dir / "_cache"
     cache_dir.mkdir(parents=True)
     (cache_dir / "step.json").write_bytes(b"{not json")
-    assert not is_valid(step_cfg=_cfg(), parent_ids=("0",), step_dir=step_dir)
+    assert not load_if_valid(step_cfg=_cfg(), parent_ids=("0",), step_dir=step_dir)
 
 
-def test_is_valid_false_when_parents_change(tmp_path: Path):
+def test_load_if_valid_false_when_parents_change(tmp_path: Path):
     step_dir = tmp_path / "step1"
     cfg = _cfg()
     save(
@@ -389,11 +390,11 @@ def test_is_valid_false_when_parents_change(tmp_path: Path):
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
-    assert not is_valid(step_cfg=cfg, parent_ids=("0", "1"), step_dir=step_dir)
+    assert not load_if_valid(step_cfg=cfg, parent_ids=("0", "1"), step_dir=step_dir)
 
 
-def test_is_valid_false_when_no_cache(tmp_path: Path):
-    assert not is_valid(step_cfg=_cfg(), parent_ids=("0",), step_dir=tmp_path / "step1")
+def test_load_if_valid_false_when_no_cache(tmp_path: Path):
+    assert not load_if_valid(step_cfg=_cfg(), parent_ids=("0",), step_dir=tmp_path / "step1")
 
 
 # ---------------------------------------------------------------------------
