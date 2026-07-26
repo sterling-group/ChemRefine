@@ -8,7 +8,7 @@ import pytest
 from synthetic import THERMOCHEMISTRY_BLOCK, synthetic_dft_output
 
 from chemrefine.engines.api import ParsedResult
-from chemrefine.engines.orca.output import parse_dft, parse_dft_from_text, parse_output
+from chemrefine.engines.orca.output import parse_dft, parse_dft_from_text, parse_output, status
 from chemrefine.engines.orca.output.ensembles import (
     parse_docker,
     parse_goat_ensemble,
@@ -95,6 +95,61 @@ def test_parse_dft_marks_not_converged(tmp_path: Path):
     out = tmp_path / "maxiter.out"
     out.write_text(_minimal_out(terminated=True, not_converged=True), encoding="utf-8")
     assert parse_dft(out)[0].converged is False
+
+
+# ---------------------------------------------------------------------------
+# Convergence is the LAST verdict, not "did the file ever say NOT CONVERGED" (B4)
+# ---------------------------------------------------------------------------
+
+_SCF_FAIL = "     SCF NOT CONVERGED AFTER  125 CYCLES"
+_SCF_OK = "     *           SCF CONVERGED AFTER   6 CYCLES          *"
+_GEOM_FAIL = "     ***        THE OPTIMIZATION HAS NOT CONVERGED     ***"
+_GEOM_OK = "     ***        THE OPTIMIZATION HAS CONVERGED     ***"
+
+
+def test_converged_true_when_an_early_scf_failure_recovers():
+    """A recovered SCF must not fail the run.
+
+    ORCA retries a failed SCF with a different guess; the optimisation then
+    converges. Scanning the whole file for ``NOT CONVERGED`` called that run
+    failed, which halted an ``on_failure: stop`` pipeline that had actually
+    succeeded and resubmitted a converged structure.
+    """
+    assert status.parse_converged("\n".join([_SCF_FAIL, _SCF_OK, _GEOM_OK])) is True
+
+
+def test_converged_false_when_geometry_gives_up_after_a_good_scf():
+    """MaxIter on the geometry is a failure even though every SCF converged."""
+    assert status.parse_converged("\n".join([_SCF_OK, _SCF_OK, _GEOM_FAIL])) is False
+
+
+def test_converged_true_when_a_final_single_point_follows_a_converged_opt():
+    """The post-optimisation single point is the last verdict and it passed."""
+    assert status.parse_converged("\n".join([_GEOM_OK, _SCF_OK])) is True
+
+
+def test_converged_false_when_the_last_scf_fails():
+    assert status.parse_converged("\n".join([_SCF_OK, _GEOM_OK, _SCF_FAIL])) is False
+
+
+def test_converged_true_when_no_verdict_is_printed():
+    """No signal is not a failure signal — matches ``step_failures.succeeded``."""
+    assert status.parse_converged("FINAL SINGLE POINT ENERGY  -1.5\n") is True
+
+
+def test_parse_dft_recovered_scf_is_a_success(tmp_path: Path):
+    """The recovery reaches the parsed structure, not just the status helper."""
+    out = tmp_path / "recovered.out"
+    out.write_text(
+        _minimal_out(terminated=True, not_converged=False).replace(
+            "FINAL SINGLE POINT ENERGY",
+            f"{_SCF_FAIL}\n{_SCF_OK}\n{_GEOM_OK}\nFINAL SINGLE POINT ENERGY",
+        ),
+        encoding="utf-8",
+    )
+    parsed = parse_dft(out)[0]
+    assert parsed.converged is True
+    assert parsed.terminated is True
 
 
 # ---------------------------------------------------------------------------
