@@ -502,3 +502,133 @@ def test_rebuild_cache_reparses_without_submitting(tmp_path: Path):
     finally:
         eng.fail_ids, eng.submitted = set(), []
         ENGINES.pop("flaky", None)
+
+
+# ---------------------------------------------------------------------------
+# The recovery matrix — this test IS the spec
+# ---------------------------------------------------------------------------
+#
+# Six CLI actions map to a handful of per-step execution paths, and which path a
+# given step takes is decided at three different depths (recovery.execute,
+# pipeline.run, step.run_step) from two nullable ints. Nothing else states the
+# mapping, so it is asserted here in one place: for each action, which steps
+# re-execute their engine and which are served from cache.
+
+
+def _recording_engine():
+    """A fake engine that records the steps it actually executed."""
+    from typing import ClassVar
+
+    import numpy as np
+
+    from chemrefine.engines.api import register
+    from chemrefine.ids import structure_artifact_path
+    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+
+    @register("recorder")
+    class _Recorder:
+        name: ClassVar[str] = "recorder"
+        submitted: ClassVar[list[int]] = []
+
+        def prepare(self, ctx):
+            ctx.step_dir.mkdir(parents=True, exist_ok=True)
+            files = []
+            for s in ctx.prev_state.structures:
+                step = ctx.step_cfg.step
+                inp = structure_artifact_path(ctx.step_dir, step, s.id, "inp")
+                out = structure_artifact_path(ctx.step_dir, step, s.id, "out")
+                inp.parent.mkdir(parents=True, exist_ok=True)
+                inp.write_text("in\n", encoding="utf-8")
+                out.write_text("out\n", encoding="utf-8")
+                files.append((inp, out, s.id))
+            return StepInputs(files=tuple(files))
+
+        def submit(self, inputs, ctx):
+            _Recorder.submitted.append(ctx.step_cfg.step)
+            return JobBatch(jobs={})
+
+        def parse(self, inputs, ctx):
+            seeds = {s.id: s for s in ctx.prev_state.structures}
+            out = []
+            for _inp, _o, sid in inputs.files:
+                seed = seeds[sid]
+                out.append(
+                    Structure(
+                        id=sid,
+                        atoms=seed.atoms,
+                        parent_id=seed.parent_id,
+                        energy_hartree=-1.0 - len(sid) * 1e-3,
+                        forces_ev_per_a=np.zeros((len(seed.atoms), 3)),
+                    )
+                )
+            return StepResults(structures=tuple(out))
+
+        def input_digest(self, ctx):
+            return ""
+
+    return _Recorder
+
+
+@pytest.mark.parametrize(
+    ("action", "target", "expected_submits"),
+    [
+        # run: every cache is invalidated, so both steps execute again.
+        (Action.RUN, None, [1, 2]),
+        # resume: both caches are valid and clean, so nothing re-executes.
+        (Action.RESUME, None, []),
+        # rerun N: only that step's cache is dropped; the other cache-hits. Step 2
+        # follows because step 1's survivors are unchanged, so its fingerprint holds.
+        (Action.RERUN, 1, [1]),
+        (Action.RERUN, 2, [2]),
+        # rebuild-nms is a named alias of rerun for the NMS-tuning workflow.
+        (Action.REBUILD_NMS, 2, [2]),
+        # rerun-errors N: nothing is pending, so it degrades to a plain resume.
+        (Action.RERUN_ERRORS, 2, []),
+        # rebuild-cache N: re-parses from disk. No submission, by definition.
+        (Action.REBUILD_CACHE, 2, []),
+    ],
+    ids=[
+        "run-reexecutes-everything",
+        "resume-hits-every-cache",
+        "rerun-1-redoes-only-step-1",
+        "rerun-2-redoes-only-step-2",
+        "rebuild-nms-is-rerun",
+        "rerun-errors-with-nothing-pending-is-resume",
+        "rebuild-cache-never-submits",
+    ],
+)
+def test_recovery_matrix(tmp_path: Path, action, target, expected_submits):
+    """Each action's per-step routing, asserted end to end."""
+    from chemrefine.engines.api import ENGINES
+
+    eng = _recording_engine()
+    try:
+        cfg = _seeded_config(
+            tmp_path,
+            [
+                StepConfig(step=1, name="screen", engine="recorder", operation="opt_sp"),
+                StepConfig(step=2, name="refine", engine="recorder", operation="opt_sp"),
+            ],
+        )
+        execute(cfg, Action.RESUME)  # prime both caches
+        eng.submitted.clear()
+
+        assert execute(cfg, action, target=target) == 0
+
+        assert sorted(eng.submitted) == expected_submits
+    finally:
+        eng.submitted.clear()
+        ENGINES.pop("recorder", None)
+
+
+def test_recovery_matrix_covers_every_action():
+    """A new Action must be given a row above, not silently inherit someone else's."""
+    covered = {
+        Action.RUN,
+        Action.RESUME,
+        Action.RERUN,
+        Action.REBUILD_NMS,
+        Action.RERUN_ERRORS,
+        Action.REBUILD_CACHE,
+    }
+    assert covered == set(Action)
