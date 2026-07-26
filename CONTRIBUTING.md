@@ -91,3 +91,26 @@ publishes to PyPI; a `vX.Y.Z.devN` tag publishes to TestPyPI instead
 `pyproject.toml`, and the publish jobs refuse a tag that doesn't match it.
 Before tagging: bump the version, retitle the Unreleased section in
 `CHANGELOG.md`, and start a fresh Unreleased section.
+
+**Then run the release gate — this step is required:**
+
+```bash
+scripts/release-check.sh
+```
+
+It runs everything CI runs, then installs the built wheel into a throwaway
+venv and runs the tier-3 suite against a real ORCA. CI cannot do that last
+part: GitHub-hosted runners have no ORCA, and automating it would mean a
+self-hosted runner, which is unsafe on a public repository — a pull request
+from a fork can execute arbitrary code on it.
+
+That matters because the defects worth catching before a release are the
+ones every structural gate passes. A parser that misreads real output, or a
+step that returns the previous run's results, produces a plausible number
+rather than an error; 100 % coverage and a clean mypy say nothing about it.
+Running the real thing is the only check that does.
+
+The script refuses to run if `orca` on PATH is not the quantum-chemistry
+ORCA — desktop Linux ships `/usr/bin/orca`, the GNOME screen reader, and
+without that check the live cases would skip and the gate would pass having
+tested nothing.

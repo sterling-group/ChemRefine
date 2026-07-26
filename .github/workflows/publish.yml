@@ -37,6 +37,22 @@ jobs:
         with:
           attest-build-provenance-github: true
 
+      # Provenance says who built the artifact; the SBOM says what is inside it. A user
+      # auditing a CVE against their install needs the second, and reconstructing it from
+      # pyproject floors after the fact gives the wrong answer — the floors are not what
+      # the resolver actually picked.
+      - name: Generate a CycloneDX SBOM
+        run: |
+          python -m pip install --quiet cyclonedx-bom
+          python -m cyclonedx_py environment \
+            --output-format JSON \
+            --outfile chemrefine-sbom.cdx.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: SBOM
+          path: chemrefine-sbom.cdx.json
+          if-no-files-found: error
+
   # Create a GitHub Release automatically when a non-dev tag is pushed
   create-release:
     name: Create GitHub Release
@@ -51,10 +67,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Download the SBOM built alongside the package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: SBOM
       - name: Create Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           generate_release_notes: true
+          files: chemrefine-sbom.cdx.json
 
   # Publish dev tags (e.g. v4.0.0.dev1) to TestPyPI
   release-test-pypi:

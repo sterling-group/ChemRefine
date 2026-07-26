@@ -59,6 +59,32 @@ generated SLURM script inside double quotes. Paths containing `"`, `$`, or a
 backtick are **rejected at config-load time** — they would otherwise terminate
 the quoted string or introduce a command substitution.
 
+## Supply chain
+
+Every release carries two artifacts beyond the package itself. **Build provenance**
+(PEP 740 plus a GitHub attestation) says the wheel was built by this workflow from this
+commit — verify it with `gh attestation verify`. A **CycloneDX SBOM** says what is inside
+it, resolved at build time; reconstructing that from the version floors in
+`pyproject.toml` after the fact gives the wrong answer, because the floors are not what
+the resolver actually picked.
+
+### Managed backend environments are not hash-pinned
+
+`chemrefine backends install <extra>` runs an ordinary `pip install` into the managed
+environment. A compromised index could therefore reach a backend env.
+
+This is an accepted risk rather than an oversight. Closing it means a hash-pinned
+lockfile per MLIP extra, and those extras track torch and CUDA builds that publish
+frequently — every upstream release would break every lockfile until regenerated, which
+is recurring work with no one to absorb it. Two things bound the exposure: a managed env
+holds only the backend and its dependencies, never credentials or job data, and
+`build_backend_env` installs the *same* ChemRefine source as the orchestrator driving it
+(pinned by version for an index install, by URL or commit for a direct one), so the
+package itself cannot be substituted.
+
+If you need the guarantee, provision the environment yourself with your own pinned
+requirements and point the step at it with `options.backend_python`.
+
 ## Reporting
 
 Report vulnerabilities privately via
