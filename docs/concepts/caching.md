@@ -70,4 +70,27 @@ runs additionally leave ORCA's own `basename.property.json` (requested via
 incompatible layout (or the pickle-era summary sidecar) is rejected on load,
 forcing a clean rebuild rather than a silent wrong read.
 
+## Cost at scale
+
+`step.json` is one document holding every structure, rewritten in full on each save, and
+`parents_digest` re-hashes every parent's coordinates once per step. Both are linear in
+the structure count, and both are negligible next to the calculations they bookkeep.
+Measured on 30-atom structures (`tests/test_perf_cache.py`, run with `-m integration`):
+
+| structures | `parents_digest` | `cache.save` | `cache.load` | `steps.csv` | `step.json` |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 200 | 0.001 s | 0.03 s | 0.02 s | 0.01 s | 1.5 MB |
+| 2 000 | 0.02 s | 0.32 s | 0.21 s | 0.01 s | 15 MB |
+| 10 000 | 0.06 s | 1.6 s | 1.2 s | 0.05 s | 73 MB |
+
+A 10 000-structure step spends under three seconds on all of its bookkeeping, against a
+step that is running 10 000 quantum-chemistry jobs. There is no reason to reach for a
+different on-disk format at these sizes.
+
+The number worth watching is the document size, not the time: at 10 000 structures
+`step.json` is ~73 MB, and saving or loading it materialises that as Python objects. If a
+workflow ever needs 10⁵ structures in a single step, that is the limit it will hit
+first — and the fix would be per-structure records under `_cache/` with an index, not a
+faster serializer.
+
 See the [Cache API](../api/cache.md) for the functions involved.
