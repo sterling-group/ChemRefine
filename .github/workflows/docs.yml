@@ -32,9 +32,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # Must match ci.yml's docs-check. mkdocs --strict fails on warnings, and
+      # mkdocstrings renders live signatures, so a different Python here could pass
+      # in PR and then fail on deploy — after merge, when nobody is looking.
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.12"
+          python-version: "3.13"
           cache: pip
 
       - name: Install dependencies

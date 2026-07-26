@@ -6,12 +6,31 @@ on:
   schedule:
     - cron: "23 5 * * 1" # weekly, Monday morning UTC
   workflow_dispatch:
+  # pip-audit runs weekly, which means a PR that pulls in a vulnerable dependency
+  # can sit on main for up to six days before anything says so. dependency-review
+  # catches it in the PR that introduces it.
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@bc41886e18ea39df68b1b1245f4184881938e050 # v4.6.0
+        with:
+          fail-on-severity: high
+
   pip-audit:
+    # Scheduled sweep only. Auditing the fully-resolved environment costs a real
+    # install; on a PR, dependency-review above already covers what that PR changes.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
