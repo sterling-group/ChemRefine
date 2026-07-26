@@ -89,7 +89,7 @@ def run_batch(engine: JobExecutable, inputs: StepInputs, ctx: StepContext) -> Jo
     operation = ctx.step_cfg.operation or ""
     jobs: dict[Path, str] = {}
     for inp, out, sid in inputs.files:
-        throttler.wait_for_room(pal, is_finished=slurm.is_finished, gpus_needed=gpus)
+        throttler.wait_for_room(pal, finished=slurm.finished_jobs, gpus_needed=gpus)
         # Pin a free GPU per local job so concurrent CUDA jobs don't collide on device
         # 0; under SLURM the scheduler sets CUDA_VISIBLE_DEVICES itself.
         device = throttler.assign_device() if (local and gpus) else None
@@ -118,7 +118,7 @@ def run_batch(engine: JobExecutable, inputs: StepInputs, ctx: StepContext) -> Jo
         jobs[inp] = job_id
         logger.info("submitted %s as job %s (pal=%d, gpus=%d)", inp.name, job_id, pal, gpus)
 
-    throttler.wait_all(is_finished=slurm.is_finished)
+    throttler.wait_all(finished=slurm.finished_jobs)
     return JobBatch(jobs=jobs)
 
 
@@ -176,6 +176,6 @@ def _run_array(engine: JobExecutable, inputs: StepInputs, ctx: StepContext) -> J
         )
 
     slurm.wait_for_jobs(
-        set(jobs.values()), poll_interval=_SLURM_POLL_SECONDS, is_finished=slurm.is_finished
+        set(jobs.values()), poll_interval=_SLURM_POLL_SECONDS, finished=slurm.finished_jobs
     )
     return JobBatch(jobs=jobs)

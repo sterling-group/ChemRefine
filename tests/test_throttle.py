@@ -9,12 +9,19 @@ import pytest
 from chemrefine.throttle import Throttler
 
 
-def _never_finished(_job_id: str) -> bool:
-    return False
+def _never_finished(_job_ids):
+    """Nothing ever completes — one poll returns the empty set."""
+    return set()
 
 
-def _always_finished(_job_id: str) -> bool:
-    return True
+def _always_finished(job_ids):
+    """Everything the throttler asks about is already done."""
+    return set(job_ids)
+
+
+def _finishes(*done: str):
+    """A poll that reports exactly ``done`` (intersected with what is active)."""
+    return lambda job_ids: {j for j in job_ids if j in done}
 
 
 # ---------------------------------------------------------------------------
@@ -58,12 +65,12 @@ def test_wait_for_room_blocks_on_gpu_budget_even_when_cores_free():
     t.register("g0", 1, gpus=1, device=0)
     state = {"calls": 0}
 
-    def is_finished(jid: str) -> bool:
+    def finished(job_ids):
         state["calls"] += 1
-        return state["calls"] >= 2 and jid == "g0"
+        return {j for j in job_ids if j == "g0"} if state["calls"] >= 2 else set()
 
     with patch("time.sleep") as sleeper:
-        t.wait_for_room(1, is_finished=is_finished, gpus_needed=1)
+        t.wait_for_room(1, finished=finished, gpus_needed=1)
     sleeper.assert_called()  # had to wait for the GPU to free
     assert t.active_jobs == ()
 
@@ -73,14 +80,14 @@ def test_wait_for_room_admits_cpu_job_while_gpu_saturated():
     t = Throttler(max_cores=64, max_gpus=1)
     t.register("g0", 1, gpus=1, device=0)
     with patch("time.sleep") as sleeper:
-        t.wait_for_room(8, is_finished=_never_finished, gpus_needed=0)
+        t.wait_for_room(8, finished=_never_finished, gpus_needed=0)
     sleeper.assert_not_called()
 
 
 def test_wait_for_room_rejects_gpu_request_above_budget():
     t = Throttler(max_cores=16, max_gpus=1)
     with pytest.raises(ValueError):
-        t.wait_for_room(1, is_finished=_always_finished, gpus_needed=2)
+        t.wait_for_room(1, finished=_always_finished, gpus_needed=2)
 
 
 def test_assign_device_returns_lowest_free_index_and_reuses_freed():
@@ -89,7 +96,7 @@ def test_assign_device_returns_lowest_free_index_and_reuses_freed():
     t.register("a", 1, gpus=1, device=0)
     assert t.assign_device() == 1
     t.register("b", 1, gpus=1, device=1)
-    t._reap(lambda jid: jid == "a")  # frees device 0
+    t._reap(_finishes("a"))  # frees device 0
     assert t.assign_device() == 0
 
 
@@ -120,7 +127,7 @@ def test_register_rejects_zero_pal():
 def test_wait_for_room_no_wait_when_budget_available():
     t = Throttler(max_cores=64)
     with patch("time.sleep") as sleeper:
-        t.wait_for_room(16, is_finished=_never_finished)
+        t.wait_for_room(16, finished=_never_finished)
     sleeper.assert_not_called()
 
 
@@ -130,12 +137,14 @@ def test_wait_for_room_reaps_finished_jobs_to_free_budget():
     t.register("running", 8)
     state = {"poll_count": 0}
 
-    def is_finished(jid: str) -> bool:
+    def finished(job_ids):
         state["poll_count"] += 1
-        return jid == "done"
+        return {j for j in job_ids if j == "done"}
 
     with patch("time.sleep"):
-        t.wait_for_room(16, is_finished=is_finished)
+        t.wait_for_room(16, finished=finished)
+    # One poll answers the whole active batch, however many jobs there are.
+    assert state["poll_count"] == 1
     assert t.cores_in_use == 8
     assert t.active_jobs == ("running",)
 
@@ -146,13 +155,13 @@ def test_wait_for_room_blocks_until_jobs_finish():
     t.register("b", 4)
     state = {"calls": 0}
 
-    def is_finished(jid: str) -> bool:
+    def finished(job_ids):
         state["calls"] += 1
-        # Only after the 3rd poll do we report 'a' done.
-        return state["calls"] >= 3 and jid == "a"
+        # Only on the 3rd poll do we report 'a' done.
+        return {j for j in job_ids if j == "a"} if state["calls"] >= 3 else set()
 
     with patch("time.sleep"):
-        t.wait_for_room(4, is_finished=is_finished)
+        t.wait_for_room(4, finished=finished)
     assert t.active_jobs == ("b",)
 
 
@@ -163,14 +172,14 @@ def test_reap_logs_freed_cores(caplog):
     t = Throttler(max_cores=32)
     t.register("done", 8)
     with caplog.at_level(_logging.INFO, logger="chemrefine.throttle"):
-        t._reap(lambda _: True)
+        t._reap(_always_finished)
     assert any("freed 8 cores" in record.message for record in caplog.records)
 
 
 def test_wait_for_room_rejects_request_above_budget():
     t = Throttler(max_cores=16)
     with pytest.raises(ValueError):
-        t.wait_for_room(32, is_finished=_always_finished)
+        t.wait_for_room(32, finished=_always_finished)
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +192,7 @@ def test_wait_all_empties_active_set():
     t.register("a", 8)
     t.register("b", 16)
     with patch("time.sleep"):
-        t.wait_all(is_finished=_always_finished)
+        t.wait_all(finished=_always_finished)
     assert t.cores_in_use == 0
     assert t.active_jobs == ()
 
@@ -191,7 +200,7 @@ def test_wait_all_empties_active_set():
 def test_wait_all_returns_immediately_when_no_jobs():
     t = Throttler(max_cores=64)
     with patch("time.sleep") as sleeper:
-        t.wait_all(is_finished=_never_finished)
+        t.wait_all(finished=_never_finished)
     sleeper.assert_not_called()
 
 
@@ -201,12 +210,12 @@ def test_wait_all_sleeps_until_jobs_finish():
     t.register("running", 8)
     state = {"calls": 0}
 
-    def is_finished(_jid: str) -> bool:
+    def finished(job_ids):
         state["calls"] += 1
-        return state["calls"] >= 2  # finishes on the second poll
+        return set(job_ids) if state["calls"] >= 2 else set()  # done on the second poll
 
     with patch("time.sleep") as sleeper:
-        t.wait_all(is_finished=is_finished)
+        t.wait_all(finished=finished)
     assert t.active_jobs == ()
     sleeper.assert_called()
 
@@ -226,7 +235,7 @@ def test_wait_for_room_raises_on_timeout():
         patch("time.monotonic", side_effect=[0.0, 0.0, 99.0]),
         pytest.raises(ThrottleTimeoutError),
     ):
-        t.wait_for_room(4, is_finished=_never_finished, max_wait_seconds=5.0)
+        t.wait_for_room(4, finished=_never_finished, max_wait_seconds=5.0)
 
 
 def test_wait_all_raises_on_timeout():
@@ -239,4 +248,4 @@ def test_wait_all_raises_on_timeout():
         patch("time.monotonic", side_effect=[0.0, 0.0, 99.0]),
         pytest.raises(ThrottleTimeoutError),
     ):
-        t.wait_all(is_finished=_never_finished, max_wait_seconds=5.0)
+        t.wait_all(finished=_never_finished, max_wait_seconds=5.0)

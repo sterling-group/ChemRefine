@@ -74,9 +74,9 @@ def _ctx(
     )
 
 
-@patch.object(slurm, "is_finished", return_value=True)
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
 @patch.object(slurm, "submit")
-def test_run_batch_submits_one_job_per_structure(submit_mock, _is_finished, tmp_path: Path):
+def test_run_batch_submits_one_job_per_structure(submit_mock, _finished_jobs, tmp_path: Path):
     """One SLURM script + one submission per input, all mapped in the returned batch."""
     submit_mock.side_effect = ["1001", "1002"]
     engine = _FakeJobEngine()
@@ -100,10 +100,10 @@ def test_header_name_picks_cuda_for_a_gpu_step(tmp_path: Path):
     assert _execution._header_name(engine, replace(ctx, step_cfg=override)) == "special.header"
 
 
-@patch.object(slurm, "is_finished", return_value=True)
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
 @patch.object(slurm, "submit", return_value="local-1")
 def test_run_batch_dispatch_local_skips_array_and_submits_locally(
-    submit_mock, _is_finished, tmp_path: Path
+    submit_mock, _finished_jobs, tmp_path: Path
 ):
     """`dispatch: local` takes the per-job path (no sbatch --array) even with
     slurm_array set and an sbatch binary on PATH, and threads the mode to submit."""
@@ -116,9 +116,9 @@ def test_run_batch_dispatch_local_skips_array_and_submits_locally(
     assert submit_mock.call_args.kwargs["dispatch"] == "local"
 
 
-@patch.object(slurm, "is_finished", return_value=True)
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
 @patch.object(slurm, "submit", return_value="9001")
-def test_run_batch_rejects_a_gpu_step_over_the_budget(_submit, _is_finished, tmp_path: Path):
+def test_run_batch_rejects_a_gpu_step_over_the_budget(_submit, _finished_jobs, tmp_path: Path):
     """Demanding more GPUs than the budget is a ConfigError, not a throttler traceback.
 
     Uses a single-GPU step against ``max_gpus=0`` so this exercises the *budget*
@@ -133,9 +133,9 @@ def test_run_batch_rejects_a_gpu_step_over_the_budget(_submit, _is_finished, tmp
         _execution.run_batch(engine, inputs, ctx)
 
 
-@patch.object(slurm, "is_finished", return_value=True)
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
 @patch.object(slurm, "submit", return_value="9001")
-def test_run_batch_rejects_multi_gpu_step_locally(_submit, _is_finished, tmp_path: Path):
+def test_run_batch_rejects_multi_gpu_step_locally(_submit, _finished_jobs, tmp_path: Path):
     """Local dispatch pins exactly one device per job, so >1 GPU must fail loudly.
 
     ``Throttler.assign_device`` hands out a single index and ``run_batch`` exports
@@ -150,9 +150,9 @@ def test_run_batch_rejects_multi_gpu_step_locally(_submit, _is_finished, tmp_pat
         _execution.run_batch(engine, inputs, ctx)
 
 
-@patch.object(slurm, "is_finished", return_value=True)
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
 @patch.object(slurm, "submit", return_value="9001")
-def test_run_batch_allows_multi_gpu_step_under_slurm(_submit, _is_finished, tmp_path: Path):
+def test_run_batch_allows_multi_gpu_step_under_slurm(_submit, _finished_jobs, tmp_path: Path):
     """Under SLURM the scheduler places the GPUs, so >1 per job is fine."""
     engine = _FakeJobEngine()
     engine.gpu_count = 2

@@ -629,3 +629,51 @@ def test_submit_array_raises_when_output_lacks_job_id(tmp_path: Path):
         pytest.raises(JobSubmissionError, match="could not parse job ID"),
     ):
         slurm.submit_array(tmp_path / "a.slurm", n_tasks=1, max_concurrent=1, manifest=tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# finished_jobs — one scheduler query answers the whole batch
+# ---------------------------------------------------------------------------
+
+
+def test_finished_jobs_asks_squeue_once_for_the_whole_batch():
+    """The point of the batch form: N jobs cost one squeue, not N.
+
+    Polling per job meant a step with N concurrent jobs ran N squeue
+    subprocesses every poll interval — at max_cores 512 with pal 1 that is
+    roughly 50 invocations a second against the controller, sustained, which
+    sites rate-limit or ban for.
+    """
+    fake = MagicMock(returncode=0, stdout="1002\n", stderr="")
+    ids = [str(1000 + i) for i in range(200)]
+    with patch.object(subprocess, "run", return_value=fake) as run:
+        done = slurm.finished_jobs(ids)
+    assert run.call_count == 1
+    assert "1002" not in done  # still queued
+    assert len(done) == len(ids) - 1
+
+
+def test_finished_jobs_matches_array_tasks_by_prefix():
+    fake = MagicMock(returncode=0, stdout="12345_3\n777\n", stderr="")
+    with patch.object(subprocess, "run", return_value=fake):
+        assert slurm.finished_jobs(["12345", "777", "999"]) == {"999"}
+
+
+def test_finished_jobs_treats_a_failing_squeue_as_nothing_finished():
+    """A transient squeue failure must not be read as "the batch is done" —
+    that would parse every still-running job as a missing-output failure."""
+    with patch.object(subprocess, "run", side_effect=subprocess.CalledProcessError(1, "squeue")):
+        assert slurm.finished_jobs(["1", "2"]) == set()
+
+
+def test_finished_jobs_skips_squeue_entirely_for_local_only_batches():
+    """A laptop run has no scheduler to ask."""
+    with patch.object(subprocess, "run") as run:
+        assert slurm.finished_jobs(["local-404"]) == {"local-404"}
+    run.assert_not_called()
+
+
+def test_finished_jobs_of_an_empty_batch_asks_nothing():
+    with patch.object(subprocess, "run") as run:
+        assert slurm.finished_jobs([]) == set()
+    run.assert_not_called()

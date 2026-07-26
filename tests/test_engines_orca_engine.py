@@ -156,10 +156,10 @@ def test_prepare_uses_step_specific_template_when_given(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-@patch.object(slurm, "is_finished", return_value=True)
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
 @patch.object(slurm, "submit")
 def test_submit_creates_script_per_input_and_returns_batch(
-    submit_mock, _is_finished, tmp_path: Path
+    submit_mock, _finished_jobs, tmp_path: Path
 ):
     submit_mock.side_effect = ["1001", "1002"]
     engine = get_engine("orca")
@@ -173,9 +173,9 @@ def test_submit_creates_script_per_input_and_returns_batch(
         assert inp.with_suffix(".slurm").exists()
 
 
-@patch.object(slurm, "is_finished", return_value=True)
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
 @patch.object(slurm, "submit", return_value="9001")
-def test_submit_script_contains_orca_executable_invocation(_submit, _is_finished, tmp_path: Path):
+def test_submit_script_contains_orca_executable_invocation(_submit, _finished_jobs, tmp_path: Path):
     engine = get_engine("orca")
     ctx = _ctx(tmp_path, structures=(_seed_structure(),))
     inputs = engine.prepare(ctx)
@@ -188,9 +188,9 @@ def test_submit_script_contains_orca_executable_invocation(_submit, _is_finished
     assert "*.hess" in script_text
 
 
-@patch.object(slurm, "is_finished", return_value=True)
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
 @patch.object(slurm, "submit", return_value="9001")
-def test_submit_missing_slurm_header_raises(_submit, _is_finished, tmp_path: Path):
+def test_submit_missing_slurm_header_raises(_submit, _finished_jobs, tmp_path: Path):
     engine = get_engine("orca")
     ctx = _ctx(tmp_path, structures=(_seed_structure(),))
     (ctx.template_dir / "cpu.slurm.header").unlink()
@@ -200,11 +200,11 @@ def test_submit_missing_slurm_header_raises(_submit, _is_finished, tmp_path: Pat
 
 
 @patch.object(slurm, "sbatch_available", return_value=True)
-@patch.object(slurm, "is_finished", return_value=True)
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
 @patch.object(slurm, "submit_array", return_value="777")
 @patch.object(slurm, "submit")
 def test_submit_uses_one_array_when_slurm_array_set(
-    submit_mock, submit_array_mock, _is_finished, _sbatch, tmp_path: Path
+    submit_mock, submit_array_mock, _finished_jobs, _sbatch, tmp_path: Path
 ):
     """`slurm_array: true` on a SLURM host → one array submission, zero per-job
     sbatch calls, every input mapped to the parent id, one script + manifest."""
@@ -230,11 +230,11 @@ def test_submit_uses_one_array_when_slurm_array_set(
     assert manifest.read_text(encoding="utf-8").count("\n") == 2
 
 
-@patch.object(slurm, "is_finished", return_value=True)
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
 @patch.object(slurm, "submit_array")
 @patch.object(slurm, "submit", return_value="9001")
 def test_submit_ignores_slurm_array_locally(
-    _submit, submit_array_mock, _is_finished, tmp_path: Path
+    _submit, submit_array_mock, _finished_jobs, tmp_path: Path
 ):
     """Without sbatch on PATH the knob is inert — the local per-job path runs."""
     from dataclasses import replace
@@ -269,7 +269,7 @@ def test_submit_array_polls_until_the_array_drains(_submit_array, _sbatch, tmp_p
     ctx = replace(_ctx(tmp_path, structures=(_seed_structure(),)), slurm_array=True)
     inputs = engine.prepare(ctx)
     with (
-        patch.object(slurm, "is_finished", side_effect=[False, True]) as finished_mock,
+        patch.object(slurm, "finished_jobs", side_effect=[set(), {"777"}]) as finished_mock,
         patch("chemrefine.slurm.time.sleep") as sleep_mock,
     ):
         engine.submit(inputs, ctx)

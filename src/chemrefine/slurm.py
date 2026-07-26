@@ -627,23 +627,37 @@ def submit(
     return job_id
 
 
-def is_finished(job_id: str, *, squeue_cmd: str = "squeue") -> bool:
-    """Return True if ``job_id`` is no longer running.
+def finished_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> set[str]:
+    """Return the subset of ``job_ids`` that is no longer running — **one** ``squeue``.
 
-    ``"local-N"`` IDs are polled via their background process
-    (:func:`_local_is_finished`); real SLURM IDs are checked against the
-    current user's ``squeue``. An array's parent id matches its task rows by
-    prefix — ``squeue`` prints running tasks as ``12345_0`` and pending ones
-    as ``12345_[5-999]``, never the bare parent id.
+    The whole set is answered by a single scheduler query. Asking per job instead meant
+    a step with N concurrent jobs ran N ``squeue`` subprocesses every poll interval: at
+    ``max_cores: 512`` with ``pal: 1`` that is ~50 invocations a second against the
+    controller, sustained for the length of the step. Sites rate-limit or ban for
+    exactly that, and it is pure waste — the same full job list was being fetched N
+    times to answer N questions about it.
 
-    ``--noheader`` is requested explicitly rather than slicing the first line
-    off the output: a site that injects ``--noheader`` (via a ``squeue``
-    wrapper or ``SQUEUE_FORMAT``) would otherwise have its first *real* job id
-    discarded as if it were the header, reporting a still-running job as
-    finished and misclassifying it as a failure.
+    ``"local-N"`` ids are polled via their background process
+    (:func:`_local_is_finished`, which also reaps them, so each is polled exactly once
+    per call); real SLURM ids are matched against the current user's queue. An array's
+    parent id matches its task rows by prefix — ``squeue`` prints running tasks as
+    ``12345_0`` and pending ones as ``12345_[5-999]``, never the bare parent id.
+
+    ``--noheader`` is requested explicitly rather than slicing the first line off the
+    output: a site that injects ``--noheader`` (via a ``squeue`` wrapper or
+    ``SQUEUE_FORMAT``) would otherwise have its first *real* job id discarded as if it
+    were the header, reporting a still-running job as finished and misclassifying it as
+    a failure.
+
+    A failing ``squeue`` (transient on busy clusters) yields no scheduler ids this
+    tick — "not finished", to be retried — rather than falsely reporting the batch done.
     """
-    if job_id.startswith(_LOCAL_JOB_PREFIX):
-        return _local_is_finished(job_id)
+    ids = set(job_ids)
+    local = {jid for jid in ids if jid.startswith(_LOCAL_JOB_PREFIX)}
+    done = {jid for jid in local if _local_is_finished(jid)}
+    scheduled = ids - local
+    if not scheduled:
+        return done
     try:
         result = subprocess.run(
             [squeue_cmd, "--noheader", "-u", _current_user(), "-o", "%i"],
@@ -652,28 +666,42 @@ def is_finished(job_id: str, *, squeue_cmd: str = "squeue") -> bool:
             check=True,
         )
     except subprocess.CalledProcessError:
-        # squeue is transient on busy clusters; treat as "not finished" and try again later.
-        return False
+        return done
     running = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    return not any(line == job_id or line.startswith(f"{job_id}_") for line in running)
+    done |= {
+        jid
+        for jid in scheduled
+        if not any(line == jid or line.startswith(f"{jid}_") for line in running)
+    }
+    return done
+
+
+def is_finished(job_id: str, *, squeue_cmd: str = "squeue") -> bool:
+    """Return True if ``job_id`` is no longer running.
+
+    The single-job form of :func:`finished_jobs`, kept for callers that genuinely have
+    one job to wait on (the MLIP trainer submits exactly one). Batch callers must use
+    :func:`finished_jobs` — calling this in a loop is the pathology it exists to avoid.
+    """
+    return job_id in finished_jobs([job_id], squeue_cmd=squeue_cmd)
 
 
 def wait_for_jobs(
     job_ids: Collection[str],
     *,
     poll_interval: float,
-    is_finished: Callable[[str], bool],
+    finished: Callable[[Collection[str]], set[str]],
 ) -> None:
     """Block until every id in ``job_ids`` reports finished, polling at ``poll_interval``.
 
     The single canonical "wait for these SLURM jobs to drain" loop — used by the job-array
     path in :mod:`chemrefine.engines._execution` (the per-job path uses the budget-aware
-    :class:`chemrefine.throttle.Throttler` instead, which reaps as it waits). ``is_finished``
-    is injected (the caller passes :func:`is_finished`) so it stays mockable, mirroring the
-    throttler.
+    :class:`chemrefine.throttle.Throttler` instead, which reaps as it waits). ``finished``
+    is injected (the caller passes :func:`finished_jobs`) so it stays mockable, mirroring
+    the throttler.
     """
     pending = set(job_ids)
     while pending:
-        pending = {jid for jid in pending if not is_finished(jid)}
+        pending -= finished(pending)
         if pending:
             time.sleep(poll_interval)

@@ -4,8 +4,9 @@ A pipeline step typically submits many jobs at once, but a host has a
 fixed CPU budget (``max_cores``) and — locally — a fixed number of GPUs
 (``max_gpus``). The throttler tracks each active job's ``(cores, gpus)``
 demand and blocks new submissions until **both** budgets allow it.
-Polling delegates to a caller-supplied ``is_finished`` callable so tests
-can substitute a fake without monkeypatching :mod:`subprocess`.
+Polling delegates to a caller-supplied ``finished`` callable — set-shaped, so
+one scheduler query answers the whole active batch — which also lets tests
+substitute a fake without monkeypatching :mod:`subprocess`.
 
 The GPU budget only bites locally: under SLURM the scheduler places GPUs
 itself (``--gres=gpu``), so the batch engine sets ``max_gpus`` effectively
@@ -18,13 +19,18 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 
 from chemrefine.errors import ThrottleTimeoutError
 
 logger = logging.getLogger(__name__)
 
-IsFinishedFn = Callable[[str], bool]
+FinishedFn = Callable[[Collection[str]], set[str]]
+"""Poll the scheduler once for a whole set of job ids; return those that are done.
+
+Set-shaped rather than per-job on purpose: the throttler asks about every active job
+on every tick, and a per-job callable turned that into one scheduler subprocess per
+job per tick (see :func:`chemrefine.slurm.finished_jobs`)."""
 
 
 class Throttler:
@@ -96,13 +102,13 @@ class Throttler:
         self,
         pal_needed: int,
         *,
-        is_finished: IsFinishedFn,
+        finished: FinishedFn,
         gpus_needed: int = 0,
         max_wait_seconds: float | None = None,
     ) -> None:
         """Block until ``pal_needed`` cores **and** ``gpus_needed`` GPUs can be allocated.
 
-        Calls ``is_finished`` once per loop iteration to reap completed
+        Polls ``finished`` once per loop iteration to reap completed
         jobs; sleeps ``poll_interval`` seconds before re-checking when
         room is still insufficient. Returns as soon as both budgets
         allow the request.
@@ -125,7 +131,7 @@ class Throttler:
             )
         deadline = time.monotonic() + max_wait_seconds if max_wait_seconds is not None else None
         while True:
-            self._reap(is_finished)
+            self._reap(finished)
             if (
                 self.cores_in_use + pal_needed <= self.max_cores
                 and self.gpus_in_use + gpus_needed <= self.max_gpus
@@ -150,7 +156,7 @@ class Throttler:
     def wait_all(
         self,
         *,
-        is_finished: IsFinishedFn,
+        finished: FinishedFn,
         max_wait_seconds: float | None = None,
     ) -> None:
         """Block until every active job has finished.
@@ -164,7 +170,7 @@ class Throttler:
         """
         deadline = time.monotonic() + max_wait_seconds if max_wait_seconds is not None else None
         while self._active:
-            self._reap(is_finished)
+            self._reap(finished)
             if not self._active:
                 return
             if deadline is not None and time.monotonic() >= deadline:
@@ -175,9 +181,10 @@ class Throttler:
 
     # -- internals ---------------------------------------------------------
 
-    def _reap(self, is_finished: IsFinishedFn) -> None:
-        """Drop every active job that ``is_finished`` reports done."""
-        for jid in list(self._active):
-            if is_finished(jid):
-                cores, gpus, _dev = self._active.pop(jid)
-                logger.info("job %s finished, freed %d cores + %d gpus", jid, cores, gpus)
+    def _reap(self, finished: FinishedFn) -> None:
+        """Drop every active job the scheduler reports done — one poll for all of them."""
+        if not self._active:
+            return
+        for jid in finished(tuple(self._active)):
+            cores, gpus, _dev = self._active.pop(jid)
+            logger.info("job %s finished, freed %d cores + %d gpus", jid, cores, gpus)
