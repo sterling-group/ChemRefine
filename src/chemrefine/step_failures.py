@@ -305,9 +305,9 @@ def apply_failure_policy(
 
     The ``failed_jobs.json`` ledger is **always** written for any failures (so
     they're visible regardless of policy) and cleared on a clean step. ``skip``
-    (default) drops the failures and keeps the successes; ``best`` keeps every
+    drops the failures and keeps the successes; ``best`` keeps every
     structure, backfilling a failure with the best geometry obtained for it
-    (else its submitted input); ``stop`` keeps the successes too but the run is
+    (else its submitted input); ``stop`` (the default) keeps the successes too but the run is
     halted by :func:`chemrefine.step.halt_if_pending` (from the pipeline)
     *after* the cache is written (so ``resume`` / ``rerun-errors`` re-attempt
     only those failed jobs).

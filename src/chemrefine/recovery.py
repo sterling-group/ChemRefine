@@ -1,9 +1,9 @@
 """Action dispatcher — run / resume / rerun-errors / rerun / rebuild-cache / rebuild-nms.
 
 The CLI maps each subcommand to an :class:`Action` and calls :func:`execute`.
-Failure handling is per step via ``on_failure: stop | skip | best``: ``skip``
-(default) drops failures and continues, ``best`` keeps all (backfilling the
-best geometry), ``stop`` halts the run after caching the step's successes.
+Failure handling is per step via ``on_failure: stop | skip | best``: ``stop``
+(the default) halts the run after caching the step's successes, ``skip`` drops
+failures and continues, ``best`` keeps all (backfilling the best geometry).
 Only a ``stop`` step leaves failures pending — and these actions recover them:
 
 * ``run`` — wipe every step's cache and re-execute from scratch.

@@ -52,11 +52,14 @@ resolved **by name** at run time (see
 
 Per-step `on_failure` (in the YAML) decides in-run behaviour:
 
-- **`skip`** (default) — drop the failed structures, keep the successes, continue.
+- **`stop`** (default) — cache the step's successes, then halt the run so you can fix
+  the failures and `resume` (or `rerun-errors N`). The default so failures are never
+  silently dropped.
+- **`skip`** — drop the failed structures, keep the successes, continue.
 - **`best`** — keep every structure, backfilling a failure with the best geometry
-  obtained for it.
-- **`stop`** — cache the step's successes, then halt the run so you can fix the
-  failures and `resume` (or `rerun-errors N`).
+  obtained for it. A backfilled structure carries no thermochemistry, so it is
+  excluded from a `sample` that ranks on `gibbs` / `enthalpy` /
+  `electronic_zero_point` rather than aborting the step.
 
 The `failed_jobs.json` ledger always records which structures failed (so they are
 visible), but only `stop` failures are *pending* for `resume` / `rerun-errors` to
