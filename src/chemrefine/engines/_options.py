@@ -19,8 +19,16 @@ class EngineOptions(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    device: Literal["cuda", "cpu"] = "cuda"
-    """Compute device for this engine (``cuda`` ⇒ GPU, ``cpu`` ⇒ CPU)."""
+    device: Literal["cuda", "cpu"] = "cpu"
+    """Compute device for this engine (``cuda`` ⇒ GPU, ``cpu`` ⇒ CPU).
+
+    Defaults to ``cpu`` because this value is read by two layers that must agree: the
+    engine renders it into the step's script (``$DEVICE``), and the scheduler derives
+    the step's GPU demand and SLURM header from it
+    (:func:`chemrefine.engines._job.gpus_from_options`). ``cpu`` is the floor that
+    always runs; requesting a GPU is one line of YAML, whereas a wrong ``cuda``
+    default schedules a CPU job whose script then asks for a device it wasn't given.
+    """
 
     backend_python: str | None = None
     """Explicit Python interpreter for this step's compute backend (escape hatch).

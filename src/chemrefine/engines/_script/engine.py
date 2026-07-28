@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from chemrefine.engines import _provision
-from chemrefine.engines._job import JobEngine, gpus_from_device_options
+from chemrefine.engines._job import JobEngine, gpus_from_options
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines._script import output as script_output
 from chemrefine.engines._script import render as script_render
@@ -35,6 +35,12 @@ class ScriptEngine(JobEngine):
     template_suffix: ClassVar[str] = "py"
     output_suffix: ClassVar[str] = "json"
     output_globs: ClassVar[tuple[str, ...]] = ("*.json", "*.xyz")
+    options_cls: ClassVar[type[EngineOptions]] = EngineOptions
+    """This engine's validated ``step.options`` model — the single reader of those knobs.
+
+    Subclasses point it at their own model so ``pal`` / ``gpus`` and the template
+    placeholders all resolve the same defaults; the ExtOpt engines declare the same
+    ClassVar for the same reason."""
 
     # -- input -------------------------------------------------------------
 
@@ -71,14 +77,14 @@ class ScriptEngine(JobEngine):
     def pal(self, ctx: StepContext) -> int:
         """Direct scripts take their core count from ``options.cores`` (default 1).
 
-        Read through :class:`~chemrefine.engines._options.EngineOptions`, which
-        declares and bounds the field, rather than off the raw dict.
+        Read through this engine's :attr:`options_cls`, which declares and bounds the
+        field, rather than off the raw dict.
         """
-        return EngineOptions.from_raw_lenient(ctx.step_cfg.options).cores
+        return self.options_cls.from_raw_lenient(ctx.step_cfg.options).cores
 
     def gpus(self, ctx: StepContext) -> int:
-        """A GPU if ``options.device: cuda`` (or a truthy ``gpu``); else CPU."""
-        return gpus_from_device_options(ctx.step_cfg.options)
+        """A GPU if this engine's validated options request one; else CPU."""
+        return gpus_from_options(ctx.step_cfg.options, self.options_cls)
 
     def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
         """Run the rendered Python script inside ``$WORK_DIR``, capped to its core budget.

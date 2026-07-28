@@ -19,7 +19,7 @@ from typing import ClassVar
 
 from chemrefine.engines import _provision
 from chemrefine.engines._backend_server.base import SERVER_URL_FILENAME, ComputeBackend
-from chemrefine.engines._job import gpus_from_device_options
+from chemrefine.engines._job import gpus_from_options
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.engines.orca.extopt import protocol, run_block
@@ -35,8 +35,13 @@ class ExtOptOrcaEngine(OrcaEngine):
     calculator_cls: ClassVar[type[ComputeBackend]]
 
     def gpus(self, ctx: StepContext) -> int:
-        """A GPU when the backend's options request one (``device: cuda``); else CPU."""
-        return gpus_from_device_options(ctx.step_cfg.options)
+        """A GPU when the backend's **validated** options request one; else CPU.
+
+        Read through :attr:`options_cls` — the same model :meth:`_server_cmd` validates —
+        so the step's GPU demand, its SLURM header, and the calculator the server builds
+        can never disagree about what ``device`` was asked for.
+        """
+        return gpus_from_options(ctx.step_cfg.options, self.options_cls)
 
     def _extra_blocks(self, ctx: StepContext) -> str:
         """Emit the ``%method ProgExt "<wrapper>"`` block tying ORCA to this step's wrapper."""

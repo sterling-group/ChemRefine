@@ -25,7 +25,8 @@ from chemrefine.config import (
     StepConfig,
     load_config,
 )
-from chemrefine.engines._job import gpus_from_device_options
+from chemrefine.engines._job import gpus_from_options
+from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import get_engine
 from chemrefine.engines.mlip.options import MlipOptions
 from chemrefine.engines.orca.inspect import inspect_template
@@ -43,6 +44,17 @@ _ORCA_FAMILY = {"orca", "mlip-extopt", "pyscf-extopt"}
 def _seed_path(cfg: Config) -> Path:
     """The pipeline's seed input: explicit ``input:`` or the step-1 default."""
     return Path(cfg.input) if cfg.input is not None else cfg.template_dir / "step1.xyz"
+
+
+def _requests_gpu(step: StepConfig) -> bool:
+    """Whether a step asks for a GPU, read through the engine's own options model.
+
+    Goes through the same single reader the scheduler uses (`gpus_from_options` +
+    the engine's `options_cls`) rather than re-deriving it from the raw dict here —
+    re-deriving is what let this check drift from `_execution._header_name`.
+    """
+    options_cls = getattr(get_engine(step.engine), "options_cls", EngineOptions)
+    return bool(gpus_from_options(step.options, options_cls))
 
 
 def _resolved_template(cfg: Config, step: StepConfig) -> Path | None:
@@ -101,7 +113,7 @@ def test_example_slurm_headers_exist(yml: Path) -> None:
     for step in cfg.steps:
         if step.slurm_template:
             header = step.slurm_template
-        elif gpus_from_device_options(step.options):
+        elif _requests_gpu(step):
             header = "cuda.slurm.header"
         else:
             header = cfg.slurm_template

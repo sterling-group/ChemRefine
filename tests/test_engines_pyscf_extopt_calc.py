@@ -126,8 +126,11 @@ def test_pyscf_options_defaults():
     assert opt.xc == "pbe"
     assert opt.basis == "def2-svp"
     assert opt.df is True  # DF defaults on
-    assert opt.device == "cuda"
-    assert opt.gpu is True  # derived from device=cuda
+    # CPU is the floor: this value is read by both the rendered script and the
+    # scheduler, so an unrequested GPU would schedule a CPU job that then asks for
+    # a device it wasn't given.
+    assert opt.device == "cpu"
+    assert opt.gpu is False  # derived from device=cpu
     assert opt.save_tensors is False
     assert opt.localized is False
     assert opt.tensor_folder == "tensors"
@@ -139,6 +142,15 @@ def test_pyscf_options_gpu_derived_from_device():
     # An explicit gpu always wins over the device-derived default.
     assert PyscfOptions(device="cuda", gpu=False).gpu is False
     assert PyscfOptions(device="cpu", gpu=True).gpu is True
+
+
+def test_pyscf_options_gpu_derivation_tracks_the_device_field_default():
+    """An unset `device` must derive `gpu` from the field's *own* default.
+
+    The derivation used to repeat the literal `"cuda"`, so moving the field default
+    would have left it deriving `gpu: true` for a step the scheduler books on CPU.
+    """
+    assert PyscfOptions().gpu is (PyscfOptions.model_fields["device"].default == "cuda")
 
 
 def test_pyscf_options_rejects_empty_tensor_folder():

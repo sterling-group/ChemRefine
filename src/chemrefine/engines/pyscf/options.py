@@ -60,9 +60,16 @@ class PyscfOptions(EngineOptions):
     @model_validator(mode="before")
     @classmethod
     def _derive_gpu_from_device(cls, data: Any) -> Any:
-        """Default ``gpu`` from ``device`` when ``gpu`` isn't given (``cuda`` ⇒ ``True``)."""
+        """Default ``gpu`` from ``device`` when ``gpu`` isn't given (``cuda`` ⇒ ``True``).
+
+        The fallback reads ``device``'s own field default rather than repeating the
+        literal: spelling it twice is what let this derivation keep saying ``cuda``
+        after the field default moved, so an unset ``device`` would have derived
+        ``gpu: true`` while the scheduler booked a CPU job.
+        """
         if isinstance(data, dict) and "gpu" not in data:
-            device = str(data.get("device", "cuda")).lower()
+            default_device = cls.model_fields["device"].default
+            device = str(data.get("device", default_device)).lower()
             data = {**data, "gpu": device == "cuda"}
         return data
 

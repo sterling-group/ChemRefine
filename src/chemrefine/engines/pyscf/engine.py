@@ -15,6 +15,7 @@ from typing import Any, ClassVar
 
 from chemrefine.engines._script import ScriptEngine
 from chemrefine.engines.api import BackendRequirement, register
+from chemrefine.engines.pyscf.options import PyscfOptions
 from chemrefine.state import StepContext
 
 
@@ -24,6 +25,7 @@ class PyscfEngine(ScriptEngine):
 
     name: ClassVar[str] = "pyscf"
     label: ClassVar[str] = "PySCF"
+    options_cls: ClassVar[type[PyscfOptions]] = PyscfOptions
 
     def backend_requirement(self, options: dict[str, Any] | None) -> BackendRequirement:
         """The backend env this step needs — PySCF, whatever the options say."""

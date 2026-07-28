@@ -32,6 +32,7 @@ class MlipEngine(ScriptEngine):
 
     name: ClassVar[str] = "mlip"
     label: ClassVar[str] = "MLIP"
+    options_cls: ClassVar[type[MlipOptions]] = MlipOptions
 
     def backend_requirement(self, options: dict[str, Any] | None) -> BackendRequirement:
         """The backend env this step needs — derived from its task/model selection."""
@@ -51,7 +52,7 @@ class MlipEngine(ScriptEngine):
         the alias rules (``model`` / ``size`` for ``model_name``) belong to the
         model rather than being spelled out a second time here.
         """
-        opts = MlipOptions.from_raw_lenient(ctx.step_cfg.options)
+        opts = self.options_cls.from_raw_lenient(ctx.step_cfg.options)
         return {
             "MODEL_NAME": opts.model_name,
             "TASK_NAME": opts.task_name,
