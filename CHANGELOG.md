@@ -79,6 +79,15 @@ for the full map.
   pointer to the migration guide.
 - `mlff` renamed to `mlip` everywhere (engines, extras, YAML); the old
   spellings remain as aliases.
+- The parsed-result field `terminated` is now `terminated_normally`, in the
+  cache document, the `*.result.json` records, and the API. `True` always meant
+  "the program exited cleanly" — a success marker — and the shorter name read as
+  its opposite. Renamed before 2.0.0 ships so no released cache carries the old
+  key; the format versions are deliberately unchanged, since there is no released
+  reader to protect.
+- `options.device` now defaults to `cpu` (was `cuda`). It is read by both the
+  rendered script and the scheduler, so the old default asked for a GPU the job
+  was never allocated; request one explicitly with `device: cuda`.
 - The version is single-sourced in `pyproject.toml`; releases are tag-driven
   (a `vX.Y.Z` tag builds, creates the GitHub Release, and publishes to PyPI
   after a tag↔version consistency check).
@@ -104,6 +113,24 @@ Hardening landed during the 2.0.0 stabilization:
 - The ExtOpt server requires a per-run bearer token on `/calculate` (written
   `0600` next to `server.url`), so other users on a shared compute node can
   no longer drive it.
+- `on_failure: best` no longer aborts the run when the step samples on `gibbs`,
+  `enthalpy`, or `electronic_zero_point`. A backfilled structure carries no
+  thermochemistry, and raising on it defeated the one policy meant to keep
+  going; it is now excluded from the ranking, and only a step where *nothing*
+  has the requested energy is a config error.
+- A step's GPU demand, its SLURM header, and the device rendered into its script
+  are all read from the engine's own options model, so they cannot disagree.
+- The ORCA executable and `$OUTPUT_DIR` are shell-quoted in the ExtOpt run block
+  too, not just the plain ORCA one — a path containing a space broke ExtOpt steps.
+- Normal-mode sampling seeds its RNG per structure, so `rebuild-cache` re-derives
+  the same displaced children a run did even when it skips a structure the run
+  visited (previously it reported resolved structures as unresolved).
+- A missing input template or SLURM header exits with the documented config-error
+  code instead of an uncaught traceback.
+- A truncated `.extinp.tmp` is a classified job failure rather than an
+  `IndexError` inside the ExtOpt wrapper.
+- `squeue` missing from `PATH` no longer raises on every poll; the cache is
+  `fsync`ed before its atomic rename.
 
 ## [1.3.1] and earlier
 
