@@ -100,6 +100,24 @@ def test_read_extinp_handles_dograd_zero(tmp_path: Path):
     assert protocol.read_extinp(inp).dograd is False
 
 
+@pytest.mark.parametrize("kept_lines", [0, 1, 4])
+def test_read_extinp_rejects_a_truncated_file(tmp_path: Path, kept_lines: int):
+    """A short `.extinp.tmp` is a classified job failure, not an IndexError.
+
+    ORCA killed mid-write (walltime, a full disk) leaves a partial file. Indexing it
+    blind raised IndexError *inside the wrapper script*, so ORCA got no `.engrad` and
+    the step died with a bare traceback in the runlog instead of a failure the ledger
+    could record.
+    """
+    inp = _write_extinp(tmp_path)
+    inp.write_text(
+        "\n".join(inp.read_text(encoding="utf-8").splitlines()[:kept_lines]), encoding="utf-8"
+    )
+
+    with pytest.raises(JobFailureError, match="truncated"):
+        protocol.read_extinp(inp)
+
+
 def test_read_extinp_handles_absolute_xyz_path(tmp_path: Path):
     xyz = tmp_path / "abs_struct.xyz"
     xyz.write_text("1\nc\nH 1.0 2.0 3.0\n", encoding="utf-8")

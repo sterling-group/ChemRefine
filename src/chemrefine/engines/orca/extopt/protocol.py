@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from chemrefine.engines._backend_server.base import CalculationData
+from chemrefine.errors import JobFailureError
 
 if TYPE_CHECKING:
     import numpy as np
@@ -31,6 +32,9 @@ if TYPE_CHECKING:
 # and reads ``X.engrad`` back. Single source for the protocol's filenames.
 EXTINP_SUFFIX = ".extinp.tmp"
 ENGRAD_SUFFIX = ".engrad"
+
+_EXTINP_LINES = 5
+"""Lines ORCA writes to a ``.extinp.tmp``: xyz name, charge, mult, ncores, dograd."""
 
 
 def read_extinp(
@@ -54,6 +58,13 @@ def read_extinp(
     """
     inpfile = Path(inpfile)
     lines = inpfile.read_text(encoding="utf-8").splitlines()
+    # A truncated file — ORCA killed mid-write, a full disk — would otherwise raise
+    # IndexError inside the wrapper script, so ORCA gets no `.engrad` and the step
+    # fails with a bare traceback in the runlog instead of a classified failure.
+    if len(lines) < _EXTINP_LINES:
+        raise JobFailureError(
+            f"truncated ExtOpt input {inpfile}: expected {_EXTINP_LINES} lines, got {len(lines)}"
+        )
     xyz_name = lines[0].split("#")[0].strip()
     charge = int(lines[1].split("#")[0].strip())
     mult = int(lines[2].split("#")[0].strip())
