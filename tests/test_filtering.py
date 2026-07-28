@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from ase import Atoms
 
@@ -10,6 +12,7 @@ from chemrefine.config import (
     MaxSample,
     MinSample,
 )
+from chemrefine.errors import ConfigError
 from chemrefine.filtering import apply
 from chemrefine.quantities import HARTREE_TO_KCALMOL
 from chemrefine.state import StepResults, Structure
@@ -276,3 +279,77 @@ def test_every_sample_variant_dispatches_to_its_own_filter():
     assert [s.id for s in highest.structures] == ["2"]
     # At 1% cumulative only the lowest-energy structure carries enough weight.
     assert [s.id for s in boltzmann.structures] == ["0"]
+
+
+# ---------------------------------------------------------------------------
+# Thermochemical energy_type x partially-missing thermochemistry
+#
+# `on_failure: best` backfills a failed structure with its best geometry, which
+# carries no thermochemistry. Raising on that aborted the whole run at the filter
+# and turned `best` -- the one policy whose purpose is to keep going -- into
+# something worse than `stop`.
+# ---------------------------------------------------------------------------
+
+_THERMO_TYPES = ["gibbs", "enthalpy", "electronic_zero_point"]
+_THERMO_ATTR = {
+    "gibbs": "gibbs_hartree",
+    "enthalpy": "enthalpy_hartree",
+    "electronic_zero_point": "energy_zpe_hartree",
+}
+
+
+def _with_thermo(structure: Structure, energy_type: str, value: float | None) -> Structure:
+    """A copy of ``structure`` carrying (or missing) one thermochemical energy."""
+    return replace(structure, **{_THERMO_ATTR[energy_type]: value})
+
+
+@pytest.mark.parametrize("energy_type", _THERMO_TYPES)
+@pytest.mark.parametrize(
+    "sample_factory",
+    [
+        lambda t: MinSample(method="min", count=1, energy_type=t),
+        lambda t: MaxSample(method="max", count=1, energy_type=t),
+        lambda t: BoltzmannSample(method="boltzmann", percent_cumulative=99.0, energy_type=t),
+    ],
+    ids=["min", "max", "boltzmann"],
+)
+def test_partial_thermochemistry_drops_the_backfills_instead_of_raising(
+    energy_type: str, sample_factory
+):
+    """A structure with no thermochemistry is excluded from the ranking, not fatal.
+
+    This is the `on_failure: best` shape: one converged structure with a full freq
+    result, one backfilled failure carrying only its electronic energy.
+    """
+    ranked, backfilled = _results(("0", -1.1), ("1", -1.0)).structures
+    results = StepResults(
+        structures=(
+            _with_thermo(ranked, energy_type, -1.09),
+            _with_thermo(backfilled, energy_type, None),
+        )
+    )
+
+    survivors = apply(results, sample_factory(energy_type))
+
+    assert [s.id for s in survivors.structures] == ["0"]
+
+
+@pytest.mark.parametrize("energy_type", _THERMO_TYPES)
+def test_no_structure_with_thermochemistry_is_still_a_config_error(energy_type: str):
+    """Nothing has the energy -> no freq step ran, which is a genuine config mistake."""
+    sample = MinSample(method="min", count=1, energy_type=energy_type)
+    with pytest.raises(ConfigError, match=energy_type):
+        apply(_results(("0", -1.1), ("1", -1.0)), sample)
+
+
+def test_full_thermochemistry_ranks_on_it_not_on_electronic():
+    """The partial-data path must not disturb ordinary thermochemical ranking."""
+    a, b = _results(("0", -1.0), ("1", -2.0)).structures
+    results = StepResults(
+        structures=(_with_thermo(a, "gibbs", -5.0), _with_thermo(b, "gibbs", -4.0))
+    )
+
+    survivors = apply(results, MinSample(method="min", count=1, energy_type="gibbs"))
+
+    # Lowest *Gibbs* is "0", even though "1" has the lower electronic energy.
+    assert [s.id for s in survivors.structures] == ["0"]

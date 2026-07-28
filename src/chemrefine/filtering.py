@@ -69,8 +69,10 @@ def apply(results: StepResults, sample: SampleConfig | None) -> PipelineState:
 
     With a ``sample`` set, structures without a computed electronic energy are
     dropped (they cannot be sorted or weighted), then sorted and filtered on
-    ``sample.energy_type`` — a non-``electronic`` type requires a frequency calc
-    to have populated that energy, else :class:`ConfigError`.
+    ``sample.energy_type``. A non-``electronic`` type needs a frequency calc to
+    have populated that energy; structures missing it are dropped the same way,
+    and only a step where *nothing* has it raises :class:`ConfigError` (see
+    :func:`_with_energy`).
     """
     if sample is None:
         return PipelineState(structures=tuple(results.structures))
@@ -80,13 +82,7 @@ def apply(results: StepResults, sample: SampleConfig | None) -> PipelineState:
 
     energy_attr = ENERGY_ATTR[sample.energy_type]
     if energy_attr != "energy_hartree":
-        missing = [s.id for s in structures if getattr(s, energy_attr) is None]
-        if missing:
-            raise ConfigError(
-                f"sample energy_type={sample.energy_type!r} needs thermochemistry "
-                f"(a frequency calc), but no such energy was computed for "
-                f"structure(s) {missing}; run a freq step or use energy_type: electronic"
-            )
+        structures = _with_energy(structures, energy_attr, sample.energy_type)
 
     if sample.by_parent:
         survivors = _filter_by_parent(structures, sample, energy_attr)
@@ -95,6 +91,43 @@ def apply(results: StepResults, sample: SampleConfig | None) -> PipelineState:
             sorted(structures, key=operator.attrgetter(energy_attr)), sample, energy_attr
         )
     return PipelineState(structures=tuple(survivors))
+
+
+def _with_energy(
+    structures: list[Structure], energy_attr: str, energy_type: str
+) -> list[Structure]:
+    """Keep the structures carrying a thermochemical energy; raise only if none do.
+
+    The distinction is what separates a config mistake from a partial failure, and
+    getting it wrong turns ``on_failure: best`` into something worse than ``stop``:
+
+    * **No structure has it** — no frequency calc ran at all. That is a genuine config
+      error (``energy_type: gibbs`` on a step that computes no thermochemistry), so it
+      raises and names the fix.
+    * **Some structures have it** — the ones that don't are ``on_failure: best``
+      backfills, which carry the best geometry obtained but no thermochemistry by
+      construction. Raising here aborted the whole run at the filter, defeating the
+      one policy whose entire purpose is to keep going. They are dropped from the
+      ranking instead — exactly what already happens to a structure with no electronic
+      energy — and stay in the cache and the failure ledger where they are visible.
+    """
+    usable = [s for s in structures if getattr(s, energy_attr) is not None]
+    if not usable:
+        raise ConfigError(
+            f"sample energy_type={energy_type!r} needs thermochemistry "
+            f"(a frequency calc), but no such energy was computed for any structure; "
+            f"run a freq step or use energy_type: electronic"
+        )
+    dropped = [s.id for s in structures if getattr(s, energy_attr) is None]
+    if dropped:
+        logger.warning(
+            "%d structure(s) have no %s and are excluded from the filter "
+            "(on_failure backfills carry no thermochemistry): %s",
+            len(dropped),
+            energy_type,
+            dropped,
+        )
+    return usable
 
 
 # ---------------------------------------------------------------------------
