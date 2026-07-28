@@ -139,14 +139,19 @@ def registered_extras() -> frozenset[str]:
 def requirement_from_options(options: dict[str, Any] | None) -> BackendRequirement:
     """The :class:`BackendRequirement` a step's raw ``options`` imply.
 
-    Reads the task/model selection tolerantly (same aliases the direct engine's template
-    vars accept, defaults from :class:`~chemrefine.engines.mlip.options.MlipOptions`) and maps
-    it through :func:`backend_spec` — so the env requirement always matches what
+    Reads the task/model selection through :class:`~chemrefine.engines.mlip.options.MlipOptions`
+    and maps it through :func:`backend_spec` — so the env requirement always matches what
     :func:`build_calculator` would actually load.
+
+    Through the model, not by hand. This used to re-implement the ``task``/``task_name``
+    alias itself, and the copy disagreed with the original: a step naming both spellings
+    resolved here to a backend requirement but raised in the direct engine's template
+    render. Since this function is what ``preflight_backends`` calls, such a step passed
+    the fail-fast check at the top of the run and then died in ``prepare`` — from the very
+    check that exists to stop that happening.
     """
-    raw = options or {}
-    task = str(raw.get("task_name") or raw.get("task") or MlipOptions().task_name)
-    spec = backend_spec(task, raw.get("model_path"))
+    opts = MlipOptions.from_raw_lenient(options)
+    spec = backend_spec(opts.task_name, opts.model_path)
     return BackendRequirement(extra=spec.extra, import_name=spec.import_name)
 
 

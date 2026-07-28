@@ -13,6 +13,8 @@ from typing import Any, Literal, Self
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
+from chemrefine.errors import ConfigError
+
 
 class EngineOptions(BaseModel):
     """Base for an engine's validated ``step.options`` model."""
@@ -49,20 +51,50 @@ class EngineOptions(BaseModel):
         being silently ignored. Subclasses override to add engine-specific
         required-field checks (e.g. PySCF's ``basis`` / ``xc``).
         """
-        return cls(**(raw or {}))
+        raw = raw or {}
+        cls._reject_ambiguous_spellings(raw)
+        return cls(**raw)
 
     @classmethod
-    def _accepted_names(cls) -> set[str]:
-        """Every YAML spelling this model accepts — field names plus their aliases."""
-        names: set[str] = set()
+    def _spellings_by_field(cls) -> dict[str, set[str]]:
+        """Every YAML spelling this model accepts, grouped by the field it sets."""
+        grouped: dict[str, set[str]] = {}
         for name, field in cls.model_fields.items():
-            names.add(name)
+            names = {name}
             alias = field.validation_alias
             if isinstance(alias, str):
                 names.add(alias)
             elif isinstance(alias, AliasChoices):
                 names.update(c for c in alias.choices if isinstance(c, str))
-        return names
+            grouped[name] = names
+        return grouped
+
+    @classmethod
+    def _accepted_names(cls) -> set[str]:
+        """Every YAML spelling this model accepts — field names plus their aliases."""
+        return {name for names in cls._spellings_by_field().values() for name in names}
+
+    @classmethod
+    def _reject_ambiguous_spellings(cls, raw: dict[str, Any]) -> None:
+        """Refuse a step that sets two spellings of the same knob.
+
+        Aliases exist so each backend reads naturally (``task`` for ``task_name``,
+        ``model``/``size`` for ``model_name``), which means a step *can* name one field
+        twice. Pydantic already rejects that, but as ``extra="forbid"`` on whichever
+        spelling it did not pick — a message that names the wrong problem — and only on
+        the strict path, so the two readers of the same options disagreed about whether
+        such a step was valid at all.
+
+        Raising here, before validation, makes both paths agree and says which knob is
+        doubled.
+        """
+        for field, names in cls._spellings_by_field().items():
+            present = sorted(name for name in names if name in raw)
+            if len(present) > 1:
+                raise ConfigError(
+                    f"options set {' and '.join(repr(n) for n in present)}, which are "
+                    f"spellings of the same knob ({field!r}); keep one"
+                )
 
     @classmethod
     def from_raw_lenient(cls, raw: dict[str, Any] | None) -> Self:
@@ -74,5 +106,7 @@ class EngineOptions(BaseModel):
         the alias rules (``model`` / ``size`` for ``model_name``) being spelled out a
         second time, by hand, next to the model that already declared them.
         """
+        raw = raw or {}
+        cls._reject_ambiguous_spellings(raw)
         accepted = cls._accepted_names()
-        return cls(**{k: v for k, v in (raw or {}).items() if k in accepted})
+        return cls(**{k: v for k, v in raw.items() if k in accepted})

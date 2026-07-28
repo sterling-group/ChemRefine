@@ -26,6 +26,8 @@ import pytest
 from chemrefine.config import StepConfig
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import ENGINES, JobExecutable, get_engine
+from chemrefine.engines.mlip.calculator import requirement_from_options
+from chemrefine.errors import ConfigError
 from chemrefine.state import PipelineState, StepContext
 
 # Options each engine needs before it will validate at all (no defaults on purpose).
@@ -121,3 +123,50 @@ def test_run_block_survives_paths_with_spaces(engine_name: str, tmp_path: Path):
         if "my orca" in line:
             command = shlex.split(line.split(">")[0])
             assert "/opt/my orca/orca" in command, f"executable was split by the shell: {command}"
+
+
+# ---------------------------------------------------------------------------
+# Alias handling is the model's job, and every reader must get the same answer
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("engine_name", _gpu_capable())
+def test_every_options_model_refuses_two_spellings_of_one_knob(engine_name: str):
+    """A step naming one field twice fails the same way for every reader.
+
+    Aliases let each backend read naturally (`task` for `task_name`, `model`/`size` for
+    `model_name`), which means a step *can* set one knob twice. Pydantic rejected that as
+    `extra="forbid"` on whichever spelling it did not pick -- a message naming the wrong
+    problem -- and only on the strict path. So `requirement_from_options`, which
+    `preflight_backends` calls, accepted a config that the direct engine's template render
+    then refused: it passed the fail-fast check and died in `prepare`.
+    """
+    options_cls = getattr(get_engine(engine_name), "options_cls", EngineOptions)
+    aliased = {
+        field: sorted(names)
+        for field, names in options_cls._spellings_by_field().items()
+        if len(names) > 1
+    }
+    if not aliased:
+        pytest.skip(f"{engine_name} declares no aliases")
+
+    for field, spellings in aliased.items():
+        raw = dict.fromkeys(spellings, "x")
+        for read in (options_cls.from_raw, options_cls.from_raw_lenient):
+            with pytest.raises(ConfigError, match=field):
+                read(raw)
+
+
+def test_preflight_and_template_render_agree_on_an_ambiguous_mlip_step(tmp_path: Path):
+    """The concrete case: both mlip readers raise, and raise a ConfigError.
+
+    ConfigError specifically -- it carries the documented exit code, where the raw
+    pydantic ValidationError escaped the CLI's contract as a traceback.
+    """
+    both = {"task": "mace_off", "task_name": "omol", "model_name": "small"}
+    engine = get_engine("mlip")
+
+    with pytest.raises(ConfigError):
+        requirement_from_options(both)
+    with pytest.raises(ConfigError):
+        engine._template_vars(_ctx(tmp_path, "mlip", both))
