@@ -8,6 +8,7 @@ and the ``on_failure`` policies driven from a genuinely missing output.
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -67,6 +68,51 @@ def test_rebuild_cache_reparses_outputs_without_submitting(
         assert [s.id for s in outcomes[-1].state.structures] == [
             s.id for s in baseline[-1].state.structures
         ], f"rebuilding step {step_number} changed the survivors"
+
+
+@pytest.mark.parametrize("name", ORCA_CASES)
+def test_rebuilt_records_match_the_archived_ones_field_for_field(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-parsing the archived outputs must reproduce the archived cache exactly.
+
+    The drift detector for the recordings. Comparing only survivor *ids* — which is
+    all the tests above do — let the archives fall a parser fix behind without any
+    signal: `_stamp_run_status` began stamping a run status onto ensemble frames, and
+    the recorded caches kept the pre-fix `null` for a week with a green suite. An
+    archive that no longer matches what the code produces is not a fixture, it is a
+    fossil, and the whole value of record/replay rests on the difference.
+
+    A failure here means the parse changed on purpose and the recordings need
+    regenerating (a parse-only rebuild from these same archived outputs — no ORCA and
+    no MLIP stack required), not that the assertion is too strict.
+    """
+    case = extract_case(name, tmp_path)
+    relocate(case)
+    monkeypatch.setattr(RUN_BATCH, forbid_run_batch)
+
+    archived = {
+        doc.relative_to(case.output_dir): json.loads(doc.read_text())
+        for doc in sorted(case.output_dir.rglob("_cache/step.json"))
+    }
+    assert archived, "the recording carries no cache documents to compare against"
+
+    pipeline.run(load_config(case.config_path), RunPlan(default=StepMode.REBUILD))
+
+    for rel, before in archived.items():
+        after = json.loads((case.output_dir / rel).read_text())
+        assert [structure_record_keys(s) for s in after["structures"]] == [
+            structure_record_keys(s) for s in before["structures"]
+        ], f"{rel}: rebuilt records differ from the archive — regenerate the recording"
+
+
+def structure_record_keys(record: dict[str, object]) -> dict[str, object]:
+    """One cached structure record, minus the coordinates.
+
+    Geometry round-trips through JSON exactly, but it is bulky and its equality adds
+    nothing here: the fields that silently drift are the *status and energy* ones.
+    """
+    return {k: v for k, v in record.items() if k not in ("positions", "forces_ev_per_a")}
 
 
 # ---------------------------------------------------------------------------
