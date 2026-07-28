@@ -184,7 +184,7 @@ def structure_record(s: Structure) -> dict[str, Any]:
     - ``id`` / ``parent_id`` — lineage
     - ``energy_hartree``, ``gibbs_hartree``, ``enthalpy_hartree``,
       ``energy_zpe_hartree`` — energies [Hartree]
-    - ``converged`` / ``terminated`` — run status (``None`` = not reported)
+    - ``converged`` / ``terminated_normally`` — run status (``None`` = not reported)
     - ``symbols``, ``positions`` — the geometry [Å]
     - ``forces_ev_per_a`` — forces [eV/Å]
     - ``imaginary_freqs`` — mode index (JSON string) → frequency [cm⁻¹]
@@ -203,7 +203,7 @@ def structure_record(s: Structure) -> dict[str, Any]:
         "enthalpy_hartree": s.enthalpy_hartree,
         "energy_zpe_hartree": s.energy_zpe_hartree,
         "converged": s.converged,
-        "terminated": s.terminated,
+        "terminated_normally": s.terminated_normally,
         "symbols": list(s.atoms.get_chemical_symbols()),
         "positions": np.asarray(s.atoms.get_positions(), dtype=np.float64).tolist(),
         "forces_ev_per_a": (
@@ -232,7 +232,7 @@ def structure_from_record(d: dict[str, Any]) -> Structure:
         energy_hartree=d["energy_hartree"],
         forces_ev_per_a=None if forces is None else np.asarray(forces, dtype=np.float64),
         converged=d["converged"],
-        terminated=d["terminated"],
+        terminated_normally=d["terminated_normally"],
         # Thermochemistry + imaginary modes are additive — older caches lack these keys.
         gibbs_hartree=d.get("gibbs_hartree"),
         enthalpy_hartree=d.get("enthalpy_hartree"),

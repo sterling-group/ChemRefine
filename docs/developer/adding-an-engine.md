@@ -258,7 +258,7 @@ class DemoqmEngine(JobEngine):
                 positions=positions,
                 energy_hartree=energy,
                 forces_ev_per_a=None,
-                terminated=True,
+                terminated_normally=True,
             )
         ]
 ```

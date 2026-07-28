@@ -50,8 +50,12 @@ _VERDICT_RE = re.compile(
 )
 
 
-def parse_terminated(text: str) -> bool:
-    """``True`` if ORCA printed its normal-termination banner."""
+def parse_terminated_normally(text: str) -> bool:
+    """``True`` if ORCA printed its normal-termination banner (i.e. it exited cleanly).
+
+    Named to match :attr:`chemrefine.state.Structure.terminated_normally`, whose value
+    this becomes: ``True`` is success, not "the job was terminated".
+    """
     return bool(_TERMINATED_RE.search(text))
 
 

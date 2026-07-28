@@ -142,17 +142,17 @@ def succeeded(s: Structure) -> bool:
     ``None`` (engine doesn't report it) is treated as 'not a failure signal', so
     backends that don't set termination/convergence flags are never gated.
     """
-    return s.terminated is not False and s.converged is not False
+    return s.terminated_normally is not False and s.converged is not False
 
 
 def failure_kind(s: Structure) -> FailureKind:
     """Classify why a parsed structure counts as a failure.
 
-    ``terminated is False`` → the engine crashed / didn't finish cleanly;
+    ``terminated_normally is False`` → the engine crashed / didn't finish cleanly;
     ``converged is False`` → it finished but the SCF/geometry didn't converge;
     otherwise :attr:`FailureKind.FAILED` (a flag the engine set we don't name).
     """
-    if s.terminated is False:
+    if s.terminated_normally is False:
         return FailureKind.NOT_TERMINATED
     if s.converged is False:
         return FailureKind.NOT_CONVERGED

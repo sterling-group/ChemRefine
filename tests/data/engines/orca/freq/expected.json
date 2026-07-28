@@ -9,7 +9,7 @@
       "enthalpy_hartree": -56.38740975,
       "energy_zpe_hartree": -56.391197866134,
       "converged": true,
-      "terminated": true,
+      "terminated_normally": true,
       "symbols": [
         "N",
         "H",

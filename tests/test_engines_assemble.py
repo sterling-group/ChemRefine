@@ -64,14 +64,14 @@ def test_thermochemistry_and_status_flags_pass_through():
     prev = _prev(Structure(id="0", atoms=Atoms("H")))
     parsed = _result(
         converged=True,
-        terminated=True,
+        terminated_normally=True,
         gibbs_hartree=-1.5,
         enthalpy_hartree=-1.4,
         energy_zpe_hartree=-1.3,
     )
     child = build_structures([("0", [parsed])], prev).structures[0]
     assert child.converged is True
-    assert child.terminated is True
+    assert child.terminated_normally is True
     assert (child.gibbs_hartree, child.enthalpy_hartree, child.energy_zpe_hartree) == (
         -1.5,
         -1.4,

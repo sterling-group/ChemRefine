@@ -75,7 +75,7 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
             positions=positions,
             energy_hartree=electronic,
             forces_ev_per_a=forces.parse_forces_from_text(text),
-            terminated=status.parse_terminated(text),
+            terminated_normally=status.parse_terminated_normally(text),
             converged=status.parse_converged(text),
             gibbs_hartree=thermo.gibbs_hartree if thermo else None,
             enthalpy_hartree=thermo.enthalpy_hartree if thermo else None,
@@ -125,19 +125,20 @@ def _stamp_run_status(frames: list[ParsedResult], out_path: Path) -> list[Parsed
     """Copy the ``.out``'s termination verdict onto every sidecar frame (B2).
 
     The ensemble sidecar carries geometries and energies but no run status, so frames
-    parsed straight out of it default to ``terminated=None`` — and
+    parsed straight out of it default to ``terminated_normally=None`` — and
     :func:`chemrefine.step_failures.succeeded` reads ``None`` as "not a failure signal".
     A GOAT job killed mid-run after writing a partial ensemble was therefore an
     unconditional success: no ledger entry, no ``on_failure``, no signal to the user.
 
-    Only ``terminated`` is stamped. A whole-run ``NOT CONVERGED`` says nothing reliable
+    Only ``terminated_normally`` is stamped. A whole-run ``NOT CONVERGED`` says nothing reliable
     about an individual pose — an ensemble is a *set* of stationary points, and one
     stubborn conformer must not condemn the rest — so ``converged`` stays ``None``
     (not reported per frame). :func:`ensembles.parse_pes_from_text` already does the
     same for scan points.
     """
-    terminated = status.parse_terminated(out_path.read_text(encoding="utf-8", errors="replace"))
-    return [replace(frame, terminated=terminated) for frame in frames]
+    text = out_path.read_text(encoding="utf-8", errors="replace")
+    normally = status.parse_terminated_normally(text)
+    return [replace(frame, terminated_normally=normally) for frame in frames]
 
 
 def parse_output(path: str | Path, operation: str) -> list[ParsedResult]:

@@ -9,7 +9,7 @@
       "enthalpy_hartree": null,
       "energy_zpe_hartree": null,
       "converged": true,
-      "terminated": false,
+      "terminated_normally": false,
       "symbols": [
         "C",
         "Fe",

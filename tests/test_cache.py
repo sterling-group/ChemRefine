@@ -200,7 +200,7 @@ def test_round_trip_preserves_positions_forces_and_flags(tmp_path: Path):
         energy_hartree=-1.0000000000000002,
         forces_ev_per_a=forces,
         converged=True,
-        terminated=False,
+        terminated_normally=False,
     )
     step_dir = tmp_path / "step1"
     save(
@@ -213,7 +213,7 @@ def test_round_trip_preserves_positions_forces_and_flags(tmp_path: Path):
     loaded = load(step_dir).results.structures[0]
     assert loaded.parent_id == "0"
     assert loaded.energy_hartree == -1.0000000000000002
-    assert loaded.converged is True and loaded.terminated is False
+    assert loaded.converged is True and loaded.terminated_normally is False
     np.testing.assert_array_equal(loaded.atoms.get_positions(), struct.atoms.get_positions())
     np.testing.assert_array_equal(loaded.forces_ev_per_a, forces)
     assert loaded.forces_ev_per_a.dtype == np.float64
@@ -564,7 +564,7 @@ def test_result_record_round_trips_through_structure_from_record(tmp_path: Path)
         energy_hartree=-1.17,
         forces_ev_per_a=np.zeros((2, 3)),
         converged=True,
-        terminated=True,
+        terminated_normally=True,
     )
     save_result_records([structure], tmp_path, step=1)
     record = json.loads((tmp_path / "step1_0.result.json").read_text())

@@ -251,7 +251,7 @@ def _struct(**kw) -> Structure:
 def test_failure_kind_branches():
     from chemrefine.step_failures import FailureKind, failure_kind
 
-    assert failure_kind(_struct(terminated=False)) is FailureKind.NOT_TERMINATED
+    assert failure_kind(_struct(terminated_normally=False)) is FailureKind.NOT_TERMINATED
     assert failure_kind(_struct(converged=False)) is FailureKind.NOT_CONVERGED
     assert failure_kind(_struct()) is FailureKind.FAILED
 

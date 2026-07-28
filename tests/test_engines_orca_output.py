@@ -61,7 +61,7 @@ def test_fixture_present():
 # ---------------------------------------------------------------------------
 
 
-def _minimal_out(*, terminated: bool, not_converged: bool) -> str:
+def _minimal_out(*, terminated_normally: bool, not_converged: bool) -> str:
     """Smallest .out parse_dft accepts, with optional status markers."""
     body = (
         "FINAL SINGLE POINT ENERGY     -1.500000\n\n"
@@ -75,28 +75,28 @@ def _minimal_out(*, terminated: bool, not_converged: bool) -> str:
         # fixture said "The optimization HAS NOT CONVERGED", which ORCA never prints —
         # a fabricated fixture agreeing with a fabricated regex is why the gap survived.
         body += "\nThe optimization has not yet converged - more geometry cycles are needed\n"
-    if terminated:
+    if terminated_normally:
         body += "\n                  ****ORCA TERMINATED NORMALLY****\n"
     return body
 
 
 def test_parse_dft_marks_success(tmp_path: Path):
     out = tmp_path / "ok.out"
-    out.write_text(_minimal_out(terminated=True, not_converged=False), encoding="utf-8")
+    out.write_text(_minimal_out(terminated_normally=True, not_converged=False), encoding="utf-8")
     ps = parse_dft(out)[0]
-    assert ps.terminated is True
+    assert ps.terminated_normally is True
     assert ps.converged is True
 
 
 def test_parse_dft_marks_not_terminated(tmp_path: Path):
     out = tmp_path / "crash.out"
-    out.write_text(_minimal_out(terminated=False, not_converged=False), encoding="utf-8")
-    assert parse_dft(out)[0].terminated is False
+    out.write_text(_minimal_out(terminated_normally=False, not_converged=False), encoding="utf-8")
+    assert parse_dft(out)[0].terminated_normally is False
 
 
 def test_parse_dft_marks_not_converged(tmp_path: Path):
     out = tmp_path / "maxiter.out"
-    out.write_text(_minimal_out(terminated=True, not_converged=True), encoding="utf-8")
+    out.write_text(_minimal_out(terminated_normally=True, not_converged=True), encoding="utf-8")
     assert parse_dft(out)[0].converged is False
 
 
@@ -180,7 +180,7 @@ def test_parse_dft_recovered_scf_is_a_success(tmp_path: Path):
     """The recovery reaches the parsed structure, not just the status helper."""
     out = tmp_path / "recovered.out"
     out.write_text(
-        _minimal_out(terminated=True, not_converged=False).replace(
+        _minimal_out(terminated_normally=True, not_converged=False).replace(
             "FINAL SINGLE POINT ENERGY",
             f"{_SCF_FAIL}\n{_SCF_OK}\n{_GEOM_OK}\nFINAL SINGLE POINT ENERGY",
         ),
@@ -188,7 +188,7 @@ def test_parse_dft_recovered_scf_is_a_success(tmp_path: Path):
     )
     parsed = parse_dft(out)[0]
     assert parsed.converged is True
-    assert parsed.terminated is True
+    assert parsed.terminated_normally is True
 
 
 # ---------------------------------------------------------------------------
@@ -196,11 +196,11 @@ def test_parse_dft_recovered_scf_is_a_success(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def _goat_case(tmp_path: Path, *, terminated: bool) -> Path:
+def _goat_case(tmp_path: Path, *, terminated_normally: bool) -> Path:
     """A minimal GOAT job on disk: the ``.out`` plus its ensemble sidecar."""
     out = tmp_path / "step1_0.out"
     body = "GOAT                             ...       75.347 sec\n"
-    if terminated:
+    if terminated_normally:
         body += "                             ****ORCA TERMINATED NORMALLY****\n"
     out.write_text(body, encoding="utf-8")
     (tmp_path / "step1_0.finalensemble.xyz").write_text(
@@ -212,28 +212,28 @@ def _goat_case(tmp_path: Path, *, terminated: bool) -> Path:
 
 
 def test_goat_frames_inherit_normal_termination(tmp_path: Path):
-    frames = parse_output(_goat_case(tmp_path, terminated=True), "goat")
+    frames = parse_output(_goat_case(tmp_path, terminated_normally=True), "goat")
     assert len(frames) == 2
-    assert all(f.terminated is True for f in frames)
+    assert all(f.terminated_normally is True for f in frames)
 
 
 def test_goat_frames_are_flagged_when_the_job_never_terminated(tmp_path: Path):
     """A crashed GOAT run must not read as success.
 
     The sidecar carries no run status, so frames parsed straight out of it default
-    to ``terminated=None`` — which ``succeeded()`` reads as "not a failure signal".
+    to ``terminated_normally=None`` — which ``succeeded()`` reads as "not a failure signal".
     A job killed after writing a partial ensemble was therefore an unconditional
     success with an empty ledger (B2).
     """
-    frames = parse_output(_goat_case(tmp_path, terminated=False), "goat")
+    frames = parse_output(_goat_case(tmp_path, terminated_normally=False), "goat")
     assert len(frames) == 2
-    assert all(f.terminated is False for f in frames)
+    assert all(f.terminated_normally is False for f in frames)
 
 
 def test_ensemble_frames_leave_converged_unreported(tmp_path: Path):
     """An ensemble is a *set* of stationary points — one stubborn pose must not
     condemn the rest, so the whole-run convergence verdict is not stamped."""
-    frames = parse_output(_goat_case(tmp_path, terminated=True), "goat")
+    frames = parse_output(_goat_case(tmp_path, terminated_normally=True), "goat")
     assert all(f.converged is None for f in frames)
 
 

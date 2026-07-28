@@ -171,7 +171,7 @@ def parse_pes(path: str | Path) -> list[ParsedResult]:
 def parse_pes_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]:
     """Parse a PES-scan output from already-read text (one structure per converged point)."""
     segments = _PES_SEGMENT_RE.split(text)[:-1]  # last fragment has no DONE marker
-    terminated = status.parse_terminated(text)
+    terminated = status.parse_terminated_normally(text)
 
     structures: list[ParsedResult] = []
     for seg in segments:
@@ -191,7 +191,7 @@ def parse_pes_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
                 forces_ev_per_a=None,
                 # Each frame is a converged scan point (split on RUN DONE).
                 converged=True,
-                terminated=terminated,
+                terminated_normally=terminated,
             )
         )
     if not structures:

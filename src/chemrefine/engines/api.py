@@ -118,7 +118,7 @@ class ParsedResult:
     The DTO a :class:`JobEngine`'s ``parse_one`` returns; the assembler
     (:func:`chemrefine.engines._job.build_structures`) turns a step's
     ``ParsedResult``s into :class:`~chemrefine.state.Structure` objects with IDs +
-    parents. ``terminated`` / ``converged`` are run-status flags (``None`` when the
+    parents. ``terminated_normally`` / ``converged`` are run-status flags (``None`` when the
     engine doesn't report them, e.g. sidecar ensemble frames); a structure is a
     *failure* only when one is explicitly ``False``. The thermochemistry + frequency
     fields are populated only by a frequency run: ``imaginary_freqs`` maps a mode index to
@@ -132,7 +132,7 @@ class ParsedResult:
     energy_hartree: float
     forces_ev_per_a: NDArray[np.float64] | None
     converged: bool | None = None
-    terminated: bool | None = None
+    terminated_normally: bool | None = None
     gibbs_hartree: float | None = None
     enthalpy_hartree: float | None = None
     energy_zpe_hartree: float | None = None

@@ -62,7 +62,7 @@ def test_every_recorded_run_reads_as_successful():
     bad = [
         label
         for label, text in _recorded_outputs()
-        if not (status.parse_terminated(text) and status.parse_converged(text))
+        if not (status.parse_terminated_normally(text) and status.parse_converged(text))
     ]
     assert bad == []
 

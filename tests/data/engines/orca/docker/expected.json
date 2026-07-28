@@ -9,7 +9,7 @@
       "enthalpy_hartree": null,
       "energy_zpe_hartree": null,
       "converged": null,
-      "terminated": true,
+      "terminated_normally": true,
       "symbols": [
         "C",
         "C",
@@ -301,7 +301,7 @@
       "enthalpy_hartree": null,
       "energy_zpe_hartree": null,
       "converged": null,
-      "terminated": true,
+      "terminated_normally": true,
       "symbols": [
         "C",
         "C",
@@ -593,7 +593,7 @@
       "enthalpy_hartree": null,
       "energy_zpe_hartree": null,
       "converged": null,
-      "terminated": true,
+      "terminated_normally": true,
       "symbols": [
         "C",
         "C",

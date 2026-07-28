@@ -399,14 +399,14 @@ def test_orca_engine_is_nms_capable():
 # ---------------------------------------------------------------------------
 
 
-def _goat_job(tmp_path: Path, *, terminated: bool) -> tuple[StepContext, StepInputs]:
+def _goat_job(tmp_path: Path, *, terminated_normally: bool) -> tuple[StepContext, StepInputs]:
     """A GOAT step whose one structure has an ensemble sidecar and a `.out` on disk."""
     step_cfg = StepConfig(step=1, engine="orca", operation="goat")
     ctx = _ctx(tmp_path, (_seed_structure("0"),), step_cfg)
     job_dir = ctx.step_dir / "0"
     job_dir.mkdir(parents=True, exist_ok=True)
     body = "GOAT                             ...       75.347 sec\n"
-    if terminated:
+    if terminated_normally:
         body += "                             ****ORCA TERMINATED NORMALLY****\n"
     out = job_dir / "step1_0.out"
     out.write_text(body, encoding="utf-8")
@@ -418,7 +418,7 @@ def _goat_job(tmp_path: Path, *, terminated: bool) -> tuple[StepContext, StepInp
 
 
 def test_completed_goat_job_is_a_success(tmp_path: Path):
-    ctx, inputs = _goat_job(tmp_path, terminated=True)
+    ctx, inputs = _goat_job(tmp_path, terminated_normally=True)
     successes, failures = step_failures.parse_with_failures(get_engine("orca"), inputs, ctx)
     assert [s.id for s in successes] == ["0"]
     assert failures == []
@@ -427,11 +427,11 @@ def test_completed_goat_job_is_a_success(tmp_path: Path):
 def test_crashed_goat_job_is_ledgered_not_silently_accepted(tmp_path: Path):
     """The end-to-end shape of B2: no termination banner → a real, visible failure.
 
-    Before the fix the sidecar's frames carried ``terminated=None``, ``succeeded()``
+    Before the fix the sidecar's frames carried ``terminated_normally=None``, ``succeeded()``
     accepted them, and a killed GOAT run produced a clean success with an empty
     ledger — the partial ensemble flowing downstream as if complete.
     """
-    ctx, inputs = _goat_job(tmp_path, terminated=False)
+    ctx, inputs = _goat_job(tmp_path, terminated_normally=False)
     successes, failures = step_failures.parse_with_failures(get_engine("orca"), inputs, ctx)
     assert successes == []
     assert [(f.sid, f.reason) for f in failures] == [("0", "did not terminate normally")]

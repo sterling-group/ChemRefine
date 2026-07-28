@@ -218,15 +218,15 @@ def _best(structures: list[Structure], fallback: Structure) -> Structure:
 
 
 def _is_resolved(child: Structure, target: int | None) -> bool:
-    """Whether a round-2 child reached the target (terminated + matching imaginary count).
+    """Whether a round-2 child reached the target (terminated normally + matching imaginary count).
 
-    ``target is None`` (random) accepts any terminated child. A child whose parse found no
+    ``target is None`` (random) accepts any normally-terminated child. A child whose parse found no
     frequency table (``imaginary_freqs is None``) is never resolved — without freq evidence,
     zero imaginary modes can't be claimed (only counted-and-zero is a verified minimum). The
     frequencies were parsed onto the child in the same pass as its geometry, so this is a
     field read — no second parse of the ``.out``.
     """
-    if child.terminated is False:
+    if child.terminated_normally is False:
         return False
     if target is None:
         return True

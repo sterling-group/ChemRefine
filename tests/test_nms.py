@@ -172,7 +172,7 @@ def test_best_returns_fallback_when_empty():
 
 
 def test_is_resolved_false_for_non_terminated_child():
-    child = Structure(id="c", atoms=Atoms("H"), terminated=False)
+    child = Structure(id="c", atoms=Atoms("H"), terminated_normally=False)
     assert nms._is_resolved(child, 0) is False
 
 
@@ -270,7 +270,7 @@ class _FakeNms:
                     seed,
                     id=sid,
                     converged=converged,
-                    terminated=True,
+                    terminated_normally=True,
                     energy_hartree=-1.0,
                     imaginary_freqs=freq.imaginary,
                     normal_modes=freq.modes,

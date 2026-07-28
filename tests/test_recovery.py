@@ -393,7 +393,7 @@ def _register_fake_nms():
                         id=sid,
                         atoms=seed.atoms if seed else Atoms("H"),
                         energy_hartree=-1.0,
-                        terminated=True,
+                        terminated_normally=True,
                         converged=True,
                         imaginary_freqs=imaginary,
                         normal_modes=modes,

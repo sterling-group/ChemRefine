@@ -47,10 +47,17 @@ class Structure:
     converged: bool | None = None
     """Did the run converge (SCF + geometry)? ``None`` when the engine
     doesn't report it — treated as 'not a failure signal'."""
-    terminated: bool | None = None
-    """Did the program terminate normally? ``None`` when the engine doesn't
-    report it. A structure is a *failure* only when a flag is explicitly
-    ``False`` (see :func:`chemrefine.step_failures.succeeded`)."""
+    terminated_normally: bool | None = None
+    """Did the program terminate normally — i.e. exit cleanly? ``None`` when the
+    engine doesn't report it (the script engines never do).
+
+    ``True`` means **success**, so the name says ``_normally``: plain ``terminated``
+    read as "the job was killed" and inverted the meaning of the flag that decides
+    whether a calculation counts. It matches ORCA's own banner
+    (``ORCA TERMINATED NORMALLY``) and :attr:`FailureKind.NOT_TERMINATED`'s wording.
+
+    A structure is a *failure* only when a flag is explicitly ``False`` (see
+    :func:`chemrefine.step_failures.succeeded`)."""
     gibbs_hartree: float | None = None
     """Gibbs free energy (Hartree) from a frequency calc; ``None`` when no
     thermochemistry was computed. Used by ``sample.energy_type: gibbs``."""

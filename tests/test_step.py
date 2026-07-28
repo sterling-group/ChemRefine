@@ -194,7 +194,7 @@ def _register_fail_engine():
     """Register a fake engine whose ``fail`` ClassVar marks per-sid failures.
 
     ``fail[sid] == "missing"`` produces no output; ``"unconverged"`` produces an
-    output that parses but with ``terminated=False``; anything else succeeds.
+    output that parses but with ``terminated_normally=False``; anything else succeeds.
     """
     from typing import ClassVar
 
@@ -235,7 +235,7 @@ def _register_fail_engine():
                         atoms=seed.atoms,
                         parent_id=seed.parent_id,
                         energy_hartree=-1.0 - int(sid) * 1e-3,
-                        terminated=self.fail.get(sid) != "unconverged",
+                        terminated_normally=self.fail.get(sid) != "unconverged",
                         converged=True,
                     )
                 )
@@ -374,7 +374,7 @@ def _register_conv_engine():
                         parent_id=seed.parent_id,
                         energy_hartree=-1.0 - int(sid) * 1e-3,
                         forces_ev_per_a=np.zeros((len(seed.atoms), 3)),
-                        terminated=True,
+                        terminated_normally=True,
                         converged=converged,
                     )
                 )

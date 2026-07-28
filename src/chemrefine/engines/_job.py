@@ -101,7 +101,7 @@ def build_structures(
                     energy_hartree=ps.energy_hartree,
                     forces_ev_per_a=ps.forces_ev_per_a,
                     converged=ps.converged,
-                    terminated=ps.terminated,
+                    terminated_normally=ps.terminated_normally,
                     gibbs_hartree=ps.gibbs_hartree,
                     enthalpy_hartree=ps.enthalpy_hartree,
                     energy_zpe_hartree=ps.energy_zpe_hartree,

@@ -750,14 +750,14 @@ def test_terminate_local_jobs_escalates_to_kill_when_sigterm_is_ignored(tmp_path
         pid = 4242
 
         def __init__(self) -> None:
-            self.terminated = False
+            self.terminated_normally = False
             self.killed = False
 
         def poll(self) -> int | None:
             return None if not self.killed else -9
 
         def terminate(self) -> None:
-            self.terminated = True
+            self.terminated_normally = True
 
         def wait(self, timeout: float | None = None) -> int:
             if timeout is not None and not self.killed:
@@ -774,6 +774,6 @@ def test_terminate_local_jobs_escalates_to_kill_when_sigterm_is_ignored(tmp_path
 
     slurm.terminate_local_jobs(["local-stubborn"])
 
-    assert proc.terminated and proc.killed  # asked nicely first, then insisted
+    assert proc.terminated_normally and proc.killed  # asked nicely first, then insisted
     assert out_handle.closed and err_handle.closed
     assert "local-stubborn" not in slurm._LOCAL_PROCS
