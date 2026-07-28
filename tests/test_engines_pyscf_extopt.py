@@ -213,7 +213,11 @@ def test_pyscf_run_block_includes_readiness_loop(tmp_path: Path):
         out_path=ctx.step_dir / "step1_structure_0.out",
     )
     assert "/healthz" in run_block
-    assert "trap _on_extopt_exit EXIT INT TERM" in run_block
+    # Teardown is a hook the surrounding script's EXIT trap calls, never a trap of our own:
+    # bash keeps one handler per signal, so trapping EXIT here replaced the script's and took
+    # the tensor copy-back, the runlog footer and the scratch teardown with it.
+    assert "_chemrefine_engine_cleanup()" in run_block
+    assert "trap " not in run_block
 
 
 def test_pyscf_prepare_writes_inp_with_method_block(tmp_path: Path):

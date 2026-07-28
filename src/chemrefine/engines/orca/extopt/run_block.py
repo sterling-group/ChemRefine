@@ -56,10 +56,19 @@ def _build_extopt_run_block(
     * Binds the server on a kernel-assigned port (sidecar URL file).
     * Loops up to ``_SERVER_READY_TIMEOUT_SECONDS`` polling ``/healthz``,
       exiting fast if the server process dies during startup.
-    * Wraps cleanup in ``trap _on_extopt_exit EXIT INT TERM`` so SLURM
-      cancellation (SIGTERM), Ctrl-C (SIGINT), or normal exit all reach
-      the cleanup path; ``kill -TERM`` + ``wait`` gives the server a
-      chance to release GPU memory cleanly.
+    * Defines ``_chemrefine_engine_cleanup`` — the hook
+      :func:`chemrefine.slurm._run_body_lines` calls from *its* ``EXIT`` trap — so
+      ``kill -TERM`` + ``wait`` gives the server a chance to release GPU memory
+      cleanly on any exit path, including SLURM cancellation and Ctrl-C.
+
+    It deliberately installs **no trap of its own**. It used to
+    (``trap _on_extopt_exit EXIT INT TERM``), and bash keeps one handler per signal, so
+    that silently *replaced* the surrounding script's ``EXIT`` trap: every ExtOpt job lost
+    its copy-back (``.gbw`` / ``.hess`` / ``.property.json`` / the optimised ``.xyz``), its
+    ``output_dirs`` copy — which is the only delivery path for ``pyscf-extopt``'s
+    ``save_tensors`` — its runlog footer, and its scratch teardown, leaking ``$WORK_DIR`` on
+    every run. Nothing caught it because ORCA redirects its ``.out`` straight to
+    ``$OUTPUT_DIR``, so parsing still succeeded.
 
     ``orca_command`` arrives already assembled and quoted from
     :meth:`chemrefine.engines.orca.engine.OrcaEngine.orca_command` — the same string
@@ -74,13 +83,13 @@ def _build_extopt_run_block(
         f"{server_cmd} &\n"
         "SERVER_PID=$!\n"
         "\n"
-        "_on_extopt_exit() {\n"
+        # The hook the surrounding script's EXIT trap calls; never a trap of our own.
+        "_chemrefine_engine_cleanup() {\n"
         '  if [ -n "${SERVER_PID:-}" ]; then\n'
         '    kill -TERM "$SERVER_PID" 2>/dev/null || true\n'
         '    wait "$SERVER_PID" 2>/dev/null || true\n'
         "  fi\n"
         "}\n"
-        "trap _on_extopt_exit EXIT INT TERM\n"
         "\n"
         "# Wait for /healthz; bail out fast if the server crashed during startup.\n"
         "ready=\n"

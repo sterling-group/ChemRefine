@@ -226,6 +226,17 @@ def _run_body_lines(
     each ``output_dirs`` entry (a whole directory, e.g. pyscf's ``tensors/``) back
     to ``$OUTPUT_DIR`` and emits the runlog footer — success or failure — before
     running the engine's ``run_block``.
+
+    **An engine's run block must not install its own ``trap … EXIT``**: bash keeps one
+    handler per signal, so a second one silently *replaces* this handler and takes the
+    copy-back, the ``output_dirs`` copy, the scratch teardown and the footer with it. An
+    engine that needs teardown of its own defines ``_chemrefine_engine_cleanup`` instead;
+    this handler calls it first, before copying anything back.
+
+    ``TERM``/``INT`` are trapped explicitly so a cancelled job records its real exit code:
+    the ``EXIT`` trap does fire on a fatal signal, but with ``$?`` already reset to 0, which
+    made a ``scancel``-ed run look successful in its runlog. ``_cr_done`` keeps the handler
+    single-shot, since ``TERM`` then ``EXIT`` would otherwise run it twice.
     """
     dir_copies = [f'  cp -r "{d}" "$OUTPUT_DIR/" 2>/dev/null || true' for d in output_dirs]
     return [
@@ -244,14 +255,22 @@ def _run_body_lines(
         "",
         header,
         "",
-        # Always emit the footer on exit, success or failure. The trap
-        # captures $? immediately so it survives the cp/cleanup steps.
+        # Always emit the footer on exit, success or failure.
         "exit_code=0",
         "files_copied=0",
         "scratch_kept=false",
+        "_cr_done=false",
         "_on_exit() {",
-        "  exit_code=$?",
+        # `local rc=$?` must be the FIRST statement: the `$_cr_done` test below is itself a
+        # command, so checking the latch first would overwrite the status we came here to record.
+        "  local rc=$?",
+        "  $_cr_done && return 0",
+        "  _cr_done=true",
+        # An explicit code from the signal traps wins; otherwise the status we were entered with.
+        "  exit_code=${1:-$rc}",
+        # `set +e` before the hook, so an engine whose cleanup fails cannot abort the copy-back.
         "  set +e",
+        "  declare -F _chemrefine_engine_cleanup >/dev/null && _chemrefine_engine_cleanup",
         f"  files_copied=$(ls {globs_expr} 2>/dev/null | wc -l)",
         f'  cp {globs_expr} "$OUTPUT_DIR/" 2>/dev/null || true',
         *dir_copies,
@@ -259,6 +278,8 @@ def _run_body_lines(
         footer,
         "}",
         "trap _on_exit EXIT",
+        "trap '_on_exit 143' TERM",
+        "trap '_on_exit 130' INT",
         "",
         run_block,
         "",

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -777,3 +779,76 @@ def test_terminate_local_jobs_escalates_to_kill_when_sigterm_is_ignored(tmp_path
     assert proc.terminated_normally and proc.killed  # asked nicely first, then insisted
     assert out_handle.closed and err_handle.closed
     assert "local-stubborn" not in slurm._LOCAL_PROCS
+
+
+# ---------------------------------------------------------------------------
+# The generated script's exit handler — runs once, records the truth
+# ---------------------------------------------------------------------------
+
+
+def _runnable(tmp_path: Path, run_block: str) -> Path:
+    """Build a generated script that can actually execute (its input file exists)."""
+    kwargs = _build_kwargs(tmp_path, run_block=run_block)
+    inp = Path(kwargs["input_path"])
+    inp.parent.mkdir(parents=True, exist_ok=True)
+    inp.write_text("! SP\n", encoding="utf-8")
+    return slurm.build_script(**kwargs)
+
+
+def _run_generated(script: Path) -> subprocess.CompletedProcess[str]:
+    """Execute a generated script with bash, as the local runner does."""
+    return subprocess.run(
+        ["bash", str(script)], capture_output=True, text=True, timeout=60, check=False
+    )
+
+
+def test_generated_script_records_the_real_exit_code(tmp_path: Path):
+    """The footer must report the failing command's status, not a swallowed 0."""
+    script = _runnable(tmp_path, "exit 7")
+
+    result = _run_generated(script)
+
+    assert result.returncode == 7
+    assert "exit_code=7" in result.stdout
+
+
+def test_generated_script_reports_a_cancelled_job_as_failed(tmp_path: Path):
+    """A SIGTERM'd job must not read as a success in its runlog.
+
+    `bash` does fire the EXIT trap on a fatal signal, but with `$?` already reset to 0 — so
+    before the explicit TERM trap a `scancel`-ed run recorded `exit_code=0`, i.e. it looked
+    like it had finished cleanly. 143 is the conventional 128+SIGTERM.
+    """
+    script = _runnable(tmp_path, "sleep 30")
+
+    # Signal the whole process group, which is what `scancel` does. Signalling bash alone
+    # would leave the foreground `sleep` running -- and bash defers a trap until its
+    # foreground child returns, so the handler would not fire for another 30 seconds.
+    log = tmp_path / "run.log"
+    with log.open("w", encoding="utf-8") as fh:
+        proc = subprocess.Popen(
+            ["bash", str(script)], stdout=fh, stderr=subprocess.DEVNULL, start_new_session=True
+        )
+        time.sleep(0.5)
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        proc.wait(timeout=30)
+    stdout = log.read_text(encoding="utf-8")
+
+    assert "exit_code=143" in stdout, stdout
+    # ...and exactly once: TERM fires the handler, then EXIT would fire it a second time
+    # without the `_cr_done` latch, running the copy-back and scratch teardown twice.
+    assert stdout.count("files_copied=") == 1, stdout
+
+
+def test_generated_script_calls_an_engine_cleanup_hook_before_copying_back(tmp_path: Path):
+    """An engine defines `_chemrefine_engine_cleanup`; it must never trap EXIT itself.
+
+    The hook runs *before* the copy-back (so a server releasing files has finished writing),
+    and a hook that fails must not abort the copy-back that follows it.
+    """
+    script = _runnable(tmp_path, "_chemrefine_engine_cleanup() { echo HOOK_RAN; false; }\ntrue")
+
+    result = _run_generated(script)
+
+    assert "HOOK_RAN" in result.stdout
+    assert result.stdout.index("HOOK_RAN") < result.stdout.index("files_copied=")

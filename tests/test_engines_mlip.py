@@ -361,7 +361,7 @@ def test_mlip_extopt_run_block_starts_shared_extopt_server(tmp_path: Path):
     assert ctx.executables.get("orca", "orca") in run_block
 
 
-def test_mlip_extopt_run_block_includes_readiness_loop_and_trap(tmp_path: Path):
+def test_mlip_extopt_run_block_has_a_readiness_loop_and_a_cleanup_hook(tmp_path: Path):
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path)
     run_block = engine.run_block(
@@ -372,7 +372,11 @@ def test_mlip_extopt_run_block_includes_readiness_loop_and_trap(tmp_path: Path):
     assert "sleep 10" not in run_block
     assert "/healthz" in run_block
     assert "ps -p" in run_block
-    assert "trap _on_extopt_exit EXIT INT TERM" in run_block
+    # Teardown is a hook the surrounding script's EXIT trap calls, never a trap of our own:
+    # bash keeps one handler per signal, so trapping EXIT here replaced the script's and took
+    # the copy-back, the runlog footer and the scratch teardown with it.
+    assert "_chemrefine_engine_cleanup()" in run_block
+    assert "trap " not in run_block
     assert "kill -TERM" in run_block
 
 

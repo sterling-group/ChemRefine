@@ -18,12 +18,14 @@ rather than per engine, where the next engine would simply not be covered.
 from __future__ import annotations
 
 import ast
+import os
 import shlex
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from chemrefine import slurm
 from chemrefine.config import StepConfig
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import ENGINES, JobExecutable, get_engine
@@ -72,6 +74,128 @@ def _gpu_capable() -> list[str]:
         for name in _job_executables()
         if getattr(get_engine(name), "options_cls", None) is not None
     ]
+
+
+def _assemble(
+    engine_name: str, tmp_path: Path, *, array: bool = False
+) -> tuple[Path, dict[str, str]]:
+    """Build a real SLURM script for ``engine_name``; return ``(script, output_dir)``.
+
+    The whole point is to exercise the *composed* script -- header + job_log + scratch trap +
+    the engine's own run block -- rather than the run block on its own.
+    """
+    engine = get_engine(engine_name)
+    ctx = _ctx(tmp_path, engine_name, {})
+    # Point ORCA at a binary that cannot exist, so the run block dies on its first real
+    # command. `orca` on PATH is not safe to leave resolvable: desktop Linux ships
+    # /usr/bin/orca, the GNOME screen reader (the same trap scripts/release-check.sh guards).
+    object.__setattr__(ctx, "executables", {"orca": str(tmp_path / "no-such-orca")})
+    header = tmp_path / "cpu.slurm.header"
+    header.write_text("#!/bin/bash\n#SBATCH --partition=test\n", encoding="utf-8")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(exist_ok=True)
+    inp = out_dir / "step1_0.inp"
+    inp.write_text("! SP\n", encoding="utf-8")
+
+    common = {
+        "pal": 1,
+        "template_path": header,
+        "output_dir": out_dir,
+        "scratch_dir": None,
+        "engine": engine_name,
+        "operation": "opt_sp",
+        "step": 1,
+        "output_globs": engine.output_globs,
+        "output_dirs": engine.output_dirs(ctx),
+        "extra_header_fields": engine.extra_header_fields(ctx),
+    }
+    if array:
+        script = slurm.build_array_script(
+            step_label="step1",
+            script_path=tmp_path / "array.slurm",
+            run_block=engine.run_block(ctx, Path("$INP_NAME"), Path("$OUT_NAME")),
+            **common,
+        )
+        # The array task resolves its own row from $CR_MANIFEST, which sbatch normally
+        # exports via --export=ALL,CR_MANIFEST=...; supply it here.
+        manifest = slurm.write_array_manifests(
+            [(inp, out_dir / "step1_0.out", "0")], out_dir, step_label="step1"
+        )[0][0]
+        return script, {"CR_MANIFEST": str(manifest)}
+
+    script = slurm.build_script(
+        job_name="step1_0",
+        script_path=tmp_path / "job.slurm",
+        input_path=inp,
+        structure_id="0",
+        step_label="step1",
+        run_block=engine.run_block(ctx, inp, out_dir / "step1_0.out"),
+        **common,
+    )
+    return script, {}
+
+
+def _run_script(script: Path, extra_env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """Run an assembled script for real; it is expected to fail, and to clean up anyway.
+
+    The shell and coreutils stay on PATH (the script needs them); what is missing is the
+    engine's own compute -- ORCA points at a nonexistent binary, the script engines find no
+    rendered `.py`, and the ExtOpt server dies importing a backend that is not installed.
+    Every one of those unwinds the script, which is precisely the path the EXIT trap must
+    survive.
+    """
+    env = {**os.environ, "SLURM_ARRAY_TASK_ID": "0", **extra_env}
+    return subprocess.run(
+        ["bash", str(script)], capture_output=True, text=True, env=env, timeout=180
+    )
+
+
+@pytest.mark.parametrize("engine_name", _job_executables())
+def test_the_assembled_script_still_runs_its_exit_handler(engine_name: str, tmp_path: Path):
+    """An engine's run block must not seize the script's EXIT trap.
+
+    The copy-back, the scratch cleanup and the runlog footer all live in the outer `_on_exit`.
+    An engine that installs its own `trap ... EXIT` *replaces* it -- silently, because the ORCA
+    path redirects its `.out` to `$OUTPUT_DIR` directly, so parsing still succeeds and every
+    other gate stays green. The visible damage is elsewhere: `pyscf-extopt`'s `save_tensors`
+    directory never arrives, `.gbw`/`.hess` are abandoned in scratch, the runlog has no footer,
+    and `$WORK_DIR` is never removed -- a scratch leak on every ExtOpt job.
+
+    `bash -n` on the run block alone cannot see this; only the composed script can.
+    """
+    script, extra_env = _assemble(engine_name, tmp_path)
+
+    result = _run_script(script, extra_env)
+
+    assert "files_copied=" in result.stdout, (
+        f"{engine_name}: the outer _on_exit never fired -- the run block replaced the EXIT trap.\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert not list(tmp_path.glob("out/_work_*")), f"{engine_name}: scratch dir was not cleaned up"
+
+
+@pytest.mark.parametrize("engine_name", _job_executables())
+def test_the_assembled_array_script_still_runs_its_exit_handler(
+    engine_name: str, tmp_path: Path
+) -> None:
+    """The array path shares ``_run_body_lines``, so it has exactly the same exposure.
+
+    Asserted separately because a fix applied to the per-job path only would leave every
+    ``slurm_array: true`` step still leaking -- and the ExtOpt engines are `JobExecutable`,
+    so they reach `_run_array` too.
+
+    The array task ``exec``-redirects itself to the canonical per-structure runlog, so unlike
+    the per-job case the footer lands in that file rather than on stdout.
+    """
+    script, extra_env = _assemble(engine_name, tmp_path, array=True)
+
+    _run_script(script, extra_env)
+
+    runlog = tmp_path / "out" / "step1_0.runlog"
+    assert runlog.is_file(), f"{engine_name}: the array task wrote no runlog"
+    assert "files_copied=" in runlog.read_text(encoding="utf-8"), (
+        f"{engine_name}: the array script's _on_exit never fired.\n{runlog.read_text()}"
+    )
 
 
 @pytest.mark.parametrize("engine_name", _gpu_capable())
