@@ -256,12 +256,20 @@ def save_result_records(structures: Sequence[Structure], job_dir: Path, step: in
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
-    """Write ``data`` to ``path`` via a temp file + rename."""
+    """Write ``data`` to ``path`` via a temp file + fsync + rename.
+
+    The ``fsync`` is what makes the atomicity survive more than a process death: a
+    rename is ordered against the data only once the data is on the device, so without
+    it a machine crash (not a kill) could leave the renamed file truncated or empty —
+    exactly the half-baked cache the temp-file dance exists to prevent.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp_", suffix=".part")
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
         Path(tmp).replace(path)
     finally:
         Path(tmp).unlink(missing_ok=True)
