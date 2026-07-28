@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from chemrefine import slurm
-from chemrefine.errors import ConfigError, JobSubmissionError
+from chemrefine.errors import ConfigError, JobSubmissionError, ThrottleTimeoutError
 
 
 def _drain_local(job_id: str, *, timeout: float = 5.0) -> None:
@@ -852,3 +852,31 @@ def test_generated_script_calls_an_engine_cleanup_hook_before_copying_back(tmp_p
 
     assert "HOOK_RAN" in result.stdout
     assert result.stdout.index("HOOK_RAN") < result.stdout.index("files_copied=")
+
+
+def test_wait_for_jobs_times_out_when_a_deadline_is_set():
+    """The array path honours `job_timeout_seconds` too.
+
+    The per-job path waits through the throttler, the array path through this loop. Wiring
+    the deadline into only one of them would mean `job_timeout_seconds` silently did nothing
+    for a `slurm_array: true` step — the sort of split that makes a knob untrustworthy.
+    """
+    with pytest.raises(ThrottleTimeoutError):
+        slurm.wait_for_jobs(
+            ["1"], poll_interval=0.01, finished=lambda _ids: set(), max_wait_seconds=0.05
+        )
+
+
+def test_wait_for_jobs_returns_when_all_drain():
+    """No deadline configured (the default) keeps the old wait-forever behaviour."""
+    slurm.wait_for_jobs(["1", "2"], poll_interval=0.01, finished=lambda ids: set(ids))
+
+
+def test_wait_for_jobs_with_nothing_to_wait_for_returns_immediately():
+    """An empty batch must not poll at all — and must not consult the deadline."""
+    slurm.wait_for_jobs([], poll_interval=0.01, finished=_never_called, max_wait_seconds=0.0)
+
+
+def _never_called(_ids: object) -> set[str]:
+    """A `finished` callable that fails the test if the loop polls when it should not."""
+    raise AssertionError("wait_for_jobs polled with an empty job set")

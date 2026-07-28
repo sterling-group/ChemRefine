@@ -21,7 +21,7 @@ from chemrefine import slurm
 from chemrefine.config import StepConfig
 from chemrefine.engines import _execution
 from chemrefine.engines._job import JobEngine
-from chemrefine.errors import ConfigError, JobSubmissionError
+from chemrefine.errors import ConfigError, JobSubmissionError, ThrottleTimeoutError
 from chemrefine.state import JobBatch, PipelineState, StepContext, Structure
 
 
@@ -219,3 +219,41 @@ def test_run_batch_cleanup_runs_on_the_happy_path_too(tmp_path: Path):
         _execution.run_batch(engine, inputs, ctx)
 
     assert seen == [()]  # wait_all reaped everything; nothing left to terminate
+
+
+# ---------------------------------------------------------------------------
+# job_timeout_seconds — the deadline that makes exit code 8 reachable
+# ---------------------------------------------------------------------------
+
+
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set())
+@patch.object(slurm, "submit", side_effect=lambda *a, **k: "1001")
+def test_run_batch_raises_when_jobs_outlive_the_configured_timeout(
+    _submit, _finished, tmp_path: Path
+):
+    """A job that never finishes must eventually fail the run, not block it forever.
+
+    `Throttler` has always accepted `max_wait_seconds` and `ThrottleTimeoutError` has always
+    owned exit code 8 — but no caller ever passed a deadline, so the error was unreachable
+    and a stuck job blocked the pipeline indefinitely with no diagnostic. The `finally` that
+    reaps local jobs could not fire either, because nothing raised.
+    """
+    engine = _FakeJobEngine()
+    ctx = replace(_ctx(tmp_path), job_timeout_seconds=0.05)
+    inputs = engine.prepare(ctx)
+
+    with pytest.raises(ThrottleTimeoutError):
+        _execution.run_batch(engine, inputs, ctx)
+
+
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
+@patch.object(slurm, "submit", side_effect=lambda *a, **k: "1001")
+def test_run_batch_waits_indefinitely_when_no_timeout_is_configured(
+    _submit, _finished, tmp_path: Path
+):
+    """`None` is the default and must preserve the old behaviour exactly."""
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path)
+    assert ctx.job_timeout_seconds is None
+
+    assert _execution.run_batch(engine, engine.prepare(ctx), ctx).jobs

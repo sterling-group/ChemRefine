@@ -60,6 +60,7 @@ def build_context(config: Config, step_cfg: StepConfig, prev_state: PipelineStat
         max_gpus=config.max_gpus,
         slurm_array=config.slurm_array,
         dispatch=config.dispatch,
+        job_timeout_seconds=config.job_timeout_seconds,
     )
 
 

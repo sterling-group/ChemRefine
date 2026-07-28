@@ -554,6 +554,19 @@ class Config(BaseModel):
     per-array task cap are split into chunks. Per-structure outputs, runlogs,
     and the failure ledger are identical to the per-job path. Ignored when
     running locally (no ``sbatch`` on PATH)."""
+    job_timeout_seconds: float | None = Field(None, gt=0)
+    """Wall-clock deadline for a step's jobs to finish, in seconds.
+
+    ``None`` (default) waits indefinitely, which is the right thing under SLURM: the
+    scheduler already enforces the partition's own time limit and will kill the job itself.
+    Set it when nothing else will — a local ``dispatch: local`` run, or a cluster where a
+    job can sit in ``PD`` forever — so a stuck batch fails with
+    :class:`~chemrefine.errors.ThrottleTimeoutError` (exit code 8) instead of blocking the
+    pipeline with no diagnostic.
+
+    The deadline covers *waiting*, not compute: it is how long ChemRefine will wait for the
+    scheduler to free up room or drain the batch, so set it well above the longest job you
+    expect."""
     dispatch: Dispatch = "auto"
     """How jobs are executed. ``auto`` (default) submits via ``sbatch`` when it
     is on PATH and runs the generated scripts locally via ``bash`` otherwise.

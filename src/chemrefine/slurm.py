@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import TextIO
 
 from chemrefine import job_log
-from chemrefine.errors import ConfigError, JobSubmissionError
+from chemrefine.errors import ConfigError, JobSubmissionError, ThrottleTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -764,6 +764,7 @@ def wait_for_jobs(
     *,
     poll_interval: float,
     finished: Callable[[Collection[str]], set[str]],
+    max_wait_seconds: float | None = None,
 ) -> None:
     """Block until every id in ``job_ids`` reports finished, polling at ``poll_interval``.
 
@@ -772,9 +773,19 @@ def wait_for_jobs(
     :class:`chemrefine.throttle.Throttler` instead, which reaps as it waits). ``finished``
     is injected (the caller passes :func:`finished_jobs`) so it stays mockable, mirroring
     the throttler.
+
+    ``max_wait_seconds`` mirrors :meth:`chemrefine.throttle.Throttler.wait_all` so
+    ``Config.job_timeout_seconds`` means the same thing on both paths — otherwise setting it
+    would silently do nothing for a ``slurm_array: true`` step. ``None`` waits indefinitely.
     """
+    deadline = time.monotonic() + max_wait_seconds if max_wait_seconds is not None else None
     pending = set(job_ids)
     while pending:
         pending -= finished(pending)
-        if pending:
-            time.sleep(poll_interval)
+        if not pending:
+            return
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ThrottleTimeoutError(
+                f"timed out after {max_wait_seconds}s waiting for {len(pending)} array job(s)"
+            )
+        time.sleep(poll_interval)

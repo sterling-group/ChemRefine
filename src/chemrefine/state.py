@@ -123,6 +123,9 @@ class StepContext:
     slurm_array: bool = False
     """Submit this step as SLURM job array(s) (``Config.slurm_array``);
     ignored when running locally."""
+    job_timeout_seconds: float | None = None
+    """Wall-clock deadline for this step's jobs (``Config.job_timeout_seconds``);
+    ``None`` waits indefinitely."""
     dispatch: Dispatch = "auto"
     """Job dispatch mode (``Config.dispatch``): auto / local / slurm."""
 

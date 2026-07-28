@@ -94,7 +94,7 @@ def run_batch(engine: JobExecutable, inputs: StepInputs, ctx: StepContext) -> Jo
     jobs: dict[Path, str] = {}
     try:
         _submit_all(engine, inputs, ctx, throttler, header_path, pal, gpus, local, jobs)
-        throttler.wait_all(finished=slurm.finished_jobs)
+        throttler.wait_all(finished=slurm.finished_jobs, max_wait_seconds=ctx.job_timeout_seconds)
     finally:
         # Any job still active here means we are unwinding on an exception — a
         # ThrottleTimeoutError, a mid-batch JobSubmissionError, a KeyboardInterrupt.
@@ -121,7 +121,12 @@ def _submit_all(
     step_label = ctx.step_cfg.dir_name()
     operation = ctx.step_cfg.operation or ""
     for inp, out, sid in inputs.files:
-        throttler.wait_for_room(pal, finished=slurm.finished_jobs, gpus_needed=gpus)
+        throttler.wait_for_room(
+            pal,
+            finished=slurm.finished_jobs,
+            gpus_needed=gpus,
+            max_wait_seconds=ctx.job_timeout_seconds,
+        )
         # Pin a free GPU per local job so concurrent CUDA jobs don't collide on device
         # 0; under SLURM the scheduler sets CUDA_VISIBLE_DEVICES itself.
         device = throttler.assign_device() if (local and gpus) else None
@@ -205,6 +210,9 @@ def _run_array(engine: JobExecutable, inputs: StepInputs, ctx: StepContext) -> J
         )
 
     slurm.wait_for_jobs(
-        set(jobs.values()), poll_interval=_SLURM_POLL_SECONDS, finished=slurm.finished_jobs
+        set(jobs.values()),
+        poll_interval=_SLURM_POLL_SECONDS,
+        finished=slurm.finished_jobs,
+        max_wait_seconds=ctx.job_timeout_seconds,
     )
     return JobBatch(jobs=jobs)

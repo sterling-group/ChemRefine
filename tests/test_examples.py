@@ -216,7 +216,7 @@ REQUIRED = {
 }
 
 TESTS_ONLY = {
-    "config": {"max_gpus", "slurm_array", "dispatch"},
+    "config": {"max_gpus", "slurm_array", "dispatch", "job_timeout_seconds"},
     "step": {"slurm_template", "on_failure"},
     "sample": {"by_parent", "temperature_k", "energy_type"},
     "nms": {"ts_mode_index", "seed"},

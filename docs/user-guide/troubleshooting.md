@@ -15,7 +15,7 @@ wrapper script or a SLURM chain can branch on it without parsing log text.
 | `5` | Job ran but failed | A backend reported failure the pipeline could not recover from | Look at the structure's `.runlog` and `.err` under `outputs/stepN/<id>/` |
 | `6` | Output unparseable | The calculation produced a file ChemRefine could not read — usually truncated by a time limit or a node failure | Inspect the `.out`; re-run the affected structures with `chemrefine rerun-errors N` |
 | `7` | Cache corrupt or unwritable | An interrupted write, a full disk, or a cache written by a different ChemRefine version | `chemrefine rebuild-cache N` re-parses from the outputs already on disk without re-running anything |
-| `8` | Wait deadline expired | A job outlived the configured wait | Raise the limit, or check whether the job is stuck in the queue |
+| `8` | Wait deadline expired | A job outlived `job_timeout_seconds` | Raise the limit, or check whether the job is stuck in the queue (`squeue -u $USER`). Only reachable when you set `job_timeout_seconds`; the default waits indefinitely |
 
 ## A step halted with pending failures
 
