@@ -287,8 +287,11 @@ def save_step_csv(
     # Last column, so the historic header prefix is unchanged for existing tooling.
     df["Energy type"] = energy_type
 
-    mode = "w" if step_number == 1 else "a"
-    header = step_number == 1
-    df.to_csv(path, mode=mode, index=False, header=header)
+    # The header follows the *file*, not the step number. Keying both off `step_number == 1`
+    # meant a step 1 that summarised nothing (every energy None — which `on_failure: best`
+    # produces on step 1, where the backfills are seeds with no energy yet) left step 2
+    # appending header-less onto a file that did not exist, so the report began with a data
+    # row and every `read_csv` consumed it as the column names.
+    df.to_csv(path, mode="a", index=False, header=not path.exists())
     logger.info("saved step %d summary to %s", step_number, path)
     return path

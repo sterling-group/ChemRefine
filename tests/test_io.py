@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
 import pytest
 from ase import Atoms
 from ase.io import read as ase_read
@@ -192,6 +193,26 @@ def test_save_step_csv_step_one_truncates_stale_file(tmp_path: Path):
     assert stale.exists()
     path = save_step_csv([float("nan")], ["0"], step_number=1, output_dir=tmp_path)
     assert not path.exists()
+
+
+def test_save_step_csv_writes_a_header_when_step_one_wrote_nothing(tmp_path: Path):
+    """The report must never start with a data row.
+
+    Truncation and the header were two decisions keyed off the same `step_number == 1`, so a
+    step 1 that summarised nothing left step 2 appending `header=False` onto a file that did
+    not exist -- producing a CSV whose first line is data, which every `read_csv` then eats as
+    the column names.
+
+    Reachable without contrivance: `on_failure: best` on step 1 with no `sample:` keeps the
+    backfilled seeds, and those carry no energy yet.
+    """
+    assert not save_step_csv([None, None], ["0", "1"], step_number=1, output_dir=tmp_path).exists()
+
+    path = save_step_csv([-1.0, -1.5], ["0", "1"], step_number=2, output_dir=tmp_path)
+
+    assert path.read_text(encoding="utf-8").splitlines()[0].startswith("Step,Conformer,")
+    frame = pd.read_csv(path)
+    assert list(frame["Step"]) == [2, 2]
 
 
 # ---------------------------------------------------------------------------

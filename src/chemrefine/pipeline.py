@@ -140,10 +140,10 @@ def _write_step_csv(config: Config, step_cfg: StepConfig, state: PipelineState) 
     survivor set it was describing. With no sample filter, the electronic energy
     at the standard reference temperature.
 
-    A step with no survivors has nothing to summarise, so no row is written.
+    A step with no survivors has nothing to summarise, so no row is written — that
+    decision lives in :func:`~chemrefine.io.save_step_csv` along with the step-1
+    truncation, rather than being half here and half there.
     """
-    if not state.structures:
-        return
     sample = step_cfg.sample
     temperature_k = sample.temperature_k if sample is not None else DEFAULT_TEMPERATURE_K
     energy_type = sample.energy_type if sample is not None else "electronic"
