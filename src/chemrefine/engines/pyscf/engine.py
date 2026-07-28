@@ -38,15 +38,16 @@ class PyscfEngine(ScriptEngine):
     def _template_vars(self, ctx: StepContext) -> dict[str, object]:
         """Expose the SCF knobs as template placeholders, for parity with direct MLIP.
 
-        Lets a direct ``step{N}.py`` read ``$METHOD`` / ``$XC`` / ``$BASIS`` from
-        the YAML ``step.options`` instead of hardcoding them. Read tolerantly (with
-        the standard fallbacks) so a template's extra knobs never fail the render;
-        the ``pyscf-extopt`` path validates strictly via
-        :class:`~chemrefine.engines.pyscf.options.PyscfOptions`.
+        Lets a direct ``step{N}.py`` read ``$METHOD`` / ``$XC`` / ``$BASIS`` from the YAML
+        ``step.options`` instead of hardcoding them. Read leniently, so a template's extra
+        knobs never fail the render — the ``pyscf-extopt`` path is the one that validates
+        strictly, since it also has to require ``basis`` / ``xc`` explicitly.
+
+        Through :attr:`options_cls`, not off the raw dict. The defaults spelled here by
+        hand happened to match the model's, but "happened to" is the whole problem: the
+        same shape — a literal default beside a model that declares one — has already
+        split twice in this codebase, and neither split was visible until it produced a
+        wrong job.
         """
-        raw = ctx.step_cfg.options or {}
-        return {
-            "METHOD": raw.get("method", "dft"),
-            "XC": raw.get("xc", "pbe"),
-            "BASIS": raw.get("basis", "def2-svp"),
-        }
+        opts = self.options_cls.from_raw_lenient(ctx.step_cfg.options)
+        return {"METHOD": opts.method, "XC": opts.xc, "BASIS": opts.basis}

@@ -20,6 +20,7 @@ import pytest
 from chemrefine.engines._backend_server.base import CalculationData
 from chemrefine.engines.pyscf import _runtime, extopt_calc
 from chemrefine.engines.pyscf.options import PyscfOptions
+from chemrefine.errors import ConfigError
 
 
 def _data(*, multiplicity: int = 1, dograd: bool = True, **settings) -> CalculationData:
@@ -169,16 +170,19 @@ def test_pyscf_options_rejects_unknown_field():
 
 
 def test_pyscf_options_from_raw_requires_basis():
-    """The YAML must name a basis — no silent default on the user-facing path."""
-    with pytest.raises(ValueError, match="'basis' is required"):
+    """The YAML must name a basis — no silent default on the user-facing path.
+
+    ConfigError, like every other option failure, so it carries the documented exit code.
+    """
+    with pytest.raises(ConfigError, match="'basis' is required"):
         PyscfOptions.from_raw(None)
-    with pytest.raises(ValueError, match="'basis' is required"):
+    with pytest.raises(ConfigError, match="'basis' is required"):
         PyscfOptions.from_raw({"method": "hf"})
 
 
 def test_pyscf_options_from_raw_requires_xc_for_dft():
     """A dft step must name xc; hf does not need it."""
-    with pytest.raises(ValueError, match="'xc' is required"):
+    with pytest.raises(ConfigError, match="'xc' is required"):
         PyscfOptions.from_raw({"method": "dft", "basis": "def2-svp"})
     # hf needs no xc.
     assert PyscfOptions.from_raw({"method": "hf", "basis": "def2-svp"}).method == "hf"

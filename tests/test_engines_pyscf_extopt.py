@@ -13,10 +13,10 @@ from pathlib import Path
 
 import pytest
 from ase import Atoms
-from pydantic import ValidationError
 
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import ENGINES, NmsCapableEngine, get_engine
+from chemrefine.errors import ConfigError
 from chemrefine.state import PipelineState, StepContext, Structure
 
 # ---------------------------------------------------------------------------
@@ -190,10 +190,13 @@ def test_pyscf_unknown_option_fails_fast(tmp_path: Path):
 
     Regression: the raw options dict used to bypass :class:`PyscfOptions`, so
     unknown keys were dropped and the run proceeded with wrong settings.
+
+    ConfigError rather than pydantic's ValidationError — a bad knob is a config error
+    and must exit with the documented code instead of escaping the CLI as a traceback.
     """
     engine = get_engine("pyscf-extopt")
     ctx = _pyscf_ctx(tmp_path, basis_set="def2-tzvp")
-    with pytest.raises(ValidationError, match="basis_set"):
+    with pytest.raises(ConfigError, match="basis_set"):
         engine.run_block(
             ctx,
             inp_path=ctx.step_dir / "step1_structure_0.inp",

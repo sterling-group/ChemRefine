@@ -14,6 +14,7 @@ from typing import Any, Literal
 from pydantic import Field, field_validator, model_validator
 
 from chemrefine.engines._options import EngineOptions
+from chemrefine.errors import ConfigError
 
 
 class PyscfOptions(EngineOptions):
@@ -90,11 +91,17 @@ class PyscfOptions(EngineOptions):
         fast rather than running with a surprise level of theory. (The model
         fields keep values only so the server CLI / programmatic callers can
         still construct an instance.)
+
+        Delegates the actual validation to the base rather than calling ``cls`` itself:
+        this override used to build the model directly, so it skipped the base's
+        conversion of a pydantic error into a :class:`~chemrefine.errors.ConfigError` and
+        a typoed PySCF knob escaped the CLI's exit-code contract as a traceback. The extra
+        requirements below are the only thing this override should be adding.
         """
         raw = raw or {}
-        opts = cls(**raw)
+        opts = super().from_raw(raw)
         if "basis" not in raw:
-            raise ValueError("pyscf: 'basis' is required (name the basis set explicitly)")
+            raise ConfigError("pyscf: 'basis' is required (name the basis set explicitly)")
         if opts.method == "dft" and "xc" not in raw:
-            raise ValueError("pyscf: 'xc' is required when method is 'dft'")
+            raise ConfigError("pyscf: 'xc' is required when method is 'dft'")
         return opts

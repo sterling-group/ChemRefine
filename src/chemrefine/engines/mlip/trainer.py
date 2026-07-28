@@ -56,9 +56,8 @@ def prepare_inputs(results: StepResults, ctx: StepContext) -> tuple[Path, Path]:
     Raises :class:`ValueError` when any structure is missing an energy
     or forces — MLIP training needs both.
     """
-    options = ctx.step_cfg.options or {}
-    valid_fraction = float(options.get("valid_fraction", 0.1))
-    seed = int(options.get("seed", 42))
+    opts = MlipTrainOptions.from_raw_lenient(ctx.step_cfg.options)
+    valid_fraction, seed = opts.valid_fraction, opts.seed
 
     atoms_list: list[Atoms] = []
     for struct in results.structures:
@@ -152,21 +151,16 @@ def write_training_slurm(*, ctx: StepContext, config_path: Path) -> Path:
     here — the repeated literal is what let this header keep asking for a GPU after
     the shared default moved to ``cpu``.
     """
-    options = ctx.step_cfg.options or {}
-    header_name = slurm.header_name_for_device(MlipTrainOptions.from_raw_lenient(options).device)
-    header_path = ctx.template_dir / header_name
+    opts = MlipTrainOptions.from_raw_lenient(ctx.step_cfg.options)
+    header_path = ctx.template_dir / slurm.header_name_for_device(opts.device)
     if not header_path.is_file():
         raise ConfigError(f"SLURM header template not found: {header_path}")
 
-    # A raw job_name lands inside an #SBATCH directive, where a newline would start
-    # an arbitrary extra directive and whitespace would split the value. SLURM job
-    # names are a restricted vocabulary anyway, so reject rather than mangle.
-    job_name = str(options.get("job_name", "mlip_train"))
-    if not _JOB_NAME_RE.fullmatch(job_name):
-        raise ConfigError(
-            f"invalid mlip-train `job_name` {job_name!r}: use only letters, digits, "
-            f"underscores, dots and hyphens"
-        )
+    # `job_name` lands inside an #SBATCH directive, where a newline would start an
+    # arbitrary extra directive and whitespace would split the value. The pattern that
+    # enforces that is on the field now, so it is declared once next to what it
+    # constrains rather than re-checked wherever the value is read.
+    job_name = opts.job_name
     script_path = ctx.step_dir / "train.slurm"
     header_text = header_path.read_text(encoding="utf-8").rstrip()
     body = (

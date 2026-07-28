@@ -74,3 +74,21 @@ class MlipTrainOptions(MlipOptions):
     """
 
     device: Literal["cuda", "cpu"] = "cuda"
+
+    valid_fraction: float = Field(0.1, gt=0, lt=1)
+    """Share of the structures held out for validation.
+
+    Bounded here rather than checked in the trainer: ``0`` left no validation set and
+    ``1`` left nothing to train on, and both only surfaced as a ``ValueError`` from
+    :func:`~chemrefine.engines.mlip.trainer.prepare_inputs` after the step had already
+    started."""
+
+    seed: int = 42
+    """Seed for the train/validation split, so a re-run reproduces the same split."""
+
+    job_name: str = Field("mlip_train", pattern=r"^[A-Za-z0-9._-]+$")
+    """SLURM job name for the training job.
+
+    The pattern is the constraint the trainer already enforced by hand, moved to the
+    field that owns it: this value lands inside an ``#SBATCH`` directive, where a newline
+    would start an arbitrary extra directive and whitespace would split the value."""

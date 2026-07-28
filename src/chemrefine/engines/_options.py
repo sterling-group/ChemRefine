@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Self
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 
 from chemrefine.errors import ConfigError
 
@@ -53,7 +53,7 @@ class EngineOptions(BaseModel):
         """
         raw = raw or {}
         cls._reject_ambiguous_spellings(raw)
-        return cls(**raw)
+        return cls._validate(raw)
 
     @classmethod
     def _spellings_by_field(cls) -> dict[str, set[str]]:
@@ -109,4 +109,21 @@ class EngineOptions(BaseModel):
         raw = raw or {}
         cls._reject_ambiguous_spellings(raw)
         accepted = cls._accepted_names()
-        return cls(**{k: v for k, v in raw.items() if k in accepted})
+        return cls._validate({k: v for k, v in raw.items() if k in accepted})
+
+    @classmethod
+    def _validate(cls, data: dict[str, Any]) -> Self:
+        """Build the model, reporting a bad knob as a :class:`ConfigError`.
+
+        An invalid ``step.options`` value is a config error and must exit with the code
+        :mod:`chemrefine.errors` documents for one. Letting pydantic's ``ValidationError``
+        escape put it outside that contract — the CLI catches ``ChemRefineError`` — so a
+        typo in the YAML surfaced as a traceback instead of a message, which is the same
+        gap a missing template used to fall through.
+        """
+        try:
+            return cls(**data)
+        except ValidationError as e:
+            raise ConfigError(
+                f"invalid {cls.__name__.removesuffix('Options').lower()} options:\n{e}"
+            ) from e

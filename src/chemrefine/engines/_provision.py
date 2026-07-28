@@ -40,6 +40,7 @@ from urllib.request import url2pathname
 
 from chemrefine import __version__
 from chemrefine.config import StepConfig
+from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import (
     ENGINES,
     BackendRequirement,
@@ -122,8 +123,20 @@ def launcher_for(engine: object, options: dict[str, Any] | None) -> str:
     """
     if isinstance(engine, ProvisionableEngine):
         raw = options or {}
-        return resolve_launcher(engine.backend_requirement(raw), raw.get("backend_python"))
+        return resolve_launcher(engine.backend_requirement(raw), _backend_python(engine, raw))
     return sys.executable
+
+
+def _backend_python(engine: object, options: dict[str, Any]) -> str | None:
+    """The step's ``backend_python`` override, read through the engine's own model.
+
+    ``backend_python`` is an :class:`~chemrefine.engines._options.EngineOptions` field, so
+    reading it off the raw dict here was a second reader of a declared knob — the shape
+    that has already split twice in this codebase. The engine's ``options_cls`` is used
+    when it declares one, exactly as :func:`chemrefine.engines._job.gpus_from_options` does.
+    """
+    options_cls: type[EngineOptions] = getattr(engine, "options_cls", EngineOptions)
+    return options_cls.from_raw_lenient(options).backend_python
 
 
 def require_backend(requirement: BackendRequirement, override: str | None = None) -> None:
@@ -158,7 +171,7 @@ def preflight_backends(steps: Sequence[StepConfig]) -> None:
         engine = get_engine(step_cfg.engine)
         if isinstance(engine, ProvisionableEngine):
             raw = step_cfg.options or {}
-            require_backend(engine.backend_requirement(raw), raw.get("backend_python"))
+            require_backend(engine.backend_requirement(raw), _backend_python(engine, raw))
 
 
 def detect_env_tool() -> EnvTool:

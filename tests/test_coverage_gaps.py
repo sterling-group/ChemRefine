@@ -214,9 +214,21 @@ def test_trainer_rejects_valid_fraction_leaving_no_training(tmp_path: Path):
         )
         for i in range(2)
     )
-    ctx = _ctx(tmp_path, options={"valid_fraction": 1.0})
+    # 0.6 of 2 structures rounds up to 2 held out, leaving none to train on. The
+    # field bounds valid_fraction to (0, 1); this is the case only the structure
+    # count can decide, so the trainer still has to check it.
+    ctx = _ctx(tmp_path, options={"valid_fraction": 0.6})
     with pytest.raises(ValueError, match="leaves no training"):
         trainer.prepare_inputs(StepResults(structures=seeds), ctx)
+
+
+def test_trainer_options_reject_a_degenerate_valid_fraction(tmp_path: Path):
+    """0 and 1 are wrong whatever the structure count, so the field refuses them."""
+    from chemrefine.engines.mlip.options import MlipTrainOptions
+
+    for bad in (0.0, 1.0):
+        with pytest.raises(ChemRefineError, match="valid_fraction"):
+            MlipTrainOptions.from_raw_lenient({"valid_fraction": bad})
 
 
 # --- orb backend success path (mock the optional library) -------------------

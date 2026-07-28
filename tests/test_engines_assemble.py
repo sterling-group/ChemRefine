@@ -129,11 +129,16 @@ def test_from_raw_lenient_accepts_a_plain_string_alias():
 
 
 def test_from_raw_stays_strict_about_unknown_keys():
-    """Only the lenient reader is lenient — a typoed knob still fails the step."""
+    """Only the lenient reader is lenient — a typoed knob still fails the step.
+
+    As a ConfigError, not a raw pydantic ValidationError: a bad option is a config
+    error and has to carry the documented exit code, or the CLI — which catches
+    ChemRefineError — lets it out as a traceback.
+    """
     import pytest
-    from pydantic import ValidationError
 
     from chemrefine.engines.mlip.options import MlipOptions
+    from chemrefine.errors import ConfigError
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(ConfigError, match="modle_name"):
         MlipOptions.from_raw({"modle_name": "typo"})
