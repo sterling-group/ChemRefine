@@ -54,10 +54,29 @@ user on that node, so binding locally is not by itself access control.
 
 ### Generated job scripts
 
-`template_dir`, `output_dir`, and `scratch_dir` are interpolated into the
-generated SLURM script inside double quotes. Paths containing `"`, `$`, or a
-backtick are **rejected at config-load time** — they would otherwise terminate
-the quoted string or introduce a command substitution.
+**Every config value that reaches the generated SLURM script is refused at
+config-load time if it contains `"`, `$`, a backtick, a backslash, or a
+newline.** Those would terminate a quoted string or introduce a command
+substitution the job would then run.
+
+The rule is attached to that property, not to a list of fields — a value that
+reaches bash by a new route inherits it automatically:
+
+| Value | Why it needs the rule |
+| --- | --- |
+| `template_dir`, `output_dir`, `scratch_dir` | interpolated into `export WORK_DIR=…` |
+| `executables` | embedded raw in the runlog heredoc, which must stay unquoted so `$(hostname)` and `${SLURM_JOB_ID:-$$}` still expand |
+| `operation` | the same heredoc |
+| `options.tensor_folder` (pyscf) | reaches `cp -r "…"` — and bash substitutes *inside* double quotes, so the quoting there is not protection |
+
+Other values in those same lines are safe by construction and need no check:
+`engine` must be a registry key, `step.name` and the trainer's `job_name` are
+matched against a character allowlist, `step`/`cores` are integers,
+`structure_id` is minted by ChemRefine, and `output_globs` is an engine
+constant.
+
+Quoting alone is not the fix, and neither is quoting the heredoc: the expansion
+around those fields is load-bearing. Refusing the character at the boundary is.
 
 ## Supply chain
 

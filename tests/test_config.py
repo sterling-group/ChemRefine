@@ -401,6 +401,33 @@ def test_executables_with_shell_metacharacters_rejected(tmp_path: Path, bad: str
         load_config(_write_yaml(tmp_path, data))
 
 
+@pytest.mark.parametrize("bad", ["opt_sp$(id -un)", "opt_sp`whoami`", 'opt_sp"x', "opt_sp\\x"])
+def test_operation_with_shell_metacharacters_rejected(tmp_path: Path, bad: str):
+    """`operation` lands in the same unquoted heredoc the executables rule exists for.
+
+    `name` is regex-validated and `engine` is registry-checked, but `operation` was a free
+    string interpolated raw into the runlog header — so `operation: opt_sp$(id -un)` was a
+    command substitution the job executed. The rule belongs to the *concept* ("every config
+    value that reaches generated bash"), not to the fields that happened to have it first.
+    """
+    data = _minimal_config()
+    data["steps"][0]["operation"] = bad
+    with pytest.raises(ConfigError):
+        load_config(_write_yaml(tmp_path, data))
+
+
+@pytest.mark.parametrize("ok", ["opt_sp", "OPT+SP", "sp", "mlip_train", "goat"])
+def test_operation_accepts_every_real_spelling(tmp_path: Path, ok: str):
+    """The rule blocks shell metacharacters only — not the vocabulary engines actually use.
+
+    `OPT+SP` matters: it is the legacy spelling, normalised to `opt_sp` before this
+    validator sees it, and a stricter allowlist would have rejected it for no security gain.
+    """
+    data = _minimal_config()
+    data["steps"][0]["operation"] = ok
+    assert load_config(_write_yaml(tmp_path, data)).steps[0].operation is not None
+
+
 @pytest.mark.parametrize("ok", ["/opt/my orca/orca", "/opt/orca/orca", "orca"])
 def test_executables_allow_spaces_and_bare_command_names(tmp_path: Path, ok: str):
     """A space is not a shell hazard here — the run site quotes it — and paths have them.

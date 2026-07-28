@@ -16,6 +16,7 @@ from ase import Atoms
 
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import ENGINES, NmsCapableEngine, get_engine
+from chemrefine.engines.pyscf.options import PyscfOptions
 from chemrefine.errors import ConfigError
 from chemrefine.state import PipelineState, StepContext, Structure
 
@@ -282,3 +283,29 @@ def test_pyscf_extopt_calculator_from_args_round_trips():
 
 
 # Direct engine body coverage lives in ``tests/test_engines_pyscf.py``.
+
+
+@pytest.mark.parametrize(
+    "bad", ["tensors$(id -un)", "tensors`whoami`", 'tensors"x', "tensors\\x", "tensors\nx"]
+)
+def test_tensor_folder_with_shell_metacharacters_rejected(bad: str):
+    """`tensor_folder` reaches generated bash, so it is held to the same rule as the paths.
+
+    It is the engine option that lands in the on-exit copy-back as
+    `cp -r "<tensor_folder>" "$OUTPUT_DIR/"` — and bash performs command substitution
+    *inside* double quotes, so quoting there is not protection. Verified before the fix:
+    `tensor_folder: 'tensors$(id -un > /abs/path)'` wrote that file when the job ran.
+
+    Found by sweeping every value that reaches the generated script rather than patching
+    the one field a report named -- the same omission that left `operation` unguarded.
+    """
+    with pytest.raises(ConfigError):
+        PyscfOptions.from_raw({"basis": "def2-svp", "xc": "pbe", "tensor_folder": bad})
+
+
+def test_tensor_folder_allows_ordinary_names():
+    """Only metacharacters are refused; a plain or nested folder name stays legal."""
+    opts = PyscfOptions.from_raw(
+        {"basis": "def2-svp", "xc": "pbe", "tensor_folder": "run1/tensors"}
+    )
+    assert opts.tensor_folder == "run1/tensors"

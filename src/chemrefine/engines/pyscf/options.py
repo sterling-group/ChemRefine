@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
+from chemrefine.config import reject_shell_unsafe
 from chemrefine.engines._options import EngineOptions
 from chemrefine.errors import ConfigError
 
@@ -76,10 +77,23 @@ class PyscfOptions(EngineOptions):
 
     @field_validator("tensor_folder")
     @classmethod
-    def _non_empty(cls, v: str) -> str:
-        """``tensor_folder`` must be non-empty (no implicit cwd writes)."""
+    def _non_empty_and_shell_safe(cls, v: str) -> str:
+        """Non-empty (no implicit cwd writes), and safe to interpolate into generated bash.
+
+        This is the one engine option that reaches the job script: a relative
+        ``tensor_folder`` becomes an ``output_dirs`` entry, which the on-exit handler copies
+        with ``cp -r "<tensor_folder>" "$OUTPUT_DIR/"``. The double quotes there are **not**
+        protection — bash performs command substitution inside them — so
+        ``tensor_folder: 'tensors$(...)'`` ran that command when the job did.
+
+        Held to :func:`chemrefine.config.reject_shell_unsafe`, the same rule as the
+        directory paths, ``executables`` and ``operation``, rather than a copy of it: this
+        knob was missed exactly because the rule had been remembered as a list of fields
+        instead of as "every config value that reaches generated bash".
+        """
         if not v.strip():
             raise ValueError("tensor_folder must be a non-empty string")
+        reject_shell_unsafe(v, what="tensor_folder", fix="rename the folder")
         return v
 
     @classmethod

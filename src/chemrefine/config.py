@@ -204,6 +204,29 @@ class StepConfig(BaseModel):
     its submitted input). The default is ``stop`` so failures are never silently
     dropped — opt into ``skip``/``best`` per step when that is what you want."""
 
+    @field_validator("operation")
+    @classmethod
+    def _reject_unsafe_operation(cls, v: str | None) -> str | None:
+        """Hold ``operation`` to the same shell rule as the paths and ``executables``.
+
+        This value is interpolated raw into the runlog header's ``cat <<EOF`` — the same
+        unquoted heredoc :meth:`Config._reject_unsafe_executables` exists for, and unquotable
+        for the same reason (``$(hostname)`` / ``${SLURM_JOB_ID:-$$}`` must still expand). So
+        ``operation: opt_sp$(id -un)`` was a command substitution the job ran, and a stray
+        ``$`` silently corrupted the runlog.
+
+        Its two neighbours in that header were already covered by construction — ``engine``
+        must be a registry key, ``name`` is matched against :data:`_NAME_RE` — which is
+        precisely why this one was missed: the rule had been attached to the fields that
+        needed it first rather than to "every config value that reaches generated bash".
+
+        Only the metacharacters are refused, not the vocabulary: ``OPT+SP`` (normalised to
+        ``opt_sp`` before this runs) and any engine's own operation name stay legal.
+        """
+        if v is not None:
+            reject_shell_unsafe(v, what="operation", fix="rename the operation")
+        return v
+
     @field_validator("name")
     @classmethod
     def _validate_name(cls, v: str | None) -> str | None:
@@ -445,12 +468,34 @@ Dispatch: TypeAlias = Literal["auto", "local", "slurm"]
 _SHELL_UNSAFE = ('"', "$", "`", "\\")
 
 
-def _reject_shell_unsafe(text: str, *, what: str, fix: str) -> None:
+def reject_shell_unsafe(text: str, *, what: str, fix: str) -> None:
     """Raise unless ``text`` is safe to interpolate into the generated SLURM script.
 
-    One rule, one home. Every config value that reaches generated bash goes through here —
-    the directory paths and the ``executables`` map — because the second one was added
-    later, against a copy of the rule that did not exist, and so went unguarded.
+    **One rule, one home — and it belongs to the concept, not to a list of fields.** Every
+    config value that reaches generated bash goes through here. Twice now a value was added
+    that reached bash by a route nobody re-checked, because the rule was remembered as
+    "the path fields" rather than as the property it actually is:
+
+    ==========================  ===============================================================
+    Value                       How it is protected
+    ==========================  ===============================================================
+    ``template_dir`` /          this rule — interpolated into ``export WORK_DIR=…``
+    ``output_dir`` /
+    ``scratch_dir``
+    ``executables``             this rule — embedded raw in the runlog heredoc
+    ``operation``               this rule — same heredoc
+    ``tensor_folder``           this rule (via :class:`~chemrefine.engines.pyscf.options.\
+PyscfOptions`) — reaches ``cp -r "…"``, and bash substitutes *inside* double quotes
+    ``engine``                  safe by construction — must be a registry key
+    ``step.name``               safe by construction — matched against :data:`_NAME_RE`
+    ``step`` / ``cores``        safe by construction — integers
+    ``structure_id``            safe by construction — minted by :mod:`chemrefine.ids`
+    ``output_globs``            safe by construction — an engine ``ClassVar``
+    ``job_name`` (trainer)      safe by construction — its own field ``pattern``
+    ==========================  ===============================================================
+
+    Public, not underscored, because the engine option models import it: a knob that reaches
+    bash must be able to reach the rule, wherever it is declared.
     """
     bad = {c for c in _SHELL_UNSAFE if c in text}
     if "\n" in text or "\r" in text:
@@ -536,7 +581,7 @@ class Config(BaseModel):
         """
         if v is None:
             return v
-        _reject_shell_unsafe(str(v), what="path", fix="rename the directory")
+        reject_shell_unsafe(str(v), what="path", fix="rename the directory")
         return v
 
     @field_validator("executables")
@@ -560,7 +605,7 @@ class Config(BaseModel):
         is a perfectly ordinary path.
         """
         for tool, value in v.items():
-            _reject_shell_unsafe(value, what=f"executable for {tool!r}", fix="move the binary")
+            reject_shell_unsafe(value, what=f"executable for {tool!r}", fix="move the binary")
         return v
 
     @model_validator(mode="after")
