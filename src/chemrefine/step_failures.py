@@ -332,8 +332,13 @@ def apply_failure_policy(
 
     if step_cfg.on_failure == "best":
         prev_by_id = {s.id: s for s in ctx.prev_state.structures}
-        for f in failures:
-            fallback = f.best if f.best is not None else prev_by_id.get(f.sid)
-            if fallback is not None:
-                successes.append(fallback)
+        # Build a new list rather than appending into the caller's: every other value
+        # crossing this module is frozen, and a policy function quietly rewriting its
+        # argument is the one aliasing bug this file would not survive.
+        backfilled = [
+            fallback
+            for f in failures
+            if (fallback := (f.best if f.best is not None else prev_by_id.get(f.sid))) is not None
+        ]
+        return StepResults(structures=(*successes, *backfilled))
     return StepResults(structures=tuple(successes))
