@@ -77,18 +77,27 @@ class OrcaEngine(JobEngine):
         """PAL is a property of the template (one ``%pal`` for the step), read once."""
         return inspect.inspect_template(self._resolve_template(ctx)).pal
 
-    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
-        """Engine-specific bash that runs inside ``$WORK_DIR``.
+    @staticmethod
+    def orca_command(ctx: StepContext, inp_name: str, out_name: str) -> str:
+        """The quoted ``orca <input> > <output>`` invocation, for every ORCA run block.
 
-        The executable is quoted: it comes from the YAML, and an unquoted path with a
-        space in it silently becomes two words, while one with a shell metacharacter
-        becomes something else entirely. The script engines already quote their
-        interpreter, and the config validator already refuses metacharacters in the
-        directory paths — this closes the same hole on the one remaining
-        config-supplied value that reaches generated bash.
+        The executable comes from the YAML, and an unquoted path with a space in it
+        silently becomes two words while one with a shell metacharacter becomes
+        something else entirely. ``$OUTPUT_DIR`` is quoted for the same reason: the
+        config validator refuses metacharacters in the directory paths but **not**
+        spaces, so ``output_dir: ./my outputs`` would word-split the redirect.
+
+        This lives here, shared, because the fix was originally applied to this
+        method alone and :class:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine`
+        — which overrides ``run_block`` and re-embeds the same value — silently kept
+        the unquoted form. One definition means a subclass cannot reopen the hole.
         """
         orca = shlex.quote(ctx.executables.get("orca", "orca"))
-        return f"export OMP_NUM_THREADS=1\n{orca} {inp_path.name} > $OUTPUT_DIR/{out_path.name}"
+        return f'{orca} {inp_name} > "$OUTPUT_DIR/{out_name}"'
+
+    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
+        """Engine-specific bash that runs inside ``$WORK_DIR``."""
+        return f"export OMP_NUM_THREADS=1\n{self.orca_command(ctx, inp_path.name, out_path.name)}"
 
     def extra_header_fields(self, ctx: StepContext) -> tuple[tuple[str, object], ...]:
         """Record which ORCA binary ran in the runlog header."""

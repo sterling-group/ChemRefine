@@ -94,12 +94,14 @@ class ExtOptOrcaEngine(OrcaEngine):
         return ""
 
     def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
-        """Combine the engine's server command with the shared lifecycle bash."""
+        """Combine the engine's server command with the shared lifecycle bash.
+
+        The ORCA invocation itself comes from :meth:`OrcaEngine.orca_command`, so this
+        path runs the identically-quoted command the plain ORCA path does.
+        """
         return run_block._build_extopt_run_block(
             server_cmd=self._server_cmd(ctx),
-            orca_executable=ctx.executables.get("orca", "orca"),
-            inp_name=inp_path.name,
-            out_name=out_path.name,
+            orca_command=self.orca_command(ctx, inp_path.name, out_path.name),
         )
 
     def _wrapper_path(self, ctx: StepContext) -> Path:

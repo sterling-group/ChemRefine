@@ -3,16 +3,22 @@
 The per-engine test files each cover their own engine, and the contract tests cover
 each parser against a golden. What neither covers is a property that only breaks when
 *two* correct components disagree -- which is where the defects in this file's history
-actually lived: the `device` knob had two readers -- the engine's options model and
-the scheduler's raw-dict heuristic -- with different defaults, so a step that named no
-device rendered a CUDA script and was scheduled as a CPU job.
+actually lived:
 
-Being a property over *every* registered engine, it is asserted that way here rather
-than per engine, where the next engine would simply not be covered.
+* the `device` knob had two readers (the engine's options model and the scheduler's
+  raw-dict heuristic) with different defaults, so a step that named no device rendered
+  a CUDA script and was scheduled as a CPU job;
+* the ORCA executable was shell-quoted in `OrcaEngine.run_block` but not in the ExtOpt
+  subclass that overrides it, so a path with a space broke one path and not the other.
+
+Both are properties over *every* registered engine, so they are asserted that way here
+rather than per engine, where the next engine would simply not be covered.
 """
 
 from __future__ import annotations
 
+import shlex
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -92,3 +98,26 @@ def test_unset_device_never_silently_requests_a_gpu(engine_name: str, tmp_path: 
     """CPU is the floor: a step that names no device must schedule as a CPU job."""
     engine = get_engine(engine_name)
     assert engine.gpus(_ctx(tmp_path, engine_name, {})) == 0
+
+
+@pytest.mark.parametrize("engine_name", _job_executables())
+def test_run_block_survives_paths_with_spaces(engine_name: str, tmp_path: Path):
+    """Every engine's generated bash must parse, with a space in the executable path.
+
+    A config-supplied path is the one value that reaches generated bash, and an
+    unquoted one with a space in it silently becomes two words. Asserted over every
+    engine so a new `run_block` -- or an override of an existing one -- cannot
+    reintroduce it for its own path only.
+    """
+    engine = get_engine(engine_name)
+    ctx = _ctx(tmp_path, engine_name, {})
+    object.__setattr__(ctx, "executables", {"orca": "/opt/my orca/orca"})
+
+    block = engine.run_block(ctx, Path("step1_0.inp"), Path("step1_0.out"))
+
+    # `bash -n` parses the block without running it: unbalanced quoting fails here.
+    subprocess.run(["bash", "-n"], input=block, text=True, check=True, capture_output=True)
+    for line in block.splitlines():
+        if "my orca" in line:
+            command = shlex.split(line.split(">")[0])
+            assert "/opt/my orca/orca" in command, f"executable was split by the shell: {command}"
