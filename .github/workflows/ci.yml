@@ -93,14 +93,38 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+      # The mlip-* extras are the likeliest thing here to rot — they pin `e3nn==0.4.4`,
+      # `torch>=2.8,<2.9`, and an `orb-models; python_version >= '3.12'` marker — and a
+      # broken one reaches users by both supported routes: `pip install chemrefine[mlip]`
+      # into their own environment (the first backend can share it), and `chemrefine
+      # backends install <extra>`, which resolves the same requirement into a fresh env.
+      # Resolution only: metadata is fetched, no torch wheel is downloaded (~10s each).
       - name: Resolve every declared extra
         run: |
           pip install --upgrade pip
-          for extra in server pyscf docs test dev; do
+          for extra in server pyscf docs test dev \
+                       mlip mlip-fairchem mlip-mace mlip-sevenn mlip-orb mlip-chgnet; do
             echo "::group::[$extra]"
             pip install --dry-run --quiet ".[$extra]"
             echo "::endgroup::"
           done
+
+      # `mlip-orb` carries `python_version >= '3.12'`. On 3.11 the marker must exclude
+      # orb-models outright; without it pip backtracks through every orb release looking
+      # for a compatible one and ends in a resolver wall of text instead of a clear
+      # "requires a different Python". Nothing else would notice that marker regressing.
+      - name: The mlip-orb marker must exclude orb-models on 3.11
+        if: matrix.python-version == '3.11'
+        run: |
+          pip install --dry-run --quiet --report orb.json ".[mlip-orb]"
+          python - <<'PY'
+          import json, sys
+          report = json.load(open("orb.json"))
+          names = {p["metadata"]["name"].lower() for p in report["install"]}
+          if "orb-models" in names:
+              sys.exit("orb-models resolved on 3.11 — the version marker is not holding")
+          print("marker holds: orb-models excluded on 3.11")
+          PY
 
   type-check:
     runs-on: ubuntu-latest
