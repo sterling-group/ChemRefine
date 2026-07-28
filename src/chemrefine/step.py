@@ -254,6 +254,11 @@ def _nms_reuse_outcome(
         logger.info(
             "step %d: NMS search params changed, all resolved — reusing cache", step_cfg.step
         )
+        # The one place a step is persisted *without* `step_failures.finalize`, and
+        # deliberately so: there is nothing to resolve. Every structure was already resolved
+        # under the previous search params, so re-applying `on_failure` to an empty failure
+        # list would only re-stamp a ledger that is already correct. This re-stamps the
+        # cache under the new fingerprint and nothing else.
         cache.save_step_results(
             step_cfg=step_cfg,
             parent_ids=parent_ids,
@@ -393,16 +398,7 @@ def _run_full_step(
             step_cfg,
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
-    results = step_failures.apply_failure_policy(successes, failures, ctx, step_cfg)
-
-    cache.save_step_results(
-        step_cfg=step_cfg,
-        parent_ids=parent_ids,
-        results=results,
-        ctx=ctx,
-        template_digest=engine.input_digest(ctx),
-        chemrefine_version=__version__,
-    )
+    results = step_failures.finalize(engine, ctx, step_cfg, parent_ids, successes, failures)
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
 
@@ -474,15 +470,7 @@ def rebuild_cache_step(
             step_cfg,
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
-    results = step_failures.apply_failure_policy(successes, failures, ctx, step_cfg)
-    cache.save_step_results(
-        step_cfg=step_cfg,
-        parent_ids=parent_ids,
-        results=results,
-        ctx=ctx,
-        template_digest=engine.input_digest(ctx),
-        chemrefine_version=__version__,
-    )
+    results = step_failures.finalize(engine, ctx, step_cfg, parent_ids, successes, failures)
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
 
@@ -529,13 +517,4 @@ def _resubmit_failed(
 
     successes, failures = step_failures.parse_with_failures(engine, manifest, ctx)
     successes, failures = step_failures.retry_unconverged(engine, ctx, successes, failures)
-    results = step_failures.apply_failure_policy(successes, failures, ctx, step_cfg)
-    cache.save_step_results(
-        step_cfg=step_cfg,
-        parent_ids=parent_ids,
-        results=results,
-        ctx=ctx,
-        template_digest=engine.input_digest(ctx),
-        chemrefine_version=__version__,
-    )
-    return results
+    return step_failures.finalize(engine, ctx, step_cfg, parent_ids, successes, failures)

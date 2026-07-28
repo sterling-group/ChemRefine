@@ -33,7 +33,7 @@ from ase import Atoms
 from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field
 
-from chemrefine import __version__, cache, io, step_failures
+from chemrefine import cache, io, step_failures
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import NmsCapableEngine
 from chemrefine.errors import CacheError
@@ -465,15 +465,11 @@ def reattempt_nms(
         for s in cached.results.structures
         if s.id not in failed_ids and s.parent_id not in failed_ids
     )
-    results = step_failures.apply_failure_policy(
-        list(kept + reattempt.survivors), list(reattempt.failures), ctx, step_cfg
+    return step_failures.finalize(
+        engine,
+        ctx,
+        step_cfg,
+        parent_ids,
+        list(kept + reattempt.survivors),
+        list(reattempt.failures),
     )
-    cache.save_step_results(
-        step_cfg=step_cfg,
-        parent_ids=parent_ids,
-        results=results,
-        ctx=ctx,
-        template_digest=engine.input_digest(ctx),
-        chemrefine_version=__version__,
-    )
-    return results

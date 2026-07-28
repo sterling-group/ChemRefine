@@ -22,7 +22,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
-from chemrefine import cache, ids
+from chemrefine import __version__, cache, ids
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import CalculationEngine
 from chemrefine.errors import OutputParseError
@@ -342,3 +342,42 @@ def apply_failure_policy(
         ]
         return StepResults(structures=(*successes, *backfilled))
     return StepResults(structures=tuple(successes))
+
+
+def finalize(
+    engine: CalculationEngine,
+    ctx: StepContext,
+    step_cfg: StepConfig,
+    parent_ids: tuple[str, ...],
+    successes: list[Structure],
+    failures: list[Failure],
+) -> StepResults:
+    """Resolve a step's failures and persist the result — the one way a step ends.
+
+    Every path that finishes a step does the same two things in the same order: apply
+    ``on_failure`` (:func:`apply_failure_policy`), then write the cache
+    (:func:`chemrefine.cache.save_step_results`). Four call sites spelled that out
+    identically — the full run, ``rebuild-cache``, the failed-job resubmit, and the NMS
+    re-attempt — and how they *reach* this point differs (some retry unconverged structures
+    first, some run NMS, some filter afterwards and some return the raw results), which is
+    why only the tail is shared and only the tail is extracted.
+
+    Worth having as one function because the shape has already cost something: this pair is
+    what :func:`chemrefine.cache.save_step_results` was itself extracted for, after a site
+    drifted and wrote a cache without its reuse fingerprint. A cache written with an
+    inconsistent key is not a crash — it is a silent re-run, or a silent reuse, much later.
+
+    Lives here rather than in :mod:`chemrefine.step` for a plain reason: ``step`` imports
+    ``nms``, so ``nms`` cannot import back. This module already owns the policy half and is
+    already imported by both.
+    """
+    results = apply_failure_policy(successes, failures, ctx, step_cfg)
+    cache.save_step_results(
+        step_cfg=step_cfg,
+        parent_ids=parent_ids,
+        results=results,
+        ctx=ctx,
+        template_digest=engine.input_digest(ctx),
+        chemrefine_version=__version__,
+    )
+    return results
