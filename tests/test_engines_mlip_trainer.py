@@ -19,7 +19,7 @@ from ase import Atoms
 from chemrefine.config import StepConfig
 from chemrefine.engines.mlip import trainer
 from chemrefine.engines.mlip.options import MlipOptions, MlipTrainOptions
-from chemrefine.errors import ConfigError
+from chemrefine.errors import ChemRefineError, ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import PipelineState, StepContext, StepResults, Structure
 
@@ -382,3 +382,43 @@ def test_training_device_default_is_declared_not_repeated():
     """The trainer's default lives on the options model, not in a second literal."""
     assert MlipTrainOptions().device == "cuda"
     assert MlipOptions().device == "cpu"
+
+
+# --- mlip-train engine no-op / unsupported ----------------------------------
+
+
+def test_mlip_train_engine_not_nms_capable(tmp_path: Path):
+    from chemrefine.engines.api import NmsCapableEngine, get_engine
+
+    eng = get_engine("mlip-train")
+    # mlip-train is a pass-through: it doesn't satisfy the NMS hook contract.
+    assert not isinstance(eng, NmsCapableEngine)
+
+
+def test_trainer_rejects_valid_fraction_leaving_no_training(tmp_path: Path):
+    from chemrefine.engines.mlip import trainer
+
+    seeds = tuple(
+        Structure(
+            id=str(i),
+            atoms=Atoms("H", positions=[[0, 0, 0]]),
+            energy_hartree=-1.0,
+            forces_ev_per_a=np.zeros((1, 3)),
+        )
+        for i in range(2)
+    )
+    # 0.6 of 2 structures rounds up to 2 held out, leaving none to train on. The
+    # field bounds valid_fraction to (0, 1); this is the case only the structure
+    # count can decide, so the trainer still has to check it.
+    ctx = _ctx(tmp_path, valid_fraction=0.6)
+    with pytest.raises(ValueError, match="leaves no training"):
+        trainer.prepare_inputs(StepResults(structures=seeds), ctx)
+
+
+def test_trainer_options_reject_a_degenerate_valid_fraction(tmp_path: Path):
+    """0 and 1 are wrong whatever the structure count, so the field refuses them."""
+    from chemrefine.engines.mlip.options import MlipTrainOptions
+
+    for bad in (0.0, 1.0):
+        with pytest.raises(ChemRefineError, match="valid_fraction"):
+            MlipTrainOptions.from_raw_lenient({"valid_fraction": bad})

@@ -855,3 +855,23 @@ def test_pes_coord_block_at_end_of_segment_is_parsed():
     atoms = _parse_last_pes_coord_block(segment)
     assert [a[0] for a in atoms] == ["H", "H"]
     assert atoms[1][1] == 0.74
+
+
+# --- orca output text dispatcher --------------------------------------------
+
+
+def test_parse_text_handles_pes():
+    from synthetic import synthetic_pes_segment
+
+    from chemrefine.engines.orca import output
+
+    text = synthetic_pes_segment(coords=[("H", 0.0, 0.0, 0.0)], energy=-1.0)
+    parsed = output.parse_text(text, "pes", src="x")
+    assert parsed and parsed[-1].energy_hartree == -1.0
+
+
+def test_parse_text_rejects_non_text_operation():
+    from chemrefine.engines.orca import output
+
+    with pytest.raises(OutputParseError):
+        output.parse_text("", "goat", src="x")

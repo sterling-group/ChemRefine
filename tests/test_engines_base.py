@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 # Importing from ``chemrefine.engines.api`` triggers the parent package's
@@ -83,3 +85,26 @@ def test_registry_holds_only_canonical_engine_names():
     assert {"orca", "mlip", "mlip-extopt", "mlip-train"} <= set(ENGINES)
     for legacy in ("mlff", "mlff-extopt", "mlff-train", "dft"):
         assert legacy not in ENGINES
+
+
+# --- base: the abstract SLURM hooks -----------------------------------------
+
+
+def test_job_engine_primitive_hooks_are_abstract():
+    from chemrefine.engines._job import JobEngine
+
+    eng = JobEngine()
+    with pytest.raises(NotImplementedError):
+        eng.pal(None)
+    with pytest.raises(NotImplementedError):
+        eng.run_block(None, Path("i"), Path("o"))
+    with pytest.raises(NotImplementedError):
+        eng.build_input(
+            xyz_path=Path("x"),
+            template_path=Path("t"),
+            input_path=Path("i"),
+            output_path=Path("o"),
+            ctx=None,
+        )
+    with pytest.raises(NotImplementedError):
+        eng.parse_one(Path("o"), "0", None)

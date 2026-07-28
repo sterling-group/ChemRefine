@@ -632,3 +632,22 @@ def test_recovery_matrix_covers_every_action():
         Action.REBUILD_CACHE,
     }
     assert covered == set(Action)
+
+
+def _coverage_cfg(tmp_path: Path, **step_over) -> Config:
+    """A one-step fake-engine Config rooted at tmp_path."""
+    return Config(
+        output_dir=tmp_path / "outputs",
+        steps=[StepConfig(step=1, engine="fake", operation="opt_sp", **step_over)],
+    )
+
+
+# --- recovery: rerun-errors with nothing pending ----------------------------
+
+
+def test_rerun_errors_logs_when_no_failures(tmp_path: Path, monkeypatch):
+    from chemrefine import recovery
+
+    cfg = _coverage_cfg(tmp_path)
+    monkeypatch.setattr(recovery.pipeline, "run", lambda *a, **k: [])
+    recovery._action_rerun_errors(cfg, None)  # last step, no ledger → "no failures" branch

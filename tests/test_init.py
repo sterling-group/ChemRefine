@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import runpy
+import sys
 from importlib.metadata import PackageNotFoundError
 from unittest.mock import patch
 
@@ -60,3 +61,27 @@ def test_python_dash_m_translates_legacy_argv():
     ):
         runpy.run_module("chemrefine", run_name="__main__")
     assert captured["argv"] == ["resume", "input.yaml"]
+
+
+# --- module __main__ entry points -------------------------------------------
+
+
+@pytest.mark.filterwarnings("ignore:.*found in sys.modules.*:RuntimeWarning")
+@pytest.mark.parametrize(
+    "module",
+    [
+        "chemrefine.engines.orca.extopt.bridge",
+        "chemrefine.engines._backend_server.server",
+    ],
+)
+def test_module_entrypoint_runs_main(module, monkeypatch):
+    """`python -m <module>` dispatches through the ``if __name__ == "__main__"`` guard.
+
+    Driven via ``--help`` so ``main()`` exits cleanly (argparse SystemExit) without
+    binding a socket or contacting a backend. ``runpy`` executes the module as
+    ``__main__`` in-process so the guard line runs under coverage — a spawned
+    subprocess isn't viable here (the server blocks; the bridge needs a live backend).
+    """
+    monkeypatch.setattr(sys, "argv", [module, "--help"])
+    with pytest.raises(SystemExit):
+        runpy.run_module(module, run_name="__main__")

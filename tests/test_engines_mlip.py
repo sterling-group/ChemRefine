@@ -17,9 +17,11 @@ Coverage:
 from __future__ import annotations
 
 import json
+import sys
+import types
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from ase import Atoms
@@ -790,3 +792,68 @@ def test_mlip_direct_submit_respects_cores_option(tmp_path: Path):
         engine.submit(inputs, ctx)
     script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
     assert "#SBATCH --ntasks=2" in script_text
+
+
+# --- orb backend success path (mock the optional library) -------------------
+
+
+def test_build_orb_success_path(monkeypatch):
+    pretrained = types.SimpleNamespace(orb_v2=MagicMock(return_value="ORBFF"))
+    forcefield = types.ModuleType("orb_models.forcefield")
+    forcefield.pretrained = pretrained
+    calc_mod = types.ModuleType("orb_models.forcefield.inference.calculator")
+    calc_mod.ORBCalculator = MagicMock(return_value="ORB_CALC")
+    for name, mod in {
+        "orb_models": types.ModuleType("orb_models"),
+        "orb_models.forcefield": forcefield,
+        "orb_models.forcefield.inference": types.ModuleType("orb_models.forcefield.inference"),
+        "orb_models.forcefield.inference.calculator": calc_mod,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, mod)
+
+    from chemrefine.engines.mlip.backends.orb import _build_orb
+
+    assert _build_orb(model_name="orb_v2", device="cpu") == "ORB_CALC"
+
+
+# --- orb older-layout fallback ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "task, lib, package, extra",
+    [
+        ("mace_off", "mace", "mace-torch", "mlip-mace"),
+        ("omol", "fairchem", "fairchem-core", "mlip-fairchem"),
+        ("sevenn", "sevenn", "sevenn", "mlip-sevenn"),
+        ("chgnet", "chgnet", "chgnet", "mlip-chgnet"),
+        ("orb", "orb_models", "orb-models", "mlip-orb"),
+    ],
+)
+def test_backend_missing_dependency_names_the_extra(task, lib, package, extra, monkeypatch):
+    """A missing backend lib → a helpful ImportError naming the package + extra."""
+    monkeypatch.setitem(sys.modules, lib, None)  # force the lazy import to fail
+    from chemrefine.engines.mlip.calculator import build_calculator
+
+    with pytest.raises(ImportError, match=f"{package}.*{extra}"):
+        build_calculator(task_name=task, model_name="x")
+
+
+def test_build_orb_older_layout(monkeypatch):
+    """When the v3 ``inference.calculator`` import fails, fall back to the older path."""
+    pretrained = types.SimpleNamespace(orb_v2=MagicMock(return_value="ORBFF"))
+    forcefield = types.ModuleType("orb_models.forcefield")
+    forcefield.pretrained = pretrained
+    older_calc = types.ModuleType("orb_models.forcefield.calculator")
+    older_calc.ORBCalculator = MagicMock(return_value="OLD_CALC")
+    for name, mod in {
+        "orb_models": types.ModuleType("orb_models"),
+        "orb_models.forcefield": forcefield,
+        # v3 layout absent (None ⇒ ImportError) → exercises the older-layout branch
+        "orb_models.forcefield.inference.calculator": None,
+        "orb_models.forcefield.calculator": older_calc,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, mod)
+
+    from chemrefine.engines.mlip.backends.orb import _build_orb
+
+    assert _build_orb(model_name="orb_v2", device="cpu") == "OLD_CALC"

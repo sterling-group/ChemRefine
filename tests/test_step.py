@@ -10,8 +10,8 @@ from ase import Atoms
 
 from chemrefine import cache, step_failures
 from chemrefine.config import Config, StepConfig
-from chemrefine.errors import ChemRefineError
-from chemrefine.state import PipelineState, Structure
+from chemrefine.errors import CacheError, ChemRefineError
+from chemrefine.state import PipelineState, StepContext, StepInputs, StepResults, Structure
 from chemrefine.step import (
     StepMode,
     StepOutcome,
@@ -20,6 +20,7 @@ from chemrefine.step import (
     run_step,
     step_dir_for,
 )
+from chemrefine.step_failures import FailureKind, FailureRecord
 
 
 def _config(tmp_path: Path, **step_overrides) -> Config:
@@ -686,3 +687,196 @@ def test_halt_if_pending_no_pending_returns(tmp_path: Path):
     cfg = _config(tmp_path, on_failure="stop")
     step_dir_for(cfg, cfg.steps[0]).mkdir(parents=True, exist_ok=True)
     halt_if_pending(cfg, cfg.steps[0], StepMode.RESUME)  # no ledger → no raise
+
+
+def _branch_ctx(
+    tmp_path: Path, *, options=None, nms: bool = False, engine: str = "fake"
+) -> StepContext:
+    """A minimal StepContext for unit-level branch tests (no templates needed)."""
+    step_cfg = StepConfig(step=1, engine=engine, operation="opt_sp", options=options or {}, nms=nms)
+    return StepContext(
+        step_cfg=step_cfg,
+        step_dir=tmp_path / "outputs" / "step1",
+        template_dir=tmp_path / "templates",
+        scratch_dir=None,
+        prev_state=PipelineState(structures=()),
+        charge=0,
+        multiplicity=1,
+        max_cores=2,
+        slurm_template="cpu.slurm.header",
+        executables={},
+    )
+
+
+def _branch_cfg(tmp_path: Path, **step_over) -> Config:
+    return Config(
+        output_dir=tmp_path / "outputs",
+        steps=[StepConfig(step=1, engine="fake", operation="opt_sp", **step_over)],
+    )
+
+
+# --- no-manifest guards (step / nms) ----------------------------------------
+
+
+def test_rebuild_cache_step_raises_without_manifest(tmp_path: Path):
+    from chemrefine import step
+
+    cfg = _branch_cfg(tmp_path)
+    with pytest.raises(CacheError, match="cannot rebuild-cache"):
+        step.rebuild_cache_step(cfg, cfg.steps[0], PipelineState(structures=()))
+
+
+def test_resubmit_failed_raises_without_manifest(tmp_path: Path):
+    from chemrefine import step
+    from chemrefine.engines.api import get_engine
+
+    ctx = _branch_ctx(tmp_path)
+    ctx.step_dir.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(CacheError, match="no manifest to rehydrate"):
+        step._resubmit_failed(
+            get_engine("fake"),
+            ctx,
+            ctx.step_cfg,
+            [FailureRecord("0", FailureKind.MISSING_OUTPUT, "output missing")],
+            (),
+        )
+
+
+def test_reattempt_nms_raises_without_manifest(tmp_path: Path):
+    from chemrefine import nms
+    from chemrefine.engines.api import get_engine
+
+    ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
+    ctx.step_dir.mkdir(parents=True, exist_ok=True)  # no manifest written
+    with pytest.raises(CacheError, match="no manifest"):
+        nms.reattempt_nms(get_engine("orca"), ctx, ctx.step_cfg, None, ())
+
+
+def test_rebuild_cache_step_nms_branch(tmp_path: Path):
+    """rebuild-cache routes an NMS step through nms.rebuild_nms (here: an already-resolved
+    round-1, so the survivor passes through at its canonical id)."""
+    from synthetic import synthetic_dft_output
+
+    from chemrefine import cache, step
+    from chemrefine.ids import structure_artifact_path
+
+    template_dir = tmp_path / "templates"
+    template_dir.mkdir(parents=True, exist_ok=True)
+    cfg = Config(
+        output_dir=tmp_path / "outputs",
+        template_dir=template_dir,
+        steps=[
+            StepConfig(
+                step=1, engine="orca", operation="freq", nms=True, options={"target": "minimum"}
+            ),
+        ],
+    )
+    step_cfg = cfg.steps[0]
+    step_dir = (cfg.output_dir / step_cfg.dir_name()).resolve()
+    out = structure_artifact_path(step_dir, 1, "0", "out")
+    inp = structure_artifact_path(step_dir, 1, "0", "inp")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    # A frequency table with NO imaginary modes ⇒ already at the minimum ⇒ resolved.
+    out.write_text(
+        synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)])
+        + "VIBRATIONAL FREQUENCIES\n-----------------------\n     6:    100.00 cm**-1\n"
+        + "\n****ORCA TERMINATED NORMALLY****\n",
+        encoding="utf-8",
+    )
+    inp.write_text("! Opt Freq\n", encoding="utf-8")
+    cache.save_manifest(
+        StepInputs(files=((inp, out, "0"),)), step_dir, operation="freq", engine="orca"
+    )
+    seed = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
+    outcome = step.rebuild_cache_step(cfg, step_cfg, PipelineState(structures=(seed,)))
+    assert outcome.cache_hit is False
+    assert {s.id for s in outcome.state.structures} == {"0"}  # resolved, id kept
+
+
+# --- _nms_reuse_outcome (NMS reuse-fingerprint path) ------------------------
+
+
+def _pin_nms(monkeypatch, fp: str = "FP") -> None:
+    """Pin the NMS reuse fingerprint + re-attempt result for these tests.
+
+    ``step.py`` calls through the :mod:`chemrefine.cache` and :mod:`chemrefine.nms`
+    module objects, so patching the module attributes redirects the orchestrator
+    without touching its code.
+    """
+    from chemrefine import cache, nms
+
+    monkeypatch.setattr(
+        cache,
+        "reuse_fingerprint",
+        lambda step_cfg, parent_ids, *, parents_digest="", template_digest="": fp,
+    )
+    monkeypatch.setattr(
+        nms,
+        "reattempt_nms",
+        lambda engine, ctx, step_cfg, cached, parent_ids: StepResults(
+            structures=(
+                Structure(id="re", atoms=Atoms("H", positions=[[0, 0, 0]]), energy_hartree=-1.0),
+            )
+        ),
+    )
+
+
+def _save_reuse_cache(ctx, reuse_fp: str):
+    from chemrefine import cache
+
+    ctx.step_dir.mkdir(parents=True, exist_ok=True)
+    cache.save(
+        step_cfg=ctx.step_cfg,
+        parent_ids=(),
+        results=StepResults(
+            structures=(Structure(id="c", atoms=Atoms("H", positions=[[0, 0, 0]])),)
+        ),
+        step_dir=ctx.step_dir,
+        chemrefine_version="v",
+        reuse_fingerprint=reuse_fp,
+    )
+
+
+def test_nms_reuse_outcome_none_without_cache(tmp_path: Path, monkeypatch):
+    from chemrefine import step
+    from chemrefine.engines.api import get_engine
+
+    _pin_nms(monkeypatch)
+    ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
+    ctx.step_dir.mkdir(parents=True, exist_ok=True)
+    assert step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca")) is None
+
+
+def test_nms_reuse_outcome_none_on_corrupt_cache(tmp_path: Path, monkeypatch):
+    from chemrefine import cache, step
+    from chemrefine.engines.api import get_engine
+
+    _pin_nms(monkeypatch)
+    ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
+    cache_path = cache._cache_path(ctx.step_dir)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_bytes(b"not json")
+    assert step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca")) is None
+
+
+def test_nms_reuse_outcome_restamps_when_all_resolved(tmp_path: Path, monkeypatch):
+    from chemrefine import step
+    from chemrefine.engines.api import get_engine
+
+    _pin_nms(monkeypatch, "FP")
+    ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
+    _save_reuse_cache(ctx, "FP")  # matching reuse fingerprint, no failed ledger
+    out = step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"))
+    assert out is not None and out.cache_hit is False
+
+
+def test_nms_reuse_outcome_reattempts_when_ledger_present(tmp_path: Path, monkeypatch):
+    from chemrefine import cache, step
+    from chemrefine.engines.api import get_engine
+
+    _pin_nms(monkeypatch, "FP")
+    ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
+    _save_reuse_cache(ctx, "FP")
+    cache.save_failed_jobs(ctx.step_dir, [{"structure_id": "0", "kind": "failed", "reason": "x"}])
+    out = step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"))
+    assert out is not None and any(s.id == "re" for s in out.state.structures)

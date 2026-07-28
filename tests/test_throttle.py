@@ -249,3 +249,24 @@ def test_wait_all_raises_on_timeout():
         pytest.raises(ThrottleTimeoutError),
     ):
         t.wait_all(finished=_never_finished, max_wait_seconds=5.0)
+
+
+# --- throttle ---------------------------------------------------------------
+
+
+def test_throttler_register_rejects_negative_gpus():
+    from chemrefine.throttle import Throttler
+
+    with pytest.raises(ValueError, match="gpus must be >= 0"):
+        Throttler(max_cores=8, max_gpus=1).register("g", 1, gpus=-1)
+
+
+def test_throttler_assign_device_raises_when_all_taken():
+    from chemrefine.throttle import Throttler
+
+    # Unreachable on the real call path (wait_for_room admits first), so assign_device
+    # fails loud rather than silently colliding two GPU jobs on device 0.
+    t = Throttler(max_cores=8, max_gpus=1)
+    t.register("g", 1, gpus=1, device=0)
+    with pytest.raises(RuntimeError, match="no free GPU device"):
+        t.assign_device()

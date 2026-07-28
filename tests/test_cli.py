@@ -343,3 +343,13 @@ def test_malformed_config_exits_with_the_config_error_code(tmp_path: Path):
     result = CliRunner().invoke(app, ["run", str(config)])
 
     assert result.exit_code == ConfigError.exit_code
+
+
+# --- cli: malformed legacy argv passes through ------------------------------
+
+
+def test_translate_legacy_argv_passes_through_on_argparse_error():
+    from chemrefine.cli import _translate_legacy_argv
+
+    argv = ["c.yaml", "--maxcores", "not-an-int"]  # argparse SystemExit
+    assert _translate_legacy_argv(argv) == argv
