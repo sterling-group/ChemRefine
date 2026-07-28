@@ -111,6 +111,22 @@ def displace_along_mode(
     return pos, neg
 
 
+def rng_for(structure_id: str, seed: int) -> np.random.Generator:
+    """A per-structure RNG, so ``random`` mode selection can't depend on loop position.
+
+    One generator shared across the structure loop made each structure's draw depend on
+    how many structures preceded it — and :func:`run_nms` and :func:`rebuild_nms` skip on
+    *different* conditions (only the rebuild skips a structure with no ``attemptK/`` on
+    disk). One skip shifted the stream for every structure after it, so ``rebuild-cache``
+    re-derived children that were never computed, found no outputs for them, and reported
+    a resolved structure as unresolved.
+
+    Seeding from the structure id makes the draw a pure function of ``(seed, id)``: the
+    two coordinators agree whatever either one skips.
+    """
+    return np.random.default_rng([seed, *structure_id.encode()])
+
+
 def _reaction_coordinate(imag_freqs: dict[int, float], opts: NmsOptions) -> int:
     """The mode to *keep* for a TS: ``ts_mode_index`` or the most-imaginary."""
     if opts.ts_mode_index is not None:
@@ -325,7 +341,6 @@ def run_nms(
     """
     opts = _resolved_options(engine, ctx)
     target = target_imaginary_count(opts)
-    rng = np.random.default_rng(opts.seed)
     survivors: list[Structure] = []
     failures: list[step_failures.Failure] = list(round1_failures)
     for s in round1.structures:
@@ -343,7 +358,10 @@ def run_nms(
             )
             continue
         children = _children_of(
-            s, select_displacements(s, s.imaginary_freqs or {}, s.normal_modes, opts, rng)
+            s,
+            select_displacements(
+                s, s.imaginary_freqs or {}, s.normal_modes, opts, rng_for(s.id, opts.seed)
+            ),
         )
         if not children:
             failures.append(
@@ -374,7 +392,6 @@ def rebuild_nms(
     """
     opts = _resolved_options(engine, ctx)
     target = target_imaginary_count(opts)
-    rng = np.random.default_rng(opts.seed)
     survivors: list[Structure] = []
     failures: list[step_failures.Failure] = list(round1_failures)
     for s in round1.structures:
@@ -392,7 +409,10 @@ def rebuild_nms(
             )
             continue
         children = _children_of(
-            s, select_displacements(s, s.imaginary_freqs or {}, s.normal_modes, opts, rng)
+            s,
+            select_displacements(
+                s, s.imaginary_freqs or {}, s.normal_modes, opts, rng_for(s.id, opts.seed)
+            ),
         )
         round2 = _parse_round_two(engine, children, ctx, attempt)
         resolved = [c for c in round2 if _is_resolved(c, target)]

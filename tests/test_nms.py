@@ -459,3 +459,46 @@ def test_rebuild_nms_unresolved_when_no_attempt_on_disk(tmp_path: Path):
     round1 = _seed_round1(engine, ctx)  # round-1 only, no attempt dir
     res = nms.rebuild_nms(engine, round1, [], ctx, ctx.step_cfg)
     assert [f.sid for f in res.failures] == ["0"]
+
+
+# ---------------------------------------------------------------------------
+# Mode selection must not depend on loop position
+# ---------------------------------------------------------------------------
+
+
+def test_random_mode_selection_is_per_structure_not_stream_order():
+    """The same structure draws the same modes regardless of what ran before it.
+
+    `run_nms` and `rebuild_nms` skip on different conditions -- only the rebuild
+    skips a structure whose `attemptK/` is absent -- so a shared RNG stream made a
+    skip shift every later structure's draw. `rebuild-cache` then looked for children
+    that were never computed and reported a resolved structure as unresolved.
+    """
+    opts = nms.NmsOptions(target="random", num_random_displacements=1, seed=42)
+    modes = np.zeros((3, 3, 9))
+    modes[0, 0, :] = 1.0
+
+    def drawn(structure_id: str) -> str:
+        struct = Structure(id=structure_id, atoms=Atoms("H3", positions=np.zeros((3, 3))))
+        rng = nms.rng_for(struct.id, opts.seed)
+        return nms.select_displacements(struct, {}, modes, opts, rng)[0][0]
+
+    visited_all = [drawn(sid) for sid in ("0", "1", "2")]
+    skipped_one = [drawn(sid) for sid in ("0", "2")]
+
+    assert visited_all[0] == skipped_one[0]
+    assert visited_all[2] == skipped_one[1], "a skipped structure shifted a later one's draw"
+
+
+def test_rng_for_is_deterministic_and_distinct_per_structure():
+    """Same (id, seed) -> same stream; different ids -> different streams."""
+    assert nms.rng_for("0", 42).integers(0, 1000, 5).tolist() == (
+        nms.rng_for("0", 42).integers(0, 1000, 5).tolist()
+    )
+    assert nms.rng_for("0", 42).integers(0, 1000, 5).tolist() != (
+        nms.rng_for("1", 42).integers(0, 1000, 5).tolist()
+    )
+    # The seed still matters -- it is not being ignored in favour of the id.
+    assert nms.rng_for("0", 42).integers(0, 1000, 5).tolist() != (
+        nms.rng_for("0", 43).integers(0, 1000, 5).tolist()
+    )
