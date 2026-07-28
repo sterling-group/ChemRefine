@@ -2,8 +2,8 @@
 
 The per-section tests use small synthetic snippets, which is right for edge cases but is
 also how two defects survived: a fabricated fixture agreeing with a fabricated regex looks
-exactly like a passing test. This file asserts the readers against the ~100 real ORCA
-outputs already in the repo, streamed straight out of the ``tests/data/e2e/recordings``
+exactly like a passing test. This file asserts the readers against every real ORCA output
+already in the repo, streamed straight out of the ``tests/data/e2e/recordings``
 archives (nothing is extracted to disk).
 
 Every recorded run is a *successful* one — they were captured from passing live runs — so
@@ -11,8 +11,8 @@ the corpus-wide expectation is simple and strong: every output must read as term
 converged, and every frequency job must yield a well-shaped normal-mode tensor. A reader
 that starts finding failures here is wrong about real ORCA, whatever the unit tests say.
 
-Marked ``integration`` only because it reads ~100 files out of six compressed archives; it
-needs no binaries and runs in a couple of seconds.
+Marked ``integration`` only because it reads every ``.out`` out of six compressed
+archives; it needs no binaries and runs in a couple of seconds.
 """
 
 from __future__ import annotations
@@ -36,12 +36,22 @@ RECORDINGS = Path(__file__).resolve().parent / "data" / "e2e" / "recordings"
 
 
 def _recorded_outputs() -> Iterator[tuple[str, str]]:
-    """Yield ``(label, text)`` for every ``.out`` inside the recording archives."""
+    """Yield ``(label, text)`` once per distinct ``.out`` in the recording archives.
+
+    Deduplicated by member name on purpose. ``tar`` permits the same path to appear
+    several times in one archive, and these archives used to carry four byte-identical
+    copies of every file — so a plain member walk counted each recorded output four
+    times, and the "has the corpus shrunk?" guards below were sized against that
+    inflated number rather than against the number of distinct ORCA runs. A guard
+    calibrated on duplicates is not a guard.
+    """
     for archive in sorted(RECORDINGS.glob("*.tar.xz")):
         with tarfile.open(archive) as tf:
+            seen: set[str] = set()
             for member in tf.getmembers():
-                if not member.name.endswith(".out"):
+                if not member.name.endswith(".out") or member.name in seen:
                     continue
+                seen.add(member.name)
                 handle = tf.extractfile(member)
                 if handle is None:  # pragma: no cover - directories have no payload
                     continue
@@ -49,8 +59,11 @@ def _recorded_outputs() -> Iterator[tuple[str, str]]:
 
 
 def test_the_corpus_is_actually_there():
-    """Guards against this file silently passing because it found nothing to check."""
-    assert sum(1 for _ in _recorded_outputs()) >= 100
+    """Guards against this file silently passing because it found nothing to check.
+
+    Sized against the *distinct* runs in the archives, not the tar member count.
+    """
+    assert sum(1 for _ in _recorded_outputs()) >= 25
 
 
 def test_every_recorded_run_reads_as_successful():
@@ -98,4 +111,4 @@ def test_every_frequency_output_yields_a_well_shaped_normal_mode_tensor():
         assert tensor.shape[:2] == (n_atoms, 3), label
         assert tensor.shape[2] >= 1, label
         checked += 1
-    assert checked >= 50, f"only {checked} frequency outputs found — corpus shrank?"
+    assert checked >= 15, f"only {checked} frequency outputs found — corpus shrank?"
