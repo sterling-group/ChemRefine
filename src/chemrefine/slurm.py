@@ -699,6 +699,10 @@ def finished_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> se
 
     A failing ``squeue`` (transient on busy clusters) yields no scheduler ids this
     tick — "not finished", to be retried — rather than falsely reporting the batch done.
+    A **missing** ``squeue`` is treated the same way rather than raising: a host with
+    ``sbatch`` but no ``squeue`` (a partially-installed client) would otherwise raise on
+    every poll of a batch that is already running, which is the worst moment to fail.
+    :func:`submit` handles both the same way.
     """
     ids = set(job_ids)
     local = {jid for jid in ids if jid.startswith(_LOCAL_JOB_PREFIX)}
@@ -713,7 +717,7 @@ def finished_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> se
             text=True,
             check=True,
         )
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, FileNotFoundError):
         return done
     running = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     done |= {
