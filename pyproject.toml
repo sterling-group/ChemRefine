@@ -169,6 +169,11 @@ include = [
 [tool.mypy]
 python_version = "3.11"
 files = ["src/chemrefine", "tests"]
+# Step templates are `string.Template` sources, not modules: they carry bare
+# `$PLACEHOLDER` tokens and are rendered before anything executes them. Excluded for
+# the same reason ruff excludes them — and because two cases naming their template
+# `step1.py` is the normal convention, not a module-name collision to resolve.
+exclude = ["tests/data/e2e/cases/.*/templates/.*\\.py$"]
 plugins = ["pydantic.mypy"]
 strict = true
 # The scientific stack publishes no stubs, so every call into it reads as an "untyped
@@ -240,8 +245,15 @@ line-length = 100
 target-version = "py311"
 # Engine step templates are rendered through `string.Template` before they are
 # executed, so they legitimately contain bare `$PLACEHOLDER` tokens (e.g.
-# `charge=$CHARGE`) and are not parseable Python on their own.
-extend-exclude = ["examples/*/templates/*.py", "examples/*/*/templates/*.py"]
+# `charge=$CHARGE`) and are not parseable Python on their own. The e2e case
+# templates are the same kind of file and belong here for the same reason — they
+# only escaped notice while the single one that existed happened to keep every
+# placeholder inside a string literal, which is not a property worth relying on.
+extend-exclude = [
+    "examples/*/templates/*.py",
+    "examples/*/*/templates/*.py",
+    "tests/data/e2e/cases/*/templates/*.py",
+]
 
 [tool.ruff.lint]
 # `S` (bandit) is on so every shell-out and subprocess call has to be either safe by
