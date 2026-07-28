@@ -10,6 +10,8 @@ reading the raw YAML dict.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import AliasChoices, ConfigDict, Field
 
 from chemrefine.engines._options import EngineOptions
@@ -54,3 +56,21 @@ class MlipOptions(EngineOptions):
 
     model_path: str | None = None
     """Custom MACE checkpoint path (selects the ``custom_mace`` backend)."""
+
+
+class MlipTrainOptions(MlipOptions):
+    """Validated knobs for the ``mlip-train`` step.
+
+    Exists for one field. Training is GPU work — MACE training on CPU is not a
+    slower run, it is an impractical one — so this step keeps requesting a GPU
+    when the YAML names no device, where every inference engine now defaults to
+    ``cpu`` (the floor that always runs).
+
+    The point of declaring that here rather than leaving a literal in the trainer
+    is that a default spelled in two places is a default that drifts: the trainer
+    repeated ``"cuda"`` inline, so moving the shared default silently split the
+    two apart, with the options model saying ``cpu`` and the SLURM header saying
+    ``cuda`` for the very same step.
+    """
+
+    device: Literal["cuda", "cpu"] = "cuda"

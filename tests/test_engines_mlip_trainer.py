@@ -18,6 +18,7 @@ from ase import Atoms
 
 from chemrefine.config import StepConfig
 from chemrefine.engines.mlip import trainer
+from chemrefine.engines.mlip.options import MlipOptions, MlipTrainOptions
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import PipelineState, StepContext, StepResults, Structure
@@ -355,3 +356,29 @@ def test_write_training_slurm_accepts_ordinary_job_names(tmp_path: Path):
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     script = trainer.write_training_slurm(ctx=ctx, config_path=tmp_path / "input.yaml")
     assert "#SBATCH --job-name=mace-run_1.0" in script.read_text()
+
+
+def test_write_training_slurm_defaults_to_the_cuda_header(tmp_path: Path):
+    """A training step that names no device still asks for a GPU.
+
+    Training is the one step where CPU is not a slower run but an impractical
+    one, so `mlip-train` deliberately defaults to `cuda` where the inference
+    engines default to `cpu`. Every other test here passes `device` explicitly,
+    which is why nothing noticed when the trainer's inline default and the shared
+    options default silently drifted apart.
+    """
+    ctx = _ctx(tmp_path)
+    ctx.step_cfg.options.pop("device")
+    ctx.step_dir.mkdir(parents=True, exist_ok=True)
+    config = ctx.step_dir / "input.yaml"
+    config.touch()
+
+    script = trainer.write_training_slurm(ctx=ctx, config_path=config)
+
+    assert "--gres=gpu:1" in script.read_text(), "an unspecified device must still train on GPU"
+
+
+def test_training_device_default_is_declared_not_repeated():
+    """The trainer's default lives on the options model, not in a second literal."""
+    assert MlipTrainOptions().device == "cuda"
+    assert MlipOptions().device == "cpu"

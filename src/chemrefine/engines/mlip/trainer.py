@@ -27,6 +27,7 @@ from ase import Atoms
 from ase.io import write as ase_write
 
 from chemrefine import ids, slurm
+from chemrefine.engines.mlip.options import MlipTrainOptions
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import StepContext, StepResults
@@ -141,14 +142,18 @@ def write_training_config(*, train_path: Path, test_path: Path, ctx: StepContext
 def write_training_slurm(*, ctx: StepContext, config_path: Path) -> Path:
     """Generate the MACE training SLURM script.
 
-    Picks ``cuda.slurm.header`` or ``cpu.slurm.header`` from
-    ``ctx.template_dir`` based on ``step.options.device`` (default
-    ``"cuda"``), appends ``--job-name`` / ``--output`` / ``--error``,
-    and writes a single ``mace_run_train --config <input.yaml>``
+    Picks ``cuda.slurm.header`` or ``cpu.slurm.header`` from ``ctx.template_dir``
+    based on ``step.options.device``, appends ``--job-name`` / ``--output`` /
+    ``--error``, and writes a single ``mace_run_train --config <input.yaml>``
     command at the end.
+
+    The device is read through :class:`~chemrefine.engines.mlip.options.MlipTrainOptions`,
+    which declares training's ``cuda`` default, rather than repeating that default
+    here — the repeated literal is what let this header keep asking for a GPU after
+    the shared default moved to ``cpu``.
     """
     options = ctx.step_cfg.options or {}
-    header_name = slurm.header_name_for_device(options.get("device", "cuda"))
+    header_name = slurm.header_name_for_device(MlipTrainOptions.from_raw_lenient(options).device)
     header_path = ctx.template_dir / header_name
     if not header_path.is_file():
         raise ConfigError(f"SLURM header template not found: {header_path}")
