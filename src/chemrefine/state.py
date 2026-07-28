@@ -34,9 +34,12 @@ class Structure:
     reads this field directly instead of parsing a hyphen-encoded
     lineage out of ``id``.
 
-    ``forces_ev_per_a`` is a numpy array, which the ``frozen=True``
-    contract cannot enforce as immutable. Callers must treat it as
-    read-only — the array is shared by reference across the pipeline.
+    ``forces_ev_per_a`` is a numpy array, which ``frozen=True`` cannot make
+    immutable on its own — so ``__post_init__`` clears its write flag. The
+    array is shared by reference across the pipeline, and "callers must treat
+    it as read-only" was a convention with nothing enforcing it; now a stray
+    write raises :class:`ValueError` at the point of the mistake instead of
+    silently changing a structure another step already holds.
     """
 
     id: str
@@ -76,6 +79,20 @@ class Structure:
     when absent. A **transient** artifact used by NMS to displace along imaginary modes — it is
     *not* persisted to the cache (an active NMS run always re-parses), so a cache-reloaded
     structure carries ``None``."""
+
+    def __post_init__(self) -> None:
+        """Make the array fields as read-only as the dataclass claims to be.
+
+        ``frozen=True`` stops the *attribute* being rebound but says nothing about the
+        contents of an ndarray it points at, and these arrays are shared by reference —
+        every structure carried between steps hands out the same buffer. Clearing the write
+        flag turns a stray in-place write into a ``ValueError`` where it happens, rather than
+        a value that quietly changes under a step that already holds it.
+        """
+        for field_name in ("forces_ev_per_a", "normal_modes"):
+            array = getattr(self, field_name)
+            if array is not None:
+                array.setflags(write=False)
 
 
 @dataclass(frozen=True)

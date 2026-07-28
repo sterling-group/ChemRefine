@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from chemrefine.engines.orca.input import build_input, clamp_pal
-from chemrefine.engines.orca.inspect import parse_pal
+from chemrefine.engines.orca.inspect import inspect_template
 from chemrefine.errors import ConfigError
 
 
@@ -100,26 +100,26 @@ def test_build_input_missing_template_raises(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# parse_pal
+# PAL parsing (via inspect_template — the one reader)
 # ---------------------------------------------------------------------------
 
 
-def test_parse_pal_reads_nprocs(tmp_path: Path):
+def test_inspect_template_reads_nprocs(tmp_path: Path):
     inp = tmp_path / "step1.inp"
     inp.write_text("! B3LYP def2-SVP\n%pal\n  nprocs 8\nend\n", encoding="utf-8")
-    assert parse_pal(inp) == 8
+    assert inspect_template(inp).pal == 8
 
 
-def test_parse_pal_reads_inline_directive(tmp_path: Path):
+def test_inspect_template_reads_inline_pal_directive(tmp_path: Path):
     inp = tmp_path / "step1.inp"
     inp.write_text("! B3LYP PAL4\n", encoding="utf-8")
-    assert parse_pal(inp) == 4
+    assert inspect_template(inp).pal == 4
 
 
-def test_parse_pal_defaults_to_one(tmp_path: Path):
+def test_inspect_template_pal_defaults_to_one(tmp_path: Path):
     inp = tmp_path / "step1.inp"
     inp.write_text("! B3LYP def2-SVP\n", encoding="utf-8")
-    assert parse_pal(inp) == 1
+    assert inspect_template(inp).pal == 1
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +165,7 @@ def test_build_input_clamps_template_pal_to_max_pal(tmp_path: Path):
     text = out.read_text()
     assert "nprocs 8" in text
     assert "nprocs 16" not in text
-    assert parse_pal(out) == 8
+    assert inspect_template(out).pal == 8
 
 
 def test_build_input_absolutizes_relative_template_paths(tmp_path: Path):

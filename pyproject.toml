@@ -83,14 +83,14 @@ mlip-mace = [
     "chemrefine[server]",
 ]
 # downloads: sevenn (→ e3nn>=0.5, torch_geometric, torch), + server (heavy)
-mlip-sevenn = ["sevenn", "chemrefine[server]"]
+mlip-sevenn = ["sevenn>=0.11", "chemrefine[server]"]
 # downloads: orb-models (→ torch>=2.8); needs Python >= 3.12, + server (heavy)
 # The marker is load-bearing: without it, `pip install chemrefine[mlip-orb]` on 3.11
 # backtracks through every orb-models release looking for a compatible one and ends in
 # a resolver wall of text instead of "requires a different Python".
 mlip-orb = ["orb-models; python_version >= '3.12'", "chemrefine[server]"]
 # downloads: chgnet (→ torch, pymatgen), + server (heavy)
-mlip-chgnet = ["chgnet", "chemrefine[server]"]
+mlip-chgnet = ["chgnet>=0.4", "chemrefine[server]"]
 # The default MLIP install = FAIRChem / UMA (`uma-s-1p2`).
 mlip = ["chemrefine[mlip-fairchem]"]
 # Back-compat alias: `mlff` was renamed to `mlip`; keep the old extra working.
@@ -135,7 +135,9 @@ docs = [
 # downloads: test + docs, ruff, mypy, pre-commit (small)
 dev = [
     "chemrefine[test,docs]",
-    "ruff>=0.5",
+    # Matched to the pinned pre-commit hook rev — that hook is what actually gates,
+    # so a floor years behind it is decorative.
+    "ruff>=0.15",
     "mypy>=1.11",
     "types-PyYAML",
     "pre-commit>=3.5",

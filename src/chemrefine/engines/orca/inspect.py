@@ -66,8 +66,27 @@ class OrcaInputInfo:
 
 
 def _strip_orca_comments(text: str) -> str:
-    """Drop ORCA ``#`` comments (everything from the first ``#`` on each line)."""
-    return "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+    """Drop ORCA ``#`` comments — everything from the first *unquoted* ``#`` on each line.
+
+    The quote tracking is not pedantry: templates name auxiliary files in double quotes
+    (``%DOCKER GUEST "lig#3.xyz"``), and cutting the line at that ``#`` silently truncated
+    it. Whatever followed — an ``Opt`` or ``Freq`` keyword on the same line, the ``end`` of a
+    ``%geom … Scan`` block — then vanished from the keyword surface, so the step was
+    classified with the wrong parser or refused NMS for a reason that was not true. A
+    failure that reads as a chemistry problem, caused by a character in a filename.
+    """
+    lines = []
+    for raw in text.splitlines():
+        in_quotes = False
+        cut = len(raw)
+        for index, char in enumerate(raw):
+            if char == '"':
+                in_quotes = not in_quotes
+            elif char == "#" and not in_quotes:
+                cut = index
+                break
+        lines.append(raw[:cut])
+    return "\n".join(lines)
 
 
 def _read_pal(text: str) -> int:
@@ -77,16 +96,6 @@ def _read_pal(text: str) -> int:
         if m:
             return int(m.group(2))
     return 1
-
-
-def parse_pal(input_file: str | Path) -> int:
-    """Return the PAL / ``nprocs`` value declared in an ORCA input or template file.
-
-    Per-structure ``.inp`` files inherit their ``%pal`` block from the step template, so
-    callers typically pass the template path once per step. Falls back to ``1`` when no PAL
-    directive is found, matching ORCA's own default for serial runs.
-    """
-    return _read_pal(Path(input_file).read_text(encoding="utf-8"))
 
 
 def inspect_template(template_path: str | Path) -> OrcaInputInfo:

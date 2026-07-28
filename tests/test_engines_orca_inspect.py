@@ -83,6 +83,26 @@ def test_inspect_ignores_commented_out_scan_block(tmp_path: Path):
     assert inspect_template(_write(tmp_path, body)).operation == "opt_sp"
 
 
+def test_inspect_keeps_a_hash_inside_a_quoted_filename(tmp_path: Path):
+    """A ``#`` in a quoted path is part of the filename, not the start of a comment.
+
+    Cutting the line there truncated whatever followed, so a template naming
+    ``"lig#3.xyz"`` lost the rest of its own line — here the `Freq` that gates NMS and the
+    `end` that closes the scan block. The step was then classified with the wrong parser, or
+    refused NMS for a reason that was not true: a chemistry-shaped failure caused by a
+    character in a filename.
+    """
+    run = inspect_template(_write(tmp_path, '! B3LYP def2-SVP Opt "lig#3.xyz" Freq\n'))
+    assert run.has_freq is True, "the keyword after the quoted '#' was swallowed"
+    assert run.operation == "opt_sp"
+
+
+def test_inspect_still_strips_a_real_comment_after_a_quoted_string(tmp_path: Path):
+    """Quote tracking must not cost us actual comment stripping."""
+    run = inspect_template(_write(tmp_path, '! B3LYP def2-SVP Opt "lig#3.xyz"  # Freq later\n'))
+    assert run.has_freq is False
+
+
 # ---------------------------------------------------------------------------
 # Keyword matching is by whole token, checked against the real templates
 # ---------------------------------------------------------------------------
