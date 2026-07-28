@@ -48,8 +48,18 @@ support recovery:
 
 - **`manifest.json`** — the input → output → structure-ID file layout, so
   `rerun` / recovery can rehydrate which input produced which output after a restart.
+  It also carries the step's **fingerprint**, and it is written *before* any job is
+  submitted — which is what lets a `resume` after an interrupted run prove that the
+  outputs sitting on disk were computed for this configuration and re-parse them
+  instead of resubmitting. Without that proof there is no way to tell a finished
+  output from a stale leftover, so the whole step had to be redone.
 - **`failed_jobs.json`** — the ledger of failed structures (`structure_id`,
   `reason`); always written for visibility, but only `stop` failures are *pending*.
+
+`step.json` is written once, at the end of a step, so "no `step.json`" means the
+step did not finish. That is deliberately distinct from "the user discarded it":
+`run` and `rerun` drop the manifest too, so a step you asked to redo is never
+mistaken for one that was merely interrupted.
 
 Writes are atomic (temp file + rename), so an interrupted write never leaves a
 half-baked cache.

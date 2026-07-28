@@ -473,13 +473,33 @@ def load_if_valid(
 
 
 def invalidate(step_dir: Path) -> None:
-    """Delete the cache for ``step_dir``. No-op if nothing is cached.
+    """Delete the cached *results* for ``step_dir``. No-op if nothing is cached.
 
-    Also removes the ``step.pkl`` a pre-JSON version may have left behind,
-    so re-running over an old output tree leaves no stale binary around.
+    Deliberately narrow: the manifest survives, so ``rebuild-cache`` can still re-parse the
+    outputs on disk after the results document is gone. Callers that mean "redo this step
+    from scratch" want :func:`discard_step` instead.
+
+    Also removes the ``step.pkl`` a pre-JSON version may have left behind, so re-running
+    over an old output tree leaves no stale binary around.
     """
     _cache_path(step_dir).unlink(missing_ok=True)
     (step_dir / "_cache" / "step.pkl").unlink(missing_ok=True)
+
+
+def discard_step(step_dir: Path) -> None:
+    """Forget that ``step_dir`` ever ran — results **and** manifest.
+
+    The difference from :func:`invalidate` is the manifest, and it is load-bearing. Together
+    the two files say "this step already ran with this configuration"; the manifest alone
+    says "these outputs on disk belong to this configuration", which is what
+    :func:`chemrefine.step._partial_step_outcome` reads to continue an interrupted step.
+
+    So leaving the manifest behind would make a step the user deliberately invalidated
+    indistinguishable from one the driver was killed in the middle of — and ``rerun`` would
+    re-parse the very outputs it was asked to discard instead of resubmitting them.
+    """
+    invalidate(step_dir)
+    manifest_path(step_dir).unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -498,23 +518,43 @@ def save_manifest(
     *,
     operation: str | None,
     engine: str,
+    fingerprint: str = "",
 ) -> Path:
     """Persist ``inputs`` plus step metadata to ``manifest.json``; return the path.
 
     The file layout (which input produced which output for which structure ID)
     is what ``rerun`` / recovery rehydrates via :func:`load_manifest` after a
     restart. Written atomically, like the cache document.
+
+    ``fingerprint`` is the same key :func:`save` would store, written **before** the
+    jobs go out. It is what lets a ``resume`` after an interrupted step prove that the
+    outputs sitting on disk were produced for *this* step config and *these* parents —
+    without it there is no way to tell them from a stale leftover, so the whole step had
+    to be re-run. See :func:`chemrefine.step._partial_step_outcome`.
     """
     path = manifest_path(step_dir)
     data = {
         "operation": operation,
         "engine": engine,
+        "fingerprint": fingerprint,
         "files": [
             {"input": str(inp), "output": str(out), "id": sid} for inp, out, sid in inputs.files
         ],
     }
     _write_json(path, data)
     return path
+
+
+def load_manifest_fingerprint(step_dir: Path) -> str:
+    """The fingerprint recorded alongside a step's manifest, or ``""``.
+
+    ``""`` for a manifest written before this key existed, and for a missing manifest —
+    either way it can never equal a real fingerprint, so the caller falls back to the
+    full re-run. Read separately from :func:`load_manifest` so every existing caller,
+    which wants only the file layout, is untouched.
+    """
+    data = _read_json(manifest_path(step_dir), None, label="manifest")
+    return str(data.get("fingerprint", "")) if isinstance(data, dict) else ""
 
 
 def load_manifest(step_dir: Path) -> StepInputs | None:

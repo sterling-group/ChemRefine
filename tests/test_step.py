@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from ase import Atoms
+from fake_engine import FakeEngine
 
 from chemrefine import cache, step_failures
 from chemrefine.config import Config, StepConfig
@@ -880,3 +882,93 @@ def test_nms_reuse_outcome_reattempts_when_ledger_present(tmp_path: Path, monkey
     cache.save_failed_jobs(ctx.step_dir, [{"structure_id": "0", "kind": "failed", "reason": "x"}])
     out = step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"))
     assert out is not None and any(s.id == "re" for s in out.state.structures)
+
+
+# ---------------------------------------------------------------------------
+# Resuming a step the driver died in the middle of
+# ---------------------------------------------------------------------------
+
+
+def _interrupt_after(cfg: Config, seeds: PipelineState, keep: set[str]) -> Path:
+    """Simulate a driver killed mid-step: run it, then keep only ``keep``'s outputs.
+
+    What survives is exactly what survives a real interruption — the manifest (written
+    before submission) and the outputs of the jobs that had finished — but no `step.json`,
+    because that is written once, at the very end.
+    """
+    run_step(cfg, cfg.steps[0], seeds)
+    step_dir = step_dir_for(cfg, cfg.steps[0])
+    # Only `step.json` goes: it is written last, so an interruption is exactly "no results
+    # document, but the manifest and whatever outputs had finished are still there".
+    cache.invalidate(step_dir)
+    for struct in seeds.structures:
+        if struct.id not in keep:
+            for stale in (step_dir / struct.id).glob("*.out"):
+                stale.unlink()
+    return step_dir
+
+
+def test_resume_reparses_a_finished_structure_instead_of_resubmitting_it(tmp_path: Path):
+    """An interrupted step must continue, not start over.
+
+    `step.json` is written once, at the end of a step. If the driver dies before that —
+    walltime on the batch job that runs ChemRefine itself, a node failure, Ctrl-C — then
+    `resume` missed the cache, entered the full-run path, and `archive_previous_attempts`
+    moved every finished `.out` into `attemptK/` before resubmitting *everything*. The
+    completed compute was still on disk and was never read: `parse_with_failures` decides
+    success by `out.is_file()` at the canonical path, which had just been emptied.
+
+    On HPC that is cluster-days of work discarded silently.
+    """
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1", "2"])
+    step_dir = _interrupt_after(cfg, seeds, keep={"0", "1"})
+
+    submitted: list[list[str]] = []
+    original_submit = FakeEngine.submit
+
+    def _recording_submit(self, inputs, ctx):
+        submitted.append([sid for _i, _o, sid in inputs.files])
+        return original_submit(self, inputs, ctx)
+
+    with patch.object(FakeEngine, "submit", _recording_submit):
+        outcome = run_step(cfg, cfg.steps[0], seeds, mode=StepMode.RESUME)
+
+    assert [s.id for s in outcome.state.structures] == ["0", "1", "2"]
+    # Only the unfinished structure goes back to the scheduler.
+    assert submitted == [["2"]], submitted
+    # ...and the finished ones keep their original attempt: nothing was archived.
+    assert not list((step_dir / "0").glob("attempt*"))
+
+
+def test_run_still_redoes_everything_even_when_outputs_are_present(tmp_path: Path):
+    """`chemrefine run` means "start over", and must keep meaning that.
+
+    The resume path leans on the manifest fingerprint to prove the on-disk outputs belong
+    to this configuration. EXECUTE deliberately ignores all of it — otherwise the B1
+    invariant would be weakened: a re-executed job that dies before writing anything would
+    re-read the previous run's result and report it as current.
+    """
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1"])
+    step_dir = _interrupt_after(cfg, seeds, keep={"0", "1"})
+
+    run_step(cfg, cfg.steps[0], seeds, mode=StepMode.EXECUTE)
+
+    assert list((step_dir / "0").glob("attempt*")), "EXECUTE must archive and re-run"
+
+
+def test_resume_refuses_a_manifest_from_a_different_config(tmp_path: Path):
+    """A manifest whose fingerprint does not match must fall back to the full re-run.
+
+    This is what keeps the optimisation honest: outputs on disk are only reusable if they
+    were produced for *this* step config and *these* parents.
+    """
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1"])
+    step_dir = _interrupt_after(cfg, seeds, keep={"0", "1"})
+
+    changed = _config(tmp_path, options={"basis": "other"})
+    run_step(changed, changed.steps[0], seeds, mode=StepMode.RESUME)
+
+    assert list((step_dir / "0").glob("attempt*")), "a stale manifest must not be trusted"

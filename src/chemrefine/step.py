@@ -175,6 +175,13 @@ def run_step(
             reused = _nms_reuse_outcome(ctx, step_cfg, parent_ids, nms_engine)
             if reused is not None:
                 return reused
+        # No cache at all, but possibly a step this configuration already half-ran and
+        # was interrupted before it could write one.
+        partial = _partial_step_outcome(
+            ctx, step_cfg, parent_ids, engine, nms_engine=nms_engine, mode=mode
+        )
+        if partial is not None:
+            return partial
 
     return _run_full_step(ctx, step_cfg, parent_ids, engine, nms_engine=nms_engine)
 
@@ -259,6 +266,86 @@ def _nms_reuse_outcome(
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
 
+def _current_fingerprint(
+    ctx: StepContext,
+    step_cfg: StepConfig,
+    parent_ids: tuple[str, ...],
+    engine: CalculationEngine,
+) -> str:
+    """The cache key for this step as configured right now."""
+    return cache.fingerprint(
+        step_cfg,
+        parent_ids,
+        parents_digest=cache.parents_digest(ctx.prev_state.structures),
+        template_digest=engine.input_digest(ctx),
+    )
+
+
+def _partial_step_outcome(
+    ctx: StepContext,
+    step_cfg: StepConfig,
+    parent_ids: tuple[str, ...],
+    engine: CalculationEngine,
+    *,
+    nms_engine: NmsCapableEngine | None,
+    mode: StepMode,
+) -> StepOutcome | None:
+    """Continue a step the driver died in the middle of, instead of redoing it.
+
+    ``step.json`` is written **once**, at the end of a step, so a driver killed partway
+    through — the batch job running ChemRefine hits its walltime, a node fails, Ctrl-C —
+    leaves no cache at all. Without this, ``resume`` fell straight through to
+    :func:`_run_full_step`, whose first act is to archive every finished ``.out`` into
+    ``attemptK/`` and resubmit the lot. The completed compute stayed on disk and was never
+    read back, because :func:`~chemrefine.step_failures.parse_with_failures` decides success
+    by ``out.is_file()`` at the canonical path, which had just been emptied. On HPC that is
+    cluster-days discarded silently.
+
+    The manifest is what makes continuing *safe* rather than merely cheap. It is written
+    before submission and now carries the step's fingerprint, so a match proves these
+    outputs were produced for this step config and these parents — which is exactly the
+    distinction ``out.is_file()`` cannot make on its own, and the reason archiving had to be
+    unconditional before. Anything still missing is handed to :func:`_resubmit_failed`, the
+    same per-structure archive-and-resubmit path ``rerun-errors`` uses; it re-parses the
+    whole manifest afterwards, so the finished structures come back from disk.
+
+    Returns ``None`` — meaning "run the whole step" — unless every condition holds:
+
+    * ``mode is RESUME``. ``EXECUTE`` (``chemrefine run``) means *start over*, and
+      ``CACHE_ONLY`` must not submit anything.
+    * A manifest exists and its fingerprint matches the current one.
+    * The step is not NMS. An interrupted NMS step needs its round-2 children re-resolved,
+      not just its round-1 outputs re-parsed, so it falls back to the full re-run rather
+      than being silently half-recovered.
+    """
+    if mode is not StepMode.RESUME or nms_engine is not None:
+        return None
+    manifest = cache.load_manifest(ctx.step_dir)
+    if manifest is None:
+        return None
+    if cache.load_manifest_fingerprint(ctx.step_dir) != _current_fingerprint(
+        ctx, step_cfg, parent_ids, engine
+    ):
+        return None
+    missing = [
+        step_failures.FailureRecord(
+            structure_id=sid,
+            kind=step_failures.FailureKind.MISSING_OUTPUT,
+            reason=step_failures.FailureKind.MISSING_OUTPUT.value,
+        )
+        for _inp, out, sid in manifest.files
+        if not out.is_file()
+    ]
+    logger.info(
+        "step %d: resuming an interrupted step — %d of %d structure(s) still to run",
+        step_cfg.step,
+        len(missing),
+        len(manifest.files),
+    )
+    results = _resubmit_failed(engine, ctx, step_cfg, missing, parent_ids)
+    return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
+
+
 def _run_full_step(
     ctx: StepContext,
     step_cfg: StepConfig,
@@ -278,7 +365,15 @@ def _run_full_step(
     # too and already manage their own attempt dirs.
     step_failures.archive_previous_attempts(ctx.step_dir, (s.id for s in ctx.prev_state.structures))
     inputs = engine.prepare(ctx)
-    cache.save_manifest(inputs, ctx.step_dir, operation=step_cfg.operation, engine=step_cfg.engine)
+    cache.save_manifest(
+        inputs,
+        ctx.step_dir,
+        operation=step_cfg.operation,
+        engine=step_cfg.engine,
+        # Stamped before submission, so an interrupted run leaves proof of *what* these
+        # outputs were computed for — see :func:`_partial_step_outcome`.
+        fingerprint=_current_fingerprint(ctx, step_cfg, parent_ids, engine),
+    )
 
     logger.info("step %d: submitting %d jobs", step_cfg.step, len(inputs.files))
     engine.submit(inputs, ctx)

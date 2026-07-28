@@ -36,6 +36,38 @@ previous artifacts are moved to `outputs/stepN/<id>/attemptK/` rather than
 overwritten — nothing is lost, and a job that dies without writing anything can
 never be mistaken for a success.
 
+## The run was interrupted mid-step
+
+A ChemRefine run is a long-lived process. If you submit it as a batch job (see
+the [conformer-sampling tutorial](../tutorials/conformer_sampling.md)) it has a
+walltime of its own, and a pipeline that outlives it is killed partway through a
+step — as it is by a node failure or a `Ctrl-C`.
+
+Just resume:
+
+```bash
+chemrefine resume input.yaml
+```
+
+The calculations that had already finished are **re-parsed from disk, not
+resubmitted**. Only the structures whose output is missing go back to the
+scheduler. ChemRefine can tell the difference because the step's manifest —
+written before any job is submitted — records the same fingerprint the cache
+would have, so outputs on disk are provably the ones this configuration asked
+for. If the config changed in between, the fingerprint no longer matches and the
+step is re-run in full rather than mixing results from two configurations.
+
+Two things deliberately do *not* reuse that work:
+
+- `chemrefine run` means start over, and always does.
+- An `nms:` step falls back to a full re-run. Its round-2 children need
+  re-resolving, not just re-parsing, and half-recovering that is worse than
+  redoing it.
+
+If you would rather drive it by hand — to inspect what survived before
+continuing — `chemrefine rebuild-cache N` re-parses step N's outputs without
+submitting anything, and ledgers whatever is missing.
+
 ## A structure keeps failing to converge
 
 An unconverged structure is retried once per run from the best geometry it

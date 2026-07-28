@@ -61,10 +61,16 @@ def _resolve_target_or_last(config: Config, target: str | int | None) -> StepCon
 
 
 def invalidate_step(config: Config, step_cfg: StepConfig) -> None:
-    """Drop the cache for one step so the next run re-executes it."""
+    """Discard one step's state so the next run genuinely re-executes it.
+
+    Results *and* manifest (:func:`chemrefine.cache.discard_step`): keeping the manifest
+    would leave the step looking merely interrupted rather than deliberately discarded, and
+    ``resume`` would then re-parse the outputs from disk instead of resubmitting them —
+    which is the opposite of what ``run`` and ``rerun`` ask for.
+    """
     step_dir = config.step_dir(step_cfg).resolve()
-    cache.invalidate(step_dir)
-    logger.info("invalidated cache for %s", step_cfg.dir_name())
+    cache.discard_step(step_dir)
+    logger.info("discarded cached state for %s", step_cfg.dir_name())
 
 
 def _action_run(config: Config, _target: str | int | None) -> None:
