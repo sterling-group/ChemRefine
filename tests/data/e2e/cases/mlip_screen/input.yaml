@@ -1,5 +1,10 @@
 # Capture case: direct-MLIP screen of a 2-frame seed with MACE-OFF on CPU.
 # Exercises the option aliases (task/model) and the cores thread budget.
+#
+# It also carries the live tier's only Boltzmann filter. That used to sit on the
+# conformers case, where an unbounded filter over 14 GOAT results is exactly what
+# made it cost twenty minutes; here it chooses between two MACE structures that
+# take seconds, so the method stays covered end to end for free.
 template_dir: ./templates
 output_dir: ./outputs
 dispatch: auto
@@ -14,4 +19,4 @@ steps:
     engine: mlip
     operation: opt_sp
     options: { task: mace_off, model: small, device: cpu, cores: 2 }
-    sample: { method: min, count: 1 }
+    sample: { method: boltzmann, percent_cumulative: 99 }

@@ -14,16 +14,24 @@ multiplicity: 1
 steps:
   # GOAT conformer search (XTB); the template asks for 16 cores to prove the
   # max_cores clamp.
+  #
+  # `min count 3` is what bounds this case. Step 1's filter is the only thing
+  # deciding how many structures reach the DFT opt+freq below, and it used to be
+  # `boltzmann 99%`, which kept 11 of GOAT's 14 — so the case spent 1212s running
+  # eleven opt+freq jobs to demonstrate that the next filter picks a couple by
+  # Gibbs energy. Three demonstrates that just as well. The Boltzmann filter moved
+  # to the mlip_screen case, where exercising it costs nothing.
   - step: 1
     engine: orca
     operation: goat
-    sample: { method: boltzmann, percent_cumulative: 99 }
+    sample: { method: min, count: 3 }
 
-  # Opt + freq, then keep the 3 lowest by Gibbs free energy (not electronic).
+  # Opt + freq, then keep the 2 lowest by Gibbs free energy (not electronic) —
+  # `count 2` of 3 rather than 3 of 3, so the Gibbs ranking still selects.
   - step: 2
     engine: orca
     operation: opt_sp
-    sample: { method: min, count: 3, energy_type: gibbs }
+    sample: { method: min, count: 2, energy_type: gibbs }
 
   # Final single point on the Gibbs-ranked survivors.
   - step: 3

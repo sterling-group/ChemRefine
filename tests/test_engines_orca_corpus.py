@@ -66,8 +66,10 @@ def test_the_corpus_is_actually_there():
     """Guards against this file silently passing because it found nothing to check.
 
     Sized against the *distinct* runs in the archives, not the tar member count.
+    The corpus holds 18 today, down from 26 — the conformers case stopped running a
+    DFT opt+freq on eleven GOAT conformers to prove that the next filter picks two.
     """
-    assert sum(1 for _ in _recorded_outputs()) >= 25
+    assert sum(1 for _ in _recorded_outputs()) >= 17
 
 
 def test_every_recorded_run_reads_as_successful():
@@ -115,4 +117,4 @@ def test_every_frequency_output_yields_a_well_shaped_normal_mode_tensor():
         assert tensor.shape[:2] == (n_atoms, 3), label
         assert tensor.shape[2] >= 1, label
         checked += 1
-    assert checked >= 15, f"only {checked} frequency outputs found — corpus shrank?"
+    assert checked >= 7, f"only {checked} frequency outputs found — corpus shrank?"

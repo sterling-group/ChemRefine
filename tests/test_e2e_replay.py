@@ -64,9 +64,11 @@ def test_conformers_full_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     outcomes = pipeline.run(config)
 
     assert len(outcomes) == 3
+    # Step 1 keeps the 3 lowest of the GOAT ensemble, which is what bounds the DFT
+    # opt+freq below; step 2 then keeps 2 of those 3 by Gibbs energy.
     fan_out = len(submitter.calls[1].files)
-    assert 1 <= fan_out <= len(ensemble), "step 2 runs the boltzmann survivors"
-    assert len(outcomes[1].state.structures) == min(3, fan_out)
+    assert fan_out == min(3, len(ensemble)), "step 2 runs step 1's three survivors"
+    assert len(outcomes[1].state.structures) == min(2, fan_out)
     assert len(outcomes[2].state.structures) == 1
     csv_text = (case.output_dir / "steps.csv").read_text()
     assert csv_text.count("\n") >= 4, "steps.csv gains rows for all three steps"
@@ -211,8 +213,11 @@ def test_mlip_screen_renders_options_and_parses(
     assert '"small"' in rendered, "the model alias reaches the script"
     assert '"mace_off"' in rendered, "the task alias reaches the script"
     assert '"cpu"' in rendered, "device: cpu reaches the script"
-    assert len(outcomes[0].state.structures) == 1
-    assert outcomes[0].state.structures[0].energy_hartree is not None
+    # This case carries the live tier's only Boltzmann filter (it moved here from
+    # conformers, where filtering 14 GOAT results cost twenty minutes of DFT). At 99%
+    # cumulative weight over two close MACE energies, both survive.
+    assert len(outcomes[0].state.structures) == 2, "boltzmann keeps both close conformers"
+    assert all(s.energy_hartree is not None for s in outcomes[0].state.structures)
 
 
 def test_mlip_extopt_renders_server_block_and_parses(
