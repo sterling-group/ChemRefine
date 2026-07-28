@@ -175,7 +175,7 @@ def test_build_script_copies_output_dirs_back(tmp_path: Path):
 
 
 def test_build_script_missing_template_raises(tmp_path: Path):
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(ConfigError):
         slurm.build_script(**_build_kwargs(tmp_path, template_path=tmp_path / "missing.header"))
 
 

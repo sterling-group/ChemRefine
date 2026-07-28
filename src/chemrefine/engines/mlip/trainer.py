@@ -151,7 +151,7 @@ def write_training_slurm(*, ctx: StepContext, config_path: Path) -> Path:
     header_name = slurm.header_name_for_device(options.get("device", "cuda"))
     header_path = ctx.template_dir / header_name
     if not header_path.is_file():
-        raise FileNotFoundError(f"SLURM header template not found: {header_path}")
+        raise ConfigError(f"SLURM header template not found: {header_path}")
 
     # A raw job_name lands inside an #SBATCH directive, where a newline would start
     # an arbitrary extra directive and whitespace would split the value. SLURM job

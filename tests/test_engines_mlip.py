@@ -29,7 +29,7 @@ from chemrefine.engines import _execution as submit
 from chemrefine.engines.api import ENGINES, NmsCapableEngine, get_engine
 from chemrefine.engines.mlip import calculator as mlip_calculator
 from chemrefine.engines.mlip.calculator import BackendSpec, MlipCalculator, build_calculator
-from chemrefine.errors import OutputParseError
+from chemrefine.errors import ConfigError, OutputParseError
 from chemrefine.state import PipelineState, StepContext, Structure
 
 
@@ -683,7 +683,7 @@ def test_mlip_direct_prepare_missing_template_raises(tmp_path: Path):
     ctx = _mlip_direct_ctx(tmp_path, structures=(_seed(),))
     (ctx.template_dir / "step1.py").unlink()
     engine = get_engine("mlip")
-    with pytest.raises(FileNotFoundError, match="MLIP template not found"):
+    with pytest.raises(ConfigError, match="MLIP template not found"):
         engine.prepare(ctx)
 
 
@@ -778,7 +778,7 @@ def test_mlip_direct_submit_missing_slurm_header_raises(tmp_path: Path):
     (ctx.template_dir / "cpu.slurm.header").unlink()
     engine = get_engine("mlip")
     inputs = engine.prepare(ctx)
-    with pytest.raises(FileNotFoundError, match="SLURM header"):
+    with pytest.raises(ConfigError, match="SLURM header"):
         engine.submit(inputs, ctx)
 
 

@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 
 from chemrefine import __version__
 from chemrefine.cli import _translate_legacy_argv, app
+from chemrefine.errors import ConfigError
 
 runner = CliRunner()
 
@@ -286,3 +287,59 @@ def test_legacy_rerun_errors_flag_dispatches_via_main(tmp_path: Path, monkeypatc
     with contextlib.suppress(SystemExit):  # typer.Exit at the end of app()
         cli.main()
     assert seen == {"action": Action.RERUN_ERRORS, "target": "1"}
+
+
+# ---------------------------------------------------------------------------
+# The exit-code contract
+#
+# `chemrefine.errors` promises every exception carries an `exit_code` the CLI
+# maps to a deterministic process exit status. That only holds if the failure
+# actually raises a ChemRefineError: a missing template used to raise a bare
+# FileNotFoundError, so the likeliest first-run error greeted the user with a
+# traceback and exit 1 instead of the documented code.
+# ---------------------------------------------------------------------------
+
+
+def _minimal_project(tmp_path: Path, *, engine: str = "orca") -> Path:
+    """A config that validates but whose templates directory is empty."""
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "seed.xyz").write_text("1\n\nH 0.0 0.0 0.0\n", encoding="utf-8")
+    config = tmp_path / "input.yaml"
+    config.write_text(
+        "input: ./seed.xyz\n"
+        "output_dir: ./out\n"
+        "template_dir: ./templates\n"
+        "dispatch: local\n"
+        "steps:\n"
+        f"  - step: 1\n    engine: {engine}\n    operation: opt_sp\n",
+        encoding="utf-8",
+    )
+    return config
+
+
+def test_missing_template_exits_with_the_config_error_code(tmp_path: Path):
+    """A missing `step1.inp` is a config error (exit 2), not an uncaught traceback."""
+    result = CliRunner().invoke(app, ["run", str(_minimal_project(tmp_path))])
+
+    assert result.exit_code == ConfigError.exit_code
+    assert not isinstance(result.exception, FileNotFoundError)
+
+
+def test_missing_slurm_header_exits_with_the_config_error_code(tmp_path: Path):
+    """A missing SLURM header is a config error too -- the other first-run stumble."""
+    config = _minimal_project(tmp_path)
+    (tmp_path / "templates" / "step1.inp").write_text("! SP\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["run", str(config)])
+
+    assert result.exit_code == ConfigError.exit_code
+
+
+def test_malformed_config_exits_with_the_config_error_code(tmp_path: Path):
+    """The already-working case, pinned so the contract is asserted end to end."""
+    config = tmp_path / "bad.yaml"
+    config.write_text("steps: []\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["run", str(config)])
+
+    assert result.exit_code == ConfigError.exit_code

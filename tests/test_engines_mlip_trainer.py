@@ -18,6 +18,7 @@ from ase import Atoms
 
 from chemrefine.config import StepConfig
 from chemrefine.engines.mlip import trainer
+from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import PipelineState, StepContext, StepResults, Structure
 
@@ -231,7 +232,7 @@ def test_write_training_slurm_raises_when_header_missing(tmp_path: Path):
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     config = ctx.step_dir / "input.yaml"
     config.touch()
-    with pytest.raises(FileNotFoundError, match="SLURM header template"):
+    with pytest.raises(ConfigError, match="SLURM header template"):
         trainer.write_training_slurm(ctx=ctx, config_path=config)
 
 

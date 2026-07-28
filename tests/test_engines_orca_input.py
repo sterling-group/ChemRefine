@@ -8,6 +8,7 @@ import pytest
 
 from chemrefine.engines.orca.input import build_input, clamp_pal
 from chemrefine.engines.orca.inspect import parse_pal
+from chemrefine.errors import ConfigError
 
 
 def _template(tmp_path: Path, body: str) -> Path:
@@ -88,7 +89,7 @@ def test_build_input_omits_base_directive(tmp_path: Path):
 
 
 def test_build_input_missing_template_raises(tmp_path: Path):
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(ConfigError):
         build_input(
             xyz_path=tmp_path / "x.xyz",
             template_path=tmp_path / "missing.inp",

@@ -37,6 +37,8 @@ from __future__ import annotations
 from pathlib import Path
 from string import Template
 
+from chemrefine.errors import ConfigError
+
 
 def _build_output_footer(output_basename: str) -> str:
     """Return the appended footer that harvests result vars and writes the JSON.
@@ -99,12 +101,12 @@ def build_input(
 
     Engines call this through
     :class:`chemrefine.engines._script.engine.ScriptEngine`,
-    which already raises a backend-specific ``FileNotFoundError`` for
+    which already raises a backend-specific ``ConfigError`` for
     a missing template; the same check is kept here as a defensive
     guard for any direct caller.
     """
     if not template_path.is_file():
-        raise FileNotFoundError(f"template not found: {template_path}")
+        raise ConfigError(f"template not found: {template_path}")
     text = template_path.read_text(encoding="utf-8")
     substitutions: dict[str, object] = {
         "XYZ_PATH": str(xyz_path),

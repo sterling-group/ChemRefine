@@ -19,7 +19,7 @@ from ase import Atoms
 from chemrefine.engines._script import render as _template_render
 from chemrefine.engines._script.engine import ScriptEngine
 from chemrefine.engines._script.output import _atoms_from_output, _forces_from_gradient
-from chemrefine.errors import OutputParseError
+from chemrefine.errors import ConfigError, OutputParseError
 
 
 def test_base_template_vars_default_is_empty():
@@ -98,7 +98,7 @@ def test_build_input_leaves_legacy_output_json_placeholder_alone(tmp_path: Path)
 
 def test_build_input_missing_template_raises_generic(tmp_path: Path):
     """Direct call (no engine layer above it) surfaces the generic message."""
-    with pytest.raises(FileNotFoundError, match="template not found"):
+    with pytest.raises(ConfigError, match="template not found"):
         _template_render.build_input(
             xyz_path=tmp_path / "x.xyz",
             template_path=tmp_path / "missing.py",

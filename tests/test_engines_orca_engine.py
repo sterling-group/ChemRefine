@@ -13,6 +13,7 @@ from chemrefine import slurm, step_failures
 from chemrefine.config import StepConfig
 from chemrefine.engines import _execution as submit
 from chemrefine.engines.api import NmsCapableEngine, get_engine
+from chemrefine.errors import ConfigError
 from chemrefine.state import JobBatch, PipelineState, StepContext, StepInputs, Structure
 
 FIXTURE = Path(__file__).parent / "data" / "engines" / "orca" / "dft" / "step1_0.out"
@@ -137,7 +138,7 @@ def test_prepare_missing_template_raises(tmp_path: Path):
     ctx = _ctx(tmp_path, structures=(_seed_structure(),))
     # Delete the template after _ctx wrote it.
     (ctx.template_dir / "step1.inp").unlink()
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(ConfigError):
         engine.prepare(ctx)
 
 
@@ -195,7 +196,7 @@ def test_submit_missing_slurm_header_raises(_submit, _finished_jobs, tmp_path: P
     ctx = _ctx(tmp_path, structures=(_seed_structure(),))
     (ctx.template_dir / "cpu.slurm.header").unlink()
     inputs = engine.prepare(ctx)
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(ConfigError):
         engine.submit(inputs, ctx)
 
 
@@ -285,7 +286,7 @@ def test_submit_array_missing_header_raises(_sbatch, tmp_path: Path):
     ctx = replace(_ctx(tmp_path, structures=(_seed_structure(),)), slurm_array=True)
     inputs = engine.prepare(ctx)
     (ctx.template_dir / "cpu.slurm.header").unlink()
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(ConfigError):
         engine.submit(inputs, ctx)
 
 

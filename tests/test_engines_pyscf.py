@@ -22,7 +22,7 @@ from ase import Atoms
 
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import get_engine
-from chemrefine.errors import OutputParseError
+from chemrefine.errors import ConfigError, OutputParseError
 from chemrefine.state import JobBatch, PipelineState, StepContext, Structure
 
 # ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ def test_prepare_missing_template_raises(tmp_path: Path):
     ctx = _ctx(tmp_path, structures=(_seed(),))
     (ctx.template_dir / "step1.py").unlink()
     engine = get_engine("pyscf")
-    with pytest.raises(FileNotFoundError, match="PySCF template not found"):
+    with pytest.raises(ConfigError, match="PySCF template not found"):
         engine.prepare(ctx)
 
 
@@ -220,7 +220,7 @@ def test_submit_missing_slurm_header_raises(tmp_path: Path):
     (ctx.template_dir / "cpu.slurm.header").unlink()
     engine = get_engine("pyscf")
     inputs = engine.prepare(ctx)
-    with pytest.raises(FileNotFoundError, match="SLURM header"):
+    with pytest.raises(ConfigError, match="SLURM header"):
         engine.submit(inputs, ctx)
 
 

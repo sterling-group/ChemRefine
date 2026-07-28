@@ -25,6 +25,7 @@ import re
 from pathlib import Path
 
 from chemrefine.engines.orca.inspect import _PAL_PATTERNS
+from chemrefine.errors import ConfigError
 
 _XYZFILE_DIRECTIVE_RE = re.compile(r"^\s*\*\s+xyzfile.*$", re.MULTILINE)
 
@@ -99,7 +100,7 @@ def build_input(
     allocation grants.
     """
     if not template_path.is_file():
-        raise FileNotFoundError(f"ORCA template not found: {template_path}")
+        raise ConfigError(f"ORCA template not found: {template_path}")
 
     template = template_path.read_text(encoding="utf-8")
     cleaned = _XYZFILE_DIRECTIVE_RE.sub("", template).rstrip()

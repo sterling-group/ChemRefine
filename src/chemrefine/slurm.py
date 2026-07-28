@@ -190,7 +190,7 @@ def _read_header(template_path: Path) -> tuple[list[str], list[str]]:
     Longer flags that merely share a prefix (``--ntasks-per-node``) are kept.
     """
     if not template_path.is_file():
-        raise FileNotFoundError(f"SLURM header template {template_path} not found")
+        raise ConfigError(f"SLURM header template {template_path} not found")
     sbatch_lines: list[str] = []
     body_lines: list[str] = []
     for raw in template_path.read_text(encoding="utf-8").splitlines():

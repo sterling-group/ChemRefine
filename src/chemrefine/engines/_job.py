@@ -28,6 +28,7 @@ from ase import Atoms
 from chemrefine.engines import _execution
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import ParsedResult
+from chemrefine.errors import ConfigError
 from chemrefine.ids import (
     allocate_child_ids,
     input_geometry_path,
@@ -179,7 +180,10 @@ class JobEngine:
         """
         try:
             template = self._resolve_template(ctx)
-        except FileNotFoundError:
+        except ConfigError:
+            # A missing template is not a digest failure: the step will raise from
+            # `prepare` with the actionable message. Fingerprinting just has nothing
+            # to hash yet.
             return ""
         return hashlib.sha1(template.read_bytes(), usedforsecurity=False).hexdigest()[:16]
 

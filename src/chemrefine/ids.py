@@ -33,6 +33,8 @@ import re
 from collections.abc import Sequence
 from pathlib import Path
 
+from chemrefine.errors import ConfigError
+
 _ATTEMPT_DIR_RE = re.compile(r"attempt(\d+)$")
 
 
@@ -153,11 +155,17 @@ def resolve_step_template(
     """Resolve a step's input template under ``template_dir``.
 
     Uses the step's explicit ``template`` override when set, otherwise
-    :func:`default_template_name`. Raises :class:`FileNotFoundError` naming
-    ``label`` (the human backend name) when the file is missing.
+    :func:`default_template_name`.
+
+    A missing template raises :class:`~chemrefine.errors.ConfigError`, not a bare
+    ``FileNotFoundError``: it *is* a config error, and it is the likeliest error of a
+    first run. :mod:`chemrefine.errors` promises every exception carries an
+    ``exit_code`` the CLI maps to a deterministic exit status, but ``cli._dispatch``
+    catches only :class:`~chemrefine.errors.ChemRefineError` — so a bare OSError here
+    escaped that contract and greeted the user with a traceback instead of a message.
     """
     name = template or default_template_name(step, suffix)
     path = template_dir / name
     if not path.is_file():
-        raise FileNotFoundError(f"{label} template not found: {path}")
+        raise ConfigError(f"{label} template not found: {path}")
     return path
