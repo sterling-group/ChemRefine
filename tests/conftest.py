@@ -23,3 +23,9 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="re-pack the e2e recordings from passing live (-m integration) runs",
     )
+    parser.addoption(
+        "--update-recordings",
+        action="store_true",
+        default=False,
+        help="re-pack the e2e recordings from a parse-only rebuild (no ORCA, no MLIP stack)",
+    )

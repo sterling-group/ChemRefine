@@ -9,7 +9,8 @@ from ase import Atoms
 
 from chemrefine import io, pipeline
 from chemrefine.config import Config, StepConfig
-from chemrefine.errors import ConfigError
+from chemrefine.errors import ChemRefineError, ConfigError
+from chemrefine.step import RunPlan, StepMode
 
 
 def _h2() -> Atoms:
@@ -458,3 +459,34 @@ def test_steps_csv_defaults_to_electronic_without_a_sample(tmp_path: Path):
     pipeline.run(cfg)
     df = pd.read_csv(cfg.output_dir / "steps.csv")
     assert set(df["Energy type"]) == {"electronic"}
+
+
+def test_rebuild_does_not_require_the_backend_it_will_never_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`rebuild-cache` re-parses outputs on disk; it must not demand the compute backend.
+
+    `preflight_backends` fails fast so a missing MLIP/PySCF env is reported before any job
+    submits. A REBUILD step submits nothing at all, so applying the check to it turned a
+    parse-only operation into one that needed the whole stack installed — precisely where you
+    would want to rebuild: a login node, or any machine holding the output tree but not the
+    backend that produced it.
+    """
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        pipeline, "preflight_backends", lambda steps: calls.append([s.engine for s in steps])
+    )
+    cfg = Config(
+        template_dir=tmp_path / "templates",
+        output_dir=tmp_path / "outputs",
+        steps=[
+            StepConfig(step=1, engine="fake", operation="opt_sp"),
+            StepConfig(step=2, engine="fake", operation="opt_sp"),
+        ],
+    )
+
+    # It fails later for want of a seed; all that matters is what preflight was handed.
+    with pytest.raises(ChemRefineError):
+        pipeline.run(cfg, RunPlan(default=StepMode.CACHE_ONLY, overrides={1: StepMode.REBUILD}))
+
+    assert calls == [["fake"]], "the REBUILD step must be excluded from the backend preflight"

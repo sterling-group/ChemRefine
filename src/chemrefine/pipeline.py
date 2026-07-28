@@ -178,7 +178,15 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
     )
     # Fail fast: every step's backend env must be resolvable before ANY job submits,
     # and `dispatch: slurm` must actually have sbatch available.
-    preflight_backends(config.steps)
+    #
+    # A `REBUILD` step is exempt because it *cannot* submit — it re-parses outputs already
+    # on disk. Checking it anyway made `chemrefine rebuild-cache` refuse to run wherever the
+    # backend was not installed, which is exactly where you would want to rebuild: a login
+    # node, or any machine holding the output tree but not the MLIP/PySCF stack that produced
+    # it. A guard for something that will not happen is just a wall.
+    preflight_backends(
+        [cfg for cfg in config.steps if plan.for_step(cfg.step) is not StepMode.REBUILD]
+    )
     slurm.dispatch_locally(config.dispatch)
     state = bootstrap(config)
     logger.info("bootstrapped pipeline with %d seed structure(s)", len(state.structures))

@@ -24,6 +24,13 @@ RUN_BATCH = "chemrefine.engines._execution.run_batch"
 
 ORCA_CASES = ["conformers", "nms_minimum", "ts_pes", "host_guest"]
 
+ALL_CASES = [*ORCA_CASES, "mlip_screen", "mlip_extopt", "pyscf_sp", "pyscf_extopt"]
+"""Every recorded case, for the checks that only re-parse.
+
+The ORCA-only list above is for replays that submit through a stubbed `run_batch`; a
+parse-only rebuild needs no backend at all, so the drift detector — the one thing standing
+between a recording and becoming a fossil — covers all eight."""
+
 
 def _with_step_update(config: Config, step_number: int, **updates: object) -> Config:
     steps = [
@@ -70,7 +77,7 @@ def test_rebuild_cache_reparses_outputs_without_submitting(
         ], f"rebuilding step {step_number} changed the survivors"
 
 
-@pytest.mark.parametrize("name", ORCA_CASES)
+@pytest.mark.parametrize("name", ALL_CASES)
 def test_rebuilt_records_match_the_archived_ones_field_for_field(
     name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
