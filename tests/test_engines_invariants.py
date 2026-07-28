@@ -17,6 +17,7 @@ rather than per engine, where the next engine would simply not be covered.
 
 from __future__ import annotations
 
+import ast
 import shlex
 import subprocess
 from pathlib import Path
@@ -170,3 +171,71 @@ def test_preflight_and_template_render_agree_on_an_ambiguous_mlip_step(tmp_path:
         requirement_from_options(both)
     with pytest.raises(ConfigError):
         engine._template_vars(_ctx(tmp_path, "mlip", both))
+
+
+# ---------------------------------------------------------------------------
+# No second reader of a declared knob
+# ---------------------------------------------------------------------------
+
+# Names a raw `step.options` dict conventionally goes by in this codebase.
+_RAW_DICT_NAMES = {"options", "raw", "opts"}
+
+# Reads that are deliberately raw, with the reason they are allowed to be.
+_ALLOWED_RAW_READS = {
+    # Operates on `validated.model_dump()` (see extopt/engine.py), so this *is* the
+    # model's output -- it just arrives as a dict because the server CLI is generic.
+    "engines/_backend_server/base.py",
+}
+
+
+def _raw_option_reads(source: str) -> list[str]:
+    """Every `<raw dict>.get("key")` literal key in ``source``.
+
+    Parsed rather than grepped. A regex over the text also matches prose: the docstring
+    on `gpus_from_options` quotes the very call it exists to have replaced, and a
+    text scan flagged the module that fixed the bug.
+    """
+    keys: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr != "get" or not isinstance(node.func.value, ast.Name):
+            continue
+        if node.func.value.id not in _RAW_DICT_NAMES or not node.args:
+            continue
+        first = node.args[0]
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            keys.append(first.value)
+    return keys
+
+
+def test_no_module_reads_a_declared_option_key_off_the_raw_dict():
+    """A knob a model declares must be read through that model, everywhere.
+
+    Every options divergence this project has had was one shape: a raw `options.get("x")`
+    beside a model that already declares `x`, the two carrying different defaults or
+    alias rules, and nothing noticing until the mismatch produced a wrong job -- a CUDA
+    script scheduled on a CPU node, a training step picking the wrong SLURM header, a
+    backend requirement that preflight accepted and `prepare` refused.
+
+    So the rule is checked rather than remembered. If a genuinely raw read is needed, add
+    the file to `_ALLOWED_RAW_READS` with the reason, which makes it a decision someone
+    made rather than one that crept in.
+    """
+    declared: set[str] = set()
+    for name in sorted(ENGINES):
+        options_cls = getattr(get_engine(name), "options_cls", None)
+        if options_cls is not None:
+            declared |= options_cls._accepted_names()
+    assert declared, "no engine declares an options model — has options_cls been dropped?"
+
+    src = Path(__file__).resolve().parent.parent / "src" / "chemrefine"
+    offenders = [
+        f"{rel}: reads declared knob {key!r} off the raw dict"
+        for path in sorted(src.rglob("*.py"))
+        if (rel := path.relative_to(src).as_posix()) not in _ALLOWED_RAW_READS
+        for key in _raw_option_reads(path.read_text(encoding="utf-8"))
+        if key in declared
+    ]
+
+    assert offenders == [], "\n".join(offenders)
