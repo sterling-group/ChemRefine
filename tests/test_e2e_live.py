@@ -12,6 +12,7 @@ recording and replay share one case definition, so they cannot drift.
 from __future__ import annotations
 
 import importlib.util
+import os
 import shutil
 from pathlib import Path
 
@@ -43,8 +44,19 @@ def _real_orca() -> str | None:
     return found
 
 
+def _backend_available(import_name: str, extra: str) -> bool:
+    """Whether a compute backend can run here — importable, or a managed env exists.
+
+    Deliberately the same two conditions :func:`chemrefine.engines._provision.require_backend`
+    accepts, so a case is skipped exactly when the pipeline would refuse to start it, and
+    never when it would have run.
+    """
+    return importlib.util.find_spec(import_name) is not None or backend_env_python(extra).is_file()
+
+
 _ORCA = _real_orca()
-_MACE = importlib.util.find_spec("mace") is not None or backend_env_python("mlip-mace").is_file()
+_MACE = _backend_available("mace", "mlip-mace")
+_PYSCF = _backend_available("pyscf", "pyscf")
 
 _REQUIRES = {
     "conformers": {"orca"},
@@ -53,17 +65,34 @@ _REQUIRES = {
     "host_guest": {"orca"},
     "mlip_screen": {"mace"},
     "mlip_extopt": {"orca", "mace"},
+    "pyscf_sp": {"pyscf"},
+    "pyscf_extopt": {"orca", "pyscf"},
 }
 
 
 def _skip_unless_available(requirements: set[str]) -> None:
+    """Skip a case whose backend is absent — or fail, under ``CHEMREFINE_REQUIRE_LIVE``.
+
+    Skipping is right for a developer running the tier on a laptop with only some of the
+    stacks installed. It is wrong for the release gate, whose whole purpose is that the
+    real binaries ran: ``release-check.sh`` guards ORCA by hand precisely because "the
+    tier-3 suite skips every live case and the gate passes having tested nothing", but the
+    same hole was open for every other backend. Setting the variable closes it — a missing
+    stack then fails by name instead of quietly shrinking what the gate covered.
+    """
     missing = []
     if "orca" in requirements and _ORCA is None:
         missing.append("ORCA on PATH")
     if "mace" in requirements and not _MACE:
         missing.append("a mace stack (importable or `chemrefine backends install mlip-mace`)")
-    if missing:
-        pytest.skip(f"live case needs {', '.join(missing)}")
+    if "pyscf" in requirements and not _PYSCF:
+        missing.append("pyscf (importable or `chemrefine backends install pyscf`)")
+    if not missing:
+        return
+    message = f"live case needs {', '.join(missing)}"
+    if os.environ.get("CHEMREFINE_REQUIRE_LIVE"):
+        pytest.fail(f"{message} — CHEMREFINE_REQUIRE_LIVE is set, so this may not be skipped")
+    pytest.skip(message)
 
 
 @pytest.mark.parametrize("name", sorted(_REQUIRES))
@@ -101,6 +130,14 @@ def test_live_case(name: str, tmp_path: Path, request: pytest.FixtureRequest) ->
         assert ts.imaginary_freqs is not None and len(ts.imaginary_freqs) == 1
     elif name == "host_guest":
         assert outcomes[1].state.structures, "solvator output must parse"
+    elif name in ("pyscf_sp", "pyscf_extopt"):
+        # Water/HF/STO-3G is ~-74.96 Eh. Asserting the number, not just that something
+        # parsed, is the point of running PySCF for real: the contract goldens for both
+        # engines were hand-made from our own footer format rather than captured, so
+        # until now nothing had checked that this backend computes anything at all.
+        (structure,) = outcomes[0].state.structures
+        assert structure.energy_hartree is not None
+        assert -75.5 < structure.energy_hartree < -74.5, structure.energy_hartree
 
     if request.config.getoption("--record"):
         archive = replay.pack_case(tmp_path, name)

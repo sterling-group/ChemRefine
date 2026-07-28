@@ -1,0 +1,21 @@
+# Capture case: direct-PySCF single point on water, HF/STO-3G.
+#
+# The smallest thing that proves the direct script engine drives a real PySCF:
+# render the template, run it under the backend's own interpreter, parse the
+# footer JSON back. HF (not DFT) so no `xc` is needed, and STO-3G on 3 atoms
+# converges in a tenth of a second — the cost here is process startup, not SCF.
+template_dir: ./templates
+output_dir: ./outputs
+dispatch: auto
+max_cores: 2
+
+input: ./water.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  - step: 1
+    engine: pyscf
+    operation: sp
+    options: { method: hf, basis: sto-3g, device: cpu, cores: 1 }
+    sample: { method: min, count: 1 }

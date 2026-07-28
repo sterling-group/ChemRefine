@@ -1,0 +1,22 @@
+# Capture case: ORCA ExtOpt optimisation of water over a PySCF gradient server.
+#
+# The ExtOpt machinery with a second backend: ORCA drives the optimiser and asks
+# a long-running PySCF server for energy+gradient at each step, over the sidecar
+# URL and bearer token. HF/STO-3G on 3 atoms keeps every one of those SCFs at a
+# fraction of a second, so what this measures is the round trip, not the method.
+template_dir: ./templates
+output_dir: ./outputs
+executables: { orca: orca }  # the live harness injects the resolved absolute path
+dispatch: auto
+max_cores: 2
+
+input: ./water.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  - step: 1
+    engine: pyscf-extopt
+    operation: opt_sp
+    options: { method: hf, basis: sto-3g, device: cpu }
+    sample: { method: min, count: 1 }
