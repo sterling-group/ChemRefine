@@ -438,6 +438,29 @@ def _normalize_sample_block(sample: Any) -> Any:
 
 Dispatch: TypeAlias = Literal["auto", "local", "slurm"]
 
+#: Characters that cannot survive interpolation into the generated bash. ``"``, ``$`` and
+#: a backtick end a quoted string or start a command substitution; a backslash is refused
+#: because inside double quotes it escapes the very characters above, which is enough to
+#: smuggle one past the check.
+_SHELL_UNSAFE = ('"', "$", "`", "\\")
+
+
+def _reject_shell_unsafe(text: str, *, what: str, fix: str) -> None:
+    """Raise unless ``text`` is safe to interpolate into the generated SLURM script.
+
+    One rule, one home. Every config value that reaches generated bash goes through here —
+    the directory paths and the ``executables`` map — because the second one was added
+    later, against a copy of the rule that did not exist, and so went unguarded.
+    """
+    bad = {c for c in _SHELL_UNSAFE if c in text}
+    if "\n" in text or "\r" in text:
+        bad.add("newline")
+    if bad:
+        raise ValueError(
+            f"{what} {text!r} contains {sorted(bad)}, which cannot be safely embedded "
+            f"in the generated SLURM script; {fix}"
+        )
+
 
 class Config(BaseModel):
     """Top-level YAML config."""
@@ -507,27 +530,37 @@ class Config(BaseModel):
 
         These three paths are interpolated into the generated SLURM script (see
         :func:`chemrefine.slurm._run_body_lines`), which exports them inside
-        double quotes. A path containing ``"``, ``$``, or a backtick would end
-        the quoted string or introduce a command substitution, so it is refused
-        at config-load time rather than producing a corrupt — or actively
-        dangerous — job script much later.
-
-        A newline is refused for the same reason one line up: it ends the ``export``
-        statement and makes whatever follows a command of its own. A backslash is
-        refused because inside double quotes it escapes the very characters above,
-        which is enough to smuggle one past this check.
+        double quotes — so a metacharacter would end the quoted string or introduce a
+        command substitution. Refused at config-load time rather than producing a
+        corrupt — or actively dangerous — job script much later.
         """
         if v is None:
             return v
-        text = str(v)
-        bad = {c for c in ('"', "$", "`", "\\") if c in text}
-        if "\n" in text or "\r" in text:
-            bad.add("newline")
-        if bad:
-            raise ValueError(
-                f"path {text!r} contains {sorted(bad)}, which cannot be safely embedded "
-                f"in the generated SLURM script; rename the directory"
-            )
+        _reject_shell_unsafe(str(v), what="path", fix="rename the directory")
+        return v
+
+    @field_validator("executables")
+    @classmethod
+    def _reject_unsafe_executables(cls, v: dict[str, str]) -> dict[str, str]:
+        """Hold ``executables`` to the same rule as the directory paths.
+
+        These values reach generated bash by two routes with different protections.
+        Where the binary is *run*, the engine shell-quotes it
+        (:meth:`chemrefine.engines.orca.engine.OrcaEngine.orca_command`). But the runlog
+        header embeds it raw inside ``cat <<EOF`` — a heredoc that must stay unquoted so
+        ``$(hostname)``, ``$WORK_DIR`` and ``${SLURM_JOB_ID:-$$}`` expand — so
+        ``executables: {orca: /opt/orca-$(id -un)/orca}`` was a command substitution the
+        job would run, and an innocent ``$`` in a path silently corrupted the runlog.
+
+        Quoting the header is not the fix: the heredoc's expansion is load-bearing for
+        the fields around it. Refusing the character at the boundary is, and it is the
+        rule this config already applies to every other value that reaches bash.
+
+        Spaces stay legal — the run site quotes them correctly and ``/opt/my orca/orca``
+        is a perfectly ordinary path.
+        """
+        for tool, value in v.items():
+            _reject_shell_unsafe(value, what=f"executable for {tool!r}", fix="move the binary")
         return v
 
     @model_validator(mode="after")

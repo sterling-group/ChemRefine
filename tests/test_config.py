@@ -385,6 +385,33 @@ def test_directory_paths_with_shell_metacharacters_rejected(tmp_path: Path, fiel
         load_config(_write_yaml(tmp_path, data))
 
 
+@pytest.mark.parametrize(
+    "bad", ["/opt/orca-$(id -un)/orca", "/opt/`whoami`/orca", '/opt/o"rca/orca', "/opt/o\\x/orca"]
+)
+def test_executables_with_shell_metacharacters_rejected(tmp_path: Path, bad: str):
+    """`executables` reaches generated bash too, and one route does not quote it.
+
+    The runlog header embeds the binary raw inside `cat <<EOF`, a heredoc that has to
+    stay unquoted so `$(hostname)` and `$WORK_DIR` expand — so a `$(...)` in the
+    configured path is a command substitution the job runs. Quoting the header is not
+    available; refusing the character at the boundary is.
+    """
+    data = _minimal_config(executables={"orca": bad})
+    with pytest.raises(ConfigError):
+        load_config(_write_yaml(tmp_path, data))
+
+
+@pytest.mark.parametrize("ok", ["/opt/my orca/orca", "/opt/orca/orca", "orca"])
+def test_executables_allow_spaces_and_bare_command_names(tmp_path: Path, ok: str):
+    """A space is not a shell hazard here — the run site quotes it — and paths have them.
+
+    A bare command name stays legal too: it is resolved on the executing host, which is
+    how a `module load` inside the job is meant to provide the binary.
+    """
+    data = _minimal_config(executables={"orca": ok})
+    assert load_config(_write_yaml(tmp_path, data)).executables["orca"] == ok
+
+
 def test_explicit_null_scratch_dir_is_accepted(tmp_path: Path):
     """An explicit ``scratch_dir: null`` still means "auto-derive under output_dir"."""
     data = _minimal_config(scratch_dir=None)
