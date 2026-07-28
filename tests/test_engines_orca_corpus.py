@@ -11,8 +11,12 @@ the corpus-wide expectation is simple and strong: every output must read as term
 converged, and every frequency job must yield a well-shaped normal-mode tensor. A reader
 that starts finding failures here is wrong about real ORCA, whatever the unit tests say.
 
-Marked ``integration`` only because it reads every ``.out`` out of six compressed
-archives; it needs no binaries and runs in a couple of seconds.
+Marked ``slow``, not ``integration``: it reads every ``.out`` out of six compressed archives,
+which is a second or so, but it invokes no ORCA, no SLURM and no external service. That
+distinction decides whether the file ever runs. ``integration`` is deselected by the default
+``addopts``, so this — the strongest reader-versus-real-output assertion in the suite — was
+excluded from every CI run, and a change to the recordings went unnoticed until a release
+gate hit it thirteen minutes in. ``slow`` still runs by default.
 """
 
 from __future__ import annotations
@@ -30,7 +34,7 @@ from chemrefine.engines.orca.output.frequencies import (
 )
 from chemrefine.engines.orca.output.geometry import parse_coordinates_from_text
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.slow
 
 RECORDINGS = Path(__file__).resolve().parent / "data" / "e2e" / "recordings"
 
