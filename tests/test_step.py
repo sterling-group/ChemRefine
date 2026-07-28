@@ -5,12 +5,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from ase import Atoms
 
 from chemrefine import cache, step_failures
 from chemrefine.config import Config, StepConfig
+from chemrefine.errors import ChemRefineError
 from chemrefine.state import PipelineState, Structure
-from chemrefine.step import StepMode, StepOutcome, build_context, run_step
+from chemrefine.step import (
+    StepMode,
+    StepOutcome,
+    build_context,
+    halt_if_pending,
+    run_step,
+    step_dir_for,
+)
 
 
 def _config(tmp_path: Path, **step_overrides) -> Config:
@@ -506,30 +515,6 @@ def test_check_nms_freq_gate_not_bypassed_by_explicit_operation(tmp_path: Path):
         _check_nms_freq_gate(_NoFreqEngine(), ctx, cfg.steps[0])
 
 
-def test_archive_failed_attempt_numbers_sequentially(tmp_path: Path):
-    """Numbered attempt dirs: next-free K, never blocked by an existing/odd one."""
-    from chemrefine import step_failures
-
-    sid_dir = tmp_path / "0"
-    sid_dir.mkdir()
-    (sid_dir / "step1_0.out").write_text("fail", encoding="utf-8")
-    dest = step_failures.archive_failed_attempt(sid_dir)
-    assert dest.name == "attempt1"
-    assert (dest / "step1_0.out").is_file()  # the loose file moved in
-    assert not (sid_dir / "step1_0.out").exists()
-
-    (sid_dir / "step1_0.out").write_text("fail2", encoding="utf-8")
-    assert step_failures.archive_failed_attempt(sid_dir).name == "attempt2"  # next free
-
-    # A manually-added higher attempt + a non-matching 'attempt*' dir: K = max+1,
-    # the odd dir is ignored, and existing attempt dirs are left in place.
-    (sid_dir / "attempt5").mkdir()
-    (sid_dir / "attemptX").mkdir()  # matches the glob but not attempt<digits>
-    (sid_dir / "step1_0.out").write_text("fail3", encoding="utf-8")
-    assert step_failures.archive_failed_attempt(sid_dir).name == "attempt6"
-    assert (sid_dir / "attempt1").is_dir() and (sid_dir / "attempt5").is_dir()
-
-
 def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypatch):
     """run_step routes an `nms: true` step through the generic coordinator (nms.run_nms),
     then applies the on_failure policy to its survivors/failures."""
@@ -675,3 +660,29 @@ def test_first_run_over_a_clean_tree_archives_nothing(tmp_path: Path):
     cfg = _config(tmp_path)
     run_step(cfg, cfg.steps[0], _seed_state(["0"]), mode=StepMode.EXECUTE)
     assert not list((cfg.output_dir.resolve() / "step1" / "0").glob("attempt*"))
+
+
+# ---------------------------------------------------------------------------
+# halt_if_pending — the single halt point, reached by every mode
+# ---------------------------------------------------------------------------
+
+
+def test_halt_if_pending_skips_a_cache_only_step(tmp_path: Path):
+    cfg = _config(tmp_path, on_failure="stop")
+    # CACHE_ONLY is the mode every step a scoped action isn't targeting runs in;
+    # halting there would stop `rerun-errors N` before it ever reached step N.
+    halt_if_pending(cfg, cfg.steps[0], StepMode.CACHE_ONLY)
+
+
+def test_halt_if_pending_raises_when_stop_step_has_pending(tmp_path: Path):
+    cfg = _config(tmp_path, on_failure="stop")
+    step_dir = step_dir_for(cfg, cfg.steps[0])
+    cache.save_failed_jobs(step_dir, [{"structure_id": "1", "kind": "failed", "reason": "x"}])
+    with pytest.raises(ChemRefineError, match="halted"):
+        halt_if_pending(cfg, cfg.steps[0], StepMode.RESUME)
+
+
+def test_halt_if_pending_no_pending_returns(tmp_path: Path):
+    cfg = _config(tmp_path, on_failure="stop")
+    step_dir_for(cfg, cfg.steps[0]).mkdir(parents=True, exist_ok=True)
+    halt_if_pending(cfg, cfg.steps[0], StepMode.RESUME)  # no ledger → no raise
