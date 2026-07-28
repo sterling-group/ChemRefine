@@ -22,7 +22,7 @@ from chemrefine.config import StepConfig
 from chemrefine.engines import _execution
 from chemrefine.engines._job import JobEngine
 from chemrefine.errors import ConfigError, JobSubmissionError, ThrottleTimeoutError
-from chemrefine.state import JobBatch, PipelineState, StepContext, Structure
+from chemrefine.state import JobBatch, PipelineState, RunBlock, StepContext, Structure
 
 
 class _FakeJobEngine(JobEngine):
@@ -39,8 +39,8 @@ class _FakeJobEngine(JobEngine):
     def build_input(self, *, xyz_path, template_path, input_path, output_path, ctx) -> None:
         input_path.write_text("fake input\n", encoding="utf-8")
 
-    def run_block(self, ctx, inp_path, out_path) -> str:
-        return f"echo run {inp_path.name}"
+    def run_block(self, ctx, inp_path, out_path) -> RunBlock:
+        return RunBlock(body=f"echo run {inp_path.name}")
 
     def pal(self, ctx) -> int:
         return 1

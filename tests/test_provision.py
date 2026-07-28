@@ -380,21 +380,21 @@ def test_script_run_block_uses_managed_env(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
     py = _provisioned(tmp_path, "mlip-fairchem")
     ctx = _ctx(tmp_path, engine="mlip", options={"task_name": "omol"})
-    block = get_engine("mlip").run_block(ctx, Path("step1_0.py"), Path("step1_0.json"))
+    block = get_engine("mlip").run_block(ctx, Path("step1_0.py"), Path("step1_0.json")).body
     assert block.splitlines()[-1] == f"{py} step1_0.py"
 
 
 def test_script_run_block_defaults_to_sys_executable(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
     ctx = _ctx(tmp_path, engine="mlip", options=None)
-    block = get_engine("mlip").run_block(ctx, Path("step1_0.py"), Path("step1_0.json"))
+    block = get_engine("mlip").run_block(ctx, Path("step1_0.py"), Path("step1_0.json")).body
     assert block.splitlines()[-1] == f"{sys.executable} step1_0.py"
 
 
 def test_script_run_block_honours_backend_python_override(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
     ctx = _ctx(tmp_path, engine="mlip", options={"backend_python": "/envs/x/bin/python"})
-    block = get_engine("mlip").run_block(ctx, Path("step1_0.py"), Path("step1_0.json"))
+    block = get_engine("mlip").run_block(ctx, Path("step1_0.py"), Path("step1_0.json")).body
     assert block.splitlines()[-1] == "/envs/x/bin/python step1_0.py"
 
 
@@ -408,7 +408,7 @@ def test_non_provisionable_script_engine_uses_own_interpreter(monkeypatch, tmp_p
 
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
     ctx = _ctx(tmp_path, engine="mlip", options={})
-    block = _PlainScript().run_block(ctx, Path("step1_0.py"), Path("step1_0.json"))
+    block = _PlainScript().run_block(ctx, Path("step1_0.py"), Path("step1_0.json")).body
     assert block.splitlines()[-1] == f"{sys.executable} step1_0.py"
 
 

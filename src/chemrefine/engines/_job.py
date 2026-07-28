@@ -27,7 +27,7 @@ from ase import Atoms
 
 from chemrefine.engines import _execution
 from chemrefine.engines._options import EngineOptions
-from chemrefine.engines.api import ParsedResult
+from chemrefine.engines.api import ParsedResult, RunBlock
 from chemrefine.errors import ConfigError
 from chemrefine.ids import (
     allocate_child_ids,
@@ -207,8 +207,8 @@ class JobEngine:
         """Parse one output into ``ParsedResult``(s) — ≥2 for an ensemble fan-out."""
         raise NotImplementedError
 
-    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
-        """The engine-specific bash that runs inside ``$WORK_DIR``."""
+    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> RunBlock:
+        """The bash that runs inside ``$WORK_DIR``, plus any teardown it needs."""
         raise NotImplementedError
 
     def pal(self, ctx: StepContext) -> int:

@@ -13,6 +13,7 @@ import pytest
 
 from chemrefine import slurm
 from chemrefine.errors import ConfigError, JobSubmissionError, ThrottleTimeoutError
+from chemrefine.state import RunBlock
 
 
 def _drain_local(job_id: str, *, timeout: float = 5.0) -> None:
@@ -51,7 +52,7 @@ def _build_kwargs(tmp_path: Path, **overrides):
         "input_path": tmp_path / "in" / "step1_structure_0.inp",
         "output_dir": tmp_path / "out",
         "scratch_dir": tmp_path / "scratch",
-        "run_block": "echo hi",
+        "run_block": RunBlock(body="echo hi"),
         "engine": "orca",
         "operation": "opt_sp",
         "step": 1,
@@ -68,7 +69,9 @@ def test_build_script_overrides_ntasks_and_writes_script(tmp_path: Path):
         **_build_kwargs(
             tmp_path,
             pal=12,
-            run_block="$ORCA step1_structure_0.inp > $OUTPUT_DIR/step1_structure_0.out",
+            run_block=RunBlock(
+                body="$ORCA step1_structure_0.inp > $OUTPUT_DIR/step1_structure_0.out"
+            ),
         )
     )
     assert script.exists()
@@ -137,7 +140,9 @@ def test_build_script_includes_runlog_header_and_footer_fields(tmp_path: Path):
 
 
 def test_build_script_includes_run_block(tmp_path: Path):
-    script = slurm.build_script(**_build_kwargs(tmp_path, run_block="echo CUSTOM_RUN_BLOCK_HERE"))
+    script = slurm.build_script(
+        **_build_kwargs(tmp_path, run_block=RunBlock(body="echo CUSTOM_RUN_BLOCK_HERE"))
+    )
     assert "echo CUSTOM_RUN_BLOCK_HERE" in script.read_text()
 
 
@@ -559,7 +564,7 @@ def test_build_array_script_resolves_task_from_manifest(tmp_path: Path):
         script_path=tmp_path / "out" / "step2_refine_array.slurm",
         output_dir=tmp_path / "out",
         scratch_dir=tmp_path / "scratch",
-        run_block="orca $INP_NAME > $OUTPUT_DIR/$OUT_NAME",
+        run_block=RunBlock(body="orca $INP_NAME > $OUTPUT_DIR/$OUT_NAME"),
         engine="orca",
         operation="opt_sp",
         step=2,
@@ -786,9 +791,9 @@ def test_terminate_local_jobs_escalates_to_kill_when_sigterm_is_ignored(tmp_path
 # ---------------------------------------------------------------------------
 
 
-def _runnable(tmp_path: Path, run_block: str) -> Path:
+def _runnable(tmp_path: Path, body: str, cleanup: str = "") -> Path:
     """Build a generated script that can actually execute (its input file exists)."""
-    kwargs = _build_kwargs(tmp_path, run_block=run_block)
+    kwargs = _build_kwargs(tmp_path, run_block=RunBlock(body=body, cleanup=cleanup))
     inp = Path(kwargs["input_path"])
     inp.parent.mkdir(parents=True, exist_ok=True)
     inp.write_text("! SP\n", encoding="utf-8")
@@ -840,13 +845,14 @@ def test_generated_script_reports_a_cancelled_job_as_failed(tmp_path: Path):
     assert stdout.count("files_copied=") == 1, stdout
 
 
-def test_generated_script_calls_an_engine_cleanup_hook_before_copying_back(tmp_path: Path):
-    """An engine defines `_chemrefine_engine_cleanup`; it must never trap EXIT itself.
+def test_generated_script_runs_engine_cleanup_before_copying_back(tmp_path: Path):
+    """`RunBlock.cleanup` is placed inside the script's one EXIT handler.
 
-    The hook runs *before* the copy-back (so a server releasing files has finished writing),
-    and a hook that fails must not abort the copy-back that follows it.
+    It runs *before* the copy-back (so a server releasing files has finished writing), and a
+    cleanup that fails must not abort the copy-back that follows it. The engine supplies this
+    as data; it has no way to install a trap of its own.
     """
-    script = _runnable(tmp_path, "_chemrefine_engine_cleanup() { echo HOOK_RAN; false; }\ntrue")
+    script = _runnable(tmp_path, "true", cleanup="echo HOOK_RAN\nfalse")
 
     result = _run_generated(script)
 

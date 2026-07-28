@@ -353,7 +353,7 @@ def test_mlip_extopt_run_block_starts_shared_extopt_server(tmp_path: Path):
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
-    )
+    ).body
     assert "-m chemrefine.engines._backend_server.server" in run_block
     assert "--backend mlip" in run_block
     assert "--bind 127.0.0.1:0" in run_block
@@ -364,20 +364,20 @@ def test_mlip_extopt_run_block_starts_shared_extopt_server(tmp_path: Path):
 def test_mlip_extopt_run_block_has_a_readiness_loop_and_a_cleanup_hook(tmp_path: Path):
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path)
-    run_block = engine.run_block(
+    block = engine.run_block(
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
     )
-    assert "sleep 10" not in run_block
-    assert "/healthz" in run_block
-    assert "ps -p" in run_block
-    # Teardown is a hook the surrounding script's EXIT trap calls, never a trap of our own:
-    # bash keeps one handler per signal, so trapping EXIT here replaced the script's and took
-    # the copy-back, the runlog footer and the scratch teardown with it.
-    assert "_chemrefine_engine_cleanup()" in run_block
-    assert "trap " not in run_block
-    assert "kill -TERM" in run_block
+    assert "sleep 10" not in block.body
+    assert "/healthz" in block.body
+    assert "ps -p" in block.body
+    # Teardown is returned as data the script places inside its own EXIT handler, never bash
+    # the engine traps: bash keeps one handler per signal, so a `trap ... EXIT` here replaced
+    # the script's and took the copy-back, the runlog footer and the scratch teardown with it.
+    assert "kill -TERM" in block.cleanup
+    assert "trap " not in block.body
+    assert "trap " not in block.cleanup
 
 
 def test_mlip_extopt_prepare_writes_inp_with_method_block(tmp_path: Path):

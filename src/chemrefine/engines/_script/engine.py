@@ -23,7 +23,7 @@ from chemrefine.engines._job import JobEngine, gpus_from_options
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines._script import output as script_output
 from chemrefine.engines._script import render as script_render
-from chemrefine.engines.api import ParsedResult
+from chemrefine.engines.api import ParsedResult, RunBlock
 from chemrefine.state import StepContext
 
 
@@ -86,7 +86,7 @@ class ScriptEngine(JobEngine):
         """A GPU if this engine's validated options request one; else CPU."""
         return gpus_from_options(ctx.step_cfg.options, self.options_cls)
 
-    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
+    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> RunBlock:
         """Run the rendered Python script inside ``$WORK_DIR``, capped to its core budget.
 
         Script engines (pyscf / mlip direct) are OpenMP/MKL/torch-threaded with no MPI, so the
@@ -98,8 +98,8 @@ class ScriptEngine(JobEngine):
         """
         cores = self.pal(ctx)
         interpreter = _provision.launcher_for(self, ctx.step_cfg.options)
-        return (
-            f"export OMP_NUM_THREADS={cores}\n"
+        return RunBlock(
+            body=f"export OMP_NUM_THREADS={cores}\n"
             f"export MKL_NUM_THREADS={cores}\n"
             f"export OPENBLAS_NUM_THREADS={cores}\n"
             f"{shlex.quote(interpreter)} {inp_path.name}"

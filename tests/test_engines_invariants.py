@@ -240,7 +240,7 @@ def test_run_block_survives_paths_with_spaces(engine_name: str, tmp_path: Path):
     ctx = _ctx(tmp_path, engine_name, {})
     object.__setattr__(ctx, "executables", {"orca": "/opt/my orca/orca"})
 
-    block = engine.run_block(ctx, Path("step1_0.inp"), Path("step1_0.out"))
+    block = engine.run_block(ctx, Path("step1_0.inp"), Path("step1_0.out")).body
 
     # `bash -n` parses the block without running it: unbalanced quoting fails here.
     subprocess.run(["bash", "-n"], input=block, text=True, check=True, capture_output=True)
@@ -363,3 +363,25 @@ def test_no_module_reads_a_declared_option_key_off_the_raw_dict():
     ]
 
     assert offenders == [], "\n".join(offenders)
+
+
+@pytest.mark.parametrize("engine_name", _job_executables())
+def test_no_engine_emits_a_trap_of_its_own(engine_name: str, tmp_path: Path):
+    """Teardown is returned as data, never trapped by the engine.
+
+    `RunBlock` splits an engine's bash into `body` and `cleanup` so teardown has somewhere to
+    go that is not a `trap`: the script installs exactly one `EXIT` handler and interpolates
+    `cleanup` inside it. That removes the *reason* an engine would trap -- but the handler is
+    armed before the body runs, so an engine that wrote `trap ... EXIT` into `body` anyway
+    would still displace it, exactly as the ExtOpt engines did for ten weeks.
+
+    So the type carries the intent and this carries the rule, over every registered engine
+    rather than the two that happened to have the bug. Its companion,
+    `test_the_assembled_script_still_runs_its_exit_handler`, catches the consequence by
+    running the composed script; this one names the cause.
+    """
+    engine = get_engine(engine_name)
+    block = engine.run_block(_ctx(tmp_path, engine_name, {}), Path("in.inp"), Path("out.out"))
+
+    assert "trap " not in block.body, f"{engine_name}: run block installs its own trap"
+    assert "trap " not in block.cleanup, f"{engine_name}: cleanup installs its own trap"

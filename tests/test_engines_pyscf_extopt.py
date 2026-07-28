@@ -100,7 +100,7 @@ def test_pyscf_wrapper_carries_no_per_call_flags(tmp_path: Path):
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
-    )
+    ).body
     assert "--df" in run_block
     assert "--gpu" in run_block
 
@@ -112,7 +112,7 @@ def test_pyscf_run_block_starts_shared_extopt_server(tmp_path: Path):
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
-    )
+    ).body
     assert "-m chemrefine.engines._backend_server.server" in run_block
     assert "--backend pyscf" in run_block
     assert "--method dft" in run_block
@@ -127,7 +127,7 @@ def test_pyscf_run_block_emits_gpu_and_df_when_set(tmp_path: Path):
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
-    )
+    ).body
     assert "--df" in run_block
     assert "--gpu" in run_block
 
@@ -145,7 +145,7 @@ def test_pyscf_save_tensors_reaches_server_cmd(tmp_path: Path):
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
-    )
+    ).body
     assert "--save_tensors" in run_block
     assert "--localized" in run_block
     assert "--tensor_folder td" in run_block
@@ -177,7 +177,7 @@ def test_pyscf_run_block_omits_bool_flags_when_unset(tmp_path: Path):
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
-    )
+    ).body
     assert "--method dft" in run_block
     assert " --df" not in run_block
     assert " --gpu" not in run_block
@@ -208,17 +208,18 @@ def test_pyscf_unknown_option_fails_fast(tmp_path: Path):
 def test_pyscf_run_block_includes_readiness_loop(tmp_path: Path):
     engine = get_engine("pyscf-extopt")
     ctx = _pyscf_ctx(tmp_path)
-    run_block = engine.run_block(
+    block = engine.run_block(
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.inp",
         out_path=ctx.step_dir / "step1_structure_0.out",
     )
-    assert "/healthz" in run_block
-    # Teardown is a hook the surrounding script's EXIT trap calls, never a trap of our own:
-    # bash keeps one handler per signal, so trapping EXIT here replaced the script's and took
-    # the tensor copy-back, the runlog footer and the scratch teardown with it.
-    assert "_chemrefine_engine_cleanup()" in run_block
-    assert "trap " not in run_block
+    assert "/healthz" in block.body
+    # Teardown is returned as data the script places inside its own EXIT handler, never bash
+    # the engine traps: bash keeps one handler per signal, so a `trap ... EXIT` here replaced
+    # the script's and took the tensor copy-back, the runlog footer and the scratch teardown.
+    assert "kill -TERM" in block.cleanup
+    assert "trap " not in block.body
+    assert "trap " not in block.cleanup
 
 
 def test_pyscf_prepare_writes_inp_with_method_block(tmp_path: Path):

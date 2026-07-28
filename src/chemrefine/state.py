@@ -160,6 +160,43 @@ class StepInputs:
 
 
 @dataclass(frozen=True)
+class RunBlock:
+    """The bash one engine contributes to a job script — split into what runs and what cleans up.
+
+    Two fields rather than one string, because the one-string form let an engine take the whole
+    script's exit path with it. :func:`chemrefine.slurm._run_body_lines` installs a single
+    ``EXIT`` trap that copies results back, copies each ``output_dirs`` entry back, tears down
+    scratch and emits the runlog footer — and bash keeps exactly one handler per signal, so an
+    engine that wrote its own ``trap … EXIT`` into its block silently *replaced* all of it.
+
+    That is not hypothetical: the ExtOpt engines did it for ten weeks, and nothing caught it
+    because ORCA redirects its ``.out`` straight to ``$OUTPUT_DIR``, so parsing kept succeeding
+    while ``.gbw``/``.hess`` were abandoned in scratch, ``pyscf-extopt``'s ``save_tensors``
+    produced nothing at all, and every job leaked its ``$WORK_DIR``.
+
+    So teardown is *data* the infra layer places, not bash the engine emits: ``cleanup`` is
+    interpolated inside that one handler, and an engine has no reason left to trap.
+
+    Note what this does and does not guarantee. The handler is armed *before* the body runs —
+    it has to be, or a failure inside the body would clean up nothing — so an engine that
+    wrote ``trap … EXIT`` into ``body`` anyway would still displace it. The type removes the
+    motive; the rule is enforced by
+    ``test_no_engine_emits_a_trap_of_its_own`` over every registered engine, and its
+    consequence by ``test_the_assembled_script_still_runs_its_exit_handler``, which runs the
+    composed script.
+    """
+
+    body: str
+    """Bash run inside ``$WORK_DIR`` after the runlog header, in place of the calculation."""
+
+    cleanup: str = ""
+    """Bash run inside the script's own ``EXIT`` handler, before anything is copied back.
+
+    For teardown that must happen however the job ends — the ExtOpt engines stop their gradient
+    server here. Runs with ``set +e``, so failing cleanup cannot abort the copy-back."""
+
+
+@dataclass(frozen=True)
 class JobBatch:
     """Opaque handle returned by ``engine.submit`` and consumed by ``engine.wait``.
 

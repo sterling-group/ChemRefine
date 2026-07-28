@@ -206,7 +206,7 @@ def test_template_run_block_caps_threads_to_cores(tmp_path: Path):
         ctx,
         inp_path=ctx.step_dir / "step1_structure_0.py",
         out_path=ctx.step_dir / "step1_structure_0.out",
-    )
+    ).body
     assert "export OMP_NUM_THREADS=4" in run_block
     assert "export MKL_NUM_THREADS=4" in run_block
     # The launcher is the *resolved* interpreter, whose basename depends on how

@@ -59,7 +59,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from chemrefine.errors import EngineNotFoundError
-from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
+from chemrefine.state import JobBatch, RunBlock, StepContext, StepInputs, StepResults
 
 
 @runtime_checkable
@@ -152,8 +152,8 @@ class JobExecutable(Protocol):
 
     output_globs: ClassVar[tuple[str, ...]]
 
-    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
-        """The engine-specific bash that runs one job inside ``$WORK_DIR``."""
+    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> RunBlock:
+        """The bash that runs one job inside ``$WORK_DIR``, plus any teardown it needs."""
         ...
 
     def pal(self, ctx: StepContext) -> int:

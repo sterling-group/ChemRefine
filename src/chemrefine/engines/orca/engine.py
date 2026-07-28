@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from chemrefine.engines._job import JobEngine
-from chemrefine.engines.api import NmsInputInfo, ParsedResult, register
+from chemrefine.engines.api import NmsInputInfo, ParsedResult, RunBlock, register
 from chemrefine.engines.orca import input as orca_input
 from chemrefine.engines.orca import inspect, output
 from chemrefine.state import StepContext
@@ -95,9 +95,11 @@ class OrcaEngine(JobEngine):
         orca = shlex.quote(ctx.executables.get("orca", "orca"))
         return f'{orca} {inp_name} > "$OUTPUT_DIR/{out_name}"'
 
-    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
-        """Engine-specific bash that runs inside ``$WORK_DIR``."""
-        return f"export OMP_NUM_THREADS=1\n{self.orca_command(ctx, inp_path.name, out_path.name)}"
+    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> RunBlock:
+        """Engine-specific bash that runs inside ``$WORK_DIR``; no teardown of its own."""
+        return RunBlock(
+            body=f"export OMP_NUM_THREADS=1\n{self.orca_command(ctx, inp_path.name, out_path.name)}"
+        )
 
     def extra_header_fields(self, ctx: StepContext) -> tuple[tuple[str, object], ...]:
         """Record which ORCA binary ran in the runlog header."""

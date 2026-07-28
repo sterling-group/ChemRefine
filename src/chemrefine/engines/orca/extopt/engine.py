@@ -23,7 +23,7 @@ from chemrefine.engines._job import gpus_from_options
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.engines.orca.extopt import protocol, run_block
-from chemrefine.state import StepContext, StepInputs
+from chemrefine.state import RunBlock, StepContext, StepInputs
 
 
 class ExtOptOrcaEngine(OrcaEngine):
@@ -93,11 +93,16 @@ class ExtOptOrcaEngine(OrcaEngine):
         """
         return ""
 
-    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
+    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> RunBlock:
         """Combine the engine's server command with the shared lifecycle bash.
 
         The ORCA invocation itself comes from :meth:`OrcaEngine.orca_command`, so this
         path runs the identically-quoted command the plain ORCA path does.
+
+        This is the engine that made :class:`~chemrefine.engines.api.RunBlock` two fields:
+        its gradient server has to be stopped however the job ends, and expressing that as a
+        ``trap`` inside the body replaced the script's own ``EXIT`` handler. Now the teardown
+        is returned as ``cleanup`` and the infra layer places it.
         """
         return run_block._build_extopt_run_block(
             server_cmd=self._server_cmd(ctx),
