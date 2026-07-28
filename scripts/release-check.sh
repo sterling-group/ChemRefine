@@ -82,8 +82,13 @@ marker = pathlib.Path(spec.submodule_search_locations[0]) / 'py.typed'
 sys.exit('py.typed missing from the wheel' if not marker.is_file() else 0)
 "
 
+# CHEMREFINE_REQUIRE_LIVE turns a missing backend into a failure instead of a skip. The
+# ORCA precondition above exists because a silently skipped tier leaves this gate passing
+# having tested nothing — but that reasoning covers every backend, not just ORCA, and
+# pytest reports "N passed, M skipped" with exit 0 either way. With the variable set, a
+# missing MACE or PySCF stack fails here by name.
 step "tier-3: the real binaries, end to end"
-PATH="$orca_dir:$PATH" "$E2E_ENV/bin/pytest" -m integration -q
+CHEMREFINE_REQUIRE_LIVE=1 PATH="$orca_dir:$PATH" "$E2E_ENV/bin/pytest" -m integration -q
 
 step "the tag will match the version"
 version="$("$DEV_ENV/bin/python" -c 'import chemrefine; print(chemrefine.__version__)')"
