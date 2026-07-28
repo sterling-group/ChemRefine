@@ -28,6 +28,31 @@ The coverage gate is real: new code ships with tests that cover every
 line and branch, and every module/class/function carries a docstring
 (`interrogate --fail-under=100`). The suite is fast (< 10 s) — run it often.
 
+### What 100% coverage does not prove
+
+It proves every line ran. It does not prove two components agree, and that
+is where this project's defects have actually lived: a `device` knob whose
+options model defaulted to `cuda` while the scheduler read the raw dict and
+booked a CPU job; an executable quoted where it was run but not where it was
+logged; a backend requirement that preflight accepted and `prepare` refused.
+Every one of those sat in fully covered code.
+
+So a change that spans two modules lands with an **invariant** test, not only
+a unit test — one that asserts the two readers agree, over every engine rather
+than the one you touched. `tests/test_engines_invariants.py` is where they go;
+the worked examples there are the device/GPU agreement, the `bash -n` check on
+every generated run block, and the scan that fails if a knob a model declares
+gets a second reader.
+
+### If you change what a parser produces
+
+Regenerate the end-to-end recordings. `tests/data/e2e/recordings/` stores what
+the parsers *used to* produce, and
+`test_rebuilt_records_match_the_archived_ones_field_for_field` will fail when
+that drifts. Rebuilding is parse-only — it re-derives the cached records from
+the archived outputs already in the tree, so it needs no ORCA and no MLIP
+stack. An archive that no longer matches the code is a fossil, not a fixture.
+
 ## Conventions worth knowing
 
 - **Engines** are plugins. Read the
