@@ -1,11 +1,15 @@
 """Per-step result cache for skip-on-resume.
 
 Each step writes its parsed results to ``{step_dir}/_cache/step.json``
-— one human-inspectable JSON document holding the step metadata and
-every structure (symbols, coordinates, energy, forces, status flags).
-Plain JSON rather than pickle on purpose: loading it can never execute
-code from the file, and Python's float round-tripping keeps coordinates
-byte-identical so :func:`parents_digest` is stable across save → load.
+— one JSON document holding the step metadata and every structure
+(symbols, coordinates, energy, forces, status flags). Plain JSON rather
+than pickle on purpose: loading it can never execute code from the file,
+and Python's float round-tripping keeps coordinates byte-identical so
+:func:`parents_digest` is stable across save → load. It is written
+without indentation (see :func:`_write_json`) — inspectable with ``jq``
+or :func:`json.load`, not by eye, because at 10⁴ structures the layout
+alone would be half the file. The per-structure ``.result.json`` records
+beside it stay indented; those are the ones a person opens.
 The cache is keyed by a SHA-1 *fingerprint* covering the step's config
 (engine, operation, options, charge, multiplicity, template, NMS flag)
 plus the parent structures that fed into the step — their IDs **and**
@@ -275,9 +279,28 @@ def _atomic_write(path: Path, data: bytes) -> None:
         Path(tmp).unlink(missing_ok=True)
 
 
-def _write_json(path: Path, data: Any) -> None:
-    """Serialize ``data`` to indented JSON and write it atomically to ``path``."""
-    _atomic_write(path, json.dumps(data, indent=2).encode())
+#: ``json.dumps`` separators with no padding: ``{"a":1,"b":2}`` rather than ``{"a": 1, "b": 2}``.
+#: Only worth using where a document is machine-read and large — see :func:`_write_json`.
+_COMPACT_SEPARATORS = (",", ":")
+
+
+def _write_json(path: Path, data: Any, *, indent: int | None = 2) -> None:
+    """Serialize ``data`` to JSON and write it atomically to ``path``.
+
+    Indented by default: the manifest, the failed-jobs ledger and the per-structure
+    ``.result.json`` records are all things a person opens, and all small enough that
+    readability is the only property that matters.
+
+    ``indent=None`` switches to compact separators, for the step document alone. At the
+    10,000 structures of 30 atoms that :mod:`tests.test_perf_cache` measures, that file is
+    **73.3 MB indented and 38.7 MB compact** — the indentation is not a rounding error, it
+    is 47% of the file, because a coordinate record is thousands of short numeric values and
+    each one carries its own newline and run of spaces. Nothing reads it by eye at that size,
+    and nothing reads it by line either: the loader parses the whole document, so the layout
+    is invisible to every consumer.
+    """
+    separators = None if indent is not None else _COMPACT_SEPARATORS
+    _atomic_write(path, json.dumps(data, indent=indent, separators=separators).encode())
 
 
 def _read_json(path: Path, default: Any, *, label: str) -> Any:
@@ -332,7 +355,7 @@ def save(
         "parent_ids": list(parent_ids),
         "structures": [structure_record(s) for s in results.structures],
     }
-    _write_json(_cache_path(step_dir), document)
+    _write_json(_cache_path(step_dir), document, indent=None)
     logger.info("saved step %d cache (fingerprint %s)", step_cfg.step, fp)
 
 

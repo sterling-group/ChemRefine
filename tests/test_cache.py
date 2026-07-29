@@ -129,6 +129,32 @@ def test_save_creates_single_json_document(tmp_path: Path):
     assert not (step_dir / "_cache" / "step.pkl").exists()
 
 
+def test_the_step_document_is_compact_but_the_records_beside_it_are_not(tmp_path: Path):
+    """A deliberate asymmetry: the bulk document is machine-read, the small ones are not.
+
+    Indentation costs 47% of ``step.json`` at 10⁴ structures — it is thousands of short
+    numeric values each carrying a newline and a run of spaces — and no consumer benefits,
+    because the loader parses the whole document rather than reading it by line or by eye.
+    The per-structure ``.result.json`` is the opposite case: a few KB that a person opens.
+    """
+    step_dir = tmp_path / "step1"
+    save(
+        step_cfg=_cfg(),
+        parent_ids=("0", "1"),
+        results=_results(),
+        step_dir=step_dir,
+        chemrefine_version="2.0.0",
+    )
+
+    document = (step_dir / "_cache" / "step.json").read_text()
+    assert "\n" not in document, "the step document carries no layout"
+    assert '"step":' in document and '"step": ' not in document
+
+    save_result_records(_results().structures, step_dir, step=1)
+    records = list(step_dir.glob("*.result.json"))
+    assert records and all("\n" in p.read_text() for p in records), "records stay readable"
+
+
 def test_save_and_load_round_trip(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(

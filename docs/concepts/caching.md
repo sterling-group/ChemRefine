@@ -1,11 +1,17 @@
 # Caching & Resume
 
-Every step writes its parsed results to `{step_dir}/_cache/step.json` — one
-human-inspectable JSON document holding the step metadata and every structure
-(symbols, coordinates, energy, forces, status flags). It is plain JSON, not
-pickle, on purpose: loading it can never execute code from the file, and float
-round-tripping keeps coordinates byte-identical so the fingerprint is stable
-across save → load.
+Every step writes its parsed results to `{step_dir}/_cache/step.json` — one JSON
+document holding the step metadata and every structure (symbols, coordinates,
+energy, forces, status flags). It is plain JSON, not pickle, on purpose: loading
+it can never execute code from the file, and float round-tripping keeps
+coordinates byte-identical so the fingerprint is stable across save → load.
+
+The document is written **without indentation**. Read it with `jq` or
+`json.load`, not by eye — at 10,000 structures the whitespace alone would be 47%
+of the file (73.3 MB indented against 38.7 MB compact), and nothing benefits
+from it, since the loader parses the whole document rather than reading it line
+by line. Each structure also gets its own indented `step{N}_{id}.result.json`
+next to its output files; that is the artifact meant for reading.
 
 ## The fingerprint
 
