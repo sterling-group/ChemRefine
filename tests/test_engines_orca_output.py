@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
+import numpy as np
 import pytest
 from synthetic import THERMOCHEMISTRY_BLOCK, synthetic_dft_output
 
@@ -875,3 +877,70 @@ def test_parse_text_rejects_non_text_operation():
 
     with pytest.raises(OutputParseError):
         output.parse_text("", "goat", src="x")
+
+
+# ---------------------------------------------------------------------------
+# Multi-Hessian outputs: every parser must describe the same (final) geometry
+# ---------------------------------------------------------------------------
+
+_MULTI_HESSIAN = (
+    Path(__file__).resolve().parent
+    / "data"
+    / "engines"
+    / "orca"
+    / "freq_multi_hessian"
+    / "step1_0.out"
+)
+
+
+def _blocks(text: str) -> list[str]:
+    """The text of each ``VIBRATIONAL FREQUENCIES`` group, in file order."""
+    return text.split("VIBRATIONAL FREQUENCIES")[1:]
+
+
+def test_the_fixture_really_has_disagreeing_hessians():
+    """Guard the guard: if the fixture stops having two differing blocks, the tests below pass
+    vacuously and the defect they exist for could come back unnoticed."""
+    blocks = _blocks(_MULTI_HESSIAN.read_text(encoding="utf-8"))
+    counts = [len(re.findall("imaginary mode", b)) for b in blocks]
+    assert len(counts) >= 2, counts
+    assert counts[0] != counts[-1], f"first and last Hessian agree ({counts}) — fixture is useless"
+
+
+def test_frequencies_come_from_the_final_hessian():
+    """A TS search recomputes the Hessian; only the last one describes the converged geometry.
+
+    Reading the first meant a structure that had converged to a clean transition state was
+    reported with the imaginary modes it had *before* converging — so `nms` re-optimised it
+    along modes that no longer existed. On the run this fixture is trimmed from, 66 of 72
+    round-2 optimisations were spawned for structures already at the target.
+    """
+    text = _MULTI_HESSIAN.read_text(encoding="utf-8")
+    expected = len(re.findall("imaginary mode", _blocks(text)[-1]))
+
+    parsed = parse_dft_from_text(text)[0]
+
+    assert len(parsed.imaginary_freqs or {}) == expected
+
+
+def test_every_parser_reads_the_same_hessian():
+    """Energy, geometry, thermochemistry and frequencies must describe one geometry.
+
+    They drifted because nothing said they had to agree: four parsers took the *last* match and
+    the two frequency parsers took the *first*. This asserts the property rather than the
+    implementation, so a future parser that reaches for a different block fails here.
+    """
+    text = _MULTI_HESSIAN.read_text(encoding="utf-8")
+    # Everything from the converged geometry onward: its coordinates, its energy and its
+    # Hessian, with the earlier cycles removed entirely. Parsing the whole file must agree
+    # with parsing this — that is what "one geometry" means.
+    final_only = text[text.rindex("CARTESIAN COORDINATES (ANGSTROEM)") :]
+    assert _blocks(final_only) and len(_blocks(final_only)) == 1, "slice must hold one Hessian"
+
+    whole = parse_dft_from_text(text)[0]
+    converged = parse_dft_from_text(final_only)[0]
+
+    assert whole.imaginary_freqs == converged.imaginary_freqs
+    assert whole.gibbs_hartree == converged.gibbs_hartree
+    assert whole.energy_hartree == converged.energy_hartree
+    np.testing.assert_array_equal(whole.normal_modes, converged.normal_modes)

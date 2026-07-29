@@ -27,6 +27,9 @@ import re
 import numpy as np
 from numpy.typing import NDArray
 
+_FREQ_BLOCK_MARKER = "VIBRATIONAL FREQUENCIES"
+"""Banner each Hessian's frequency table opens with; a TS search prints one per recompute."""
+
 _NORMAL_MODES_MARKER = "NORMAL MODES"
 """Banner the displacement-tensor scan anchors on (see
 :func:`parse_normal_modes_tensor_from_text`)."""
@@ -50,7 +53,24 @@ def parse_frequencies_from_text(
     ``skip_first_real`` is kept, so the default of ``5`` drops indices 0-5 — the six
     translation/rotation modes ORCA prints for a non-linear molecule (a linear one has
     five, and its sixth mode is discarded with them).
+
+    Reads the **last** ``VIBRATIONAL FREQUENCIES`` group, matching every sibling parser
+    (:func:`~chemrefine.engines.orca.output.energy.parse_final_energy_from_text`,
+    the thermochemistry, the coordinates — all take the last match). A TS search recomputes
+    the Hessian as it goes and prints one group per recompute, so reading the *first* meant
+    a structure that had converged to a clean transition state was reported with the
+    imaginary modes it had before converging. Energy and geometry then described the final
+    geometry while the frequencies described an earlier one, and NMS re-optimised along modes
+    that no longer existed. Same discipline as
+    :func:`~chemrefine.engines.orca.output.status.parse_converged`: last verdict wins.
     """
+    # `sep` empty means the banner is absent — leave `text` alone so a frequency-less
+    # output still yields `{}` rather than being scanned from the top.
+    _head, sep, tail = text.rpartition(_FREQ_BLOCK_MARKER)
+    # The marker itself has to survive: the scan below only enters the block when it *sees*
+    # that line, so slicing it off would return nothing at all.
+    text = sep + tail if sep else text
+
     in_block = False
     after_scaling = False
     out: dict[int, float] = {}
@@ -108,8 +128,12 @@ def parse_normal_modes_tensor_from_text(text: str, *, num_atoms: int) -> NDArray
     every structure fails NMS with "no normal-mode tensor" — a message pointing at the
     frequency job rather than at the parser.
     """
-    _, _, tail = text.partition(_NORMAL_MODES_MARKER)
-    if not tail:
+    # `rpartition` for the same reason as the frequency table: the last Hessian is the one
+    # describing the converged geometry. Guard on `sep`, not `tail` — `partition` yields an
+    # empty tail when the marker is absent, but `rpartition` yields the *whole text*, so
+    # testing `tail` here would stop catching a non-frequency output.
+    _head, sep, tail = text.rpartition(_NORMAL_MODES_MARKER)
+    if not sep:
         raise ValueError(f"no {_NORMAL_MODES_MARKER!r} section; is this a frequency output?")
     collecting = False
     block_rows: list[list[float]] = []

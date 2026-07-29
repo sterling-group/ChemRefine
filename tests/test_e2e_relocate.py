@@ -13,6 +13,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+import replay
 from replay import extract_case, forbid_run_batch, relocate, replay_run_batch
 
 from chemrefine import pipeline
@@ -79,7 +80,7 @@ def test_rebuild_cache_reparses_outputs_without_submitting(
 
 @pytest.mark.parametrize("name", ALL_CASES)
 def test_rebuilt_records_match_the_archived_ones_field_for_field(
-    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> None:
     """Re-parsing the archived outputs must reproduce the archived cache exactly.
 
@@ -105,6 +106,14 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
     assert archived, "the recording carries no cache documents to compare against"
 
     pipeline.run(load_config(case.config_path), RunPlan(default=StepMode.REBUILD))
+
+    if request.config.getoption("--update-recordings"):
+        # The rebuild above rewrote every cache in `case.output_dir` from the archived native
+        # outputs, with `forbid_run_batch` proving nothing was submitted. That tree is exactly
+        # what `pack_case` trims and re-archives, so regenerating is a re-pack — no ORCA, no
+        # MLIP stack, which is what this test's own message has always promised.
+        assert replay.pack_case(case.root, name).is_file()
+        return
 
     for rel, before in archived.items():
         after = json.loads((case.output_dir / rel).read_text())
