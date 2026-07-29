@@ -8,6 +8,21 @@ mapping so you can modernise your files when convenient.
 Everything below is rewritten automatically **except `calculation_type`**, which
 must be replaced by hand with `engine:` + `operation:`.
 
+!!! warning "The compatibility layer is scheduled for removal in 3.0"
+
+    Reading a v1 file is a **2.x** guarantee, not a permanent one. Every key on this
+    page was renamed before 2.0, so the translation has nothing left to learn — it can
+    only accumulate. Two modules hold all of it, and 3.0 deletes both:
+
+    | module | translates |
+    |--------|-----------|
+    | `chemrefine/config_legacy.py` | the YAML keys on this page |
+    | `chemrefine/cli_legacy.py` | the v1 flag-style command line (`--input x.yaml --skip`) |
+
+    Nothing else in the package knows the old names, so a 3.0 config file is a 2.x
+    config file that emitted no deprecation warnings. **Run once on 2.x, fix what it
+    warns about, and you are done** — there is no separate migration step later.
+
 ## Top level
 
 | v1.3.1                          | v2                                |

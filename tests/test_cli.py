@@ -13,7 +13,8 @@ import yaml
 from typer.testing import CliRunner
 
 from chemrefine import __version__
-from chemrefine.cli import _translate_legacy_argv, app
+from chemrefine.cli import app
+from chemrefine.cli_legacy import translate_argv as _translate_legacy_argv
 from chemrefine.errors import ConfigError
 
 runner = CliRunner()
@@ -349,7 +350,7 @@ def test_malformed_config_exits_with_the_config_error_code(tmp_path: Path):
 
 
 def test_translate_legacy_argv_passes_through_on_argparse_error():
-    from chemrefine.cli import _translate_legacy_argv
+    from chemrefine.cli_legacy import translate_argv as _translate_legacy_argv
 
     argv = ["c.yaml", "--maxcores", "not-an-int"]  # argparse SystemExit
     assert _translate_legacy_argv(argv) == argv

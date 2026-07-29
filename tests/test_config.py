@@ -680,7 +680,7 @@ def test_legacy_nms_false_with_no_parameters_normalizes_to_nothing():
 
 def test_normalizer_passes_through_non_list_steps():
     """A non-list ``steps`` is left for Pydantic to reject with its own message."""
-    from chemrefine.config import _normalize_legacy
+    from chemrefine.config_legacy import normalize as _normalize_legacy
 
     raw = {"steps": "not-a-list"}
     assert _normalize_legacy(raw) == raw
@@ -688,7 +688,7 @@ def test_normalizer_passes_through_non_list_steps():
 
 def test_normalizer_handles_step_without_operation():
     """Engine renames still apply when ``operation`` is absent (validation rejects later)."""
-    from chemrefine.config import _normalize_step
+    from chemrefine.config_legacy import _normalize_step
 
     s = _normalize_step({"step": 1, "engine": "DFT"})
     assert s["engine"] == "orca"
@@ -761,14 +761,14 @@ def test_config_rejects_a_backslash_in_a_directory_path():
 
 
 def test_normalize_sample_helpers_pass_through_non_dict():
-    from chemrefine.config import _flatten_sample_type, _normalize_sample_block
+    from chemrefine.config_legacy import _flatten_sample_type, _normalize_sample_block
 
     assert _flatten_sample_type("nope") == "nope"
     assert _normalize_sample_block("nope") == "nope"
 
 
 def test_flatten_then_normalize_carries_through_extra_top_level_keys():
-    from chemrefine.config import _flatten_sample_type, _normalize_sample_block
+    from chemrefine.config_legacy import _flatten_sample_type, _normalize_sample_block
 
     flat = _flatten_sample_type(
         {"method": "boltzmann", "parameters": {"weight": 95}, "by_parent": True}
@@ -779,6 +779,6 @@ def test_flatten_then_normalize_carries_through_extra_top_level_keys():
 
 def test_normalize_sample_block_without_method_passes_keys_through():
     """A block with no ``method`` key leaves it out (validation rejects it later)."""
-    from chemrefine.config import _normalize_sample_block
+    from chemrefine.config_legacy import _normalize_sample_block
 
     assert _normalize_sample_block({"count": 5}) == {"count": 5}
