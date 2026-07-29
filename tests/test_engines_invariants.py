@@ -18,6 +18,7 @@ rather than per engine, where the next engine would simply not be covered.
 from __future__ import annotations
 
 import ast
+import inspect
 import os
 import shlex
 import subprocess
@@ -26,7 +27,7 @@ from pathlib import Path
 import pytest
 
 from chemrefine import slurm
-from chemrefine.config import StepConfig
+from chemrefine.config import StepConfig, reject_shell_unsafe
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import ENGINES, JobExecutable, get_engine
 from chemrefine.engines.mlip.calculator import requirement_from_options
@@ -385,3 +386,84 @@ def test_no_engine_emits_a_trap_of_its_own(engine_name: str, tmp_path: Path):
 
     assert "trap " not in block.body, f"{engine_name}: run block installs its own trap"
     assert "trap " not in block.cleanup, f"{engine_name}: cleanup installs its own trap"
+
+
+# ---------------------------------------------------------------------------
+# Shell safety: every value reaching generated bash is classified
+# ---------------------------------------------------------------------------
+
+#: How each parameter of the bash-emitting functions is kept safe. The keys are the union of
+#: their signatures; the values are the reason, mirroring the table in
+#: `config.reject_shell_unsafe`. `VALIDATED` means the value is user-supplied text that
+#: reaches bash and is run through that rule; everything else says why it cannot carry a
+#: hostile character in the first place.
+VALIDATED = "reject_shell_unsafe"
+
+_BASH_PARAM_SAFETY: dict[str, str] = {
+    # --- user-supplied text, validated at config load -----------------------------------
+    "operation": VALIDATED,
+    "output_dir": VALIDATED,  # config.output_dir
+    "work_dir_expr": VALIDATED,  # built from output_dir + scratch_dir, both validated
+    "output_dirs": VALIDATED,  # engine-declared; pyscf's tensor_folder goes through the rule
+    # --- safe by construction ------------------------------------------------------------
+    "engine": "a registry key",
+    "step": "an integer",
+    "cores": "an integer",
+    "structure_id": "minted by chemrefine.ids",
+    "step_label": "StepConfig.dir_name(): 'step{int}' plus a name matched against _NAME_RE",
+    "step_dir": "output_dir (validated) joined with step_label",
+    "input_path": "minted by chemrefine.ids under output_dir",
+    "globs_expr": "a join of output_globs, an engine ClassVar",
+    "extra_fields": "engine-supplied runlog rows, not interpolated as code",
+    # --- bash this project wrote ---------------------------------------------------------
+    "header": "the output of job_log.bash_header, itself covered by this table",
+    "footer": "the output of job_log.bash_footer, itself covered by this table",
+    "cleanup": "bash authored in this repo's source",
+    "run_block": "a RunBlock of bash authored in this repo's source",
+}
+
+
+def _bash_emitting_params() -> set[str]:
+    """Every parameter name of the three functions that turn values into generated bash."""
+    from chemrefine import job_log
+
+    functions = (job_log.bash_header, job_log.bash_footer, slurm._run_body_lines)
+    return {
+        name for func in functions for name in inspect.signature(func).parameters if name != "self"
+    }
+
+
+def test_every_value_reaching_generated_bash_is_classified():
+    """Adding a value to the generated script must be a decision someone records.
+
+    `reject_shell_unsafe` is a single rule with a docstring table of what it validates
+    against what is safe by construction -- but the table is *remembered*, and twice a value
+    reached bash by a route nobody re-checked: `operation`, which lands in the runlog
+    heredoc, and `tensor_folder`, which lands in a `cp -r "..."` where bash substitutes
+    inside the quotes.
+
+    So the enumeration is taken from the signatures rather than from memory. A new parameter
+    on any of the three bash-emitting functions fails here until it is classified -- which is
+    the point: the failure asks for a decision, at the moment the value is added, instead of
+    after it turns up in a shell.
+    """
+    unclassified = _bash_emitting_params() - _BASH_PARAM_SAFETY.keys()
+    assert unclassified == set(), (
+        f"these values reach generated bash with no recorded reason they are safe: "
+        f"{sorted(unclassified)} — validate each with config.reject_shell_unsafe, or add it "
+        f"to _BASH_PARAM_SAFETY saying why it cannot carry a hostile character"
+    )
+
+    stale = _BASH_PARAM_SAFETY.keys() - _bash_emitting_params()
+    assert stale == set(), f"_BASH_PARAM_SAFETY classifies values that no longer exist: {stale}"
+
+
+@pytest.mark.parametrize("hostile", ['"', "$", "`", "\\", "\n"])
+def test_the_rule_rejects_every_character_it_claims_to(hostile: str):
+    """The classification above is only worth anything if `VALIDATED` actually bites.
+
+    Each of these ends a quoted string, starts a substitution, or breaks the line -- the four
+    ways a value interpolated into the generated script stops being a value.
+    """
+    with pytest.raises(ValueError, match="cannot be safely embedded"):
+        reject_shell_unsafe(f"/tmp/x{hostile}y", what="path", fix="rename it")
