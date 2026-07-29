@@ -33,7 +33,7 @@ from ase import Atoms
 from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field
 
-from chemrefine import cache, io, step_failures
+from chemrefine import cache, filtering, io, step_failures
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import NmsCapableEngine
 from chemrefine.errors import CacheError
@@ -210,11 +210,33 @@ def _displaced(structure: Structure, positions: NDArray[np.float64]) -> Atoms:
     return atoms
 
 
-def _best(structures: list[Structure], fallback: Structure) -> Structure:
-    """The lowest-energy structure (``None`` energy sorts last), or ``fallback`` if empty."""
+def _energy_attr(step_cfg: StepConfig) -> str:
+    """The :class:`~chemrefine.state.Structure` attribute this step ranks structures by.
+
+    The step's own ``sample.energy_type``, through :data:`chemrefine.filtering.ENERGY_ATTR` —
+    the single home of that mapping. A step with no ``sample`` filter has declared no
+    preference, so electronic energy, matching what
+    :func:`chemrefine.pipeline._write_step_csv` reports in the same situation.
+    """
+    sample = step_cfg.sample
+    return filtering.ENERGY_ATTR["electronic" if sample is None else sample.energy_type]
+
+
+def _best(structures: list[Structure], fallback: Structure, energy_attr: str) -> Structure:
+    """The lowest-``energy_attr`` structure (``None`` sorts last), or ``fallback`` if empty.
+
+    ``energy_attr`` is the step's own ranking energy (see :func:`_energy_attr`), not always the
+    electronic one. When several round-2 children reach the target, the one carried forward has
+    to be the one the step's filter would have kept — a TS step sampling on ``gibbs`` picked its
+    winner on electronic energy and could therefore promote a child that the very next filter
+    would have discarded.
+    """
     if not structures:
         return fallback
-    return min(structures, key=lambda s: (s.energy_hartree is None, s.energy_hartree or 0.0))
+    return min(
+        structures,
+        key=lambda s: (getattr(s, energy_attr) is None, getattr(s, energy_attr) or 0.0),
+    )
 
 
 def _is_resolved(child: Structure, target: int | None) -> bool:
@@ -299,17 +321,22 @@ def _accept(
     ``minimum``/``ts`` collapse to the single best resolved geometry **at the parent's
     canonical id** (winner geometry written back when ``write_winner``). A parent with
     nothing resolved becomes one ``Failure`` carrying its best geometry obtained.
+
+    "Best" is by the step's own ranking energy throughout — see :func:`_energy_attr`.
     """
+    energy_attr = _energy_attr(ctx.step_cfg)
     if target is None:  # random: the children are the (fan-out) results
         if resolved:
             return resolved, []
         return [], [
             step_failures.Failure(
-                parent.id, step_failures.FailureKind.UNRESOLVED_NMS, _best(round2, parent)
+                parent.id,
+                step_failures.FailureKind.UNRESOLVED_NMS,
+                _best(round2, parent, energy_attr),
             )
         ]
     if resolved:
-        winner = _best(resolved, parent)
+        winner = _best(resolved, parent, energy_attr)
         if write_winner:
             io.write_single_xyz(
                 winner.atoms,
@@ -319,7 +346,7 @@ def _accept(
         return [replace(winner, id=parent.id, parent_id=parent.parent_id)], []
     return [], [
         step_failures.Failure(
-            parent.id, step_failures.FailureKind.UNRESOLVED_NMS, _best(round2, parent)
+            parent.id, step_failures.FailureKind.UNRESOLVED_NMS, _best(round2, parent, energy_attr)
         )
     ]
 

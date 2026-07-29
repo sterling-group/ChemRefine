@@ -19,7 +19,7 @@ import pytest
 from ase import Atoms
 
 from chemrefine import cache, nms
-from chemrefine.config import Config, StepConfig
+from chemrefine.config import Config, MinSample, StepConfig
 from chemrefine.engines.api import NmsInputInfo
 from chemrefine.ids import structure_artifact_path
 from chemrefine.state import (
@@ -168,7 +168,37 @@ def test_select_displacements_skips_mode_shape_mismatch():
 
 def test_best_returns_fallback_when_empty():
     fallback = _h2("fb")
-    assert nms._best([], fallback) is fallback
+    assert nms._best([], fallback, "energy_hartree") is fallback
+
+
+def test_best_ranks_by_the_energy_the_step_filters_on():
+    """A step sampling on Gibbs must promote the child its own filter would keep.
+
+    The two children disagree: ``lo_elec`` wins on electronic energy, ``lo_gibbs`` on Gibbs.
+    Ranking a ``gibbs`` step on electronic energy carried forward a structure the very next
+    filter would have discarded — silently, because both children genuinely reached the target.
+    """
+    lo_elec = replace(_h2("lo_elec"), energy_hartree=-1.0, gibbs_hartree=-0.5)
+    lo_gibbs = replace(_h2("lo_gibbs"), energy_hartree=-0.9, gibbs_hartree=-0.7)
+    children = [lo_elec, lo_gibbs]
+
+    assert nms._best(children, lo_elec, "energy_hartree") is lo_elec
+    assert nms._best(children, lo_elec, "gibbs_hartree") is lo_gibbs
+
+
+@pytest.mark.parametrize(
+    ("sample", "expected"),
+    [
+        (None, "energy_hartree"),
+        (MinSample(method="min", count=1), "energy_hartree"),
+        (MinSample(method="min", count=1, energy_type="gibbs"), "gibbs_hartree"),
+        (MinSample(method="min", count=1, energy_type="enthalpy"), "enthalpy_hartree"),
+    ],
+)
+def test_energy_attr_follows_the_steps_sample_filter(sample, expected):
+    """No ``sample`` means no declared preference — electronic, as the step CSV also reports."""
+    step_cfg = StepConfig(step=1, engine="orca", operation="sp", sample=sample)
+    assert nms._energy_attr(step_cfg) == expected
 
 
 def test_is_resolved_false_for_non_terminated_child():
