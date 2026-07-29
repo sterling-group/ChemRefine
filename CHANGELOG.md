@@ -96,10 +96,29 @@ for the full map.
 
 Hardening landed during the 2.0.0 stabilization:
 
-- The step cache is one plain-JSON document (`_cache/step.json`) instead of
-  a pickle — loading a cache can never execute code from the file, and the
-  document is directly inspectable. Caches from earlier dev builds rebuild
-  automatically.
+- Frequencies are read from the **last** Hessian in an ORCA output, matching
+  the energy, geometry and thermochemistry parsers. A TS search recomputes the
+  Hessian as it goes and prints one table per recompute; v1.3.1 accumulated
+  across all of them, so imaginary modes a structure had *before* it converged
+  were still reported after. A converged transition state came back with
+  several imaginary modes instead of one, and normal-mode sampling then went off
+  resolving modes that no longer existed — on one real TS run, 66 of 72 round-2
+  jobs were spent on structures already at the target.
+- The step cache is plain data instead of a pickle — loading it can never
+  execute code from the file. It is two files: `_cache/step.json` for the
+  metadata and `_cache/arrays.npz` for coordinates and forces, which at 10,000
+  structures is 31 MB and 0.36 s to load against 69 MB and 1.73 s for a single
+  JSON document. `step.json` is written without indentation — read it with `jq`
+  or `json.load`; each structure also gets an indented `.result.json` beside its
+  output files. Caches from earlier dev builds rebuild automatically.
+- ORCA's `.opt` restart file and `.property.txt` are copied back out of the
+  scratch directory with the rest of the results. `.opt` is what lets a stalled
+  optimisation resume where it stopped rather than start over.
+- Normal-mode sampling no longer overwrites the calculation it was launched
+  from. The round-1 job is archived into the same `attemptK/` its displaced
+  children ran in, and the winning child's artifacts are promoted to the
+  structure's canonical path — so `stepN/<id>/` describes one calculation, and
+  the geometry, output, orbitals and Hessian there all agree.
 
 - Cluster SLURM headers using `--ntasks-per-node` / `--ntasks-per-core` keep
   those directives in generated scripts.
