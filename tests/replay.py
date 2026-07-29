@@ -145,7 +145,10 @@ def _kept(path: Path) -> bool:
     if path.name.endswith(DROP_SUFFIXES):
         return False
     if path.parent.name == "_cache":
-        return path.suffix == ".json"
+        # `.npz` is the step cache's coordinate sidecar. Dropping it would archive a
+        # `step.json` whose arrays are gone, and since `cache.load` fails closed on a missing
+        # sidecar, every replay would resubmit instead of hitting the cache.
+        return path.suffix in (".json", ".npz")
     return any(fnmatch.fnmatch(path.name, pattern) for pattern in KEEP_PATTERNS)
 
 
@@ -188,9 +191,11 @@ def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
                 continue
             target = captured / path.relative_to(outputs)
             target.parent.mkdir(parents=True, exist_ok=True)
-            if path.parent.name == "_cache":
+            if path.parent.name == "_cache" and path.suffix == ".json":
                 target.write_text(path.read_text().replace(str(outputs), OUTPUT_DIR_TOKEN))
             else:
+                # The `.npz` sidecar holds no paths to tokenize, and is binary — running the
+                # text substitution over it would fail to decode.
                 shutil.copy2(path, target)
             kept += 1
         assert kept, f"nothing matched the keep patterns under {outputs}"

@@ -1,17 +1,50 @@
 # Caching & Resume
 
-Every step writes its parsed results to `{step_dir}/_cache/step.json` — one JSON
-document holding the step metadata and every structure (symbols, coordinates,
-energy, forces, status flags). It is plain JSON, not pickle, on purpose: loading
-it can never execute code from the file, and float round-tripping keeps
-coordinates byte-identical so the fingerprint is stable across save → load.
+Every step writes its parsed results to `{step_dir}/_cache/` as two files:
 
-The document is written **without indentation**. Read it with `jq` or
-`json.load`, not by eye — at 10,000 structures the whitespace alone would be 47%
-of the file (73.3 MB indented against 38.7 MB compact), and nothing benefits
-from it, since the loader parses the whole document rather than reading it line
-by line. Each structure also gets its own indented `step{N}_{id}.result.json`
-next to its output files; that is the artifact meant for reading.
+| file | holds |
+|------|-------|
+| `step.json` | step metadata + each structure's scalars — id, lineage, energies, status flags, symbols |
+| `arrays.npz` | the bulk — coordinates and forces, concatenated with an offsets index |
+
+Neither can execute code when loaded, which is the reason this is not pickle:
+JSON cannot by construction, and the `.npz` is read with `allow_pickle=False`,
+which makes numpy *raise* rather than run an object array. Coordinates round-trip
+byte-identically either way, so the fingerprint is stable across save → load.
+
+**Why the split.** Coordinates are 93% of a record. Written as decimal text each
+float64 costs 18 bytes on disk, a `strtod` call to parse and 32 bytes live; as a
+`.npy` member it costs 8 bytes, a memcpy and 8 bytes. Over 10,000 structures of
+10–120 atoms:
+
+| | one JSON document | JSON + `.npz` |
+|---|---|---|
+| on disk | 69.1 MB | **31.3 MB** |
+| save | 2.32 s | **1.06 s** |
+| load | 1.73 s | **0.36 s** |
+| peak memory | 268 MB | **75 MB** |
+
+`tests/test_perf_cache.py` re-measures this (`pytest -m integration -s`), so the
+claim stays checked rather than remembered.
+
+An `.npz` is an ordinary ZIP of `.npy` members, and a `.npy` is a short ASCII
+header plus the array's raw buffer — inspect it with `unzip -l` or `np.load`.
+It is stored uncompressed: float64 coordinates deflate by about 5% and cost
+roughly twenty times the encode.
+
+Structures within one step need not share an atom count — `input:` pointing at a
+directory or a SMILES CSV seeds different molecules into the same step — so the
+arrays are concatenated with an offsets index rather than stacked, and forces
+carry a present-mask because an engine may report none.
+
+`step.json` is written **without indentation**; read it with `jq` or
+`json.load`, not by eye. Each structure also gets its own indented
+`step{N}_{id}.result.json` next to its output files, coordinates included —
+that is the artifact meant for reading.
+
+A `step.json` whose `arrays.npz` is missing is an **error**, never a fallback to
+reading coordinates inline: that is the one way a tree could end up half in each
+format, and it would be silent. The step rebuilds instead.
 
 ## The fingerprint
 

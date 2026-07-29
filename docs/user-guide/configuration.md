@@ -147,7 +147,7 @@ outputs/
 │   ├── 0/                     step1_0_inp.xyz  step1_0.{inp,out,xyz,...}  step1_0.runlog
 │   │   └── 0_m5_pos/          NMS round-2 (a displaced re-run) nests under its parent
 │   ├── 1/                     …
-│   └── _cache/                step.json, manifest.json, failed_jobs.json
+│   └── _cache/                step.json + arrays.npz, manifest.json, failed_jobs.json
 ├── step2_refine/<id>/…
 └── steps.csv                  Boltzmann summary per surviving structure
 ```

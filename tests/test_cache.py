@@ -406,6 +406,85 @@ def test_load_if_valid_false_when_cache_is_corrupt(tmp_path: Path):
     assert not load_if_valid(step_cfg=_cfg(), parent_ids=("0",), step_dir=step_dir)
 
 
+def _saved(tmp_path: Path) -> Path:
+    """A step dir holding a freshly saved cache (document + coordinate sidecar)."""
+    step_dir = tmp_path / "step1"
+    save(
+        step_cfg=_cfg(),
+        parent_ids=("0", "1"),
+        results=_results(),
+        step_dir=step_dir,
+        chemrefine_version="2.0.0",
+    )
+    return step_dir
+
+
+def test_a_document_without_its_sidecar_is_an_error_not_a_fallback(tmp_path: Path):
+    """The one direction the split format cannot enforce on its own.
+
+    A ``step.json`` written before the arrays moved out still carries ``positions`` inline,
+    and reading those would be the single way to end up with a cache half in each format —
+    silently, since the records parse fine. So the reader takes arrays from the sidecar or
+    refuses: no inline fallback, ever. ``load_if_valid`` turns that into a plain miss, which
+    rebuilds the step.
+    """
+    step_dir = _saved(tmp_path)
+    (step_dir / "_cache" / "arrays.npz").unlink()
+
+    with pytest.raises(CacheError, match=r"arrays\.npz"):
+        load(step_dir)
+    assert not load_if_valid(step_cfg=_cfg(), parent_ids=("0", "1"), step_dir=step_dir)
+
+
+def test_the_sidecar_refuses_to_unpickle(tmp_path: Path):
+    """``allow_pickle=False`` is the whole reason this is not a pickle — assert numpy enforces it.
+
+    The cache promises that loading it can never execute code from the file. JSON gave that
+    for free; ``.npy`` gives it only because the flag is spelled out, and numpy raises on an
+    object array rather than running its reduce. A sidecar smuggling one in must be rejected.
+    """
+    step_dir = _saved(tmp_path)
+    with (step_dir / "_cache" / "arrays.npz").open("wb") as fh:
+        np.savez(fh, positions=np.array([{"payload": "code"}], dtype=object))
+
+    with pytest.raises(CacheError, match="corrupt coordinate sidecar"):
+        load(step_dir)
+
+
+def test_ragged_structures_round_trip_through_the_sidecar(tmp_path: Path):
+    """Structures in one step need not share an atom count, and need not all have forces.
+
+    ``_seed_from_directory`` and ``_seed_from_smiles_csv`` both seed different molecules into
+    a single step, so the arrays are concatenated with an offsets index rather than stacked —
+    a stack raises outright on this input. Coordinates must survive **exactly**: the fingerprint
+    hashes float64 bytes, so a lossy round-trip would invalidate every downstream step.
+    """
+    big = np.arange(9, dtype=np.float64).reshape(3, 3) / 7.0
+    results = StepResults(
+        structures=(
+            Structure(id="0", atoms=Atoms("H"), forces_ev_per_a=np.array([[0.1, 0.2, 0.3]])),
+            Structure(id="1", atoms=Atoms("H3", positions=big)),  # no forces
+            Structure(id="2", atoms=Atoms("H2"), forces_ev_per_a=np.ones((2, 3)) / 3.0),
+        )
+    )
+    step_dir = tmp_path / "step1"
+    save(
+        step_cfg=_cfg(),
+        parent_ids=("0",),
+        results=results,
+        step_dir=step_dir,
+        chemrefine_version="2.0.0",
+    )
+
+    loaded = load(step_dir)
+    assert loaded is not None
+    out = loaded.results.structures
+    assert [len(s.atoms) for s in out] == [1, 3, 2]
+    assert np.array_equal(out[1].atoms.get_positions(), big), "exact, not merely close"
+    assert out[1].forces_ev_per_a is None, "a structure without forces stays without them"
+    assert np.array_equal(out[2].forces_ev_per_a, np.ones((2, 3)) / 3.0)
+
+
 def test_load_if_valid_false_when_parents_change(tmp_path: Path):
     step_dir = tmp_path / "step1"
     cfg = _cfg()
