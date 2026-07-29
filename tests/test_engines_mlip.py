@@ -698,7 +698,7 @@ def test_mlip_direct_submit_runs_template_locally_when_no_sbatch(tmp_path: Path)
     ctx = _mlip_direct_ctx(tmp_path, structures=(_seed("0"),))
     engine = get_engine("mlip")
     inputs = engine.prepare(ctx)
-    with patch("chemrefine.slurm.shutil.which", return_value=None):
+    with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         from chemrefine.state import JobBatch
 
         batch = engine.submit(inputs, ctx)
@@ -714,7 +714,7 @@ def test_mlip_direct_parse_returns_structure_with_energy_and_forces(tmp_path: Pa
     ctx = _mlip_direct_ctx(tmp_path, structures=(_seed("0"),))
     engine = get_engine("mlip")
     inputs = engine.prepare(ctx)
-    with patch("chemrefine.slurm.shutil.which", return_value=None):
+    with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         engine.submit(inputs, ctx)
     results = engine.parse(inputs, ctx)
     assert len(results.structures) == 1
@@ -792,7 +792,7 @@ def test_mlip_direct_submit_respects_cores_option(tmp_path: Path):
     ctx = _mlip_direct_ctx(tmp_path, structures=(_seed(),), options={"cores": 2}, max_cores=4)
     engine = get_engine("mlip")
     inputs = engine.prepare(ctx)
-    with patch("chemrefine.slurm.shutil.which", return_value=None):
+    with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         engine.submit(inputs, ctx)
     script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
     assert "#SBATCH --ntasks=2" in script_text

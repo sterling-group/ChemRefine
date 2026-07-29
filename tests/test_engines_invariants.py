@@ -32,6 +32,7 @@ from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import ENGINES, JobExecutable, get_engine
 from chemrefine.engines.mlip.calculator import requirement_from_options
 from chemrefine.errors import ConfigError
+from chemrefine.slurm import script
 from chemrefine.state import PipelineState, StepContext
 
 # Options each engine needs before it will validate at all (no defaults on purpose).
@@ -427,7 +428,7 @@ def _bash_emitting_params() -> set[str]:
     """Every parameter name of the three functions that turn values into generated bash."""
     from chemrefine import job_log
 
-    functions = (job_log.bash_header, job_log.bash_footer, slurm._run_body_lines)
+    functions = (job_log.bash_header, job_log.bash_footer, script._run_body_lines)
     return {
         name for func in functions for name in inspect.signature(func).parameters if name != "self"
     }

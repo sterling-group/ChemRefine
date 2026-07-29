@@ -14,6 +14,7 @@ from chemrefine.config import StepConfig
 from chemrefine.engines import _execution as submit
 from chemrefine.engines.api import NmsCapableEngine, get_engine
 from chemrefine.errors import ConfigError
+from chemrefine.slurm import dispatch
 from chemrefine.state import JobBatch, PipelineState, StepContext, StepInputs, Structure
 
 FIXTURE = Path(__file__).parent / "data" / "engines" / "orca" / "dft" / "step1_0.out"
@@ -215,7 +216,7 @@ def test_submit_missing_slurm_header_raises(_submit, _finished_jobs, tmp_path: P
         engine.submit(inputs, ctx)
 
 
-@patch.object(slurm, "sbatch_available", return_value=True)
+@patch.object(dispatch, "sbatch_available", return_value=True)
 @patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
 @patch.object(slurm, "submit_array", return_value="777")
 @patch.object(slurm, "submit")
@@ -258,12 +259,12 @@ def test_submit_ignores_slurm_array_locally(
     engine = get_engine("orca")
     ctx = replace(_ctx(tmp_path, structures=(_seed_structure(),)), slurm_array=True)
     inputs = engine.prepare(ctx)
-    with patch.object(slurm, "sbatch_available", return_value=False):
+    with patch.object(dispatch, "sbatch_available", return_value=False):
         engine.submit(inputs, ctx)
     submit_array_mock.assert_not_called()
 
 
-@patch.object(slurm, "sbatch_available", return_value=True)
+@patch.object(dispatch, "sbatch_available", return_value=True)
 def test_submit_array_empty_batch_short_circuits(_sbatch, tmp_path: Path):
     """An empty batch returns an empty JobBatch without touching sbatch."""
     from dataclasses import replace
@@ -275,7 +276,7 @@ def test_submit_array_empty_batch_short_circuits(_sbatch, tmp_path: Path):
     assert engine.submit(StepInputs(files=()), ctx).jobs == {}
 
 
-@patch.object(slurm, "sbatch_available", return_value=True)
+@patch.object(dispatch, "sbatch_available", return_value=True)
 @patch.object(slurm, "submit_array", return_value="777")
 def test_submit_array_polls_until_the_array_drains(_submit_array, _sbatch, tmp_path: Path):
     """The wait loop re-polls (with the SLURM cadence) while tasks remain."""
@@ -286,14 +287,14 @@ def test_submit_array_polls_until_the_array_drains(_submit_array, _sbatch, tmp_p
     inputs = engine.prepare(ctx)
     with (
         patch.object(slurm, "finished_jobs", side_effect=[set(), {"777"}]) as finished_mock,
-        patch("chemrefine.slurm.time.sleep") as sleep_mock,
+        patch("chemrefine.slurm.dispatch.time.sleep") as sleep_mock,
     ):
         engine.submit(inputs, ctx)
     assert finished_mock.call_count == 2
     sleep_mock.assert_called_once()
 
 
-@patch.object(slurm, "sbatch_available", return_value=True)
+@patch.object(dispatch, "sbatch_available", return_value=True)
 def test_submit_array_missing_header_raises(_sbatch, tmp_path: Path):
     from dataclasses import replace
 

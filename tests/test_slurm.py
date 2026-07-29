@@ -13,6 +13,7 @@ import pytest
 
 from chemrefine import slurm
 from chemrefine.errors import ConfigError, JobSubmissionError, ThrottleTimeoutError
+from chemrefine.slurm import dispatch
 from chemrefine.state import RunBlock
 
 
@@ -222,7 +223,7 @@ def test_build_script_without_extra_header_fields_is_engine_neutral(tmp_path: Pa
 def test_submit_parses_job_id_from_sbatch_output():
     fake = MagicMock(returncode=0, stdout="Submitted batch job 12345\n", stderr="")
     with (
-        patch("chemrefine.slurm.shutil.which", return_value="/usr/bin/sbatch"),
+        patch("chemrefine.slurm.dispatch.shutil.which", return_value="/usr/bin/sbatch"),
         patch.object(subprocess, "run", return_value=fake),
     ):
         assert slurm.submit("script.slurm") == "12345"
@@ -232,7 +233,7 @@ def test_submit_raises_on_sbatch_failure_with_stderr_and_hint():
     """sbatch's own diagnostic and the `dispatch: local` escape hatch reach the user."""
     err = subprocess.CalledProcessError(1, ["sbatch"], stderr="permission denied")
     with (
-        patch("chemrefine.slurm.shutil.which", return_value="/usr/bin/sbatch"),
+        patch("chemrefine.slurm.dispatch.shutil.which", return_value="/usr/bin/sbatch"),
         patch.object(subprocess, "run", side_effect=err),
         pytest.raises(JobSubmissionError, match="permission denied") as excinfo,
     ):
@@ -243,7 +244,7 @@ def test_submit_raises_on_sbatch_failure_with_stderr_and_hint():
 def test_submit_raises_when_output_lacks_job_id():
     fake = MagicMock(returncode=0, stdout="weird output\n", stderr="")
     with (
-        patch("chemrefine.slurm.shutil.which", return_value="/usr/bin/sbatch"),
+        patch("chemrefine.slurm.dispatch.shutil.which", return_value="/usr/bin/sbatch"),
         patch.object(subprocess, "run", return_value=fake),
         pytest.raises(JobSubmissionError),
     ):
@@ -259,7 +260,7 @@ def test_submit_falls_back_to_local_when_sbatch_missing(tmp_path: Path):
     """No sbatch on PATH → launch via bash in the background, return a local-N job ID."""
     script = tmp_path / "script.slurm"
     script.write_text("#!/bin/bash\ntrue\n", encoding="utf-8")
-    with patch("chemrefine.slurm.shutil.which", return_value=None):
+    with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         job_id = slurm.submit(script)
     assert job_id.startswith("local-")
     _drain_local(job_id)
@@ -273,7 +274,7 @@ def test_submit_local_writes_runlog_and_err_alongside_script(tmp_path: Path):
         "#!/bin/bash\necho 'hello from the template'\necho 'warning: backend X' >&2\n",
         encoding="utf-8",
     )
-    with patch("chemrefine.slurm.shutil.which", return_value=None):
+    with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         job_id = slurm.submit(script)
     _drain_local(job_id)
     assert script.with_suffix(".runlog").read_text(encoding="utf-8") == "hello from the template\n"
@@ -287,7 +288,7 @@ def test_two_local_jobs_run_in_background_concurrently(tmp_path: Path):
     s2 = tmp_path / "b.slurm"
     s1.write_text("#!/bin/bash\nsleep 0.5\n", encoding="utf-8")
     s2.write_text("#!/bin/bash\nsleep 0.5\n", encoding="utf-8")
-    with patch("chemrefine.slurm.shutil.which", return_value=None):
+    with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         j1 = slurm.submit(s1)
         j2 = slurm.submit(s2)
     # Right after submit, both are still running → they run in parallel.
@@ -306,7 +307,7 @@ def test_submit_local_failure_is_not_raised_but_recorded_on_disk(tmp_path: Path)
     script.write_text(
         "#!/bin/bash\necho 'partial stdout'\necho 'boom' >&2\nexit 2\n", encoding="utf-8"
     )
-    with patch("chemrefine.slurm.shutil.which", return_value=None):
+    with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         job_id = slurm.submit(script)  # does not raise
     _drain_local(job_id)
     assert slurm.is_finished(job_id) is True
@@ -327,15 +328,15 @@ def test_submit_local_closes_handles_and_reraises_when_spawn_fails(tmp_path: Pat
         opened.append(handle)
         return handle
 
-    before = set(slurm._LOCAL_PROCS)
+    before = set(dispatch._LOCAL_PROCS)
     with (
         patch.object(Path, "open", spy_open),
-        patch.object(slurm.subprocess, "Popen", side_effect=OSError("cannot spawn")),
+        patch.object(dispatch.subprocess, "Popen", side_effect=OSError("cannot spawn")),
         pytest.raises(OSError, match="cannot spawn"),
     ):
-        slurm._submit_local(script)
+        dispatch._submit_local(script)
     assert len(opened) == 2 and all(handle.closed for handle in opened)
-    assert set(slurm._LOCAL_PROCS) == before  # no half-registered job
+    assert set(dispatch._LOCAL_PROCS) == before  # no half-registered job
 
 
 # ---------------------------------------------------------------------------
@@ -432,23 +433,23 @@ def test_current_user_falls_back_to_uid_when_no_passwd_entry():
     import getpass
     import os
 
-    slurm._current_user.cache_clear()
+    dispatch._current_user.cache_clear()
     try:
         with patch.object(getpass, "getuser", side_effect=KeyError("getpwuid(): uid not found")):
-            assert slurm._current_user() == str(os.getuid())
+            assert dispatch._current_user() == str(os.getuid())
     finally:
-        slurm._current_user.cache_clear()
+        dispatch._current_user.cache_clear()
 
 
 def test_current_user_returns_login_name():
     import getpass
 
-    slurm._current_user.cache_clear()
+    dispatch._current_user.cache_clear()
     try:
         with patch.object(getpass, "getuser", return_value="alice"):
-            assert slurm._current_user() == "alice"
+            assert dispatch._current_user() == "alice"
     finally:
-        slurm._current_user.cache_clear()
+        dispatch._current_user.cache_clear()
 
 
 # ---------------------------------------------------------------------------
@@ -467,14 +468,14 @@ def test_resolve_gpu_budget_explicit_value_wins():
 
 
 def test_resolve_gpu_budget_unlimited_under_slurm():
-    with patch("chemrefine.slurm.shutil.which", return_value="/usr/bin/sbatch"):
+    with patch("chemrefine.slurm.dispatch.shutil.which", return_value="/usr/bin/sbatch"):
         assert slurm.resolve_gpu_budget(None) >= 1000
 
 
 def test_resolve_gpu_budget_uses_detected_count_locally():
     with (
-        patch("chemrefine.slurm.shutil.which", return_value=None),
-        patch("chemrefine.slurm._detect_local_gpus", return_value=2),
+        patch("chemrefine.slurm.dispatch.shutil.which", return_value=None),
+        patch("chemrefine.slurm.dispatch._detect_local_gpus", return_value=2),
     ):
         assert slurm.resolve_gpu_budget(None) == 2
 
@@ -482,8 +483,8 @@ def test_resolve_gpu_budget_uses_detected_count_locally():
 def test_resolve_gpu_budget_respects_forced_local():
     """`dispatch: local` uses the detected device count even with sbatch on PATH."""
     with (
-        patch("chemrefine.slurm.shutil.which", return_value="/usr/bin/sbatch"),
-        patch("chemrefine.slurm._detect_local_gpus", return_value=2),
+        patch("chemrefine.slurm.dispatch.shutil.which", return_value="/usr/bin/sbatch"),
+        patch("chemrefine.slurm.dispatch._detect_local_gpus", return_value=2),
     ):
         assert slurm.resolve_gpu_budget(None, dispatch="local") == 2
 
@@ -494,9 +495,9 @@ def test_resolve_gpu_budget_respects_forced_local():
 
 
 def test_dispatch_auto_follows_sbatch_availability():
-    with patch("chemrefine.slurm.shutil.which", return_value="/usr/bin/sbatch"):
+    with patch("chemrefine.slurm.dispatch.shutil.which", return_value="/usr/bin/sbatch"):
         assert slurm.dispatch_locally("auto") is False
-    with patch("chemrefine.slurm.shutil.which", return_value=None):
+    with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         assert slurm.dispatch_locally("auto") is True
 
 
@@ -504,7 +505,7 @@ def test_dispatch_local_forces_local_runner_despite_sbatch(tmp_path: Path):
     """A stray sbatch on PATH must not hijack a `dispatch: local` run."""
     script = tmp_path / "script.slurm"
     script.write_text("#!/bin/bash\ntrue\n", encoding="utf-8")
-    with patch("chemrefine.slurm.shutil.which", return_value="/usr/bin/sbatch"):
+    with patch("chemrefine.slurm.dispatch.shutil.which", return_value="/usr/bin/sbatch"):
         job_id = slurm.submit(script, dispatch="local")
     assert job_id.startswith("local-")
     _drain_local(job_id)
@@ -514,7 +515,7 @@ def test_dispatch_local_forces_local_runner_despite_sbatch(tmp_path: Path):
 def test_dispatch_slurm_requires_sbatch():
     """`dispatch: slurm` never silently runs locally — it fails fast instead."""
     with (
-        patch("chemrefine.slurm.shutil.which", return_value=None),
+        patch("chemrefine.slurm.dispatch.shutil.which", return_value=None),
         pytest.raises(ConfigError, match="sbatch"),
     ):
         slurm.dispatch_locally("slurm")
@@ -530,19 +531,19 @@ def test_detect_local_gpus_counts_mig_instances(monkeypatch):
     monkeypatch.setattr(
         subprocess, "run", lambda *a, **k: MagicMock(returncode=0, stdout=out, stderr="")
     )
-    assert slurm._detect_local_gpus() == 2
+    assert dispatch._detect_local_gpus() == 2
 
 
 def test_detect_local_gpus_falls_back_to_one_without_nvidia_smi(monkeypatch):
     monkeypatch.setattr(subprocess, "run", MagicMock(side_effect=FileNotFoundError("nvidia-smi")))
-    assert slurm._detect_local_gpus() == 1
+    assert dispatch._detect_local_gpus() == 1
 
 
 def test_submit_local_applies_cuda_visible_devices_env(tmp_path: Path):
     """The local fallback pins CUDA_VISIBLE_DEVICES for the launched process."""
     script = tmp_path / "g.slurm"
     script.write_text('#!/bin/bash\necho "$CUDA_VISIBLE_DEVICES"\n', encoding="utf-8")
-    with patch("chemrefine.slurm.shutil.which", return_value=None):
+    with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         job_id = slurm.submit(script, env={"CUDA_VISIBLE_DEVICES": "1"})
     _drain_local(job_id)
     assert script.with_suffix(".runlog").read_text(encoding="utf-8") == "1\n"
@@ -699,23 +700,23 @@ def test_terminate_local_jobs_kills_and_reaps_a_running_job(tmp_path: Path):
     """
     script = tmp_path / "sleeper.slurm"
     script.write_text("#!/bin/bash\nsleep 60\n", encoding="utf-8")
-    job_id = slurm._submit_local(script)
-    proc, out_handle, err_handle = slurm._LOCAL_PROCS[job_id]
+    job_id = dispatch._submit_local(script)
+    proc, out_handle, err_handle = dispatch._LOCAL_PROCS[job_id]
 
     slurm.terminate_local_jobs([job_id])
 
     assert proc.poll() is not None  # reaped, not left running
     assert out_handle.closed and err_handle.closed
-    assert job_id not in slurm._LOCAL_PROCS
+    assert job_id not in dispatch._LOCAL_PROCS
 
 
 def test_terminate_local_jobs_defaults_to_every_registered_job(tmp_path: Path):
     """The no-argument form is what the interpreter-exit hook uses."""
     script = tmp_path / "sleeper.slurm"
     script.write_text("#!/bin/bash\nsleep 60\n", encoding="utf-8")
-    ids = [slurm._submit_local(script), slurm._submit_local(script)]
+    ids = [dispatch._submit_local(script), dispatch._submit_local(script)]
     slurm.terminate_local_jobs()
-    assert all(i not in slurm._LOCAL_PROCS for i in ids)
+    assert all(i not in dispatch._LOCAL_PROCS for i in ids)
 
 
 def test_terminate_local_jobs_ignores_unknown_and_finished_ids():
@@ -731,8 +732,8 @@ def test_terminate_local_jobs_closes_handles_of_an_already_exited_job(tmp_path: 
     """
     script = tmp_path / "quick.slurm"
     script.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
-    job_id = slurm._submit_local(script)
-    proc, out_handle, err_handle = slurm._LOCAL_PROCS[job_id]
+    job_id = dispatch._submit_local(script)
+    proc, out_handle, err_handle = dispatch._LOCAL_PROCS[job_id]
     proc.wait()  # it exits immediately; poll() is now non-None
 
     with patch.object(proc, "terminate") as terminate:
@@ -740,7 +741,7 @@ def test_terminate_local_jobs_closes_handles_of_an_already_exited_job(tmp_path: 
 
     terminate.assert_not_called()
     assert out_handle.closed and err_handle.closed
-    assert job_id not in slurm._LOCAL_PROCS
+    assert job_id not in dispatch._LOCAL_PROCS
 
 
 def test_terminate_local_jobs_escalates_to_kill_when_sigterm_is_ignored(tmp_path: Path):
@@ -777,13 +778,13 @@ def test_terminate_local_jobs_escalates_to_kill_when_sigterm_is_ignored(tmp_path
     proc = _Stubborn()
     out_handle = (tmp_path / "j.runlog").open("w", encoding="utf-8")
     err_handle = (tmp_path / "j.err").open("w", encoding="utf-8")
-    slurm._LOCAL_PROCS["local-stubborn"] = (proc, out_handle, err_handle)  # type: ignore[assignment]
+    dispatch._LOCAL_PROCS["local-stubborn"] = (proc, out_handle, err_handle)  # type: ignore[assignment]
 
     slurm.terminate_local_jobs(["local-stubborn"])
 
     assert proc.terminated_normally and proc.killed  # asked nicely first, then insisted
     assert out_handle.closed and err_handle.closed
-    assert "local-stubborn" not in slurm._LOCAL_PROCS
+    assert "local-stubborn" not in dispatch._LOCAL_PROCS
 
 
 # ---------------------------------------------------------------------------

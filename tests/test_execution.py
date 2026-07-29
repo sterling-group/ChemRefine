@@ -22,6 +22,7 @@ from chemrefine.config import StepConfig
 from chemrefine.engines import _execution
 from chemrefine.engines._job import JobEngine
 from chemrefine.errors import ConfigError, JobSubmissionError, ThrottleTimeoutError
+from chemrefine.slurm import dispatch
 from chemrefine.state import JobBatch, PipelineState, RunBlock, StepContext, Structure
 
 
@@ -111,7 +112,7 @@ def test_run_batch_dispatch_local_skips_array_and_submits_locally(
     engine = _FakeJobEngine()
     ctx = _ctx(tmp_path, slurm_array=True, dispatch="local")
     inputs = engine.prepare(ctx)
-    with patch.object(slurm, "sbatch_available", return_value=True):
+    with patch.object(dispatch, "sbatch_available", return_value=True):
         batch = _execution.run_batch(engine, inputs, ctx)
     assert set(batch.jobs.values()) == {"local-1"}
     assert submit_mock.call_args.kwargs["dispatch"] == "local"
@@ -159,7 +160,7 @@ def test_run_batch_allows_multi_gpu_step_under_slurm(_submit, _finished_jobs, tm
     engine.gpu_count = 2
     ctx = _ctx(tmp_path, max_gpus=4, dispatch="slurm")
     inputs = engine.prepare(ctx)
-    with patch.object(slurm, "sbatch_available", return_value=True):
+    with patch.object(dispatch, "sbatch_available", return_value=True):
         batch = _execution.run_batch(engine, inputs, ctx)
     assert batch.jobs
 

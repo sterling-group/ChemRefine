@@ -167,7 +167,7 @@ def test_submit_runs_template_locally_when_no_sbatch(tmp_path: Path):
     inputs = engine.prepare(ctx)
     # No sbatch available → slurm.submit takes the local-bash path,
     # which runs the rendered template synchronously.
-    with patch("chemrefine.slurm.shutil.which", return_value=None):
+    with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         batch = engine.submit(inputs, ctx)
     assert isinstance(batch, JobBatch)
     assert all(jid.startswith("local-") for jid in batch.jobs.values())
@@ -191,7 +191,7 @@ def test_submit_template_failure_is_deferred_to_parsing(tmp_path: Path):
     )
     engine = get_engine("pyscf")
     inputs = engine.prepare(ctx)
-    with patch("chemrefine.slurm.shutil.which", return_value=None):
+    with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         batch = engine.submit(inputs, ctx)  # does not raise
     assert all(jid.startswith("local-") for jid in batch.jobs.values())
     # The failed run wrote no valid JSON output → detected downstream at parse time.
@@ -228,7 +228,7 @@ def test_submit_respects_cores_option(tmp_path: Path):
     ctx = _ctx(tmp_path, structures=(_seed(),), options={"cores": 2}, max_cores=4)
     engine = get_engine("pyscf")
     inputs = engine.prepare(ctx)
-    with patch("chemrefine.slurm.shutil.which", return_value=None):
+    with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         engine.submit(inputs, ctx)
     # The generated SLURM script should request the configured cores.
     script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
@@ -240,7 +240,7 @@ def test_submit_uses_template_engine_output_globs(tmp_path: Path):
     ctx = _ctx(tmp_path, structures=(_seed(),))
     engine = get_engine("pyscf")
     inputs = engine.prepare(ctx)
-    with patch("chemrefine.slurm.shutil.which", return_value=None):
+    with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         engine.submit(inputs, ctx)
     script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
     assert "*.json" in script_text
@@ -262,7 +262,7 @@ def test_parse_returns_structures_with_energy_and_forces(tmp_path: Path):
     ctx = _ctx(tmp_path, structures=(_seed("0"),))
     engine = get_engine("pyscf")
     inputs = engine.prepare(ctx)
-    with patch("chemrefine.slurm.shutil.which", return_value=None):
+    with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         engine.submit(inputs, ctx)
     results = engine.parse(inputs, ctx)
     assert len(results.structures) == 1
