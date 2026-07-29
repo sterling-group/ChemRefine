@@ -54,7 +54,7 @@ What happens when you run `chemrefine run input.yaml`:
 
 ```mermaid
 flowchart TD
-  CLI["cli.main → _translate_legacy_argv → Typer app"] --> DISP["cli._dispatch"]
+  CLI["cli.main → cli_legacy.translate_argv → Typer app"] --> DISP["cli._dispatch"]
   DISP --> REC["recovery.execute (_HANDLERS)"]
   REC --> RUN["pipeline.run"]
   RUN --> BOOT["bootstrap: seed PipelineState\n(.xyz / dir / SMILES csv)"]

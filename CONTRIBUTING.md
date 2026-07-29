@@ -60,8 +60,9 @@ stack. An archive that no longer matches the code is a fossil, not a fixture.
   adding one — it names the base class to subclass for each shape of
   backend, and the contract fixture every engine must ship.
 - **Legacy YAML/CLI vocabulary** lives in exactly two quarantine zones:
-  the config normalizer (`config.py`) and `cli._translate_legacy_argv`.
-  New legacy spellings go there, nowhere else.
+  `config_legacy.py` (YAML keys) and `cli_legacy.py` (v1 flag-style argv).
+  New legacy spellings go there, nowhere else. Both are scheduled for removal in
+  3.0 — see `docs/migrating-v1-to-v2.md`.
 - **Tests are tiered.** Unit tests mirror `src/` one file per module
   (`tests/test_<module>.py`, `tests/test_engines_<name>*.py`); shared
   synthetic ORCA snippets live in `tests/synthetic.py`. The recorded

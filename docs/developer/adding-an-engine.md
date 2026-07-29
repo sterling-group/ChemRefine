@@ -95,7 +95,7 @@ __all__ = ["MyEngine"]
 
 Nothing outside `engines/<name>/` changes — underscored packages (building blocks) and plain
 modules are never treated as plugins. Legacy YAML engine spellings are rewritten to the
-canonical name by `config._normalize_legacy` (the single place that knows the legacy
+canonical name by `config_legacy.normalize` (the single place that knows the legacy
 vocabulary) — never the registry.
 
 ## Resources
