@@ -208,18 +208,30 @@ def parse_with_failures(
 # ---------------------------------------------------------------------------
 
 
-def archive_failed_attempt(structure_dir: Path) -> Path:
-    """Move a structure dir's loose files into the next free ``attemptK/``; return it.
+def archive_failed_attempt(structure_dir: Path, dest: Path | None = None) -> Path:
+    """Move a structure dir's artifacts into an ``attemptK/``; return it.
 
-    The shared "attempt" primitive (path via :func:`chemrefine.ids.next_attempt_dir`):
-    only loose **files** move — existing ``attempt*/`` (and any nested) sub-directories
-    stay put — so a re-run never clobbers an earlier attempt.
+    The shared "attempt" primitive (path via :func:`chemrefine.ids.next_attempt_dir`).
+    Everything the attempt produced moves — loose files and any engine-written
+    sub-directory such as ``pyscf-extopt``'s ``tensors/`` (an ``output_dirs`` entry). Only
+    ``attempt*/`` stays put, so a re-run never clobbers an earlier attempt.
+
+    A ``tensors/`` left at the canonical path would be the same lie the rest of this
+    machinery exists to prevent: whatever runs there next writes its own files *beside* the
+    stale ones, and the directory ends up describing two calculations at once.
+
+    ``dest`` names an **existing** attempt directory to archive into, instead of minting the
+    next free one. :func:`chemrefine.nms._accept` needs that: ``run_nms`` already created an
+    ``attemptK/`` and ran the displaced children inside it, so the round-1 calculation those
+    children came from belongs in that same directory rather than in one of its own. An
+    attempt then holds both halves — the state that triggered the resolution and what was
+    tried — which is what an attempt directory is supposed to be.
     """
-    dest = ids.next_attempt_dir(structure_dir)
+    dest = ids.next_attempt_dir(structure_dir) if dest is None else dest
     dest.mkdir(parents=True, exist_ok=True)
     for item in structure_dir.iterdir():
-        if item.is_dir():
-            continue  # leave attempt*/ (and any nested) sub-directories in place
+        if item.is_dir() and ids.is_attempt_dir(item):
+            continue  # never fold one attempt into another
         shutil.move(str(item), str(dest / item.name))
     return dest
 

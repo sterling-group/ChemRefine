@@ -135,11 +135,27 @@ def test_nms_resolves_saddle_via_round_two(tmp_path: Path, monkeypatch: pytest.M
 
     outcomes = pipeline.run(config)
 
-    children = sorted(p.name for p in (case.output_dir / "step1" / "0" / "attempt1").iterdir())
+    structure_dir = case.output_dir / "step1" / "0"
+    attempt = structure_dir / "attempt1"
+    children = sorted(p.name for p in attempt.iterdir() if p.is_dir())
     assert children and all(name.startswith("0_m") for name in children)
     assert {sid for c in submitter.calls for _i, _o, sid in c.files} >= set(children)
-    child_records = list((case.output_dir / "step1" / "0" / "attempt1").glob("*/*.result.json"))
+    child_records = list(attempt.glob("*/*.result.json"))
     assert child_records, "round-2 children leave canonical result records too"
+
+    # The attempt holds both halves: the round-1 calculation that triggered the resolution
+    # (loose files) and the children it spawned (subdirectories).
+    assert (attempt / "step1_0.out").is_file(), "round 1 is archived, not overwritten"
+
+    # ...and the canonical location holds exactly one calculation — the winner's. Before,
+    # only the winning *geometry* was written back, leaving a .xyz from one calculation
+    # beside the .out of another with nothing to show they disagreed.
+    canonical_out = (structure_dir / "step1_0.out").read_text()
+    child_outs = [p.read_text() for p in sorted(attempt.glob("*/step1_*.out"))]
+    assert canonical_out != (attempt / "step1_0.out").read_text(), "not round 1's output"
+    assert child_outs.count(canonical_out) == 1, "canonical is one specific child's output"
+    assert (structure_dir / "step1_0.xyz").read_text().splitlines()[1] == "NMS-resolved 0"
+
     (survivor,) = outcomes[0].state.structures
     assert survivor.id == "0", "the resolved child is written back under the parent id"
     assert survivor.converged

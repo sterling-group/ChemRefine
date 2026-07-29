@@ -119,6 +119,17 @@ def next_attempt_dir(structure_dir: Path) -> Path:
     return structure_dir / f"attempt{(max(existing) + 1) if existing else 1}"
 
 
+def is_attempt_dir(path: Path) -> bool:
+    """Whether ``path`` is an ``attempt<n>/`` directory of the resolution model.
+
+    The membership test behind the two lookups above, so "what counts as an attempt" is
+    decided in one place. :func:`chemrefine.step_failures.archive_failed_attempt` asks it to
+    know what *not* to move: everything else in a structure dir is that attempt's output and
+    goes with it, but folding one attempt into another would lose a run's history.
+    """
+    return path.is_dir() and _ATTEMPT_DIR_RE.fullmatch(path.name) is not None
+
+
 def latest_attempt_dir(structure_dir: Path) -> Path | None:
     """Return the highest-numbered existing ``attemptK/`` under a structure's dir.
 
