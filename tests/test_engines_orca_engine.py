@@ -189,6 +189,21 @@ def test_submit_script_contains_orca_executable_invocation(_submit, _finished_jo
     assert "*.hess" in script_text
 
 
+def test_the_restart_and_readable_property_files_are_copied_back():
+    """``.opt`` and ``.property.txt`` must survive the scratch dir.
+
+    A live ORCA 6.1.1 ``! HF-3c Opt`` writes ``.bibtex``, ``.densities``, ``.densitiesinfo``,
+    ``.engrad``, ``.gbw``, ``.opt``, ``.out``, ``.property.txt`` and the ``.xyz`` pair. Only
+    the last few were declared, so every finished run left its optimisation restart file — the
+    one thing that lets a stalled optimisation resume rather than start over — behind in
+    ``$WORK_DIR`` to be deleted. A whole TS project's output tree held zero of either.
+    """
+    globs = get_engine("orca").output_globs
+    assert "*.opt" in globs
+    assert "*.property.txt" in globs
+    assert "*.txt" not in globs, "a bare *.txt would sweep up whatever a template writes"
+
+
 @patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
 @patch.object(slurm, "submit", return_value="9001")
 def test_submit_missing_slurm_header_raises(_submit, _finished_jobs, tmp_path: Path):

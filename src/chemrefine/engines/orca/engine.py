@@ -41,7 +41,19 @@ class OrcaEngine(JobEngine):
         "*.gbw",
         "*.hess",
         "*.property.json",
+        "*.property.txt",
+        "*.opt",
     )
+    """Result files copied back out of ``$WORK_DIR``; anything else is scratch.
+
+    ``.property.txt`` is the human-readable twin of the property JSON, and ``.opt`` is the
+    optimisation restart file — the one artifact that lets a stalled optimisation be picked
+    up where it stopped instead of started over. Both were left behind in scratch.
+
+    Named exactly rather than as ``*.txt``, which would sweep up whatever a user's template
+    happens to write. Note ``*.hess`` also matches ORCA's numbered intermediates
+    (``<base>.001.hess``, ``.002.hess``, …), so a long TS search brings back one Hessian per
+    recompute; they are large and superseded, and keeping them is a deliberate choice."""
 
     # -- input -------------------------------------------------------------
 
