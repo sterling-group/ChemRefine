@@ -141,6 +141,27 @@ jobs:
       - name: mypy
         run: mypy
 
+  # Coverage proves every line ran; it does not prove an assertion looked at the result.
+  # This breaks each predicate whose inversion would be a wrong scientific answer rather
+  # than a crash, and requires a red test — so those predicates are checked, not merely
+  # executed. Its own job because it runs the suite once per mutation (~3 min; only a
+  # survivor costs the full time, since a caught one stops at the first failure).
+  mutation-gate:
+    name: Critical predicates are checked, not just covered
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install package
+        run: pip install -e ".[test]"
+      - name: Break each critical predicate and require a red test
+        run: python scripts/mutation_gate.py
+
   docs-check:
     runs-on: ubuntu-latest
 
@@ -218,6 +239,7 @@ jobs:
       - test
       - extras-resolve
       - type-check
+      - mutation-gate
       - docs-check
       - build-package
       - install-smoke-test

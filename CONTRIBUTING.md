@@ -22,16 +22,33 @@ pre-commit run --all-files                    # lint + format + docstring covera
 pytest --cov=chemrefine --cov-fail-under=100  # 100% coverage; live tier deselected
 mypy                                          # type check (config in pyproject.toml)
 mkdocs build --strict                         # docs build with no warnings
+python scripts/mutation_gate.py               # critical predicates are *checked*, not just run
 ```
 
 The coverage gate is real: new code ships with tests that cover every
 line and branch, and every module/class/function carries a docstring
 (`interrogate --fail-under=100`). The suite is fast (< 10 s) — run it often.
+The mutation gate is the slow one (~3 min) because it runs the suite once per
+mutation; it only needs re-running when you touch one of the predicates it lists
+(`python scripts/mutation_gate.py --list`).
 
 ### What 100% coverage does not prove
 
-It proves every line ran. It does not prove two components agree, and that is
-the shape a covered defect takes: a `device` knob whose options model defaults
+It proves every line ran. It does not prove an assertion looked at the result — a
+predicate can be executed by every test in the suite and checked by none of them.
+`scripts/mutation_gate.py` closes that gap for the predicates where it matters
+most: the handful whose inversion produces a *wrong scientific answer* rather
+than a crash, such as the NMS resolution test that decides whether a structure
+reached the stationary point that was asked for. It breaks each one and requires
+a red test. Add an entry when you write such a predicate; when one survives, the
+fix is an assertion, not a smaller list.
+
+Whole-package mutation testing is a different tool — thousands of mutants, mostly
+log strings, and a survivor list to triage and then maintain. Use it occasionally
+to *find* entries for that list; the gate is what keeps them.
+
+Nor does coverage prove two components agree, and that is the other shape a
+covered defect takes: a `device` knob whose options model defaults
 to `cuda` while the scheduler reads the raw dict and books a CPU job; an
 executable quoted where it is run but not where it is logged; a backend
 requirement preflight accepts and `prepare` refuses. Each half passes its own
