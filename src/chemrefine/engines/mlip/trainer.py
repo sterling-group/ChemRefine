@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 from math import ceil
 from pathlib import Path
 
@@ -195,13 +194,30 @@ def write_training_slurm(*, ctx: StepContext, config_path: Path) -> Path:
 
 
 def submit_training(
-    *, script_path: Path, poll_seconds: float = 30.0, dispatch: str = "auto"
+    *,
+    script_path: Path,
+    poll_seconds: float = 30.0,
+    dispatch: str = "auto",
+    max_wait_seconds: float | None = None,
 ) -> str:
-    """Submit the MLIP training SLURM job and block until it finishes."""
+    """Submit the MLIP training SLURM job and block until it finishes.
+
+    Waits through :func:`chemrefine.slurm.wait_for_jobs` rather than a loop of its own, so
+    ``Config.job_timeout_seconds`` means the same thing here as on the other two waiting
+    paths. It did not: this loop had no deadline, so setting the knob did nothing for a
+    training step and a job stuck in ``PD`` blocked the pipeline with no diagnostic instead
+    of failing with :class:`~chemrefine.errors.ThrottleTimeoutError`. That is the same gap
+    :func:`chemrefine.slurm.wait_for_jobs` was given ``max_wait_seconds`` to close for
+    ``slurm_array`` steps; the third loop was simply not brought along.
+    """
     job_id = slurm.submit(script_path, dispatch=dispatch)
     logger.info("MLIP training submitted as job %s", job_id)
-    while not slurm.is_finished(job_id):
-        time.sleep(poll_seconds)
+    slurm.wait_for_jobs(
+        [job_id],
+        poll_interval=poll_seconds,
+        finished=slurm.finished_jobs,
+        max_wait_seconds=max_wait_seconds,
+    )
     logger.info("MLIP training job %s finished", job_id)
     return job_id
 
@@ -222,5 +238,9 @@ def run_training(results: StepResults, ctx: StepContext) -> StepResults:
     train_path, test_path = prepare_inputs(results, ctx)
     config_path = write_training_config(train_path=train_path, test_path=test_path, ctx=ctx)
     script_path = write_training_slurm(ctx=ctx, config_path=config_path)
-    submit_training(script_path=script_path, dispatch=ctx.dispatch)
+    submit_training(
+        script_path=script_path,
+        dispatch=ctx.dispatch,
+        max_wait_seconds=ctx.job_timeout_seconds,
+    )
     return results

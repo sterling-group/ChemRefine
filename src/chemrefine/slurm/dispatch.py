@@ -416,13 +416,14 @@ def wait_for_jobs(
     """Block until every id in ``job_ids`` reports finished, polling at ``poll_interval``.
 
     The single canonical "wait for these SLURM jobs to drain" loop — used by the job-array
-    path in :mod:`chemrefine.engines._execution` (the per-job path uses the budget-aware
+    path in :mod:`chemrefine.engines._execution` and by the MLIP trainer, which submits one
+    job (the per-structure path uses the budget-aware
     :class:`chemrefine.throttle.Throttler` instead, which reaps as it waits). ``finished``
     is injected (the caller passes :func:`finished_jobs`) so it stays mockable, mirroring
     the throttler.
 
     ``max_wait_seconds`` mirrors :meth:`chemrefine.throttle.Throttler.wait_all` so
-    ``Config.job_timeout_seconds`` means the same thing on both paths — otherwise setting it
+    ``Config.job_timeout_seconds`` means the same thing on every path — otherwise setting it
     would silently do nothing for a ``slurm_array: true`` step. ``None`` waits indefinitely.
     """
     deadline = time.monotonic() + max_wait_seconds if max_wait_seconds is not None else None
@@ -433,7 +434,8 @@ def wait_for_jobs(
             return
         if deadline is not None and time.monotonic() >= deadline:
             raise ThrottleTimeoutError(
-                f"timed out after {max_wait_seconds}s waiting for {len(pending)} array job(s)"
+                f"timed out after {max_wait_seconds}s waiting for "
+                f"{len(pending)} job(s) to finish: {sorted(pending)}"
             )
         time.sleep(poll_interval)
 

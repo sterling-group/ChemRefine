@@ -3,11 +3,12 @@
 The actual ``mace_run_train`` invocation is not exercised here — it
 requires a real CUDA stack. We only test the inputs we generate
 (extxyz files, YAML config, SLURM script) and the submit/wait loop
-with a mocked ``slurm.submit`` / ``slurm.is_finished``.
+with a mocked ``slurm.submit`` / ``slurm.finished_jobs``.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,7 +21,7 @@ from chemrefine import cache
 from chemrefine.config import StepConfig
 from chemrefine.engines.mlip import trainer
 from chemrefine.engines.mlip.options import MlipOptions, MlipTrainOptions
-from chemrefine.errors import ChemRefineError, ConfigError
+from chemrefine.errors import ChemRefineError, ConfigError, ThrottleTimeoutError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import PipelineState, StepContext, StepResults, Structure
 
@@ -244,23 +245,45 @@ def test_write_training_slurm_raises_when_header_missing(tmp_path: Path):
 
 
 def test_submit_training_blocks_until_finished():
-    """``submit_training`` should poll ``slurm.is_finished`` until it returns True."""
-    finished_calls = [False, False, True]
-
-    def fake_is_finished(job_id: str) -> bool:
-        return finished_calls.pop(0)
+    """``submit_training`` polls the scheduler until the training job drains."""
+    polls = [set(), set(), {"12345"}]
 
     with (
         patch.object(trainer.slurm, "submit", return_value="12345"),
-        patch.object(trainer.slurm, "is_finished", side_effect=fake_is_finished),
-        patch.object(trainer.time, "sleep", return_value=None),
+        patch.object(trainer.slurm, "finished_jobs", side_effect=lambda ids: polls.pop(0)),
     ):
-        job_id = trainer.submit_training(
-            script_path=Path("train.slurm"),
-            poll_seconds=0,
-        )
+        job_id = trainer.submit_training(script_path=Path("train.slurm"), poll_seconds=0)
+
     assert job_id == "12345"
-    assert finished_calls == []
+    assert polls == []
+
+
+def test_submit_training_honours_the_configured_job_timeout():
+    """`job_timeout_seconds` must mean the same thing here as on every other wait.
+
+    This loop had no deadline at all, so setting the knob did nothing for a training step:
+    a job stuck in PD blocked the pipeline indefinitely instead of failing with exit 8.
+    """
+    with (
+        patch.object(trainer.slurm, "submit", return_value="12345"),
+        patch.object(trainer.slurm, "finished_jobs", return_value=set()),
+        pytest.raises(ThrottleTimeoutError),
+    ):
+        trainer.submit_training(script_path=Path("train.slurm"), poll_seconds=0, max_wait_seconds=0)
+
+
+def test_run_training_forwards_the_step_timeout(tmp_path: Path):
+    """The deadline has to reach the wait from the step context, not stop at the call site."""
+    ctx = replace(_ctx(tmp_path), job_timeout_seconds=1234.0)
+    with (
+        patch.object(trainer, "prepare_inputs", return_value=(Path("a"), Path("b"))),
+        patch.object(trainer, "write_training_config", return_value=Path("c")),
+        patch.object(trainer, "write_training_slurm", return_value=Path("d")),
+        patch.object(trainer, "submit_training") as submit,
+    ):
+        trainer.run_training(StepResults(structures=()), ctx)
+
+    assert submit.call_args.kwargs["max_wait_seconds"] == 1234.0
 
 
 # ---------------------------------------------------------------------------
@@ -274,8 +297,7 @@ def test_run_training_drives_pipeline_and_returns_results_unchanged(tmp_path: Pa
     results = StepResults(structures=tuple(_struct(str(i)) for i in range(4)))
     with (
         patch.object(trainer.slurm, "submit", return_value="42") as mock_submit,
-        patch.object(trainer.slurm, "is_finished", return_value=True),
-        patch.object(trainer.time, "sleep", return_value=None),
+        patch.object(trainer.slurm, "finished_jobs", return_value={"42"}),
     ):
         out = trainer.run_training(results, ctx)
     assert out is results
