@@ -492,9 +492,17 @@ def test_rebuild_nms_reads_existing_children(tmp_path: Path):
     )
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)
-    nms.run_nms(engine, round1, [], ctx)  # populates attempt1/ on disk
-    res = nms.rebuild_nms(engine, round1, [], ctx)
-    assert [s.id for s in res.survivors] == ["0"]
+    ran = nms.run_nms(engine, round1, [], ctx)  # populates attempt1/ on disk
+    rebuilt = nms.rebuild_nms(engine, round1, [], ctx)
+
+    # Comparing ids would pass while the two disagreed about energies, convergence or which
+    # child won — the class of drift that shipped once already. Compare the whole record.
+    assert [cache.structure_record(s) for s in rebuilt.survivors] == [
+        cache.structure_record(s) for s in ran.survivors
+    ]
+    assert [(f.sid, f.kind, f.detail) for f in rebuilt.failures] == [
+        (f.sid, f.kind, f.detail) for f in ran.failures
+    ]
 
 
 def test_rebuild_reproduces_the_resolution_after_the_winner_was_promoted(tmp_path: Path):

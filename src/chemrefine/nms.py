@@ -412,6 +412,54 @@ def _install_winner(
     _write_resolution(attempt_dir, source_id)
 
 
+def _already_at_target(structure: Structure, target: int | None) -> bool:
+    """Whether this structure needs no displacement at all.
+
+    ``target is None`` (``random``) never short-circuits — it is exploration, not cleanup —
+    and a structure whose parse found no frequency table cannot claim to be anywhere.
+    """
+    return (
+        target is not None
+        and structure.imaginary_freqs is not None
+        and len(structure.imaginary_freqs) == target
+    )
+
+
+def _passthrough(structure: Structure, ctx: StepContext) -> Structure:
+    """A structure already at its target, carried through at the canonical place.
+
+    That is either an untouched round-1 result or one this step already resolved; the
+    attempt's sidecar is what tells the two apart.
+    """
+    return replace(
+        structure,
+        converged=True,
+        resolved_from=_read_resolution(ctx.step_dir / structure.id),
+    )
+
+
+def _children_for(structure: Structure, opts: NmsOptions) -> list[Structure]:
+    """The displaced ± children to try for one structure; empty when there are none.
+
+    Empty means the structure cannot be resolved without new information — the parse found no
+    normal-mode tensor, or no mode qualified for displacement under this target. Both
+    coordinators ask this one question, so neither can decide it differently from the other.
+    """
+    if structure.normal_modes is None:
+        logger.warning("NMS %s: no normal-mode tensor; cannot displace (unresolved)", structure.id)
+        return []
+    return _children_of(
+        structure,
+        select_displacements(
+            structure,
+            structure.imaginary_freqs or {},
+            structure.normal_modes,
+            opts,
+            rng_for(structure.id, opts.seed),
+        ),
+    )
+
+
 def run_nms(
     engine: NmsCapableEngine,
     round1: StepResults,
@@ -431,31 +479,10 @@ def run_nms(
     survivors: list[Structure] = []
     failures: list[Failure] = list(round1_failures)
     for s in round1.structures:
-        if (
-            target is not None
-            and s.imaginary_freqs is not None
-            and len(s.imaginary_freqs) == target
-        ):
-            # Already at the target. That is either an untouched round-1 result or one this
-            # step already resolved — the attempt's sidecar is what tells the two apart.
-            survivors.append(
-                replace(
-                    s,
-                    converged=True,
-                    resolved_from=_read_resolution(ctx.step_dir / s.id),
-                )
-            )
+        if _already_at_target(s, target):
+            survivors.append(_passthrough(s, ctx))
             continue
-        if s.normal_modes is None:
-            logger.warning("NMS %s: no normal-mode tensor; cannot displace (unresolved)", s.id)
-            failures.append(Failure(s.id, FailureKind.UNRESOLVED_NMS, s))
-            continue
-        children = _children_of(
-            s,
-            select_displacements(
-                s, s.imaginary_freqs or {}, s.normal_modes, opts, rng_for(s.id, opts.seed)
-            ),
-        )
+        children = _children_for(s, opts)
         if not children:
             failures.append(Failure(s.id, FailureKind.UNRESOLVED_NMS, s))
             continue
@@ -490,29 +517,15 @@ def rebuild_nms(
     survivors: list[Structure] = []
     failures: list[Failure] = list(round1_failures)
     for s in round1.structures:
-        if (
-            target is not None
-            and s.imaginary_freqs is not None
-            and len(s.imaginary_freqs) == target
-        ):
-            survivors.append(
-                replace(
-                    s,
-                    converged=True,
-                    resolved_from=_read_resolution(ctx.step_dir / s.id),
-                )
-            )
+        if _already_at_target(s, target):
+            survivors.append(_passthrough(s, ctx))
             continue
+        children = _children_for(s, opts)
         attempt = latest_attempt_dir(ctx.step_dir / s.id)
-        if s.normal_modes is None or attempt is None:
+        # The extra condition a rebuild has: children it can re-derive but never ran.
+        if not children or attempt is None:
             failures.append(Failure(s.id, FailureKind.UNRESOLVED_NMS, s))
             continue
-        children = _children_of(
-            s,
-            select_displacements(
-                s, s.imaginary_freqs or {}, s.normal_modes, opts, rng_for(s.id, opts.seed)
-            ),
-        )
         round2 = _parse_round_two(engine, children, ctx, attempt)
         resolved = [c for c in round2 if _is_resolved(c, target)]
         s_surv, s_fail = _select_survivors(resolved, round2, s, ctx, target)
