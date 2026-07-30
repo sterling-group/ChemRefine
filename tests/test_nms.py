@@ -442,7 +442,7 @@ def test_run_nms_winner_at_canonical_id_stays(tmp_path: Path):
     )
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)
-    res = nms.run_nms(engine, round1, [], ctx, ctx.step_cfg)
+    res = nms.run_nms(engine, round1, [], ctx)
     assert [s.id for s in res.survivors] == ["0"]  # stable id, ONE survivor (no ± duplicate)
     assert res.failures == ()
     assert (ctx.step_dir / "0" / "step1_0.xyz").is_file()  # winner geometry at canonical
@@ -456,7 +456,7 @@ def test_run_nms_already_at_target_passes_through(tmp_path: Path):
     engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=None)})  # already a minimum
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)
-    res = nms.run_nms(engine, round1, [], ctx, ctx.step_cfg)
+    res = nms.run_nms(engine, round1, [], ctx)
     assert [s.id for s in res.survivors] == ["0"]
     assert res.survivors[0].converged is True
     assert not (ctx.step_dir / "0" / "attempt1").exists()  # no displacement needed
@@ -468,7 +468,7 @@ def test_run_nms_random_fanout_records_no_resolution(tmp_path: Path):
     engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=_modes(8))})
     ctx = _ctx(tmp_path, (_h2("0"),), options={"target": "random", "seed": 1})
     round1 = _seed_round1(engine, ctx)
-    res = nms.run_nms(engine, round1, [], ctx, ctx.step_cfg)
+    res = nms.run_nms(engine, round1, [], ctx)
     assert all(s.resolved_from is None for s in res.survivors)
 
 
@@ -478,7 +478,7 @@ def test_run_nms_random_fans_out_to_children(tmp_path: Path):
     )
     ctx = _ctx(tmp_path, (_h2("0"),), options={"target": "random", "num_random_displacements": 1})
     round1 = _seed_round1(engine, ctx)
-    res = nms.run_nms(engine, round1, [], ctx, ctx.step_cfg)
+    res = nms.run_nms(engine, round1, [], ctx)
     assert {s.id for s in res.survivors} == {"0_m6_pos", "0_m6_neg"}  # fan-out, child ids
     assert res.failures == ()
 
@@ -495,7 +495,7 @@ def test_run_nms_ts_target_inferred_from_input(tmp_path: Path):
     )
     ctx = _ctx(tmp_path, (_h2("0"),))  # options has no target → inferred
     round1 = _seed_round1(engine, ctx)
-    res = nms.run_nms(engine, round1, [], ctx, ctx.step_cfg)
+    res = nms.run_nms(engine, round1, [], ctx)
     assert [s.id for s in res.survivors] == ["0"]  # resolved to a TS, id kept
 
 
@@ -509,7 +509,7 @@ def test_run_nms_unresolved_becomes_failure(tmp_path: Path):
     )
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)
-    res = nms.run_nms(engine, round1, [], ctx, ctx.step_cfg)
+    res = nms.run_nms(engine, round1, [], ctx)
     assert res.survivors == ()
     assert [f.sid for f in res.failures] == ["0"]
     assert res.failures[0].reason == "NMS: target stationary point not reached"
@@ -519,7 +519,7 @@ def test_run_nms_no_modes_is_failure(tmp_path: Path):
     engine = _FakeNms(freqs={"0": _Freq(imaginary={5: -42.0}, modes=None)})
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)
-    res = nms.run_nms(engine, round1, [], ctx, ctx.step_cfg)
+    res = nms.run_nms(engine, round1, [], ctx)
     assert [f.sid for f in res.failures] == ["0"]
 
 
@@ -528,7 +528,7 @@ def test_run_nms_no_displacements_is_failure(tmp_path: Path):
     engine = _FakeNms(freqs={"0": _Freq(imaginary={37: -118.0}, modes=_modes(6))})
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)
-    res = nms.run_nms(engine, round1, [], ctx, ctx.step_cfg)
+    res = nms.run_nms(engine, round1, [], ctx)
     assert [f.sid for f in res.failures] == ["0"]
 
 
@@ -537,7 +537,7 @@ def test_run_nms_random_all_children_fail_is_failure(tmp_path: Path):
     engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=_modes(8))}, fail_children=True)
     ctx = _ctx(tmp_path, (_h2("0"),), options={"target": "random", "num_random_displacements": 1})
     round1 = _seed_round1(engine, ctx)
-    res = nms.run_nms(engine, round1, [], ctx, ctx.step_cfg)
+    res = nms.run_nms(engine, round1, [], ctx)
     assert res.survivors == ()
     assert [f.sid for f in res.failures] == ["0"]
 
@@ -547,7 +547,7 @@ def test_run_nms_carries_round1_failures(tmp_path: Path):
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)
     prior = [Failure("9", FailureKind.MISSING_OUTPUT, None)]
-    res = nms.run_nms(engine, round1, prior, ctx, ctx.step_cfg)
+    res = nms.run_nms(engine, round1, prior, ctx)
     assert "9" in {f.sid for f in res.failures}
 
 
@@ -563,7 +563,7 @@ def test_run_nms_retries_unconverged_child(tmp_path: Path):
     )
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)
-    res = nms.run_nms(engine, round1, [], ctx, ctx.step_cfg)
+    res = nms.run_nms(engine, round1, [], ctx)
     assert [s.id for s in res.survivors] == ["0"]  # resolved after the child retry
     assert (ctx.step_dir / "0" / "attempt1" / "0_m5_pos" / "attempt1").is_dir()
 
@@ -579,8 +579,8 @@ def test_rebuild_nms_reads_existing_children(tmp_path: Path):
     )
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)
-    nms.run_nms(engine, round1, [], ctx, ctx.step_cfg)  # populates attempt1/ on disk
-    res = nms.rebuild_nms(engine, round1, [], ctx, ctx.step_cfg)
+    nms.run_nms(engine, round1, [], ctx)  # populates attempt1/ on disk
+    res = nms.rebuild_nms(engine, round1, [], ctx)
     assert [s.id for s in res.survivors] == ["0"]
 
 
@@ -599,12 +599,12 @@ def test_rebuild_reproduces_the_resolution_after_the_winner_was_promoted(tmp_pat
         }
     )
     ctx = _ctx(tmp_path, (_h2("0"),))
-    ran = nms.run_nms(engine, _seed_round1(engine, ctx), [], ctx, ctx.step_cfg)
+    ran = nms.run_nms(engine, _seed_round1(engine, ctx), [], ctx)
     assert ran.survivors[0].resolved_from == "0_m5_pos"
 
     # What a re-parse of the promoted canonical output now yields: no imaginary modes.
     promoted = StepResults(structures=(replace(_h2("0"), imaginary_freqs={}),))
-    rebuilt = nms.rebuild_nms(engine, promoted, [], ctx, ctx.step_cfg)
+    rebuilt = nms.rebuild_nms(engine, promoted, [], ctx)
 
     assert [s.id for s in rebuilt.survivors] == ["0"]
     assert rebuilt.survivors[0].resolved_from == "0_m5_pos"
@@ -615,7 +615,7 @@ def test_rebuild_of_an_unresolved_tree_names_no_winner(tmp_path: Path):
     engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=None)})
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)
-    res = nms.rebuild_nms(engine, round1, [], ctx, ctx.step_cfg)
+    res = nms.rebuild_nms(engine, round1, [], ctx)
     assert res.survivors[0].resolved_from is None
 
 
@@ -623,7 +623,7 @@ def test_rebuild_nms_unresolved_when_no_attempt_on_disk(tmp_path: Path):
     engine = _FakeNms(freqs={"0": _Freq(imaginary={5: -42.0}, modes=_modes(6))})
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)  # round-1 only, no attempt dir
-    res = nms.rebuild_nms(engine, round1, [], ctx, ctx.step_cfg)
+    res = nms.rebuild_nms(engine, round1, [], ctx)
     assert [f.sid for f in res.failures] == ["0"]
 
 

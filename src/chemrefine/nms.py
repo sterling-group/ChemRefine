@@ -447,7 +447,6 @@ def run_nms(
     round1: StepResults,
     round1_failures: list[step_failures.Failure] | tuple[step_failures.Failure, ...],
     ctx: StepContext,
-    step_cfg: StepConfig,
 ) -> step_failures.NmsResolution:
     """Resolve each round-1 survivor to its stationary point (submits round-2).
 
@@ -508,7 +507,6 @@ def rebuild_nms(
     round1: StepResults,
     round1_failures: list[step_failures.Failure] | tuple[step_failures.Failure, ...],
     ctx: StepContext,
-    step_cfg: StepConfig,
 ) -> step_failures.NmsResolution:
     """Re-resolve NMS from outputs already on disk — no submission (``rebuild-cache``).
 
@@ -591,7 +589,7 @@ def reattempt_nms(
 
     r1_succ, r1_fail = step_failures.parse_with_failures(engine, failed_manifest, ctx)
     r1_succ, r1_fail = step_failures.retry_unconverged(engine, ctx, r1_succ, r1_fail)
-    reattempt = run_nms(engine, StepResults(structures=tuple(r1_succ)), r1_fail, ctx, step_cfg)
+    reattempt = run_nms(engine, StepResults(structures=tuple(r1_succ)), r1_fail, ctx)
     kept = tuple(
         s
         for s in cached.results.structures

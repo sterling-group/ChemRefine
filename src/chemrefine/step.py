@@ -395,7 +395,6 @@ def _run_full_step(
             StepResults(structures=tuple(successes)),
             failures,
             ctx,
-            step_cfg,
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
     results = step_failures.finalize(engine, ctx, step_cfg, parent_ids, successes, failures)
@@ -467,7 +466,6 @@ def rebuild_cache_step(
             StepResults(structures=tuple(successes)),
             failures,
             ctx,
-            step_cfg,
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
     results = step_failures.finalize(engine, ctx, step_cfg, parent_ids, successes, failures)

@@ -528,7 +528,7 @@ def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypa
 
     calls: list[int] = []
 
-    def _fake_run_nms(engine, round1, failures, ctx, step_cfg):
+    def _fake_run_nms(engine, round1, failures, ctx):
         calls.append(1)
         return NmsResolution(survivors=round1.structures, failures=tuple(failures))
 
