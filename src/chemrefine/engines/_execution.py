@@ -91,9 +91,8 @@ def run_batch(engine: JobExecutable, inputs: StepInputs, ctx: StepContext) -> Jo
             f"step {ctx.step_cfg.step} needs {gpus} GPU(s) but the budget is "
             f"{throttler.max_gpus}; raise `max_gpus` or set `options.device: cpu`"
         )
-    jobs: dict[Path, str] = {}
     try:
-        _submit_all(engine, inputs, ctx, throttler, header_path, pal, gpus, local, jobs)
+        jobs = _submit_all(engine, inputs, ctx, throttler, header_path, pal, gpus, local)
         throttler.wait_all(finished=slurm.finished_jobs, max_wait_seconds=ctx.job_timeout_seconds)
     finally:
         # Any job still active here means we are unwinding on an exception — a
@@ -115,9 +114,9 @@ def _submit_all(
     pal: int,
     gpus: int,
     local: bool,
-    jobs: dict[Path, str],
-) -> None:
-    """Submit every prepared input under the budget, recording ids into ``jobs``."""
+) -> dict[Path, str]:
+    """Submit every prepared input under the budget; return input path → job id."""
+    jobs: dict[Path, str] = {}
     step_label = ctx.step_cfg.dir_name()
     operation = ctx.step_cfg.operation or ""
     for inp, out, sid in inputs.files:
@@ -154,6 +153,7 @@ def _submit_all(
         throttler.register(job_id, pal, gpus=gpus, device=device)
         jobs[inp] = job_id
         logger.info("submitted %s as job %s (pal=%d, gpus=%d)", inp.name, job_id, pal, gpus)
+    return jobs
 
 
 def _run_array(engine: JobExecutable, inputs: StepInputs, ctx: StepContext) -> JobBatch:

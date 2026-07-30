@@ -539,8 +539,24 @@ def reattempt_nms(
 
     The still-valid resolved survivors from the old cache are kept; the failed parents'
     round-1 outputs are re-parsed (missing ones resubmitted, unconverged ones retried),
-    NMS round-2 is re-run for them, and the merged result is re-cached. Mirrors
-    :func:`chemrefine.step._resubmit_failed` for the two-round case.
+    NMS round-2 is re-run for them, and the merged result is re-cached.
+
+    **Why it archives and regenerates nothing on entry**, where
+    :func:`chemrefine.step._resubmit_failed` does both before resubmitting. Reusing round 1 is
+    the point of this path, and archiving it up front would defeat that. Two facts make the
+    omission safe rather than lucky:
+
+    * Only ``MISSING_OUTPUT`` ids are resubmitted. Archiving exists to stop a re-executed job
+      re-reading the previous run's output as if it were its own, and a structure with no
+      output has nothing to re-read.
+    * :func:`chemrefine.cache.reuse_fingerprint` covers ``template_digest``, so an edited
+      template changes the key gating this path — a stale input can never be resubmitted from
+      the manifest.
+
+    Round 1 *is* archived later, for a resolved parent, by
+    :func:`_install_winner` sealing it into the attempt its children ran in. That is the
+    resolution's doing, not this function's, and it happens only once there is a winner to put
+    at the canonical path.
     """
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:

@@ -651,3 +651,15 @@ def test_rebuilding_cannot_install_a_winner():
     }
     assert "_select_survivors" in called, "the rebuild must still choose a winner"
     assert "_install_winner" not in called
+
+
+def test_an_edited_template_invalidates_the_reuse_before_a_reattempt(tmp_path: Path):
+    """The second invariant: a stale input can never be resubmitted from the manifest.
+
+    `reuse_fingerprint` covers `template_digest`, so editing a template changes the key that
+    gates this path — the re-attempt is not reached with inputs the user has since changed.
+    """
+    cfg = StepConfig(step=1, engine="orca", operation="opt_sp", nms=True)
+    first = cache.reuse_fingerprint(cfg, ("0",), template_digest="original")
+    edited = cache.reuse_fingerprint(cfg, ("0",), template_digest="edited")
+    assert first and first != edited
