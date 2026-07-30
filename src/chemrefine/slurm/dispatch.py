@@ -13,6 +13,7 @@ orphaned when the interpreter exits.
 from __future__ import annotations
 
 import atexit
+import contextlib
 import functools
 import getpass
 import itertools
@@ -20,6 +21,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import time
 from collections.abc import Callable, Collection
@@ -189,6 +191,12 @@ def _submit_local(script_path: str | Path, *, env: dict[str, str] | None = None)
     concurrently under the PAL budget. A non-zero exit is **not** raised
     here; it surfaces through the engine's output parsing (the same path
     SLURM failures take), so it lands in the ``on_failure`` ledger.
+
+    ``start_new_session=True`` gives the job a process group of its own, which is what
+    makes it *stoppable*: the thing that has to die is the calculation, and that is a
+    grandchild — ``bash`` runs it as a foreground child. Without a group of its own the
+    job sits in the driver's, and :func:`terminate_local_jobs` can only reach the shell.
+    See there for what that cost.
     """
     script_path = Path(script_path)
     out_handle = script_path.with_suffix(".runlog").open("w", encoding="utf-8")
@@ -201,6 +209,7 @@ def _submit_local(script_path: str | Path, *, env: dict[str, str] | None = None)
             stdout=out_handle,
             stderr=err_handle,
             env={**os.environ, **env} if env else None,
+            start_new_session=True,
         )
     except Exception:
         out_handle.close()
@@ -239,6 +248,20 @@ def terminate_local_jobs(job_ids: Collection[str] = ()) -> None:
     ``job_ids`` limits the sweep to one batch; the default empty tuple means *every*
     registered local job, which is what the interpreter-exit hook wants. Already-finished
     jobs are simply absent from the registry, so this is safe to call unconditionally.
+
+    **The signal goes to the process group, not to ``bash``.** What has to stop is the
+    calculation, and that is a grandchild — the shell runs it as a foreground child and
+    then waits. ``proc.terminate()`` reaches only the shell, which defers its ``TERM``
+    trap until that child returns, so the grace period expired, the shell was SIGKILLed,
+    and the calculation went on running, reparented to init. Nothing said so: the EXIT
+    trap never fired either, so the run lost its copy-back, its scratch teardown and its
+    runlog footer, while ORCA's ``.out`` — redirected straight to ``$OUTPUT_DIR`` — still
+    parsed. Signalling the group reaches both, which is why :func:`_submit_local` gives
+    each job a session of its own.
+
+    ``ProcessLookupError`` is suppressed because the group can drain between the poll and
+    the signal; ``PermissionError`` because a job that re-execs under another uid is the
+    scheduler's business, not ours, and neither is a reason to abandon the rest of the sweep.
     """
     targets = list(job_ids) if job_ids else list(_LOCAL_PROCS)
     for job_id in targets:
@@ -247,15 +270,25 @@ def terminate_local_jobs(job_ids: Collection[str] = ()) -> None:
             continue
         proc, out_handle, err_handle = entry
         if proc.poll() is None:
-            logger.warning("terminating local job %s (pid %s)", job_id, proc.pid)
-            proc.terminate()
+            logger.warning("terminating local job %s (pgid %s)", job_id, proc.pid)
+            _signal_group(proc.pid, signal.SIGTERM)
             try:
                 proc.wait(timeout=_LOCAL_TERMINATE_GRACE_SECONDS)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                _signal_group(proc.pid, signal.SIGKILL)
                 proc.wait()
         out_handle.close()
         err_handle.close()
+
+
+def _signal_group(pgid: int, sig: signal.Signals) -> None:
+    """Signal a local job's whole process group, tolerating one that has already gone.
+
+    ``pgid`` is the leader's pid: :func:`_submit_local` starts each job in a new session,
+    so the two are the same number.
+    """
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(pgid, sig)
 
 
 atexit.register(terminate_local_jobs)

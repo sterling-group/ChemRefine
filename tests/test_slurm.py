@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -692,31 +693,134 @@ def test_finished_jobs_of_an_empty_batch_asks_nothing():
 # ---------------------------------------------------------------------------
 
 
-def test_terminate_local_jobs_kills_and_reaps_a_running_job(tmp_path: Path):
-    """An abnormal exit must not leave background children burning cores.
+def _alive(pid: int) -> bool:
+    """Whether ``pid`` still exists as something other than a zombie.
 
-    They are real processes owned by this interpreter; left running they keep
-    competing with whatever the user runs next, and their log handles stay open.
+    A reaped-but-not-yet-collected child is present in the pid space and consuming
+    nothing; that is stopped. "Still running" means a live state.
     """
-    script = tmp_path / "sleeper.slurm"
-    script.write_text("#!/bin/bash\nsleep 60\n", encoding="utf-8")
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0]
+    except (ProcessLookupError, FileNotFoundError, IndexError):
+        return False
+    return state != "Z"
+
+
+def _await_stopped(pid: int, *, timeout: float = 5.0) -> None:
+    """Assert the calculation stops within ``timeout`` — it must not outlive the job.
+
+    Polled rather than probed once, because the last thing ``terminate_local_jobs`` waits
+    on is ``bash``. On the escalation path the group is SIGKILLed and ``bash`` is reaped
+    first, so the calculation is torn down a scheduler tick later; a single probe races
+    the kernel rather than testing anything. What the contract promises is that it stops,
+    not that it has already stopped by the time the call returns.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _alive(pid):
+            return
+        time.sleep(0.02)
+    raise AssertionError(f"calculation {pid} was still running {timeout}s after termination")
+
+
+def _await_pid(pidfile: Path, *, timeout: float = 10.0) -> int:
+    """Block until the calculation has recorded its own pid; return it."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        text = pidfile.read_text(encoding="utf-8").strip() if pidfile.is_file() else ""
+        if text:
+            return int(text)
+        time.sleep(0.02)
+    raise AssertionError(f"the calculation never wrote {pidfile}")
+
+
+def _job_with_a_foreground_calculation(
+    tmp_path: Path, *, stubborn: bool = False
+) -> tuple[Path, Path]:
+    """A *generated* script whose run block launches a long foreground child.
+
+    The shape every real engine emits — ``orca <inp> > <out>``, ``python step1.py`` — and
+    the reason a bare ``sleep 60`` script cannot test this: that script has no traps and no
+    child, so bash dies on SIGTERM whatever is signalled. A generated script installs
+    ``trap '_on_exit 143' TERM`` and then *waits* on a foreground child, and bash defers a
+    trap until that child returns. Signalling the shell alone therefore does nothing until
+    the grace expires.
+
+    ``stubborn`` makes the calculation ignore SIGTERM outright, which is the escalation
+    case: quantum-chemistry binaries do install their own handlers.
+    """
+    pidfile = tmp_path / "calc.pid"
+    calc = tmp_path / "calc.py"
+    ignore = "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n" if stubborn else ""
+    calc.write_text(
+        "import os, signal, sys, time\n"
+        f"{ignore}"
+        f"open({str(pidfile)!r}, 'w').write(str(os.getpid()))\n"
+        "time.sleep(120)\n",
+        encoding="utf-8",
+    )
+    body = f"{sys.executable} {calc} > $OUTPUT_DIR/step1_structure_0.out"
+    return _runnable(tmp_path, body), pidfile
+
+
+def test_terminate_local_jobs_stops_the_calculation_not_just_its_shell(tmp_path: Path):
+    """The calculation must die with the job, not outlive it.
+
+    ``Popen`` without ``start_new_session`` leaves the job in the driver's own process
+    group, so ``proc.terminate()`` reaches only bash — which is mid-``wait`` on the
+    calculation and defers the trap. The grace then expires, bash is SIGKILLed, and the
+    calculation survives, reparented to init: cores still burning, and because the EXIT
+    trap never ran, no copy-back, no scratch teardown and no runlog footer.
+    """
+    script, pidfile = _job_with_a_foreground_calculation(tmp_path)
     job_id = dispatch._submit_local(script)
     proc, out_handle, err_handle = dispatch._LOCAL_PROCS[job_id]
+    calc_pid = _await_pid(pidfile)
+    try:
+        slurm.terminate_local_jobs([job_id])
 
-    slurm.terminate_local_jobs([job_id])
+        _await_stopped(calc_pid)  # must not outlive its shell
+        assert proc.poll() is not None  # reaped, not left running
+        assert out_handle.closed and err_handle.closed
+        assert job_id not in dispatch._LOCAL_PROCS
+    finally:
+        if _alive(calc_pid):  # pragma: no cover - only on a regression
+            os.kill(calc_pid, signal.SIGKILL)
 
-    assert proc.poll() is not None  # reaped, not left running
-    assert out_handle.closed and err_handle.closed
-    assert job_id not in dispatch._LOCAL_PROCS
+
+def test_terminate_local_jobs_runs_the_exit_handler_before_the_job_dies(tmp_path: Path):
+    """Stopping the job must still leave the artifacts a cancelled run owes the user.
+
+    The consequence of signalling only the shell is quiet: `.out` is redirected straight to
+    `$OUTPUT_DIR`, so parsing still succeeds while the copy-back, the scratch teardown and
+    the runlog footer are all skipped. `exit_code=143` is the same invariant
+    `test_generated_script_reports_a_cancelled_job_as_failed` asserts for a `scancel`.
+    """
+    script, pidfile = _job_with_a_foreground_calculation(tmp_path)
+    job_id = dispatch._submit_local(script)
+    calc_pid = _await_pid(pidfile)
+    try:
+        slurm.terminate_local_jobs([job_id])
+        runlog = script.with_suffix(".runlog").read_text(encoding="utf-8")
+        assert "exit_code=143" in runlog, runlog
+        assert "files_copied=" in runlog, runlog
+    finally:
+        if _alive(calc_pid):  # pragma: no cover - only on a regression
+            os.kill(calc_pid, signal.SIGKILL)
 
 
 def test_terminate_local_jobs_defaults_to_every_registered_job(tmp_path: Path):
     """The no-argument form is what the interpreter-exit hook uses."""
-    script = tmp_path / "sleeper.slurm"
-    script.write_text("#!/bin/bash\nsleep 60\n", encoding="utf-8")
-    ids = [dispatch._submit_local(script), dispatch._submit_local(script)]
-    slurm.terminate_local_jobs()
-    assert all(i not in dispatch._LOCAL_PROCS for i in ids)
+    script, pidfile = _job_with_a_foreground_calculation(tmp_path)
+    ids = [dispatch._submit_local(script)]
+    calc_pid = _await_pid(pidfile)
+    try:
+        slurm.terminate_local_jobs()
+        assert all(i not in dispatch._LOCAL_PROCS for i in ids)
+        _await_stopped(calc_pid)
+    finally:
+        if _alive(calc_pid):  # pragma: no cover - only on a regression
+            os.kill(calc_pid, signal.SIGKILL)
 
 
 def test_terminate_local_jobs_ignores_unknown_and_finished_ids():
@@ -729,6 +833,8 @@ def test_terminate_local_jobs_closes_handles_of_an_already_exited_job(tmp_path: 
 
     This is the common shape on the unwind path: some of the batch completed
     normally before the exception, and signalling a dead process would be wrong.
+    Signalling a *reaped* pid is worse than pointless: the number is free for reuse,
+    so the signal could land on someone else's process.
     """
     script = tmp_path / "quick.slurm"
     script.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
@@ -736,55 +842,39 @@ def test_terminate_local_jobs_closes_handles_of_an_already_exited_job(tmp_path: 
     proc, out_handle, err_handle = dispatch._LOCAL_PROCS[job_id]
     proc.wait()  # it exits immediately; poll() is now non-None
 
-    with patch.object(proc, "terminate") as terminate:
+    with patch.object(dispatch.os, "killpg") as killpg:
         slurm.terminate_local_jobs([job_id])
 
-    terminate.assert_not_called()
+    killpg.assert_not_called()
     assert out_handle.closed and err_handle.closed
     assert job_id not in dispatch._LOCAL_PROCS
 
 
-def test_terminate_local_jobs_escalates_to_kill_when_sigterm_is_ignored(tmp_path: Path):
-    """A job that ignores SIGTERM still gets reaped — the grace period is bounded.
+def test_terminate_local_jobs_escalates_to_kill_when_sigterm_is_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A calculation that ignores SIGTERM still gets reaped — the grace period is bounded.
 
-    Quantum-chemistry binaries do install signal handlers, so a terminate that
-    politely waits forever would hang the interpreter on exit. Driven through a
-    stub rather than a real signal-trapping shell: whether a given shell forwards
-    or ignores SIGTERM is platform behaviour, and this is a test of the escalation
-    logic, not of bash.
+    Quantum-chemistry binaries do install signal handlers, so a terminate that politely
+    waited forever would hang the interpreter on exit. Driven through a real
+    SIG_IGN-installing child rather than a stub, because the thing under test is which
+    processes the signal reaches, and a stub cannot answer that.
     """
+    monkeypatch.setattr(dispatch, "_LOCAL_TERMINATE_GRACE_SECONDS", 0.3)
+    script, pidfile = _job_with_a_foreground_calculation(tmp_path, stubborn=True)
+    job_id = dispatch._submit_local(script)
+    proc, out_handle, err_handle = dispatch._LOCAL_PROCS[job_id]
+    calc_pid = _await_pid(pidfile)
+    try:
+        slurm.terminate_local_jobs([job_id])
 
-    class _Stubborn:
-        pid = 4242
-
-        def __init__(self) -> None:
-            self.terminated_normally = False
-            self.killed = False
-
-        def poll(self) -> int | None:
-            return None if not self.killed else -9
-
-        def terminate(self) -> None:
-            self.terminated_normally = True
-
-        def wait(self, timeout: float | None = None) -> int:
-            if timeout is not None and not self.killed:
-                raise subprocess.TimeoutExpired("bash", timeout)
-            return -9
-
-        def kill(self) -> None:
-            self.killed = True
-
-    proc = _Stubborn()
-    out_handle = (tmp_path / "j.runlog").open("w", encoding="utf-8")
-    err_handle = (tmp_path / "j.err").open("w", encoding="utf-8")
-    dispatch._LOCAL_PROCS["local-stubborn"] = (proc, out_handle, err_handle)  # type: ignore[assignment]
-
-    slurm.terminate_local_jobs(["local-stubborn"])
-
-    assert proc.terminated_normally and proc.killed  # asked nicely first, then insisted
-    assert out_handle.closed and err_handle.closed
-    assert "local-stubborn" not in dispatch._LOCAL_PROCS
+        _await_stopped(calc_pid)  # a SIGTERM-ignoring calculation still gets reaped
+        assert proc.poll() is not None
+        assert out_handle.closed and err_handle.closed
+        assert job_id not in dispatch._LOCAL_PROCS
+    finally:
+        if _alive(calc_pid):  # pragma: no cover - only on a regression
+            os.kill(calc_pid, signal.SIGKILL)
 
 
 # ---------------------------------------------------------------------------
