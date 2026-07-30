@@ -117,6 +117,7 @@ raises a clear error if the chosen energy wasn't computed.
     | `xc` | — (**required** for `dft`) | Exchange-correlation functional. No silent default — name it explicitly. |
     | `basis` | — (**required**) | Orbital basis set. No silent default — name it explicitly. |
     | `df` | `True` | Density fitting / RI (defaults on — large speed-up, negligible cost). |
+    | `strict_scf` | `True` | Refuse to serve a gradient from an SCF that did not converge. PySCF returns the last iterate rather than raising, and ORCA's `.out` reports only *its own* geometry convergence — so a loose result would rank against converged siblings unmarked. Set `false` for a knowingly loose SCF. |
     | `device` | `cuda` | Compute device; drives `gpu` when `gpu` is unset (`cuda` ⇒ attempt GPU). |
     | `gpu` | derived from `device` | Attempt `gpu4pyscf` if installed (falls back to CPU). Set explicitly to override the `device`-derived default. |
     | `save_tensors` | `False` | Dump 1e/2e MO tensors after the SCF. |
@@ -132,7 +133,7 @@ raises a clear error if the chosen energy wasn't computed.
     | `target` | inferred | `minimum` removes every imaginary mode; `ts` keeps the reaction coordinate and removes the rest; `random` explores. Default: **inferred** from the template (`OptTS` → `ts`, else `minimum`); set this to override. |
     | `displacement_value` | `1.0` | ± displacement (Å) per selected mode. |
     | `num_random_displacements` | `1` | `random` only: how many modes to draw. |
-    | `ts_mode_index` | `None` | `ts` only: which imaginary mode to keep (default: the largest-magnitude one). |
+    | `ts_mode_index` | `None` | `ts` only: which imaginary mode to keep (default: the largest-magnitude one). Must name a mode the structure's frequency calculation flagged imaginary — an index that matches none is rejected per structure, since which modes are imaginary is a property of the result rather than of the config. |
     | `seed` | `42` | RNG seed for reproducible `random` selection. |
 
 ## Output layout

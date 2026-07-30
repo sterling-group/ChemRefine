@@ -75,6 +75,54 @@ reached, with the failed attempt archived under `attemptK/`. If it still fails,
 it lands in the ledger. Common fixes: loosen the SCF convergence in the template,
 give the optimiser more cycles, or start from a better geometry.
 
+## A structure failed with "the calculation diverged"
+
+```
+unparseable: MLIP output …/step1_1.json reports a non-finite 'energy_hartree' (nan);
+the calculation diverged
+```
+
+The `step{N}.py` template produced a `nan` or `inf` energy — an MLIP that
+diverged on a strained geometry, an SCF that blew up. It is refused at the
+parse boundary and ledgered like any other failed structure, because a
+non-finite energy cannot be ranked: every comparison against it is false, so
+it would sort by list position and displace a genuine survivor rather than
+being filtered out.
+
+Look at the geometry that produced it (`step{N}_{id}_inp.xyz`). If the model is
+simply out of its depth there, `on_failure: skip` drops the structure and keeps
+the rest. Gradients are held to the same rule, since a non-finite force is what
+an `mlip-train` step would go on to fit.
+
+## A `pyscf-extopt` step failed with "SCF did not converge"
+
+```
+PySCF SCF did not converge (E=… Eh, method=dft, xc=pbe, basis=def2-svp);
+a gradient from a non-stationary density is not usable.
+```
+
+The gradient server refuses to answer with a result ORCA cannot use: ORCA would
+otherwise take its next optimisation step on it and report *its own* geometry
+convergence in the `.out`, which says nothing about the backend's SCF. The full
+message is in `server_<jobid>.log` beside the structure's other artifacts.
+
+Tighten the SCF (a better guess, more cycles, a smaller DIIS space), or set
+`strict_scf: false` in the step's `options:` if the loose behaviour is what you
+want — the energy is then whatever the last iteration produced.
+
+## An `nms` step says a mode index is not imaginary
+
+```
+nms ts_mode_index=7 is not an imaginary mode of this structure;
+its imaginary modes are [6].
+```
+
+`ts_mode_index` names the mode to *keep* during a `ts` search. It has to be one
+this structure's frequency calculation actually flagged imaginary, and it cannot
+be checked when the YAML loads — which modes are imaginary is a property of each
+result. Use one of the indices in the message, or drop the setting to keep the
+most imaginary mode automatically.
+
 ## The run reports fewer structures than expected
 
 Check `steps.csv`. Each row records the step, the structure, and the energy the
