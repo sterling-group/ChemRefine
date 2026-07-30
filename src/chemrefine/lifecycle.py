@@ -170,9 +170,24 @@ def rerun_from_best(
     resubmitted, and re-parsed. ``ctx_for_prepare.step_dir`` is what nests the
     structure, so the SAME helper serves a top-level structure (round-1, ``step_dir``
     = the step dir) and an NMS round-2 child (``step_dir`` = the parent's dir).
+
+    **``best`` is resubmitted as it is, not rebuilt from its parts.** It used to be
+    reconstructed as ``Structure(id=best.id, atoms=best.atoms)``, which dropped
+    ``parent_id`` — and :func:`chemrefine.engines._job.build_structures` reads the parent
+    back off ``prev_state``, so a structure that merely needed a second attempt came out of
+    the step an orphan, permanently, into the cache. Downstream that is not a cosmetic
+    loss: :func:`chemrefine.filtering._filter_by_parent` groups on ``parent_id or id``, so
+    an orphan is indistinguishable from a seed, forms its own singleton group, and survives
+    a filter that should have discarded it.
+
+    The structure is frozen and nothing here mutates it, so there is nothing to copy. Its
+    stale result fields are simply overwritten by the re-parse. That is the point of
+    passing it whole: a field added to :class:`~chemrefine.state.Structure` later is
+    carried through the retry automatically instead of being silently left behind, which
+    is how this went wrong once already.
     """
     attempts.archive(ctx_for_prepare.step_dir / best.id)
-    return submit_and_parse(engine, ctx_for_prepare, [Structure(id=best.id, atoms=best.atoms)])
+    return submit_and_parse(engine, ctx_for_prepare, [best])
 
 
 def retry_unconverged(
