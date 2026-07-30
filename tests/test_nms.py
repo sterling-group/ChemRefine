@@ -155,6 +155,20 @@ def test_select_displacements_random_no_candidates_is_empty():
     assert out == []
 
 
+def test_random_never_displaces_along_a_translation():
+    """A molecule with no vibrational modes to draw from yields nothing, not a translation.
+
+    A diatomic has six tensor columns and one vibration, so the non-trivial slice is empty at
+    the ``_TRIVIAL_MODES`` cut. Falling back to the whole range put pure translations in the
+    candidate set — displacing along one moves the molecule and re-computes the same energy,
+    a job spent to learn nothing.
+    """
+    out = nms.select_displacements(
+        _h2("0"), {}, _modes(6), nms.NmsOptions(target="random"), np.random.default_rng(0)
+    )
+    assert out == []
+
+
 def test_select_displacements_skips_mode_shape_mismatch():
     # a 3-atom mode tensor against a 2-atom structure → per-mode shape mismatch, skipped.
     out = nms.select_displacements(

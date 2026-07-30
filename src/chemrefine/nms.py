@@ -54,9 +54,18 @@ from chemrefine.state import (
 
 logger = logging.getLogger(__name__)
 
-# ORCA-style frequency tables print 6 (5 for linear) trivial translation/rotation
-# modes at low index; ``random`` sampling skips them.
 _TRIVIAL_MODES = 6
+"""Leading modes of the ``normal_modes`` tensor that are not vibrations.
+
+A frequency table lists all ``3N`` modes with the translations and rotations first — six of
+them for a non-linear molecule, five for a linear one. ``random`` sampling skips them, since
+displacing along a translation just moves the molecule and re-computes the same energy.
+
+Six for every molecule, deliberately. Distinguishing the linear case means deciding whether a
+geometry is collinear to some tolerance, and being wrong in the permissive direction spends a
+job on a translated copy. Being wrong the conservative way — which this is — costs a linear
+molecule one candidate vibration out of a random draw. `minimum` and `ts` are unaffected:
+they displace along the modes the parse flagged imaginary, whatever their index."""
 
 
 # ---------------------------------------------------------------------------
@@ -151,8 +160,7 @@ def _selected_modes(
 ) -> list[int]:
     """Mode indices to displace along, per ``target``."""
     if opts.target == "random":
-        lo = min(_TRIVIAL_MODES, n_modes)
-        candidates = list(range(lo, n_modes)) or list(range(n_modes))
+        candidates = list(range(_TRIVIAL_MODES, n_modes))
         if not candidates:
             return []
         k = min(opts.num_random_displacements, len(candidates))
