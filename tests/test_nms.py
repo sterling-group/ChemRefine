@@ -240,6 +240,31 @@ def test_promote_winner_rewrites_the_id_prefix_not_the_suffix(tmp_path: Path):
     assert (child / "step1_0_m6_pos.out").is_file(), "the child dir is copied from, not emptied"
 
 
+def test_promoting_a_retried_winner_leaves_its_own_attempt_behind(tmp_path: Path):
+    """A child that was itself retried carries an ``attemptK/``; that must not travel with it.
+
+    ``retry_unconverged`` runs against the child's own directory, so an unconverged round-2
+    child gains ``attemptK/<child>/attempt1/`` holding the run that failed. Promoting the child
+    must copy the calculation that won, not the one it discarded — and the destination for a
+    directory named ``attempt1`` is the parent's ``attempt1``, which is the very directory the
+    promotion reads from.
+    """
+    attempt = tmp_path / "0" / "attempt1"
+    child = attempt / "0_m5_pos"
+    (child / "attempt1").mkdir(parents=True)
+    (child / "attempt1" / "step1_0_m5_pos.out").write_text("the child's discarded run")
+    (child / "step1_0_m5_pos.out").write_text("the run that won")
+    (attempt / "step1_0.out").write_text("round 1, archived")
+
+    nms._promote_winner("0_m5_pos", "0", 1, attempt)
+
+    assert (tmp_path / "0" / "step1_0.out").read_text() == "the run that won"
+    assert (attempt / "step1_0.out").read_text() == "round 1, archived", (
+        "the child's discarded run must not overwrite the archived round 1"
+    )
+    assert sorted(p.name for p in attempt.iterdir()) == ["0_m5_pos", "step1_0.out"]
+
+
 def test_archiving_takes_the_engine_written_directory_with_it(tmp_path: Path):
     """``tensors/`` belongs to the attempt that produced it, not to the path it sits at.
 

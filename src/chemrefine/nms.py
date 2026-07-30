@@ -38,7 +38,12 @@ from chemrefine import cache, filtering, io, step_failures
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import NmsCapableEngine
 from chemrefine.errors import CacheError
-from chemrefine.ids import latest_attempt_dir, next_attempt_dir, structure_artifact_path
+from chemrefine.ids import (
+    is_attempt_dir,
+    latest_attempt_dir,
+    next_attempt_dir,
+    structure_artifact_path,
+)
 from chemrefine.state import PipelineState, StepContext, StepInputs, StepResults, Structure
 
 logger = logging.getLogger(__name__)
@@ -327,6 +332,11 @@ def _promote_winner(winner_id: str, parent_id: str, step: int, attempt_dir: Path
     """
     stem = f"step{step}_{winner_id}"
     for item in sorted((attempt_dir / winner_id).iterdir()):
+        if is_attempt_dir(item):
+            # The winner's own earlier attempts stay with it: they are the runs it discarded,
+            # and `attemptK` resolves against the parent's directory, so copying one up would
+            # merge a discarded run into the attempt this promotion is reading from.
+            continue
         if item.is_dir():
             # An engine-written directory (``pyscf-extopt``'s ``tensors/``) is named by the
             # engine, not after the structure, so it is promoted under its own name.
