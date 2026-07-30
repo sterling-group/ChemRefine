@@ -8,6 +8,10 @@ on:
   # Re-run the matrix without needing a push (a flaky runner, a dependency that
   # just published a fix).
   workflow_dispatch:
+  # Callable from publish.yml, so a release runs this whole file rather than a
+  # reduced copy of it. Nothing that gates a merge should be absent from the path
+  # that ships a wheel to PyPI.
+  workflow_call:
 
 permissions:
   contents: read
@@ -162,6 +166,36 @@ jobs:
       - name: Break each critical predicate and require a red test
         run: python scripts/mutation_gate.py
 
+  # The suite must not depend on which backend environments the machine happens to have
+  # provisioned. Runners are bare, so the default matrix only ever exercises the
+  # not-provisioned half — while a developer who has run `chemrefine backends install` is
+  # in the other. A fake managed env is enough to tell them apart: `resolve_launcher` only
+  # probes for `<env>/bin/python`, so this reaches the same branch a real 3 GB torch
+  # install would, in a second.
+  provisioned-backend:
+    name: Suite is independent of provisioned backends
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install package
+        run: pip install -e ".[test]"
+      - name: Fake a provisioned managed env for every backend extra
+        run: |
+          for extra in pyscf mlip-fairchem mlip-mace mlip-sevenn mlip-orb mlip-chgnet; do
+            mkdir -p "$HOME/fake-crh/backends/$extra/bin"
+            ln -s "$(command -v python)" "$HOME/fake-crh/backends/$extra/bin/python"
+          done
+      - name: The suite must still pass
+        env:
+          CHEMREFINE_HOME: /home/runner/fake-crh
+        run: pytest -q
+
   docs-check:
     runs-on: ubuntu-latest
 
@@ -221,6 +255,16 @@ jobs:
           chemrefine --version
           chemrefine --help > /dev/null
 
+      # The sdist is the second artifact PyPI serves, and a distro packager builds from
+      # it — so it needs the same proof the wheel gets. `--no-binary` forces a real build
+      # from the source tree rather than resolving the wheel just installed.
+      - name: Install the sdist and exercise the entry point
+        run: |
+          pip uninstall -y chemrefine
+          pip install --no-binary chemrefine dist/*.tar.gz
+          chemrefine --version
+          chemrefine --help > /dev/null
+
       - name: The package must advertise its types
         run: |
           python - <<'PY'
@@ -240,6 +284,7 @@ jobs:
       - extras-resolve
       - type-check
       - mutation-gate
+      - provisioned-backend
       - docs-check
       - build-package
       - install-smoke-test
