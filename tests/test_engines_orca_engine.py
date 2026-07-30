@@ -411,7 +411,7 @@ def test_orca_engine_is_nms_capable():
 
 
 # ---------------------------------------------------------------------------
-# A crashed ensemble job reaches the failure ledger (B2)
+# A crashed ensemble job reaches the failure ledger
 # ---------------------------------------------------------------------------
 
 

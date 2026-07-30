@@ -48,7 +48,7 @@ def test_apply_with_none_sample_keeps_energyless_structures():
 
     ``on_failure: best`` backfills a failed structure from its submitted input. On
     step 1 those are bootstrap seeds, which have no energy yet; dropping them here
-    would silently turn ``best`` into ``skip`` (B5).
+    would silently turn ``best`` into ``skip``.
     """
     r = StepResults(
         structures=(

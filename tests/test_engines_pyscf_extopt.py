@@ -189,7 +189,7 @@ def test_pyscf_unknown_option_fails_fast(tmp_path: Path):
     """A typoed knob (``basis_set:`` for ``basis:``) raises instead of silently
     running the calculation with the default basis.
 
-    Regression: the raw options dict used to bypass :class:`PyscfOptions`, so
+    The raw options dict must not bypass :class:`PyscfOptions`, or
     unknown keys were dropped and the run proceeded with wrong settings.
 
     ConfigError rather than pydantic's ValidationError — a bad knob is a config error

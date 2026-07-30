@@ -47,7 +47,7 @@ def test_natural_key_handles_paths():
 
 
 def test_natural_key_orders_three_digit_ids_numerically():
-    """Regression: >100 structures must not sort lexicographically.
+    """>100 structures must not sort lexicographically.
 
     Plain string sorting puts ``structure_100`` before ``structure_11``
     before ``structure_2``; natural ordering compares the digit runs as
@@ -131,7 +131,7 @@ def test_gather_output_files_returns_natural_order(tmp_path: Path):
 
 
 def test_gather_output_files_orders_more_than_100_structures(tmp_path: Path):
-    """Regression: a seed dir with >100 structures must glob in numeric order."""
+    """A seed dir with >100 structures must glob in numeric order."""
     for sid in (100, 2, 11, 1, 99):
         (tmp_path / f"step1_structure_{sid}.xyz").touch()
     found = gather_output_files(tmp_path, "*.xyz")

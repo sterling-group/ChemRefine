@@ -342,7 +342,7 @@ def test_on_failure_best_backfills_all(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# B10 — auto-retry-once on convergence failure
+# Auto-retry-once on convergence failure
 # ---------------------------------------------------------------------------
 
 
@@ -629,7 +629,7 @@ def test_run_step_writes_canonical_result_records(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# B1 — a re-executed step never re-reads the previous run's output
+# A re-executed step never re-reads the previous run's output
 # ---------------------------------------------------------------------------
 
 

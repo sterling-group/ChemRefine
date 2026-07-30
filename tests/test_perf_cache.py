@@ -1,10 +1,9 @@
 """Time the per-step bookkeeping from hundreds to tens of thousands of structures.
 
-The audit flagged three structural limits without measuring any of them: the step cache
-is rewritten in full on every save, :func:`~chemrefine.cache.parents_digest` re-hashes
-every parent's coordinates once per step, and the per-step CSV round-trips through pandas.
-Each is a real property of the design; whether any is a *problem* depends on numbers
-nobody had.
+Three properties of the design invite the question "does this scale": the step cache is
+rewritten in full on every save, :func:`~chemrefine.cache.parents_digest` re-hashes every
+parent's coordinates once per step, and the per-step CSV round-trips through pandas.
+Whether any is a *problem* is a question about numbers, so this produces them.
 
 So this measures rather than asserts. It prints a table and checks only that the work
 stays roughly linear in the structure count — the shape that would make a 10⁴-structure
@@ -19,8 +18,8 @@ Two things it reports beyond wall time:
   rather than the coordinates, which is why it is far above the array bytes and why
   reducing it would mean giving up ASE as the interop contract.
 * **The format comparison** — the same structures serialized as one JSON document versus
-  the shipped JSON-plus-``.npz`` split, so the reason for the split stays measured rather
-  than remembered.
+  the shipped JSON-plus-``.npz`` split, so the reason for the split has a number behind it
+  and `docs/concepts/caching.md` has somewhere to get one.
 
 Run it with ``-s`` to see the table:
 
@@ -48,7 +47,7 @@ from chemrefine.state import PipelineState, StepContext, StepResults, Structure
 pytestmark = pytest.mark.integration
 
 #: Structure counts to time. 200 is a normal conformer screen; 10 000 is well past
-#: anything the tutorials do, and is the size the audit worried about.
+#: anything the tutorials do — the size at which these questions get interesting.
 SIZES = (200, 2_000, 10_000)
 
 #: Atoms per structure — a mid-sized organic molecule, so the coordinate arrays that

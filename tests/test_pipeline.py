@@ -64,7 +64,7 @@ def test_bootstrap_from_multiframe_xyz_seeds_every_frame(tmp_path: Path):
 def test_bootstrap_from_xyz_with_trailing_blank_lines(tmp_path: Path):
     """Editors and ORCA leave trailing blank lines on real .xyz files.
 
-    Regression: seeding forced ASE's naive ``format="xyz"`` parser, which loops
+    Seeding must not use ASE's naive ``format="xyz"`` parser, which loops
     ``int(lines.pop(0))`` over every remaining line and dies on the blank tail
     with ``invalid literal for int(): '\\n'``. ``extxyz`` tolerates it.
     """
@@ -88,7 +88,7 @@ def test_bootstrap_from_directory(tmp_path: Path):
 def test_bootstrap_from_directory_seeds_every_frame_of_multiframe_files(tmp_path: Path):
     """A multi-frame file inside a seed directory yields one structure per frame.
 
-    Regression: directory seeding used ASE's default read (last frame only),
+    Directory seeding must not use ASE's default read (last frame only),
     silently dropping every other conformer — the exact bug the single-file
     path already guards against.
     """
@@ -344,7 +344,7 @@ def test_run_stops_when_no_survivors(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# B8 — steps.csv reports the energy the step actually filtered on
+# steps.csv reports the energy the step actually filtered on
 # ---------------------------------------------------------------------------
 
 

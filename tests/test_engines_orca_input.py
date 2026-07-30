@@ -149,7 +149,7 @@ def test_clamp_pal_keeps_declarations_at_or_below_budget():
 def test_build_input_clamps_template_pal_to_max_pal(tmp_path: Path):
     """A template asking for more ranks than ``max_cores`` is clamped in the ``.inp``.
 
-    Regression: the SLURM allocation was clamped but the ``%pal`` block was
+    The SLURM allocation and the ``%pal`` block must be clamped together; if only the first is,
     copied verbatim, so ORCA launched more MPI ranks than the job owned.
     """
     template = _template(tmp_path, "! B3LYP def2-SVP\n%pal\n  nprocs 16\nend\n")
@@ -171,7 +171,7 @@ def test_build_input_clamps_template_pal_to_max_pal(tmp_path: Path):
 def test_build_input_absolutizes_relative_template_paths(tmp_path: Path):
     """A quoted path that exists relative to the template dir is pinned absolute.
 
-    Regression: ``%DOCKER GUEST "../templates/cl.xyz"`` resolved against the
+    A ``%DOCKER GUEST "../templates/cl.xyz"`` path resolves against the
     scratch work dir at run time, so ORCA died with CANNOT OPEN FILE.
     """
     templates = tmp_path / "templates"

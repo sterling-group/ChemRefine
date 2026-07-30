@@ -103,7 +103,7 @@ def test_parse_dft_marks_not_converged(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Convergence is the LAST verdict, not "did the file ever say NOT CONVERGED" (B4)
+# Convergence is the LAST verdict, not "did the file ever say NOT CONVERGED"
 # ---------------------------------------------------------------------------
 
 # Verbatim ORCA 6.1.1 wording — taken from its binaries and the recorded outputs, not
@@ -194,7 +194,7 @@ def test_parse_dft_recovered_scf_is_a_success(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Ensemble frames take their run status from the .out beside the sidecar (B2)
+# Ensemble frames take their run status from the .out beside the sidecar
 # ---------------------------------------------------------------------------
 
 
@@ -225,7 +225,7 @@ def test_goat_frames_are_flagged_when_the_job_never_terminated(tmp_path: Path):
     The sidecar carries no run status, so frames parsed straight out of it default
     to ``terminated_normally=None`` — which ``succeeded()`` reads as "not a failure signal".
     A job killed after writing a partial ensemble was therefore an unconditional
-    success with an empty ledger (B2).
+    success with an empty ledger.
     """
     frames = parse_output(_goat_case(tmp_path, terminated_normally=False), "goat")
     assert len(frames) == 2

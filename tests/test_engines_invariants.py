@@ -1,18 +1,13 @@
 """Cross-engine invariants: properties every registered engine must satisfy at once.
 
-The per-engine test files each cover their own engine, and the contract tests cover
-each parser against a golden. What neither covers is a property that only breaks when
-*two* correct components disagree -- which is where the defects in this file's history
-actually lived:
+The per-engine test files each cover their own engine, and the contract tests cover each
+parser against a golden. Neither covers a property that breaks only when *two* correct
+components disagree — a knob whose options model and whose scheduler heuristic default
+differently, an executable quoted where it is run but not where it is logged. Each part
+passes its own tests; the pair produces a wrong job.
 
-* the `device` knob had two readers (the engine's options model and the scheduler's
-  raw-dict heuristic) with different defaults, so a step that named no device rendered
-  a CUDA script and was scheduled as a CPU job;
-* the ORCA executable was shell-quoted in `OrcaEngine.run_block` but not in the ExtOpt
-  subclass that overrides it, so a path with a space broke one path and not the other.
-
-Both are properties over *every* registered engine, so they are asserted that way here
-rather than per engine, where the next engine would simply not be covered.
+Asserted over *every* registered engine rather than per engine, because per engine the next
+one added is simply not covered.
 """
 
 from __future__ import annotations
@@ -346,15 +341,14 @@ def _raw_option_reads(source: str) -> list[str]:
 def test_no_module_reads_a_declared_option_key_off_the_raw_dict():
     """A knob a model declares must be read through that model, everywhere.
 
-    Every options divergence this project has had was one shape: a raw `options.get("x")`
-    beside a model that already declares `x`, the two carrying different defaults or
-    alias rules, and nothing noticing until the mismatch produced a wrong job -- a CUDA
-    script scheduled on a CPU node, a training step picking the wrong SLURM header, a
-    backend requirement that preflight accepted and `prepare` refused.
+    An options divergence takes one shape: a raw `options.get("x")` beside a model that
+        already declares `x`, the two carrying different defaults or alias rules. Nothing
+        notices until the mismatch produces a wrong job — a CUDA script scheduled on a CPU node,
+        a training step picking the wrong SLURM header, a backend requirement that preflight
+        accepts and `prepare` refuses.
 
-    So the rule is checked rather than remembered. If a genuinely raw read is needed, add
-    the file to `_ALLOWED_RAW_READS` with the reason, which makes it a decision someone
-    made rather than one that crept in.
+        A genuinely raw read belongs in `_ALLOWED_RAW_READS` with its reason, so it is a
+        decision on the record rather than one that crept in.
     """
     declared: set[str] = set()
     for name in sorted(ENGINES):
@@ -381,12 +375,12 @@ def test_no_engine_emits_a_trap_of_its_own(engine_name: str, tmp_path: Path):
 
     `RunBlock` splits an engine's bash into `body` and `cleanup` so teardown has somewhere to
     go that is not a `trap`: the script installs exactly one `EXIT` handler and interpolates
-    `cleanup` inside it. That removes the *reason* an engine would trap -- but the handler is
+    `cleanup` inside it. That removes the *reason* an engine would trap — but the handler is
     armed before the body runs, so an engine that wrote `trap ... EXIT` into `body` anyway
-    would still displace it, exactly as the ExtOpt engines did for ten weeks.
+    would still displace it, and the loss is quiet.
 
-    So the type carries the intent and this carries the rule, over every registered engine
-    rather than the two that happened to have the bug. Its companion,
+    The type carries the intent; this carries the rule, over every registered engine. Its
+    companion,
     `test_the_assembled_script_still_runs_its_exit_handler`, catches the consequence by
     running the composed script; this one names the cause.
     """
@@ -446,12 +440,12 @@ def test_every_value_reaching_generated_bash_is_classified():
     """Adding a value to the generated script must be a decision someone records.
 
     `reject_shell_unsafe` is a single rule with a docstring table of what it validates
-    against what is safe by construction -- but the table is *remembered*, and twice a value
-    reached bash by a route nobody re-checked: `operation`, which lands in the runlog
-    heredoc, and `tensor_folder`, which lands in a `cp -r "..."` where bash substitutes
-    inside the quotes.
+    against what is safe by construction. A table is only as good as the last person to
+    read it, and bash reaches further than the path fields it was first written for:
+    `operation` lands in the runlog heredoc, `tensor_folder` in a `cp -r "..."` where bash
+    substitutes inside the quotes.
 
-    So the enumeration is taken from the signatures rather than from memory. A new parameter
+    So the enumeration is taken from the signatures rather than from the table. A new parameter
     on any of the three bash-emitting functions fails here until it is classified -- which is
     the point: the failure asks for a decision, at the moment the value is added, instead of
     after it turns up in a shell.

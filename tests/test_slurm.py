@@ -89,7 +89,7 @@ def test_build_script_overrides_ntasks_and_writes_script(tmp_path: Path):
 def test_build_script_keeps_ntasks_per_node_directive(tmp_path: Path):
     """``--ntasks-per-*`` directives only share a prefix with ``--ntasks`` — keep them.
 
-    Regression: substring matching on ``--ntasks`` used to silently strip a
+    Substring matching on ``--ntasks`` would strip a
     cluster header's ``--ntasks-per-node`` from every generated script.
     """
     header = tmp_path / "per_node.slurm.header"
@@ -358,7 +358,7 @@ def test_is_finished_passes_noheader_to_squeue():
 
 
 def test_is_finished_false_for_the_only_queued_job():
-    """Regression: the sole queued job must not be mistaken for a header row.
+    """The sole queued job must not be mistaken for a header row.
 
     The previous implementation dropped ``lines[0]`` as a header. On a site whose
     ``squeue`` already suppresses the header, that discarded the first *real*

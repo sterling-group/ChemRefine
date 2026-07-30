@@ -170,7 +170,7 @@ def test_run_batch_allows_multi_gpu_step_under_slurm(_submit, _finished_jobs, tm
 
 
 # ---------------------------------------------------------------------------
-# An abnormal exit must not orphan local jobs (B7)
+# An abnormal exit must not orphan local jobs
 # ---------------------------------------------------------------------------
 
 
