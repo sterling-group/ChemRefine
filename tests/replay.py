@@ -125,6 +125,21 @@ def relocate(case: ReplayCase) -> None:
 # Recording (tier 3 → tier 2): pack a finished live run into an archive
 # ---------------------------------------------------------------------------
 
+# An archive holds what the *jobs* produced, keyed by the directory each job ran in —
+# `ReplaySubmitter` serves a submission by copying that directory's files into place. Anything
+# the pipeline does to a tree *after* its jobs finish is replayed, not recorded.
+#
+# NMS promotion is the case where that distinction bites. Once a parent is resolved, its
+# canonical `.out` is a copy of the winning child's, and round 1 has moved into `attemptK/`.
+# Packing that tree yields an archive whose round-1 submission returns a structure already at
+# the target, so a fresh replay resolves it in one round and never runs round 2 — the behaviour
+# the recording exists to exercise. `nms_minimum` is therefore packed from a tree whose
+# canonical output is still round 1's; `rebuild_nms` re-derives the children from `attemptK/`,
+# which is the same answer by a different route.
+#
+# The post-promotion tree is covered where it belongs: `tests/test_nms.py` pins the passthrough
+# reading `attemptK/resolution.json`, and `pytest -m integration` runs it against real ORCA.
+
 MAX_ARCHIVE_BYTES = 1_000_000
 
 KEEP_PATTERNS = (
