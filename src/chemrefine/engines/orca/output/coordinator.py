@@ -66,6 +66,14 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
     symbols, positions = coords
     if not symbols:
         raise OutputParseError(f"CARTESIAN COORDINATES block has no atoms in {src}")
+    try:
+        force_vectors = forces.parse_forces_from_text(text)
+    except ValueError as e:
+        # Held to the same rule as the coordinates above. A bare ValueError escaping here
+        # would pass straight through `lifecycle._parse_job`, which contains only
+        # `OutputParseError` — so one malformed row would end the whole run in a traceback
+        # rather than becoming that structure's ledgered failure.
+        raise OutputParseError(f"malformed gradient row in {src}: {e}") from e
 
     thermo = energy.parse_thermochemistry_from_text(text, electronic_hartree=electronic)
     imaginary, modes = _parse_frequency_block(text, n_atoms=len(symbols))
@@ -74,7 +82,7 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
             symbols=symbols,
             positions=positions,
             energy_hartree=electronic,
-            forces_ev_per_a=forces.parse_forces_from_text(text),
+            forces_ev_per_a=force_vectors,
             terminated_normally=status.parse_terminated_normally(text),
             converged=status.parse_converged(text),
             gibbs_hartree=thermo.gibbs_hartree if thermo else None,

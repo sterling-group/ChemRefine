@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 from synthetic import THERMOCHEMISTRY_BLOCK, synthetic_dft_output
 
 from chemrefine.engines.api import ParsedResult
+from chemrefine.engines.orca.output import forces as forces_module
 from chemrefine.engines.orca.output import parse_dft, parse_dft_from_text, parse_output, status
 from chemrefine.engines.orca.output.ensembles import (
     parse_docker,
@@ -409,6 +411,45 @@ def test_parse_forces_handles_synthetic_block():
     assert forces.shape == (2, 3)
     # F = -dE/dx, so first atom's fx should be -0.001
     assert abs(forces[0][0] - (-0.001)) < 1e-9
+
+
+@pytest.mark.parametrize("exponent", ["1.0E-03", "1.0e-03", "1.0D-03", "1.0d-03"])
+def test_parse_forces_reads_every_exponent_spelling_it_admits(exponent: str):
+    """The row pattern accepts `[EeDd]`, so every one of those must convert.
+
+    ORCA 6.1.1 prints gradients fixed-point, but a pattern that matches a spelling the
+    conversion cannot parse is a latent bare ValueError on a path with no ValueError
+    handling of its own.
+    """
+    text = f"CARTESIAN GRADIENT\n----\n   0  H :   {exponent}   0.000000   0.000000\n----\n"
+    forces = parse_forces(text, to_ev_per_A=False)
+    assert forces is not None
+    assert abs(forces[0][0] - (-1.0e-3)) < 1e-12
+
+
+def test_a_malformed_gradient_row_is_a_parse_error_not_a_crash():
+    """Held to the same rule as a malformed coordinate row.
+
+    A bare ValueError here would pass straight through `lifecycle._parse_job`, which
+    contains only `OutputParseError` — one bad row would end the run in a traceback rather
+    than becoming that structure's ledgered failure.
+    """
+    text = (
+        "FINAL SINGLE POINT ENERGY  -1.0\n"
+        "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "---------\n"
+        "  H  0.0 0.0 0.0\n"
+        "---------\n"
+        "CARTESIAN GRADIENT\n"
+        "----\n"
+        "   0  H :   1.0e999999   0.000000   0.000000\n"
+        "----\n"
+    )
+    with (
+        patch.object(forces_module, "parse_forces_from_text", side_effect=ValueError("bad row")),
+        pytest.raises(OutputParseError, match="malformed gradient row"),
+    ):
+        parse_dft_from_text(text, src="job.out")
 
 
 # ---------------------------------------------------------------------------

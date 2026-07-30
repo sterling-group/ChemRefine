@@ -38,9 +38,10 @@ def parse_forces_from_text(text: str, *, to_ev_per_A: bool = True) -> NDArray[np
         m = _GRAD_LINE_RE.match(line)
         if not m:
             continue
-        dx = float(m.group(2).replace("D", "E"))
-        dy = float(m.group(3).replace("D", "E"))
-        dz = float(m.group(4).replace("D", "E"))
+        # The regex admits a Fortran `D` exponent in either case, so the rewrite has to
+        # cover both — accepting a spelling the conversion then cannot parse would turn a
+        # gradient row into a bare ValueError.
+        dx, dy, dz = (float(m.group(i).replace("D", "E").replace("d", "e")) for i in (2, 3, 4))
         fx, fy, fz = -dx, -dy, -dz
         if to_ev_per_A:
             fx *= HARTREE_PER_BOHR_TO_EV_PER_A

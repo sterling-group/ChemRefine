@@ -45,6 +45,45 @@ def test_inspect_empty_template_is_single_point(tmp_path: Path):
     assert inspect_template(_write(tmp_path, "* xyzfile 0 1 geom.xyz\n")).operation == "sp"
 
 
+@pytest.mark.parametrize(
+    "keyword",
+    [
+        "Opt",
+        "OptTS",
+        "COpt",
+        "ExtOpt",
+        "SloppyOpt",
+        "LooseOpt",
+        "NormalOpt",
+        "TightOpt",
+        "VeryTightOpt",
+    ],
+)
+def test_every_optimisation_keyword_orca_accepts_reads_as_an_optimisation(
+    tmp_path: Path, keyword: str
+):
+    """The list is what ORCA 6.1.1 actually takes, checked against the binary.
+
+    Guessing here fails silently in both directions: an accepted keyword this does not
+    recognise picks the wrong parser and, through the NMS frequency gate, admits or refuses
+    a step for a reason that is not true.
+    """
+    assert inspect_template(_write(tmp_path, f"! HF STO-3G {keyword}\n")).operation == "opt_sp"
+
+
+@pytest.mark.parametrize(
+    "keyword", ["TightOptTS", "VeryTightOptTS", "LooseOptTS", "COptTS", "ExtOptTS"]
+)
+def test_a_ts_search_is_only_ever_the_bare_keyword(tmp_path: Path, keyword: str):
+    """ORCA rejects every prefixed `…OptTS` spelling, so none can reach a real run.
+
+    This is what lets `is_ts` test for the exact token: a tightness level for a saddle-point
+    search is written as its own keyword (`! OptTS TightOpt`), read here as two tokens.
+    """
+    assert inspect_template(_write(tmp_path, f"! HF STO-3G {keyword}\n")).is_ts is False
+    assert inspect_template(_write(tmp_path, f"! HF STO-3G OptTS {keyword}\n")).is_ts is True
+
+
 def test_inspect_flags_optts_as_ts(tmp_path: Path):
     run = inspect_template(_write(tmp_path, "! B3LYP def2-SVP OptTS Freq\n"))
     # OptTS still parses like a normal opt (single optimized structure)…

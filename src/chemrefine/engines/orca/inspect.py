@@ -29,16 +29,24 @@ from pathlib import Path
 # A ``%geom … Scan … end`` block (a relaxed surface scan) → the ``pes`` parser.
 _GEOM_SCAN_RE = re.compile(r"%geom\b.*?\bscan\b.*?\bend\b", re.IGNORECASE | re.DOTALL)
 
-# Whole-token spellings of the two run-type keywords this keys on. ORCA prefixes
-# convergence tightness (``TightOpt``) and Cartesian/TS variants (``COpt``, ``OptTS``),
-# and frequencies come as ``Freq`` / ``NumFreq`` / ``AnFreq``. Matched against whole
-# tokens, so a keyword that merely contains one of these substrings cannot trip them.
+# Whole-token spellings of the two run-type keywords this keys on, as ORCA 6.1.1 accepts
+# them. Matched against whole tokens, so a keyword that merely contains one of these
+# substrings cannot trip them.
 #
-# ``ExtOpt`` is in the list because it *is* an optimisation — ORCA runs its own optimiser
-# over gradients supplied by an external program, which is exactly what the ExtOpt engines
-# (``mlip-extopt`` / ``pyscf-extopt``) do. Tokenising without it silently reclassified
-# every ExtOpt step as a single point.
-_OPT_TOKEN_RE = re.compile(r"(?:very|tight|normal|loose|c|ext)?opt(?:ts)?", re.IGNORECASE)
+# The optimisation prefixes are the convergence levels (``SloppyOpt`` … ``VeryTightOpt``)
+# and the Cartesian / external-optimiser variants (``COpt``, ``ExtOpt``). ``ExtOpt`` counts
+# as an optimisation because it is one — ORCA runs its own optimiser over gradients from an
+# external program, which is what the ``mlip-extopt`` / ``pyscf-extopt`` engines do.
+#
+# ``TS`` is a separate alternative rather than a suffix on the prefixed forms, because it
+# only attaches to the bare keyword: ORCA takes ``OptTS`` and rejects ``TightOptTS``,
+# ``COptTS`` and ``ExtOptTS`` outright ("UNRECOGNIZED OR DUPLICATED KEYWORD"). A tightness
+# level for a saddle-point search is written as its own keyword — ``! OptTS TightOpt`` —
+# which this reads as the two tokens it is. That is also why :attr:`OrcaInputInfo.is_ts`
+# can test for the exact token ``optts`` and not a family of spellings.
+_OPT_TOKEN_RE = re.compile(
+    r"(?:sloppy|loose|normal|verytight|tight|c|ext)?opt|optts", re.IGNORECASE
+)
 _FREQ_TOKEN_RE = re.compile(r"(?:num|an)?freq", re.IGNORECASE)
 
 # Every spelling of an ORCA PAL declaration, as ``(prefix)(count)`` pairs so :func:`_read_pal`
