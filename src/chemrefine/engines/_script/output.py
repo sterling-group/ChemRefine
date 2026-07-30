@@ -51,7 +51,40 @@ def _load_output_json(out_path: Path, *, label: str) -> dict[str, Any]:
         raise OutputParseError(f"{label} output {out_path} is not valid JSON: {e}") from e
     if "energy_hartree" not in data:
         raise OutputParseError(f"{label} output {out_path} missing required 'energy_hartree' field")
+    _require_finite(data["energy_hartree"], what="energy_hartree", label=label, path=out_path)
+    for row in data.get("gradient_hartree_per_bohr") or ():
+        for component in row:
+            _require_finite(component, what="gradient_hartree_per_bohr", label=label, path=out_path)
     return data
+
+
+def _require_finite(value: Any, *, what: str, label: str, path: Path) -> float:
+    """Return ``value`` as a finite float, or raise :class:`OutputParseError`.
+
+    A diverged calculation reports ``nan`` / ``inf`` rather than failing, and nothing
+    downstream treats that as a failure: :func:`chemrefine.lifecycle.succeeded` only reads
+    an explicit ``False`` flag, and :func:`chemrefine.filtering.apply` drops an energy that
+    is ``None``, not one that is ``NaN``. So the structure ranks as a real result — and
+    because every ``NaN`` comparison is false, it sorts by position rather than by energy
+    and displaces a genuine survivor. Refused here, at the boundary, where it becomes an
+    ordinary :attr:`~chemrefine.state.FailureKind.UNPARSEABLE` ledger entry and the step's
+    ``on_failure`` policy decides what happens next.
+
+    The gradient is held to the same rule: it is the other half of the same diverged
+    calculation, and a non-finite force is what the MLIP trainer would go on to train on.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as e:
+        raise OutputParseError(
+            f"{label} output {path} has a non-numeric {what!r} ({value!r})"
+        ) from e
+    if not np.isfinite(number):
+        raise OutputParseError(
+            f"{label} output {path} reports a non-finite {what!r} ({value!r}); "
+            f"the calculation diverged"
+        )
+    return number
 
 
 def _atoms_from_output(data: dict[str, Any], *, fallback: Atoms | None) -> Atoms:

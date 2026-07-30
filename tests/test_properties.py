@@ -196,3 +196,39 @@ def test_displacement_rejects_a_mode_of_the_wrong_shape(n_atoms: int, n_modes: i
 
     with pytest.raises(ValueError, match="shape mismatch"):
         displace_along_mode(np.zeros((n_atoms, 3)), np.zeros((n_modes, 3)), displacement=1.0)
+
+
+# ---------------------------------------------------------------------------
+# The parse boundary — what makes `energies` above a safe strategy
+# ---------------------------------------------------------------------------
+
+
+@given(st.floats())
+@settings(max_examples=200)
+def test_only_a_finite_energy_survives_the_parse_boundary(tmp_path_factory, value: float) -> None:
+    """No float reaches a ``Structure`` unless it is finite — or parsing raises.
+
+    Every filter property above draws from ``energies``, which excludes NaN and infinity.
+    That exclusion is only legitimate if something *enforces* it, and this is the
+    enforcement point: a diverged calculation writes ``nan``/``inf`` and the boundary must
+    turn that into an ``OutputParseError``, never a rankable energy. Asserted over the whole
+    float domain rather than the well-behaved subset, because the well-behaved subset is
+    exactly what let a NaN through before.
+
+    ``tmp_path_factory`` is session-scoped, so hypothesis may reuse it across examples;
+    one file, rewritten per example, is what that scope allows.
+    """
+    import json
+
+    import pytest
+
+    from chemrefine.engines._script.output import _load_output_json
+    from chemrefine.errors import OutputParseError
+
+    out = tmp_path_factory.getbasetemp() / "parse_boundary.json"
+    out.write_text(json.dumps({"energy_hartree": value}), encoding="utf-8")
+    if np.isfinite(value):
+        assert _load_output_json(out, label="MLIP")["energy_hartree"] == value
+    else:
+        with pytest.raises(OutputParseError):
+            _load_output_json(out, label="MLIP")

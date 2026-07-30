@@ -392,9 +392,18 @@ def write_json(path: Path, data: Any, *, indent: int | None = 2) -> None:
     thousands of short numeric values, and each carries its own newline and run of spaces.
     Nothing reads that document by eye, and nothing reads it by line either: the loader
     parses it whole, so the layout reaches no consumer.
+
+    ``allow_nan=False`` because Python's default emits bare ``NaN`` / ``Infinity``, which
+    are not JSON: ``jq`` reads ``NaN`` back as ``null``, so a diverged calculation would
+    reach any external consumer of a ``.result.json`` as "no energy computed" instead. The
+    parse boundary (:func:`chemrefine.engines._script.output._require_finite`) already
+    refuses those values, so this is the assertion that it did — a ``ValueError`` here
+    means something upstream let one through.
     """
     separators = None if indent is not None else _COMPACT_SEPARATORS
-    _atomic_write(path, json.dumps(data, indent=indent, separators=separators).encode())
+    _atomic_write(
+        path, json.dumps(data, indent=indent, separators=separators, allow_nan=False).encode()
+    )
 
 
 def _npz_bytes(arrays: dict[str, NDArray[Any]]) -> bytes:

@@ -18,7 +18,11 @@ from ase import Atoms
 
 from chemrefine.engines._script import render as _template_render
 from chemrefine.engines._script.engine import ScriptEngine
-from chemrefine.engines._script.output import _atoms_from_output, _forces_from_gradient
+from chemrefine.engines._script.output import (
+    _atoms_from_output,
+    _forces_from_gradient,
+    _load_output_json,
+)
 from chemrefine.errors import ConfigError, OutputParseError
 
 
@@ -192,3 +196,51 @@ def test_forces_from_gradient_handles_none():
 
 def test_forces_from_gradient_handles_empty():
     assert _forces_from_gradient([]) is None
+
+
+# ---------------------------------------------------------------------------
+# _load_output_json — a diverged calculation must not read as a result
+# ---------------------------------------------------------------------------
+
+
+def _write_output(tmp_path: Path, body: str) -> Path:
+    out = tmp_path / "step1_0.json"
+    out.write_text(body, encoding="utf-8")
+    return out
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
+def test_a_non_finite_energy_is_refused(tmp_path: Path, literal: str):
+    """A diverged calculation reports `nan`/`inf`; it must not rank as a real result.
+
+    Nothing downstream would catch it: `succeeded` reads only an explicit False flag, and
+    `filtering.apply` drops an energy that is None, not one that is NaN — so the structure
+    would sort by list position (every NaN comparison is false) and displace a real survivor.
+    """
+    out = _write_output(tmp_path, f'{{"energy_hartree": {literal}}}')
+    with pytest.raises(OutputParseError, match="non-finite"):
+        _load_output_json(out, label="MLIP")
+
+
+def test_a_non_finite_gradient_component_is_refused(tmp_path: Path):
+    """The other half of the same diverged calculation — and what the trainer would fit."""
+    out = _write_output(
+        tmp_path, '{"energy_hartree": -1.0, "gradient_hartree_per_bohr": [[0.0, NaN, 0.0]]}'
+    )
+    with pytest.raises(OutputParseError, match=r"non-finite.*gradient_hartree_per_bohr"):
+        _load_output_json(out, label="MLIP")
+
+
+def test_a_non_numeric_energy_is_refused(tmp_path: Path):
+    """`float()` on a string used to escape as a bare ValueError, past the exit-code contract."""
+    out = _write_output(tmp_path, '{"energy_hartree": "diverged"}')
+    with pytest.raises(OutputParseError, match="non-numeric"):
+        _load_output_json(out, label="MLIP")
+
+
+def test_a_finite_energy_and_gradient_still_pass(tmp_path: Path):
+    """The guard must not reject the ordinary case."""
+    out = _write_output(
+        tmp_path, '{"energy_hartree": -1.5, "gradient_hartree_per_bohr": [[0.0, 1e-9, -2.0]]}'
+    )
+    assert _load_output_json(out, label="MLIP")["energy_hartree"] == -1.5
