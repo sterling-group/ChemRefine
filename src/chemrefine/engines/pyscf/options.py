@@ -43,6 +43,19 @@ class PyscfOptions(EngineOptions):
     ``device`` (``cuda`` ⇒ ``True``); set it explicitly to override. The SCF
     falls back to CPU if gpu4pyscf can't initialise."""
 
+    strict_scf: bool = True
+    """Refuse to serve a gradient from an SCF that did not converge.
+
+    On by default because the alternative is silent: PySCF returns the last iterate rather
+    than raising, so ORCA would take its next optimisation step on a gradient computed from
+    a non-stationary density, and the ``.out`` it writes reports *ORCA's* geometry
+    convergence — which says nothing about the backend's SCF. The structure then ranks and
+    filters against correctly-converged siblings with nothing marking it.
+
+    Set ``false`` only if you knowingly want the loose behaviour (a deliberately truncated
+    SCF, a scan where a few points are expected not to settle); the energy is then whatever
+    the last iteration produced."""
+
     save_tensors: bool = False
     """Extract one- + two-electron tensors after the SCF and persist to ``.npz``."""
 

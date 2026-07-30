@@ -135,6 +135,7 @@ def tokens_from_options(
     *,
     value_flags: tuple[tuple[str, str], ...] = (),
     bool_flags: tuple[str, ...] = (),
+    false_flags: tuple[tuple[str, str], ...] = (),
 ) -> list[str]:
     """Turn a validated options dict into ``--flag value`` / ``--flag`` CLI tokens.
 
@@ -143,6 +144,14 @@ def tokens_from_options(
     truthy (covering MLIP's kebab mapping ``model_name → --model`` and PySCF's plain
     ``method → --method`` alike); ``bool_flags`` are option keys emitted as ``--{key}`` when
     truthy. Falsy values are omitted so the engine's ``run_block`` emits only flags the user set.
+
+    ``false_flags`` are the inverse — ``(option_key, cli_flag)`` pairs emitted when the value
+    is **explicitly falsy** — and exist for a knob whose safe setting is the default. A guard
+    spelled as a positive flag fails *open*: the server's argparse default has to be the off
+    state, so anything that drops the token (a stale wrapper, a hand-run server) silently
+    disables it. Spelling the opt-*out* means the dangerous state is the one that needs saying.
+    An **absent** key emits nothing, matching the other two: absent means "not set", which is
+    the model's default, which for this kind of knob is on.
     """
     tokens: list[str] = []
     for key, flag in value_flags:
@@ -152,4 +161,5 @@ def tokens_from_options(
     for key in bool_flags:
         if options.get(key):
             tokens.append(f"--{key}")
+    tokens.extend(flag for key, flag in false_flags if key in options and not options[key])
     return tokens

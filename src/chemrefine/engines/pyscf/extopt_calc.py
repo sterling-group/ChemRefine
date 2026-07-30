@@ -30,6 +30,7 @@ from chemrefine.engines._backend_server.base import (
 )
 from chemrefine.engines.pyscf import _runtime
 from chemrefine.engines.pyscf.options import PyscfOptions
+from chemrefine.errors import JobFailureError
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,8 @@ logger = logging.getLogger(__name__)
 # ``--{key}`` token builder below needs no per-flag special-casing.
 _KEY_VALUE_FLAGS: tuple[str, ...] = ("method", "xc", "basis", "tensor_folder")
 _BOOL_FLAGS: tuple[str, ...] = ("df", "gpu", "save_tensors", "localized")
+# Spelled as the opt-*out* so the guard fails closed: a dropped token leaves it on.
+_FALSE_FLAGS: tuple[tuple[str, str], ...] = (("strict_scf", "--no-strict-scf"),)
 
 # The correlation tag becomes a filename component; the request is untrusted
 # (any same-host client can POST to the loopback server), so squash anything
@@ -63,6 +66,7 @@ class PyscfExtOptCalculator(ComputeBackend):
         save_tensors: bool = False,
         localized: bool = False,
         tensor_folder: str = "tensors",
+        strict_scf: bool = True,
     ) -> None:
         self.method = method
         self.xc = xc
@@ -72,6 +76,9 @@ class PyscfExtOptCalculator(ComputeBackend):
         self.save_tensors = save_tensors
         self.localized = localized
         self.tensor_folder = tensor_folder
+        # Defaults on, unlike the other booleans here, because it is a correctness guard:
+        # a directly-constructed calculator must not be the lenient one.
+        self.strict_scf = strict_scf
 
     @classmethod
     def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:
@@ -125,6 +132,16 @@ class PyscfExtOptCalculator(ComputeBackend):
             default=defaults.tensor_folder,
             help="Directory (relative to $WORK_DIR) for save_tensors .npz output",
         )
+        # The one negative flag: `strict_scf` is on unless the step opts out, so argparse
+        # must default it on too — the other booleans here can default off because their
+        # off state is the harmless one.
+        parser.add_argument(
+            "--no-strict-scf",
+            dest="strict_scf",
+            action="store_false",
+            default=defaults.strict_scf,
+            help="Serve a gradient even when the SCF did not converge",
+        )
 
     @classmethod
     def server_cli_from_options(cls, options: dict[str, Any]) -> list[str]:
@@ -132,11 +149,15 @@ class PyscfExtOptCalculator(ComputeBackend):
 
         PySCF flag spelling == YAML key, so each value flag maps to ``--{key}``; the server
         still injects the per-call correlation ``tag`` itself (single-channel, like MLIP).
+        ``strict_scf`` is the exception, emitted as its opt-out so a missing token cannot
+        turn the guard off — see
+        :func:`~chemrefine.engines._backend_server.base.tokens_from_options`.
         """
         return tokens_from_options(
             options,
             value_flags=tuple((key, f"--{key}") for key in _KEY_VALUE_FLAGS),
             bool_flags=_BOOL_FLAGS,
+            false_flags=_FALSE_FLAGS,
         )
 
     @classmethod
@@ -151,6 +172,7 @@ class PyscfExtOptCalculator(ComputeBackend):
             save_tensors=args.save_tensors,
             localized=args.localized,
             tensor_folder=args.tensor_folder,
+            strict_scf=args.strict_scf,
         )
 
     def calc(self, data: CalculationData) -> tuple[float, list[list[float]]]:
@@ -159,6 +181,14 @@ class PyscfExtOptCalculator(ComputeBackend):
         Single channel: the SCF knobs come from this instance (built once on the
         server from the step's YAML options); only the per-call correlation
         ``tag`` is read off the request, to key ``save_tensors`` dumps.
+
+        A non-converged SCF raises unless the step set ``strict_scf: false``. PySCF returns
+        the last iterate rather than raising, so this used to be logged and then served: ORCA
+        stepped on a gradient from a non-stationary density and recorded its own geometry
+        convergence in the ``.out``, which says nothing about the backend. Raising here turns
+        it into the ordinary failure the bridge already knows how to report — the server's
+        500 becomes a :class:`~chemrefine.errors.JobFailureError` client-side, and the
+        detail lands in the ExtOpt server log beside the structure's other artifacts.
         """
         mol = _runtime.build_mol(
             symbols=data.symbols,
@@ -183,6 +213,13 @@ class PyscfExtOptCalculator(ComputeBackend):
             meta["gpu_used"],
             meta["elapsed_seconds"],
         )
+        if self.strict_scf and not meta["converged"]:
+            raise JobFailureError(
+                f"PySCF SCF did not converge (E={energy:.10f} Eh, method={self.method}, "
+                f"xc={self.xc}, basis={self.basis}); a gradient from a non-stationary "
+                f"density is not usable. Tighten the SCF, or set `strict_scf: false` in "
+                f"the step's options to accept it."
+            )
 
         if self.save_tensors:
             # ``tag`` is the per-call correlation id the bridge derives from the

@@ -221,7 +221,17 @@ TESTS_ONLY = {
     "sample": {"by_parent", "temperature_k", "energy_type"},
     "nms": {"ts_mode_index", "seed"},
     "mlip": {"model_path", "backend_python"},
-    "pyscf": {"df", "gpu", "save_tensors", "localized", "tensor_folder", "backend_python"},
+    # `strict_scf` is an opt-*out*: it defaults on, and the tutorials have no reason to
+    # turn a correctness guard off, so it is filed here rather than shown in an example.
+    "pyscf": {
+        "df",
+        "gpu",
+        "save_tensors",
+        "localized",
+        "tensor_folder",
+        "backend_python",
+        "strict_scf",
+    },
     "trainer": {"valid_fraction", "seed", "job_name", "device"},
 }
 

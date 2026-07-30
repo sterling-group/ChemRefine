@@ -8,6 +8,7 @@ tensor-extraction gating — not the chemistry itself.
 
 from __future__ import annotations
 
+import argparse
 import sys
 import types
 from pathlib import Path
@@ -20,7 +21,7 @@ import pytest
 from chemrefine.engines._backend_server.base import CalculationData
 from chemrefine.engines.pyscf import _runtime, extopt_calc
 from chemrefine.engines.pyscf.options import PyscfOptions
-from chemrefine.errors import ConfigError
+from chemrefine.errors import ConfigError, JobFailureError
 
 
 def _data(*, multiplicity: int = 1, dograd: bool = True, **settings) -> CalculationData:
@@ -604,3 +605,68 @@ def test_server_cli_from_options_handles_missing_keys():
     """A YAML options dict missing some keys must not raise; just omit them."""
     tokens = extopt_calc.PyscfExtOptCalculator.server_cli_from_options({"xc": "b3lyp"})
     assert tokens == ["--xc", "b3lyp"]
+
+
+# ---------------------------------------------------------------------------
+# strict_scf — an unconverged SCF must not be served as a usable gradient
+# ---------------------------------------------------------------------------
+
+
+def test_an_unconverged_scf_is_refused(monkeypatch):
+    """PySCF returns the last iterate instead of raising, so nothing else would notice.
+
+    ORCA writes its own geometry-convergence verdict to the `.out`, which says nothing
+    about the backend's SCF — so the structure would rank and filter against
+    correctly-converged siblings with nothing marking it.
+    """
+    mocks = _install_fake_pyscf(monkeypatch)
+    mocks["rks"].converged = False
+
+    with pytest.raises(JobFailureError, match="did not converge"):
+        extopt_calc.PyscfExtOptCalculator().calc(_data())
+
+
+def test_an_unconverged_scf_is_served_when_the_step_opts_out(monkeypatch):
+    """`strict_scf: false` is for a knowingly loose SCF — the energy is the last iterate."""
+    mocks = _install_fake_pyscf(monkeypatch)
+    mocks["rks"].converged = False
+
+    energy, gradient = extopt_calc.PyscfExtOptCalculator(strict_scf=False).calc(_data())
+
+    assert energy == -1.5
+    assert len(gradient) == 2
+
+
+def test_a_converged_scf_is_unaffected_by_the_guard(monkeypatch):
+    """The ordinary case must not change."""
+    _install_fake_pyscf(monkeypatch)
+    energy, _gradient = extopt_calc.PyscfExtOptCalculator().calc(_data())
+    assert energy == -1.5
+
+
+def test_the_guard_defaults_on_for_a_directly_constructed_calculator():
+    """Unlike the other booleans here, its safe state is the default one."""
+    assert extopt_calc.PyscfExtOptCalculator(basis="def2-svp").strict_scf is True
+    assert PyscfOptions(basis="def2-svp", xc="pbe").strict_scf is True
+
+
+def test_strict_scf_reaches_the_server_as_its_opt_out():
+    """Emitted as `--no-strict-scf` so a dropped token cannot silently disable the guard."""
+    assert "--no-strict-scf" in extopt_calc.PyscfExtOptCalculator.server_cli_from_options(
+        {"strict_scf": False}
+    )
+    assert "--no-strict-scf" not in extopt_calc.PyscfExtOptCalculator.server_cli_from_options(
+        {"strict_scf": True}
+    )
+
+
+def test_the_server_cli_round_trips_the_opt_out():
+    """The flag the engine emits must be the flag the server parses, in both states."""
+    for strict in (True, False):
+        tokens = extopt_calc.PyscfExtOptCalculator.server_cli_from_options({"strict_scf": strict})
+        parser = argparse.ArgumentParser()
+        extopt_calc.PyscfExtOptCalculator.add_cli_args(parser)
+        assert (
+            extopt_calc.PyscfExtOptCalculator.from_args(parser.parse_args(tokens)).strict_scf
+            is strict
+        )
