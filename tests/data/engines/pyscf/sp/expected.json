@@ -49,7 +49,8 @@
           -0.3111035082317716
         ]
       ],
-      "imaginary_freqs": null
+      "imaginary_freqs": null,
+      "resolved_from": null
     }
   ]
 }

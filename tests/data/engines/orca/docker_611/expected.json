@@ -57,7 +57,8 @@
         ]
       ],
       "forces_ev_per_a": null,
-      "imaginary_freqs": null
+      "imaginary_freqs": null,
+      "resolved_from": null
     },
     {
       "id": "0-1",
@@ -115,7 +116,8 @@
         ]
       ],
       "forces_ev_per_a": null,
-      "imaginary_freqs": null
+      "imaginary_freqs": null,
+      "resolved_from": null
     },
     {
       "id": "0-2",
@@ -173,7 +175,8 @@
         ]
       ],
       "forces_ev_per_a": null,
-      "imaginary_freqs": null
+      "imaginary_freqs": null,
+      "resolved_from": null
     }
   ]
 }

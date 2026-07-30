@@ -79,6 +79,14 @@ class Structure:
     when absent. A **transient** artifact used by NMS to displace along imaginary modes — it is
     *not* persisted to the cache (an active NMS run always re-parses), so a cache-reloaded
     structure carries ``None``."""
+    resolved_from: str | None = None
+    """ID of the displaced child whose calculation this structure's artifacts came from, for a
+    structure resolved by normal-mode sampling; ``None`` for every other structure.
+
+    A resolved parent keeps its own ID, and the winning child's files are promoted to the
+    parent's canonical basenames — so this is the only record of which of the ± children
+    actually produced them. ``random`` sampling and a parent already at its target leave it
+    ``None``: no promotion happened."""
 
     def __post_init__(self) -> None:
         """Make the array fields as read-only as the dataclass claims to be.

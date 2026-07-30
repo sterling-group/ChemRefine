@@ -75,7 +75,8 @@
         ]
       ],
       "forces_ev_per_a": null,
-      "imaginary_freqs": null
+      "imaginary_freqs": null,
+      "resolved_from": null
     }
   ]
 }

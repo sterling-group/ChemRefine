@@ -276,6 +276,11 @@ def structure_record(s: Structure) -> dict[str, Any]:
     - ``symbols``, ``positions`` — the geometry [Å]
     - ``forces_ev_per_a`` — forces [eV/Å]
     - ``imaginary_freqs`` — mode index (JSON string) → frequency [cm⁻¹]
+    - ``resolved_from`` — the NMS child this structure's artifacts came from
+
+    ``resolved_from`` is additive: :func:`structure_from_record` reads it with ``.get``, so a
+    record written before it existed loads as ``None`` and needs no
+    :data:`RESULT_FORMAT_VERSION` bump.
 
     Only symbols + positions of the ``Atoms`` are stored — that is all the
     pipeline ever reads back (and all that :func:`parents_digest` hashes).
@@ -306,6 +311,7 @@ def structure_record(s: Structure) -> dict[str, Any]:
         "imaginary_freqs": (
             None if s.imaginary_freqs is None else {str(k): v for k, v in s.imaginary_freqs.items()}
         ),
+        "resolved_from": s.resolved_from,
     }
 
 
@@ -326,6 +332,7 @@ def structure_from_record(d: dict[str, Any]) -> Structure:
         enthalpy_hartree=d.get("enthalpy_hartree"),
         energy_zpe_hartree=d.get("energy_zpe_hartree"),
         imaginary_freqs=None if imaginary is None else {int(k): v for k, v in imaginary.items()},
+        resolved_from=d.get("resolved_from"),
     )
 
 

@@ -447,6 +447,9 @@ def test_run_nms_winner_at_canonical_id_stays(tmp_path: Path):
     assert res.failures == ()
     assert (ctx.step_dir / "0" / "step1_0.xyz").is_file()  # winner geometry at canonical
     assert (ctx.step_dir / "0" / "attempt1").is_dir()  # exploration archived
+    # The parent keeps its own id, so this is the only record of which child's calculation
+    # the promoted artifacts came from.
+    assert res.survivors[0].resolved_from == "0_m5_pos"
 
 
 def test_run_nms_already_at_target_passes_through(tmp_path: Path):
@@ -457,6 +460,16 @@ def test_run_nms_already_at_target_passes_through(tmp_path: Path):
     assert [s.id for s in res.survivors] == ["0"]
     assert res.survivors[0].converged is True
     assert not (ctx.step_dir / "0" / "attempt1").exists()  # no displacement needed
+    assert res.survivors[0].resolved_from is None  # nothing was promoted
+
+
+def test_run_nms_random_fanout_records_no_resolution(tmp_path: Path):
+    """``random`` keeps the children as their own structures, so none is a promoted winner."""
+    engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=_modes(8))})
+    ctx = _ctx(tmp_path, (_h2("0"),), options={"target": "random", "seed": 1})
+    round1 = _seed_round1(engine, ctx)
+    res = nms.run_nms(engine, round1, [], ctx, ctx.step_cfg)
+    assert all(s.resolved_from is None for s in res.survivors)
 
 
 def test_run_nms_random_fans_out_to_children(tmp_path: Path):

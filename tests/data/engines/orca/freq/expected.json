@@ -62,7 +62,8 @@
       ],
       "imaginary_freqs": {
         "6": -820.38
-      }
+      },
+      "resolved_from": null
     }
   ]
 }

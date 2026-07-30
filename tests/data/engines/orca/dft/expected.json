@@ -863,7 +863,8 @@
           -0.00024235220401592388
         ]
       ],
-      "imaginary_freqs": null
+      "imaginary_freqs": null,
+      "resolved_from": null
     }
   ]
 }

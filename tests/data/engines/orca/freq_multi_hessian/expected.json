@@ -119,7 +119,8 @@
       "forces_ev_per_a": null,
       "imaginary_freqs": {
         "6": -364.76
-      }
+      },
+      "resolved_from": null
     }
   ]
 }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +24,7 @@ from chemrefine.cache import (
     save_manifest,
     save_result_records,
     structure_from_record,
+    structure_record,
 )
 from chemrefine.config import StepConfig
 from chemrefine.errors import CacheError
@@ -417,6 +419,30 @@ def _saved(tmp_path: Path) -> Path:
         chemrefine_version="2.0.0",
     )
     return step_dir
+
+
+def test_resolved_from_round_trips_and_is_optional(tmp_path: Path):
+    """The NMS provenance survives save → load, and a record without it loads as ``None``.
+
+    Additive by design: dropping the key is what a record written before the field existed
+    looks like, so it must read back as "no promotion happened" rather than raising.
+    """
+    resolved = replace(_results().structures[0], resolved_from="0_m5_pos")
+    step_dir = tmp_path / "step1"
+    save(
+        step_cfg=_cfg(),
+        parent_ids=("0",),
+        results=StepResults(structures=(resolved,)),
+        step_dir=step_dir,
+        chemrefine_version="2.0.0",
+    )
+    loaded = load(step_dir)
+    assert loaded is not None
+    assert loaded.results.structures[0].resolved_from == "0_m5_pos"
+
+    record = structure_record(resolved)
+    del record["resolved_from"]
+    assert structure_from_record(record).resolved_from is None
 
 
 def test_a_document_without_its_sidecar_is_an_error_not_a_fallback(tmp_path: Path):

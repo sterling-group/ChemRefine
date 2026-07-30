@@ -399,7 +399,14 @@ def _accept(
                 structure_artifact_path(ctx.step_dir, step, parent.id, "xyz"),
                 comment=f"NMS-resolved {parent.id}",
             )
-        return [replace(winner, id=parent.id, parent_id=parent.parent_id)], []
+        return [
+            replace(
+                winner,
+                id=parent.id,
+                parent_id=parent.parent_id,
+                resolved_from=winner.id,
+            )
+        ], []
     return [], [
         step_failures.Failure(
             parent.id, step_failures.FailureKind.UNRESOLVED_NMS, _best(round2, parent, energy_attr)
