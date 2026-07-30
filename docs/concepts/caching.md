@@ -24,8 +24,8 @@ float64 costs 18 bytes on disk, a `strtod` call to parse and 32 bytes live; as a
 | load | 1.73 s | **0.36 s** |
 | peak memory | 268 MB | **75 MB** |
 
-`tests/test_perf_cache.py` re-measures this (`pytest -m integration -s`), so the
-claim stays checked rather than remembered.
+`tests/test_perf_cache.py` re-measures this (`pytest -m integration -s`); these
+figures come from that run.
 
 An `.npz` is an ordinary ZIP of `.npy` members, and a `.npy` is a short ASCII
 header plus the array's raw buffer — inspect it with `unzip -l` or `np.load`.
@@ -121,25 +121,24 @@ forcing a clean rebuild rather than a silent wrong read.
 
 ## Cost at scale
 
-`step.json` is one document holding every structure, rewritten in full on each save, and
-`parents_digest` re-hashes every parent's coordinates once per step. Both are linear in
-the structure count, and both are negligible next to the calculations they bookkeep.
-Measured on 30-atom structures (`tests/test_perf_cache.py`, run with `-m integration`):
+The cache is rewritten in full on each save, and `parents_digest` re-hashes every parent's
+coordinates once per step. Both are linear in the structure count, and both are negligible
+next to the calculations they bookkeep. Measured on 30-atom structures
+(`tests/test_perf_cache.py`, run with `-m integration`):
 
-| structures | `parents_digest` | `cache.save` | `cache.load` | `steps.csv` | `step.json` |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-| 200 | 0.001 s | 0.03 s | 0.02 s | 0.01 s | 1.5 MB |
-| 2 000 | 0.02 s | 0.32 s | 0.21 s | 0.01 s | 15 MB |
-| 10 000 | 0.06 s | 1.6 s | 1.2 s | 0.05 s | 73 MB |
+| structures | `parents_digest` | `cache.save` | `cache.load` | `steps.csv` | `_cache/` | live state |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 200 | 0.001 s | 0.02 s | 0.01 s | 0.004 s | 0.4 MB | 0.6 MB |
+| 2 000 | 0.01 s | 0.15 s | 0.09 s | 0.01 s | 3.6 MB | 6.5 MB |
+| 10 000 | 0.06 s | 0.97 s | 0.24 s | 0.05 s | 17.9 MB | 32.6 MB |
 
-A 10 000-structure step spends under three seconds on all of its bookkeeping, against a
-step that is running 10 000 quantum-chemistry jobs. There is no reason to reach for a
-different on-disk format at these sizes.
+A 10 000-structure step spends about a second on all of its bookkeeping, against a step
+running 10 000 quantum-chemistry jobs.
 
-The number worth watching is the document size, not the time: at 10 000 structures
-`step.json` is ~73 MB, and saving or loading it materialises that as Python objects. If a
-workflow ever needs 10⁵ structures in a single step, that is the limit it will hit
-first — and the fix would be per-structure records under `_cache/` with an index, not a
-faster serializer.
+The number worth watching is the last column, not the time. The pipeline holds every
+structure's `ase.Atoms` in memory for the whole run, so **residency**, not disk, is the
+ceiling — and most of it is ASE's object graph rather than the coordinates. A workflow
+needing 10⁵ structures in one step would hit that first, and the answer would be to stop
+holding them all at once, not a faster serializer.
 
 See the [Cache API](../api/cache.md) for the functions involved.

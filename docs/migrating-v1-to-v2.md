@@ -123,7 +123,7 @@ one-line warning), so existing scripts keep working:
 | `chemrefine CONFIG --rerun_errors [N]`  | `chemrefine rerun-errors CONFIG [N]`  |
 | `--maxcores N`                      | `--maxcores N` (unchanged)               |
 
-## v2 default changes worth knowing
+## v2 default changes
 
 A few defaults differ from earlier expectations (all overridable):
 

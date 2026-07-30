@@ -12,14 +12,14 @@ orientation before making changes.
 
 ## One thing to know about the test suite
 
-ChemRefine holds 100% line and branch coverage, and the CI gate enforces it. It
-is worth knowing exactly what that buys: it proves every line ran, not that two
-components agree with each other.
+ChemRefine holds 100% line and branch coverage, and the CI gate enforces it.
+What that buys is precise: it proves every line ran, not that two components
+agree with each other.
 
-The defects this project has actually shipped lived in the seams — an option
-knob read through a validated model in one place and off the raw dict in
-another, with different defaults; a value shell-quoted where it was executed
-but not where it was written to the runlog. All of it fully covered.
+Covered defects live in the seams — an option knob read through a validated
+model in one place and off the raw dict in another, with different defaults; a
+value shell-quoted where it is executed but not where it is written to the
+runlog. Both halves are exercised; the pair is not.
 
 So when a change spans two modules, add an *invariant* test alongside the unit
 tests: assert the two readers agree, across every engine rather than the one

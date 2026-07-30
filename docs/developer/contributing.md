@@ -28,7 +28,7 @@ The coverage gate is real: new code ships with tests that cover every
 line and branch, and every module/class/function carries a docstring
 (`interrogate --fail-under=100`). The suite is fast (< 10 s) — run it often.
 
-## Conventions worth knowing
+## Conventions
 
 - **Engines** are plugins. Read [Adding an Engine](adding-an-engine.md) before
   adding one — it names the base class to subclass for each shape of backend,
