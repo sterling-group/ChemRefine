@@ -254,6 +254,59 @@ def test_is_resolved_false_for_non_terminated_child():
 
 
 # ---------------------------------------------------------------------------
+# The resolution boundary — `== target`, not "at most"
+# ---------------------------------------------------------------------------
+#
+# These two predicates are the whole definition of "reached the requested stationary
+# point", and the imaginary count has to match the target *exactly* in both directions.
+# Nothing used to pin the lower side: the suite passed with both weakened from `==` to
+# `<=`, at 100% branch coverage, because every case it exercised sat on the boundary from
+# above. Under `<=` a `ts` step accepts a child that relaxed all the way into a minimum,
+# promotes it to the parent's canonical id, and reports success — the transition state
+# silently replaced by the wrong stationary point.
+
+
+@pytest.mark.parametrize(
+    ("imaginary", "target", "resolved"),
+    [
+        ({}, 0, True),  # a verified minimum
+        ({6: -100.0}, 0, False),  # one imaginary left — not a minimum
+        ({6: -100.0}, 1, True),  # a verified first-order saddle
+        ({}, 1, False),  # fell into a minimum — NOT a transition state
+        ({6: -100.0, 8: -50.0}, 1, False),  # second-order saddle — not a TS either
+    ],
+)
+def test_is_resolved_requires_the_exact_imaginary_count(
+    imaginary: dict[int, float], target: int, resolved: bool
+):
+    """Both sides of the target, so neither `<=` nor `>=` can pass for `==`."""
+    child = Structure(id="c", atoms=Atoms("H"), terminated_normally=True, imaginary_freqs=imaginary)
+    assert nms._is_resolved(child, target) is resolved
+
+
+@pytest.mark.parametrize(
+    ("imaginary", "target", "at_target"),
+    [
+        ({}, 0, True),
+        ({6: -100.0}, 0, False),
+        ({6: -100.0}, 1, True),
+        ({}, 1, False),  # a minimum is not "already at" a ts target
+        ({6: -100.0, 8: -50.0}, 1, False),
+    ],
+)
+def test_already_at_target_requires_the_exact_imaginary_count(
+    imaginary: dict[int, float], target: int, at_target: bool
+):
+    """The short-circuit is held to the same rule as the round-2 verdict.
+
+    They must agree: if one accepts a structure the other rejects, a step either
+    re-displaces something already resolved or passes through something that is not.
+    """
+    structure = Structure(id="s", atoms=Atoms("H"), imaginary_freqs=imaginary)
+    assert nms._already_at_target(structure, target) is at_target
+
+
+# ---------------------------------------------------------------------------
 # Reuse fingerprint
 # ---------------------------------------------------------------------------
 
