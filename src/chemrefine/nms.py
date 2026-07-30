@@ -555,7 +555,7 @@ def reattempt_nms(
         )
         engine.submit(missing_inputs, ctx)
 
-    r1_succ, r1_fail = lifecycle.parse_with_failures(engine, failed_manifest, ctx)
+    r1_succ, r1_fail = lifecycle.parse_and_record(engine, failed_manifest, ctx)
     r1_succ, r1_fail = lifecycle.retry_unconverged(engine, ctx, r1_succ, r1_fail)
     reattempt = run_nms(engine, StepResults(structures=tuple(r1_succ)), r1_fail, ctx)
     kept = tuple(

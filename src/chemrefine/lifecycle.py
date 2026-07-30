@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from dataclasses import replace
+from pathlib import Path
 
 from chemrefine import __version__, attempts, cache
 from chemrefine.config import StepConfig
@@ -67,48 +68,76 @@ def failure_kind(s: Structure) -> FailureKind:
     return FailureKind.FAILED
 
 
+def _parse_job(
+    engine: CalculationEngine, triple: tuple[Path, Path, str], ctx: StepContext
+) -> tuple[list[Structure], Failure | None]:
+    """Parse one job: the structures it produced, and its failure if it has one.
+
+    A job is a *failure* when its output is missing, unparseable, or parses to a structure
+    the engine marks unconverged / not-terminated. A fan-out job (a GOAT ensemble, a PES
+    scan) yields several structures and at most one failure, described by the best geometry
+    among the bad frames — the reason has to describe the geometry carried forward, because
+    :func:`retry_unconverged` routes on it.
+    """
+    _inp, out, sid = triple
+    if not out.is_file():
+        return [], Failure(sid, FailureKind.MISSING_OUTPUT, None)
+    try:
+        parsed = list(engine.parse(StepInputs(files=(triple,)), ctx).structures)
+    except OutputParseError as e:
+        return [], Failure(sid, FailureKind.UNPARSEABLE, None, detail=str(e))
+    bad = [s for s in parsed if not succeeded(s)]
+    if not bad:
+        return parsed, None
+    best = min(bad, key=lambda s: (s.energy_hartree is None, s.energy_hartree or 0.0))
+    return parsed, Failure(sid, failure_kind(best), best)
+
+
+def _parse_each(
+    engine: CalculationEngine, inputs: StepInputs, ctx: StepContext
+) -> list[tuple[Path, list[Structure], Failure | None]]:
+    """Every job's ``(directory, structures, failure)``, parsed independently.
+
+    Per job rather than per batch so one bad output never crashes the step — its failure is
+    captured and the rest still parse.
+    """
+    return [(triple[1].parent, *_parse_job(engine, triple, ctx)) for triple in inputs.files]
+
+
+def _split(
+    jobs: list[tuple[Path, list[Structure], Failure | None]],
+) -> tuple[list[Structure], list[Failure]]:
+    """Flatten parsed jobs into the successes and failures a step reasons about."""
+    successes = [s for _dir, parsed, _f in jobs for s in parsed if succeeded(s)]
+    failures = [f for _dir, _parsed, f in jobs if f is not None]
+    return successes, failures
+
+
 def parse_with_failures(
     engine: CalculationEngine, inputs: StepInputs, ctx: StepContext
 ) -> tuple[list[Structure], list[Failure]]:
-    """Parse each output independently; classify into successes and failures.
+    """Parse a batch's outputs and classify them. Writes nothing.
 
-    A job is a *failure* when its output is missing, unparseable, or parses to a
-    structure the engine marks unconverged / not-terminated. Parsing per input
-    (rather than the whole batch at once) means one bad job never crashes the
-    step — its failure is captured and the rest still parse. Engine success
-    flags are set in the single parse pass (see ``orca.output``).
+    Use this to read a tree you must not modify — :func:`chemrefine.nms.rebuild_nms` re-reads
+    round-2 children only to re-derive which one won. Everything that *owns* the results it
+    parses wants :func:`parse_and_record`.
     """
-    successes: list[Structure] = []
-    failures: list[Failure] = []
-    for triple in inputs.files:
-        _inp, out, sid = triple
-        if not out.is_file():
-            failures.append(Failure(sid, FailureKind.MISSING_OUTPUT, None))
-            continue
-        try:
-            parsed = list(engine.parse(StepInputs(files=(triple,)), ctx).structures)
-        except OutputParseError as e:
-            failures.append(Failure(sid, FailureKind.UNPARSEABLE, None, detail=str(e)))
-            continue
-        # Drop the canonical parsed-result record next to the native output —
-        # the engine-independent JSON every calculation leaves behind, for
-        # failures too (an unconverged result is still a parsed result).
-        cache.save_result_records(parsed, out.parent, ctx.step_cfg.step)
-        successes.extend(s for s in parsed if succeeded(s))
-        bad = [s for s in parsed if not succeeded(s)]
-        if bad:
-            best = min(
-                bad,
-                key=lambda s: (s.energy_hartree is None, s.energy_hartree or 0.0),
-            )
-            # The reason must describe the geometry we carry forward, not some other
-            # frame of the same job. For a fan-out — a GOAT ensemble, a PES scan —
-            # frame 0 crashing while frame 3 merely failed to converge would otherwise
-            # ledger "did not terminate normally" against frame 3's geometry, and
-            # `retry_unconverged` keys on that exact string, so the mismatch routes the
-            # structure to the wrong recovery.
-            failures.append(Failure(sid, failure_kind(best), best))
-    return successes, failures
+    return _split(_parse_each(engine, inputs, ctx))
+
+
+def parse_and_record(
+    engine: CalculationEngine, inputs: StepInputs, ctx: StepContext
+) -> tuple[list[Structure], list[Failure]]:
+    """:func:`parse_with_failures`, and drop each job's canonical result record beside it.
+
+    The record is the engine-independent JSON every calculation leaves next to its native
+    output — written for failures too, since an unconverged result is still a parsed one.
+    """
+    jobs = _parse_each(engine, inputs, ctx)
+    for job_dir, parsed, _failure in jobs:
+        if parsed:
+            cache.save_result_records(parsed, job_dir, ctx.step_cfg.step)
+    return _split(jobs)
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +156,7 @@ def submit_and_parse(
     run_ctx = replace(ctx, prev_state=PipelineState(structures=tuple(structures)))
     inputs = engine.prepare(run_ctx)
     engine.submit(inputs, run_ctx)
-    return parse_with_failures(engine, inputs, run_ctx)
+    return parse_and_record(engine, inputs, run_ctx)
 
 
 def rerun_from_best(

@@ -581,3 +581,38 @@ def test_rng_for_is_deterministic_and_distinct_per_structure():
     assert nms.rng_for("0", 42).integers(0, 1000, 5).tolist() != (
         nms.rng_for("0", 43).integers(0, 1000, 5).tolist()
     )
+
+
+def test_rebuilding_does_not_rewrite_the_children_it_reads(tmp_path: Path):
+    """``rebuild_nms`` re-reads round-2 outputs to re-derive a decision, and writes nothing.
+
+    It exists to reconstruct a cache from a finished tree. Re-recording each child's parsed
+    result while doing so would make a read-only operation modify the very outputs a later
+    comparison is meant to trust.
+    """
+    engine = _FakeNms(
+        freqs={
+            "0": _Freq(imaginary={5: -42.0}, modes=_modes(6)),
+            "0_m5_pos": _Freq(imaginary={}, modes=None),
+            "0_m5_neg": _Freq(imaginary={}, modes=None),
+        }
+    )
+    ctx = _ctx(tmp_path, (_h2("0"),))
+    round1 = _seed_round1(engine, ctx)
+    nms.run_nms(engine, round1, [], ctx)
+
+    before = {
+        p: (p.read_bytes(), p.stat().st_mtime_ns)
+        for p in sorted(ctx.step_dir.rglob("*"))
+        if p.is_file()
+    }
+    nms.rebuild_nms(engine, round1, [], ctx)
+    after = {
+        p: (p.read_bytes(), p.stat().st_mtime_ns)
+        for p in sorted(ctx.step_dir.rglob("*"))
+        if p.is_file()
+    }
+
+    assert after.keys() == before.keys(), "a rebuild must not add or remove files"
+    rewritten = [p.name for p in before if after[p] != before[p]]
+    assert rewritten == [], f"a rebuild rewrote {rewritten}"

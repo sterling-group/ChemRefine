@@ -396,7 +396,7 @@ def _run_full_step(
     engine.submit(inputs, ctx)
 
     logger.info("step %d: parsing outputs", step_cfg.step)
-    successes, failures = lifecycle.parse_with_failures(engine, inputs, ctx)
+    successes, failures = lifecycle.parse_and_record(engine, inputs, ctx)
     # Round-1 convergence failures are retried from best before NMS / the policy.
     successes, failures = lifecycle.retry_unconverged(engine, ctx, successes, failures)
 
@@ -471,7 +471,7 @@ def rebuild_cache_step(
     if manifest is None:
         raise CacheError(f"step {step_cfg.step}: cannot rebuild-cache — no manifest on disk")
     logger.info("step %d: rebuilding cache from existing outputs", step_cfg.step)
-    successes, failures = lifecycle.parse_with_failures(engine, manifest, ctx)
+    successes, failures = lifecycle.parse_and_record(engine, manifest, ctx)
     if step_cfg.nms and isinstance(engine, NmsCapableEngine):
         resolution = nms.rebuild_nms(
             engine,
@@ -523,6 +523,6 @@ def _resubmit_failed(
         retry_ctx = replace(ctx, prev_state=PipelineState(structures=failed_seeds))
         engine.submit(engine.prepare(retry_ctx), retry_ctx)
 
-    successes, failures = lifecycle.parse_with_failures(engine, manifest, ctx)
+    successes, failures = lifecycle.parse_and_record(engine, manifest, ctx)
     successes, failures = lifecycle.retry_unconverged(engine, ctx, successes, failures)
     return lifecycle.finalize(engine, ctx, step_cfg, parent_ids, successes, failures)
