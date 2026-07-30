@@ -104,6 +104,22 @@ Hardening landed during the 2.0.0 stabilization:
   several imaginary modes instead of one, and normal-mode sampling then went off
   resolving modes that no longer existed — on one real TS run, 66 of 72 round-2
   jobs were spent on structures already at the target.
+- Each structure's cache record names the displaced child a normal-mode-sampling
+  run resolved it from (`resolved_from`), and the attempt directory keeps a
+  `resolution.json` saying the same. A resolved parent keeps its own ID and the
+  winning child's files are promoted to the parent's names, so nothing else
+  recorded which of the ± children actually produced them.
+- A retried normal-mode-sampling child no longer carries its own discarded runs
+  into its parent's attempt directory when it wins.
+- `rebuild-cache` no longer rewrites the `.result.json` records of NMS round-2
+  children while re-reading them. Re-deriving a cache from a finished tree now
+  modifies nothing.
+- `random` normal-mode sampling no longer displaces along a translation or
+  rotation when a molecule has no vibrational modes left to draw from — a
+  diatomic could previously be handed a job that moved it and recomputed the
+  same energy.
+- An engine missing one of the four job primitives now fails when it is
+  constructed rather than after a step's jobs have been submitted.
 - The step cache is plain data instead of a pickle — loading it can never
   execute code from the file. It is two files: `_cache/step.json` for the
   metadata and `_cache/arrays.npz` for coordinates and forces, which at 10,000
