@@ -1,22 +1,30 @@
-"""Failure classification and the per-step ``on_failure`` policy.
+"""The body of a step: run a set of structures, classify, apply the policy, persist.
 
-A *failure* is a structure whose job produced no output, an unparseable
-output, or an output the engine flagged unconverged / not-terminated.
-:class:`~chemrefine.state.FailureKind` and :class:`~chemrefine.state.Failure`
-name that outcome; this module decides what to *do* about it — the success
-test (:func:`succeeded`), per-output classification
-(:func:`parse_with_failures`), the ``stop | skip | best`` policy
-(:func:`apply_failure_policy`), and the retry a convergence failure gets
-(:func:`retry_from_best`, :func:`retry_unconverged`). Both the generic step
-lifecycle (:mod:`chemrefine.step`) and the two-round NMS coordinator
-(:mod:`chemrefine.nms`) use it. The ``failed_jobs.json`` ledger is read and
-written by :mod:`chemrefine.cache`, which owns ``_cache/``.
+Given an engine, a :class:`~chemrefine.state.StepContext` and some structures, this produces
+:class:`~chemrefine.state.StepResults` honouring the step's ``on_failure`` setting. It is the
+part :mod:`chemrefine.step` and :mod:`chemrefine.nms` both need — ``step`` wraps it in caching
+and filtering, ``nms`` runs it for each round of displaced children — so it sits below both.
+
+The phases:
+
+* :func:`submit_and_parse` — prepare, submit, parse a set of structures in one directory.
+* :func:`parse_with_failures` — parse outputs that already exist, classifying each
+  (:func:`succeeded`, :func:`failure_kind`).
+* :func:`rerun_from_best` / :func:`retry_unconverged` — give a convergence failure one more
+  try from the best geometry it reached.
+* :func:`apply_failure_policy` — ``stop | skip | best``, and the ledger that records it.
+* :func:`finalize` — the two of those a step always ends with, in the right order.
+
+It does **not** own the order of a whole step. :mod:`chemrefine.step` interleaves phases with
+work of its own — the manifest is written between ``prepare`` and ``submit``, so an interrupted
+run leaves proof of what its outputs were computed for — and that composition belongs there.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from collections.abc import Sequence
+from dataclasses import replace
 
 from chemrefine import __version__, attempts, cache
 from chemrefine.config import StepConfig
@@ -34,19 +42,6 @@ from chemrefine.state import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class NmsResolution:
-    """Outcome of NMS resolution: the resolved survivors plus unresolved failures.
-
-    The generic NMS coordinator (:mod:`chemrefine.nms`) returns this; the step
-    lifecycle then applies the ``on_failure`` policy to ``failures`` exactly as for a
-    plain step, so NMS reuses the same failure handling.
-    """
-
-    survivors: tuple[Structure, ...]
-    failures: tuple[Failure, ...]
 
 
 def succeeded(s: Structure) -> bool:
@@ -121,7 +116,21 @@ def parse_with_failures(
 # ---------------------------------------------------------------------------
 
 
-def retry_from_best(
+def submit_and_parse(
+    engine: CalculationEngine, ctx: StepContext, structures: Sequence[Structure]
+) -> tuple[list[Structure], list[Failure]]:
+    """Prepare, submit and parse ``structures`` in ``ctx.step_dir``.
+
+    The caller supplies the context, so the same call runs a structure at its canonical place
+    or a set of NMS children inside an attempt directory — the difference is ``ctx.step_dir``.
+    """
+    run_ctx = replace(ctx, prev_state=PipelineState(structures=tuple(structures)))
+    inputs = engine.prepare(run_ctx)
+    engine.submit(inputs, run_ctx)
+    return parse_with_failures(engine, inputs, run_ctx)
+
+
+def rerun_from_best(
     engine: CalculationEngine, ctx_for_prepare: StepContext, best: Structure
 ) -> tuple[list[Structure], list[Failure]]:
     """Archive a structure's failed attempt and re-run it once from ``best``.
@@ -134,11 +143,7 @@ def retry_from_best(
     = the step dir) and an NMS round-2 child (``step_dir`` = the parent's dir).
     """
     attempts.archive(ctx_for_prepare.step_dir / best.id)
-    seed = Structure(id=best.id, atoms=best.atoms)
-    retry_ctx = replace(ctx_for_prepare, prev_state=PipelineState(structures=(seed,)))
-    inputs = engine.prepare(retry_ctx)
-    engine.submit(inputs, retry_ctx)
-    return parse_with_failures(engine, inputs, retry_ctx)
+    return submit_and_parse(engine, ctx_for_prepare, [Structure(id=best.id, atoms=best.atoms)])
 
 
 def retry_unconverged(
@@ -162,7 +167,7 @@ def retry_unconverged(
             remaining.append(f)
             continue
         logger.info("structure %s did not converge — retrying from its best geometry", f.sid)
-        succ, fail = retry_from_best(engine, ctx_for_prepare, f.best)
+        succ, fail = rerun_from_best(engine, ctx_for_prepare, f.best)
         kept.extend(succ)
         remaining.extend(fail)
     return kept, remaining
@@ -237,9 +242,6 @@ def finalize(
     drifted and wrote a cache without its reuse fingerprint. A cache written with an
     inconsistent key is not a crash — it is a silent re-run, or a silent reuse, much later.
 
-    Lives here rather than in :mod:`chemrefine.step` for a plain reason: ``step`` imports
-    ``nms``, so ``nms`` cannot import back. This module already owns the policy half and is
-    already imported by both.
     """
     results = apply_failure_policy(successes, failures, ctx, step_cfg)
     cache.save_step_results(

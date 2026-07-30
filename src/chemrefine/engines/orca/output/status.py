@@ -64,7 +64,7 @@ def parse_converged(text: str) -> bool:
 
     An output with no verdict at all (a plain single point, a trimmed fixture) returns
     ``True`` — "no signal is not a failure signal", matching
-    :func:`chemrefine.step_failures.succeeded`, which treats only an explicit ``False``
+    :func:`chemrefine.lifecycle.succeeded`, which treats only an explicit ``False``
     as a failure.
     """
     last = None

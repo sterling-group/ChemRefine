@@ -126,7 +126,7 @@ nav:
       - Pipeline:
           - Orchestrator: api/pipeline.md
           - Step Lifecycle: api/step.md
-          - Failure Policy: api/step_failures.md
+          - Step Lifecycle Body: api/lifecycle.md
           - Attempt Directories: api/attempts.md
           - Normal-Mode Sampling: api/nms.md
           - Filtering: api/filtering.md

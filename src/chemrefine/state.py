@@ -8,7 +8,7 @@ structure that did not succeed (:class:`FailureKind`, :class:`Failure`,
 thread state explicitly rather than mutating shared state on a god class.
 
 Vocabulary only: deciding what a failure *means* for a step is
-:mod:`chemrefine.step_failures`, and persisting the ledger is
+:mod:`chemrefine.lifecycle`, and persisting the ledger is
 :mod:`chemrefine.cache`. Both import from here, so neither has to import
 the other to name an outcome.
 
@@ -68,7 +68,7 @@ class Structure:
     (``ORCA TERMINATED NORMALLY``) and :attr:`FailureKind.NOT_TERMINATED`'s wording.
 
     A structure is a *failure* only when a flag is explicitly ``False`` (see
-    :func:`chemrefine.step_failures.succeeded`)."""
+    :func:`chemrefine.lifecycle.succeeded`)."""
     gibbs_hartree: float | None = None
     """Gibbs free energy (Hartree) from a frequency calc; ``None`` when no
     thermochemistry was computed. Used by ``sample.energy_type: gibbs``."""

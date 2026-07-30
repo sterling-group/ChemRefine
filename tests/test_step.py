@@ -530,8 +530,8 @@ def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypa
     then applies the on_failure policy to its survivors/failures."""
     from chemrefine import nms as nms_mod
     from chemrefine.engines.api import ENGINES, NmsInputInfo, register
+    from chemrefine.nms import NmsResolution
     from chemrefine.state import JobBatch, StepInputs, StepResults
-    from chemrefine.step_failures import NmsResolution
 
     calls: list[int] = []
 
@@ -572,7 +572,8 @@ def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypa
 def test_on_failure_best_drops_failure_with_no_fallback(tmp_path: Path):
     """best: a failure with no best geometry and no prior-state entry has
     nothing to backfill — it is dropped while the others are kept."""
-    from chemrefine.step_failures import Failure, apply_failure_policy
+    from chemrefine.lifecycle import apply_failure_policy
+    from chemrefine.state import Failure
 
     cfg = _config(tmp_path, on_failure="best")
     ctx = build_context(cfg, cfg.steps[0], _seed_state(["0"]))

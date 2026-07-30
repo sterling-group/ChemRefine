@@ -1,14 +1,20 @@
-"""Per-step lifecycle: prepare → submit → parse → (nms) → filter → cache.
+"""Composing one step: which lifecycle it runs, and what happens around it.
 
-This is the only place that knows the order in which an engine's
-lifecycle methods are called. :func:`run_step` is intentionally short
-(~30 LOC) — every concern it touches lives in its own module:
+:func:`run_step` decides between the cache-recovery modes and a full run, inserts NMS
+resolution when the step asks for it and the engine can do it, then filters and caches what
+comes back. The work itself belongs to other modules:
 
-* Caching + manifest:  :mod:`chemrefine.cache`
-* Filtering:           :mod:`chemrefine.filtering`
-* Engine lookup:  :mod:`chemrefine.engines.api`
-* Failure vocabulary + ``on_failure`` policy:  :mod:`chemrefine.step_failures`
-* NMS resolution / recovery (engine-independent):  :mod:`chemrefine.nms`
+* Running, classifying, the ``on_failure`` policy: :mod:`chemrefine.lifecycle`
+* NMS resolution (engine-independent): :mod:`chemrefine.nms`
+* Caching + manifest: :mod:`chemrefine.cache`
+* Attempt directories: :mod:`chemrefine.attempts`
+* Filtering: :mod:`chemrefine.filtering`
+* Engine lookup: :mod:`chemrefine.engines.api`
+
+The one lifecycle sequence spelled out here rather than delegated is a full run's
+``prepare → save_manifest → submit``, because the manifest has to be stamped *between* the
+first two: an interrupted run then leaves proof of what its outputs were computed for. Every
+other run of a structure set goes through :func:`chemrefine.lifecycle.submit_and_parse`.
 """
 
 from __future__ import annotations
@@ -19,7 +25,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 
-from chemrefine import __version__, attempts, cache, filtering, nms, step_failures
+from chemrefine import __version__, attempts, cache, filtering, lifecycle, nms
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.api import CalculationEngine, NmsCapableEngine, get_engine
 from chemrefine.errors import CacheError, ChemRefineError, ConfigError
@@ -260,7 +266,7 @@ def _nms_reuse_outcome(
         logger.info(
             "step %d: NMS search params changed, all resolved — reusing cache", step_cfg.step
         )
-        # The one place a step is persisted *without* `step_failures.finalize`, and
+        # The one place a step is persisted *without* `lifecycle.finalize`, and
         # deliberately so: there is nothing to resolve. Every structure was already resolved
         # under the previous search params, so re-applying `on_failure` to an empty failure
         # list would only re-stamp a ledger that is already correct. This re-stamps the
@@ -308,7 +314,7 @@ def _partial_step_outcome(
     leaves no cache at all. Without this, ``resume`` fell straight through to
     :func:`_run_full_step`, whose first act is to archive every finished ``.out`` into
     ``attemptK/`` and resubmit the lot. The completed compute stayed on disk and was never
-    read back, because :func:`~chemrefine.step_failures.parse_with_failures` decides success
+    read back, because :func:`~chemrefine.lifecycle.parse_with_failures` decides success
     by ``out.is_file()`` at the canonical path, which had just been emptied. On HPC that is
     cluster-days discarded silently.
 
@@ -390,9 +396,9 @@ def _run_full_step(
     engine.submit(inputs, ctx)
 
     logger.info("step %d: parsing outputs", step_cfg.step)
-    successes, failures = step_failures.parse_with_failures(engine, inputs, ctx)
+    successes, failures = lifecycle.parse_with_failures(engine, inputs, ctx)
     # Round-1 convergence failures are retried from best before NMS / the policy.
-    successes, failures = step_failures.retry_unconverged(engine, ctx, successes, failures)
+    successes, failures = lifecycle.retry_unconverged(engine, ctx, successes, failures)
 
     if nms_engine is not None:
         logger.info("step %d: running normal-mode sampling", step_cfg.step)
@@ -403,7 +409,7 @@ def _run_full_step(
             ctx,
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
-    results = step_failures.finalize(engine, ctx, step_cfg, parent_ids, successes, failures)
+    results = lifecycle.finalize(engine, ctx, step_cfg, parent_ids, successes, failures)
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
 
@@ -465,7 +471,7 @@ def rebuild_cache_step(
     if manifest is None:
         raise CacheError(f"step {step_cfg.step}: cannot rebuild-cache — no manifest on disk")
     logger.info("step %d: rebuilding cache from existing outputs", step_cfg.step)
-    successes, failures = step_failures.parse_with_failures(engine, manifest, ctx)
+    successes, failures = lifecycle.parse_with_failures(engine, manifest, ctx)
     if step_cfg.nms and isinstance(engine, NmsCapableEngine):
         resolution = nms.rebuild_nms(
             engine,
@@ -474,7 +480,7 @@ def rebuild_cache_step(
             ctx,
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
-    results = step_failures.finalize(engine, ctx, step_cfg, parent_ids, successes, failures)
+    results = lifecycle.finalize(engine, ctx, step_cfg, parent_ids, successes, failures)
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
 
@@ -517,6 +523,6 @@ def _resubmit_failed(
         retry_ctx = replace(ctx, prev_state=PipelineState(structures=failed_seeds))
         engine.submit(engine.prepare(retry_ctx), retry_ctx)
 
-    successes, failures = step_failures.parse_with_failures(engine, manifest, ctx)
-    successes, failures = step_failures.retry_unconverged(engine, ctx, successes, failures)
-    return step_failures.finalize(engine, ctx, step_cfg, parent_ids, successes, failures)
+    successes, failures = lifecycle.parse_with_failures(engine, manifest, ctx)
+    successes, failures = lifecycle.retry_unconverged(engine, ctx, successes, failures)
+    return lifecycle.finalize(engine, ctx, step_cfg, parent_ids, successes, failures)

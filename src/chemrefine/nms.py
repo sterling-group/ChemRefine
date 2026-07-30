@@ -18,13 +18,13 @@ pure exploration, so it fans out to new child structures.
 
 The displacement maths + :class:`NmsOptions` here are pure and side-effect-free; the
 coordinator (`run_nms` / `rebuild_nms` / `reattempt_nms`) does the I/O, reusing the
-shared retry helper in :mod:`chemrefine.step_failures` for unconverged children.
+shared retry helper in :mod:`chemrefine.lifecycle` for unconverged children.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -33,7 +33,7 @@ from ase import Atoms
 from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field
 
-from chemrefine import attempts, cache, filtering, io, step_failures
+from chemrefine import attempts, cache, filtering, io, lifecycle
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import NmsCapableEngine
 from chemrefine.errors import CacheError
@@ -196,6 +196,18 @@ def select_displacements(
     return out
 
 
+@dataclass(frozen=True)
+class NmsResolution:
+    """Outcome of NMS resolution: the resolved survivors plus unresolved failures.
+
+    The coordinators below return this; the step lifecycle then applies the ``on_failure``
+    policy to ``failures`` exactly as for a plain step, so NMS reuses the same handling.
+    """
+
+    survivors: tuple[Structure, ...]
+    failures: tuple[Failure, ...]
+
+
 # ---------------------------------------------------------------------------
 # The two-round coordinator (drives the engine through NmsCapableEngine)
 # ---------------------------------------------------------------------------
@@ -285,13 +297,9 @@ def _run_round_two(
     engine: NmsCapableEngine, children: list[Structure], ctx: StepContext, attempt_dir: Path
 ) -> list[Structure]:
     """Submit + parse the displaced children under ``attempt_dir``; retry unconverged ones."""
-    child_ctx = replace(
-        ctx, step_dir=attempt_dir, prev_state=PipelineState(structures=tuple(children))
-    )
-    inputs = engine.prepare(child_ctx)
-    engine.submit(inputs, child_ctx)
-    succ, fail = step_failures.parse_with_failures(engine, inputs, child_ctx)
-    succ, _fail = step_failures.retry_unconverged(engine, child_ctx, succ, fail)
+    child_ctx = replace(ctx, step_dir=attempt_dir)
+    succ, fail = lifecycle.submit_and_parse(engine, child_ctx, children)
+    succ, _fail = lifecycle.retry_unconverged(engine, child_ctx, succ, fail)
     return succ
 
 
@@ -314,7 +322,7 @@ def _parse_round_two(
     child_ctx = replace(
         ctx, step_dir=attempt_dir, prev_state=PipelineState(structures=tuple(children))
     )
-    succ, _fail = step_failures.parse_with_failures(engine, present, child_ctx)
+    succ, _fail = lifecycle.parse_with_failures(engine, present, child_ctx)
     return succ
 
 
@@ -415,7 +423,7 @@ def run_nms(
     round1: StepResults,
     round1_failures: list[Failure] | tuple[Failure, ...],
     ctx: StepContext,
-) -> step_failures.NmsResolution:
+) -> NmsResolution:
     """Resolve each round-1 survivor to its stationary point (submits round-2).
 
     For each round-1 structure: if it is already at the target it passes through at the
@@ -463,7 +471,7 @@ def run_nms(
         s_surv, s_fail = _accept(resolved, round2, s, ctx, target, attempt_dir=attempt)
         survivors.extend(s_surv)
         failures.extend(s_fail)
-    return step_failures.NmsResolution(tuple(survivors), tuple(failures))
+    return NmsResolution(tuple(survivors), tuple(failures))
 
 
 def rebuild_nms(
@@ -471,7 +479,7 @@ def rebuild_nms(
     round1: StepResults,
     round1_failures: list[Failure] | tuple[Failure, ...],
     ctx: StepContext,
-) -> step_failures.NmsResolution:
+) -> NmsResolution:
     """Re-resolve NMS from outputs already on disk — no submission (``rebuild-cache``).
 
     Re-derives the (deterministic) displaced children and parses their existing round-2
@@ -511,7 +519,7 @@ def rebuild_nms(
         s_surv, s_fail = _accept(resolved, round2, s, ctx, target, attempt_dir=None)
         survivors.extend(s_surv)
         failures.extend(s_fail)
-    return step_failures.NmsResolution(tuple(survivors), tuple(failures))
+    return NmsResolution(tuple(survivors), tuple(failures))
 
 
 def reattempt_nms(
@@ -547,15 +555,15 @@ def reattempt_nms(
         )
         engine.submit(missing_inputs, ctx)
 
-    r1_succ, r1_fail = step_failures.parse_with_failures(engine, failed_manifest, ctx)
-    r1_succ, r1_fail = step_failures.retry_unconverged(engine, ctx, r1_succ, r1_fail)
+    r1_succ, r1_fail = lifecycle.parse_with_failures(engine, failed_manifest, ctx)
+    r1_succ, r1_fail = lifecycle.retry_unconverged(engine, ctx, r1_succ, r1_fail)
     reattempt = run_nms(engine, StepResults(structures=tuple(r1_succ)), r1_fail, ctx)
     kept = tuple(
         s
         for s in cached.results.structures
         if s.id not in failed_ids and s.parent_id not in failed_ids
     )
-    return step_failures.finalize(
+    return lifecycle.finalize(
         engine,
         ctx,
         step_cfg,

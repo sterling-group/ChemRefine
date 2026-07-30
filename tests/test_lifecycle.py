@@ -1,6 +1,6 @@
 """Tests for the failure vocabulary and the shared attempt primitive.
 
-:mod:`chemrefine.step_failures` owns what counts as a failure (:func:`succeeded`,
+:mod:`chemrefine.lifecycle` owns what counts as a failure (:func:`succeeded`,
 :func:`failure_kind`), how one is recorded (:class:`Failure`, :class:`FailureRecord`,
 the ``failed_jobs.json`` ledger), the ``on_failure`` policy, and the numbered-attempt
 primitive both the convergence retry and NMS build on. It had no test file: these tests
@@ -19,7 +19,7 @@ from pathlib import Path
 
 from ase import Atoms
 
-from chemrefine import step_failures
+from chemrefine import lifecycle
 from chemrefine.config import StepConfig
 from chemrefine.errors import OutputParseError
 from chemrefine.state import PipelineState, StepContext, StepInputs, Structure
@@ -50,8 +50,8 @@ def _ctx(tmp_path: Path) -> StepContext:
 
 
 def test_failure_kind_branches():
+    from chemrefine.lifecycle import failure_kind
     from chemrefine.state import FailureKind
-    from chemrefine.step_failures import failure_kind
 
     assert failure_kind(_struct(terminated_normally=False)) is FailureKind.NOT_TERMINATED
     assert failure_kind(_struct(converged=False)) is FailureKind.NOT_CONVERGED
@@ -87,7 +87,7 @@ def test_parse_with_failures_records_unparseable(tmp_path: Path):
             raise OutputParseError("boom")
 
     inputs = StepInputs(files=((tmp_path / "s.inp", out, "0"),))
-    successes, failures = step_failures.parse_with_failures(_Engine(), inputs, _ctx(tmp_path))
+    successes, failures = lifecycle.parse_with_failures(_Engine(), inputs, _ctx(tmp_path))
     assert successes == []
     assert failures[0].reason.startswith("unparseable")
 

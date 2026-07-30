@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 from ase import Atoms
 
-from chemrefine import slurm, step_failures
+from chemrefine import lifecycle, slurm
 from chemrefine.config import StepConfig
 from chemrefine.engines import _execution as submit
 from chemrefine.engines.api import NmsCapableEngine, get_engine
@@ -435,7 +435,7 @@ def _goat_job(tmp_path: Path, *, terminated_normally: bool) -> tuple[StepContext
 
 def test_completed_goat_job_is_a_success(tmp_path: Path):
     ctx, inputs = _goat_job(tmp_path, terminated_normally=True)
-    successes, failures = step_failures.parse_with_failures(get_engine("orca"), inputs, ctx)
+    successes, failures = lifecycle.parse_with_failures(get_engine("orca"), inputs, ctx)
     assert [s.id for s in successes] == ["0"]
     assert failures == []
 
@@ -448,7 +448,7 @@ def test_crashed_goat_job_is_ledgered_not_silently_accepted(tmp_path: Path):
     ledger — the partial ensemble flowing downstream as if complete.
     """
     ctx, inputs = _goat_job(tmp_path, terminated_normally=False)
-    successes, failures = step_failures.parse_with_failures(get_engine("orca"), inputs, ctx)
+    successes, failures = lifecycle.parse_with_failures(get_engine("orca"), inputs, ctx)
     assert successes == []
     assert [(f.sid, f.reason) for f in failures] == [("0", "did not terminate normally")]
 

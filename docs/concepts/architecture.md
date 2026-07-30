@@ -8,8 +8,9 @@ forward as immutable `PipelineState` values.
 ## Module layering
 
 ```
-cli → recovery → pipeline → step → {cache, filtering, step_failures, nms}
-                                  → attempts (attemptK/ directories)
+cli → recovery → pipeline → step → {cache, filtering, nms}
+                                  → lifecycle (run → classify → policy → persist)
+                                       → attempts (attemptK/ directories)
                                   → engines.api (Protocols + ENGINES registry)
                                        → engines/* (orca, mlip, pyscf)
                                             → engines/{_job, _execution, _script} (building blocks)
@@ -64,7 +65,7 @@ flowchart TD
   STEP --> CACHE{"cache.load_if_valid\nfingerprint match?"}
   CACHE -- hit --> FILT["filtering.apply"]
   CACHE -- miss --> LIFE["engine lifecycle:\nprepare → submit → parse"]
-  LIFE --> POL["step_failures.apply_failure_policy\n(+ nms.run_nms for nms steps)"]
+  LIFE --> POL["lifecycle.apply_failure_policy\n(+ nms.run_nms for nms steps)"]
   POL --> SAVE["cache.save"]
   SAVE --> FILT
   FILT --> CSV["io.save_step_csv → steps.csv"]

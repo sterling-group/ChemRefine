@@ -19,8 +19,8 @@ Config → bootstrap → run_step (cache | engine lifecycle) → filtering → P
 
 - [Orchestrator](pipeline.md) — `bootstrap` + `run`
 - [Step Lifecycle](step.md) — `run_step` and the cache/rebuild paths
-- [Failure Policy](step_failures.md) — `stop` / `skip` / `best` resolution + the
-  shared attempt/retry primitive
+- [Step Lifecycle Body](lifecycle.md) — run, classify, `stop` / `skip` / `best`, persist
+- [Attempt Directories](attempts.md) — sealing a structure's state into `attemptK/`
 - [Normal-Mode Sampling](nms.md) — engine-independent two-round NMS coordinator
 - [Filtering](filtering.md) — survivor selection
 - [Recovery Actions](recovery.md) — the `run` / `resume` / `rerun…` dispatcher

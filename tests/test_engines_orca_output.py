@@ -174,7 +174,7 @@ def test_converged_false_when_the_last_scf_fails():
 
 
 def test_converged_true_when_no_verdict_is_printed():
-    """No signal is not a failure signal — matches ``step_failures.succeeded``."""
+    """No signal is not a failure signal — matches ``lifecycle.succeeded``."""
     assert status.parse_converged("FINAL SINGLE POINT ENERGY  -1.5\n") is True
 
 
