@@ -65,6 +65,16 @@ def allocate_child_ids(parents: Sequence[str], fanouts: Sequence[int]) -> list[s
     return children
 
 
+def structure_stem(step: int, structure_id: str) -> str:
+    """The basename every one of a structure's artifacts is built on: ``step{N}_{id}``.
+
+    The one place that spells the convention, so a layout change touches this line and the
+    paths below follow. :func:`chemrefine.attempts.promote` swaps one stem for another when
+    it renames a child's files to its parent's.
+    """
+    return f"step{step}_{structure_id}"
+
+
 def structure_artifact_path(step_dir: Path, step: int, structure_id: str, ext: str) -> Path:
     """Canonical per-structure artifact path.
 
@@ -74,7 +84,7 @@ def structure_artifact_path(step_dir: Path, step: int, structure_id: str, ext: s
     structures: ``step_dir/{structure_id}/step{step}_{structure_id}.{ext}``.
     Keeping the naming convention here means a layout change touches one file.
     """
-    return step_dir / structure_id / f"step{step}_{structure_id}.{ext}"
+    return step_dir / structure_id / f"{structure_stem(step, structure_id)}.{ext}"
 
 
 def result_record_path(job_dir: Path, step: int, structure_id: str) -> Path:
@@ -87,7 +97,7 @@ def result_record_path(job_dir: Path, step: int, structure_id: str) -> Path:
     ``attemptK/<child>/…`` for free. Distinct from the script engines'
     native ``step{N}_{id}.json`` output.
     """
-    return job_dir / f"step{step}_{structure_id}.result.json"
+    return job_dir / f"{structure_stem(step, structure_id)}.result.json"
 
 
 def input_geometry_path(step_dir: Path, step: int, structure_id: str) -> Path:
@@ -98,7 +108,20 @@ def input_geometry_path(step_dir: Path, step: int, structure_id: str) -> Path:
     optimized geometry to ``step{step}_{structure_id}.xyz``); both survive the
     copy-back into the structure's directory.
     """
-    return step_dir / structure_id / f"step{step}_{structure_id}_inp.xyz"
+    return step_dir / structure_id / f"{structure_stem(step, structure_id)}_inp.xyz"
+
+
+def _attempt_numbers(structure_dir: Path) -> list[tuple[int, Path]]:
+    """Every ``attempt<n>/`` under a structure's dir as ``(n, path)``, unordered.
+
+    Shared by the next-free and most-recent lookups so one scan defines what counts.
+    A non-matching ``attempt*`` entry — a stray file, say — is ignored.
+    """
+    return [
+        (int(m.group(1)), d)
+        for d in structure_dir.glob("attempt*")
+        if d.is_dir() and (m := _ATTEMPT_DIR_RE.fullmatch(d.name))
+    ]
 
 
 def next_attempt_dir(structure_dir: Path) -> Path:
@@ -111,19 +134,15 @@ def next_attempt_dir(structure_dir: Path) -> Path:
     archives a structure's exploration here. The directory is **not** created here
     (path only); a non-matching ``attempt*`` entry (e.g. a stray file) is ignored.
     """
-    existing = [
-        int(m.group(1))
-        for d in structure_dir.glob("attempt*")
-        if d.is_dir() and (m := _ATTEMPT_DIR_RE.fullmatch(d.name))
-    ]
-    return structure_dir / f"attempt{(max(existing) + 1) if existing else 1}"
+    numbered = _attempt_numbers(structure_dir)
+    return structure_dir / f"attempt{max((n for n, _ in numbered), default=0) + 1}"
 
 
 def is_attempt_dir(path: Path) -> bool:
     """Whether ``path`` is an ``attempt<n>/`` directory of the resolution model.
 
     The membership test behind the two lookups above, so "what counts as an attempt" is
-    decided in one place. :func:`chemrefine.step_failures.archive_failed_attempt` asks it to
+    decided in one place. :func:`chemrefine.attempts.seal` asks it to
     know what *not* to move: everything else in a structure dir is that attempt's output and
     goes with it, but folding one attempt into another would lose a run's history.
     """
@@ -137,12 +156,8 @@ def latest_attempt_dir(structure_dir: Path) -> Path | None:
     structure's most recent attempt (e.g. an NMS exploration) from here. ``None`` when
     no ``attempt<n>/`` exists.
     """
-    attempts = [
-        (int(m.group(1)), d)
-        for d in structure_dir.glob("attempt*")
-        if d.is_dir() and (m := _ATTEMPT_DIR_RE.fullmatch(d.name))
-    ]
-    return max(attempts)[1] if attempts else None
+    numbered = _attempt_numbers(structure_dir)
+    return max(numbered)[1] if numbered else None
 
 
 def default_template_name(step: int, suffix: str) -> str:

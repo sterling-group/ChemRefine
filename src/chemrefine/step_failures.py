@@ -5,9 +5,9 @@ output, or an output the engine flagged unconverged / not-terminated.
 This module owns that vocabulary — the :class:`Failure` record, the
 success test (:func:`succeeded`), per-output classification
 (:func:`parse_with_failures`), the ``stop | skip | best`` policy
-(:func:`apply_failure_policy`), and the shared "attempt"/retry primitive
-(:func:`archive_failed_attempt`, :func:`retry_from_best`,
-:func:`retry_unconverged`) — used by both the generic step lifecycle
+(:func:`apply_failure_policy`), and the retry a convergence failure gets
+(:func:`retry_from_best`, :func:`retry_unconverged`) — used by both the
+generic step lifecycle
 (:mod:`chemrefine.step`) and the two-round NMS coordinator
 (:mod:`chemrefine.nms`). The ``failed_jobs.json`` ledger itself is
 persisted via :mod:`chemrefine.cache`.
@@ -16,13 +16,11 @@ persisted via :mod:`chemrefine.cache`.
 from __future__ import annotations
 
 import logging
-import shutil
-from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
-from chemrefine import __version__, cache, ids
+from chemrefine import __version__, attempts, cache
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import CalculationEngine
 from chemrefine.errors import OutputParseError
@@ -204,60 +202,8 @@ def parse_with_failures(
 
 
 # ---------------------------------------------------------------------------
-# Attempt / retry — the shared "resolve a structure in subdirs" primitive
+# Retry — re-run a structure once from its best geometry
 # ---------------------------------------------------------------------------
-
-
-def archive_failed_attempt(structure_dir: Path, dest: Path | None = None) -> Path:
-    """Move a structure dir's artifacts into an ``attemptK/``; return it.
-
-    The shared "attempt" primitive (path via :func:`chemrefine.ids.next_attempt_dir`).
-    Everything the attempt produced moves — loose files and any engine-written
-    sub-directory such as ``pyscf-extopt``'s ``tensors/`` (an ``output_dirs`` entry). Only
-    ``attempt*/`` stays put, so a re-run never clobbers an earlier attempt.
-
-    A ``tensors/`` left at the canonical path would be the same lie the rest of this
-    machinery exists to prevent: whatever runs there next writes its own files *beside* the
-    stale ones, and the directory ends up describing two calculations at once.
-
-    ``dest`` names an **existing** attempt directory to archive into, instead of minting the
-    next free one. :func:`chemrefine.nms._accept` needs that: ``run_nms`` already created an
-    ``attemptK/`` and ran the displaced children inside it, so the round-1 calculation those
-    children came from belongs in that same directory rather than in one of its own. An
-    attempt then holds both halves — the state that triggered the resolution and what was
-    tried — which is what an attempt directory is supposed to be.
-    """
-    dest = ids.next_attempt_dir(structure_dir) if dest is None else dest
-    dest.mkdir(parents=True, exist_ok=True)
-    for item in structure_dir.iterdir():
-        if item.is_dir() and ids.is_attempt_dir(item):
-            continue  # never fold one attempt into another
-        shutil.move(str(item), str(dest / item.name))
-    return dest
-
-
-def archive_previous_attempts(step_dir: Path, structure_ids: Iterable[str]) -> list[Path]:
-    """Archive any prior artifacts of ``structure_ids`` before they are re-executed (B1).
-
-    The invariant this protects: **a parsed output must have been produced by this run's
-    submission of that job.** :func:`parse_with_failures` decides success by
-    ``out.is_file()``, which cannot tell this run's output from a leftover — so without
-    this, a re-executed step whose job dies before writing anything silently re-reads the
-    *previous* run's result and reports it as current. The exposed paths are the ones that
-    do not truncate their output in place: the script engines (whose JSON is written in
-    ``$WORK_DIR`` and only copied back on success) and every ORCA ensemble operation
-    (which reads a ``*.finalensemble.xyz``-style sidecar, not the ``.out``).
-
-    Only structures with loose files are touched, so a first run is a no-op. Reuses
-    :func:`archive_failed_attempt`, so an ``attemptK/`` from an earlier run is preserved
-    rather than clobbered and the whole history stays recoverable.
-    """
-    archived: list[Path] = []
-    for sid in structure_ids:
-        struct_dir = step_dir / sid
-        if struct_dir.is_dir() and any(p.is_file() for p in struct_dir.iterdir()):
-            archived.append(archive_failed_attempt(struct_dir))
-    return archived
 
 
 def retry_from_best(
@@ -272,7 +218,7 @@ def retry_from_best(
     structure, so the SAME helper serves a top-level structure (round-1, ``step_dir``
     = the step dir) and an NMS round-2 child (``step_dir`` = the parent's dir).
     """
-    archive_failed_attempt(ctx_for_prepare.step_dir / best.id)
+    attempts.archive(ctx_for_prepare.step_dir / best.id)
     seed = Structure(id=best.id, atoms=best.atoms)
     retry_ctx = replace(ctx_for_prepare, prev_state=PipelineState(structures=(seed,)))
     inputs = engine.prepare(retry_ctx)

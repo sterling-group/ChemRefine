@@ -34,6 +34,15 @@ theme:
   icon:
     repo: fontawesome/brands/github
 
+# A module whose API page is missing produces no warning by default, and an orphaned page
+# is only INFO — neither reaches `--strict`, which promotes warnings. Raising both to
+# `warn` makes `mkdocs build --strict` the gate that catches a page added without a nav
+# entry, or a nav entry pointing at nothing.
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+
 plugins:
   - search
   - mkdocstrings:
@@ -118,6 +127,7 @@ nav:
           - Orchestrator: api/pipeline.md
           - Step Lifecycle: api/step.md
           - Failure Policy: api/step_failures.md
+          - Attempt Directories: api/attempts.md
           - Normal-Mode Sampling: api/nms.md
           - Filtering: api/filtering.md
           - Recovery Actions: api/recovery.md

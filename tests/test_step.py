@@ -913,7 +913,7 @@ def test_resume_reparses_a_finished_structure_instead_of_resubmitting_it(tmp_pat
 
     `step.json` is written once, at the end of a step. If the driver dies before that —
     walltime on the batch job that runs ChemRefine itself, a node failure, Ctrl-C — then
-    `resume` missed the cache, entered the full-run path, and `archive_previous_attempts`
+    `resume` missed the cache, entered the full-run path, and `attempts.archive_previous`
     moved every finished `.out` into `attemptK/` before resubmitting *everything*. The
     completed compute was still on disk and was never read: `parse_with_failures` decides
     success by `out.is_file()` at the canonical path, which had just been emptied.

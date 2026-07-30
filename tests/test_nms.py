@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 from ase import Atoms
 
-from chemrefine import cache, nms, step_failures
+from chemrefine import cache, nms
 from chemrefine.config import Config, MinSample, StepConfig
 from chemrefine.engines.api import NmsInputInfo
 from chemrefine.ids import structure_artifact_path
@@ -199,94 +199,6 @@ def test_energy_attr_follows_the_steps_sample_filter(sample, expected):
     """No ``sample`` means no declared preference — electronic, as the step CSV also reports."""
     step_cfg = StepConfig(step=1, engine="orca", operation="sp", sample=sample)
     assert nms._energy_attr(step_cfg) == expected
-
-
-def test_promote_winner_rewrites_the_id_prefix_not_the_suffix(tmp_path: Path):
-    """ORCA's names are not all single-extension, so promotion is a prefix swap.
-
-    ``step1_0_m6_pos_trj.xyz`` and ``step1_0_m6_pos.property.json`` both have to land as the
-    parent's, which ``with_suffix`` would mangle. Anything not named after the child is left
-    alone — copying it up under an unchanged name would attribute it to the parent falsely.
-
-    An engine-written directory (``pyscf-extopt``'s ``tensors/``) is named by the engine and
-    not after the structure, so it is promoted under its own name. Leaving it behind would
-    reintroduce the very disagreement this promotion exists to remove, one level down: the
-    winner's ``.out`` at the canonical path beside round 1's tensors.
-    """
-    attempt = tmp_path / "0" / "attempt1"
-    child = attempt / "0_m6_pos"
-    child.mkdir(parents=True)
-    for name in (
-        "step1_0_m6_pos.out",
-        "step1_0_m6_pos_trj.xyz",
-        "step1_0_m6_pos.property.json",
-        "unrelated.log",
-    ):
-        (child / name).write_text(name)
-    (child / "tensors").mkdir()
-    (child / "tensors" / "active.npz").write_text("winner tensors")
-
-    nms._promote_winner("0_m6_pos", "0", 1, attempt)
-
-    assert sorted(p.name for p in (tmp_path / "0").iterdir()) == [
-        "attempt1",
-        "step1_0.out",
-        "step1_0.property.json",
-        "step1_0_trj.xyz",
-        "tensors",
-    ]
-    assert (tmp_path / "0" / "step1_0.out").read_text() == "step1_0_m6_pos.out"
-    assert (tmp_path / "0" / "tensors" / "active.npz").read_text() == "winner tensors"
-    assert (child / "step1_0_m6_pos.out").is_file(), "the child dir is copied from, not emptied"
-
-
-def test_promoting_a_retried_winner_leaves_its_own_attempt_behind(tmp_path: Path):
-    """A child that was itself retried carries an ``attemptK/``; that must not travel with it.
-
-    ``retry_unconverged`` runs against the child's own directory, so an unconverged round-2
-    child gains ``attemptK/<child>/attempt1/`` holding the run that failed. Promoting the child
-    must copy the calculation that won, not the one it discarded — and the destination for a
-    directory named ``attempt1`` is the parent's ``attempt1``, which is the very directory the
-    promotion reads from.
-    """
-    attempt = tmp_path / "0" / "attempt1"
-    child = attempt / "0_m5_pos"
-    (child / "attempt1").mkdir(parents=True)
-    (child / "attempt1" / "step1_0_m5_pos.out").write_text("the child's discarded run")
-    (child / "step1_0_m5_pos.out").write_text("the run that won")
-    (attempt / "step1_0.out").write_text("round 1, archived")
-
-    nms._promote_winner("0_m5_pos", "0", 1, attempt)
-
-    assert (tmp_path / "0" / "step1_0.out").read_text() == "the run that won"
-    assert (attempt / "step1_0.out").read_text() == "round 1, archived", (
-        "the child's discarded run must not overwrite the archived round 1"
-    )
-    assert sorted(p.name for p in attempt.iterdir()) == ["0_m5_pos", "step1_0.out"]
-
-
-def test_archiving_takes_the_engine_written_directory_with_it(tmp_path: Path):
-    """``tensors/`` belongs to the attempt that produced it, not to the path it sits at.
-
-    ``pyscf-extopt``'s ``save_tensors`` writes a whole directory into the structure dir. Left
-    behind on archive, the next calculation at that path writes its own files *beside* the
-    stale ones and the directory silently describes two runs at once. Only ``attempt*/`` is
-    exempt — folding one attempt into another would lose a run's history.
-    """
-    structure_dir = tmp_path / "0"
-    (structure_dir / "tensors").mkdir(parents=True)
-    (structure_dir / "tensors" / "active.npz").write_text("round 1")
-    (structure_dir / "step1_0.out").write_text("round 1")
-    (structure_dir / "attempt1").mkdir()
-    (structure_dir / "attempt1" / "step1_0.out").write_text("round 0")
-
-    dest = step_failures.archive_failed_attempt(structure_dir)
-
-    assert dest.name == "attempt2"
-    assert (dest / "tensors" / "active.npz").read_text() == "round 1"
-    assert (dest / "step1_0.out").read_text() == "round 1"
-    assert sorted(p.name for p in structure_dir.iterdir()) == ["attempt1", "attempt2"]
-    assert (structure_dir / "attempt1" / "step1_0.out").read_text() == "round 0"
 
 
 def test_is_resolved_false_for_non_terminated_child():

@@ -19,7 +19,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 
-from chemrefine import __version__, cache, filtering, nms, step_failures
+from chemrefine import __version__, attempts, cache, filtering, nms, step_failures
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.api import CalculationEngine, NmsCapableEngine, get_engine
 from chemrefine.errors import CacheError, ChemRefineError, ConfigError
@@ -368,7 +368,7 @@ def _run_full_step(
     # a failure rather than re-reading the old result (B1). Done here, at the lifecycle
     # owner, rather than inside ``prepare`` — the retry and NMS paths call ``prepare``
     # too and already manage their own attempt dirs.
-    step_failures.archive_previous_attempts(ctx.step_dir, (s.id for s in ctx.prev_state.structures))
+    attempts.archive_previous(ctx.step_dir, (s.id for s in ctx.prev_state.structures))
     inputs = engine.prepare(ctx)
     cache.save_manifest(
         inputs,
@@ -509,7 +509,7 @@ def _resubmit_failed(
             step_cfg.step,
             len(failed_seeds),
         )
-        step_failures.archive_previous_attempts(ctx.step_dir, (s.id for s in failed_seeds))
+        attempts.archive_previous(ctx.step_dir, (s.id for s in failed_seeds))
         retry_ctx = replace(ctx, prev_state=PipelineState(structures=failed_seeds))
         engine.submit(engine.prepare(retry_ctx), retry_ctx)
 

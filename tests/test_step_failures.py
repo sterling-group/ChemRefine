@@ -94,25 +94,3 @@ def test_parse_with_failures_records_unparseable(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # The numbered-attempt primitive
 # ---------------------------------------------------------------------------
-
-
-def test_archive_failed_attempt_numbers_sequentially(tmp_path: Path):
-    """Numbered attempt dirs: next-free K, never blocked by an existing/odd one."""
-    sid_dir = tmp_path / "0"
-    sid_dir.mkdir()
-    (sid_dir / "step1_0.out").write_text("fail", encoding="utf-8")
-    dest = step_failures.archive_failed_attempt(sid_dir)
-    assert dest.name == "attempt1"
-    assert (dest / "step1_0.out").is_file()  # the loose file moved in
-    assert not (sid_dir / "step1_0.out").exists()
-
-    (sid_dir / "step1_0.out").write_text("fail2", encoding="utf-8")
-    assert step_failures.archive_failed_attempt(sid_dir).name == "attempt2"  # next free
-
-    # A manually-added higher attempt + a non-matching 'attempt*' dir: K = max+1,
-    # the odd dir is ignored, and existing attempt dirs are left in place.
-    (sid_dir / "attempt5").mkdir()
-    (sid_dir / "attemptX").mkdir()  # matches the glob but not attempt<digits>
-    (sid_dir / "step1_0.out").write_text("fail3", encoding="utf-8")
-    assert step_failures.archive_failed_attempt(sid_dir).name == "attempt6"
-    assert (sid_dir / "attempt1").is_dir() and (sid_dir / "attempt5").is_dir()

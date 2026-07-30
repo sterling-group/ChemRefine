@@ -24,7 +24,6 @@ shared retry helper in :mod:`chemrefine.step_failures` for unconverged children.
 from __future__ import annotations
 
 import logging
-import shutil
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal
@@ -34,12 +33,11 @@ from ase import Atoms
 from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field
 
-from chemrefine import cache, filtering, io, step_failures
+from chemrefine import attempts, cache, filtering, io, step_failures
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import NmsCapableEngine
 from chemrefine.errors import CacheError
 from chemrefine.ids import (
-    is_attempt_dir,
     latest_attempt_dir,
     next_attempt_dir,
     structure_artifact_path,
@@ -339,41 +337,6 @@ def _read_resolution(structure_dir: Path) -> str | None:
     return None if record is None else str(record["resolved_from"])
 
 
-def _promote_winner(winner_id: str, parent_id: str, step: int, attempt_dir: Path) -> None:
-    """Copy the winning child's artifacts up to the parent's canonical basenames.
-
-    Every loose file of ``attemptK/<winner_id>/`` is copied to the parent's directory with
-    ``step{N}_{winner_id}`` in its basename rewritten to ``step{N}_{parent_id}`` — a prefix
-    swap rather than a suffix one, because ORCA's names are not all single-extension
-    (``_trj.xyz``, ``.property.json``). So the ``.out``, ``.gbw``, ``.hess``, ``.opt`` and the
-    ``.inp`` that produced them all arrive together.
-
-    The point is that the canonical location describes **one calculation**. Before this, NMS
-    wrote only the winning *geometry* there and left round 1's output files beside it: a
-    ``.xyz`` from the pyramidal minimum next to an ``.out`` for the planar saddle it started
-    from, with no way to tell from the directory that they disagreed. Round 1 is not lost —
-    :func:`_accept` archives it into the same ``attemptK/`` first.
-
-    Copy rather than move: the child directory stays intact, so the attempt still records
-    every geometry that was tried, winner included.
-    """
-    stem = f"step{step}_{winner_id}"
-    for item in sorted((attempt_dir / winner_id).iterdir()):
-        if is_attempt_dir(item):
-            # The winner's own earlier attempts stay with it: they are the runs it discarded,
-            # and `attemptK` resolves against the parent's directory, so copying one up would
-            # merge a discarded run into the attempt this promotion is reading from.
-            continue
-        if item.is_dir():
-            # An engine-written directory (``pyscf-extopt``'s ``tensors/``) is named by the
-            # engine, not after the structure, so it is promoted under its own name.
-            shutil.copytree(item, attempt_dir.parent / item.name, dirs_exist_ok=True)
-            continue
-        if not item.name.startswith(stem):
-            continue
-        shutil.copy2(item, attempt_dir.parent / f"step{step}_{parent_id}{item.name[len(stem) :]}")
-
-
 def _accept(
     resolved: list[Structure],
     round2: list[Structure],
@@ -392,7 +355,8 @@ def _accept(
 
     ``attempt_dir`` is the ``attemptK/`` the round-2 children ran in, and passing it is what
     makes this touch the disk: round 1 is archived into it and the winner's artifacts are
-    promoted out of it (see :func:`_promote_winner`). ``None`` means re-derive in memory only
+    promoted out of it (see :func:`chemrefine.attempts.promote`). ``None`` means re-derive
+    in memory only
     — ``rebuild_nms`` re-reads a tree that has already been through this and must not
     rearrange it a second time.
 
@@ -416,8 +380,8 @@ def _accept(
             # Archive first, promote second: the copy below lands on the basenames round 1
             # is still occupying, so moving it out of the way is what stops one calculation
             # from overwriting another.
-            step_failures.archive_failed_attempt(ctx.step_dir / parent.id, attempt_dir)
-            _promote_winner(winner.id, parent.id, step, attempt_dir)
+            attempts.seal(ctx.step_dir / parent.id, attempt_dir)
+            attempts.promote(attempt_dir, step=step, source_id=winner.id, target_id=parent.id)
             # Re-stamp the geometry file with its provenance. Same coordinates the promoted
             # `.out` reports — `winner.atoms` was parsed from it — now carrying the comment
             # that says how this structure was arrived at.
