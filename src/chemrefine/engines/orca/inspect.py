@@ -29,7 +29,7 @@ from pathlib import Path
 # A ``%geom … Scan … end`` block (a relaxed surface scan) → the ``pes`` parser.
 _GEOM_SCAN_RE = re.compile(r"%geom\b.*?\bscan\b.*?\bend\b", re.IGNORECASE | re.DOTALL)
 
-# Whole-token spellings of the two run-type keywords we key on. ORCA prefixes
+# Whole-token spellings of the two run-type keywords this keys on. ORCA prefixes
 # convergence tightness (``TightOpt``) and Cartesian/TS variants (``COpt``, ``OptTS``),
 # and frequencies come as ``Freq`` / ``NumFreq`` / ``AnFreq``. Matched against whole
 # tokens, so a keyword that merely contains one of these substrings cannot trip them.

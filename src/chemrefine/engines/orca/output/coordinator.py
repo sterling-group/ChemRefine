@@ -122,7 +122,7 @@ def parse_text(text: str, operation: str, *, src: str = "<text>") -> list[Parsed
 
 
 def _stamp_run_status(frames: list[ParsedResult], out_path: Path) -> list[ParsedResult]:
-    """Copy the ``.out``'s termination verdict onto every sidecar frame (B2).
+    """Copy the ``.out``'s termination verdict onto every sidecar frame.
 
     The ensemble sidecar carries geometries and energies but no run status, so frames
     parsed straight out of it default to ``terminated_normally=None`` — and

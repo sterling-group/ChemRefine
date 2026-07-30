@@ -106,11 +106,10 @@ class PyscfOptions(EngineOptions):
         fields keep values only so the server CLI / programmatic callers can
         still construct an instance.)
 
-        Delegates the actual validation to the base rather than calling ``cls`` itself:
-        this override used to build the model directly, so it skipped the base's
-        conversion of a pydantic error into a :class:`~chemrefine.errors.ConfigError` and
-        a typoed PySCF knob escaped the CLI's exit-code contract as a traceback. The extra
-        requirements below are the only thing this override should be adding.
+        Validation is delegated to the base rather than calling ``cls`` directly, so a
+        pydantic error still becomes a :class:`~chemrefine.errors.ConfigError` and a typoed
+        knob stays inside the CLI's exit-code contract. The extra requirements below are the
+        only thing this override adds.
         """
         raw = raw or {}
         opts = super().from_raw(raw)

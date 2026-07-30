@@ -115,7 +115,7 @@ def write_training_config(*, train_path: Path, test_path: Path, ctx: StepContext
     """Render a MACE training YAML from the per-step template.
 
     The template is the step's ``template:`` override or the default
-    ``<template_dir>/step{N}.inp`` (a YAML body). We patch the dataset paths
+    ``<template_dir>/step{N}.inp`` (a YAML body). The dataset paths are patched
     and three output directories so MACE writes inside the step dir, then
     write the resolved config to ``<step_dir>/input.yaml``.
     """

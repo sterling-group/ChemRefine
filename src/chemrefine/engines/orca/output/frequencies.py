@@ -16,8 +16,8 @@ The ``VIBRATIONAL FREQUENCIES`` table looks like::
          ...
         37:   -118.27 cm**-1  ***imaginary mode***
 
-We parse the mode-index → frequency mapping and let the caller pick the subset (imaginary
-modes for NMS, all modes for a spectrum, …).
+The mode-index → frequency mapping is returned whole; the caller picks the subset it
+needs (imaginary modes for NMS, all modes for a spectrum, …).
 """
 
 from __future__ import annotations
@@ -116,7 +116,7 @@ def parse_normal_modes_tensor_from_text(text: str, *, num_atoms: int) -> NDArray
 
     Each ``[atom, axis, mode]`` slice is one Cartesian-displacement component for one normal
     mode. ORCA prints the tensor in column-major blocks (a header line with the mode indices,
-    then ``3 N`` rows); we collect each block and ``hstack`` them to recover the full
+    then ``3 N`` rows), so the blocks are collected and ``hstack``-ed to recover the full
     ``(3N, n_modes)`` matrix before reshaping. Raises :class:`ValueError` if no mode blocks are
     present or the shape doesn't match ``3·num_atoms``.
 

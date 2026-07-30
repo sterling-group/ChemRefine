@@ -143,12 +143,10 @@ def requirement_from_options(options: dict[str, Any] | None) -> BackendRequireme
     and maps it through :func:`backend_spec` — so the env requirement always matches what
     :func:`build_calculator` would actually load.
 
-    Through the model, not by hand. This used to re-implement the ``task``/``task_name``
-    alias itself, and the copy disagreed with the original: a step naming both spellings
-    resolved here to a backend requirement but raised in the direct engine's template
-    render. Since this function is what ``preflight_backends`` calls, such a step passed
-    the fail-fast check at the top of the run and then died in ``prepare`` — from the very
-    check that exists to stop that happening.
+    Through the model, not by hand. ``preflight_backends`` calls this, so a second copy of
+    the ``task``/``task_name`` alias rules here could accept a step that the direct engine's
+    template render then rejects — the fail-fast check at the top of the run passing a step
+    that dies in ``prepare``, which is exactly what it exists to prevent.
     """
     opts = MlipOptions.from_raw_lenient(options)
     spec = backend_spec(opts.task_name, opts.model_path)

@@ -131,9 +131,10 @@ def _backend_python(engine: object, options: dict[str, Any]) -> str | None:
     """The step's ``backend_python`` override, read through the engine's own model.
 
     ``backend_python`` is an :class:`~chemrefine.engines._options.EngineOptions` field, so
-    reading it off the raw dict here was a second reader of a declared knob — the shape
-    that has already split twice in this codebase. The engine's ``options_cls`` is used
-    when it declares one, exactly as :func:`chemrefine.engines._job.gpus_from_options` does.
+    it is read through the model that declares it rather than off the raw dict: a second
+    reader of a declared knob is free to disagree with the first about defaults and aliases.
+    The engine's ``options_cls`` is used when it declares one, exactly as
+    :func:`chemrefine.engines._job.gpus_from_options` does.
     """
     options_cls: type[EngineOptions] = getattr(engine, "options_cls", EngineOptions)
     return options_cls.from_raw_lenient(options).backend_python

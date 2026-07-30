@@ -95,7 +95,7 @@ def run_batch(engine: JobExecutable, inputs: StepInputs, ctx: StepContext) -> Jo
         jobs = _submit_all(engine, inputs, ctx, throttler, header_path, pal, gpus, local)
         throttler.wait_all(finished=slurm.finished_jobs, max_wait_seconds=ctx.job_timeout_seconds)
     finally:
-        # Any job still active here means we are unwinding on an exception — a
+        # Any job still active here means the stack is unwinding on an exception — a
         # ThrottleTimeoutError, a mid-batch JobSubmissionError, a KeyboardInterrupt.
         # Local jobs are real background processes owned by this interpreter, so
         # leaving them running would orphan compute that keeps competing for the

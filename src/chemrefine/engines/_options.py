@@ -116,10 +116,9 @@ class EngineOptions(BaseModel):
         """Build the model, reporting a bad knob as a :class:`ConfigError`.
 
         An invalid ``step.options`` value is a config error and must exit with the code
-        :mod:`chemrefine.errors` documents for one. Letting pydantic's ``ValidationError``
-        escape put it outside that contract — the CLI catches ``ChemRefineError`` — so a
-        typo in the YAML surfaced as a traceback instead of a message, which is the same
-        gap a missing template used to fall through.
+        :mod:`chemrefine.errors` documents for one. The CLI catches ``ChemRefineError``, so a
+        pydantic ``ValidationError`` allowed to escape would leave that contract and reach the
+        user as a traceback rather than a message.
         """
         try:
             return cls(**data)

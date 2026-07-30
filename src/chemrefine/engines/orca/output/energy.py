@@ -57,7 +57,7 @@ def parse_thermochemistry_from_text(
     if _THERMO_MARKER not in text:
         return None
     # Take the last of each (a compound job may print thermochemistry more than once; the final
-    # block is the one we want), matching the energy parser.
+    # block is the relevant one), matching the energy parser.
     gibbs = _GIBBS_RE.findall(text)
     enthalpy = _ENTHALPY_RE.findall(text)
     zpe = _ZPE_RE.findall(text)
