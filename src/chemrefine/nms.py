@@ -36,7 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from chemrefine import attempts, cache, filtering, io, lifecycle
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import NmsCapableEngine
-from chemrefine.errors import CacheError
+from chemrefine.errors import CacheError, ConfigError
 from chemrefine.ids import (
     latest_attempt_dir,
     next_attempt_dir,
@@ -149,10 +149,29 @@ def rng_for(structure_id: str, seed: int) -> np.random.Generator:
 
 
 def _reaction_coordinate(imag_freqs: dict[int, float], opts: NmsOptions) -> int:
-    """The mode to *keep* for a TS: ``ts_mode_index`` or the most-imaginary."""
-    if opts.ts_mode_index is not None:
-        return opts.ts_mode_index
-    return max(imag_freqs, key=lambda i: abs(imag_freqs[i]))
+    """The mode to *keep* for a TS: ``ts_mode_index`` or the most-imaginary.
+
+    An explicit index must name a mode that is actually imaginary. It cannot be checked at
+    config time — which modes are imaginary is a property of each structure's frequency
+    calculation, not of the YAML — so it is checked here, against the structure at hand.
+
+    The check matters because the failure is otherwise silent and inverted: the exclusion
+    is written as a filter (``if i != rc``), so an index naming no imaginary mode simply
+    excludes nothing, and NMS displaces along *every* imaginary mode — including the
+    reaction coordinate the setting exists to preserve. The children then come back as
+    minima, fail the ``target == 1`` test, and the whole step reports "target stationary
+    point not reached" after paying for the full round-2 batch: a chemistry message for an
+    off-by-one.
+    """
+    if opts.ts_mode_index is None:
+        return max(imag_freqs, key=lambda i: abs(imag_freqs[i]))
+    if opts.ts_mode_index not in imag_freqs:
+        raise ConfigError(
+            f"nms ts_mode_index={opts.ts_mode_index} is not an imaginary mode of this "
+            f"structure; its imaginary modes are {sorted(imag_freqs)}. Name one of those, "
+            f"or drop ts_mode_index to keep the most imaginary mode."
+        )
+    return opts.ts_mode_index
 
 
 def _selected_modes(

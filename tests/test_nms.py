@@ -21,6 +21,7 @@ from ase import Atoms
 from chemrefine import cache, nms
 from chemrefine.config import Config, MinSample, StepConfig
 from chemrefine.engines.api import NmsInputInfo
+from chemrefine.errors import ConfigError
 from chemrefine.ids import structure_artifact_path
 from chemrefine.state import (
     Failure,
@@ -139,6 +140,37 @@ def test_select_displacements_ts_mode_index_overrides():
         np.random.default_rng(0),
     )
     assert [s for s, _ in out] == ["m5_pos", "m5_neg"]  # displaces the *other* imaginary
+
+
+def test_a_ts_mode_index_naming_no_imaginary_mode_is_refused():
+    """The setting exists to *preserve* a mode; naming a real one destroyed it instead.
+
+    The exclusion is a filter (`if i != rc`), so an index that matches nothing excludes
+    nothing and every imaginary mode gets displaced — the reaction coordinate included.
+    Round 2 then comes back as minima, fails the `target == 1` test, and the step reports
+    "target stationary point not reached": a chemistry message for an off-by-one, after
+    paying for the whole batch.
+    """
+    with pytest.raises(ConfigError, match="not an imaginary mode"):
+        nms.select_displacements(
+            _h2("0"),
+            {6: -523.4},
+            _modes(12),
+            nms.NmsOptions(target="ts", ts_mode_index=7),  # off by one
+            np.random.default_rng(0),
+        )
+
+
+def test_a_ts_mode_index_naming_the_only_imaginary_mode_keeps_it():
+    """The correct index displaces nothing — there is no other imaginary mode to remove."""
+    out = nms.select_displacements(
+        _h2("0"),
+        {6: -523.4},
+        _modes(12),
+        nms.NmsOptions(target="ts", ts_mode_index=6),
+        np.random.default_rng(0),
+    )
+    assert out == []
 
 
 def test_select_displacements_minimum_no_imaginary_is_empty():
