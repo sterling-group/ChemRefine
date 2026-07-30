@@ -11,7 +11,7 @@ handles was renamed before 2.0. Deleting the module and its one call site is the
 removal; see ``docs/migrating-v1-to-v2.md``.
 
 Kept out of :mod:`chemrefine.config` so the schema reads as the schema. Someone learning
-what a step *is* should not have to read two hundred lines about what a step used to be.
+what a step *is* should not have to read two hundred lines of translation for older ones.
 """
 
 from __future__ import annotations
@@ -170,7 +170,7 @@ def _normalize_step(step: Any) -> Any:
             logger.warning("`sample_type` is deprecated; use `sample`")
             s["sample"] = _flatten_sample_type(s["sample_type"])
         s.pop("sample_type")
-    # Normalize whatever `sample` we now have (from sample_type, or a direct
+    # Normalize the resulting `sample` block (from sample_type, or a direct
     # block, possibly using legacy method/key names) to the v2 vocabulary.
     if isinstance(s.get("sample"), dict):
         s["sample"] = _normalize_sample_block(s["sample"])

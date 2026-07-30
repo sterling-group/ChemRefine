@@ -179,19 +179,17 @@ class StepInputs:
 class RunBlock:
     """The bash one engine contributes to a job script — split into what runs and what cleans up.
 
-    Two fields rather than one string, because the one-string form let an engine take the whole
-    script's exit path with it. :func:`chemrefine.slurm._run_body_lines` installs a single
-    ``EXIT`` trap that copies results back, copies each ``output_dirs`` entry back, tears down
-    scratch and emits the runlog footer — and bash keeps exactly one handler per signal, so an
-    engine that wrote its own ``trap … EXIT`` into its block silently *replaced* all of it.
+    Two fields rather than one string, so teardown is *data* the infra layer places rather
+    than bash an engine emits. :func:`chemrefine.slurm.script._run_body_lines` installs a
+    single ``EXIT`` trap that copies results back, copies each ``output_dirs`` entry back,
+    tears down scratch and writes the runlog footer; ``cleanup`` is interpolated inside that
+    handler.
 
-    That is not hypothetical: the ExtOpt engines did it for ten weeks, and nothing caught it
-    because ORCA redirects its ``.out`` straight to ``$OUTPUT_DIR``, so parsing kept succeeding
-    while ``.gbw``/``.hess`` were abandoned in scratch, ``pyscf-extopt``'s ``save_tensors``
-    produced nothing at all, and every job leaked its ``$WORK_DIR``.
-
-    So teardown is *data* the infra layer places, not bash the engine emits: ``cleanup`` is
-    interpolated inside that one handler, and an engine has no reason left to trap.
+    The split matters because bash keeps one handler per signal. An engine that wrote its own
+    ``trap … EXIT`` would replace the whole of that — and the loss is quiet, because ORCA
+    redirects its ``.out`` straight to ``$OUTPUT_DIR``, so parsing still succeeds while
+    ``.gbw``/``.hess`` stay in scratch and every job leaks its ``$WORK_DIR``. With teardown as
+    a field, an engine has no reason to trap at all.
 
     Note what this does and does not guarantee. The handler is armed *before* the body runs —
     it has to be, or a failure inside the body would clean up nothing — so an engine that
@@ -232,14 +230,13 @@ class JobBatch:
 class FailureKind(StrEnum):
     """Why a structure failed — the classification recovery branches on.
 
-    A closed vocabulary rather than free text. ``retry_unconverged``,
-    ``_resubmit_failed`` and ``reattempt_nms`` all route on *which* kind of failure
-    this is, and they used to do that by comparing against the exact wording of a
-    human-readable message. Rewording one — the sort of thing that looks like a docs
-    change — silently disabled a recovery path.
+    A closed vocabulary rather than free text: ``retry_unconverged``, ``_resubmit_failed``
+    and ``reattempt_nms`` each route on *which* kind of failure this is, so the comparison
+    has to survive an edit to the wording a user reads. Matching on the message itself made
+    rewording it — a docs change, to all appearances — disable a recovery path.
 
-    The values are the wording, so the ledger on disk stays readable and messages
-    stay unchanged; what moved is that the comparison is now against a name.
+    The values *are* that wording, so the ledger on disk and the log lines stay readable;
+    what the code compares is the name.
     """
 
     MISSING_OUTPUT = "output missing"
@@ -260,7 +257,7 @@ class FailureKind(StrEnum):
     """Normal-mode sampling could not reach the requested stationary point."""
 
     FAILED = "failed"
-    """The engine set a failure flag we don't have a more specific name for."""
+    """The engine set a failure flag with no more specific name here."""
 
 
 @dataclass(frozen=True)

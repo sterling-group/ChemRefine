@@ -116,7 +116,7 @@ def gather_output_files(directory: str | Path, pattern: str) -> list[Path]:
 
 
 def read_xyz_frames(path: str | Path) -> list[Atoms]:
-    """Read every frame of an XYZ file into ASE ``Atoms`` — the one place we parse XYZ.
+    """Read every frame of an XYZ file into ASE ``Atoms`` — the one XYZ reader.
 
     ``format="extxyz"`` selects ASE's robust reader: the naive ``"xyz"`` parser
     loops ``int(lines.pop(0))`` over every line and dies (``invalid literal for

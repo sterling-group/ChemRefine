@@ -310,19 +310,18 @@ def _partial_step_outcome(
     """Continue a step the driver died in the middle of, instead of redoing it.
 
     ``step.json`` is written **once**, at the end of a step, so a driver killed partway
-    through — the batch job running ChemRefine hits its walltime, a node fails, Ctrl-C —
-    leaves no cache at all. Without this, ``resume`` fell straight through to
-    :func:`_run_full_step`, whose first act is to archive every finished ``.out`` into
-    ``attemptK/`` and resubmit the lot. The completed compute stayed on disk and was never
-    read back, because :func:`~chemrefine.lifecycle.parse_with_failures` decides success
-    by ``out.is_file()`` at the canonical path, which had just been emptied. On HPC that is
-    cluster-days discarded silently.
+    through — the batch job hits its walltime, a node fails, Ctrl-C — leaves no cache at all.
+    The alternative is :func:`_run_full_step`, whose first act is to archive every finished
+    ``.out`` into ``attemptK/`` and resubmit the lot: on HPC, days of completed compute left
+    on disk and never read back, because
+    :func:`~chemrefine.lifecycle.parse_with_failures` decides success by ``out.is_file()``
+    at the canonical path, which archiving has just emptied.
 
-    The manifest is what makes continuing *safe* rather than merely cheap. It is written
-    before submission and now carries the step's fingerprint, so a match proves these
-    outputs were produced for this step config and these parents — which is exactly the
-    distinction ``out.is_file()`` cannot make on its own, and the reason archiving had to be
-    unconditional before. Anything still missing is handed to :func:`_resubmit_failed`, the
+    The manifest is what makes continuing *safe* rather than merely cheap. Written before
+    submission and carrying the step's fingerprint, a match proves these outputs were
+    produced for this step config and these parents — the distinction ``out.is_file()``
+    cannot make alone, and the reason archiving is otherwise unconditional. Anything still
+    missing is handed to :func:`_resubmit_failed`, the
     same per-structure archive-and-resubmit path ``rerun-errors`` uses; it re-parses the
     whole manifest afterwards, so the finished structures come back from disk.
 
@@ -377,9 +376,9 @@ def _run_full_step(
     logger.info("step %d (%s): preparing inputs", step_cfg.step, step_cfg.engine)
     # Anything already in these structure dirs is a previous run's work. Move it aside
     # before writing new inputs, so a job that dies without producing output is seen as
-    # a failure rather than re-reading the old result (B1). Done here, at the lifecycle
-    # owner, rather than inside ``prepare`` — the retry and NMS paths call ``prepare``
-    # too and already manage their own attempt dirs.
+    # a failure rather than re-reading the old result. Done here rather than inside
+    # ``prepare``, because the retry and NMS paths call ``prepare`` too and already
+    # manage their own attempt dirs.
     attempts.archive_previous(ctx.step_dir, (s.id for s in ctx.prev_state.structures))
     inputs = engine.prepare(ctx)
     cache.save_manifest(
@@ -496,7 +495,7 @@ def _resubmit_failed(
     The failed structures' prior artifacts are archived into ``attemptK/`` and their
     inputs **regenerated** before resubmission, rather than reusing the input files the
     original prepare left on disk. Two reasons: archiving is what stops a job that dies
-    without producing output from re-reading the old result (B1), and regenerating means
+    without producing output from re-reading the old result, and regenerating means
     a ``rerun-errors`` after a template edit actually runs the edited template — the
     on-disk input would otherwise contradict the fingerprint the cache is keyed on.
 

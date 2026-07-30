@@ -212,9 +212,9 @@ class StepConfig(BaseModel):
 
         This value is interpolated raw into the runlog header's ``cat <<EOF`` — the same
         unquoted heredoc :meth:`Config._reject_unsafe_executables` exists for, and unquotable
-        for the same reason (``$(hostname)`` / ``${SLURM_JOB_ID:-$$}`` must still expand). So
-        ``operation: opt_sp$(id -un)`` was a command substitution the job ran, and a stray
-        ``$`` silently corrupted the runlog.
+        for the same reason (``$(hostname)`` / ``${SLURM_JOB_ID:-$$}`` must still expand). So an
+        ``operation: opt_sp$(id -un)`` is a command substitution the job would run, and a
+        stray ``$`` corrupts the runlog without saying so.
 
         Its two neighbours in that header were already covered by construction — ``engine``
         must be a registry key, ``name`` is matched against :data:`_NAME_RE` — which is
@@ -274,10 +274,11 @@ _SHELL_UNSAFE = ('"', "$", "`", "\\")
 def reject_shell_unsafe(text: str, *, what: str, fix: str) -> None:
     """Raise unless ``text`` is safe to interpolate into the generated SLURM script.
 
-    **One rule, one home — and it belongs to the concept, not to a list of fields.** Every
-    config value that reaches generated bash goes through here. Twice now a value was added
-    that reached bash by a route nobody re-checked, because the rule was remembered as
-    "the path fields" rather than as the property it actually is:
+    **One rule, one home, keyed to the property rather than to a list of fields.** Every
+    config value that reaches generated bash goes through here — the table below is the whole
+    set, and `tests/test_engines_invariants.py` fails if a new one appears without a decision
+    about which column it belongs in. Remembered as "the path fields", the rule missed values
+    that reached bash by other routes.
 
     ==========================  ===============================================================
     Value                       How it is protected
@@ -410,8 +411,8 @@ class Config(BaseModel):
         (:meth:`chemrefine.engines.orca.engine.OrcaEngine.orca_command`). But the runlog
         header embeds it raw inside ``cat <<EOF`` — a heredoc that must stay unquoted so
         ``$(hostname)``, ``$WORK_DIR`` and ``${SLURM_JOB_ID:-$$}`` expand — so
-        ``executables: {orca: /opt/orca-$(id -un)/orca}`` was a command substitution the
-        job would run, and an innocent ``$`` in a path silently corrupted the runlog.
+        ``executables: {orca: /opt/orca-$(id -un)/orca}`` is a command substitution the job
+        would run, and an innocent ``$`` in a path corrupts the runlog without saying so.
 
         Quoting the header is not the fix: the heredoc's expansion is load-bearing for
         the fields around it. Refusing the character at the boundary is, and it is the

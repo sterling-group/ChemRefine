@@ -11,12 +11,11 @@ passes ``allow_pickle=False`` and numpy *raises* rather than running an
 object array's reduce. Coordinates round-trip byte-identically either
 way, so :func:`parents_digest` is stable across save → load.
 
-The split is what makes the cache scale. Coordinates are 93% of a
-record, and as decimal text each float64 costs 18 bytes on disk, a
-``strtod`` call to parse, and 32 bytes live; in a ``.npy`` member it
-costs 8 bytes, a memcpy, and 8 bytes. Measured over 10,000 structures of
-10-120 atoms: **69.1 MB / 1.73 s load / 268 MB peak** as one JSON
-document against **31.3 MB / 0.36 s / 75 MB** split. Structures in a
+The split is what makes the cache scale. Coordinates dominate a record,
+and as decimal text each float64 costs 18 bytes on disk, a ``strtod``
+call to parse and 32 bytes live; in a ``.npy`` member it costs 8 bytes,
+a memcpy and 8 bytes. ``tests/test_perf_cache.py`` measures the
+difference and ``docs/concepts/caching.md`` reports it. Structures in a
 step need not share an atom count, so the arrays are concatenated with
 an offsets index rather than stacked — see :func:`_split_arrays`.
 
@@ -388,13 +387,11 @@ def write_json(path: Path, data: Any, *, indent: int | None = 2) -> None:
     ``.result.json`` records are all things a person opens, and all small enough that
     readability is the only property that matters.
 
-    ``indent=None`` switches to compact separators, for the step document alone. At the
-    10,000 structures of 30 atoms that :mod:`tests.test_perf_cache` measures, that file is
-    **73.3 MB indented and 38.7 MB compact** — the indentation is not a rounding error, it
-    is 47% of the file, because a coordinate record is thousands of short numeric values and
-    each one carries its own newline and run of spaces. Nothing reads it by eye at that size,
-    and nothing reads it by line either: the loader parses the whole document, so the layout
-    is invisible to every consumer.
+    ``indent=None`` switches to compact separators, for the step document alone. At a
+    realistic step size the indentation is roughly half the file — a coordinate record is
+    thousands of short numeric values, and each carries its own newline and run of spaces.
+    Nothing reads that document by eye, and nothing reads it by line either: the loader
+    parses it whole, so the layout reaches no consumer.
     """
     separators = None if indent is not None else _COMPACT_SEPARATORS
     _atomic_write(path, json.dumps(data, indent=indent, separators=separators).encode())
@@ -543,12 +540,10 @@ def save_step_results(
 ) -> None:
     """Persist a step's results, deriving every digest and fingerprint from ``ctx``.
 
-    The one place a completed step is written. Five call sites used to spell out the
-    same tail — hash the parents, take the template digest, compute the plain and the
-    reuse fingerprint, call :func:`save` — and one of them had already drifted, omitting
-    the reuse fingerprint. That is the failure mode this exists to prevent: a cache
-    written with an inconsistent key is not a crash, it is a silent re-run or a silent
-    reuse much later.
+    The one place a completed step is written, so the key it is written under is derived
+    once: hash the parents, take the template digest, compute the plain and the reuse
+    fingerprint, call :func:`save`. A cache stored under an inconsistent key does not
+    crash — it re-runs work that was done, or reuses work that was not, much later.
     """
     digest = parents_digest(ctx.prev_state.structures)
     save(

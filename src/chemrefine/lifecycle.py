@@ -59,7 +59,7 @@ def failure_kind(s: Structure) -> FailureKind:
 
     ``terminated_normally is False`` → the engine crashed / didn't finish cleanly;
     ``converged is False`` → it finished but the SCF/geometry didn't converge;
-    otherwise :attr:`FailureKind.FAILED` (a flag the engine set we don't name).
+    otherwise :attr:`FailureKind.FAILED` (a flag the engine set with no name of its own here).
     """
     if s.terminated_normally is False:
         return FailureKind.NOT_TERMINATED
@@ -181,7 +181,7 @@ def retry_unconverged(
     successes: list[Structure],
     failures: list[Failure],
 ) -> tuple[list[Structure], list[Failure]]:
-    """Retry each *unconverged* failure once, from its best geometry (B10).
+    """Retry each *unconverged* failure once, from its best geometry.
 
     Convergence-only — a crashed / missing-output failure (or one with no best
     geometry) is left untouched for the ``on_failure`` policy. A single inline pass
