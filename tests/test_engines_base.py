@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 # Importing from ``chemrefine.engines.api`` triggers the parent package's
@@ -90,21 +88,30 @@ def test_registry_holds_only_canonical_engine_names():
 # --- base: the abstract SLURM hooks -----------------------------------------
 
 
-def test_job_engine_primitive_hooks_are_abstract():
+def test_an_incomplete_job_engine_cannot_be_constructed():
+    """A subclass missing a primitive fails at construction, not after submitting jobs.
+
+    These four are what a ``JobEngine`` cannot supply for itself. While they raised
+    ``NotImplementedError`` on call, a subclass that forgot one still satisfied ``isinstance``,
+    still registered, and still prepared and submitted every job of a step — the failure
+    surfaced in ``parse``, once the cluster time was already spent. Abstract, it surfaces in
+    ``get_engine``.
+    """
     from chemrefine.engines._job import JobEngine
 
-    eng = JobEngine()
-    with pytest.raises(NotImplementedError):
-        eng.pal(None)
-    with pytest.raises(NotImplementedError):
-        eng.run_block(None, Path("i"), Path("o"))
-    with pytest.raises(NotImplementedError):
-        eng.build_input(
-            xyz_path=Path("x"),
-            template_path=Path("t"),
-            input_path=Path("i"),
-            output_path=Path("o"),
-            ctx=None,
-        )
-    with pytest.raises(NotImplementedError):
-        eng.parse_one(Path("o"), "0", None)
+    class _MissingParseOne(JobEngine):
+        name = "incomplete"
+        label = "Incomplete"
+        template_suffix = "inp"
+        output_suffix = "out"
+        output_globs = ("*.out",)
+
+        def build_input(self, *, xyz_path, template_path, input_path, output_path, ctx): ...
+
+        def run_block(self, ctx, inp_path, out_path): ...
+
+        def pal(self, ctx):
+            return 1
+
+    with pytest.raises(TypeError, match="parse_one"):
+        _MissingParseOne()  # type: ignore[abstract]

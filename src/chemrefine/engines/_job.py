@@ -18,6 +18,7 @@ Engines that aren't per-structure jobs (the fake engine, ``mlip-train``) impleme
 
 from __future__ import annotations
 
+import abc
 import hashlib
 from collections.abc import Sequence
 from pathlib import Path
@@ -112,8 +113,14 @@ def build_structures(
     return StepResults(structures=tuple(out))
 
 
-class JobEngine:
-    """Shared lifecycle for one-job-per-structure engines (ORCA, the script engines)."""
+class JobEngine(abc.ABC):
+    """Shared lifecycle for one-job-per-structure engines (ORCA, the script engines).
+
+    The four primitives below are abstract, so an incomplete subclass fails at construction —
+    which is where :func:`chemrefine.engines.api.get_engine` builds it. Left as runtime
+    ``NotImplementedError``, a subclass missing ``parse_one`` still satisfied ``isinstance``,
+    still registered, and still submitted every job of a step before anything noticed.
+    """
 
     name: ClassVar[str]
     label: ClassVar[str]
@@ -199,6 +206,7 @@ class JobEngine:
 
     # -- engine primitives (the public provision surface) ------------------
 
+    @abc.abstractmethod
     def build_input(
         self,
         *,
@@ -209,21 +217,20 @@ class JobEngine:
         ctx: StepContext,
     ) -> None:
         """Write one structure's engine input file (e.g. the ``.inp`` / ``.py``)."""
-        raise NotImplementedError
 
+    @abc.abstractmethod
     def parse_one(
         self, output_path: Path, structure_id: str, ctx: StepContext
     ) -> list[ParsedResult]:
         """Parse one output into ``ParsedResult``(s) — ≥2 for an ensemble fan-out."""
-        raise NotImplementedError
 
+    @abc.abstractmethod
     def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> RunBlock:
         """The bash that runs inside ``$WORK_DIR``, plus any teardown it needs."""
-        raise NotImplementedError
 
+    @abc.abstractmethod
     def pal(self, ctx: StepContext) -> int:
         """Per-job core count (PAL) before the scheduler clamps it to ``max_cores``."""
-        raise NotImplementedError
 
     def gpus(self, ctx: StepContext) -> int:
         """GPUs this job needs (default ``0`` = CPU); GPU engines override."""

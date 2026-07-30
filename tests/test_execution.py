@@ -49,6 +49,10 @@ class _FakeJobEngine(JobEngine):
     def gpus(self, ctx) -> int:
         return self.gpu_count
 
+    def parse_one(self, output_path, structure_id, ctx):
+        """These tests drive submission only; nothing here reads an output back."""
+        raise NotImplementedError
+
 
 def _ctx(
     tmp_path: Path, *, ids=("0",), max_gpus=None, slurm_array=False, dispatch="auto"
