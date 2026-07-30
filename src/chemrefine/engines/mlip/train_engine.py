@@ -14,8 +14,10 @@ from __future__ import annotations
 import logging
 from typing import ClassVar
 
+from chemrefine import cache
 from chemrefine.engines.api import register
 from chemrefine.engines.mlip import trainer
+from chemrefine.errors import ConfigError
 from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
 
 logger = logging.getLogger(__name__)
@@ -46,5 +48,21 @@ class MlipTrainEngine:
         return StepResults(structures=ctx.prev_state.structures)
 
     def input_digest(self, ctx: StepContext) -> str:
-        """Training is a pass-through; nothing template-driven to fold into the cache."""
-        return ""
+        """SHA-1 (16 hex) of the MACE config template; ``""`` if it's missing.
+
+        The step passes its *structures* through untouched, but it is not
+        template-independent: :func:`~chemrefine.engines.mlip.trainer.write_training_config`
+        renders a per-step template that **is** the MACE config — epochs, learning rate,
+        model width. Returning ``""`` left those out of the cache key, so retuning the
+        hyperparameters and running ``resume`` was a cache hit: the step reported "reusing
+        N structures", never retrained, and left the previous model on disk for whatever
+        loads it downstream.
+
+        A missing template is not a digest failure — the step raises from ``submit`` with
+        the actionable message — so it hashes to ``""``, as it does for every job engine.
+        """
+        try:
+            template = trainer.resolve_training_template(ctx)
+        except ConfigError:
+            return ""
+        return cache.template_digest(template)

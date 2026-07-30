@@ -147,6 +147,18 @@ def parents_digest(structures: Sequence[Structure]) -> str:
     return h.hexdigest()[:16]
 
 
+def template_digest(path: Path) -> str:
+    """Return a 16-char SHA-1 over a resolved template's bytes.
+
+    The ``template_digest`` half of :func:`fingerprint`, in the module that owns cache
+    keys — the same reason :func:`reuse_fingerprint` lives here. Every engine that folds a
+    template's *contents* into its step's key goes through this, so the format cannot drift
+    between them: two engines hashing the same file to different keys is not a crash, it is
+    a step that silently re-runs or silently does not.
+    """
+    return hashlib.sha1(path.read_bytes(), usedforsecurity=False).hexdigest()[:16]
+
+
 def fingerprint(
     step_cfg: StepConfig,
     parent_ids: tuple[str, ...],

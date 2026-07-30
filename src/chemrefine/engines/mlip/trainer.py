@@ -111,6 +111,25 @@ def prepare_inputs(results: StepResults, ctx: StepContext) -> tuple[Path, Path]:
 # ---------------------------------------------------------------------------
 
 
+def resolve_training_template(ctx: StepContext) -> Path:
+    """The MACE config template for this step — the single resolution, shared.
+
+    Two callers need the same file and must not disagree about which one it is:
+    :func:`write_training_config` renders it, and
+    :meth:`~chemrefine.engines.mlip.train_engine.MlipTrainEngine.input_digest` hashes it
+    into the cache key. A second spelling of the resolution is a second answer to "which
+    template did this step run", which is how a step gets cached under a key that does not
+    describe it.
+    """
+    return ids.resolve_step_template(
+        ctx.template_dir,
+        ctx.step_cfg.step,
+        template=ctx.step_cfg.template,
+        suffix="inp",
+        label="MLIP training",
+    )
+
+
 def write_training_config(*, train_path: Path, test_path: Path, ctx: StepContext) -> Path:
     """Render a MACE training YAML from the per-step template.
 
@@ -119,13 +138,7 @@ def write_training_config(*, train_path: Path, test_path: Path, ctx: StepContext
     and three output directories so MACE writes inside the step dir, then
     write the resolved config to ``<step_dir>/input.yaml``.
     """
-    template_path = ids.resolve_step_template(
-        ctx.template_dir,
-        ctx.step_cfg.step,
-        template=ctx.step_cfg.template,
-        suffix="inp",
-        label="MLIP training",
-    )
+    template_path = resolve_training_template(ctx)
     raw = template_path.read_text(encoding="utf-8")
     config = yaml.safe_load(raw) or {}
     config["train_file"] = str(train_path)

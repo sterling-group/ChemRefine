@@ -16,6 +16,7 @@ import pytest
 import yaml
 from ase import Atoms
 
+from chemrefine import cache
 from chemrefine.config import StepConfig
 from chemrefine.engines.mlip import trainer
 from chemrefine.engines.mlip.options import MlipOptions, MlipTrainOptions
@@ -297,11 +298,44 @@ def test_mlip_train_engine_is_registered():
     assert get_engine("mlip-train").name == "mlip-train"
 
 
-def test_mlip_train_engine_has_no_input_digest(tmp_path: Path):
-    """Training is a pass-through, so it contributes nothing to the cache fingerprint."""
+def test_retuning_the_training_template_invalidates_the_step(tmp_path: Path):
+    """Editing the MACE config must re-run the training, not cache-hit past it.
+
+    The step passes its structures through, which is why its digest used to be ``""`` —
+    but it is not template-independent: that template *is* the MACE config. With the
+    digest empty, retuning epochs or learning rate and running `resume` reported "reusing
+    N structures", never retrained, and left the previous model on disk.
+    """
     from chemrefine.engines.api import get_engine
 
-    assert get_engine("mlip-train").input_digest(_ctx(tmp_path)) == ""
+    ctx = _ctx(tmp_path)
+    engine = get_engine("mlip-train")
+    template = ctx.template_dir / "step1.inp"
+
+    before = engine.input_digest(ctx)
+    template.write_text("model: MACE\nmax_num_epochs: 500\nlr: 0.001\n", encoding="utf-8")
+    after = engine.input_digest(ctx)
+
+    assert before and after
+    assert before != after
+
+
+def test_the_training_digest_hashes_the_template_the_trainer_reads(tmp_path: Path):
+    """One resolution, so the key cannot describe a different file than the run used."""
+    from chemrefine.engines.api import get_engine
+
+    ctx = _ctx(tmp_path)
+    resolved = trainer.resolve_training_template(ctx)
+    assert get_engine("mlip-train").input_digest(ctx) == cache.template_digest(resolved)
+
+
+def test_a_missing_training_template_digests_to_empty(tmp_path: Path):
+    """Not a digest failure — `submit` raises with the actionable message instead."""
+    from chemrefine.engines.api import get_engine
+
+    ctx = _ctx(tmp_path)
+    (ctx.template_dir / "step1.inp").unlink()
+    assert get_engine("mlip-train").input_digest(ctx) == ""
 
 
 def test_mlip_train_engine_trains_on_prev_and_passes_structures_through(tmp_path: Path):

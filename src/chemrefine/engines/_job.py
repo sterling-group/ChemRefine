@@ -19,13 +19,13 @@ Engines that aren't per-structure jobs (the fake engine, ``mlip-train``) impleme
 from __future__ import annotations
 
 import abc
-import hashlib
 from collections.abc import Sequence
 from pathlib import Path
 from typing import ClassVar
 
 from ase import Atoms
 
+from chemrefine import cache
 from chemrefine.engines import _execution
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import ParsedResult, RunBlock
@@ -202,7 +202,7 @@ class JobEngine(abc.ABC):
             # `prepare` with the actionable message. Fingerprinting just has nothing
             # to hash yet.
             return ""
-        return hashlib.sha1(template.read_bytes(), usedforsecurity=False).hexdigest()[:16]
+        return cache.template_digest(template)
 
     # -- engine primitives (the public provision surface) ------------------
 
