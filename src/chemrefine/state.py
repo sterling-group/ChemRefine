@@ -1,9 +1,16 @@
 """Frozen runtime types passed between pipeline stages.
 
-These dataclasses are the values that flow from one step to the next and
-between the engine lifecycle stages (prepare → submit → wait → parse →
-sample). Keeping them frozen and small forces callers to thread state
-explicitly rather than mutating shared state on a god class.
+These are the values that flow from one step to the next and between the
+engine lifecycle stages (prepare → submit → wait → parse → sample) —
+what a step was given, what it produced, and what it has to say about a
+structure that did not succeed (:class:`FailureKind`, :class:`Failure`,
+:class:`FailureRecord`). Keeping them frozen and small forces callers to
+thread state explicitly rather than mutating shared state on a god class.
+
+Vocabulary only: deciding what a failure *means* for a step is
+:mod:`chemrefine.step_failures`, and persisting the ledger is
+:mod:`chemrefine.cache`. Both import from here, so neither has to import
+the other to name an outcome.
 
 ``StepConfig`` lives in :mod:`chemrefine.config` to avoid pulling Pydantic
 into this module — it is type-hinted as a forward reference where needed.
@@ -12,6 +19,7 @@ into this module — it is type-hinted as a forward reference where needed.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 import numpy as np
@@ -214,6 +222,93 @@ class JobBatch:
     """
 
     jobs: dict[Path, str]
+
+
+# ---------------------------------------------------------------------------
+# Failure vocabulary — what a step says about a structure that did not succeed
+# ---------------------------------------------------------------------------
+
+
+class FailureKind(StrEnum):
+    """Why a structure failed — the classification recovery branches on.
+
+    A closed vocabulary rather than free text. ``retry_unconverged``,
+    ``_resubmit_failed`` and ``reattempt_nms`` all route on *which* kind of failure
+    this is, and they used to do that by comparing against the exact wording of a
+    human-readable message. Rewording one — the sort of thing that looks like a docs
+    change — silently disabled a recovery path.
+
+    The values are the wording, so the ledger on disk stays readable and messages
+    stay unchanged; what moved is that the comparison is now against a name.
+    """
+
+    MISSING_OUTPUT = "output missing"
+    """The job produced no output file at all — crashed, killed, never started."""
+
+    UNPARSEABLE = "unparseable"
+    """An output exists but the engine could not read it (truncated, corrupt)."""
+
+    NOT_TERMINATED = "did not terminate normally"
+    """The program ran but did not exit cleanly."""
+
+    NOT_CONVERGED = "did not converge"
+    """It finished, but the SCF or the geometry did not converge. The only kind
+    that is retried from its best geometry — resubmitting the identical input for
+    any of the others would just fail the same way."""
+
+    UNRESOLVED_NMS = "NMS: target stationary point not reached"
+    """Normal-mode sampling could not reach the requested stationary point."""
+
+    FAILED = "failed"
+    """The engine set a failure flag we don't have a more specific name for."""
+
+
+@dataclass(frozen=True)
+class Failure:
+    """One failed structure: its id, why, and the best geometry obtained (if any)."""
+
+    sid: str
+    kind: FailureKind
+    best: Structure | None
+    detail: str = ""
+    """Extra context for kinds that have some (the parser message for
+    ``UNPARSEABLE``); empty otherwise."""
+
+    @property
+    def reason(self) -> str:
+        """The human-readable reason, as written to the ledger and the logs."""
+        return f"{self.kind.value}: {self.detail}" if self.detail else self.kind.value
+
+
+@dataclass(frozen=True)
+class FailureRecord:
+    """A ledger entry — one failed structure, as persisted to ``failed_jobs.json``.
+
+    The recovery paths read this back to decide what to re-attempt, so it is a typed
+    record rather than a bare dict indexed with string literals at four call sites.
+    """
+
+    structure_id: str
+    kind: FailureKind
+    reason: str
+
+    @classmethod
+    def of(cls, failure: Failure) -> FailureRecord:
+        """The ledger entry for an in-flight :class:`Failure`."""
+        return cls(structure_id=failure.sid, kind=failure.kind, reason=failure.reason)
+
+    def to_json(self) -> dict[str, str]:
+        """Serialize for ``failed_jobs.json``."""
+        return {"structure_id": self.structure_id, "kind": self.kind.value, "reason": self.reason}
+
+    @classmethod
+    def from_json(cls, data: dict[str, str]) -> FailureRecord:
+        """Rebuild from a ``failed_jobs.json`` entry."""
+        return cls(
+            structure_id=data["structure_id"],
+            kind=FailureKind(data["kind"]),
+            reason=data.get("reason", ""),
+        )
 
 
 @dataclass(frozen=True)

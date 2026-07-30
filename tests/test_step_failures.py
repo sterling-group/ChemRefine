@@ -50,7 +50,8 @@ def _ctx(tmp_path: Path) -> StepContext:
 
 
 def test_failure_kind_branches():
-    from chemrefine.step_failures import FailureKind, failure_kind
+    from chemrefine.state import FailureKind
+    from chemrefine.step_failures import failure_kind
 
     assert failure_kind(_struct(terminated_normally=False)) is FailureKind.NOT_TERMINATED
     assert failure_kind(_struct(converged=False)) is FailureKind.NOT_CONVERGED
@@ -60,7 +61,7 @@ def test_failure_kind_branches():
 def test_failure_kind_values_are_the_human_wording():
     """The enum values *are* the messages, so the ledger stays readable and the
     recovery paths still branch on a name rather than on that wording."""
-    from chemrefine.step_failures import Failure, FailureKind
+    from chemrefine.state import Failure, FailureKind
 
     assert FailureKind.NOT_CONVERGED.value == "did not converge"
     assert Failure("0", FailureKind.MISSING_OUTPUT, None).reason == "output missing"
@@ -70,7 +71,7 @@ def test_failure_kind_values_are_the_human_wording():
 
 
 def test_failure_record_round_trips_through_the_ledger():
-    from chemrefine.step_failures import Failure, FailureKind, FailureRecord
+    from chemrefine.state import Failure, FailureKind, FailureRecord
 
     record = FailureRecord.of(Failure("7", FailureKind.NOT_CONVERGED, None))
     assert FailureRecord.from_json(record.to_json()) == record

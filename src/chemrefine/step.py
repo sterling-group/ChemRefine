@@ -23,7 +23,13 @@ from chemrefine import __version__, attempts, cache, filtering, nms, step_failur
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.api import CalculationEngine, NmsCapableEngine, get_engine
 from chemrefine.errors import CacheError, ChemRefineError, ConfigError
-from chemrefine.state import PipelineState, StepContext, StepResults
+from chemrefine.state import (
+    FailureKind,
+    FailureRecord,
+    PipelineState,
+    StepContext,
+    StepResults,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +215,7 @@ def _cached_outcome(
     )
     if cached is None:
         return None
-    failed = step_failures.load_failure_records(ctx.step_dir)
+    failed = cache.load_failure_records(ctx.step_dir)
     if failed and step_cfg.on_failure == "stop" and mode is StepMode.RESUME:
         results = (
             nms.reattempt_nms(nms_engine, ctx, step_cfg, cached, parent_ids)
@@ -248,7 +254,7 @@ def _nms_reuse_outcome(
     )
     if cached is None or getattr(cached, "reuse_fingerprint", "") != fingerprint:
         return None
-    if cache.load_failed_jobs(ctx.step_dir):
+    if cache.load_failure_records(ctx.step_dir):
         results = nms.reattempt_nms(engine, ctx, step_cfg, cached, parent_ids)
     else:
         logger.info(
@@ -333,10 +339,10 @@ def _partial_step_outcome(
     ):
         return None
     missing = [
-        step_failures.FailureRecord(
+        FailureRecord(
             structure_id=sid,
-            kind=step_failures.FailureKind.MISSING_OUTPUT,
-            reason=step_failures.FailureKind.MISSING_OUTPUT.value,
+            kind=FailureKind.MISSING_OUTPUT,
+            reason=FailureKind.MISSING_OUTPUT.value,
         )
         for _inp, out, sid in manifest.files
         if not out.is_file()
@@ -434,7 +440,7 @@ def halt_if_pending(config: Config, step_cfg: StepConfig, mode: StepMode) -> Non
         return
     if mode is StepMode.CACHE_ONLY:
         return
-    if cache.load_failed_jobs(step_dir_for(config, step_cfg)):
+    if cache.load_failure_records(step_dir_for(config, step_cfg)):
         raise ChemRefineError(
             f"step {step_cfg.step} halted (on_failure=stop); fix the failed "
             f"job(s) and run `chemrefine resume` (or `rerun-errors {step_cfg.step}`)"
@@ -476,7 +482,7 @@ def _resubmit_failed(
     engine: CalculationEngine,
     ctx: StepContext,
     step_cfg: StepConfig,
-    failed: list[step_failures.FailureRecord],
+    failed: list[FailureRecord],
     parent_ids: tuple[str, ...],
 ) -> StepResults:
     """Re-prepare and resubmit only the failed structures, then re-parse + re-cache the step.
@@ -499,9 +505,7 @@ def _resubmit_failed(
     # Convergence failures are re-attempted from their best geometry by the retry
     # pass below (resubmitting the identical input would just fail again); the
     # plain resubmit handles crashed / missing-output jobs.
-    failed_ids = {
-        f.structure_id for f in failed if f.kind is not step_failures.FailureKind.NOT_CONVERGED
-    }
+    failed_ids = {f.structure_id for f in failed if f.kind is not FailureKind.NOT_CONVERGED}
     failed_seeds = tuple(s for s in ctx.prev_state.structures if s.id in failed_ids)
     if failed_seeds:
         logger.info(

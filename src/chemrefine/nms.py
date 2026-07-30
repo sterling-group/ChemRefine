@@ -42,7 +42,15 @@ from chemrefine.ids import (
     next_attempt_dir,
     structure_artifact_path,
 )
-from chemrefine.state import PipelineState, StepContext, StepInputs, StepResults, Structure
+from chemrefine.state import (
+    Failure,
+    FailureKind,
+    PipelineState,
+    StepContext,
+    StepInputs,
+    StepResults,
+    Structure,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -345,7 +353,7 @@ def _accept(
     target: int | None,
     *,
     attempt_dir: Path | None,
-) -> tuple[list[Structure], list[step_failures.Failure]]:
+) -> tuple[list[Structure], list[Failure]]:
     """Turn a parent's resolved children into the unified survivor(s) + failure.
 
     ``random`` (``target is None``) keeps every resolved child as a fan-out structure;
@@ -367,9 +375,9 @@ def _accept(
         if resolved:
             return resolved, []
         return [], [
-            step_failures.Failure(
+            Failure(
                 parent.id,
-                step_failures.FailureKind.UNRESOLVED_NMS,
+                FailureKind.UNRESOLVED_NMS,
                 _best(round2, parent, energy_attr),
             )
         ]
@@ -399,17 +407,13 @@ def _accept(
                 resolved_from=winner.id,
             )
         ], []
-    return [], [
-        step_failures.Failure(
-            parent.id, step_failures.FailureKind.UNRESOLVED_NMS, _best(round2, parent, energy_attr)
-        )
-    ]
+    return [], [Failure(parent.id, FailureKind.UNRESOLVED_NMS, _best(round2, parent, energy_attr))]
 
 
 def run_nms(
     engine: NmsCapableEngine,
     round1: StepResults,
-    round1_failures: list[step_failures.Failure] | tuple[step_failures.Failure, ...],
+    round1_failures: list[Failure] | tuple[Failure, ...],
     ctx: StepContext,
 ) -> step_failures.NmsResolution:
     """Resolve each round-1 survivor to its stationary point (submits round-2).
@@ -423,7 +427,7 @@ def run_nms(
     opts = _resolved_options(engine, ctx)
     target = target_imaginary_count(opts)
     survivors: list[Structure] = []
-    failures: list[step_failures.Failure] = list(round1_failures)
+    failures: list[Failure] = list(round1_failures)
     for s in round1.structures:
         if (
             target is not None
@@ -442,9 +446,7 @@ def run_nms(
             continue
         if s.normal_modes is None:
             logger.warning("NMS %s: no normal-mode tensor; cannot displace (unresolved)", s.id)
-            failures.append(
-                step_failures.Failure(s.id, step_failures.FailureKind.UNRESOLVED_NMS, s)
-            )
+            failures.append(Failure(s.id, FailureKind.UNRESOLVED_NMS, s))
             continue
         children = _children_of(
             s,
@@ -453,9 +455,7 @@ def run_nms(
             ),
         )
         if not children:
-            failures.append(
-                step_failures.Failure(s.id, step_failures.FailureKind.UNRESOLVED_NMS, s)
-            )
+            failures.append(Failure(s.id, FailureKind.UNRESOLVED_NMS, s))
             continue
         attempt = next_attempt_dir(ctx.step_dir / s.id)
         round2 = _run_round_two(engine, children, ctx, attempt)
@@ -469,7 +469,7 @@ def run_nms(
 def rebuild_nms(
     engine: NmsCapableEngine,
     round1: StepResults,
-    round1_failures: list[step_failures.Failure] | tuple[step_failures.Failure, ...],
+    round1_failures: list[Failure] | tuple[Failure, ...],
     ctx: StepContext,
 ) -> step_failures.NmsResolution:
     """Re-resolve NMS from outputs already on disk — no submission (``rebuild-cache``).
@@ -481,7 +481,7 @@ def rebuild_nms(
     opts = _resolved_options(engine, ctx)
     target = target_imaginary_count(opts)
     survivors: list[Structure] = []
-    failures: list[step_failures.Failure] = list(round1_failures)
+    failures: list[Failure] = list(round1_failures)
     for s in round1.structures:
         if (
             target is not None
@@ -498,9 +498,7 @@ def rebuild_nms(
             continue
         attempt = latest_attempt_dir(ctx.step_dir / s.id)
         if s.normal_modes is None or attempt is None:
-            failures.append(
-                step_failures.Failure(s.id, step_failures.FailureKind.UNRESOLVED_NMS, s)
-            )
+            failures.append(Failure(s.id, FailureKind.UNRESOLVED_NMS, s))
             continue
         children = _children_of(
             s,
@@ -533,11 +531,9 @@ def reattempt_nms(
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
         raise CacheError(f"step {step_cfg.step}: cannot re-attempt NMS — no manifest on disk")
-    failed = step_failures.load_failure_records(ctx.step_dir)
+    failed = cache.load_failure_records(ctx.step_dir)
     failed_ids = {f.structure_id for f in failed}
-    missing_ids = {
-        f.structure_id for f in failed if f.kind is step_failures.FailureKind.MISSING_OUTPUT
-    }
+    missing_ids = {f.structure_id for f in failed if f.kind is FailureKind.MISSING_OUTPUT}
 
     failed_manifest = StepInputs(files=tuple(f for f in manifest.files if f[2] in failed_ids))
     missing_inputs = StepInputs(

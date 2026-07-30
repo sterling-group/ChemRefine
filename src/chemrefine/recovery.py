@@ -110,7 +110,7 @@ def _action_rerun_errors(config: Config, target: str | int | None) -> None:
     """
     target_step = _resolve_target_or_last(config, target)
     step_dir = config.step_dir(target_step).resolve()
-    n_failed = len(cache.load_failed_jobs(step_dir))
+    n_failed = len(cache.load_failure_records(step_dir))
     if not n_failed:
         logger.info(
             "rerun-errors: %s has no recorded failures to rerun",

@@ -7,10 +7,11 @@ from pathlib import Path
 import pytest
 from ase import Atoms
 
-from chemrefine import io, step_failures
+from chemrefine import io
 from chemrefine.config import Config, StepConfig
 from chemrefine.errors import ChemRefineError
 from chemrefine.recovery import Action, execute, invalidate_step, resolve_target
+from chemrefine.state import FailureKind
 
 
 def _seeded_config(tmp_path: Path, steps: list[StepConfig]) -> Config:
@@ -213,8 +214,8 @@ def test_resume_is_incremental_resubmits_only_failed(tmp_path: Path):
         eng.fail_ids = {"1"}
         with pytest.raises(ChemRefineError):  # stop halts after caching "0"
             execute(cfg, Action.RESUME)
-        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
-            ("1", step_failures.FailureKind.MISSING_OUTPUT)
+        assert [(r.structure_id, r.kind) for r in cache.load_failure_records(step_dir)] == [
+            ("1", FailureKind.MISSING_OUTPUT)
         ]
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0"}
 
@@ -222,7 +223,7 @@ def test_resume_is_incremental_resubmits_only_failed(tmp_path: Path):
         eng.submitted = []
         assert execute(cfg, Action.RESUME) == 0  # incremental re-attempt
         assert eng.submitted == ["1"]  # only the failed structure resubmitted
-        assert cache.load_failed_jobs(step_dir) == []  # ledger cleared
+        assert cache.load_failure_records(step_dir) == []  # ledger cleared
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
     finally:
         eng.fail_ids, eng.submitted = set(), []
@@ -266,7 +267,7 @@ def test_rerun_errors_reattempts_only_the_target_step_failures(tmp_path: Path):
         eng.fail_ids, eng.submitted = set(), []
         assert execute(cfg, Action.RERUN_ERRORS, target=1) == 0
         assert eng.submitted == ["1"]  # only the failed structure
-        assert cache.load_failed_jobs(step_dir) == []
+        assert cache.load_failure_records(step_dir) == []
     finally:
         eng.fail_ids, eng.submitted = set(), []
         ENGINES.pop("flaky", None)
@@ -317,13 +318,13 @@ def test_resume_does_not_reattempt_skip_step(tmp_path: Path):
         step_dir = (cfg.output_dir / "step1_s").resolve()
         eng.fail_ids = {"1"}
         assert execute(cfg, Action.RESUME) == 0  # skip → continues, no halt
-        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
-            ("1", step_failures.FailureKind.MISSING_OUTPUT)
+        assert [(r.structure_id, r.kind) for r in cache.load_failure_records(step_dir)] == [
+            ("1", FailureKind.MISSING_OUTPUT)
         ]  # failure is visible
         eng.fail_ids, eng.submitted = set(), []
         assert execute(cfg, Action.RESUME) == 0
         assert eng.submitted == []  # cache-hit — the skipped failure is NOT re-run
-        assert cache.load_failed_jobs(step_dir) != []  # ledger kept for visibility
+        assert cache.load_failure_records(step_dir) != []  # ledger kept for visibility
     finally:
         eng.fail_ids, eng.submitted = set(), []
         ENGINES.pop("flaky", None)
@@ -434,8 +435,8 @@ def test_resume_after_tuning_reattempts_only_unresolved(tmp_path: Path):
         cfg1 = _seeded_config(tmp_path, [_nms_step(1.0)])
         step_dir = (cfg1.output_dir / "step1_s").resolve()
         execute(cfg1, Action.RESUME)
-        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
-            ("1", step_failures.FailureKind.UNRESOLVED_NMS)
+        assert [(r.structure_id, r.kind) for r in cache.load_failure_records(step_dir)] == [
+            ("1", FailureKind.UNRESOLVED_NMS)
         ]
         # Unified model: the survivor keeps the parent's id (resolved geometry), not a child id.
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0"}
@@ -445,7 +446,7 @@ def test_resume_after_tuning_reattempts_only_unresolved(tmp_path: Path):
         execute(_seeded_config(tmp_path, [_nms_step(2.0)]), Action.RESUME)
         assert eng.submitted == []  # round-1 freq reused, not resubmitted
         assert eng.nms_seen == ["1"]  # only the unresolved parent re-attempted
-        assert cache.load_failed_jobs(step_dir) == []
+        assert cache.load_failure_records(step_dir) == []
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
     finally:
         eng.resolved, eng.fail_round1, eng.submitted, eng.nms_seen = set(), set(), [], []
@@ -467,15 +468,15 @@ def test_reattempt_resubmits_missing_round1(tmp_path: Path):
         step_dir = (cfg.output_dir / "step1_s").resolve()
         with pytest.raises(ChemRefineError):  # stop halts on the missing round-1
             execute(cfg, Action.RESUME)
-        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
-            ("1", step_failures.FailureKind.MISSING_OUTPUT)
+        assert [(r.structure_id, r.kind) for r in cache.load_failure_records(step_dir)] == [
+            ("1", FailureKind.MISSING_OUTPUT)
         ]
 
         eng.fail_round1 = set()  # round-1 recovers
         eng.submitted = []
         execute(cfg, Action.RESUME)  # same config → full-valid + ledger → reattempt_nms
         assert eng.submitted == ["1"]  # round-1 resubmitted only for the missing one
-        assert cache.load_failed_jobs(step_dir) == []
+        assert cache.load_failure_records(step_dir) == []
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
     finally:
         eng.resolved, eng.fail_round1, eng.submitted, eng.nms_seen = set(), set(), [], []

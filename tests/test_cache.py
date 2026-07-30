@@ -712,11 +712,11 @@ def test_result_record_round_trips_through_structure_from_record(tmp_path: Path)
 # --- cache: corrupt failed-jobs ledger --------------------------------------
 
 
-def test_load_failed_jobs_raises_on_corrupt_ledger(tmp_path: Path):
+def test_load_failure_records_raises_on_corrupt_ledger(tmp_path: Path):
     from chemrefine import cache
 
     path = cache.failed_jobs_path(tmp_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{not json", encoding="utf-8")
     with pytest.raises(CacheError, match="corrupt failed-jobs ledger"):
-        cache.load_failed_jobs(tmp_path)
+        cache.load_failure_records(tmp_path)

@@ -69,7 +69,13 @@ from numpy.typing import NDArray
 from chemrefine import ids
 from chemrefine.config import StepConfig
 from chemrefine.errors import CacheError
-from chemrefine.state import StepContext, StepInputs, StepResults, Structure
+from chemrefine.state import (
+    FailureRecord,
+    StepContext,
+    StepInputs,
+    StepResults,
+    Structure,
+)
 
 CACHE_FORMAT_VERSION = "v2.0"
 """On-disk cache schema version, tracking the 2.0.0 release line.
@@ -742,25 +748,23 @@ def failed_jobs_path(step_dir: Path) -> Path:
     return step_dir / "_cache" / "failed_jobs.json"
 
 
-def save_failed_jobs(step_dir: Path, failed: list[dict[str, str]]) -> None:
-    """Persist the failed-job ledger (serialized
-    :class:`chemrefine.step_failures.FailureRecord` entries)."""
-    write_json(failed_jobs_path(step_dir), failed)
+def save_failure_records(step_dir: Path, failed: Sequence[FailureRecord]) -> None:
+    """Persist a step's failure ledger."""
+    write_json(failed_jobs_path(step_dir), [record.to_json() for record in failed])
 
 
-def load_failed_jobs(step_dir: Path) -> list[dict[str, str]]:
-    """Return the raw failed-job ledger entries for ``step_dir`` (``[]`` if none).
+def load_failure_records(step_dir: Path) -> list[FailureRecord]:
+    """Return a step's failure ledger as typed records (``[]`` if there is none).
 
-    Deliberately untyped at this layer: this module owns bytes-to-JSON, and the
-    domain meaning of an entry belongs to
-    :func:`chemrefine.step_failures.load_failure_records`, which reads it back into
-    :class:`~chemrefine.step_failures.FailureRecord`. Typing it here would mean
-    importing the policy module that already imports this one.
+    The ledger is a ``_cache/`` file, so this module owns it end to end — bytes through to
+    :class:`~chemrefine.state.FailureRecord`. The recovery paths read these back to decide
+    what to re-attempt.
     """
-    return cast(
+    raw = cast(
         list[dict[str, str]],
         read_json(failed_jobs_path(step_dir), [], label="failed-jobs ledger"),
     )
+    return [FailureRecord.from_json(rec) for rec in raw]
 
 
 def clear_failed_jobs(step_dir: Path) -> None:

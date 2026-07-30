@@ -10,10 +10,18 @@ import pytest
 from ase import Atoms
 from fake_engine import FakeEngine
 
-from chemrefine import cache, step_failures
+from chemrefine import cache
 from chemrefine.config import Config, StepConfig
 from chemrefine.errors import CacheError, ChemRefineError
-from chemrefine.state import PipelineState, StepContext, StepInputs, StepResults, Structure
+from chemrefine.state import (
+    FailureKind,
+    FailureRecord,
+    PipelineState,
+    StepContext,
+    StepInputs,
+    StepResults,
+    Structure,
+)
 from chemrefine.step import (
     StepMode,
     StepOutcome,
@@ -22,7 +30,6 @@ from chemrefine.step import (
     run_step,
     step_dir_for,
 )
-from chemrefine.step_failures import FailureKind, FailureRecord
 
 
 def _config(tmp_path: Path, **step_overrides) -> Config:
@@ -269,8 +276,8 @@ def test_on_failure_skip_drops_failed_keeps_successes(tmp_path: Path):
         outcome = run_step(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]))
         assert {s.id for s in outcome.state.structures} == {"0", "2"}
         step_dir = cfg.output_dir.resolve() / "step1"
-        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
-            ("1", step_failures.FailureKind.NOT_TERMINATED)
+        assert [(r.structure_id, r.kind) for r in cache.load_failure_records(step_dir)] == [
+            ("1", FailureKind.NOT_TERMINATED)
         ]
     finally:
         eng.fail = {}
@@ -298,8 +305,8 @@ def test_on_failure_stop_caches_successes_then_halts(tmp_path: Path):
         cached = cache.load(step_dir)
         assert cached is not None
         assert {s.id for s in cached.results.structures} == {"0", "2"}
-        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
-            ("1", step_failures.FailureKind.MISSING_OUTPUT)
+        assert [(r.structure_id, r.kind) for r in cache.load_failure_records(step_dir)] == [
+            ("1", FailureKind.MISSING_OUTPUT)
         ]
         # … and the run is halted by the single pipeline-level check.
         with pytest.raises(ChemRefineError):
@@ -328,7 +335,7 @@ def test_on_failure_best_backfills_all(tmp_path: Path):
         assert {s.id for s in outcome.state.structures} == {"0", "1", "2"}
         # best keeps going, but the failures are still visible in the ledger.
         step_dir = cfg.output_dir.resolve() / "step1"
-        assert {f["structure_id"] for f in cache.load_failed_jobs(step_dir)} == {"1", "2"}
+        assert {f.structure_id for f in cache.load_failure_records(step_dir)} == {"1", "2"}
     finally:
         eng.fail = {}
         ENGINES.pop("fake-fail", None)
@@ -413,7 +420,7 @@ def test_run_step_retries_unconverged_from_best_geometry(tmp_path: Path):
         assert {s.id for s in outcome.state.structures} == {"0"}  # retry converged
         step_dir = cfg.output_dir.resolve() / "step1"
         assert (step_dir / "0" / "attempt1").is_dir()  # failed attempt archived
-        assert cache.load_failed_jobs(step_dir) == []  # no pending failures
+        assert cache.load_failure_records(step_dir) == []  # no pending failures
     finally:
         eng.never = set()
         eng.parse_count = {}
@@ -435,8 +442,8 @@ def test_run_step_unconverged_retry_still_fails_is_ledgered(tmp_path: Path):
         step_dir = cfg.output_dir.resolve() / "step1"
         assert (step_dir / "0" / "attempt1").is_dir()  # one retry attempt, then stop
         assert not (step_dir / "0" / "attempt2").exists()  # only once per run
-        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
-            ("0", step_failures.FailureKind.NOT_CONVERGED)
+        assert [(r.structure_id, r.kind) for r in cache.load_failure_records(step_dir)] == [
+            ("0", FailureKind.NOT_CONVERGED)
         ]
     finally:
         eng.never = set()
@@ -464,8 +471,8 @@ def test_resume_retries_unconverged_again_into_next_attempt(tmp_path: Path):
         # _resubmit_failed retries it again — into attempt2 (never blocked by attempt1).
         run_step(cfg, cfg.steps[0], state)
         assert (step_dir / "0" / "attempt2").is_dir()
-        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
-            ("0", step_failures.FailureKind.NOT_CONVERGED)
+        assert [(r.structure_id, r.kind) for r in cache.load_failure_records(step_dir)] == [
+            ("0", FailureKind.NOT_CONVERGED)
         ]
     finally:
         eng.never = set()
@@ -570,11 +577,11 @@ def test_on_failure_best_drops_failure_with_no_fallback(tmp_path: Path):
     cfg = _config(tmp_path, on_failure="best")
     ctx = build_context(cfg, cfg.steps[0], _seed_state(["0"]))
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
-    failures = [Failure(sid="ghost", kind=step_failures.FailureKind.MISSING_OUTPUT, best=None)]
+    failures = [Failure(sid="ghost", kind=FailureKind.MISSING_OUTPUT, best=None)]
     results = apply_failure_policy([], failures, ctx, cfg.steps[0])
     assert results.structures == ()
-    assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(ctx.step_dir)] == [
-        ("ghost", step_failures.FailureKind.MISSING_OUTPUT)
+    assert [(r.structure_id, r.kind) for r in cache.load_failure_records(ctx.step_dir)] == [
+        ("ghost", FailureKind.MISSING_OUTPUT)
     ]
 
 
@@ -624,8 +631,8 @@ def test_rerun_does_not_read_a_previous_runs_output(tmp_path: Path):
         second = run_step(cfg, cfg.steps[0], state, mode=StepMode.EXECUTE)
 
         assert second.state.structures == ()  # not the stale success
-        assert [(r.structure_id, r.kind) for r in step_failures.load_failure_records(step_dir)] == [
-            ("0", step_failures.FailureKind.MISSING_OUTPUT)
+        assert [(r.structure_id, r.kind) for r in cache.load_failure_records(step_dir)] == [
+            ("0", FailureKind.MISSING_OUTPUT)
         ]
         # The previous run's work is archived, not destroyed — full provenance.
         assert (step_dir / "0" / "attempt1" / "step1_0.out").is_file()
@@ -680,7 +687,9 @@ def test_halt_if_pending_skips_a_cache_only_step(tmp_path: Path):
 def test_halt_if_pending_raises_when_stop_step_has_pending(tmp_path: Path):
     cfg = _config(tmp_path, on_failure="stop")
     step_dir = step_dir_for(cfg, cfg.steps[0])
-    cache.save_failed_jobs(step_dir, [{"structure_id": "1", "kind": "failed", "reason": "x"}])
+    cache.save_failure_records(
+        step_dir, [FailureRecord(structure_id="1", kind=FailureKind.FAILED, reason="x")]
+    )
     with pytest.raises(ChemRefineError, match="halted"):
         halt_if_pending(cfg, cfg.steps[0], StepMode.RESUME)
 
@@ -879,7 +888,9 @@ def test_nms_reuse_outcome_reattempts_when_ledger_present(tmp_path: Path, monkey
     _pin_nms(monkeypatch, "FP")
     ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
     _save_reuse_cache(ctx, "FP")
-    cache.save_failed_jobs(ctx.step_dir, [{"structure_id": "0", "kind": "failed", "reason": "x"}])
+    cache.save_failure_records(
+        ctx.step_dir, [FailureRecord(structure_id="0", kind=FailureKind.FAILED, reason="x")]
+    )
     out = step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"))
     assert out is not None and any(s.id == "re" for s in out.state.structures)
 

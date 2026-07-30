@@ -23,6 +23,8 @@ from chemrefine.config import Config, MinSample, StepConfig
 from chemrefine.engines.api import NmsInputInfo
 from chemrefine.ids import structure_artifact_path
 from chemrefine.state import (
+    Failure,
+    FailureKind,
     JobBatch,
     PipelineState,
     StepContext,
@@ -30,7 +32,6 @@ from chemrefine.state import (
     StepResults,
     Structure,
 )
-from chemrefine.step_failures import Failure, FailureKind
 
 # Frequency data the fake engine attaches to each parsed structure (imaginary modes + the
 # normal-mode tensor) — the real engine sets ``Structure.imaginary_freqs`` / ``normal_modes``

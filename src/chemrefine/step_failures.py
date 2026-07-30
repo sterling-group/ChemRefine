@@ -2,123 +2,38 @@
 
 A *failure* is a structure whose job produced no output, an unparseable
 output, or an output the engine flagged unconverged / not-terminated.
-This module owns that vocabulary — the :class:`Failure` record, the
-success test (:func:`succeeded`), per-output classification
+:class:`~chemrefine.state.FailureKind` and :class:`~chemrefine.state.Failure`
+name that outcome; this module decides what to *do* about it — the success
+test (:func:`succeeded`), per-output classification
 (:func:`parse_with_failures`), the ``stop | skip | best`` policy
 (:func:`apply_failure_policy`), and the retry a convergence failure gets
-(:func:`retry_from_best`, :func:`retry_unconverged`) — used by both the
-generic step lifecycle
-(:mod:`chemrefine.step`) and the two-round NMS coordinator
-(:mod:`chemrefine.nms`). The ``failed_jobs.json`` ledger itself is
-persisted via :mod:`chemrefine.cache`.
+(:func:`retry_from_best`, :func:`retry_unconverged`). Both the generic step
+lifecycle (:mod:`chemrefine.step`) and the two-round NMS coordinator
+(:mod:`chemrefine.nms`) use it. The ``failed_jobs.json`` ledger is read and
+written by :mod:`chemrefine.cache`, which owns ``_cache/``.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, replace
-from enum import StrEnum
-from pathlib import Path
 
 from chemrefine import __version__, attempts, cache
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import CalculationEngine
 from chemrefine.errors import OutputParseError
-from chemrefine.state import PipelineState, StepContext, StepInputs, StepResults, Structure
+from chemrefine.state import (
+    Failure,
+    FailureKind,
+    FailureRecord,
+    PipelineState,
+    StepContext,
+    StepInputs,
+    StepResults,
+    Structure,
+)
 
 logger = logging.getLogger(__name__)
-
-
-class FailureKind(StrEnum):
-    """Why a structure failed — the classification recovery branches on.
-
-    A closed vocabulary rather than free text. ``retry_unconverged``,
-    ``_resubmit_failed`` and ``reattempt_nms`` all route on *which* kind of failure
-    this is, and they used to do that by comparing against the exact wording of a
-    human-readable message. Rewording one — the sort of thing that looks like a docs
-    change — silently disabled a recovery path.
-
-    The values are the wording, so the ledger on disk stays readable and messages
-    stay unchanged; what moved is that the comparison is now against a name.
-    """
-
-    MISSING_OUTPUT = "output missing"
-    """The job produced no output file at all — crashed, killed, never started."""
-
-    UNPARSEABLE = "unparseable"
-    """An output exists but the engine could not read it (truncated, corrupt)."""
-
-    NOT_TERMINATED = "did not terminate normally"
-    """The program ran but did not exit cleanly."""
-
-    NOT_CONVERGED = "did not converge"
-    """It finished, but the SCF or the geometry did not converge. The only kind
-    that is retried from its best geometry — resubmitting the identical input for
-    any of the others would just fail the same way."""
-
-    UNRESOLVED_NMS = "NMS: target stationary point not reached"
-    """Normal-mode sampling could not reach the requested stationary point."""
-
-    FAILED = "failed"
-    """The engine set a failure flag we don't have a more specific name for."""
-
-
-@dataclass(frozen=True)
-class Failure:
-    """One failed structure: its id, why, and the best geometry obtained (if any)."""
-
-    sid: str
-    kind: FailureKind
-    best: Structure | None
-    detail: str = ""
-    """Extra context for kinds that have some (the parser message for
-    ``UNPARSEABLE``); empty otherwise."""
-
-    @property
-    def reason(self) -> str:
-        """The human-readable reason, as written to the ledger and the logs."""
-        return f"{self.kind.value}: {self.detail}" if self.detail else self.kind.value
-
-
-@dataclass(frozen=True)
-class FailureRecord:
-    """A ledger entry — one failed structure, as persisted to ``failed_jobs.json``.
-
-    The recovery paths read this back to decide what to re-attempt, so it is a typed
-    record rather than a bare dict indexed with string literals at four call sites.
-    """
-
-    structure_id: str
-    kind: FailureKind
-    reason: str
-
-    @classmethod
-    def of(cls, failure: Failure) -> FailureRecord:
-        """The ledger entry for an in-flight :class:`Failure`."""
-        return cls(structure_id=failure.sid, kind=failure.kind, reason=failure.reason)
-
-    def to_json(self) -> dict[str, str]:
-        """Serialize for ``failed_jobs.json``."""
-        return {"structure_id": self.structure_id, "kind": self.kind.value, "reason": self.reason}
-
-    @classmethod
-    def from_json(cls, data: dict[str, str]) -> FailureRecord:
-        """Rebuild from a ``failed_jobs.json`` entry."""
-        return cls(
-            structure_id=data["structure_id"],
-            kind=FailureKind(data["kind"]),
-            reason=data.get("reason", ""),
-        )
-
-
-def load_failure_records(step_dir: Path) -> list[FailureRecord]:
-    """Read a step's failure ledger back into typed records.
-
-    The JSON↔domain half of the ledger; :func:`chemrefine.cache.load_failed_jobs` is
-    the bytes↔JSON half. Split that way because this module already depends on
-    ``cache``, so the typing has to live on this side of the boundary.
-    """
-    return [FailureRecord.from_json(rec) for rec in cache.load_failed_jobs(step_dir)]
 
 
 @dataclass(frozen=True)
@@ -274,10 +189,7 @@ def apply_failure_policy(
         cache.clear_failed_jobs(ctx.step_dir)
         return StepResults(structures=tuple(successes))
 
-    cache.save_failed_jobs(
-        ctx.step_dir,
-        [FailureRecord.of(f).to_json() for f in failures],
-    )
+    cache.save_failure_records(ctx.step_dir, [FailureRecord.of(f) for f in failures])
     for f in failures:
         logger.debug("step %d: structure %s failed — %s", step_cfg.step, f.sid, f.reason)
     logger.warning(
