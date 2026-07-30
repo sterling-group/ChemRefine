@@ -306,22 +306,16 @@ def _run_round_two(
 def _parse_round_two(
     engine: NmsCapableEngine, children: list[Structure], ctx: StepContext, attempt_dir: Path
 ) -> list[Structure]:
-    """Parse already-on-disk child outputs under ``attempt_dir`` (rebuild — no submit)."""
-    step = ctx.step_cfg.step
-    present = StepInputs(
-        files=tuple(
-            (
-                structure_artifact_path(attempt_dir, step, c.id, "inp"),
-                structure_artifact_path(attempt_dir, step, c.id, "out"),
-                c.id,
-            )
-            for c in children
-            if structure_artifact_path(attempt_dir, step, c.id, "out").is_file()
-        )
-    )
+    """Parse already-on-disk child outputs under ``attempt_dir`` (rebuild — no submit).
+
+    The engine says where its files are; a child whose output is absent is simply left out,
+    so its parent stays unresolved rather than the rebuild failing.
+    """
     child_ctx = replace(
         ctx, step_dir=attempt_dir, prev_state=PipelineState(structures=tuple(children))
     )
+    paths = ((c.id, engine.artifact_paths(child_ctx, c.id)) for c in children)
+    present = StepInputs(files=tuple((inp, out, cid) for cid, (inp, out) in paths if out.is_file()))
     succ, _fail = lifecycle.parse_with_failures(engine, present, child_ctx)
     return succ
 

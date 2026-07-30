@@ -174,7 +174,26 @@ class JobExecutable(Protocol):
 
 
 @runtime_checkable
-class NmsCapableEngine(CalculationEngine, Protocol):
+class StructureArtifacts(Protocol):
+    """An engine whose per-structure input and output live at paths the caller can compute.
+
+    Separate from :class:`CalculationEngine` because it is a different claim: an engine can
+    produce structures without every one of them having a file of its own — a training step
+    prepares no per-structure inputs at all. And separate from :class:`JobExecutable`, whose
+    members are about *how* a job runs (cores, GPUs, the bash it executes) rather than where
+    its files land.
+
+    :class:`NmsCapableEngine` requires it because the two-round algorithm has to find a
+    round-2 child's output without being told the engine's file extensions.
+    """
+
+    def artifact_paths(self, ctx: StepContext, structure_id: str) -> tuple[Path, Path]:
+        """This structure's ``(input, output)`` paths under ``ctx.step_dir``."""
+        ...
+
+
+@runtime_checkable
+class NmsCapableEngine(CalculationEngine, StructureArtifacts, Protocol):
     """An engine that supports normal-mode sampling, via one input-introspection hook.
 
     The two-round NMS algorithm — displacement, round-2 submission, resolution, retry — is
@@ -183,8 +202,13 @@ class NmsCapableEngine(CalculationEngine, Protocol):
     :meth:`parse` already carries ``imaginary_freqs`` + ``normal_modes`` on each
     :class:`~chemrefine.state.Structure` (parsed in the same single pass as energy/geometry),
     so NMS reads them off the structures it already holds. A new NMS-capable engine implements
-    only ``nms_input_info`` and populates those two structure fields; capability is detected
-    with ``isinstance``.
+    ``nms_input_info`` and :meth:`~StructureArtifacts.artifact_paths` — which
+    :class:`~chemrefine.engines._job.JobEngine` already provides — and populates those two
+    structure fields; capability is detected with ``isinstance``.
+
+    ``normal_modes`` is indexed with the trivial translation/rotation modes first: NMS skips
+    the leading six (five for a linear molecule) when drawing at random, so an engine
+    populating the tensor must use that ordering.
     """
 
     def nms_input_info(self, ctx: StepContext) -> NmsInputInfo:

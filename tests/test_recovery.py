@@ -408,6 +408,13 @@ def _register_fake_nms():
         def nms_input_info(self, ctx):
             return NmsInputInfo(is_transition_state=False, computes_frequencies=True)
 
+        def artifact_paths(self, ctx, structure_id):
+            step = ctx.step_cfg.step
+            return (
+                ctx.step_dir / structure_id / f"step{step}_{structure_id}.inp",
+                ctx.step_dir / structure_id / f"step{step}_{structure_id}.out",
+            )
+
     return _FakeNms2
 
 

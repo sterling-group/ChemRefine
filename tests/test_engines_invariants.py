@@ -22,18 +22,26 @@ import inspect
 import os
 import shlex
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from ase import Atoms
 
 from chemrefine import slurm
 from chemrefine.config import StepConfig, reject_shell_unsafe
 from chemrefine.engines._options import EngineOptions
-from chemrefine.engines.api import ENGINES, JobExecutable, get_engine
+from chemrefine.engines.api import (
+    ENGINES,
+    JobExecutable,
+    NmsCapableEngine,
+    StructureArtifacts,
+    get_engine,
+)
 from chemrefine.engines.mlip.calculator import requirement_from_options
 from chemrefine.errors import ConfigError
 from chemrefine.slurm import script
-from chemrefine.state import PipelineState, StepContext
+from chemrefine.state import PipelineState, StepContext, Structure
 
 # Options each engine needs before it will validate at all (no defaults on purpose).
 _REQUIRED_OPTIONS: dict[str, dict[str, object]] = {
@@ -468,3 +476,50 @@ def test_the_rule_rejects_every_character_it_claims_to(hostile: str):
     """
     with pytest.raises(ValueError, match="cannot be safely embedded"):
         reject_shell_unsafe(f"/tmp/x{hostile}y", what="path", fix="rename it")
+
+
+def test_every_engine_with_the_nms_hook_satisfies_the_nms_protocol():
+    """Declaring the NMS hook is not enough — the whole protocol has to hold.
+
+    `step.run_step` gates on `isinstance(engine, NmsCapableEngine)` and, when it fails,
+    runs a plain step: `nms: true` becomes a no-op with nothing said. So an engine that
+    grows the frequency hook but misses another member of the protocol would quietly stop
+    doing normal-mode sampling. Assert the two never come apart.
+    """
+    declared = [n for n in sorted(ENGINES) if hasattr(get_engine(n), "nms_input_info")]
+    assert declared, "no engine offers NMS — has the hook been renamed?"
+    not_capable = [n for n in declared if not isinstance(get_engine(n), NmsCapableEngine)]
+    assert not_capable == [], (
+        f"{not_capable} declare nms_input_info but fail isinstance(NmsCapableEngine), "
+        f"so `nms: true` would silently run a plain step"
+    )
+
+
+def test_artifact_paths_resolves_to_the_input_that_was_written(tmp_path: Path):
+    """A structure's input really is at the path the engine reports.
+
+    Weaker than it looks on purpose: `JobEngine.prepare` derives its paths *from*
+    `artifact_paths`, so the base class cannot disagree with itself — that guarantee is
+    structural, not tested. What this catches is an engine that overrides one of the two
+    without the other, which is the only way they can still come apart.
+    """
+    checked = []
+    for name in sorted(ENGINES):
+        engine = get_engine(name)
+        if not isinstance(engine, StructureArtifacts):
+            continue
+        root = tmp_path / name
+        root.mkdir(parents=True)
+        ctx = replace(
+            _ctx(root, name, {}),
+            prev_state=PipelineState(structures=(Structure(id="0", atoms=Atoms("H")),)),
+        )
+        (root / f"step1.{engine.template_suffix}").write_text("", encoding="utf-8")
+        engine.prepare(ctx)
+
+        claimed_input, claimed_output = engine.artifact_paths(ctx, "0")
+        assert claimed_input.is_file(), f"{name}: no input at the path artifact_paths claims"
+        assert claimed_output.parent == claimed_input.parent
+        checked.append(name)
+
+    assert checked, "no engine declares the capability — has StructureArtifacts been dropped?"

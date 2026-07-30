@@ -123,6 +123,19 @@ class JobEngine:
 
     # -- lifecycle (shared algorithm) --------------------------------------
 
+    def artifact_paths(self, ctx: StepContext, structure_id: str) -> tuple[Path, Path]:
+        """This structure's ``(input, output)`` paths, from the engine's two suffixes.
+
+        One derivation, used by :meth:`prepare` when it writes them and by
+        :mod:`chemrefine.nms` when it re-reads a round-2 child — so a caller never has to
+        know whether this engine writes ``.inp``/``.out`` or ``.py``/``.json``.
+        """
+        step = ctx.step_cfg.step
+        return (
+            structure_artifact_path(ctx.step_dir, step, structure_id, self.template_suffix),
+            structure_artifact_path(ctx.step_dir, step, structure_id, self.output_suffix),
+        )
+
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Write one input geometry (``_inp.xyz``) + one input file per seed structure."""
         ctx.step_dir.mkdir(parents=True, exist_ok=True)
@@ -135,10 +148,7 @@ class JobEngine:
                 input_geometry_path(ctx.step_dir, step, struct.id),
                 comment=f"step {step} {struct.id} input",
             )
-            input_path = structure_artifact_path(
-                ctx.step_dir, step, struct.id, self.template_suffix
-            )
-            output_path = structure_artifact_path(ctx.step_dir, step, struct.id, self.output_suffix)
+            input_path, output_path = self.artifact_paths(ctx, struct.id)
             self.build_input(
                 xyz_path=xyz_path,
                 template_path=template,

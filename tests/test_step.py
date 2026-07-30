@@ -492,6 +492,13 @@ def test_check_nms_freq_gate_rejects_when_input_computes_no_frequencies(tmp_path
         def nms_input_info(self, ctx):
             return NmsInputInfo(is_transition_state=False, computes_frequencies=False)
 
+        def artifact_paths(self, ctx, structure_id):
+            step = ctx.step_cfg.step
+            return (
+                ctx.step_dir / structure_id / f"step{step}_{structure_id}.inp",
+                ctx.step_dir / structure_id / f"step{step}_{structure_id}.out",
+            )
+
     cfg = _config(tmp_path, engine="orca", nms=True, operation=None)
     ctx = build_context(cfg, cfg.steps[0], _seed_state([]))
     with pytest.raises(ConfigError, match="frequency"):
@@ -500,6 +507,13 @@ def test_check_nms_freq_gate_rejects_when_input_computes_no_frequencies(tmp_path
     class _FreqEngine:
         def nms_input_info(self, ctx):
             return NmsInputInfo(is_transition_state=False, computes_frequencies=True)
+
+        def artifact_paths(self, ctx, structure_id):
+            step = ctx.step_cfg.step
+            return (
+                ctx.step_dir / structure_id / f"step{step}_{structure_id}.inp",
+                ctx.step_dir / structure_id / f"step{step}_{structure_id}.out",
+            )
 
     # Returns None; calling it without raising is the assertion.
     _check_nms_freq_gate(_FreqEngine(), ctx, cfg.steps[0])
@@ -518,6 +532,13 @@ def test_check_nms_freq_gate_not_bypassed_by_explicit_operation(tmp_path: Path):
     class _NoFreqEngine:
         def nms_input_info(self, ctx):
             return NmsInputInfo(is_transition_state=False, computes_frequencies=False)
+
+        def artifact_paths(self, ctx, structure_id):
+            step = ctx.step_cfg.step
+            return (
+                ctx.step_dir / structure_id / f"step{step}_{structure_id}.inp",
+                ctx.step_dir / structure_id / f"step{step}_{structure_id}.out",
+            )
 
     cfg = _config(tmp_path, engine="orca", nms=True, operation="opt_sp")
     ctx = build_context(cfg, cfg.steps[0], _seed_state([]))
@@ -560,6 +581,13 @@ def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypa
 
         def nms_input_info(self, ctx):
             return NmsInputInfo(is_transition_state=False, computes_frequencies=True)
+
+        def artifact_paths(self, ctx, structure_id):
+            step = ctx.step_cfg.step
+            return (
+                ctx.step_dir / structure_id / f"step{step}_{structure_id}.inp",
+                ctx.step_dir / structure_id / f"step{step}_{structure_id}.out",
+            )
 
     try:
         cfg = _config(tmp_path, engine="fake-nms", nms=True)

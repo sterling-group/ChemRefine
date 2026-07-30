@@ -315,6 +315,12 @@ class _FakeNms:
     def nms_input_info(self, ctx: StepContext) -> NmsInputInfo:
         return NmsInputInfo(is_transition_state=self.is_ts, computes_frequencies=self.computes_freq)
 
+    def artifact_paths(self, ctx: StepContext, structure_id: str) -> tuple[Path, Path]:
+        return (
+            structure_artifact_path(ctx.step_dir, ctx.step_cfg.step, structure_id, "inp"),
+            structure_artifact_path(ctx.step_dir, ctx.step_cfg.step, structure_id, "out"),
+        )
+
 
 def _ctx(tmp_path: Path, structures: tuple[Structure, ...], **over) -> StepContext:
     cfg = Config(
