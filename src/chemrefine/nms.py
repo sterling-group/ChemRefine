@@ -353,28 +353,20 @@ def _read_resolution(structure_dir: Path) -> str | None:
     return None if record is None else str(record["resolved_from"])
 
 
-def _accept(
+def _select_survivors(
     resolved: list[Structure],
     round2: list[Structure],
     parent: Structure,
     ctx: StepContext,
     target: int | None,
-    *,
-    attempt_dir: Path | None,
 ) -> tuple[list[Structure], list[Failure]]:
-    """Turn a parent's resolved children into the unified survivor(s) + failure.
+    """Decide what a parent's round-2 children amount to. Pure — reads no disk, writes none.
 
     ``random`` (``target is None``) keeps every resolved child as a fan-out structure;
     ``minimum``/``ts`` collapse to the single best resolved geometry **at the parent's
-    canonical id**. A parent with nothing resolved becomes one ``Failure`` carrying its best
-    geometry obtained.
-
-    ``attempt_dir`` is the ``attemptK/`` the round-2 children ran in, and passing it is what
-    makes this touch the disk: round 1 is archived into it and the winner's artifacts are
-    promoted out of it (see :func:`chemrefine.attempts.promote`). ``None`` means re-derive
-    in memory only
-    — ``rebuild_nms`` re-reads a tree that has already been through this and must not
-    rearrange it a second time.
+    canonical id**, recording which child that was in
+    :attr:`~chemrefine.state.Structure.resolved_from`. A parent with nothing resolved becomes
+    one :class:`~chemrefine.state.Failure` carrying the best geometry it did obtain.
 
     "Best" is by the step's own ranking energy throughout — see :func:`_energy_attr`.
     """
@@ -383,39 +375,41 @@ def _accept(
         if resolved:
             return resolved, []
         return [], [
-            Failure(
-                parent.id,
-                FailureKind.UNRESOLVED_NMS,
-                _best(round2, parent, energy_attr),
-            )
+            Failure(parent.id, FailureKind.UNRESOLVED_NMS, _best(round2, parent, energy_attr))
         ]
-    if resolved:
-        winner = _best(resolved, parent, energy_attr)
-        if attempt_dir is not None:
-            step = ctx.step_cfg.step
-            # Archive first, promote second: the copy below lands on the basenames round 1
-            # is still occupying, so moving it out of the way is what stops one calculation
-            # from overwriting another.
-            attempts.seal(ctx.step_dir / parent.id, attempt_dir)
-            attempts.promote(attempt_dir, step=step, source_id=winner.id, target_id=parent.id)
-            # Re-stamp the geometry file with its provenance. Same coordinates the promoted
-            # `.out` reports — `winner.atoms` was parsed from it — now carrying the comment
-            # that says how this structure was arrived at.
-            io.write_single_xyz(
-                winner.atoms,
-                structure_artifact_path(ctx.step_dir, step, parent.id, "xyz"),
-                comment=f"NMS-resolved {parent.id}",
-            )
-            _write_resolution(attempt_dir, winner.id)
-        return [
-            replace(
-                winner,
-                id=parent.id,
-                parent_id=parent.parent_id,
-                resolved_from=winner.id,
-            )
-        ], []
-    return [], [Failure(parent.id, FailureKind.UNRESOLVED_NMS, _best(round2, parent, energy_attr))]
+    if not resolved:
+        return [], [
+            Failure(parent.id, FailureKind.UNRESOLVED_NMS, _best(round2, parent, energy_attr))
+        ]
+    winner = _best(resolved, parent, energy_attr)
+    survivor = replace(winner, id=parent.id, parent_id=parent.parent_id, resolved_from=winner.id)
+    return [survivor], []
+
+
+def _install_winner(
+    survivor: Structure, source_id: str, parent_id: str, ctx: StepContext, attempt_dir: Path
+) -> None:
+    """Put the chosen child's calculation at the parent's canonical path.
+
+    ``source_id`` is the child :func:`_select_survivors` chose, taken from the survivor's
+    :attr:`~chemrefine.state.Structure.resolved_from` — so there is one answer to "which
+    child won" and the disk follows it rather than re-deciding.
+
+    Archive first, promote second: the copy lands on the basenames round 1 still occupies,
+    so moving those aside is what stops one calculation overwriting another. The resolution
+    sidecar is written last, after the artifacts it describes are in place.
+    """
+    step = ctx.step_cfg.step
+    attempts.seal(ctx.step_dir / parent_id, attempt_dir)
+    attempts.promote(attempt_dir, step=step, source_id=source_id, target_id=parent_id)
+    # Re-stamp the geometry file with its provenance: the same coordinates the promoted
+    # `.out` reports — `survivor.atoms` was parsed from it — now saying how it was reached.
+    io.write_single_xyz(
+        survivor.atoms,
+        structure_artifact_path(ctx.step_dir, step, parent_id, "xyz"),
+        comment=f"NMS-resolved {parent_id}",
+    )
+    _write_resolution(attempt_dir, source_id)
 
 
 def run_nms(
@@ -468,7 +462,12 @@ def run_nms(
         attempt = next_attempt_dir(ctx.step_dir / s.id)
         round2 = _run_round_two(engine, children, ctx, attempt)
         resolved = [c for c in round2 if _is_resolved(c, target)]
-        s_surv, s_fail = _accept(resolved, round2, s, ctx, target, attempt_dir=attempt)
+        s_surv, s_fail = _select_survivors(resolved, round2, s, ctx, target)
+        # A promoted winner is the only case with a `resolved_from`: `random` fans out and
+        # an unresolved parent has no survivor, and neither installs anything.
+        winner_source = s_surv[0].resolved_from if s_surv else None
+        if winner_source is not None:
+            _install_winner(s_surv[0], winner_source, s.id, ctx, attempt)
         survivors.extend(s_surv)
         failures.extend(s_fail)
     return NmsResolution(tuple(survivors), tuple(failures))
@@ -516,7 +515,7 @@ def rebuild_nms(
         )
         round2 = _parse_round_two(engine, children, ctx, attempt)
         resolved = [c for c in round2 if _is_resolved(c, target)]
-        s_surv, s_fail = _accept(resolved, round2, s, ctx, target, attempt_dir=None)
+        s_surv, s_fail = _select_survivors(resolved, round2, s, ctx, target)
         survivors.extend(s_surv)
         failures.extend(s_fail)
     return NmsResolution(tuple(survivors), tuple(failures))

@@ -616,3 +616,24 @@ def test_rebuilding_does_not_rewrite_the_children_it_reads(tmp_path: Path):
     assert after.keys() == before.keys(), "a rebuild must not add or remove files"
     rewritten = [p.name for p in before if after[p] != before[p]]
     assert rewritten == [], f"a rebuild rewrote {rewritten}"
+
+
+def test_rebuilding_cannot_install_a_winner():
+    """The rebuild coordinator does not reach the code that writes — by construction.
+
+    Choosing a winner and installing it on disk are separate functions, so a rebuild is not
+    relying on an argument being right: it never calls the installer at all. This asserts the
+    shape rather than the behaviour, so the byte-identical snapshot above cannot start passing
+    for an accidental reason.
+    """
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(nms.rebuild_nms))
+    called = {
+        n.func.id
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+    }
+    assert "_select_survivors" in called, "the rebuild must still choose a winner"
+    assert "_install_winner" not in called
