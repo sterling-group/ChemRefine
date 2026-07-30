@@ -312,6 +312,33 @@ def _parse_round_two(
     return succ
 
 
+_RESOLUTION_FILE = "resolution.json"
+"""Sidecar naming the child an attempt resolved to, written inside that ``attemptK/``."""
+
+
+def _write_resolution(attempt_dir: Path, winner_id: str) -> None:
+    """Record which child this attempt resolved to.
+
+    Written last, after the winner's artifacts are in place, so the claim never outlives the
+    files it describes.
+    """
+    cache.write_json(attempt_dir / _RESOLUTION_FILE, {"resolved_from": winner_id})
+
+
+def _read_resolution(structure_dir: Path) -> str | None:
+    """The child a structure's most recent attempt resolved to, or ``None`` if none did.
+
+    Promotion leaves the winner's output at the canonical path, so re-parsing a resolved
+    structure yields one already at its target — which is the answer, but not *which child
+    produced it*. That is only on disk, here.
+    """
+    attempt = latest_attempt_dir(structure_dir)
+    if attempt is None:
+        return None
+    record = cache.read_json(attempt / _RESOLUTION_FILE, None, label="NMS resolution")
+    return None if record is None else str(record["resolved_from"])
+
+
 def _promote_winner(winner_id: str, parent_id: str, step: int, attempt_dir: Path) -> None:
     """Copy the winning child's artifacts up to the parent's canonical basenames.
 
@@ -399,6 +426,7 @@ def _accept(
                 structure_artifact_path(ctx.step_dir, step, parent.id, "xyz"),
                 comment=f"NMS-resolved {parent.id}",
             )
+            _write_resolution(attempt_dir, winner.id)
         return [
             replace(
                 winner,
@@ -439,7 +467,15 @@ def run_nms(
             and s.imaginary_freqs is not None
             and len(s.imaginary_freqs) == target
         ):
-            survivors.append(replace(s, converged=True))  # already at the target, in place
+            # Already at the target. That is either an untouched round-1 result or one this
+            # step already resolved — the attempt's sidecar is what tells the two apart.
+            survivors.append(
+                replace(
+                    s,
+                    converged=True,
+                    resolved_from=_read_resolution(ctx.step_dir / s.id),
+                )
+            )
             continue
         if s.normal_modes is None:
             logger.warning("NMS %s: no normal-mode tensor; cannot displace (unresolved)", s.id)
@@ -490,7 +526,13 @@ def rebuild_nms(
             and s.imaginary_freqs is not None
             and len(s.imaginary_freqs) == target
         ):
-            survivors.append(replace(s, converged=True))
+            survivors.append(
+                replace(
+                    s,
+                    converged=True,
+                    resolved_from=_read_resolution(ctx.step_dir / s.id),
+                )
+            )
             continue
         attempt = latest_attempt_dir(ctx.step_dir / s.id)
         if s.normal_modes is None or attempt is None:

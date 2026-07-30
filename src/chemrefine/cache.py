@@ -20,7 +20,7 @@ document against **31.3 MB / 0.36 s / 75 MB** split. Structures in a
 step need not share an atom count, so the arrays are concatenated with
 an offsets index rather than stacked — see :func:`_split_arrays`.
 
-``step.json`` is written without indentation (see :func:`_write_json`) —
+``step.json`` is written without indentation (see :func:`write_json`) —
 read it with ``jq`` or :func:`json.load`, not by eye. The per-structure
 ``.result.json`` records beside each output stay indented and keep their
 coordinates inline; those are the ones a person opens, and they are a
@@ -347,7 +347,7 @@ def save_result_records(structures: Sequence[Structure], job_dir: Path, step: in
     """
     for s in structures:
         record = {"result_format": RESULT_FORMAT_VERSION, **structure_record(s)}
-        _write_json(ids.result_record_path(job_dir, step, s.id), record)
+        write_json(ids.result_record_path(job_dir, step, s.id), record)
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
@@ -371,11 +371,11 @@ def _atomic_write(path: Path, data: bytes) -> None:
 
 
 #: ``json.dumps`` separators with no padding: ``{"a":1,"b":2}`` rather than ``{"a": 1, "b": 2}``.
-#: Only worth using where a document is machine-read and large — see :func:`_write_json`.
+#: Only worth using where a document is machine-read and large — see :func:`write_json`.
 _COMPACT_SEPARATORS = (",", ":")
 
 
-def _write_json(path: Path, data: Any, *, indent: int | None = 2) -> None:
+def write_json(path: Path, data: Any, *, indent: int | None = 2) -> None:
     """Serialize ``data`` to JSON and write it atomically to ``path``.
 
     Indented by default: the manifest, the failed-jobs ledger and the per-structure
@@ -428,7 +428,7 @@ def _read_arrays(path: Path) -> Any:
         raise CacheError(f"corrupt coordinate sidecar at {path}: {e}") from e
 
 
-def _read_json(path: Path, default: Any, *, label: str) -> Any:
+def read_json(path: Path, default: Any, *, label: str) -> Any:
     """Return the JSON parsed from ``path``, or ``default`` if it doesn't exist.
 
     Raises :class:`CacheError` (naming ``label``) if the file is present but
@@ -486,7 +486,7 @@ def save(
     # whose arrays are missing — `load` fails closed on that, but a miss is cheaper than an
     # error, and this way the pair is effectively atomic without a second mechanism.
     _atomic_write(_arrays_path(step_dir), _npz_bytes(_split_arrays(records)))
-    _write_json(_cache_path(step_dir), document, indent=None)
+    write_json(_cache_path(step_dir), document, indent=None)
     logger.info("saved step %d cache (fingerprint %s)", step_cfg.step, fp)
 
 
@@ -569,7 +569,7 @@ def load(step_dir: Path) -> StepCache | None:
     forcing a clean rebuild rather than a wrong read.
     """
     path = _cache_path(step_dir)
-    data = _read_json(path, None, label="step cache")
+    data = read_json(path, None, label="step cache")
     if data is None:
         return None
     try:
@@ -698,7 +698,7 @@ def save_manifest(
             {"input": str(inp), "output": str(out), "id": sid} for inp, out, sid in inputs.files
         ],
     }
-    _write_json(path, data)
+    write_json(path, data)
     return path
 
 
@@ -710,7 +710,7 @@ def load_manifest_fingerprint(step_dir: Path) -> str:
     full re-run. Read separately from :func:`load_manifest` so every existing caller,
     which wants only the file layout, is untouched.
     """
-    data = _read_json(manifest_path(step_dir), None, label="manifest")
+    data = read_json(manifest_path(step_dir), None, label="manifest")
     return str(data.get("fingerprint", "")) if isinstance(data, dict) else ""
 
 
@@ -722,7 +722,7 @@ def load_manifest(step_dir: Path) -> StepInputs | None:
     rather than silently re-parsing an empty batch.
     """
     path = manifest_path(step_dir)
-    data = _read_json(path, None, label="manifest")
+    data = read_json(path, None, label="manifest")
     if data is None:
         return None
     try:
@@ -745,7 +745,7 @@ def failed_jobs_path(step_dir: Path) -> Path:
 def save_failed_jobs(step_dir: Path, failed: list[dict[str, str]]) -> None:
     """Persist the failed-job ledger (serialized
     :class:`chemrefine.step_failures.FailureRecord` entries)."""
-    _write_json(failed_jobs_path(step_dir), failed)
+    write_json(failed_jobs_path(step_dir), failed)
 
 
 def load_failed_jobs(step_dir: Path) -> list[dict[str, str]]:
@@ -759,7 +759,7 @@ def load_failed_jobs(step_dir: Path) -> list[dict[str, str]]:
     """
     return cast(
         list[dict[str, str]],
-        _read_json(failed_jobs_path(step_dir), [], label="failed-jobs ledger"),
+        read_json(failed_jobs_path(step_dir), [], label="failed-jobs ledger"),
     )
 
 

@@ -584,6 +584,41 @@ def test_rebuild_nms_reads_existing_children(tmp_path: Path):
     assert [s.id for s in res.survivors] == ["0"]
 
 
+def test_rebuild_reproduces_the_resolution_after_the_winner_was_promoted(tmp_path: Path):
+    """A rebuild of a resolved tree must report the same winner the run did.
+
+    Promotion puts the winner's output at the parent's canonical path, so re-parsing round 1
+    on a resolved tree yields a structure *already at the target* — the passthrough, which
+    never re-derives children and so has no winner to name. The verdict has to come off disk.
+    """
+    engine = _FakeNms(
+        freqs={
+            "0": _Freq(imaginary={5: -42.0}, modes=_modes(6)),
+            "0_m5_pos": _Freq(imaginary={}, modes=None),
+            "0_m5_neg": _Freq(imaginary={}, modes=None),
+        }
+    )
+    ctx = _ctx(tmp_path, (_h2("0"),))
+    ran = nms.run_nms(engine, _seed_round1(engine, ctx), [], ctx, ctx.step_cfg)
+    assert ran.survivors[0].resolved_from == "0_m5_pos"
+
+    # What a re-parse of the promoted canonical output now yields: no imaginary modes.
+    promoted = StepResults(structures=(replace(_h2("0"), imaginary_freqs={}),))
+    rebuilt = nms.rebuild_nms(engine, promoted, [], ctx, ctx.step_cfg)
+
+    assert [s.id for s in rebuilt.survivors] == ["0"]
+    assert rebuilt.survivors[0].resolved_from == "0_m5_pos"
+
+
+def test_rebuild_of_an_unresolved_tree_names_no_winner(tmp_path: Path):
+    """No resolution on disk means none is claimed — an absent sidecar reads as ``None``."""
+    engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=None)})
+    ctx = _ctx(tmp_path, (_h2("0"),))
+    round1 = _seed_round1(engine, ctx)
+    res = nms.rebuild_nms(engine, round1, [], ctx, ctx.step_cfg)
+    assert res.survivors[0].resolved_from is None
+
+
 def test_rebuild_nms_unresolved_when_no_attempt_on_disk(tmp_path: Path):
     engine = _FakeNms(freqs={"0": _Freq(imaginary={5: -42.0}, modes=_modes(6))})
     ctx = _ctx(tmp_path, (_h2("0"),))
