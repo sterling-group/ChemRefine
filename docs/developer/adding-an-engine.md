@@ -45,9 +45,9 @@ Decorate the class with `@register("<name>")` and choose the **kind** that match
 | Kind | Base | You provide |
 |------|------|-------------|
 | Per-structure program (own input format) | [`JobEngine`](../api/engines_job.md) | `build_input`, `run_block`, `parse_one`, `pal`, `gpus` + the ClassVars (`label` / `template_suffix` / `output_suffix` / `output_globs`) |
-| User Python script | [`ScriptEngine`](../api/engines_job.md) (a `JobEngine`) | usually only `_template_vars` (inject `$VAR`s from `step.options`) |
+| User Python script | [`ScriptEngine`](../api/engines_job.md) (a `JobEngine`) | usually only `_vars_from` (inject `$VAR`s from `step.options`) |
 | ORCA optimises using *this* engine's gradients | `ExtOptOrcaEngine` | the ClassVars `backend` / `wrapper_filename` / `options_cls` / `calculator_cls`, plus a `ComputeBackend` in `extopt_calc.py` |
-| Not a per-structure job (e.g. a training step) | `CalculationEngine` directly | `prepare` / `submit` / `parse` + `input_digest` |
+| Not a per-structure job (e.g. a training step) | `CalculationEngine` directly | `prepare` / `submit` / `parse` |
 
 A `JobEngine` provides only **primitives** — the public provision surface chemrefine requests
 (`build_input` / `run_block` / `parse_one` / `pal` / `gpus`, the `JobExecutable` contract). The
@@ -108,9 +108,10 @@ install (see `mlip.calculator.register_backend`).
 
 ## The lifecycle
 
-Whatever kind you pick, the engine satisfies the contract the step lifecycle drives in order
-(plus `input_digest`, folded into the cache fingerprint). `submit` blocks until the jobs finish,
-so there is no separate `wait`:
+Whatever kind you pick, the engine satisfies the contract the step lifecycle drives in order.
+That contract is three methods and mentions caching nowhere: how a run is resumed is the
+orchestrator's business, not an engine's. `submit` blocks until the jobs finish, so there is no
+separate `wait`:
 
 ```
 prepare → submit → parse
@@ -279,7 +280,7 @@ That's a working engine: `engine: demoqm` in a step now renders `step{N}.inp` pe
 `demoqm`, and parses each result back into the pipeline.
 
 For the real, shipped versions to copy: **`orca/`** is the `JobEngine` for an own-input-format
-program; **`pyscf/`** is a `ScriptEngine` (it overrides only `_template_vars`); **`mlip/`** adds a
+program; **`pyscf/`** is a `ScriptEngine` (it overrides only `_vars_from`); **`mlip/`** adds a
 backend server. A library-only backend (e.g. a future `tblite` engine) is a `ScriptEngine` or a
 `_backend_server` backend — not a binary wrapper like this one.
 

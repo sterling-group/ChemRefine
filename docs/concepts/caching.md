@@ -54,10 +54,10 @@ The cache is keyed by a SHA-1 **fingerprint** covering:
   the NMS flag; and
 - the **parent structures** that fed the step — their IDs *and* their content
   (symbols, coordinates, energy), via `parents_digest`; and
-- the **template contents** — a digest of the resolved template file
-  (`input_digest`), so editing a template *in place* re-runs the step even though
-  its basename is unchanged. This also matters because, when `operation` is
-  omitted, the template's keywords decide what ORCA does.
+- the **template contents** — a digest of the step's resolved template
+  (`StepContext.template`, resolved once per step), so editing a template *in place*
+  re-runs the step even though its basename is unchanged. This also matters because, when
+  `operation` is omitted, the template's keywords decide what ORCA does.
 
 If the YAML changes, or the seed file / a template's contents / any upstream
 result changes, the fingerprint changes and the next run re-executes the step

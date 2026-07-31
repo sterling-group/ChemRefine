@@ -9,7 +9,7 @@ forward as immutable `PipelineState` values.
 
 ```
 cli → recovery → pipeline → step → {cache, filtering, nms}
-                                  → lifecycle (run → classify → policy → persist)
+                                  → lifecycle (run → classify → policy → persist → cache)
                                        → attempts (attemptK/ directories)
                                   → engines.api (Protocols + ENGINES registry)
                                        → engines/* (orca, mlip, pyscf)
@@ -17,9 +17,30 @@ cli → recovery → pipeline → step → {cache, filtering, nms}
                                             → slurm, throttle, io, ids, job_log, quantities
 ```
 
-Only `cli` touches `sys.argv` / process exit; only `slurm` shells out to
-`sbatch` / `squeue`; only `io` and `cache` own the on-disk formats. Engines
+**`engines/` does not import `cache`** — an engine turns a step's specification into a
+calculation and the output back into structures; how a run is resumed and what a cache key
+is made of are not its business. That edge did exist until recently: every engine had to
+implement an `input_digest` the cache alone consumed. The step's template now travels on the
+`StepContext` and the cache digests it there.
+`test_no_engine_module_imports_the_cache` keeps the layer boundary honest, since prose does
+not.
+
+`sbatch` / `squeue` are reached only from `slurm`; `io` and `cache` own the *shared* on-disk
+formats (each engine owns its own input format — that is the plugin contract). Engines
 receive a focused `StepContext`, never the whole `Config`.
+
+## Entry points
+
+Three programs live in this package, and only the first is the pipeline:
+
+| Entry point | Started by | What it is |
+| --- | --- | --- |
+| `chemrefine` (`cli:main`) | the user | the pipeline; the only one that reads `sys.argv` for a *run* or sets its exit code |
+| `python -m chemrefine.engines._backend_server.server` | an ExtOpt step's job script | the gradient server ORCA's wrapper posts to |
+| `chemrefine.engines.orca.extopt.bridge` | ORCA, via `%method ProgExt` | relays one `.extinp.tmp` to that server and writes back `.engrad` |
+
+The last two run inside a job, one process per step, and exit with the job. They parse their
+own argv because they are separate programs — not because the layering leaks.
 
 ## The recovery matrix
 
