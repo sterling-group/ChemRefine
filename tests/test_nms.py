@@ -732,25 +732,46 @@ def test_rebuilding_does_not_rewrite_the_children_it_reads(tmp_path: Path):
     assert rewritten == [], f"a rebuild rewrote {rewritten}"
 
 
-def test_rebuilding_cannot_install_a_winner():
-    """The rebuild coordinator does not reach the code that writes — by construction.
-
-    Choosing a winner and installing it on disk are separate functions, so a rebuild is not
-    relying on an argument being right: it never calls the installer at all. This asserts the
-    shape rather than the behaviour, so the byte-identical snapshot above cannot start passing
-    for an accidental reason.
-    """
+def _calls_in(obj) -> set[str]:
+    """Every plain-name function call in ``obj``'s source."""
     import ast
     import inspect
+    import textwrap
 
-    tree = ast.parse(inspect.getsource(nms.rebuild_nms))
-    called = {
+    tree = ast.parse(textwrap.dedent(inspect.getsource(obj)))
+    return {
         n.func.id
         for n in ast.walk(tree)
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
     }
-    assert "_select_survivors" in called, "the rebuild must still choose a winner"
-    assert "_install_winner" not in called
+
+
+def test_rebuilding_cannot_install_a_winner():
+    """The rebuild does not reach the code that writes — by construction, not by argument.
+
+    One loop resolves both modes, so "does a rebuild promote" is no longer a branch anyone
+    could get wrong: it is `_RebuildAttempt.install`, which does nothing, against
+    `_RunAttempt.install`, which promotes. This asserts that shape rather than the behaviour,
+    so the byte-identical snapshot above cannot start passing for an accidental reason.
+    """
+    assert "_install_winner" in _calls_in(nms._RunAttempt.install)
+    assert not _calls_in(nms._RebuildAttempt.install)
+    # Both modes still choose a winner — the shared loop is what guarantees it.
+    assert "_select_survivors" in _calls_in(nms._resolve_all)
+
+
+def test_one_loop_resolves_both_modes():
+    """There is a single resolution loop; the coordinators only name their mode.
+
+    Two copies of it drifted twice — on the skip conditions (b9e2d95, a resolved structure
+    reported unresolved) and on the empty-children short-circuit (5bf4f1d, "they agreed, but
+    nothing made them agree"). Both times the repair extracted a shared decision and left the
+    copies standing. A public entry point that grew its own loop again would pass the
+    agreement test above only until the next divergence.
+    """
+    for entry in (nms.run_nms, nms.rebuild_nms):
+        assert "_resolve_all" in _calls_in(entry), f"{entry.__name__} must delegate to the loop"
+        assert "_select_survivors" not in _calls_in(entry), f"{entry.__name__} grew its own loop"
 
 
 def test_an_edited_template_invalidates_the_reuse_before_a_reattempt(tmp_path: Path):

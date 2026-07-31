@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 import numpy as np
 from ase import Atoms
@@ -320,31 +320,129 @@ def _children_of(
     ]
 
 
-def _run_round_two(
-    engine: NmsCapableEngine, children: list[Structure], ctx: StepContext, attempt_dir: Path
-) -> list[Structure]:
-    """Submit + parse the displaced children under ``attempt_dir``; retry unconverged ones."""
-    child_ctx = replace(ctx, step_dir=attempt_dir)
-    succ, fail = lifecycle.submit_and_parse(engine, child_ctx, children)
-    succ, _fail = lifecycle.retry_unconverged(engine, child_ctx, succ, fail)
-    return succ
+class _AttemptMode(Protocol):
+    """How one parent's attempt is reached: located, populated, and concluded.
 
+    The two coordinators below differ in exactly these three answers and in nothing else.
+    They used to be two copies of one twelve-step loop, and the copies drifted twice: once
+    on the skip conditions, which shifted a shared RNG stream and made ``rebuild-cache``
+    report a resolved structure as unresolved (``b9e2d95`` — *"a wrong answer rather than
+    an error"*), and once on the short-circuit for a structure with no children
+    (``5bf4f1d`` — *"they agreed, but nothing made them agree"*). Both were repaired by
+    extracting a shared decision and leaving the two loops standing.
 
-def _parse_round_two(
-    engine: NmsCapableEngine, children: list[Structure], ctx: StepContext, attempt_dir: Path
-) -> list[Structure]:
-    """Parse already-on-disk child outputs under ``attempt_dir`` (rebuild — no submit).
+    One loop, parameterised by the axis that actually varies, is what makes them agree by
+    construction. A Protocol rather than a flag or a record of callables, because
+    ``install`` is behaviour and :mod:`chemrefine.engines.api` states the rule: capabilities
+    are never a flag.
 
-    The engine says where its files are; a child whose output is absent is simply left out,
-    so its parent stays unresolved rather than the rebuild failing.
+    **Deliberately private, and never a parameter of the public functions.** The choice
+    already exists upstream as :meth:`chemrefine.step.StepMode.may_submit`, so a mode a
+    caller could *pass* would be a second vocabulary for it — one more pair that has to be
+    kept in step, which is the defect this removes rather than relocates. ``run_nms`` and
+    ``rebuild_nms`` each name their own mode tautologically; nobody chooses one.
     """
-    child_ctx = replace(
-        ctx, step_dir=attempt_dir, prev_state=PipelineState(structures=tuple(children))
-    )
-    paths = ((c.id, engine.artifact_paths(child_ctx, c.id)) for c in children)
-    present = StepInputs(files=tuple((inp, out, cid) for cid, (inp, out) in paths if out.is_file()))
-    succ, _fail = lifecycle.parse_with_failures(engine, present, child_ctx)
-    return succ
+
+    def attempt_dir(self, structure_dir: Path) -> Path | None:
+        """The attempt directory to use, or ``None`` when there is none to work with."""
+        ...
+
+    def obtain(
+        self,
+        engine: NmsCapableEngine,
+        children: list[Structure],
+        ctx: StepContext,
+        attempt: Path,
+    ) -> list[Structure]:
+        """The round-2 children's parsed results."""
+        ...
+
+    def install(
+        self,
+        survivor: Structure,
+        source_id: str,
+        parent_id: str,
+        ctx: StepContext,
+        attempt: Path,
+    ) -> None:
+        """Put the winner's calculation at the parent's canonical path, if that applies."""
+        ...
+
+
+class _RunAttempt:
+    """Submit round 2 into a fresh attempt and promote the winner."""
+
+    def attempt_dir(self, structure_dir: Path) -> Path | None:
+        """A fresh ``attemptK/`` — never ``None``, so the shared guard's other half is moot."""
+        return next_attempt_dir(structure_dir)
+
+    def obtain(
+        self,
+        engine: NmsCapableEngine,
+        children: list[Structure],
+        ctx: StepContext,
+        attempt: Path,
+    ) -> list[Structure]:
+        """Submit + parse the displaced children under ``attempt``; retry unconverged ones."""
+        child_ctx = replace(ctx, step_dir=attempt)
+        succ, fail = lifecycle.submit_and_parse(engine, child_ctx, children)
+        succ, _fail = lifecycle.retry_unconverged(engine, child_ctx, succ, fail)
+        return succ
+
+    def install(
+        self,
+        survivor: Structure,
+        source_id: str,
+        parent_id: str,
+        ctx: StepContext,
+        attempt: Path,
+    ) -> None:
+        """Promote the winning child to the parent's canonical basenames."""
+        _install_winner(survivor, source_id, parent_id, ctx, attempt)
+
+
+class _RebuildAttempt:
+    """Re-read the latest attempt from disk, changing nothing (``rebuild-cache``)."""
+
+    def attempt_dir(self, structure_dir: Path) -> Path | None:
+        """The most recent ``attemptK/``, or ``None`` for children re-derivable but never run."""
+        return latest_attempt_dir(structure_dir)
+
+    def obtain(
+        self,
+        engine: NmsCapableEngine,
+        children: list[Structure],
+        ctx: StepContext,
+        attempt: Path,
+    ) -> list[Structure]:
+        """Parse already-on-disk child outputs under ``attempt`` — no submission.
+
+        The engine says where its files are; a child whose output is absent is simply left
+        out, so its parent stays unresolved rather than the rebuild failing.
+        """
+        child_ctx = replace(
+            ctx, step_dir=attempt, prev_state=PipelineState(structures=tuple(children))
+        )
+        paths = ((c.id, engine.artifact_paths(child_ctx, c.id)) for c in children)
+        files = tuple((inp, out, cid) for cid, (inp, out) in paths if out.is_file())
+        succ, _fail = lifecycle.parse_with_failures(engine, StepInputs(files=files), child_ctx)
+        return succ
+
+    def install(
+        self,
+        survivor: Structure,
+        source_id: str,
+        parent_id: str,
+        ctx: StepContext,
+        attempt: Path,
+    ) -> None:
+        """Nothing: a rebuild must not rewrite the outputs it was asked to read.
+
+        Not an omission — the invariant ``7a7d1bf`` was filed for, held by the type rather
+        than by a caller remembering. The winner's artifacts are already at the canonical
+        path from the run that promoted them; re-promoting would rewrite the very records a
+        later comparison is meant to trust.
+        """
 
 
 _RESOLUTION_FILE = "resolution.json"
@@ -487,19 +585,25 @@ def _children_for(structure: Structure, opts: NmsOptions) -> list[Structure]:
     )
 
 
-def run_nms(
+def _resolve_all(
     engine: NmsCapableEngine,
     round1: StepResults,
     round1_failures: list[Failure] | tuple[Failure, ...],
     ctx: StepContext,
+    mode: _AttemptMode,
 ) -> NmsResolution:
-    """Resolve each round-1 survivor to its stationary point (submits round-2).
+    """Resolve every round-1 survivor through ``mode``. The one NMS loop.
 
     For each round-1 structure: if it is already at the target it passes through at the
-    canonical place; otherwise its ± displaced children run under ``stepN/<id>/attemptK/``
-    and the best resolved geometry becomes the survivor at the canonical id (``random``
-    fans out instead). Round-1 jobs that already failed (``round1_failures``) are carried
+    canonical place; otherwise its ± displaced children are obtained under
+    ``stepN/<id>/attemptK/`` and the best resolved geometry becomes the survivor at the
+    canonical id (``random`` fans out instead). Round-1 jobs that already failed are carried
     through unchanged.
+
+    The attempt is located before the children are checked, which is safe because both
+    lookups are pure on a directory that does not exist yet. That ordering lets one guard
+    cover both modes: a run's ``attempt`` is never ``None``, so for it the second disjunct
+    is dead, and for a rebuild it is the "re-derivable but never ran" case.
     """
     opts = _resolved_options(engine, ctx)
     target = target_imaginary_count(opts)
@@ -510,21 +614,35 @@ def run_nms(
             survivors.append(_passthrough(s, ctx.step_dir))
             continue
         children = _children_for(s, opts)
-        if not children:
+        attempt = mode.attempt_dir(ctx.step_dir / s.id)
+        if not children or attempt is None:
             failures.append(Failure(s.id, FailureKind.UNRESOLVED_NMS, s))
             continue
-        attempt = next_attempt_dir(ctx.step_dir / s.id)
-        round2 = _run_round_two(engine, children, ctx, attempt)
+        round2 = mode.obtain(engine, children, ctx, attempt)
         resolved = [c for c in round2 if _is_resolved(c, target)]
         s_surv, s_fail = _select_survivors(resolved, round2, s, ctx.step_cfg, target)
         # A promoted winner is the only case with a `resolved_from`: `random` fans out and
         # an unresolved parent has no survivor, and neither installs anything.
         winner_source = s_surv[0].resolved_from if s_surv else None
         if winner_source is not None:
-            _install_winner(s_surv[0], winner_source, s.id, ctx, attempt)
+            mode.install(s_surv[0], winner_source, s.id, ctx, attempt)
         survivors.extend(s_surv)
         failures.extend(s_fail)
     return NmsResolution(tuple(survivors), tuple(failures))
+
+
+def run_nms(
+    engine: NmsCapableEngine,
+    round1: StepResults,
+    round1_failures: list[Failure] | tuple[Failure, ...],
+    ctx: StepContext,
+) -> NmsResolution:
+    """Resolve each round-1 survivor to its stationary point (submits round-2).
+
+    Displaced children run under a fresh ``stepN/<id>/attemptK/`` and the winner is promoted
+    to the parent's canonical basenames.
+    """
+    return _resolve_all(engine, round1, round1_failures, ctx, _RunAttempt())
 
 
 def rebuild_nms(
@@ -537,28 +655,9 @@ def rebuild_nms(
 
     Re-derives the (deterministic) displaced children and parses their existing round-2
     outputs from the structure's latest ``attemptK/``; a child with no output on disk is
-    simply absent, so its parent stays unresolved.
+    simply absent, so its parent stays unresolved, and nothing on disk is rewritten.
     """
-    opts = _resolved_options(engine, ctx)
-    target = target_imaginary_count(opts)
-    survivors: list[Structure] = []
-    failures: list[Failure] = list(round1_failures)
-    for s in round1.structures:
-        if _already_at_target(s, target):
-            survivors.append(_passthrough(s, ctx.step_dir))
-            continue
-        children = _children_for(s, opts)
-        attempt = latest_attempt_dir(ctx.step_dir / s.id)
-        # The extra condition a rebuild has: children it can re-derive but never ran.
-        if not children or attempt is None:
-            failures.append(Failure(s.id, FailureKind.UNRESOLVED_NMS, s))
-            continue
-        round2 = _parse_round_two(engine, children, ctx, attempt)
-        resolved = [c for c in round2 if _is_resolved(c, target)]
-        s_surv, s_fail = _select_survivors(resolved, round2, s, ctx.step_cfg, target)
-        survivors.extend(s_surv)
-        failures.extend(s_fail)
-    return NmsResolution(tuple(survivors), tuple(failures))
+    return _resolve_all(engine, round1, round1_failures, ctx, _RebuildAttempt())
 
 
 def reattempt_nms(
