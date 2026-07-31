@@ -126,13 +126,13 @@ def test_per_step_bookkeeping_scales_linearly(tmp_path: Path, capsys) -> None:
 
         with _timed() as digest:
             cache.parents_digest(structures)
+        key = cache.StepKey.of(ctx.step_cfg, structures, ctx.template)
         with _timed() as save:
-            cache.save_step_results(
+            cache.save(
                 step_cfg=ctx.step_cfg,
-                parent_ids=tuple(s.id for s in structures),
+                key=key,
                 results=results,
-                ctx=ctx,
-                template_digest="",
+                step_dir=step_dir,
                 chemrefine_version="perf",
             )
         with _timed() as load:

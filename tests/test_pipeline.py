@@ -173,9 +173,6 @@ def test_run_stops_early_when_a_step_produces_no_survivors(tmp_path: Path):
         def parse(self, inputs, ctx):
             return StepResults(structures=())  # no survivors
 
-        def input_digest(self, ctx):
-            return ""
-
     try:
         seed_dir = tmp_path / "seeds"
         io.write_xyz([_h2()], ["a"], step_number=0, output_dir=seed_dir)
@@ -399,9 +396,6 @@ def _register_thermo_engine():
                     )
                 )
             return StepResults(structures=tuple(out))
-
-        def input_digest(self, ctx):
-            return ""
 
     return _ThermoEngine
 

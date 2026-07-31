@@ -98,7 +98,14 @@ def test_fake_engine_round_trip_preserves_ids(tmp_path: Path):
     assert [s.id for s in results.structures] == ["0", "1-0", "1-1"]
 
 
-def test_fake_engine_has_no_input_digest(tmp_path: Path):
-    """The fake engine fabricates results, so it has no template to fold into the cache."""
-    engine = get_engine("fake")
-    assert engine.input_digest(_ctx_with_seeds(tmp_path, ["0"])) == ""
+def test_fake_engine_reads_no_template(tmp_path: Path):
+    """The fake engine fabricates results, so it declares no template at all.
+
+    Not `TemplateDriven`, so `build_context` leaves `ctx.template` as None and the step's
+    key gets no template digest — the engine itself says nothing about caching.
+    """
+    from chemrefine import cache
+    from chemrefine.engines.api import TemplateDriven
+
+    assert not isinstance(get_engine("fake"), TemplateDriven)
+    assert cache.template_digest(None) == ""

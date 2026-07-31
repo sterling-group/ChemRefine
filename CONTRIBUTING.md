@@ -32,6 +32,24 @@ The mutation gate is the slow one (~3 min) because it runs the suite once per
 mutation; it only needs re-running when you touch one of the predicates it lists
 (`python scripts/mutation_gate.py --list`).
 
+### The gates above do not cover the `integration` tier
+
+`pytest` deselects `-m integration` by default and so does CI, which is deliberate — those
+tests build 10⁴ structures or need real ORCA. But it means **a signature change can break one
+of them and every gate above will still be green**: `mypy` will not catch it either, because
+`attr-defined` is disabled for tests (see the rationale in `pyproject.toml`), so a call to a
+function that no longer exists reads as ordinary noise.
+
+If you change a public signature in `cache`, `step`, `lifecycle` or `nms`, run the tier that
+uses it:
+
+```bash
+pytest -m integration tests/test_perf_cache.py   # ~12 s, no external binaries
+```
+
+The rest of the tier (`tests/test_e2e_live.py`) does need real ORCA / an MLIP stack; see the
+e2e section below.
+
 ### What 100% coverage does not prove
 
 It proves every line ran. It does not prove an assertion looked at the result — a

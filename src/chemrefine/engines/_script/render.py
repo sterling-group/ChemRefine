@@ -15,7 +15,7 @@ syntax — collision-free with Python's ``{`` / ``}`` brackets):
 * ``$MULTIPLICITY`` — integer spin multiplicity (``= 2S + 1``).
 * engine ``extra_vars`` — per-engine option placeholders so the YAML can drive
   the template. The MLIP engine passes ``$MODEL_NAME`` / ``$TASK_NAME`` /
-  ``$DEVICE`` from ``step.options`` (see :meth:`ScriptEngine._template_vars`).
+  ``$DEVICE`` from ``step.options`` (see :meth:`ScriptEngine._vars_from`).
 
 Output contract (the appended footer harvests these names if present):
 

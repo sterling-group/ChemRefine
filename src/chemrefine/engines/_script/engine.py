@@ -6,7 +6,7 @@ its appended footer writes. A thin :class:`~chemrefine.engines._job.JobEngine`: 
 only the primitives — render the ``.py`` (:mod:`chemrefine.engines._script.render`), parse the
 ``.json`` (:mod:`chemrefine.engines._script.output`), the run command, the core budget — while
 the base owns ``prepare`` / ``submit`` / ``parse``. Concrete engines set ``name`` + ``label``
-and (optionally) override ``_template_vars``.
+and (optionally) override ``_vars_from``.
 
 This is the ``.py``-format sibling of :mod:`chemrefine.engines.orca.input` /
 :mod:`chemrefine.engines.orca.output` — the script kind's input writer + output reader.

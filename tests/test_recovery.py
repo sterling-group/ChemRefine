@@ -190,9 +190,6 @@ def _register_flaky():
                 )
             return StepResults(structures=tuple(out))
 
-        def input_digest(self, ctx):
-            return ""
-
     return _Flaky
 
 
@@ -402,9 +399,6 @@ def _register_fake_nms():
                 )
             return StepResults(structures=tuple(out))
 
-        def input_digest(self, ctx):
-            return ""
-
         def nms_input_info(self, ctx):
             return NmsInputInfo(is_transition_state=False, computes_frequencies=True)
 
@@ -570,9 +564,6 @@ def _recording_engine():
                     )
                 )
             return StepResults(structures=tuple(out))
-
-        def input_digest(self, ctx):
-            return ""
 
     return _Recorder
 

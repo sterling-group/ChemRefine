@@ -262,9 +262,6 @@ def _register_fail_engine():
                 )
             return StepResults(structures=tuple(out))
 
-        def input_digest(self, ctx):
-            return ""
-
     return _FailEngine
 
 
@@ -400,9 +397,6 @@ def _register_conv_engine():
                     )
                 )
             return StepResults(structures=tuple(out))
-
-        def input_digest(self, ctx):
-            return ""
 
     return _ConvEngine
 
@@ -577,9 +571,6 @@ def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypa
 
         def parse(self, inputs, ctx):
             return StepResults(structures=())
-
-        def input_digest(self, ctx):
-            return ""
 
         def nms_input_info(self, ctx):
             return NmsInputInfo(is_transition_state=False, computes_frequencies=True)

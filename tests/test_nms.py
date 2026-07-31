@@ -408,9 +408,6 @@ class _FakeNms:
             )
         return StepResults(structures=tuple(out))
 
-    def input_digest(self, ctx: StepContext) -> str:
-        return ""
-
     def nms_input_info(self, ctx: StepContext) -> NmsInputInfo:
         return NmsInputInfo(is_transition_state=self.is_ts, computes_frequencies=self.computes_freq)
 

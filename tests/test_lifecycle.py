@@ -183,9 +183,6 @@ class _FlakyEngine:
         ]
         return build_structures(parsed, ctx.prev_state)
 
-    def input_digest(self, ctx: StepContext) -> str:
-        return ""
-
 
 def test_a_retried_structure_keeps_its_lineage(tmp_path: Path):
     """A NOT_CONVERGED retry must come back as the same structure, parent and all.

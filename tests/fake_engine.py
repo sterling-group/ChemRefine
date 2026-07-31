@@ -92,7 +92,3 @@ class FakeEngine:
                 )
             )
         return StepResults(structures=tuple(out_structures))
-
-    def input_digest(self, ctx: StepContext) -> str:
-        """No template to hash — the fake engine fabricates its results."""
-        return ""
