@@ -236,7 +236,10 @@ def run_step(
     """
     engine = engine if engine is not None else get_engine(step_cfg.engine)
     ctx = build_context(config, step_cfg, prev_state, engine)
-    parent_ids = tuple(s.id for s in prev_state.structures)
+    # Derived once, here, and passed down as a value. Every route below needs the same
+    # answer to "would this configuration have written the cache on disk", and each used
+    # to re-derive it from whatever context it held. See `cache.StepKey`.
+    key = cache.StepKey.of(step_cfg, prev_state.structures, ctx.template)
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     # Narrow once, here, instead of asserting the capability again with a cast at
     # each of the four places that need it. `nms_engine is not None` then carries
@@ -253,7 +256,7 @@ def run_step(
 
     if mode is not StepMode.EXECUTE:
         cached = _cached_outcome(
-            ctx, step_cfg, parent_ids, engine, nms_engine=nms_engine, may_submit=may_submit
+            ctx, step_cfg, key, engine, nms_engine=nms_engine, may_submit=may_submit
         )
         if cached is not None:
             return cached
@@ -262,15 +265,13 @@ def run_step(
         # reuse the round-1 freq + already-resolved children and re-attempt only
         # the ledgered-unresolved parents — instead of re-running the whole step.
         if nms_engine is not None:
-            reused = _nms_reuse_outcome(
-                ctx, step_cfg, parent_ids, nms_engine, may_submit=may_submit
-            )
+            reused = _nms_reuse_outcome(ctx, step_cfg, key, nms_engine, may_submit=may_submit)
             if reused is not None:
                 return reused
         # No cache at all, but possibly a step this configuration already half-ran and
         # was interrupted before it could write one.
         partial = _partial_step_outcome(
-            ctx, step_cfg, parent_ids, engine, nms_engine=nms_engine, may_submit=may_submit
+            ctx, step_cfg, key, engine, nms_engine=nms_engine, may_submit=may_submit
         )
         if partial is not None:
             return partial
@@ -282,13 +283,13 @@ def run_step(
             f"Run `chemrefine resume` to bring it up to date, or "
             f"`chemrefine rerun {step_cfg.step}` to redo it."
         )
-    return _run_full_step(ctx, step_cfg, parent_ids, engine, nms_engine=nms_engine)
+    return _run_full_step(ctx, step_cfg, key, engine, nms_engine=nms_engine)
 
 
 def _cached_outcome(
     ctx: StepContext,
     step_cfg: StepConfig,
-    parent_ids: tuple[str, ...],
+    key: cache.StepKey,
     engine: CalculationEngine,
     *,
     nms_engine: NmsCapableEngine | None,
@@ -300,21 +301,15 @@ def _cached_outcome(
     when this step may submit; otherwise it is a plain cache hit (refilter), which is
     what a step a scoped action is not targeting wants.
     """
-    cached = cache.load_if_valid(
-        step_cfg=step_cfg,
-        parent_ids=parent_ids,
-        step_dir=ctx.step_dir,
-        parents_digest=cache.parents_digest(ctx.prev_state.structures),
-        template_digest=cache.template_digest(ctx.template),
-    )
+    cached = cache.load_if_valid(key=key, step_dir=ctx.step_dir)
     if cached is None:
         return None
     failed = cache.load_failure_records(ctx.step_dir)
     if failed and step_cfg.on_failure == "stop" and may_submit:
         results = (
-            nms.reattempt_nms(nms_engine, ctx, step_cfg, cached, parent_ids)
+            nms.reattempt_nms(nms_engine, ctx, step_cfg, cached, key)
             if nms_engine is not None
-            else _resubmit_failed(engine, ctx, step_cfg, failed, parent_ids)
+            else _resubmit_failed(engine, ctx, step_cfg, failed, key)
         )
         return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
     logger.info(
@@ -328,7 +323,7 @@ def _cached_outcome(
 def _nms_reuse_outcome(
     ctx: StepContext,
     step_cfg: StepConfig,
-    parent_ids: tuple[str, ...],
+    key: cache.StepKey,
     engine: NmsCapableEngine,
     *,
     may_submit: bool,
@@ -348,17 +343,12 @@ def _nms_reuse_outcome(
         cached = cache.load(ctx.step_dir)
     except CacheError:
         cached = None
-    digest = cache.parents_digest(ctx.prev_state.structures)
-    template_digest = cache.template_digest(ctx.template)
-    fingerprint = cache.reuse_fingerprint(
-        step_cfg, parent_ids, parents_digest=digest, template_digest=template_digest
-    )
-    if cached is None or getattr(cached, "reuse_fingerprint", "") != fingerprint:
+    if cached is None or cached.reuse_fingerprint != key.reuse_fingerprint:
         return None
     if cache.load_failure_records(ctx.step_dir):
         if not may_submit:
             return None
-        results = nms.reattempt_nms(engine, ctx, step_cfg, cached, parent_ids)
+        results = nms.reattempt_nms(engine, ctx, step_cfg, cached, key)
     else:
         logger.info(
             "step %d: NMS search params changed, all resolved — reusing cache", step_cfg.step
@@ -368,37 +358,21 @@ def _nms_reuse_outcome(
         # under the previous search params, so re-applying `on_failure` to an empty failure
         # list would only re-stamp a ledger that is already correct. This re-stamps the
         # cache under the new fingerprint and nothing else.
-        cache.save_step_results(
+        cache.save(
             step_cfg=step_cfg,
-            parent_ids=parent_ids,
+            key=key,
             results=cached.results,
-            ctx=ctx,
-            template_digest=template_digest,
+            step_dir=ctx.step_dir,
             chemrefine_version=__version__,
         )
         results = cached.results
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
 
-def _current_fingerprint(
-    ctx: StepContext,
-    step_cfg: StepConfig,
-    parent_ids: tuple[str, ...],
-    engine: CalculationEngine,
-) -> str:
-    """The cache key for this step as configured right now."""
-    return cache.fingerprint(
-        step_cfg,
-        parent_ids,
-        parents_digest=cache.parents_digest(ctx.prev_state.structures),
-        template_digest=cache.template_digest(ctx.template),
-    )
-
-
 def _partial_step_outcome(
     ctx: StepContext,
     step_cfg: StepConfig,
-    parent_ids: tuple[str, ...],
+    key: cache.StepKey,
     engine: CalculationEngine,
     *,
     nms_engine: NmsCapableEngine | None,
@@ -436,9 +410,7 @@ def _partial_step_outcome(
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
         return None
-    if cache.load_manifest_fingerprint(ctx.step_dir) != _current_fingerprint(
-        ctx, step_cfg, parent_ids, engine
-    ):
+    if cache.load_manifest_fingerprint(ctx.step_dir) != key.fingerprint:
         return None
     missing = [
         FailureRecord(
@@ -455,14 +427,14 @@ def _partial_step_outcome(
         len(missing),
         len(manifest.files),
     )
-    results = _resubmit_failed(engine, ctx, step_cfg, missing, parent_ids)
+    results = _resubmit_failed(engine, ctx, step_cfg, missing, key)
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
 
 def _run_full_step(
     ctx: StepContext,
     step_cfg: StepConfig,
-    parent_ids: tuple[str, ...],
+    key: cache.StepKey,
     engine: CalculationEngine,
     *,
     nms_engine: NmsCapableEngine | None,
@@ -485,7 +457,7 @@ def _run_full_step(
         engine=step_cfg.engine,
         # Stamped before submission, so an interrupted run leaves proof of *what* these
         # outputs were computed for — see :func:`_partial_step_outcome`.
-        fingerprint=_current_fingerprint(ctx, step_cfg, parent_ids, engine),
+        fingerprint=key.fingerprint,
     )
 
     logger.info("step %d: submitting %d jobs", step_cfg.step, len(inputs.files))
@@ -505,7 +477,7 @@ def _run_full_step(
             ctx,
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
-    results = lifecycle.finalize(engine, ctx, step_cfg, parent_ids, successes, failures)
+    results = lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
 
@@ -570,12 +542,12 @@ def rebuild_cache_step(
     """
     engine = get_engine(step_cfg.engine)
     ctx = build_context(config, step_cfg, prev_state, engine)
-    parent_ids = tuple(s.id for s in prev_state.structures)
+    key = cache.StepKey.of(step_cfg, prev_state.structures, ctx.template)
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
         raise CacheError(f"step {step_cfg.step}: cannot rebuild-cache — no manifest on disk")
     stamped = cache.load_manifest_fingerprint(ctx.step_dir)
-    if stamped and stamped != _current_fingerprint(ctx, step_cfg, parent_ids, engine):
+    if stamped and stamped != key.fingerprint:
         raise CacheError(
             f"step {step_cfg.step}: the outputs on disk were produced for a different "
             f"configuration — its template, options or upstream results have changed "
@@ -592,7 +564,7 @@ def rebuild_cache_step(
             ctx,
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
-    results = lifecycle.finalize(engine, ctx, step_cfg, parent_ids, successes, failures)
+    results = lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
 
@@ -601,7 +573,7 @@ def _resubmit_failed(
     ctx: StepContext,
     step_cfg: StepConfig,
     failed: list[FailureRecord],
-    parent_ids: tuple[str, ...],
+    key: cache.StepKey,
 ) -> StepResults:
     """Re-prepare and resubmit only the failed structures, then re-parse + re-cache the step.
 
@@ -637,4 +609,4 @@ def _resubmit_failed(
 
     successes, failures = lifecycle.parse_and_record(engine, manifest, ctx)
     successes, failures = lifecycle.retry_unconverged(engine, ctx, successes, failures)
-    return lifecycle.finalize(engine, ctx, step_cfg, parent_ids, successes, failures)
+    return lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)

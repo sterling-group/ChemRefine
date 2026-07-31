@@ -219,9 +219,10 @@ def test_splitting_the_arrays_out_of_json_still_pays(tmp_path: Path, capsys) -> 
     step_dir = tmp_path / "split"
     step_dir.mkdir()
 
+    step_cfg = StepConfig(step=1, engine="fake", operation="opt_sp")
     cache.save(
-        step_cfg=StepConfig(step=1, engine="fake", operation="opt_sp"),
-        parent_ids=("0",),
+        step_cfg=step_cfg,
+        key=cache.StepKey.of(step_cfg, structures[:1], None),
         results=StepResults(structures=structures),
         step_dir=step_dir,
         chemrefine_version="perf",

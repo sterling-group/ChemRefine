@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -931,24 +932,29 @@ def test_rebuild_cache_step_nms_branch(tmp_path: Path):
 # --- _nms_reuse_outcome (NMS reuse-fingerprint path) ------------------------
 
 
-def _pin_nms(monkeypatch, fp: str = "FP") -> None:
-    """Pin the NMS reuse fingerprint + re-attempt result for these tests.
+def _reuse_key(ctx, fp: str = "FP"):
+    """This step's key, with the NMS reuse fingerprint pinned to ``fp``.
 
-    ``step.py`` calls through the :mod:`chemrefine.cache` and :mod:`chemrefine.nms`
-    module objects, so patching the module attributes redirects the orchestrator
-    without touching its code.
+    The orchestrator no longer derives the reuse key — it is handed one — so these tests
+    build the key the caller would, rather than monkeypatching the derivation.
     """
-    from chemrefine import cache, nms
+    from chemrefine import cache
 
-    monkeypatch.setattr(
-        cache,
-        "reuse_fingerprint",
-        lambda step_cfg, parent_ids, *, parents_digest="", template_digest="": fp,
-    )
+    return replace(cache.StepKey.of(ctx.step_cfg, (), ctx.template), reuse_fingerprint=fp)
+
+
+def _pin_nms(monkeypatch) -> None:
+    """Pin the NMS re-attempt result for these tests.
+
+    ``step.py`` calls through the :mod:`chemrefine.nms` module object, so patching the
+    module attribute redirects the orchestrator without touching its code.
+    """
+    from chemrefine import nms
+
     monkeypatch.setattr(
         nms,
         "reattempt_nms",
-        lambda engine, ctx, step_cfg, cached, parent_ids: StepResults(
+        lambda engine, ctx, step_cfg, cached, key: StepResults(
             structures=(
                 Structure(id="re", atoms=Atoms("H", positions=[[0, 0, 0]]), energy_hartree=-1.0),
             )
@@ -957,18 +963,23 @@ def _pin_nms(monkeypatch, fp: str = "FP") -> None:
 
 
 def _save_reuse_cache(ctx, reuse_fp: str):
+    """Write a cache carrying a chosen reuse fingerprint.
+
+    The reuse key is derived, not passed, so this replaces it on the derived key rather
+    than handing `save` a loose string — which is the drift `StepKey` closes.
+    """
     from chemrefine import cache
 
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
+    key = replace(cache.StepKey.of(ctx.step_cfg, (), ctx.template), reuse_fingerprint=reuse_fp)
     cache.save(
         step_cfg=ctx.step_cfg,
-        parent_ids=(),
+        key=key,
         results=StepResults(
             structures=(Structure(id="c", atoms=Atoms("H", positions=[[0, 0, 0]])),)
         ),
         step_dir=ctx.step_dir,
         chemrefine_version="v",
-        reuse_fingerprint=reuse_fp,
     )
 
 
@@ -980,7 +991,10 @@ def test_nms_reuse_outcome_none_without_cache(tmp_path: Path, monkeypatch):
     ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     assert (
-        step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"), may_submit=True) is None
+        step._nms_reuse_outcome(
+            ctx, ctx.step_cfg, _reuse_key(ctx), get_engine("orca"), may_submit=True
+        )
+        is None
     )
 
 
@@ -994,7 +1008,10 @@ def test_nms_reuse_outcome_none_on_corrupt_cache(tmp_path: Path, monkeypatch):
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_bytes(b"not json")
     assert (
-        step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"), may_submit=True) is None
+        step._nms_reuse_outcome(
+            ctx, ctx.step_cfg, _reuse_key(ctx), get_engine("orca"), may_submit=True
+        )
+        is None
     )
 
 
@@ -1002,10 +1019,12 @@ def test_nms_reuse_outcome_restamps_when_all_resolved(tmp_path: Path, monkeypatc
     from chemrefine import step
     from chemrefine.engines.api import get_engine
 
-    _pin_nms(monkeypatch, "FP")
+    _pin_nms(monkeypatch)
     ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
     _save_reuse_cache(ctx, "FP")  # matching reuse fingerprint, no failed ledger
-    out = step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"), may_submit=True)
+    out = step._nms_reuse_outcome(
+        ctx, ctx.step_cfg, _reuse_key(ctx), get_engine("orca"), may_submit=True
+    )
     assert out is not None and out.cache_hit is False
 
 
@@ -1013,13 +1032,15 @@ def test_nms_reuse_outcome_reattempts_when_ledger_present(tmp_path: Path, monkey
     from chemrefine import cache, step
     from chemrefine.engines.api import get_engine
 
-    _pin_nms(monkeypatch, "FP")
+    _pin_nms(monkeypatch)
     ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
     _save_reuse_cache(ctx, "FP")
     cache.save_failure_records(
         ctx.step_dir, [FailureRecord(structure_id="0", kind=FailureKind.FAILED, reason="x")]
     )
-    out = step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"), may_submit=True)
+    out = step._nms_reuse_outcome(
+        ctx, ctx.step_cfg, _reuse_key(ctx), get_engine("orca"), may_submit=True
+    )
     assert out is not None and any(s.id == "re" for s in out.state.structures)
 
 
@@ -1035,13 +1056,15 @@ def test_nms_reuse_outcome_declines_to_reattempt_when_the_step_may_not_submit(
     from chemrefine import cache, step
     from chemrefine.engines.api import get_engine
 
-    _pin_nms(monkeypatch, "FP")
+    _pin_nms(monkeypatch)
     ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
     _save_reuse_cache(ctx, "FP")
     cache.save_failure_records(
         ctx.step_dir, [FailureRecord(structure_id="0", kind=FailureKind.FAILED, reason="x")]
     )
-    out = step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"), may_submit=False)
+    out = step._nms_reuse_outcome(
+        ctx, ctx.step_cfg, _reuse_key(ctx), get_engine("orca"), may_submit=False
+    )
     assert out is None
 
 
@@ -1133,3 +1156,35 @@ def test_resume_refuses_a_manifest_from_a_different_config(tmp_path: Path):
     run_step(changed, changed.steps[0], seeds, mode=StepMode.RESUME)
 
     assert list((step_dir / "0").glob("attempt*")), "a stale manifest must not be trusted"
+
+
+def test_a_step_derives_its_cache_key_exactly_once(tmp_path: Path, monkeypatch):
+    """The key is a value computed once, not a recipe each route re-follows.
+
+    It used to be the latter: a cold step hashed its parents three times and its template
+    three times, from `_cached_outcome`, `_nms_reuse_outcome`, `_current_fingerprint` and
+    `save_step_results`. That is wasted work on a 10^4-structure step, but the reason it
+    matters is drift — one of those sites once omitted the reuse fingerprint and wrote a
+    cache the NMS reuse path could never match again, and another read `ctx.prev_state`,
+    which the retry paths rebind to a *subset* of the parents.
+    """
+    from chemrefine import cache
+
+    calls: dict[str, int] = {"parents_digest": 0, "template_digest": 0, "fingerprint": 0}
+
+    def counting(name):
+        original = getattr(cache, name)
+
+        def wrapped(*args, **kwargs):
+            calls[name] += 1
+            return original(*args, **kwargs)
+
+        return wrapped
+
+    for name in calls:
+        monkeypatch.setattr(cache, name, counting(name))
+
+    cfg = _config(tmp_path)
+    state = _seed_state(["0", "1"])
+    run_step(cfg, cfg.steps[0], state, mode=StepMode.RESUME)  # cold: nothing on disk
+    assert calls == {"parents_digest": 1, "template_digest": 1, "fingerprint": 1}

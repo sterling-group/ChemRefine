@@ -566,7 +566,7 @@ def reattempt_nms(
     ctx: StepContext,
     step_cfg: StepConfig,
     cached: cache.StepCache,
-    parent_ids: tuple[str, ...],
+    key: cache.StepKey,
 ) -> StepResults:
     """Re-attempt only the ledgered-unresolved NMS parents, reusing round-1.
 
@@ -622,7 +622,7 @@ def reattempt_nms(
         engine,
         ctx,
         step_cfg,
-        parent_ids,
+        key,
         list(kept + reattempt.survivors),
         list(reattempt.failures),
     )

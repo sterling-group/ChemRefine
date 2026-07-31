@@ -70,7 +70,6 @@ from chemrefine.config import StepConfig
 from chemrefine.errors import CacheError
 from chemrefine.state import (
     FailureRecord,
-    StepContext,
     StepInputs,
     StepResults,
     Structure,
@@ -485,34 +484,31 @@ def read_json(path: Path, default: Any, *, label: str) -> Any:
 def save(
     *,
     step_cfg: StepConfig,
-    parent_ids: tuple[str, ...],
+    key: StepKey,
     results: StepResults,
     step_dir: Path,
     chemrefine_version: str,
-    reuse_fingerprint: str = "",
-    parents_digest: str = "",
-    template_digest: str = "",
 ) -> None:
-    """Persist ``results`` for ``step_cfg`` to ``step_dir/_cache/``.
+    """Persist ``results`` for ``step_cfg`` to ``step_dir/_cache/`` under ``key``.
 
-    ``parents_digest`` (the parent structures' content digest) and
-    ``template_digest`` (the resolved template's content digest) are folded
-    into the stored fingerprint; pass the same values to :func:`load_if_valid`.
+    The key is a value the caller computed once (:meth:`StepKey.of`), not a recipe this
+    function re-follows. It used to be the latter, and the derivation drifted twice: once
+    when a site omitted the reuse fingerprint entirely, and it stayed derivable from
+    whatever ``StepContext`` a caller happened to pass — including one whose ``prev_state``
+    had been rebound to a *subset* of the parents, which would have keyed the step to a
+    fingerprint nothing could ever match again.
     """
-    fp = fingerprint(
-        step_cfg, parent_ids, parents_digest=parents_digest, template_digest=template_digest
-    )
     records = [structure_record(s) for s in results.structures]
     document = {
         "cache_format": CACHE_FORMAT_VERSION,
         "chemrefine_version": chemrefine_version,
-        "fingerprint": fp,
-        "reuse_fingerprint": reuse_fingerprint,
+        "fingerprint": key.fingerprint,
+        "reuse_fingerprint": key.reuse_fingerprint,
         "step": step_cfg.step,
         "name": step_cfg.name,
         "engine": step_cfg.engine,
         "operation": step_cfg.operation,
-        "parent_ids": list(parent_ids),
+        "parent_ids": list(key.parent_ids),
         "structures": records,
     }
     # Sidecar first: a crash between the two writes then leaves an orphan `.npz` and no
@@ -521,7 +517,7 @@ def save(
     # error, and this way the pair is effectively atomic without a second mechanism.
     _atomic_write(_arrays_path(step_dir), _npz_bytes(_split_arrays(records)))
     write_json(_cache_path(step_dir), document, indent=None)
-    logger.info("saved step %d cache (fingerprint %s)", step_cfg.step, fp)
+    logger.info("saved step %d cache (fingerprint %s)", step_cfg.step, key.fingerprint)
 
 
 #: ``step.options`` keys that tune an NMS *search* without changing what counts as
@@ -560,35 +556,61 @@ def reuse_fingerprint(
     )
 
 
-def save_step_results(
-    *,
-    step_cfg: StepConfig,
-    parent_ids: tuple[str, ...],
-    results: StepResults,
-    ctx: StepContext,
-    template_digest: str,
-    chemrefine_version: str,
-) -> None:
-    """Persist a step's results, deriving every digest and fingerprint from ``ctx``.
+@dataclass(frozen=True)
+class StepKey:
+    """A step's cache identity — computed once per step, then passed around as a value.
 
-    The one place a completed step is written, so the key it is written under is derived
-    once: hash the parents, take the template digest, compute the plain and the reuse
-    fingerprint, call :func:`save`. A cache stored under an inconsistent key does not
-    crash — it re-runs work that was done, or reuses work that was not, much later.
+    Every route through :mod:`chemrefine.step` needs the same answer to "is the cache on
+    disk the one this configuration would write", and each used to re-derive it: hash the
+    parents, digest the template, fold both into :func:`fingerprint`, and for an NMS step
+    :func:`reuse_fingerprint` as well. Eight sites across three modules, three of them on
+    every cache miss.
+
+    Re-deriving is not merely wasteful, it is the shape that drifts. One site once omitted
+    the reuse fingerprint and wrote a cache the NMS reuse path could never match; the
+    derivation also read ``ctx.prev_state``, which is *rebound* to a subset of the parents
+    on the retry paths, so passing the wrong context would have keyed a step to a
+    fingerprint nothing could match again. Neither is a crash — both are a silent re-run,
+    or a silent reuse, much later.
+
+    Holding it as a value removes the invariant instead of documenting it.
+
+    :meth:`of` takes what it needs and nothing more — no :class:`~chemrefine.state.StepContext`
+    and no engine — so ``parent_ids`` and the parents' digest come from the same argument and
+    cannot disagree, and a test can build one in a line. The component digests are
+    deliberately *not* fields: nothing downstream consumes them (:func:`save` persists the
+    fingerprints and the ids, :func:`load_if_valid` compares the fingerprint), so exposing
+    them would hand callers values they must not use and could pass on inconsistently.
     """
-    digest = parents_digest(ctx.prev_state.structures)
-    save(
-        step_cfg=step_cfg,
-        parent_ids=parent_ids,
-        results=results,
-        step_dir=ctx.step_dir,
-        chemrefine_version=chemrefine_version,
-        reuse_fingerprint=reuse_fingerprint(
-            step_cfg, parent_ids, parents_digest=digest, template_digest=template_digest
-        ),
-        parents_digest=digest,
-        template_digest=template_digest,
-    )
+
+    parent_ids: tuple[str, ...]
+    fingerprint: str
+    reuse_fingerprint: str
+    """The NMS reuse key, or ``""`` for a step that is not NMS — see :func:`reuse_fingerprint`."""
+
+    @classmethod
+    def of(
+        cls,
+        step_cfg: StepConfig,
+        parents: Sequence[Structure],
+        template: Path | None,
+    ) -> StepKey:
+        """Derive the key for ``step_cfg`` run over ``parents`` with ``template``.
+
+        The one place the derivation happens. ``template`` is
+        :attr:`~chemrefine.state.StepContext.template`; ``None`` and a missing file both
+        digest to ``""`` (see :func:`template_digest`).
+        """
+        parent_ids = tuple(s.id for s in parents)
+        digests = {
+            "parents_digest": parents_digest(parents),
+            "template_digest": template_digest(template),
+        }
+        return cls(
+            parent_ids=parent_ids,
+            fingerprint=fingerprint(step_cfg, parent_ids, **digests),
+            reuse_fingerprint=reuse_fingerprint(step_cfg, parent_ids, **digests),
+        )
 
 
 def load(step_dir: Path) -> StepCache | None:
@@ -631,32 +653,23 @@ def load(step_dir: Path) -> StepCache | None:
         raise CacheError(f"stale or corrupt cache at {path}: {e!r}") from e
 
 
-def load_if_valid(
-    *,
-    step_cfg: StepConfig,
-    parent_ids: tuple[str, ...],
-    step_dir: Path,
-    parents_digest: str = "",
-    template_digest: str = "",
-) -> StepCache | None:
-    """Return the cached :class:`StepCache` iff its fingerprint matches; else ``None``.
+def load_if_valid(*, key: StepKey, step_dir: Path) -> StepCache | None:
+    """Return the cached :class:`StepCache` iff it was written under ``key``; else ``None``.
 
-    A single ``load`` + fingerprint compare, so a caller that needs the cached
-    results on a hit (e.g. :func:`chemrefine.step._cached_outcome`) reads
-    ``step.json`` **once** instead of validating and then re-loading — and there
-    is no window in which the cache could vanish between the two reads. A corrupt
-    or absent cache returns ``None`` (treated as "re-run"), never raises.
+    A single ``load`` + fingerprint compare, so a caller that needs the cached results on a
+    hit (e.g. :func:`chemrefine.step._cached_outcome`) reads ``step.json`` **once** instead
+    of validating and then re-loading — and there is no window in which the cache could
+    vanish between the two reads. A corrupt or absent cache returns ``None`` (treated as
+    "re-run"), never raises.
+
+    Takes the key rather than the ingredients to derive one: the whole point of
+    :class:`StepKey` is that the comparison and the write cannot use different recipes.
     """
     try:
         cached = load(step_dir)
     except CacheError:
         return None
-    if cached is None:
-        return None
-    current = fingerprint(
-        step_cfg, parent_ids, parents_digest=parents_digest, template_digest=template_digest
-    )
-    if cached.fingerprint != current:
+    if cached is None or cached.fingerprint != key.fingerprint:
         return None
     return cached
 

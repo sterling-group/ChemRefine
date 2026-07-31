@@ -13,6 +13,7 @@ from ase import Atoms
 from chemrefine.cache import (
     CACHE_FORMAT_VERSION,
     RESULT_FORMAT_VERSION,
+    StepKey,
     fingerprint,
     invalidate,
     load,
@@ -45,6 +46,16 @@ def _cfg(**overrides) -> StepConfig:
     base = {"step": 1, "engine": "fake", "operation": "opt_sp"}
     base.update(overrides)
     return StepConfig(**base)
+
+
+def _parents(*ids: str) -> tuple[Structure, ...]:
+    """Seed structures with the given ids — what a step's key is derived over."""
+    return tuple(Structure(id=i, atoms=Atoms("H")) for i in ids)
+
+
+def _key(*ids: str, step_cfg: StepConfig | None = None, template: Path | None = None) -> StepKey:
+    """The key a step over these parents would be written under."""
+    return StepKey.of(step_cfg or _cfg(), _parents(*ids), template)
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +133,7 @@ def test_save_creates_single_json_document(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(),
-        parent_ids=("0", "1"),
+        key=_key("0", "1", step_cfg=_cfg()),
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
@@ -142,7 +153,7 @@ def test_the_step_document_is_compact_but_the_records_beside_it_are_not(tmp_path
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(),
-        parent_ids=("0", "1"),
+        key=_key("0", "1", step_cfg=_cfg()),
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
@@ -161,7 +172,7 @@ def test_save_and_load_round_trip(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(),
-        parent_ids=("0", "1"),
+        key=_key("0", "1", step_cfg=_cfg()),
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
@@ -174,43 +185,47 @@ def test_save_and_load_round_trip(tmp_path: Path):
     assert loaded.results.structures[1].energy_hartree == -1.5
 
 
-def test_template_digest_round_trips_through_validity(tmp_path: Path):
-    """A cache saved with one template digest is invalid under a different one."""
+def test_template_contents_round_trip_through_validity(tmp_path: Path):
+    """Editing a template in place invalidates the step; the basename never changes."""
     step_dir = tmp_path / "step1"
+    template = tmp_path / "step1.inp"
+    template.write_text("! Opt\n", encoding="utf-8")
     save(
         step_cfg=_cfg(),
-        parent_ids=("0",),
+        key=_key("0", template=template),
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
-        template_digest="orig",
     )
-    assert load_if_valid(
-        step_cfg=_cfg(), parent_ids=("0",), step_dir=step_dir, template_digest="orig"
-    )
-    assert not load_if_valid(
-        step_cfg=_cfg(), parent_ids=("0",), step_dir=step_dir, template_digest="edited"
-    )
+    assert load_if_valid(key=_key("0", template=template), step_dir=step_dir)
+    template.write_text("! Opt Freq\n", encoding="utf-8")
+    assert not load_if_valid(key=_key("0", template=template), step_dir=step_dir)
 
 
 def test_reuse_fingerprint_round_trips(tmp_path: Path):
+    """An NMS step's coarser key is persisted, and the key derives it — no caller passes it.
+
+    A site that forgot to is what `StepKey` exists to make impossible.
+    """
     step_dir = tmp_path / "step1"
+    nms_cfg = _cfg(nms=True, options={"target": "minimum", "displacement_value": 1.0})
+    key = _key("0", step_cfg=nms_cfg)
+    assert key.reuse_fingerprint  # non-empty for an NMS step
     save(
-        step_cfg=_cfg(),
-        parent_ids=("0",),
+        step_cfg=nms_cfg,
+        key=key,
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
-        reuse_fingerprint="abc123",
     )
-    assert load(step_dir).reuse_fingerprint == "abc123"
+    assert load(step_dir).reuse_fingerprint == key.reuse_fingerprint
 
 
 def test_reuse_fingerprint_defaults_empty(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(),
-        parent_ids=("0",),
+        key=_key("0", step_cfg=_cfg()),
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
@@ -233,7 +248,7 @@ def test_round_trip_preserves_positions_forces_and_flags(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(),
-        parent_ids=("0",),
+        key=_key("0", step_cfg=_cfg()),
         results=StepResults(structures=(struct,)),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
@@ -260,7 +275,7 @@ def test_round_trip_preserves_thermochemistry(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(),
-        parent_ids=("0",),
+        key=_key("0", step_cfg=_cfg()),
         results=StepResults(structures=(struct,)),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
@@ -279,7 +294,7 @@ def test_load_tolerates_cache_without_thermochemistry(tmp_path: Path):
 
     save(
         step_cfg=_cfg(),
-        parent_ids=("0",),
+        key=_key("0", step_cfg=_cfg()),
         results=_results(),
         step_dir=tmp_path / "step1",
         chemrefine_version="2.0.0",
@@ -308,7 +323,7 @@ def test_round_trip_keeps_parents_digest_stable(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(),
-        parent_ids=("0",),
+        key=_key("0", step_cfg=_cfg()),
         results=StepResults(structures=(struct,)),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
@@ -335,7 +350,7 @@ def test_load_rejects_old_cache_format(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(),
-        parent_ids=("0",),
+        key=_key("0", step_cfg=_cfg()),
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
@@ -366,7 +381,7 @@ def test_load_rejects_legacy_summary_sidecar(tmp_path: Path):
     )
     with pytest.raises(CacheError, match="stale or corrupt"):
         load(step_dir)
-    assert not load_if_valid(step_cfg=_cfg(), parent_ids=("0",), step_dir=step_dir)
+    assert not load_if_valid(key=_key("0", step_cfg=_cfg()), step_dir=step_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -379,24 +394,24 @@ def test_load_if_valid_true_when_cache_matches(tmp_path: Path):
     cfg = _cfg()
     save(
         step_cfg=cfg,
-        parent_ids=("0",),
+        key=_key("0", step_cfg=cfg),
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
-    assert load_if_valid(step_cfg=cfg, parent_ids=("0",), step_dir=step_dir)
+    assert load_if_valid(key=_key("0", step_cfg=cfg), step_dir=step_dir)
 
 
 def test_load_if_valid_false_when_config_changes(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(charge=0),
-        parent_ids=("0",),
+        key=_key("0", step_cfg=_cfg(charge=0)),
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
-    assert not load_if_valid(step_cfg=_cfg(charge=-1), parent_ids=("0",), step_dir=step_dir)
+    assert not load_if_valid(key=_key("0", step_cfg=_cfg(charge=-1)), step_dir=step_dir)
 
 
 def test_load_if_valid_false_when_cache_is_corrupt(tmp_path: Path):
@@ -405,7 +420,7 @@ def test_load_if_valid_false_when_cache_is_corrupt(tmp_path: Path):
     cache_dir = step_dir / "_cache"
     cache_dir.mkdir(parents=True)
     (cache_dir / "step.json").write_bytes(b"{not json")
-    assert not load_if_valid(step_cfg=_cfg(), parent_ids=("0",), step_dir=step_dir)
+    assert not load_if_valid(key=_key("0", step_cfg=_cfg()), step_dir=step_dir)
 
 
 def _saved(tmp_path: Path) -> Path:
@@ -413,7 +428,7 @@ def _saved(tmp_path: Path) -> Path:
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(),
-        parent_ids=("0", "1"),
+        key=_key("0", "1", step_cfg=_cfg()),
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
@@ -431,7 +446,7 @@ def test_resolved_from_round_trips_and_is_optional(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(),
-        parent_ids=("0",),
+        key=_key("0", step_cfg=_cfg()),
         results=StepResults(structures=(resolved,)),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
@@ -459,7 +474,7 @@ def test_a_document_without_its_sidecar_is_an_error_not_a_fallback(tmp_path: Pat
 
     with pytest.raises(CacheError, match=r"arrays\.npz"):
         load(step_dir)
-    assert not load_if_valid(step_cfg=_cfg(), parent_ids=("0", "1"), step_dir=step_dir)
+    assert not load_if_valid(key=_key("0", "1", step_cfg=_cfg()), step_dir=step_dir)
 
 
 def test_the_sidecar_refuses_to_unpickle(tmp_path: Path):
@@ -496,7 +511,7 @@ def test_ragged_structures_round_trip_through_the_sidecar(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(),
-        parent_ids=("0",),
+        key=_key("0", step_cfg=_cfg()),
         results=results,
         step_dir=step_dir,
         chemrefine_version="2.0.0",
@@ -516,16 +531,16 @@ def test_load_if_valid_false_when_parents_change(tmp_path: Path):
     cfg = _cfg()
     save(
         step_cfg=cfg,
-        parent_ids=("0",),
+        key=_key("0", step_cfg=cfg),
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
-    assert not load_if_valid(step_cfg=cfg, parent_ids=("0", "1"), step_dir=step_dir)
+    assert not load_if_valid(key=_key("0", "1", step_cfg=cfg), step_dir=step_dir)
 
 
 def test_load_if_valid_false_when_no_cache(tmp_path: Path):
-    assert not load_if_valid(step_cfg=_cfg(), parent_ids=("0",), step_dir=tmp_path / "step1")
+    assert not load_if_valid(key=_key("0"), step_dir=tmp_path / "step1")
 
 
 # ---------------------------------------------------------------------------
@@ -539,14 +554,14 @@ def test_load_if_valid_returns_cache_on_match(tmp_path: Path):
     cfg = _cfg()
     save(
         step_cfg=cfg,
-        parent_ids=("0",),
+        key=_key("0", step_cfg=cfg),
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
-    cached = load_if_valid(step_cfg=cfg, parent_ids=("0",), step_dir=step_dir)
+    cached = load_if_valid(key=_key("0", step_cfg=cfg), step_dir=step_dir)
     assert cached is not None
-    assert cached.fingerprint == fingerprint(cfg, ("0",))
+    assert cached.fingerprint == _key("0", step_cfg=cfg).fingerprint
 
 
 def test_load_if_valid_returns_none_on_mismatch(tmp_path: Path):
@@ -554,12 +569,12 @@ def test_load_if_valid_returns_none_on_mismatch(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(charge=0),
-        parent_ids=("0",),
+        key=_key("0", step_cfg=_cfg(charge=0)),
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
-    assert load_if_valid(step_cfg=_cfg(charge=-1), parent_ids=("0",), step_dir=step_dir) is None
+    assert load_if_valid(key=_key("0", step_cfg=_cfg(charge=-1)), step_dir=step_dir) is None
 
 
 # ---------------------------------------------------------------------------
@@ -571,7 +586,7 @@ def test_invalidate_removes_cache_and_legacy_pickle(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(),
-        parent_ids=("0",),
+        key=_key("0", step_cfg=_cfg()),
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",

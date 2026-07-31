@@ -274,7 +274,7 @@ def finalize(
     engine: CalculationEngine,
     ctx: StepContext,
     step_cfg: StepConfig,
-    parent_ids: tuple[str, ...],
+    key: cache.StepKey,
     successes: list[Structure],
     failures: list[Failure],
 ) -> StepResults:
@@ -295,12 +295,11 @@ def finalize(
 
     """
     results = apply_failure_policy(successes, failures, ctx, step_cfg)
-    cache.save_step_results(
+    cache.save(
         step_cfg=step_cfg,
-        parent_ids=parent_ids,
+        key=key,
         results=results,
-        ctx=ctx,
-        template_digest=cache.template_digest(ctx.template),
+        step_dir=ctx.step_dir,
         chemrefine_version=__version__,
     )
     return results

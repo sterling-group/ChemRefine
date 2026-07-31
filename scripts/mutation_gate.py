@@ -122,7 +122,7 @@ MUTATIONS = (
     Mutation(
         id="rebuild-cache-provenance",
         path="src/chemrefine/step.py",
-        old="if stamped and stamped != _current_fingerprint(ctx, step_cfg, parent_ids, engine):",
+        old="if stamped and stamped != key.fingerprint:",
         new="if False:",
         breaks="`rebuild-cache` caches results under a configuration that never produced "
         "them, and the next `resume` serves that instead of computing what was asked for",
