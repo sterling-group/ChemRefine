@@ -140,6 +140,20 @@ class StepContext:
     step_cfg: StepConfig
     step_dir: Path
     template_dir: Path
+    template: Path | None
+    """Where this step's input template lives; ``None`` for an engine that reads none.
+
+    Part of the step's *specification* — change the template and the step must re-run — so it
+    belongs on the bundle that carries the specification, resolved once by
+    :func:`chemrefine.step.build_context` rather than re-derived by each reader. It was
+    re-derived five times per ORCA step before, and re-read each time.
+
+    ``None`` and "a path that is not there" are different states and stay distinguishable:
+    ``None`` means the engine is not :class:`~chemrefine.engines.api.TemplateDriven`, while a
+    missing file means one was named and is absent. :func:`chemrefine.cache.template_digest`
+    treats both as "contributes no digest"; :func:`chemrefine.ids.require_template` refuses
+    both, naming the path when there is one.
+    """
     scratch_dir: Path | None
     """``None`` means the SLURM script auto-derives a per-calc work dir under ``step_dir``."""
     prev_state: PipelineState

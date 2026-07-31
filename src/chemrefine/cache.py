@@ -147,15 +147,25 @@ def parents_digest(structures: Sequence[Structure]) -> str:
     return h.hexdigest()[:16]
 
 
-def template_digest(path: Path) -> str:
-    """Return a 16-char SHA-1 over a resolved template's bytes.
+def template_digest(path: Path | None) -> str:
+    """Return a 16-char SHA-1 over a step template's bytes; ``""`` when there is none.
 
-    The ``template_digest`` half of :func:`fingerprint`, in the module that owns cache
-    keys — the same reason :func:`reuse_fingerprint` lives here. Every engine that folds a
-    template's *contents* into its step's key goes through this, so the format cannot drift
-    between them: two engines hashing the same file to different keys is not a crash, it is
-    a step that silently re-runs or silently does not.
+    The ``template_digest`` half of :func:`fingerprint`, in the module that owns cache keys —
+    the same reason :func:`reuse_fingerprint` lives here. One reader for
+    :attr:`~chemrefine.state.StepContext.template`, so the format cannot drift between
+    engines: two of them hashing the same file to different keys is not a crash, it is a step
+    that silently re-runs or silently does not.
+
+    **The one home for what an absent template means to a key**, and both absences mean the
+    same thing here. ``None`` is an engine that reads no template at all; a path that is not a
+    file is a template that was named and is missing. Neither can contribute bytes, so neither
+    contributes a digest — and for the second the ``""`` is load-bearing: it *changes* the
+    fingerprint, so the step misses its cache and re-runs, and the actionable error arrives
+    from :func:`chemrefine.ids.require_template` at the moment of rendering rather than from
+    the cache.
     """
+    if path is None or not path.is_file():
+        return ""
     return hashlib.sha1(path.read_bytes(), usedforsecurity=False).hexdigest()[:16]
 
 
@@ -172,7 +182,7 @@ def fingerprint(
     cache reuse. ``parents_digest`` (see :func:`parents_digest`) ties the
     fingerprint to the parent structures' content so a changed seed file or
     changed upstream result invalidates the step even when the IDs match.
-    ``template_digest`` (see :meth:`chemrefine.engines.api.CalculationEngine.input_digest`)
+    ``template_digest`` (of :attr:`~chemrefine.state.StepContext.template`)
     ties it to the *contents* of the resolved template — editing the template
     in place (which now also drives ORCA's run-type detection when ``operation``
     is omitted) re-runs the step, where the template basename alone could not.

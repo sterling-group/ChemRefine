@@ -31,6 +31,7 @@ from chemrefine.engines.api import (
     JobExecutable,
     NmsCapableEngine,
     StructureArtifacts,
+    TemplateDriven,
     get_engine,
 )
 from chemrefine.engines.mlip.calculator import requirement_from_options
@@ -57,6 +58,7 @@ def _ctx(tmp_path: Path, engine_name: str, options: dict[str, object]) -> StepCo
         step_cfg=step_cfg,
         step_dir=tmp_path,
         template_dir=tmp_path,
+        template=tmp_path / f"step1.{get_engine(engine_name).template_suffix}",
         scratch_dir=None,
         prev_state=PipelineState(),
         charge=0,
@@ -517,3 +519,62 @@ def test_artifact_paths_resolves_to_the_input_that_was_written(tmp_path: Path):
         checked.append(name)
 
     assert checked, "no engine declares the capability — has StructureArtifacts been dropped?"
+
+
+# ---------------------------------------------------------------------------
+# Layering — the engine subsystem knows nothing about caching
+# ---------------------------------------------------------------------------
+
+
+def _chemrefine_imports(module: Path) -> set[str]:
+    """Every ``chemrefine.*`` module a source file imports, at any nesting depth."""
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(module.read_text(encoding="utf-8"))):
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.startswith("chemrefine")
+        ):
+            tail = node.module[len("chemrefine.") :]
+            found.update([tail] if node.module != "chemrefine" else [a.name for a in node.names])
+        elif isinstance(node, ast.Import):
+            found.update(
+                a.name[len("chemrefine.") :] for a in node.names if a.name.startswith("chemrefine.")
+            )
+    return found
+
+
+def test_no_engine_module_imports_the_cache() -> None:
+    """An engine turns a specification into a calculation. Caching is not its concern.
+
+    `docs/concepts/architecture.md` draws the layering with `engines/*` depending on
+    `slurm, throttle, io, ids, job_log, quantities` — and not on `cache`. That was never
+    true: the subsystem imported `cache` from the day it was written, first for
+    `save_manifest` and latterly so every engine could implement an `input_digest` the
+    cache alone consumed. The template is on the `StepContext` now and the cache digests it
+    there, so the edge is gone and this is what keeps it gone.
+    """
+    engines_root = Path(inspect.getfile(get_engine)).parent
+    offenders = {
+        str(p.relative_to(engines_root)): sorted(
+            m for m in _chemrefine_imports(p) if m == "cache" or m.startswith("cache.")
+        )
+        for p in sorted(engines_root.rglob("*.py"))
+    }
+    offenders = {k: v for k, v in offenders.items() if v}
+    assert not offenders, f"engines/ must not import cache: {offenders}"
+
+
+def test_every_template_driven_engine_declares_its_suffix() -> None:
+    """`TemplateDriven` is what `build_context` reads to resolve the step's template.
+
+    An engine that renders a template but does not declare the capability gets
+    ``ctx.template is None`` and fails at render time — which is how `mlip-train` came to
+    hardcode its suffix inside the trainer instead.
+    """
+    for name in ENGINES:
+        engine = get_engine(name)
+        if not isinstance(engine, TemplateDriven):
+            continue
+        assert engine.template_suffix, f"{name}: TemplateDriven with an empty template_suffix"
+        assert engine.label, f"{name}: TemplateDriven with an empty label"

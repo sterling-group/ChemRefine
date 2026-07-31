@@ -51,6 +51,7 @@ def _context(case_dir: Path, meta: dict[str, Any]) -> StepContext:
         step_cfg=StepConfig(step=1, engine=case_dir.parent.name, operation=meta.get("operation")),
         step_dir=case_dir,
         template_dir=case_dir,
+        template=case_dir / f"step1.{get_engine(case_dir.parent.name).template_suffix}",
         scratch_dir=None,
         prev_state=PipelineState(structures=(Structure(id="0", atoms=seed),)),
         charge=int(meta.get("charge", 0)),

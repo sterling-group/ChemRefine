@@ -14,10 +14,8 @@ from __future__ import annotations
 import logging
 from typing import ClassVar
 
-from chemrefine import cache
 from chemrefine.engines.api import register
 from chemrefine.engines.mlip import trainer
-from chemrefine.errors import ConfigError
 from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
 
 logger = logging.getLogger(__name__)
@@ -28,6 +26,14 @@ class MlipTrainEngine:
     """Train an MLIP on the previous step's structures; pass the structures through."""
 
     name: ClassVar[str] = "mlip-train"
+    label: ClassVar[str] = "MLIP training"
+    template_suffix: ClassVar[str] = "inp"
+    """The trainer config this step renders — a YAML body, despite the ``.inp`` name.
+
+    Declared here rather than hardcoded inside the trainer, which is what
+    :class:`~chemrefine.engines.api.TemplateDriven` is for. The extension stays ``inp`` so
+    existing projects keep their ``step{N}.inp``; that it holds YAML rather than ORCA
+    keywords is one of several things about this engine that deserve their own pass."""
 
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Training operates on the whole prior ensemble, not per-structure inputs."""
@@ -46,23 +52,3 @@ class MlipTrainEngine:
     def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
         """Pass the prior structures through unchanged (the model is the artifact)."""
         return StepResults(structures=ctx.prev_state.structures)
-
-    def input_digest(self, ctx: StepContext) -> str:
-        """SHA-1 (16 hex) of the MACE config template; ``""`` if it's missing.
-
-        The step passes its *structures* through untouched, but it is not
-        template-independent: :func:`~chemrefine.engines.mlip.trainer.write_training_config`
-        renders a per-step template that **is** the MACE config — epochs, learning rate,
-        model width. Returning ``""`` left those out of the cache key, so retuning the
-        hyperparameters and running ``resume`` was a cache hit: the step reported "reusing
-        N structures", never retrained, and left the previous model on disk for whatever
-        loads it downstream.
-
-        A missing template is not a digest failure — the step raises from ``submit`` with
-        the actionable message — so it hashes to ``""``, as it does for every job engine.
-        """
-        try:
-            template = trainer.resolve_training_template(ctx)
-        except ConfigError:
-            return ""
-        return cache.template_digest(template)

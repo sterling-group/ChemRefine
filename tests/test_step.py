@@ -12,6 +12,7 @@ from fake_engine import FakeEngine
 
 from chemrefine import cache
 from chemrefine.config import Config, StepConfig
+from chemrefine.engines.api import get_engine
 from chemrefine.errors import CacheError, ChemRefineError
 from chemrefine.state import (
     FailureKind,
@@ -62,7 +63,7 @@ def test_build_context_threads_global_charge():
         multiplicity=3,
         steps=[StepConfig(step=1, engine="fake", operation="opt_sp")],
     )
-    ctx = build_context(cfg, cfg.steps[0], PipelineState())
+    ctx = build_context(cfg, cfg.steps[0], PipelineState(), get_engine(cfg.steps[0].engine))
     assert ctx.charge == 2
     assert ctx.multiplicity == 3
 
@@ -73,21 +74,21 @@ def test_build_context_step_override_wins():
         multiplicity=1,
         steps=[StepConfig(step=1, engine="fake", operation="opt_sp", charge=-1, multiplicity=2)],
     )
-    ctx = build_context(cfg, cfg.steps[0], PipelineState())
+    ctx = build_context(cfg, cfg.steps[0], PipelineState(), get_engine(cfg.steps[0].engine))
     assert ctx.charge == -1
     assert ctx.multiplicity == 2
 
 
 def test_build_context_directory_paths_are_absolute(tmp_path: Path):
     cfg = _config(tmp_path)
-    ctx = build_context(cfg, cfg.steps[0], PipelineState())
+    ctx = build_context(cfg, cfg.steps[0], PipelineState(), get_engine(cfg.steps[0].engine))
     assert ctx.step_dir.is_absolute()
     assert ctx.step_dir.name == "step1"
 
 
 def test_build_context_named_step_dir_includes_label(tmp_path: Path):
     cfg = _config(tmp_path, name="screen")
-    ctx = build_context(cfg, cfg.steps[0], PipelineState())
+    ctx = build_context(cfg, cfg.steps[0], PipelineState(), get_engine(cfg.steps[0].engine))
     assert ctx.step_dir.name == "step1_screen"
 
 
@@ -96,7 +97,7 @@ def test_build_context_threads_slurm_array():
         slurm_array=True,
         steps=[StepConfig(step=1, engine="fake", operation="opt_sp")],
     )
-    ctx = build_context(cfg, cfg.steps[0], PipelineState())
+    ctx = build_context(cfg, cfg.steps[0], PipelineState(), get_engine(cfg.steps[0].engine))
     assert ctx.slurm_array is True
 
 
@@ -500,7 +501,7 @@ def test_check_nms_freq_gate_rejects_when_input_computes_no_frequencies(tmp_path
             )
 
     cfg = _config(tmp_path, engine="orca", nms=True, operation=None)
-    ctx = build_context(cfg, cfg.steps[0], _seed_state([]))
+    ctx = build_context(cfg, cfg.steps[0], _seed_state([]), get_engine(cfg.steps[0].engine))
     with pytest.raises(ConfigError, match="frequency"):
         _check_nms_freq_gate(_NoFreqEngine(), ctx, cfg.steps[0])
 
@@ -541,7 +542,7 @@ def test_check_nms_freq_gate_not_bypassed_by_explicit_operation(tmp_path: Path):
             )
 
     cfg = _config(tmp_path, engine="orca", nms=True, operation="opt_sp")
-    ctx = build_context(cfg, cfg.steps[0], _seed_state([]))
+    ctx = build_context(cfg, cfg.steps[0], _seed_state([]), get_engine(cfg.steps[0].engine))
     with pytest.raises(ConfigError, match="drop `nms: true`"):
         _check_nms_freq_gate(_NoFreqEngine(), ctx, cfg.steps[0])
 
@@ -604,7 +605,7 @@ def test_on_failure_best_drops_failure_with_no_fallback(tmp_path: Path):
     from chemrefine.state import Failure
 
     cfg = _config(tmp_path, on_failure="best")
-    ctx = build_context(cfg, cfg.steps[0], _seed_state(["0"]))
+    ctx = build_context(cfg, cfg.steps[0], _seed_state(["0"]), get_engine(cfg.steps[0].engine))
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     failures = [Failure(sid="ghost", kind=FailureKind.MISSING_OUTPUT, best=None)]
     results = apply_failure_policy([], failures, ctx, cfg.steps[0])
@@ -800,6 +801,7 @@ def _branch_ctx(
         step_cfg=step_cfg,
         step_dir=tmp_path / "outputs" / "step1",
         template_dir=tmp_path / "templates",
+        template=None,
         scratch_dir=None,
         prev_state=PipelineState(structures=()),
         charge=0,

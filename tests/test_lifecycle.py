@@ -47,6 +47,7 @@ def _ctx(tmp_path: Path) -> StepContext:
         step_cfg=StepConfig(step=1, engine="fake", operation="opt_sp"),
         step_dir=tmp_path,
         template_dir=tmp_path,
+        template=None,
         scratch_dir=None,
         prev_state=PipelineState(structures=()),
         charge=0,

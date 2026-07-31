@@ -27,7 +27,8 @@ User Python script            :class:`._script.ScriptEngine`  usually only ``_te
 ORCA-driven gradients         :class:`.orca.extopt.engine.    ``backend`` / ``wrapper_filename`` /
                               ExtOptOrcaEngine`               ``options_cls`` / ``calculator_cls``
 Custom / non-job              :class:`CalculationEngine`       ``prepare`` / ``submit`` / ``parse``
-(mlip-train)                  directly                        / ``input_digest``
+(mlip-train)                  directly                        (+ ``TemplateDriven`` if it
+                                                              renders a step template)
 ============================  ==============================  =====================================
 
 * **Capabilities** — never a flag, always a Protocol detected via ``isinstance``. NMS:
@@ -66,12 +67,16 @@ from chemrefine.state import JobBatch, RunBlock, StepContext, StepInputs, StepRe
 class CalculationEngine(Protocol):
     """Structural contract every engine must satisfy.
 
-    The lifecycle methods mirror the stages :func:`chemrefine.step.run_step` calls in
-    order: :meth:`prepare` → :meth:`submit` (which blocks until the jobs finish) →
-    :meth:`parse`. ``input_digest`` feeds the cache fingerprint. NMS is a *separate
-    capability*: an engine that supports it also satisfies :class:`NmsCapableEngine`
-    (detected via ``isinstance``), so there is no ``supports_nms`` flag to keep in sync.
-    Per-structure *job* engines get all of this from
+    Three methods, and that is the whole of it: :meth:`prepare` → :meth:`submit` (which
+    blocks until the jobs finish) → :meth:`parse`. An engine turns a step's specification
+    into a calculation and the calculation's output back into structures. How a run is
+    resumed, what a cache key is, whether the template changed since yesterday — none of
+    that is an engine's business, which is why nothing here mentions caching.
+
+    Everything else is a *capability*, detected via ``isinstance`` so there is no flag to
+    keep in sync: :class:`TemplateDriven` (reads a per-step template),
+    :class:`NmsCapableEngine`, :class:`ProvisionableEngine`, :class:`StructureArtifacts`.
+    Per-structure *job* engines get the three methods from
     :class:`chemrefine.engines._job.JobEngine` and supply only primitives.
     """
 
@@ -89,13 +94,35 @@ class CalculationEngine(Protocol):
         """Parse each output file into a :class:`~chemrefine.state.Structure`."""
         ...
 
-    def input_digest(self, ctx: StepContext) -> str:
-        """Digest of this step's input (e.g. the resolved template), or ``""``.
 
-        Folded into the cache fingerprint so editing the input in place re-runs the
-        step — the template *basename* alone never changes the fingerprint.
-        """
-        ...
+@runtime_checkable
+class TemplateDriven(CalculationEngine, Protocol):
+    """An engine whose step input is rendered from a per-step template.
+
+    **Declarations only — no methods.** This says *which file the engine reads*, not
+    anything it does differently, so it costs an implementer two ClassVars and no code.
+    :func:`chemrefine.step.build_context` reads them once per step and puts the resolved
+    path on :attr:`~chemrefine.state.StepContext.template`; everything downstream — the
+    engine rendering it, the cache digesting it — reads that field.
+
+    It is a capability rather than part of :class:`CalculationEngine` because being
+    template-driven is genuinely optional: ``mlip-train`` reads a template but writes no
+    per-structure inputs, and an engine that fabricates or passes structures through reads
+    none at all. ``template_suffix`` had to carry both "my template's extension" and "the
+    extension of the per-structure file I write" while those lived on
+    :class:`~chemrefine.engines._job.JobEngine` alone, which is exactly why ``mlip-train``
+    could not declare it and hardcoded the values instead.
+
+    ``template_suffix`` now means the first thing only. ``JobEngine`` reuses it to name each
+    structure's rendered input — not by coincidence, but because that artifact *is* a copy
+    of the template and shares its extension.
+    """
+
+    template_suffix: ClassVar[str]
+    """Extension of this engine's step template (``inp`` / ``py``), without the dot."""
+
+    label: ClassVar[str]
+    """Human name for this engine's inputs, used in "…​ template not found" errors."""
 
 
 @dataclass(frozen=True)

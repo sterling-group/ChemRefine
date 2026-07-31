@@ -67,6 +67,7 @@ def _ctx(
         step_cfg=StepConfig(step=1, engine="fake-job", operation="opt_sp"),
         step_dir=tmp_path / "outputs" / "step1",
         template_dir=template_dir,
+        template=template_dir / "step1.inp",
         scratch_dir=tmp_path / "scratch",
         prev_state=PipelineState(structures=seeds),
         charge=0,

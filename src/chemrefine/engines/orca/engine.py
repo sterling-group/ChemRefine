@@ -24,6 +24,7 @@ from chemrefine.engines._job import JobEngine
 from chemrefine.engines.api import NmsInputInfo, ParsedResult, RunBlock, register
 from chemrefine.engines.orca import input as orca_input
 from chemrefine.engines.orca import inspect, output
+from chemrefine.ids import require_template
 from chemrefine.state import StepContext
 
 
@@ -87,7 +88,7 @@ class OrcaEngine(JobEngine):
 
     def pal(self, ctx: StepContext) -> int:
         """PAL is a property of the template (one ``%pal`` for the step), read once."""
-        return inspect.inspect_template(self._resolve_template(ctx)).pal
+        return inspect.inspect_template(require_template(ctx.template, label=self.label)).pal
 
     @staticmethod
     def orca_command(ctx: StepContext, inp_name: str, out_name: str) -> str:
@@ -127,7 +128,7 @@ class OrcaEngine(JobEngine):
         """
         if ctx.step_cfg.operation is not None:
             return ctx.step_cfg.operation
-        return inspect.inspect_template(self._resolve_template(ctx)).operation
+        return inspect.inspect_template(require_template(ctx.template, label=self.label)).operation
 
     def parse_one(
         self, output_path: Path, structure_id: str, ctx: StepContext
@@ -151,5 +152,5 @@ class OrcaEngine(JobEngine):
 
     def nms_input_info(self, ctx: StepContext) -> NmsInputInfo:
         """Whether the template runs a TS search and computes frequencies (keyword scan)."""
-        run = inspect.inspect_template(self._resolve_template(ctx))
+        run = inspect.inspect_template(require_template(ctx.template, label=self.label))
         return NmsInputInfo(is_transition_state=run.is_ts, computes_frequencies=run.has_freq)

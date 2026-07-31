@@ -9,11 +9,12 @@ from unittest.mock import patch
 import pytest
 from ase import Atoms
 
-from chemrefine import lifecycle, slurm
+from chemrefine import cache, lifecycle, slurm
 from chemrefine.config import StepConfig
 from chemrefine.engines import _execution as submit
 from chemrefine.engines.api import NmsCapableEngine, get_engine
 from chemrefine.errors import ConfigError
+from chemrefine.ids import step_template_path
 from chemrefine.slurm import dispatch
 from chemrefine.state import JobBatch, PipelineState, StepContext, StepInputs, Structure
 
@@ -46,6 +47,9 @@ def _ctx(
         step_cfg=step_cfg,
         step_dir=step_dir,
         template_dir=template_dir,
+        template=step_template_path(
+            template_dir, step_cfg.step, template=step_cfg.template, suffix="inp"
+        ),
         scratch_dir=tmp_path / "scratch",
         prev_state=PipelineState(structures=structures),
         charge=0,
@@ -86,6 +90,7 @@ def test_prepare_input_contains_charge_and_multiplicity(tmp_path: Path):
         step_cfg=ctx.step_cfg,
         step_dir=ctx.step_dir,
         template_dir=ctx.template_dir,
+        template=ctx.template,
         scratch_dir=ctx.scratch_dir,
         prev_state=ctx.prev_state,
         charge=-2,
@@ -383,16 +388,19 @@ def test_effective_operation_falls_back_to_inspection(tmp_path: Path):
     assert engine._resolve_operation(ctx) == "goat"
 
 
-def test_input_digest_tracks_template_contents(tmp_path: Path):
-    """The template-content digest changes on edit and is empty when missing."""
-    engine = get_engine("orca")
+def test_template_digest_tracks_template_contents(tmp_path: Path):
+    """The template-content digest changes on edit and is empty when missing.
+
+    The engine is not involved: the template is on the context, and the cache reads it
+    from there. That is the point of the field.
+    """
     ctx = _ctx(tmp_path, structures=(_seed_structure(),))
-    first = engine.input_digest(ctx)
+    first = cache.template_digest(ctx.template)
     assert first  # non-empty for an existing template
     (ctx.template_dir / "step1.inp").write_text("! PBE def2-TZVP\n", encoding="utf-8")
-    assert engine.input_digest(ctx) != first  # an edit re-runs the step
+    assert cache.template_digest(ctx.template) != first  # an edit re-runs the step
     (ctx.template_dir / "step1.inp").unlink()
-    assert engine.input_digest(ctx) == ""  # missing template → empty digest
+    assert cache.template_digest(ctx.template) == ""  # missing template → empty digest
 
 
 # ---------------------------------------------------------------------------

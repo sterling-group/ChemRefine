@@ -21,8 +21,9 @@ The functions here own three concerns:
    geometry). (IDs travel in the step manifest, never re-parsed out of
    filenames — note that NMS child IDs like ``0_m5_pos`` contain letters,
    so a filename is not a reliable place to recover an ID from.)
-3. Resolve a step's input *template* path (:func:`resolve_step_template`,
-   :func:`default_template_name`) — the ``step{N}.{ext}`` template-naming
+3. Resolve a step's input *template* path (:func:`step_template_path`,
+   :func:`default_template_name`) and refuse a step that has none
+   (:func:`require_template`) — the ``step{N}.{ext}`` template-naming
    convention, kept here beside the artifact-path convention so every
    canonical ChemRefine filename lives in one module.
 """
@@ -170,28 +171,41 @@ def default_template_name(step: int, suffix: str) -> str:
     return f"step{step}.{suffix}"
 
 
-def resolve_step_template(
+def step_template_path(
     template_dir: Path,
     step: int,
     *,
     template: str | None,
     suffix: str,
-    label: str,
 ) -> Path:
-    """Resolve a step's input template under ``template_dir``.
+    """Where a step's input template lives — the step's override, else the default name.
 
-    Uses the step's explicit ``template`` override when set, otherwise
-    :func:`default_template_name`.
-
-    A missing template raises :class:`~chemrefine.errors.ConfigError`, not a bare
-    ``FileNotFoundError``: it *is* a config error, and it is the likeliest error of a
-    first run. :mod:`chemrefine.errors` promises every exception carries an
-    ``exit_code`` the CLI maps to a deterministic exit status, but ``cli._dispatch``
-    catches only :class:`~chemrefine.errors.ChemRefineError` — so a bare OSError here
-    escaped that contract and greeted the user with a traceback instead of a message.
+    Naming only: the file need not exist. Two different questions are asked about a step
+    template and they belong to different callers, so they are two functions. *Where is it*
+    is this one, and :func:`chemrefine.step.build_context` asks it once per step so the
+    answer travels on the :class:`~chemrefine.state.StepContext` instead of being re-derived.
+    *May I run without it* is :func:`require_template`, and only an engine about to render
+    the template asks that — the cache, which merely digests it, must not, or a step whose
+    template is absent could never be re-fingerprinted at all.
     """
-    name = template or default_template_name(step, suffix)
-    path = template_dir / name
-    if not path.is_file():
-        raise ConfigError(f"{label} template not found: {path}")
-    return path
+    return template_dir / (template or default_template_name(step, suffix))
+
+
+def require_template(template: Path | None, *, label: str) -> Path:
+    """Return ``template``, or raise :class:`~chemrefine.errors.ConfigError` if it is unusable.
+
+    The one home for "this engine cannot run without its input". ``None`` means the engine
+    declared no template at all (it is not
+    :class:`~chemrefine.engines.api.TemplateDriven`); a path that is not a file means the
+    template was named but is missing — the likeliest error of a first run.
+
+    :class:`~chemrefine.errors.ConfigError` rather than a bare ``OSError`` because
+    :mod:`chemrefine.errors` promises every exception carries an ``exit_code`` the CLI maps
+    to a deterministic status, and ``cli._dispatch`` catches only
+    :class:`~chemrefine.errors.ChemRefineError`.
+    """
+    if template is None:
+        raise ConfigError(f"{label} needs an input template, but this engine declares none")
+    if not template.is_file():
+        raise ConfigError(f"{label} template not found: {template}")
+    return template

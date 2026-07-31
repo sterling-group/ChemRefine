@@ -25,9 +25,14 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 
-from chemrefine import __version__, attempts, cache, filtering, lifecycle, nms
+from chemrefine import __version__, attempts, cache, filtering, ids, lifecycle, nms
 from chemrefine.config import Config, StepConfig
-from chemrefine.engines.api import CalculationEngine, NmsCapableEngine, get_engine
+from chemrefine.engines.api import (
+    CalculationEngine,
+    NmsCapableEngine,
+    TemplateDriven,
+    get_engine,
+)
 from chemrefine.errors import CacheError, ChemRefineError, ConfigError
 from chemrefine.state import (
     FailureKind,
@@ -54,12 +59,39 @@ def step_dir_for(config: Config, step_cfg: StepConfig) -> Path:
     return config.step_dir(step_cfg).resolve()
 
 
-def build_context(config: Config, step_cfg: StepConfig, prev_state: PipelineState) -> StepContext:
-    """Bundle the per-step inputs into a :class:`StepContext`."""
+def _template_for(config: Config, step_cfg: StepConfig, engine: CalculationEngine) -> Path | None:
+    """Where this step's input template lives, or ``None`` if the engine reads none.
+
+    Existence is not checked: a step whose template is missing must still be able to compute
+    its cache key (the digest is then ``""``, which changes the fingerprint and forces a
+    re-run), and the actionable error belongs at the moment of rendering —
+    :func:`chemrefine.ids.require_template`.
+    """
+    if not isinstance(engine, TemplateDriven):
+        return None
+    return ids.step_template_path(
+        config.template_dir.resolve(),
+        step_cfg.step,
+        template=step_cfg.template,
+        suffix=engine.template_suffix,
+    )
+
+
+def build_context(
+    config: Config, step_cfg: StepConfig, prev_state: PipelineState, engine: CalculationEngine
+) -> StepContext:
+    """Bundle the per-step inputs into a :class:`StepContext`.
+
+    Takes the engine because the step's template is part of its specification and only the
+    engine knows the extension to look for. Resolving it **here, once** is the point: every
+    later reader — ``prepare``, ORCA's ``pal`` and run-type detection, the NMS input probe,
+    the cache — takes it off the context instead of re-deriving and re-reading the file.
+    """
     return StepContext(
         step_cfg=step_cfg,
         step_dir=step_dir_for(config, step_cfg),
         template_dir=config.template_dir.resolve(),
+        template=_template_for(config, step_cfg, engine),
         scratch_dir=config.scratch_dir.resolve() if config.scratch_dir is not None else None,
         prev_state=prev_state,
         charge=step_cfg.charge if step_cfg.charge is not None else config.charge,
@@ -202,10 +234,10 @@ def run_step(
     the failures; the pipeline then halts the run once via :func:`halt_if_pending`
     (this function never raises).
     """
-    ctx = build_context(config, step_cfg, prev_state)
+    engine = engine if engine is not None else get_engine(step_cfg.engine)
+    ctx = build_context(config, step_cfg, prev_state, engine)
     parent_ids = tuple(s.id for s in prev_state.structures)
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
-    engine = engine if engine is not None else get_engine(step_cfg.engine)
     # Narrow once, here, instead of asserting the capability again with a cast at
     # each of the four places that need it. `nms_engine is not None` then carries
     # both facts — the step asked for NMS, and this engine can do it — and mypy
@@ -273,7 +305,7 @@ def _cached_outcome(
         parent_ids=parent_ids,
         step_dir=ctx.step_dir,
         parents_digest=cache.parents_digest(ctx.prev_state.structures),
-        template_digest=engine.input_digest(ctx),
+        template_digest=cache.template_digest(ctx.template),
     )
     if cached is None:
         return None
@@ -317,7 +349,7 @@ def _nms_reuse_outcome(
     except CacheError:
         cached = None
     digest = cache.parents_digest(ctx.prev_state.structures)
-    template_digest = engine.input_digest(ctx)
+    template_digest = cache.template_digest(ctx.template)
     fingerprint = cache.reuse_fingerprint(
         step_cfg, parent_ids, parents_digest=digest, template_digest=template_digest
     )
@@ -359,7 +391,7 @@ def _current_fingerprint(
         step_cfg,
         parent_ids,
         parents_digest=cache.parents_digest(ctx.prev_state.structures),
-        template_digest=engine.input_digest(ctx),
+        template_digest=cache.template_digest(ctx.template),
     )
 
 
@@ -536,9 +568,9 @@ def rebuild_cache_step(
     differently in :func:`_partial_step_outcome`, which treats an unproven match as a
     reason to re-run — it can afford to, being an optimisation over doing the work anyway.
     """
-    ctx = build_context(config, step_cfg, prev_state)
-    parent_ids = tuple(s.id for s in prev_state.structures)
     engine = get_engine(step_cfg.engine)
+    ctx = build_context(config, step_cfg, prev_state, engine)
+    parent_ids = tuple(s.id for s in prev_state.structures)
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
         raise CacheError(f"step {step_cfg.step}: cannot rebuild-cache — no manifest on disk")

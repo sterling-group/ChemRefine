@@ -17,7 +17,7 @@ import pytest
 import yaml
 from ase import Atoms
 
-from chemrefine import cache
+from chemrefine import cache, ids
 from chemrefine.config import StepConfig
 from chemrefine.engines.mlip import trainer
 from chemrefine.engines.mlip.options import MlipOptions, MlipTrainOptions
@@ -55,6 +55,7 @@ def _ctx(tmp_path: Path, **option_overrides) -> StepContext:
         step_cfg=step_cfg,
         step_dir=tmp_path / "outputs" / "step1_train",
         template_dir=template_dir,
+        template=template_dir / "step1.inp",
         scratch_dir=None,
         prev_state=PipelineState(),
         charge=0,
@@ -328,36 +329,35 @@ def test_retuning_the_training_template_invalidates_the_step(tmp_path: Path):
     digest empty, retuning epochs or learning rate and running `resume` reported "reusing
     N structures", never retrained, and left the previous model on disk.
     """
-    from chemrefine.engines.api import get_engine
-
     ctx = _ctx(tmp_path)
-    engine = get_engine("mlip-train")
     template = ctx.template_dir / "step1.inp"
 
-    before = engine.input_digest(ctx)
+    before = cache.template_digest(ctx.template)
     template.write_text("model: MACE\nmax_num_epochs: 500\nlr: 0.001\n", encoding="utf-8")
-    after = engine.input_digest(ctx)
+    after = cache.template_digest(ctx.template)
 
     assert before and after
     assert before != after
 
 
 def test_the_training_digest_hashes_the_template_the_trainer_reads(tmp_path: Path):
-    """One resolution, so the key cannot describe a different file than the run used."""
-    from chemrefine.engines.api import get_engine
+    """One resolution, so the key cannot describe a different file than the run used.
 
+    There is nothing left to keep in step: the trainer renders `ctx.template` and the cache
+    digests `ctx.template`, and `build_context` is the only thing that decided what it is.
+    """
     ctx = _ctx(tmp_path)
-    resolved = trainer.resolve_training_template(ctx)
-    assert get_engine("mlip-train").input_digest(ctx) == cache.template_digest(resolved)
+    rendered = ids.require_template(ctx.template, label="MLIP training")
+    assert cache.template_digest(ctx.template) == cache.template_digest(rendered)
 
 
 def test_a_missing_training_template_digests_to_empty(tmp_path: Path):
-    """Not a digest failure — `submit` raises with the actionable message instead."""
-    from chemrefine.engines.api import get_engine
-
+    """Not a digest failure — the render raises with the actionable message instead."""
     ctx = _ctx(tmp_path)
     (ctx.template_dir / "step1.inp").unlink()
-    assert get_engine("mlip-train").input_digest(ctx) == ""
+    assert cache.template_digest(ctx.template) == ""
+    with pytest.raises(ConfigError, match="MLIP training template not found"):
+        trainer.write_training_config(train_path=Path("a.xyz"), test_path=Path("b.xyz"), ctx=ctx)
 
 
 def test_mlip_train_engine_trains_on_prev_and_passes_structures_through(tmp_path: Path):
@@ -371,6 +371,7 @@ def test_mlip_train_engine_trains_on_prev_and_passes_structures_through(tmp_path
         step_cfg=ctx.step_cfg,
         step_dir=ctx.step_dir,
         template_dir=ctx.template_dir,
+        template=ctx.template,
         scratch_dir=ctx.scratch_dir,
         prev_state=PipelineState(structures=structs),
         charge=ctx.charge,

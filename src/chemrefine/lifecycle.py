@@ -300,7 +300,7 @@ def finalize(
         parent_ids=parent_ids,
         results=results,
         ctx=ctx,
-        template_digest=engine.input_digest(ctx),
+        template_digest=cache.template_digest(ctx.template),
         chemrefine_version=__version__,
     )
     return results

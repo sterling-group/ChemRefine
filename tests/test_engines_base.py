@@ -57,8 +57,7 @@ def test_register_decorator_adds_entry_and_returns_class():
             return None
 
     try:
-        # ENGINES is typed to the protocol; the registry stores the concrete class.
-        assert ENGINES["temp-test-engine"] is _TempEngine  # type: ignore[comparison-overlap]
+        assert ENGINES["temp-test-engine"] is _TempEngine
     finally:
         ENGINES.pop("temp-test-engine", None)
 

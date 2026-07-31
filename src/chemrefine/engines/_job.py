@@ -25,15 +25,13 @@ from typing import ClassVar
 
 from ase import Atoms
 
-from chemrefine import cache
 from chemrefine.engines import _execution
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import ParsedResult, RunBlock
-from chemrefine.errors import ConfigError
 from chemrefine.ids import (
     allocate_child_ids,
     input_geometry_path,
-    resolve_step_template,
+    require_template,
     structure_artifact_path,
 )
 from chemrefine.io import write_single_xyz
@@ -124,7 +122,11 @@ class JobEngine(abc.ABC):
 
     name: ClassVar[str]
     label: ClassVar[str]
-    template_suffix: ClassVar[str]  # input-file extension (e.g. ``inp`` / ``py``)
+    template_suffix: ClassVar[str]
+    """This engine's step-template extension — see :class:`~chemrefine.engines.api.TemplateDriven`.
+
+    Each structure's rendered input takes the same extension, because that artifact *is*
+    a copy of the template."""
     output_suffix: ClassVar[str]  # output-file extension (e.g. ``out`` / ``json``)
     output_globs: ClassVar[tuple[str, ...]]
 
@@ -146,7 +148,7 @@ class JobEngine(abc.ABC):
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Write one input geometry (``_inp.xyz``) + one input file per seed structure."""
         ctx.step_dir.mkdir(parents=True, exist_ok=True)
-        template = self._resolve_template(ctx)
+        template = require_template(ctx.template, label=self.label)
         step = ctx.step_cfg.step
         files: list[tuple[Path, Path, str]] = []
         for struct in ctx.prev_state.structures:
@@ -176,33 +178,6 @@ class JobEngine(abc.ABC):
             (sid, self.parse_one(out_path, sid, ctx)) for _inp, out_path, sid in inputs.files
         ]
         return build_structures(parsed_per_input, ctx.prev_state)
-
-    # -- shared template helpers -------------------------------------------
-
-    def _resolve_template(self, ctx: StepContext) -> Path:
-        """Resolve this step's input template (override or ``step{N}.{suffix}``)."""
-        return resolve_step_template(
-            ctx.template_dir,
-            ctx.step_cfg.step,
-            template=ctx.step_cfg.template,
-            suffix=self.template_suffix,
-            label=self.label,
-        )
-
-    def input_digest(self, ctx: StepContext) -> str:
-        """SHA-1 (16 hex) of the resolved template's bytes; ``""`` if it's missing.
-
-        Folded into the cache fingerprint so editing a template in place re-runs the
-        step (see :func:`chemrefine.cache.fingerprint`).
-        """
-        try:
-            template = self._resolve_template(ctx)
-        except ConfigError:
-            # A missing template is not a digest failure: the step will raise from
-            # `prepare` with the actionable message. Fingerprinting just has nothing
-            # to hash yet.
-            return ""
-        return cache.template_digest(template)
 
     # -- engine primitives (the public provision surface) ------------------
 

@@ -58,15 +58,19 @@ def _requests_gpu(step: StepConfig) -> bool:
 
 
 def _resolved_template(cfg: Config, step: StepConfig) -> Path | None:
-    """The template file a step would run with, or ``None`` for template-less engines."""
-    engine = get_engine(step.engine)
-    suffix = getattr(engine, "template_suffix", None)
-    if suffix is None:
-        return None
-    from chemrefine.ids import resolve_step_template
+    """The template file a step would run with, or ``None`` for template-less engines.
 
-    return resolve_step_template(
-        cfg.template_dir, step.step, template=step.template, suffix=suffix, label=step.engine
+    The same resolution `build_context` performs, so a shipped example is checked against
+    the file the run would actually read.
+    """
+    from chemrefine.engines.api import TemplateDriven
+    from chemrefine.ids import step_template_path
+
+    engine = get_engine(step.engine)
+    if not isinstance(engine, TemplateDriven):
+        return None
+    return step_template_path(
+        cfg.template_dir, step.step, template=step.template, suffix=engine.template_suffix
     )
 
 
