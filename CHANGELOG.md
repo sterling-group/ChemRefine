@@ -90,12 +90,55 @@ for the full map.
   was never allocated; request one explicitly with `device: cuda`.
 - The version is single-sourced in `pyproject.toml`; releases are tag-driven
   (a `vX.Y.Z` tag builds, creates the GitHub Release, and publishes to PyPI
-  after a tag↔version consistency check).
+  after a tag↔version consistency check) — and now run the full CI matrix
+  first. `ci.yml` triggers on pushes to `main` and on pull requests, neither of
+  which a tag is, so the release path had been running metadata validation only.
+- `pyscf` gains a `strict_scf` option (default on). Two new CI jobs cover what
+  the matrix could not reach: a mutation gate that breaks each critical predicate
+  and requires a red test, and a run of the suite with a managed backend
+  environment provisioned.
 
 ### Fixed
 
 Hardening landed during the 2.0.0 stabilization:
 
+- A calculation that diverges to a non-finite energy is refused at the parse
+  boundary and ledgered, instead of ranking as a real result. Nothing downstream
+  treated `nan` as a failure, and since every comparison against it is false it
+  sorted by list position — so a `min, count: 2` step could keep it over the
+  genuinely second-best conformer, which then went on to win the next step.
+  Gradients are held to the same rule, since a non-finite force is what an
+  `mlip-train` step would go on to fit.
+- Local dispatch stops the calculation, not just the `bash` wrapper in front of
+  it. Each job now runs in its own process group and is signalled as one; before,
+  the shell deferred its TERM trap while waiting on the calculation, so the grace
+  period expired, the shell was killed and the calculation kept running,
+  reparented to init — with no copy-back, no scratch teardown and no runlog
+  footer. A 64-job batch also took over five minutes to unwind, which on Ctrl-C
+  reads as a hang.
+- A structure retried after failing to converge keeps its lineage. The retry
+  rebuilt it without `parent_id`, so it came out of the step an orphan — and
+  `by_parent` filtering groups on `parent_id or id`, so it formed its own
+  singleton group and survived a filter that should have discarded it.
+- `pyscf-extopt` refuses to serve a gradient from an SCF that did not converge.
+  PySCF returns the last iterate rather than raising, and ORCA's `.out` records
+  only its own geometry convergence, so the result ranked against correctly
+  converged siblings unmarked. Set `strict_scf: false` to accept it knowingly.
+- An `nms` `ts_mode_index` that names no imaginary mode is rejected. The
+  exclusion was written as a filter, so an index matching nothing excluded
+  nothing and NMS displaced along every imaginary mode — including the reaction
+  coordinate the setting exists to preserve — then reported every structure
+  unresolved after paying for the whole round-2 batch.
+- Editing an `mlip-train` step's MACE config re-runs the training. Its cache key
+  omitted the template digest, so retuning epochs or learning rate and running
+  `resume` was a cache hit that left the previous model on disk.
+- `job_timeout_seconds` now applies to an `mlip-train` step. Its wait loop had no
+  deadline, so a training job stuck in `PD` blocked the pipeline indefinitely
+  instead of failing with exit code 8.
+- ORCA templates using `SloppyOpt` or `VeryTightOpt` are recognised as
+  optimisations; the keyword surface is now the one ORCA 6.1.1 actually accepts,
+  checked against the binary. A malformed gradient row is reported as a parse
+  error for that structure rather than escaping as a traceback that ends the run.
 - Frequencies are read from the **last** Hessian in an ORCA output, matching
   the energy, geometry and thermochemistry parsers. A TS search recomputes the
   Hessian as it goes and prints one table per recompute; v1.3.1 accumulated
