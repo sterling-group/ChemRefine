@@ -240,6 +240,30 @@ def test_max_sample_requires_exactly_one_selector(tmp_path: Path):
         _sample_cfg(tmp_path, {"method": "max", "count": 5, "window_kcalmol": 3.0})
 
 
+def test_the_shared_selector_rule_still_discriminates_and_keeps_its_own_bounds(tmp_path: Path):
+    """`min` and `max` share one selector rule without collapsing into one another.
+
+    The rule lives on a common base now — it was written out twice, differing only in the
+    prefix of its message, which is how one copy gets tightened and the other does not. A
+    shared base could plausibly have broken either the `method` discriminator or the
+    per-variant `count` floors, so both are asserted here rather than assumed.
+    """
+    assert isinstance(
+        _sample_cfg(tmp_path, {"method": "min", "count": 0}).steps[0].sample, MinSample
+    )
+    assert isinstance(
+        _sample_cfg(tmp_path, {"method": "max", "window_kcalmol": 3.0}).steps[0].sample, MaxSample
+    )
+    # `min: 0` means "keep everything"; `max: 0` would mean "keep nothing", so it is refused.
+    with pytest.raises(ConfigError):
+        _sample_cfg(tmp_path, {"method": "max", "count": 0})
+    # The message names the method it came from, read off the discriminator.
+    with pytest.raises(ConfigError, match="max: set exactly one"):
+        _sample_cfg(tmp_path, {"method": "max"})
+    with pytest.raises(ConfigError, match="min: set exactly one"):
+        _sample_cfg(tmp_path, {"method": "min"})
+
+
 def test_min_sample_parses(tmp_path: Path):
     cfg = _sample_cfg(tmp_path, {"method": "min", "count": 5})
     assert isinstance(cfg.steps[0].sample, MinSample)

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import shlex
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Generic, TypeVar, cast
 
 from chemrefine.engines import _provision
 from chemrefine.engines._job import JobEngine, gpus_from_options
@@ -26,9 +26,15 @@ from chemrefine.engines._script import render as script_render
 from chemrefine.engines.api import ParsedResult, RunBlock
 from chemrefine.state import StepContext
 
+OptsT = TypeVar("OptsT", bound=EngineOptions)
 
-class ScriptEngine(JobEngine):
-    """A ``JobEngine`` whose per-structure input is a user ``step{N}.py`` run with ``python``."""
+
+class ScriptEngine(JobEngine, Generic[OptsT]):
+    """A ``JobEngine`` whose per-structure input is a user ``step{N}.py`` run with ``python``.
+
+    Generic in its options model so a subclass declares ``ScriptEngine[MlipOptions]`` and
+    reads its own fields by name in :meth:`_vars_from`, type-checked.
+    """
 
     name: ClassVar[str]
     label: ClassVar[str]
@@ -65,10 +71,26 @@ class ScriptEngine(JobEngine):
         )
 
     def _template_vars(self, ctx: StepContext) -> dict[str, object]:
-        """Extra ``$VAR`` substitutions for the script (default: none).
+        """Extra ``$VAR`` substitutions for the script, from this step's validated options.
 
-        Subclasses override this to let ``step.options`` drive the rendered script — e.g.
-        the MLIP engine injects ``$MODEL_NAME`` / ``$TASK_NAME`` / ``$DEVICE``.
+        **Final on purpose** — subclasses override :meth:`_vars_from`, which is handed the
+        already-validated options. Reading them is the part that must not vary: leniently
+        (a template may carry knobs no engine model declares, and rendering must not fail
+        over them) and always through :attr:`options_cls`, never off the raw dict. Every
+        engine spelling that out for itself is how a literal default ends up beside a model
+        that declares a different one — a shape that has already split twice here, and
+        neither split was visible until it produced a wrong job.
+        """
+        # ``options_cls`` is a ClassVar of the base type, so the parameter it produces is
+        # narrowed here — once, in the one place that reads it — rather than by each
+        # subclass asserting its way back to the type it already declared.
+        opts = cast(OptsT, self.options_cls.from_raw_lenient(ctx.step_cfg.options))
+        return self._vars_from(opts)
+
+    def _vars_from(self, opts: OptsT) -> dict[str, object]:
+        """Which placeholders this engine exposes, from its validated options (default: none).
+
+        Subclasses read ``opts``' fields by name; the reading of them is the base's job.
         """
         return {}
 

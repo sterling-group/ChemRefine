@@ -34,7 +34,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Annotated, Any, Literal, TypeAlias
+from typing import Annotated, Any, Literal, Self, TypeAlias
 
 import yaml
 from pydantic import (
@@ -104,7 +104,28 @@ class BoltzmannSample(_SampleBase):
     percent_cumulative: float = Field(99.0, gt=0, le=100)
 
 
-class MinSample(_SampleBase):
+class _WindowedSample(_SampleBase):
+    """Shared shape of the two extremum filters: keep N of them, or a window around one.
+
+    ``min`` and ``max`` differ in *which* end they keep and in the floor on ``count`` —
+    everything else, including "exactly one selector", is one rule. It was written twice,
+    identical but for the ``"min:"`` / ``"max:"`` in the message, which is how a rule ends up
+    tightened on one copy and not the other. The message reads the discriminator instead.
+    """
+
+    method: str
+    count: int | None = None
+    window_kcalmol: float | None = Field(None, gt=0)
+
+    @model_validator(mode="after")
+    def _exactly_one_selector(self) -> Self:
+        """Require exactly one of ``count`` / ``window_kcalmol``."""
+        if (self.count is None) == (self.window_kcalmol is None):
+            raise ValueError(f"{self.method}: set exactly one of 'count' or 'window_kcalmol'")
+        return self
+
+
+class MinSample(_WindowedSample):
     """Keep the lowest-energy structures.
 
     Set **exactly one** selector: ``count`` keeps the N lowest (``0`` = keep all);
@@ -113,17 +134,11 @@ class MinSample(_SampleBase):
 
     method: Literal["min"]
     count: int | None = Field(None, ge=0)
-    window_kcalmol: float | None = Field(None, gt=0)
-
-    @model_validator(mode="after")
-    def _exactly_one_selector(self) -> MinSample:
-        """Require exactly one of ``count`` / ``window_kcalmol``."""
-        if (self.count is None) == (self.window_kcalmol is None):
-            raise ValueError("min: set exactly one of 'count' or 'window_kcalmol'")
-        return self
+    """``0`` is meaningful here — :func:`chemrefine.filtering._filter_min` reads it as
+    "keep everything" — which is why the floor differs from :class:`MaxSample`'s."""
 
 
-class MaxSample(_SampleBase):
+class MaxSample(_WindowedSample):
     """Keep the highest-energy structures (e.g. for PES sampling).
 
     Set **exactly one** selector: ``count`` keeps the N highest;
@@ -132,14 +147,8 @@ class MaxSample(_SampleBase):
 
     method: Literal["max"]
     count: int | None = Field(None, ge=1)
-    window_kcalmol: float | None = Field(None, gt=0)
-
-    @model_validator(mode="after")
-    def _exactly_one_selector(self) -> MaxSample:
-        """Require exactly one of ``count`` / ``window_kcalmol``."""
-        if (self.count is None) == (self.window_kcalmol is None):
-            raise ValueError("max: set exactly one of 'count' or 'window_kcalmol'")
-        return self
+    """``1`` is the floor: ``max`` has no "keep everything" spelling, and ``0`` would slice
+    the survivor set empty rather than mean anything."""
 
 
 SampleConfig: TypeAlias = Annotated[

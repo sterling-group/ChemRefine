@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 from ase import Atoms
 
+from chemrefine.engines._options import EngineOptions
 from chemrefine.engines._script import render as _template_render
 from chemrefine.engines._script.engine import ScriptEngine
 from chemrefine.engines._script.output import (
@@ -28,8 +29,12 @@ from chemrefine.errors import ChemRefineError, ConfigError, OutputParseError
 
 
 def test_base_template_vars_default_is_empty():
-    """The base ``_template_vars`` injects nothing; subclasses (mlip/pyscf) override it."""
-    assert ScriptEngine()._template_vars(None) == {}
+    """The base exposes no placeholders; subclasses (mlip/pyscf) override ``_vars_from``.
+
+    ``_template_vars`` itself is not overridden by anyone — reading the options through
+    ``options_cls``, leniently, is the part that must not vary between engines.
+    """
+    assert ScriptEngine()._vars_from(EngineOptions()) == {}
 
 
 # ---------------------------------------------------------------------------

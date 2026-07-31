@@ -17,42 +17,31 @@ see :mod:`chemrefine.engines.mlip.extopt_engine`.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from chemrefine.engines._script import ScriptEngine
-from chemrefine.engines.api import BackendRequirement, register
-from chemrefine.engines.mlip.calculator import registered_extras, requirement_from_options
+from chemrefine.engines.api import register
+from chemrefine.engines.mlip.backend import MlipBackend
 from chemrefine.engines.mlip.options import MlipOptions
-from chemrefine.state import StepContext
 
 
 @register("mlip")
-class MlipEngine(ScriptEngine):
+class MlipEngine(MlipBackend, ScriptEngine[MlipOptions]):
     """Direct MLIP engine — runs the user's ``step{N}.py`` per structure."""
 
     name: ClassVar[str] = "mlip"
     label: ClassVar[str] = "MLIP"
     options_cls: ClassVar[type[MlipOptions]] = MlipOptions
 
-    def backend_requirement(self, options: dict[str, Any] | None) -> BackendRequirement:
-        """The backend env this step needs — derived from its task/model selection."""
-        return requirement_from_options(options)
-
-    def backend_extras(self) -> frozenset[str]:
-        """Every extra a registered MLIP backend declares."""
-        return registered_extras()
-
-    def _template_vars(self, ctx: StepContext) -> dict[str, object]:
+    def _vars_from(self, opts: MlipOptions) -> dict[str, object]:
         """Expose the MLIP options as template placeholders.
 
-        Lets a direct ``step{N}.py`` read ``$MODEL_NAME`` / ``$TASK_NAME`` /
-        ``$DEVICE`` from the YAML ``step.options`` instead of hardcoding them.
-        Read leniently, through :class:`MlipOptions` itself: a template may carry
-        knobs no engine model declares and rendering must not fail over them, but
-        the alias rules (``model`` / ``size`` for ``model_name``) belong to the
-        model rather than being spelled out a second time here.
+        Lets a direct ``step{N}.py`` read ``$MODEL_NAME`` / ``$TASK_NAME`` / ``$DEVICE``
+        from the YAML ``step.options`` instead of hardcoding them. The base already read
+        them through :class:`MlipOptions` — including its alias rules (``model`` / ``size``
+        for ``model_name``), which belong to the model rather than being spelled out again
+        here.
         """
-        opts = self.options_cls.from_raw_lenient(ctx.step_cfg.options)
         return {
             "MODEL_NAME": opts.model_name,
             "TASK_NAME": opts.task_name,
