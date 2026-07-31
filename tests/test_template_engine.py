@@ -22,8 +22,9 @@ from chemrefine.engines._script.output import (
     _atoms_from_output,
     _forces_from_gradient,
     _load_output_json,
+    parse_output,
 )
-from chemrefine.errors import ConfigError, OutputParseError
+from chemrefine.errors import ChemRefineError, ConfigError, OutputParseError
 
 
 def test_base_template_vars_default_is_empty():
@@ -199,7 +200,7 @@ def test_forces_from_gradient_handles_empty():
 
 
 # ---------------------------------------------------------------------------
-# _load_output_json — a diverged calculation must not read as a result
+# Shape — a wrong-shaped array is one structure's failure, not the run's
 # ---------------------------------------------------------------------------
 
 
@@ -207,6 +208,55 @@ def _write_output(tmp_path: Path, body: str) -> Path:
     out = tmp_path / "step1_0.json"
     out.write_text(body, encoding="utf-8")
     return out
+
+
+@pytest.mark.parametrize(
+    "positions",
+    [
+        pytest.param([0.0, 0.0, 0.0, 0.74, 0.0, 0.0], id="flat-3N-list"),
+        pytest.param([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]], id="wrong-atom-count"),
+        pytest.param([[0.0, 0.0], [0.74, 0.0]], id="wrong-column-count"),
+    ],
+)
+def test_positions_of_the_wrong_shape_are_refused(positions: list):
+    """`positions_angstrom` must match the seed geometry, or be a parse failure.
+
+    ASE raises a bare ValueError, which is outside the package hierarchy that
+    `lifecycle._parse_job` and `cli._dispatch` catch — so a single structure's malformed
+    output would end the whole run in a traceback instead of becoming its ledger entry.
+    """
+    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    with pytest.raises(OutputParseError, match="positions_angstrom"):
+        _atoms_from_output({"energy_hartree": -1.0, "positions_angstrom": positions}, fallback=seed)
+
+
+def test_a_ragged_gradient_is_refused():
+    """The other half of the same shape contract — `np.asarray` would raise bare, too."""
+    with pytest.raises(OutputParseError, match="gradient_hartree_per_bohr"):
+        _forces_from_gradient([[0.1, 0.2, 0.3], [0.1, 0.2]])
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '{"energy_hartree": -1.0, "positions_angstrom": [0.0, 0.0, 0.0, 0.74, 0.0, 0.0]}',
+        '{"energy_hartree": -1.0, "gradient_hartree_per_bohr": [[0.1, 0.2, 0.3], [0.1, 0.2]]}',
+    ],
+)
+def test_a_malformed_shape_stays_inside_the_exit_code_contract(tmp_path: Path, body: str):
+    """End to end: every failure `parse_output` can raise carries an `exit_code`.
+
+    The guarantee the CLI depends on — it catches `ChemRefineError` and nothing else — so
+    this asserts the base class rather than the leaf, which is what the contract is about.
+    """
+    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    with pytest.raises(ChemRefineError):
+        parse_output(_write_output(tmp_path, body), label="MLIP", fallback=seed)
+
+
+# ---------------------------------------------------------------------------
+# _load_output_json — a diverged calculation must not read as a result
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])

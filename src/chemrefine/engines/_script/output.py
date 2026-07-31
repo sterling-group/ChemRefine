@@ -93,6 +93,14 @@ def _atoms_from_output(data: dict[str, Any], *, fallback: Atoms | None) -> Atoms
     If the script wrote a ``positions_angstrom`` block (an optimised geometry), the
     returned ``Atoms`` carries those positions on the seed's symbols; otherwise the seed
     atoms come back unchanged.
+
+    A block of the wrong *shape* is refused here rather than left to ASE. ``set_positions``
+    raises a bare :class:`ValueError`, which is outside this package's hierarchy: it passes
+    straight through :func:`chemrefine.lifecycle._parse_job` (which contains only
+    :class:`~chemrefine.errors.OutputParseError`) and out of ``cli._dispatch``, so one
+    structure's malformed output ended the whole run in a traceback — discarding the
+    successes of the same step that were about to be cached. The flat ``3N`` list is the
+    natural mistake, since a backend that hands back ``coords.ravel()`` produces one.
     """
     positions = data.get("positions_angstrom")
     if positions is None or fallback is None:
@@ -102,12 +110,25 @@ def _atoms_from_output(data: dict[str, Any], *, fallback: Atoms | None) -> Atoms
             )
         return cast(Atoms, fallback.copy())
     updated: Atoms = fallback.copy()
-    updated.set_positions(np.asarray(positions, dtype=float))
+    try:
+        updated.set_positions(np.asarray(positions, dtype=float))
+    except ValueError as e:
+        raise OutputParseError(
+            f"malformed 'positions_angstrom' for a {len(updated)}-atom structure: {e}"
+        ) from e
     return updated
 
 
 def _forces_from_gradient(gradient: list[list[float]] | None) -> NDArray[np.float64] | None:
-    """Convert a template gradient (Hartree/Bohr) to ASE forces (eV/Å)."""
+    """Convert a template gradient (Hartree/Bohr) to ASE forces (eV/Å).
+
+    Held to the same rule as the coordinates above: a ragged gradient makes ``np.asarray``
+    raise a bare :class:`ValueError`, which would leave the exit-code contract the same way.
+    """
     if not gradient:
         return None
-    return np.asarray(gradient, dtype=float) * (-HARTREE_PER_BOHR_TO_EV_PER_A)
+    try:
+        rows = np.asarray(gradient, dtype=float)
+    except ValueError as e:
+        raise OutputParseError(f"malformed 'gradient_hartree_per_bohr': {e}") from e
+    return rows * (-HARTREE_PER_BOHR_TO_EV_PER_A)
