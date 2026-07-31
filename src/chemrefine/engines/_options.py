@@ -80,10 +80,10 @@ class EngineOptions(BaseModel):
 
         Aliases exist so each backend reads naturally (``task`` for ``task_name``,
         ``model``/``size`` for ``model_name``), which means a step *can* name one field
-        twice. Pydantic already rejects that, but as ``extra="forbid"`` on whichever
-        spelling it did not pick — a message that names the wrong problem — and only on
-        the strict path, so the two readers of the same options disagreed about whether
-        such a step was valid at all.
+        twice. Pydantic rejects that on its own, but as ``extra="forbid"`` on whichever
+        spelling it did not pick — a message naming the wrong problem — and only on the
+        strict path, which would leave the two readers of the same options disagreeing about
+        whether such a step is valid at all.
 
         Raising here, before validation, makes both paths agree and says which knob is
         doubled.

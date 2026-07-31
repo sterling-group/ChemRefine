@@ -100,10 +100,10 @@ class OrcaEngine(JobEngine):
         config validator refuses metacharacters in the directory paths but **not**
         spaces, so ``output_dir: ./my outputs`` would word-split the redirect.
 
-        This lives here, shared, because the fix was originally applied to this
-        method alone and :class:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine`
-        — which overrides ``run_block`` and re-embeds the same value — silently kept
-        the unquoted form. One definition means a subclass cannot reopen the hole.
+        Shared rather than inlined per engine:
+        :class:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine` overrides
+        ``run_block`` and embeds the same value, so one definition is what stops a subclass
+        reopening the hole with its own unquoted copy.
         """
         orca = shlex.quote(ctx.executables.get("orca", "orca"))
         return f'{orca} {inp_name} > "$OUTPUT_DIR/{out_name}"'

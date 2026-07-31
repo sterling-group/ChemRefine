@@ -95,12 +95,12 @@ def _atoms_from_output(data: dict[str, Any], *, fallback: Atoms | None) -> Atoms
     atoms come back unchanged.
 
     A block of the wrong *shape* is refused here rather than left to ASE. ``set_positions``
-    raises a bare :class:`ValueError`, which is outside this package's hierarchy: it passes
-    straight through :func:`chemrefine.lifecycle._parse_job` (which contains only
-    :class:`~chemrefine.errors.OutputParseError`) and out of ``cli._dispatch``, so one
-    structure's malformed output ended the whole run in a traceback — discarding the
-    successes of the same step that were about to be cached. The flat ``3N`` list is the
-    natural mistake, since a backend that hands back ``coords.ravel()`` produces one.
+    raises a bare :class:`ValueError`, which is outside this package's hierarchy: it would
+    pass straight through :func:`chemrefine.lifecycle._parse_job` (which contains only
+    :class:`~chemrefine.errors.OutputParseError`) and out of ``cli._dispatch``, ending the
+    whole run in a traceback over one structure — and discarding the successes of the same
+    step, which are about to be cached. The flat ``3N`` list is the natural mistake, since a
+    backend that hands back ``coords.ravel()`` produces one.
     """
     positions = data.get("positions_angstrom")
     if positions is None or fallback is None:

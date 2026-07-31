@@ -295,7 +295,7 @@ def test_legacy_rerun_errors_flag_dispatches_via_main(tmp_path: Path, monkeypatc
 #
 # `chemrefine.errors` promises every exception carries an `exit_code` the CLI
 # maps to a deterministic process exit status. That only holds if the failure
-# actually raises a ChemRefineError: a missing template used to raise a bare
+# actually raises a ChemRefineError: a missing template would otherwise raise a bare
 # FileNotFoundError, so the likeliest first-run error greeted the user with a
 # traceback and exit 1 instead of the documented code.
 # ---------------------------------------------------------------------------

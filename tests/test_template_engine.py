@@ -287,7 +287,7 @@ def test_a_non_finite_gradient_component_is_refused(tmp_path: Path):
 
 
 def test_a_non_numeric_energy_is_refused(tmp_path: Path):
-    """`float()` on a string used to escape as a bare ValueError, past the exit-code contract."""
+    """`float()` on a string would escape as a bare ValueError, past the exit-code contract."""
     out = _write_output(tmp_path, '{"energy_hartree": "diverged"}')
     with pytest.raises(OutputParseError, match="non-numeric"):
         _load_output_json(out, label="MLIP")

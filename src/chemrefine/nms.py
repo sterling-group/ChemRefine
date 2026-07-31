@@ -133,17 +133,15 @@ def displace_along_mode(
 
 
 def rng_for(structure_id: str, seed: int) -> np.random.Generator:
-    """A per-structure RNG, so ``random`` mode selection can't depend on loop position.
+    """A per-structure RNG, so ``random`` mode selection cannot depend on loop position.
 
-    One generator shared across the structure loop made each structure's draw depend on
-    how many structures preceded it — and :func:`run_nms` and :func:`rebuild_nms` skip on
-    *different* conditions (only the rebuild skips a structure with no ``attemptK/`` on
-    disk). One skip shifted the stream for every structure after it, so ``rebuild-cache``
-    re-derived children that were never computed, found no outputs for them, and reported
-    a resolved structure as unresolved.
-
-    Seeding from the structure id makes the draw a pure function of ``(seed, id)``: the
-    two coordinators agree whatever either one skips.
+    Seeding from the structure id makes the draw a pure function of ``(seed, id)``. One
+    generator drawn across the whole loop would instead make each structure's modes depend
+    on how many structures preceded it, and ``run_nms`` and ``rebuild_nms`` do not visit
+    the same set — only the rebuild skips a structure with no ``attemptK/`` on disk. A
+    single skip would shift the stream for everything after it, so ``rebuild-cache`` would
+    re-derive children that were never computed and report a resolved structure as
+    unresolved.
     """
     return np.random.default_rng([seed, *structure_id.encode()])
 
@@ -323,24 +321,18 @@ def _children_of(
 class _AttemptMode(Protocol):
     """How one parent's attempt is reached: located, populated, and concluded.
 
-    The two coordinators below differ in exactly these three answers and in nothing else.
-    They used to be two copies of one twelve-step loop, and the copies drifted twice: once
-    on the skip conditions, which shifted a shared RNG stream and made ``rebuild-cache``
-    report a resolved structure as unresolved (``b9e2d95`` — *"a wrong answer rather than
-    an error"*), and once on the short-circuit for a structure with no children
-    (``5bf4f1d`` — *"they agreed, but nothing made them agree"*). Both were repaired by
-    extracting a shared decision and leaving the two loops standing.
+    :func:`run_nms` and :func:`rebuild_nms` differ in exactly these three answers and in
+    nothing else, so :func:`_resolve_all` is the only resolution loop and they agree by
+    construction. Two loops making the same twelve decisions agree only as long as every
+    edit touches both.
 
-    One loop, parameterised by the axis that actually varies, is what makes them agree by
-    construction. A Protocol rather than a flag or a record of callables, because
-    ``install`` is behaviour and :mod:`chemrefine.engines.api` states the rule: capabilities
-    are never a flag.
+    A Protocol rather than a flag or a record of callables: ``install`` is behaviour, and
+    :mod:`chemrefine.engines.api` sets the rule that capabilities are never a flag.
 
-    **Deliberately private, and never a parameter of the public functions.** The choice
-    already exists upstream as :meth:`chemrefine.step.StepMode.may_submit`, so a mode a
-    caller could *pass* would be a second vocabulary for it — one more pair that has to be
-    kept in step, which is the defect this removes rather than relocates. ``run_nms`` and
-    ``rebuild_nms`` each name their own mode tautologically; nobody chooses one.
+    **Private, and never a parameter of the public functions.** The same choice exists
+    upstream as :meth:`chemrefine.step.StepMode.may_submit`, so a mode a caller could
+    *pass* would be a second vocabulary for it — another pair to keep in step. ``run_nms``
+    and ``rebuild_nms`` each name their own mode tautologically; nobody chooses one.
     """
 
     def attempt_dir(self, structure_dir: Path) -> Path | None:
@@ -438,10 +430,10 @@ class _RebuildAttempt:
     ) -> None:
         """Nothing: a rebuild must not rewrite the outputs it was asked to read.
 
-        Not an omission — the invariant ``7a7d1bf`` was filed for, held by the type rather
-        than by a caller remembering. The winner's artifacts are already at the canonical
-        path from the run that promoted them; re-promoting would rewrite the very records a
-        later comparison is meant to trust.
+        Not an omission but the invariant, held by the type rather than by a caller
+        remembering it. The winner's artifacts are already at the canonical path, put there
+        by the run that promoted them; re-promoting would rewrite the very records a later
+        comparison is meant to trust.
         """
 
 

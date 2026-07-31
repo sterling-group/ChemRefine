@@ -324,10 +324,10 @@ def test_mlip_train_engine_is_registered():
 def test_retuning_the_training_template_invalidates_the_step(tmp_path: Path):
     """Editing the MACE config must re-run the training, not cache-hit past it.
 
-    The step passes its structures through, which is why its digest used to be ``""`` —
-    but it is not template-independent: that template *is* the MACE config. With the
-    digest empty, retuning epochs or learning rate and running `resume` reported "reusing
-    N structures", never retrained, and left the previous model on disk.
+    The step passes its structures through, so it looks template-independent — but the
+    template *is* the MACE config. With the digest empty, retuning epochs or learning rate
+    and running `resume` reports "reusing N structures", never retrains, and leaves the
+    previous model on disk for whatever loads it downstream.
     """
     ctx = _ctx(tmp_path)
     template = ctx.template_dir / "step1.inp"
@@ -420,9 +420,9 @@ def test_write_training_slurm_defaults_to_the_cuda_header(tmp_path: Path):
 
     Training is the one step where CPU is not a slower run but an impractical
     one, so `mlip-train` deliberately defaults to `cuda` where the inference
-    engines default to `cpu`. Every other test here passes `device` explicitly,
-    which is why nothing noticed when the trainer's inline default and the shared
-    options default silently drifted apart.
+    engines default to `cpu`. Every other test here passes `device` explicitly, so this is
+    the only one that would catch the trainer's header and the options model disagreeing
+    about what an unset device means.
     """
     ctx = _ctx(tmp_path)
     ctx.step_cfg.options.pop("device")

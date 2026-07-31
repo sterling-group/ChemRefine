@@ -302,8 +302,8 @@ def test_two_local_jobs_run_in_background_concurrently(tmp_path: Path):
 
 
 def test_submit_local_failure_is_not_raised_but_recorded_on_disk(tmp_path: Path):
-    """A non-zero local exit no longer raises at submit; the logs still land on disk
-    so the failure can surface through the engine's output parsing."""
+    """A non-zero local exit does not raise at submit; the logs land on disk so the
+    failure surfaces through the engine's output parsing, like a SLURM one."""
     script = tmp_path / "script.slurm"
     script.write_text(
         "#!/bin/bash\necho 'partial stdout'\necho 'boom' >&2\nexit 2\n", encoding="utf-8"

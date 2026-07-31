@@ -492,11 +492,10 @@ def save(
     """Persist ``results`` for ``step_cfg`` to ``step_dir/_cache/`` under ``key``.
 
     The key is a value the caller computed once (:meth:`StepKey.of`), not a recipe this
-    function re-follows. It used to be the latter, and the derivation drifted twice: once
-    when a site omitted the reuse fingerprint entirely, and it stayed derivable from
-    whatever ``StepContext`` a caller happened to pass — including one whose ``prev_state``
-    had been rebound to a *subset* of the parents, which would have keyed the step to a
-    fingerprint nothing could ever match again.
+    function re-follows. Deriving it here instead would mean deriving it from whichever
+    ``StepContext`` a caller happened to pass — and ``prev_state`` is rebound to a subset of
+    the parents on the retry paths, which would key the step to a fingerprint nothing can
+    match again.
     """
     records = [structure_record(s) for s in results.structures]
     document = {
@@ -561,19 +560,12 @@ class StepKey:
     """A step's cache identity — computed once per step, then passed around as a value.
 
     Every route through :mod:`chemrefine.step` needs the same answer to "is the cache on
-    disk the one this configuration would write", and each used to re-derive it: hash the
-    parents, digest the template, fold both into :func:`fingerprint`, and for an NMS step
-    :func:`reuse_fingerprint` as well. Eight sites across three modules, three of them on
-    every cache miss.
-
-    Re-deriving is not merely wasteful, it is the shape that drifts. One site once omitted
-    the reuse fingerprint and wrote a cache the NMS reuse path could never match; the
-    derivation also read ``ctx.prev_state``, which is *rebound* to a subset of the parents
-    on the retry paths, so passing the wrong context would have keyed a step to a
-    fingerprint nothing could match again. Neither is a crash — both are a silent re-run,
-    or a silent reuse, much later.
-
-    Holding it as a value removes the invariant instead of documenting it.
+    disk the one this configuration would write". Computed once and passed as a value, that
+    answer cannot vary between the routes; re-derived per route — hash the parents, digest
+    the template, fold both into :func:`fingerprint`, and for an NMS step
+    :func:`reuse_fingerprint` too — it is four chances to disagree. A cache written under an
+    inconsistent key does not crash: it silently re-runs work that was done, or reuses work
+    it should not have, much later.
 
     :meth:`of` takes what it needs and nothing more — no :class:`~chemrefine.state.StepContext`
     and no engine — so ``parent_ids`` and the parents' digest come from the same argument and

@@ -108,9 +108,9 @@ class _WindowedSample(_SampleBase):
     """Shared shape of the two extremum filters: keep N of them, or a window around one.
 
     ``min`` and ``max`` differ in *which* end they keep and in the floor on ``count`` —
-    everything else, including "exactly one selector", is one rule. It was written twice,
-    identical but for the ``"min:"`` / ``"max:"`` in the message, which is how a rule ends up
-    tightened on one copy and not the other. The message reads the discriminator instead.
+    everything else, including "exactly one selector", is one rule, and one rule written per
+    variant is one that can be tightened on a single copy. The message reads the
+    discriminator so the shared version still names the method the user wrote.
     """
 
     method: str
@@ -225,10 +225,11 @@ class StepConfig(BaseModel):
         ``operation: opt_sp$(id -un)`` is a command substitution the job would run, and a
         stray ``$`` corrupts the runlog without saying so.
 
-        Its two neighbours in that header were already covered by construction — ``engine``
-        must be a registry key, ``name`` is matched against :data:`_NAME_RE` — which is
-        precisely why this one was missed: the rule had been attached to the fields that
-        needed it first rather than to "every config value that reaches generated bash".
+        Its two neighbours in that header are covered by construction — ``engine`` must be a
+        registry key, ``name`` is matched against :data:`_NAME_RE` — which is why the rule is
+        keyed to "every config value that reaches generated bash" rather than to a list of
+        fields: a value protected some other way is easy to mistake for one that needs no
+        protection at all.
 
         Only the metacharacters are refused, not the vocabulary: ``OPT+SP`` (normalised to
         ``opt_sp`` before this runs) and any engine's own operation name stay legal.

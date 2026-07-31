@@ -105,17 +105,16 @@ class TemplateDriven(CalculationEngine, Protocol):
     path on :attr:`~chemrefine.state.StepContext.template`; everything downstream — the
     engine rendering it, the cache digesting it — reads that field.
 
-    It is a capability rather than part of :class:`CalculationEngine` because being
+    A capability rather than part of :class:`CalculationEngine`, because being
     template-driven is genuinely optional: ``mlip-train`` reads a template but writes no
     per-structure inputs, and an engine that fabricates or passes structures through reads
-    none at all. ``template_suffix`` had to carry both "my template's extension" and "the
-    extension of the per-structure file I write" while those lived on
-    :class:`~chemrefine.engines._job.JobEngine` alone, which is exactly why ``mlip-train``
-    could not declare it and hardcoded the values instead.
+    none at all.
 
-    ``template_suffix`` now means the first thing only. ``JobEngine`` reuses it to name each
-    structure's rendered input — not by coincidence, but because that artifact *is* a copy
-    of the template and shares its extension.
+    ``template_suffix`` means the template's extension and only that. Declared on
+    :class:`~chemrefine.engines._job.JobEngine` instead, it would have to mean the
+    per-structure input's extension too, and an engine with one and not the other could not
+    declare it at all. ``JobEngine`` reuses it for artifact naming — not by coincidence, but
+    because that artifact *is* a copy of the template and shares its extension.
     """
 
     template_suffix: ClassVar[str]

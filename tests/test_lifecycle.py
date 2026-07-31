@@ -210,9 +210,9 @@ def test_a_retried_structure_keeps_its_lineage(tmp_path: Path):
 def test_an_orphaned_retry_would_change_which_structures_survive():
     """Why the lineage matters: ``by_parent`` groups on ``parent_id or id``.
 
-    A structure whose parent went missing is indistinguishable from a seed, so it forms
-    its own singleton group and can no longer be outranked by its siblings — it survives a
-    filter that should have discarded it.
+    A structure whose parent is missing is indistinguishable from a seed, so it forms its own
+    singleton group, cannot be outranked by its siblings, and survives a filter that should
+    have discarded it.
     """
     sample = MinSample(method="min", count=1, by_parent=True)
 

@@ -76,10 +76,9 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
         **Final on purpose** — subclasses override :meth:`_vars_from`, which is handed the
         already-validated options. Reading them is the part that must not vary: leniently
         (a template may carry knobs no engine model declares, and rendering must not fail
-        over them) and always through :attr:`options_cls`, never off the raw dict. Every
-        engine spelling that out for itself is how a literal default ends up beside a model
-        that declares a different one — a shape that has already split twice here, and
-        neither split was visible until it produced a wrong job.
+        over them) and always through :attr:`options_cls`, never off the raw dict. An engine
+        spelling that out for itself is how a literal default ends up beside a model that
+        declares a different one — a split nothing detects until it produces a wrong job.
         """
         # ``options_cls`` is a ClassVar of the base type, so the parameter it produces is
         # narrowed here — once, in the one place that reads it — rather than by each

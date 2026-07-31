@@ -42,12 +42,10 @@ RECORDINGS = Path(__file__).resolve().parent / "data" / "e2e" / "recordings"
 def _recorded_outputs() -> Iterator[tuple[str, str]]:
     """Yield ``(label, text)`` once per distinct ``.out`` in the recording archives.
 
-    Deduplicated by member name on purpose. ``tar`` permits the same path to appear
-    several times in one archive, and these archives used to carry four byte-identical
-    copies of every file — so a plain member walk counted each recorded output four
-    times, and the "has the corpus shrunk?" guards below were sized against that
-    inflated number rather than against the number of distinct ORCA runs. A guard
-    calibrated on duplicates is not a guard.
+    Deduplicated by member name on purpose. ``tar`` permits the same path to appear several
+    times in one archive, so a plain member walk can count one recorded output several times
+    and size the "has the corpus shrunk?" guards below against an inflated number rather than
+    against the distinct ORCA runs. A guard calibrated on duplicates is not a guard.
     """
     for archive in sorted(RECORDINGS.glob("*.tar.xz")):
         with tarfile.open(archive) as tf:

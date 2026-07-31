@@ -231,7 +231,7 @@ def test_splitting_the_arrays_out_of_json_still_pays(tmp_path: Path, capsys) -> 
     with _timed() as split_load:
         cache.load(step_dir)
 
-    # The same records as one document, which is what this used to be.
+    # The same records as one document — the format the split is measured against.
     whole = json.dumps(
         {"structures": [cache.structure_record(s) for s in structures]}, separators=(",", ":")
     ).encode()

@@ -183,12 +183,12 @@ class PyscfExtOptCalculator(ComputeBackend):
         ``tag`` is read off the request, to key ``save_tensors`` dumps.
 
         A non-converged SCF raises unless the step set ``strict_scf: false``. PySCF returns
-        the last iterate rather than raising, so this used to be logged and then served: ORCA
-        stepped on a gradient from a non-stationary density and recorded its own geometry
-        convergence in the ``.out``, which says nothing about the backend. Raising here turns
-        it into the ordinary failure the bridge already knows how to report — the server's
-        500 becomes a :class:`~chemrefine.errors.JobFailureError` client-side, and the
-        detail lands in the ExtOpt server log beside the structure's other artifacts.
+        the last iterate rather than raising, so nothing downstream would notice: ORCA would
+        step on a gradient from a non-stationary density and record its own geometry
+        convergence in the ``.out``, which says nothing about the backend. Raising turns it
+        into the ordinary failure the bridge already reports — the server's 500 becomes a
+        :class:`~chemrefine.errors.JobFailureError` client-side, and the detail lands in the
+        ExtOpt server log beside the structure's other artifacts.
         """
         mol = _runtime.build_mol(
             symbols=data.symbols,

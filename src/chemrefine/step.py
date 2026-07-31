@@ -111,9 +111,9 @@ def build_context(
 class StepMode(StrEnum):
     """How one step is to be handled on this run.
 
-    Resolved **once**, here, from the requested :class:`Action` — rather than
-    re-derived at each layer from nullable step numbers, which is how the same
-    question ended up being asked at three different depths.
+    Resolved **once**, here, from the requested :class:`Action`. Re-deriving it per layer
+    from nullable step numbers is how one question comes to be asked at three depths, in
+    three wordings.
     """
 
     EXECUTE = "execute"

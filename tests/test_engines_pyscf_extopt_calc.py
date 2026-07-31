@@ -149,7 +149,7 @@ def test_pyscf_options_gpu_derived_from_device():
 def test_pyscf_options_gpu_derivation_tracks_the_device_field_default():
     """An unset `device` must derive `gpu` from the field's *own* default.
 
-    The derivation used to repeat the literal `"cuda"`, so moving the field default
+    Repeating the literal `"cuda"` in the derivation means moving the field default
     would have left it deriving `gpu: true` for a step the scheduler books on CPU.
     """
     assert PyscfOptions().gpu is (PyscfOptions.model_fields["device"].default == "cuda")

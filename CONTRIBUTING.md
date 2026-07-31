@@ -82,7 +82,7 @@ gets a second reader.
 ### If you change what a parser produces
 
 Regenerate the end-to-end recordings. `tests/data/e2e/recordings/` stores what
-the parsers *used to* produce, and
+the parsers produce today, and
 `test_rebuilt_records_match_the_archived_ones_field_for_field` will fail when
 that drifts. Rebuilding is parse-only — it re-derives the cached records from
 the archived outputs already in the tree, so it needs no ORCA and no MLIP

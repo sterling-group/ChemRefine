@@ -39,7 +39,7 @@ def write_server_url(url_file: str | Path, url: str) -> Path:
 
 
 def read_server_url(url_file: str | Path) -> str:
-    """Return the ``host:port`` previously written by :func:`write_server_url`."""
+    """Return the ``host:port`` recorded by :func:`write_server_url`."""
     return Path(url_file).read_text(encoding="utf-8").strip()
 
 
@@ -49,5 +49,5 @@ def write_server_token(token_file: str | Path, token: str) -> Path:
 
 
 def read_server_token(token_file: str | Path) -> str:
-    """Return the token previously written by :func:`write_server_token`."""
+    """Return the token recorded by :func:`write_server_token`."""
     return Path(token_file).read_text(encoding="utf-8").strip()

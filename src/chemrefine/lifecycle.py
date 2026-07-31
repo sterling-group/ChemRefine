@@ -178,20 +178,19 @@ def rerun_from_best(
     structure, so the SAME helper serves a top-level structure (round-1, ``step_dir``
     = the step dir) and an NMS round-2 child (``step_dir`` = the parent's dir).
 
-    **``best`` is resubmitted as it is, not rebuilt from its parts.** It used to be
-    reconstructed as ``Structure(id=best.id, atoms=best.atoms)``, which dropped
-    ``parent_id`` — and :func:`chemrefine.engines._job.build_structures` reads the parent
-    back off ``prev_state``, so a structure that merely needed a second attempt came out of
-    the step an orphan, permanently, into the cache. Downstream that is not a cosmetic
-    loss: :func:`chemrefine.filtering._filter_by_parent` groups on ``parent_id or id``, so
-    an orphan is indistinguishable from a seed, forms its own singleton group, and survives
-    a filter that should have discarded it.
+    **``best`` is resubmitted whole, not rebuilt from its parts.** Reconstructing it as
+    ``Structure(id=..., atoms=...)`` would drop every field not named — ``parent_id`` above
+    all, which :func:`chemrefine.engines._job.build_structures` reads back off
+    ``prev_state``, so a structure that merely needed a second attempt would leave the step
+    an orphan, permanently, into the cache. That is not cosmetic downstream:
+    :func:`chemrefine.filtering._filter_by_parent` groups on ``parent_id or id``, so an
+    orphan is indistinguishable from a seed, forms its own singleton group, and survives a
+    filter that should have discarded it.
 
-    The structure is frozen and nothing here mutates it, so there is nothing to copy. Its
-    stale result fields are simply overwritten by the re-parse. That is the point of
-    passing it whole: a field added to :class:`~chemrefine.state.Structure` later is
-    carried through the retry automatically instead of being silently left behind, which
-    is how this went wrong once already.
+    The structure is frozen and nothing here mutates it, so there is nothing to copy — its
+    stale result fields are overwritten by the re-parse. Passing it whole is also what
+    carries a field added to :class:`~chemrefine.state.Structure` later through the retry
+    without anyone remembering to.
     """
     attempts.archive(ctx_for_prepare.step_dir / best.id)
     return submit_and_parse(engine, ctx_for_prepare, [best])
@@ -288,12 +287,10 @@ def finalize(
     first, some run NMS, some filter afterwards and some return the raw results), which is
     why only the tail is shared and only the tail is extracted.
 
-    Worth having as one function because the shape has already cost something: an earlier
-    consolidation of the same pair followed a site drifting and writing a cache without its
-    reuse fingerprint. A cache written with an inconsistent key is not a crash — it is a
-    silent re-run, or a silent reuse, much later. The key itself is a value now
+    One function rather than a convention, because a site that applies the policy and skips
+    the write — or writes under a key of its own derivation — produces no crash, just a
+    silent re-run or a silent reuse much later. The key is a value
     (:class:`chemrefine.cache.StepKey`), so this takes the one its caller already built.
-
     """
     results = apply_failure_policy(successes, failures, ctx, step_cfg)
     cache.save(

@@ -140,9 +140,9 @@ def write_training_slurm(*, ctx: StepContext, config_path: Path) -> Path:
     command at the end.
 
     The device is read through :class:`~chemrefine.engines.mlip.options.MlipTrainOptions`,
-    which declares training's ``cuda`` default, rather than repeating that default
-    here — the repeated literal is what let this header keep asking for a GPU after
-    the shared default moved to ``cpu``.
+    which declares training's ``cuda`` default, rather than repeating that default here. A
+    literal here and a default there drift the first time either moves, leaving the header
+    asking for a GPU the options model did not request.
     """
     opts = MlipTrainOptions.from_raw_lenient(ctx.step_cfg.options)
     header_path = ctx.template_dir / slurm.header_name_for_device(opts.device)
@@ -185,11 +185,10 @@ def submit_training(
 
     Waits through :func:`chemrefine.slurm.wait_for_jobs` rather than a loop of its own, so
     ``Config.job_timeout_seconds`` means the same thing here as on the other two waiting
-    paths. It did not: this loop had no deadline, so setting the knob did nothing for a
-    training step and a job stuck in ``PD`` blocked the pipeline with no diagnostic instead
-    of failing with :class:`~chemrefine.errors.ThrottleTimeoutError`. That is the same gap
-    :func:`chemrefine.slurm.wait_for_jobs` was given ``max_wait_seconds`` to close for
-    ``slurm_array`` steps; the third loop was simply not brought along.
+    paths. A private loop would answer to nothing: a training job stuck in ``PD`` would block
+    the pipeline with no diagnostic instead of failing with
+    :class:`~chemrefine.errors.ThrottleTimeoutError`, and the knob would silently do nothing
+    for this one step.
     """
     job_id = slurm.submit(script_path, dispatch=dispatch)
     logger.info("MLIP training submitted as job %s", job_id)

@@ -85,11 +85,10 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
     """Re-parsing the archived outputs must reproduce the archived cache exactly.
 
     The drift detector for the recordings. Comparing only survivor *ids* — which is
-    all the tests above do — let the archives fall a parser fix behind without any
-    signal: `_stamp_run_status` began stamping a run status onto ensemble frames, and
-    the recorded caches kept the pre-fix `null` for a week with a green suite. An
-    archive that no longer matches what the code produces is not a fixture, it is a
-    fossil, and the whole value of record/replay rests on the difference.
+    all the tests above do — lets the archives fall a parser change behind with no signal:
+    the recorded caches keep the old value and the suite stays green. An archive that does
+    not match what the code produces is not a fixture, it is a fossil, and the whole value
+    of record/replay rests on the difference.
 
     A failure here means the parse changed on purpose and the recordings need
     regenerating (a parse-only rebuild from these same archived outputs — no ORCA and

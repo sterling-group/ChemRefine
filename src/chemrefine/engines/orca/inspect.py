@@ -77,11 +77,11 @@ def _strip_orca_comments(text: str) -> str:
     """Drop ORCA ``#`` comments — everything from the first *unquoted* ``#`` on each line.
 
     The quote tracking is not pedantry: templates name auxiliary files in double quotes
-    (``%DOCKER GUEST "lig#3.xyz"``), and cutting the line at that ``#`` silently truncated
-    it. Whatever followed — an ``Opt`` or ``Freq`` keyword on the same line, the ``end`` of a
-    ``%geom … Scan`` block — then vanished from the keyword surface, so the step was
-    classified with the wrong parser or refused NMS for a reason that was not true. A
-    failure that reads as a chemistry problem, caused by a character in a filename.
+    (``%DOCKER GUEST "lig#3.xyz"``), and cutting the line at that ``#`` truncates it
+    silently. Whatever follows — an ``Opt`` or ``Freq`` keyword on the same line, the ``end``
+    of a ``%geom … Scan`` block — vanishes from the keyword surface, so the step is
+    classified with the wrong parser or refused NMS for a reason that is not true: a failure
+    that reads as a chemistry problem, caused by a character in a filename.
     """
     lines = []
     for raw in text.splitlines():

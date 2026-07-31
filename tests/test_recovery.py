@@ -426,7 +426,7 @@ def _nms_step(displacement: float, on_failure: str = "skip") -> StepConfig:
 
 def test_resume_after_tuning_reattempts_only_unresolved(tmp_path: Path):
     """Tuning displacement_value (reuse fingerprint unchanged) + resume reuses
-    round-1 and re-runs NMS for ONLY the previously-unresolved parent."""
+    round-1 and re-runs NMS for ONLY the parent the ledger records as unresolved."""
     from chemrefine import cache
     from chemrefine.engines.api import ENGINES
 

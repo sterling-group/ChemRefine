@@ -78,9 +78,9 @@ class PyscfOptions(EngineOptions):
         """Default ``gpu`` from ``device`` when ``gpu`` isn't given (``cuda`` ⇒ ``True``).
 
         The fallback reads ``device``'s own field default rather than repeating the
-        literal: spelling it twice is what let this derivation keep saying ``cuda``
-        after the field default moved, so an unset ``device`` would have derived
-        ``gpu: true`` while the scheduler booked a CPU job.
+        literal. Spelled twice, the two drift the first time the field default moves: an
+        unset ``device`` would derive ``gpu: true`` here while the scheduler books a CPU
+        job from the model.
         """
         if isinstance(data, dict) and "gpu" not in data:
             default_device = cls.model_fields["device"].default
@@ -100,9 +100,10 @@ class PyscfOptions(EngineOptions):
         ``tensor_folder: 'tensors$(...)'`` ran that command when the job did.
 
         Held to :func:`chemrefine.config.reject_shell_unsafe`, the same rule as the
-        directory paths, ``executables`` and ``operation``, rather than a copy of it: this
-        knob was missed exactly because the rule had been remembered as a list of fields
-        instead of as "every config value that reaches generated bash".
+        directory paths, ``executables`` and ``operation``, rather than a copy of it. The
+        rule belongs to "every config value that reaches generated bash", not to a list of
+        fields — a knob declared in an engine's own options model reaches bash just as
+        surely as one declared in the top-level config.
         """
         if not v.strip():
             raise ValueError("tensor_folder must be a non-empty string")

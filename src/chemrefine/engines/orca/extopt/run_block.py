@@ -63,18 +63,19 @@ def _build_extopt_run_block(
     script's one ``EXIT`` handler, so it runs on any exit path including SLURM cancellation and
     Ctrl-C.
 
-    Returning teardown as *data* is the whole point of the two-field type. This function used to
-    emit ``trap _on_extopt_exit EXIT INT TERM`` inline, and because bash keeps one handler per
-    signal that silently *replaced* the surrounding script's: every ExtOpt job lost its
+    Returning teardown as *data* is the whole point of the two-field type. A ``trap
+    _on_extopt_exit EXIT INT TERM`` emitted inline here would *replace* the surrounding
+    script's handler, since bash keeps one per signal — costing every ExtOpt job its
     copy-back (``.gbw`` / ``.hess`` / ``.property.json`` / the optimised ``.xyz``), its
-    ``output_dirs`` copy — the only delivery path for ``pyscf-extopt``'s ``save_tensors`` — its
-    runlog footer, and its scratch teardown, leaking ``$WORK_DIR`` every run. Nothing caught it
-    because ORCA redirects its ``.out`` straight to ``$OUTPUT_DIR``, so parsing still succeeded.
+    ``output_dirs`` copy (the only delivery path for ``pyscf-extopt``'s ``save_tensors``),
+    its runlog footer and its scratch teardown, and leaking ``$WORK_DIR`` every run. None of
+    that surfaces in the results: ORCA redirects its ``.out`` straight to ``$OUTPUT_DIR``, so
+    parsing still succeeds.
 
     ``orca_command`` arrives already assembled and quoted from
-    :meth:`chemrefine.engines.orca.engine.OrcaEngine.orca_command` — the same string
-    the plain ORCA path runs — rather than being re-interpolated here from a raw
-    executable, which is how this path ended up unquoted while the other was fixed.
+    :meth:`chemrefine.engines.orca.engine.OrcaEngine.orca_command` — the same string the
+    plain ORCA path runs — rather than being re-interpolated here from a raw executable,
+    which is what keeps the two paths' quoting from diverging.
     """
     cleanup = (
         'if [ -n "${SERVER_PID:-}" ]; then\n'

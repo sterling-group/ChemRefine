@@ -18,12 +18,10 @@ cli → recovery → pipeline → step → {cache, filtering, nms}
 ```
 
 **`engines/` does not import `cache`** — an engine turns a step's specification into a
-calculation and the output back into structures; how a run is resumed and what a cache key
-is made of are not its business. That edge did exist until recently: every engine had to
-implement an `input_digest` the cache alone consumed. The step's template now travels on the
-`StepContext` and the cache digests it there.
-`test_no_engine_module_imports_the_cache` keeps the layer boundary honest, since prose does
-not.
+calculation and the output back into structures; how a run is resumed and what a cache key is
+made of are not its business. The step's template travels on the `StepContext` and the cache
+digests it from there, so no engine has to hand the cache anything.
+`test_no_engine_module_imports_the_cache` keeps the boundary honest, since prose does not.
 
 `sbatch` / `squeue` are reached only from `slurm`; `io` and `cache` own the *shared* on-disk
 formats (each engine owns its own input format — that is the plugin contract). Engines

@@ -1016,10 +1016,10 @@ def test_the_fixture_really_has_disagreeing_hessians():
 def test_frequencies_come_from_the_final_hessian():
     """A TS search recomputes the Hessian; only the last one describes the converged geometry.
 
-    Reading the first meant a structure that had converged to a clean transition state was
-    reported with the imaginary modes it had *before* converging — so `nms` re-optimised it
-    along modes that no longer existed. On the run this fixture is trimmed from, 66 of 72
-    round-2 optimisations were spawned for structures already at the target.
+    Reading the first reports a structure converged to a clean transition state with the
+    imaginary modes it had *before* converging, so `nms` re-optimises it along modes that no
+    longer exist. On the run this fixture is trimmed from, that is 66 of 72 round-2
+    optimisations spawned for structures already at the target.
     """
     text = _MULTI_HESSIAN.read_text(encoding="utf-8")
     expected = len(re.findall("imaginary mode", _blocks(text)[-1]))
@@ -1032,9 +1032,9 @@ def test_frequencies_come_from_the_final_hessian():
 def test_every_parser_reads_the_same_hessian():
     """Energy, geometry, thermochemistry and frequencies must describe one geometry.
 
-    They drifted because nothing said they had to agree: four parsers took the *last* match and
-    the two frequency parsers took the *first*. This asserts the property rather than the
-    implementation, so a future parser that reaches for a different block fails here.
+    Nothing in the parsers themselves says they must agree — each picks its own match out of a
+    file that can hold several Hessians. This asserts the property rather than the
+    implementation, so a parser that reaches for a different block fails here.
     """
     text = _MULTI_HESSIAN.read_text(encoding="utf-8")
     # Everything from the converged geometry onward: its coordinates, its energy and its

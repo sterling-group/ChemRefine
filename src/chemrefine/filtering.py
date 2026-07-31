@@ -164,12 +164,12 @@ def _dispatch(
 ) -> list[Structure]:
     """Pick the per-method filter implementation for ``sample``.
 
-    Matched on the closed union rather than looked up in a ``dict[type, ...]``. The
-    dict could not express that each key selects a handler taking *that* variant, so
-    its value type was ``Any`` and the correlation went unchecked; it also needed a
-    "no handler registered" branch that the discriminated union made unreachable.
-    ``match`` gives mypy the exhaustiveness instead — add a fourth ``SampleConfig``
-    variant and it fails here rather than at runtime.
+    Matched on the closed union rather than looked up in a ``dict[type, ...]``: a dict
+    cannot express that each key selects a handler taking *that* variant, so its value type
+    would be ``Any`` and the correlation unchecked, and it would need a "no handler
+    registered" branch the discriminated union makes unreachable. ``match`` gives mypy the
+    exhaustiveness instead — add a fourth ``SampleConfig`` variant and it fails here rather
+    than at runtime.
     """
     match sample:
         case MinSample():

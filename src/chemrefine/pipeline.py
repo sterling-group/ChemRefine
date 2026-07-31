@@ -181,10 +181,10 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
     # and `dispatch: slurm` must actually have sbatch available.
     #
     # The steps checked are the ones that *can* submit, which is `StepMode.may_submit` and
-    # nothing else. A guard for something that will not happen is just a wall: it made
-    # `chemrefine rebuild-cache` refuse to run wherever the backend was not installed, which
-    # is exactly where you would want to rebuild — a login node, or any machine holding the
-    # output tree but not the MLIP/PySCF stack that produced it.
+    # nothing else. A guard for something that will not happen is just a wall: it would make
+    # `chemrefine rebuild-cache` refuse to run wherever the backend is not installed, which
+    # is exactly where you want to rebuild — a login node, or any machine holding the output
+    # tree but not the MLIP/PySCF stack that produced it.
     #
     # Asking `may_submit` rather than excluding `REBUILD` by name is what makes that hold for
     # the whole command. `rebuild-cache N` puts N in `REBUILD` and every *other* step in

@@ -44,10 +44,9 @@ class Structure:
 
     ``forces_ev_per_a`` is a numpy array, which ``frozen=True`` cannot make
     immutable on its own — so ``__post_init__`` clears its write flag. The
-    array is shared by reference across the pipeline, and "callers must treat
-    it as read-only" was a convention with nothing enforcing it; now a stray
-    write raises :class:`ValueError` at the point of the mistake instead of
-    silently changing a structure another step already holds.
+    array is shared by reference across the pipeline, so a stray write raises
+    :class:`ValueError` at the point of the mistake rather than silently
+    changing a structure another step already holds.
     """
 
     id: str
@@ -62,10 +61,10 @@ class Structure:
     """Did the program terminate normally — i.e. exit cleanly? ``None`` when the
     engine doesn't report it (the script engines never do).
 
-    ``True`` means **success**, so the name says ``_normally``: plain ``terminated``
-    read as "the job was killed" and inverted the meaning of the flag that decides
-    whether a calculation counts. It matches ORCA's own banner
-    (``ORCA TERMINATED NORMALLY``) and :attr:`FailureKind.NOT_TERMINATED_NORMALLY`'s wording.
+    ``True`` means **success**, which is why the name carries ``_normally``: a bare
+    ``terminated`` reads as "the job was killed" and inverts the flag that decides whether a
+    calculation counts. It matches ORCA's own banner (``ORCA TERMINATED NORMALLY``) and
+    :attr:`FailureKind.NOT_TERMINATED_NORMALLY`'s wording.
 
     A structure is a *failure* only when a flag is explicitly ``False`` (see
     :func:`chemrefine.lifecycle.succeeded`)."""
@@ -145,8 +144,10 @@ class StepContext:
 
     Part of the step's *specification* — change the template and the step must re-run — so it
     belongs on the bundle that carries the specification, resolved once by
-    :func:`chemrefine.step.build_context` rather than re-derived by each reader. It was
-    re-derived five times per ORCA step before, and re-read each time.
+    :func:`chemrefine.step.build_context`. An ORCA step alone has five readers (``prepare``,
+    ``pal``, run-type detection, the NMS probe, the cache), and
+    :func:`~chemrefine.engines.orca.inspect.inspect_template` caches nothing, so each would
+    otherwise re-resolve and re-read the file.
 
     ``None`` and "a path that is not there" are different states and stay distinguishable:
     ``None`` means the engine is not :class:`~chemrefine.engines.api.TemplateDriven`, while a

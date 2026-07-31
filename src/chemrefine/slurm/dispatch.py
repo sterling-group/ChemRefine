@@ -72,19 +72,14 @@ and drops the entry on completion. Running local jobs in the background (rather
 than blocking) is what lets a laptop run the same throttled parallelism a SLURM
 run gets — many scripts run at once under the PAL budget instead of one-at-a-time.
 
-**Module-level on purpose, and this is where that decision is recorded.** It was
-considered for a move onto :class:`~chemrefine.throttle.Throttler`, on the grounds that
-module-global state should have an owner. It should — and this module is it: the registry
-models a process-wide fact (the child processes *this interpreter* started), and the
-:func:`atexit`-registered sweep that stops them orphaning cores is a process-wide hook.
-Hanging it off the throttler would not remove the global, only move it to a registry of
-live throttlers for ``atexit`` to walk, while coupling a core-budget abstraction to
-subprocess handle lifecycles. The scope of the state and the scope of its owner already
-agree.
-
-Note the audit's original symptom was different: ``run_batch`` had no ``try/finally``, so
-an exception mid-batch orphaned the children. That is fixed, and it was never about the
-state being global.
+**Module-level on purpose, and this is where that decision is recorded.** Module-global
+state should have an owner, and this module is it: the registry models a process-wide fact
+(the child processes *this interpreter* started), and the :func:`atexit`-registered sweep
+that stops them orphaning cores is a process-wide hook. Hanging it off
+:class:`~chemrefine.throttle.Throttler` would not remove the global, only move it to a
+registry of live throttlers for ``atexit`` to walk, while coupling a core-budget
+abstraction to subprocess handle lifecycles. The scope of the state and the scope of its
+owner already agree.
 """
 
 

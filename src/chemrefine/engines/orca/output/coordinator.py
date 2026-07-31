@@ -204,9 +204,9 @@ def _stamp_run_status(frames: list[ParsedResult], text: str) -> list[ParsedResul
 
     The ensemble sidecar carries geometries and energies but no run status, so frames
     parsed straight out of it default to ``terminated_normally=None`` — and
-    :func:`chemrefine.lifecycle.succeeded` reads ``None`` as "not a failure signal".
-    A GOAT job killed mid-run after writing a partial ensemble was therefore an
-    unconditional success: no ledger entry, no ``on_failure``, no signal to the user.
+    :func:`chemrefine.lifecycle.succeeded` reads ``None`` as "not a failure signal". Without
+    this, a GOAT job killed mid-run after writing a partial ensemble is an unconditional
+    success: no ledger entry, no ``on_failure``, no signal to the user.
 
     Only ``terminated_normally`` is stamped. A whole-run ``NOT CONVERGED`` says nothing reliable
     about an individual pose — an ensemble is a *set* of stationary points, and one

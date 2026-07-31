@@ -259,7 +259,7 @@ def test_is_resolved_false_for_non_terminated_child():
 #
 # These two predicates are the whole definition of "reached the requested stationary
 # point", and the imaginary count has to match the target *exactly* in both directions.
-# Nothing used to pin the lower side: the suite passed with both weakened from `==` to
+# Nothing else pins the lower side: the suite passes with either weakened from `==` to
 # `<=`, at 100% branch coverage, because every case it exercised sat on the boundary from
 # above. Under `<=` a `ts` step accepts a child that relaxed all the way into a minimum,
 # promotes it to the parent's canonical id, and reports success — the transition state
@@ -599,7 +599,7 @@ def test_rebuild_nms_reads_existing_children(tmp_path: Path):
     rebuilt = nms.rebuild_nms(engine, round1, [], ctx)
 
     # Comparing ids would pass while the two disagreed about energies, convergence or which
-    # child won — the class of drift that shipped once already. Compare the whole record.
+    # child won. Compare the whole record.
     assert [cache.structure_record(s) for s in rebuilt.survivors] == [
         cache.structure_record(s) for s in ran.survivors
     ]
@@ -746,10 +746,10 @@ def _calls_in(obj) -> set[str]:
 def test_rebuilding_cannot_install_a_winner():
     """The rebuild does not reach the code that writes — by construction, not by argument.
 
-    One loop resolves both modes, so "does a rebuild promote" is no longer a branch anyone
-    could get wrong: it is `_RebuildAttempt.install`, which does nothing, against
-    `_RunAttempt.install`, which promotes. This asserts that shape rather than the behaviour,
-    so the byte-identical snapshot above cannot start passing for an accidental reason.
+    One loop resolves both modes, so "does a rebuild promote" is not a branch anyone can get
+    wrong: it is `_RebuildAttempt.install`, which does nothing, against `_RunAttempt.install`,
+    which promotes. This asserts that shape rather than the behaviour, so the byte-identical
+    snapshot above cannot start passing for an accidental reason.
     """
     assert "_install_winner" in _calls_in(nms._RunAttempt.install)
     assert not _calls_in(nms._RebuildAttempt.install)
@@ -760,11 +760,10 @@ def test_rebuilding_cannot_install_a_winner():
 def test_one_loop_resolves_both_modes():
     """There is a single resolution loop; the coordinators only name their mode.
 
-    Two copies of it drifted twice — on the skip conditions (b9e2d95, a resolved structure
-    reported unresolved) and on the empty-children short-circuit (5bf4f1d, "they agreed, but
-    nothing made them agree"). Both times the repair extracted a shared decision and left the
-    copies standing. A public entry point that grew its own loop again would pass the
-    agreement test above only until the next divergence.
+    Two copies making the same twelve decisions agree only while every edit touches both, and
+    a divergence shows up as a wrong answer rather than an error: a structure the run resolved
+    reported unresolved by the rebuild. An entry point that grows its own loop would pass the
+    agreement test above only until the next edit.
     """
     for entry in (nms.run_nms, nms.rebuild_nms):
         assert "_resolve_all" in _calls_in(entry), f"{entry.__name__} must delegate to the loop"

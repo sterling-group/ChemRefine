@@ -57,11 +57,10 @@ def parse_frequencies_from_text(
     Reads the **last** ``VIBRATIONAL FREQUENCIES`` group, matching every sibling parser
     (:func:`~chemrefine.engines.orca.output.energy.parse_final_energy_from_text`,
     the thermochemistry, the coordinates — all take the last match). A TS search recomputes
-    the Hessian as it goes and prints one group per recompute, so reading the *first* meant
-    a structure that had converged to a clean transition state was reported with the
-    imaginary modes it had before converging. Energy and geometry then described the final
-    geometry while the frequencies described an earlier one, and NMS re-optimised along modes
-    that no longer existed. Same discipline as
+    the Hessian as it goes and prints one group per recompute, so reading the *first* reports
+    a converged transition state with the imaginary modes it had on the way there: energy and
+    geometry describe the final structure while the frequencies describe an earlier one, and
+    NMS re-optimises along modes that no longer exist. Same discipline as
     :func:`~chemrefine.engines.orca.output.status.parse_converged`: last verdict wins.
     """
     # `sep` empty means the banner is absent — leave `text` alone so a frequency-less

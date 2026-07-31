@@ -926,8 +926,8 @@ def test_rebuild_cache_step_nms_branch(tmp_path: Path):
 def _reuse_key(ctx, fp: str = "FP"):
     """This step's key, with the NMS reuse fingerprint pinned to ``fp``.
 
-    The orchestrator no longer derives the reuse key — it is handed one — so these tests
-    build the key the caller would, rather than monkeypatching the derivation.
+    The orchestrator is handed the key rather than deriving it, so these tests build the one
+    the caller would pass instead of monkeypatching a derivation.
     """
     from chemrefine import cache
 
@@ -1152,12 +1152,11 @@ def test_resume_refuses_a_manifest_from_a_different_config(tmp_path: Path):
 def test_a_step_derives_its_cache_key_exactly_once(tmp_path: Path, monkeypatch):
     """The key is a value computed once, not a recipe each route re-follows.
 
-    It used to be the latter: a cold step hashed its parents three times and its template
-    three times, from `_cached_outcome`, `_nms_reuse_outcome`, `_current_fingerprint` and
-    `save_step_results`. That is wasted work on a 10^4-structure step, but the reason it
-    matters is drift — one of those sites once omitted the reuse fingerprint and wrote a
-    cache the NMS reuse path could never match again, and another read `ctx.prev_state`,
-    which the retry paths rebind to a *subset* of the parents.
+    Derived per route instead, a cold step hashes its parents and its template once for each
+    of `_cached_outcome`, `_nms_reuse_outcome`, the manifest stamp and the write. That is
+    wasted work on a 10^4-structure step, but the reason it matters is drift: a route that
+    omits the reuse fingerprint writes a cache the NMS reuse path can never match, and one
+    that reads `ctx.prev_state` gets a *subset* of the parents on the retry paths.
     """
     from chemrefine import cache
 
