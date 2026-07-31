@@ -30,7 +30,7 @@ from pathlib import Path
 from chemrefine import __version__, attempts, cache
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import CalculationEngine
-from chemrefine.errors import OutputParseError
+from chemrefine.errors import OutputParseError, OutputTerminationError
 from chemrefine.state import (
     Failure,
     FailureKind,
@@ -78,12 +78,19 @@ def _parse_job(
     scan) yields several structures and at most one failure, described by the best geometry
     among the bad frames — the reason has to describe the geometry carried forward, because
     :func:`retry_unconverged` routes on it.
+
+    An output that could not be read *because the program died* is filed as
+    :attr:`~chemrefine.state.FailureKind.NOT_TERMINATED` rather than ``UNPARSEABLE``: both
+    describe an unusable output, but only one of them points at the job. A ledger full of
+    "unparseable" sends a reader to the parser for what is a cluster or input problem.
     """
     _inp, out, sid = triple
     if not out.is_file():
         return [], Failure(sid, FailureKind.MISSING_OUTPUT, None)
     try:
         parsed = list(engine.parse(StepInputs(files=(triple,)), ctx).structures)
+    except OutputTerminationError as e:
+        return [], Failure(sid, FailureKind.NOT_TERMINATED, None, detail=str(e))
     except OutputParseError as e:
         return [], Failure(sid, FailureKind.UNPARSEABLE, None, detail=str(e))
     bad = [s for s in parsed if not succeeded(s)]

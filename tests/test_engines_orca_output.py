@@ -20,7 +20,7 @@ from chemrefine.engines.orca.output.ensembles import (
     parse_solvator,
 )
 from chemrefine.engines.orca.output.forces import parse_forces_from_text as parse_forces
-from chemrefine.errors import OutputParseError
+from chemrefine.errors import OutputParseError, OutputTerminationError
 
 _WATER = [("O", 0.0, 0.0, 0.0), ("H", 0.0, 0.0, 1.0), ("H", 0.0, 1.0, 0.0)]
 
@@ -411,6 +411,71 @@ def test_parse_forces_handles_synthetic_block():
     assert forces.shape == (2, 3)
     # F = -dE/dx, so first atom's fx should be -0.001
     assert abs(forces[0][0] - (-0.001)) < 1e-9
+
+
+# ---------------------------------------------------------------------------
+# A run that died is reported as a run that died, not as an unreadable file
+# ---------------------------------------------------------------------------
+
+# A real ORCA 6.1.1 abort, kept outside `engines/` because the contract cases there are
+# outputs that *parse* into a golden record; this one is the opposite.
+ERROR_TERMINATION_FIXTURE = DATA / "orca_failures" / "startup" / "step2_5-54.out"
+
+
+def test_an_error_terminated_run_raises_a_termination_error():
+    """Both describe an unusable output; only one of them points at the job.
+
+    A section can be missing because the parser cannot read it or because the program
+    never got far enough to write it, and a ledger full of "unparseable" sends a reader to
+    the parser for what is a cluster or input problem.
+    """
+    with pytest.raises(OutputTerminationError) as excinfo:
+        parse_dft(ERROR_TERMINATION_FIXTURE)
+
+    message = str(excinfo.value)
+    assert "error termination in Startup" in message  # ORCA's own verdict
+    assert "no FINAL SINGLE POINT ENERGY" in message  # and what it cost us
+
+
+def test_an_error_terminated_run_quotes_the_stderr_that_says_why():
+    """ORCA names the module it died in; the cause is on stderr, in the job's `.err`."""
+    with pytest.raises(OutputTerminationError, match=r"orca_startup: not found"):
+        parse_dft(ERROR_TERMINATION_FIXTURE)
+
+
+def test_a_termination_error_is_still_a_parse_error(tmp_path: Path):
+    """Callers that only care that the output was unusable keep working unchanged."""
+    assert issubclass(OutputTerminationError, OutputParseError)
+
+
+def test_a_normally_terminated_run_with_no_energy_stays_unparseable(tmp_path: Path):
+    """The distinction has to cut both ways, or it is just a rename."""
+    out = tmp_path / "step1_0.out"
+    out.write_text(
+        "CARTESIAN COORDINATES (ANGSTROEM)\n---\n  H 0.0 0.0 0.0\n---\n"
+        "                  ****ORCA TERMINATED NORMALLY****\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(OutputParseError, match="no FINAL SINGLE POINT ENERGY") as excinfo:
+        parse_dft(out)
+    assert not isinstance(excinfo.value, OutputTerminationError)
+
+
+def test_a_missing_ensemble_sidecar_reports_the_dead_run(tmp_path: Path):
+    """The sidecar operations get the same rule: the job failing beats the file missing."""
+    out = tmp_path / "step1_0.out"
+    out.write_text("ORCA finished by error termination in GTOInt\n", encoding="utf-8")
+    with pytest.raises(OutputTerminationError, match="error termination in GTOInt"):
+        parse_output(out, "goat")
+
+
+def test_a_missing_ensemble_sidecar_after_a_clean_run_stays_unparseable(tmp_path: Path):
+    """A sidecar genuinely absent from a run that finished is still a parse failure."""
+    out = tmp_path / "step1_0.out"
+    out.write_text("****ORCA TERMINATED NORMALLY****\n", encoding="utf-8")
+    with pytest.raises(OutputParseError, match="expected ORCA ensemble file") as excinfo:
+        parse_output(out, "goat")
+    assert not isinstance(excinfo.value, OutputTerminationError)
 
 
 @pytest.mark.parametrize("exponent", ["1.0E-03", "1.0e-03", "1.0D-03", "1.0d-03"])

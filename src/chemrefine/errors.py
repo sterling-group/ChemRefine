@@ -16,7 +16,9 @@ Exit code     Meaning
 ``3``         :class:`EngineNotFoundError` — unknown engine
 ``4``         :class:`JobSubmissionError` — sbatch refused the job
 ``5``         :class:`JobFailureError` — job ran but indicated failure
-``6``         :class:`OutputParseError` — could not parse engine output
+``6``         :class:`OutputParseError` — could not parse engine output,
+              and :class:`OutputTerminationError` for the case where the
+              reason is that the program died
 ``7``         :class:`CacheError` — step cache corrupt / unwritable
 ``8``         :class:`ThrottleTimeoutError` — wait deadline expired
 ============  ============================================
@@ -59,6 +61,18 @@ class OutputParseError(ChemRefineError):
     """An engine output file could not be parsed."""
 
     exit_code = 6
+
+
+class OutputTerminationError(OutputParseError):
+    """An output could not be read because the program that wrote it did not finish.
+
+    A subclass rather than a separate code: it *is* an unreadable output, so the exit
+    status is the same. What it adds is the reason — the run died — which
+    :func:`chemrefine.lifecycle.failure_kind_for` turns into
+    :attr:`~chemrefine.state.FailureKind.NOT_TERMINATED` instead of ``UNPARSEABLE``. The
+    distinction is what a reader acts on: one says look at the parser, the other says look
+    at the job.
+    """
 
 
 class CacheError(ChemRefineError):
