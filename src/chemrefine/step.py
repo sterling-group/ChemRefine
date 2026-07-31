@@ -106,10 +106,38 @@ class StepMode(StrEnum):
         modes that promise not to run anything cannot do so by any route. ``CACHE_ONLY``
         is the one that says no: it belongs to the steps a scoped action is *not*
         targeting, and both ``rebuild-cache`` and ``rerun-errors`` are documented to leave
-        those alone. (``REBUILD`` never reaches here — the pipeline routes it to
-        :func:`rebuild_cache_step` instead — but it answers honestly for the same reason.)
+        those alone. (``REBUILD`` never reaches here — see :meth:`runs_through_run_step` —
+        but it answers honestly for the same reason.)
         """
         return self not in (StepMode.CACHE_ONLY, StepMode.REBUILD)
+
+    def runs_through_run_step(self) -> bool:
+        """Whether :func:`chemrefine.pipeline.run` drives this mode through :func:`run_step`.
+
+        ``REBUILD`` is the one that does not: it re-parses outputs already on disk, which is
+        :func:`rebuild_cache_step`, a different function with a different precondition (a
+        manifest whose fingerprint it can check) rather than a branch inside the recovery
+        chain.
+
+        A predicate on the enum rather than a member test in the pipeline, for the same
+        reason :meth:`may_submit` is one: three separate questions are asked about
+        :class:`StepMode` — may it submit, does it go through ``run_step``, can it halt —
+        and each answered in a different module means adding a fourth mode is a search
+        rather than a compiler error.
+        """
+        return self is not StepMode.REBUILD
+
+    def can_halt(self) -> bool:
+        """Whether an ``on_failure: stop`` step in this mode may stop the run.
+
+        ``CACHE_ONLY`` may not, and that is load-bearing rather than an optimisation: it is
+        the mode every *non-target* step runs in under a scoped action, so
+        ``rerun-errors N`` has to be able to reach step N past an earlier step's pending
+        failures. Every other mode halts — including ``REBUILD``, since re-parsing from disk
+        cannot make a failed structure succeed, and continuing would run the next step
+        against the partial survivor set the user asked to stop on.
+        """
+        return self is not StepMode.CACHE_ONLY
 
 
 @dataclass(frozen=True)
@@ -469,18 +497,14 @@ def halt_if_pending(config: Config, step_cfg: StepConfig, mode: StepMode) -> Non
     """Halt the run when an ``on_failure: stop`` step still has failed jobs.
 
     Called **once** from the pipeline after a step executes — including after a
-    ``rebuild_cache_step``, since re-parsing from disk cannot make a failed structure
-    succeed and continuing would run the next step against the partial survivor set the
-    user asked to stop on — so the step's successes are already cached. Only
-    ``stop`` turns its ledgered failures into a hard stop; ``skip`` / ``best``
-    keep their ledger for visibility but never halt. A ``CACHE_ONLY`` step does not
-    halt either: that is the mode every *non-target* step runs in under a scoped
-    action, and ``rerun-errors N`` must be able to reach step N past an earlier
-    step's pending failures.
+    ``rebuild_cache_step`` — so the step's successes are already cached. Only ``stop``
+    turns its ledgered failures into a hard stop; ``skip`` / ``best`` keep their ledger for
+    visibility but never halt. Which *modes* may halt is :meth:`StepMode.can_halt`, which
+    is where the ``CACHE_ONLY`` exemption and its reason live.
     """
     if step_cfg.on_failure != "stop":
         return
-    if mode is StepMode.CACHE_ONLY:
+    if not mode.can_halt():
         return
     if cache.load_failure_records(step_dir_for(config, step_cfg)):
         raise ChemRefineError(

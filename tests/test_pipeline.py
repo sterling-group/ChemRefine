@@ -461,17 +461,8 @@ def test_steps_csv_defaults_to_electronic_without_a_sample(tmp_path: Path):
     assert set(df["Energy type"]) == {"electronic"}
 
 
-def test_rebuild_does_not_require_the_backend_it_will_never_launch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`rebuild-cache` re-parses outputs on disk; it must not demand the compute backend.
-
-    `preflight_backends` fails fast so a missing MLIP/PySCF env is reported before any job
-    submits. A REBUILD step submits nothing at all, so applying the check to it turned a
-    parse-only operation into one that needed the whole stack installed — precisely where you
-    would want to rebuild: a login node, or any machine holding the output tree but not the
-    backend that produced it.
-    """
+def _preflighted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plan: RunPlan) -> list[list[str]]:
+    """Run a two-step pipeline under ``plan`` and return what `preflight_backends` was handed."""
     calls: list[list[str]] = []
     monkeypatch.setattr(
         pipeline, "preflight_backends", lambda steps: calls.append([s.engine for s in steps])
@@ -484,9 +475,43 @@ def test_rebuild_does_not_require_the_backend_it_will_never_launch(
             StepConfig(step=2, engine="fake", operation="opt_sp"),
         ],
     )
-
     # It fails later for want of a seed; all that matters is what preflight was handed.
     with pytest.raises(ChemRefineError):
-        pipeline.run(cfg, RunPlan(default=StepMode.CACHE_ONLY, overrides={1: StepMode.REBUILD}))
+        pipeline.run(cfg, plan)
+    return calls
 
-    assert calls == [["fake"]], "the REBUILD step must be excluded from the backend preflight"
+
+def test_rebuild_cache_requires_no_backend_from_any_of_its_steps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`rebuild-cache` re-parses outputs on disk; no step of it may demand the backend.
+
+    `preflight_backends` fails fast so a missing MLIP/PySCF env is reported before any job
+    submits. `rebuild-cache N` puts N in REBUILD and every *other* step in CACHE_ONLY, and
+    neither can submit — so the check has to be keyed on `may_submit`, not on the one named
+    step. Exempting only the target left the wall standing on all the others, which is the
+    whole command: a two-step MLIP config still could not be rebuilt on a login node, or on
+    any machine holding the output tree but not the stack that produced it.
+    """
+    calls = _preflighted(
+        tmp_path,
+        monkeypatch,
+        RunPlan(default=StepMode.CACHE_ONLY, overrides={1: StepMode.REBUILD}),
+    )
+    assert calls == [[]], "no step of a rebuild-cache run may be asked for its backend"
+
+
+def test_a_step_that_can_submit_is_still_preflighted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exemption above is scoped to modes that cannot submit, not a blanket removal.
+
+    `rerun-errors N` runs N in RESUME — it resubmits — so N's backend must still be proven
+    available before anything goes out, while the cache-only steps around it are exempt.
+    """
+    calls = _preflighted(
+        tmp_path,
+        monkeypatch,
+        RunPlan(default=StepMode.CACHE_ONLY, overrides={2: StepMode.RESUME}),
+    )
+    assert calls == [["fake"]], "the step that will submit must still be checked"

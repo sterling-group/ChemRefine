@@ -33,9 +33,10 @@ from chemrefine.state import PipelineState, Structure
 # Importing :mod:`chemrefine.step` pulls in :mod:`chemrefine.engines.api`,
 # which runs :mod:`chemrefine.engines`'s ``__init__`` and self-registers every
 # bundled engine. No explicit ``import chemrefine.engines`` needed.
+# No ``StepMode`` import: with the three questions about it answered by the enum's own
+# predicates, this module composes modes without naming a single member.
 from chemrefine.step import (
     RunPlan,
-    StepMode,
     StepOutcome,
     halt_if_pending,
     rebuild_cache_step,
@@ -179,14 +180,19 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
     # Fail fast: every step's backend env must be resolvable before ANY job submits,
     # and `dispatch: slurm` must actually have sbatch available.
     #
-    # A `REBUILD` step is exempt because it *cannot* submit — it re-parses outputs already
-    # on disk. Checking it anyway made `chemrefine rebuild-cache` refuse to run wherever the
-    # backend was not installed, which is exactly where you would want to rebuild: a login
-    # node, or any machine holding the output tree but not the MLIP/PySCF stack that produced
-    # it. A guard for something that will not happen is just a wall.
-    preflight_backends(
-        [cfg for cfg in config.steps if plan.for_step(cfg.step) is not StepMode.REBUILD]
-    )
+    # The steps checked are the ones that *can* submit, which is `StepMode.may_submit` and
+    # nothing else. A guard for something that will not happen is just a wall: it made
+    # `chemrefine rebuild-cache` refuse to run wherever the backend was not installed, which
+    # is exactly where you would want to rebuild — a login node, or any machine holding the
+    # output tree but not the MLIP/PySCF stack that produced it.
+    #
+    # Asking `may_submit` rather than excluding `REBUILD` by name is what makes that hold for
+    # the whole command. `rebuild-cache N` puts N in `REBUILD` and every *other* step in
+    # `CACHE_ONLY`, which equally cannot submit — so excluding only the named step left the
+    # wall standing on all the others, and a two-step MLIP config still could not be rebuilt
+    # off-cluster. Nothing is weakened by the wider exemption: a step that cannot submit
+    # reaches `ChemRefineError` from `run_step` if its cache is unusable, never the engine.
+    preflight_backends([cfg for cfg in config.steps if plan.for_step(cfg.step).may_submit()])
     slurm.dispatch_locally(config.dispatch)
     state = bootstrap(config)
     logger.info("bootstrapped pipeline with %d seed structure(s)", len(state.structures))
@@ -200,10 +206,11 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
             step_cfg.engine,
         )
         mode = plan.for_step(step_cfg.step)
-        if mode is StepMode.REBUILD:
-            outcome = rebuild_cache_step(config, step_cfg, state)
-        else:
-            outcome = run_step(config, step_cfg, state, mode=mode)
+        outcome = (
+            run_step(config, step_cfg, state, mode=mode)
+            if mode.runs_through_run_step()
+            else rebuild_cache_step(config, step_cfg, state)
+        )
         outcomes.append(outcome)
         # Summarise before halting, so a run that stops still reports the work it
         # actually completed — otherwise the halted step's cached successes are
@@ -212,9 +219,7 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
         state = outcome.state
         # Single halt point, reached by every mode: an on_failure=stop step with
         # pending failures stops the run here, after its successes are cached and
-        # summarised. `rebuild` is included on purpose — re-parsing from disk does
-        # not make a failed structure succeed, and continuing would run the next
-        # step against a partial survivor set the user asked to stop on.
+        # summarised. Which modes may halt is `StepMode.can_halt`.
         halt_if_pending(config, step_cfg, mode)
         if not state:
             logger.warning(
