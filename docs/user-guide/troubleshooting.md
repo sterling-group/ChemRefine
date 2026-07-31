@@ -16,6 +16,7 @@ wrapper script or a SLURM chain can branch on it without parsing log text.
 | `6` | Output unparseable | The calculation produced a file ChemRefine could not read — usually truncated by a time limit or a node failure | Inspect the `.out`; re-run the affected structures with `chemrefine rerun-errors N` |
 | `7` | Cache corrupt or unwritable | An interrupted write, a full disk, or a cache written by a different ChemRefine version | `chemrefine rebuild-cache N` re-parses from the outputs already on disk without re-running anything |
 | `8` | Wait deadline expired | A job outlived `job_timeout_seconds` | Raise the limit, or check whether the job is stuck in the queue (`squeue -u $USER`). Only reachable when you set `job_timeout_seconds`; the default waits indefinitely |
+| `9` | Backend env could not be built | `chemrefine backends install <extra>` failed — no network on the node, a resolver conflict, a full disk, or an env tool that is a shell function rather than a binary on `PATH` | The message quotes the command that failed. Run it on a machine with internet (on HPC: a login node); the half-built env is removed, so a re-run starts clean |
 
 ## A step halted with pending failures
 

@@ -29,6 +29,7 @@ import importlib.metadata
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -47,7 +48,7 @@ from chemrefine.engines.api import (
     ProvisionableEngine,
     get_engine,
 )
-from chemrefine.errors import ConfigError
+from chemrefine.errors import BackendProvisionError, ConfigError
 
 EnvTool = Literal["conda", "uv", "venv"]
 
@@ -273,12 +274,37 @@ def build_backend_env(extra: str, *, tool: EnvTool | None = None) -> Path:
 
     Idempotent — returns immediately when the env's ``python`` already exists. Builds with
     ``tool`` (default: :func:`detect_env_tool`); every subprocess must succeed.
+
+    A failing subprocess becomes a :class:`~chemrefine.errors.BackendProvisionError` rather
+    than escaping as ``CalledProcessError`` / ``FileNotFoundError``. :mod:`chemrefine.errors`
+    promises every exception carries an ``exit_code`` the CLI maps to a deterministic
+    status, and ``cli.backends_install`` catches only
+    :class:`~chemrefine.errors.ChemRefineError` — so a bare one left that contract and met
+    the user as a traceback. This is the likeliest failure the command has: it is documented
+    as "run once on a login node with internet", so running it without one is the first
+    mistake anybody makes. ``FileNotFoundError`` is the second: :func:`detect_env_tool`
+    reports ``conda`` from ``$CONDA_PREFIX``, but the build shells out to a ``conda``
+    *binary*, which on many clusters is only a shell function.
+
+    A half-built env is removed on the way out, because leaving it is worse than not
+    building it: the idempotence check above is ``<env>/bin/python``, so an env whose
+    *create* succeeded and whose *install* failed would be served to every later run as
+    though it were provisioned, and the step would fail on the import instead.
     """
     python = backend_env_python(extra)
     if python.is_file():
         return python
-    backend_env_path(extra).parent.mkdir(parents=True, exist_ok=True)
-    for argv in _build_commands(tool or detect_env_tool(), backend_env_path(extra), extra):
-        # this install's own metadata; no shell, no user-supplied string.
-        subprocess.run(argv, check=True)  # noqa: S603
+    env_path = backend_env_path(extra)
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    for argv in _build_commands(tool or detect_env_tool(), env_path, extra):
+        try:
+            # this install's own metadata; no shell, no user-supplied string.
+            subprocess.run(argv, check=True)  # noqa: S603
+        except (OSError, subprocess.CalledProcessError) as e:
+            shutil.rmtree(env_path, ignore_errors=True)
+            raise BackendProvisionError(
+                f"could not build the managed env for {extra!r}: `{shlex.join(argv)}` "
+                f"failed ({e}). Re-run `chemrefine backends install {extra}` once the "
+                f"cause is fixed, or install `chemrefine[{extra}]` into this environment."
+            ) from e
     return python

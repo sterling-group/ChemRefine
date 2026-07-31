@@ -21,6 +21,8 @@ Exit code     Meaning
               reason is that the program died
 ``7``         :class:`CacheError` — step cache corrupt / unwritable
 ``8``         :class:`ThrottleTimeoutError` — wait deadline expired
+``9``         :class:`BackendProvisionError` — a managed backend env
+              could not be built
 ============  ============================================
 """
 
@@ -85,3 +87,16 @@ class ThrottleTimeoutError(ChemRefineError):
     """A job did not finish within the configured wait deadline."""
 
     exit_code = 8
+
+
+class BackendProvisionError(ChemRefineError):
+    """Building a managed backend environment failed.
+
+    Its own code rather than :class:`ConfigError`'s, because nothing is wrong with the
+    config: the YAML named a backend this machine could not *build* — no network on the
+    node, a resolver conflict, a full disk, or an env tool that is a shell function rather
+    than a binary on ``PATH``. Those are all fixed by acting on the machine, not the file,
+    and a script wrapping ``chemrefine backends install`` needs to tell the two apart.
+    """
+
+    exit_code = 9

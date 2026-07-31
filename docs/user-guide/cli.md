@@ -84,4 +84,4 @@ subcommands above:
 Each failure mode maps to a deterministic exit code (see the
 [Errors API](../api/errors.md)): `2` config invalid, `3` unknown engine,
 `4` job submission refused, `5` job failed, `6` output unparseable, `7` cache
-corrupt, `8` wait deadline expired, `1` generic.
+corrupt, `8` wait deadline expired, `9` backend env could not be built, `1` generic.

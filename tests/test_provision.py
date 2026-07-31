@@ -7,6 +7,7 @@ so these tests also pin the end-to-end wiring: managed env → server command / 
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -17,7 +18,7 @@ from chemrefine.config import StepConfig
 from chemrefine.engines import _provision as provision
 from chemrefine.engines import preflight_backends
 from chemrefine.engines.api import BackendRequirement, get_engine
-from chemrefine.errors import ConfigError
+from chemrefine.errors import BackendProvisionError, ConfigError
 from chemrefine.state import PipelineState, StepContext, Structure
 
 _REQ = BackendRequirement(extra="mlip-mace", import_name="mace")
@@ -252,6 +253,54 @@ def test_build_backend_env_explicit_tool(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(provision.subprocess, "run", lambda argv, **_k: calls.append(argv))
     provision.build_backend_env("pyscf", tool="uv")
     assert calls[0][0] == "uv"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param(subprocess.CalledProcessError(1, ["pip"]), id="tool-exits-nonzero"),
+        pytest.param(FileNotFoundError(2, "No such file"), id="tool-not-on-path"),
+    ],
+)
+def test_a_failed_build_carries_an_exit_code(monkeypatch, tmp_path: Path, failure: Exception):
+    """Provisioning failures stay inside the exit-code contract the CLI depends on.
+
+    `cli.backends_install` catches `ChemRefineError` and nothing else, so a bare
+    `CalledProcessError` (no network, resolver conflict) or `FileNotFoundError` (conda is a
+    shell function, not a binary) would reach the user as a traceback.
+    """
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    monkeypatch.setattr(provision, "_direct_url", lambda: None)
+
+    def _boom(argv, **_k):
+        raise failure
+
+    monkeypatch.setattr(provision.subprocess, "run", _boom)
+    with pytest.raises(BackendProvisionError, match="mlip-mace") as excinfo:
+        provision.build_backend_env("mlip-mace", tool="venv")
+    assert excinfo.value.exit_code == 9
+
+
+def test_a_half_built_env_is_not_left_behind(monkeypatch, tmp_path: Path):
+    """A create that succeeded and an install that failed must not look provisioned.
+
+    `build_backend_env` short-circuits on `<env>/bin/python`, so a leftover env would be
+    handed to every later run as though complete and fail on the backend import instead.
+    """
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    monkeypatch.setattr(provision, "_direct_url", lambda: None)
+    env_path = provision.backend_env_path("mlip-mace")
+
+    def _create_then_fail(argv, **_k):
+        if argv[1:3] != ["-m", "venv"]:  # only the create step succeeds
+            raise subprocess.CalledProcessError(1, argv)
+        (env_path / "bin").mkdir(parents=True)
+        (env_path / "bin" / "python").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(provision.subprocess, "run", _create_then_fail)
+    with pytest.raises(BackendProvisionError):
+        provision.build_backend_env("mlip-mace", tool="venv")
+    assert not env_path.exists()
 
 
 # ---------------------------------------------------------------------------
