@@ -378,7 +378,7 @@ def _select_survivors(
     resolved: list[Structure],
     round2: list[Structure],
     parent: Structure,
-    ctx: StepContext,
+    step_cfg: StepConfig,
     target: int | None,
 ) -> tuple[list[Structure], list[Failure]]:
     """Decide what a parent's round-2 children amount to. Pure — reads no disk, writes none.
@@ -390,8 +390,13 @@ def _select_survivors(
     one :class:`~chemrefine.state.Failure` carrying the best geometry it did obtain.
 
     "Best" is by the step's own ranking energy throughout — see :func:`_energy_attr`.
+
+    Takes the step config rather than the whole :class:`~chemrefine.state.StepContext`
+    because the ranking energy is all it needs, and a signature that asks for the
+    scheduler's directories, dispatch mode and core budget makes the purity claim above
+    something a reader has to verify rather than read.
     """
-    energy_attr = _energy_attr(ctx.step_cfg)
+    energy_attr = _energy_attr(step_cfg)
     if target is None:  # random: the children are the (fan-out) results
         if resolved:
             return resolved, []
@@ -446,16 +451,17 @@ def _already_at_target(structure: Structure, target: int | None) -> bool:
     )
 
 
-def _passthrough(structure: Structure, ctx: StepContext) -> Structure:
+def _passthrough(structure: Structure, step_dir: Path) -> Structure:
     """A structure already at its target, carried through at the canonical place.
 
     That is either an untouched round-1 result or one this step already resolved; the
-    attempt's sidecar is what tells the two apart.
+    attempt's sidecar is what tells the two apart — which is the one thing this needs a
+    directory for, so that is what it asks for.
     """
     return replace(
         structure,
         converged=True,
-        resolved_from=_read_resolution(ctx.step_dir / structure.id),
+        resolved_from=_read_resolution(step_dir / structure.id),
     )
 
 
@@ -501,7 +507,7 @@ def run_nms(
     failures: list[Failure] = list(round1_failures)
     for s in round1.structures:
         if _already_at_target(s, target):
-            survivors.append(_passthrough(s, ctx))
+            survivors.append(_passthrough(s, ctx.step_dir))
             continue
         children = _children_for(s, opts)
         if not children:
@@ -510,7 +516,7 @@ def run_nms(
         attempt = next_attempt_dir(ctx.step_dir / s.id)
         round2 = _run_round_two(engine, children, ctx, attempt)
         resolved = [c for c in round2 if _is_resolved(c, target)]
-        s_surv, s_fail = _select_survivors(resolved, round2, s, ctx, target)
+        s_surv, s_fail = _select_survivors(resolved, round2, s, ctx.step_cfg, target)
         # A promoted winner is the only case with a `resolved_from`: `random` fans out and
         # an unresolved parent has no survivor, and neither installs anything.
         winner_source = s_surv[0].resolved_from if s_surv else None
@@ -539,7 +545,7 @@ def rebuild_nms(
     failures: list[Failure] = list(round1_failures)
     for s in round1.structures:
         if _already_at_target(s, target):
-            survivors.append(_passthrough(s, ctx))
+            survivors.append(_passthrough(s, ctx.step_dir))
             continue
         children = _children_for(s, opts)
         attempt = latest_attempt_dir(ctx.step_dir / s.id)
@@ -549,7 +555,7 @@ def rebuild_nms(
             continue
         round2 = _parse_round_two(engine, children, ctx, attempt)
         resolved = [c for c in round2 if _is_resolved(c, target)]
-        s_surv, s_fail = _select_survivors(resolved, round2, s, ctx, target)
+        s_surv, s_fail = _select_survivors(resolved, round2, s, ctx.step_cfg, target)
         survivors.extend(s_surv)
         failures.extend(s_fail)
     return NmsResolution(tuple(survivors), tuple(failures))
