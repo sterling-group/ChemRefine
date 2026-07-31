@@ -499,6 +499,18 @@ def rebuild_cache_step(
     children already on disk (under each structure's latest ``attemptK/``), then
     rewrites the ``StepCache`` with the same fingerprint a normal run would produce.
     Backs ``chemrefine rebuild-cache``.
+
+    Refuses when the manifest's stamped fingerprint *disagrees* with the current one.
+    Re-parsing outputs produced for a different template, options or upstream survivors
+    would write a cache that is internally valid and describes a run that never happened,
+    and the next ``resume`` would serve it rather than compute what was asked for.
+
+    A manifest carrying **no** fingerprint is not evidence of a mismatch, and this
+    proceeds: an output tree predating that stamp is precisely what the command exists to
+    re-parse, and the caller has named the step. The distinction is between *proving* the
+    outputs are wrong and merely being unable to prove they are right. It is drawn
+    differently in :func:`_partial_step_outcome`, which treats an unproven match as a
+    reason to re-run — it can afford to, being an optimisation over doing the work anyway.
     """
     ctx = build_context(config, step_cfg, prev_state)
     parent_ids = tuple(s.id for s in prev_state.structures)
@@ -506,6 +518,14 @@ def rebuild_cache_step(
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
         raise CacheError(f"step {step_cfg.step}: cannot rebuild-cache — no manifest on disk")
+    stamped = cache.load_manifest_fingerprint(ctx.step_dir)
+    if stamped and stamped != _current_fingerprint(ctx, step_cfg, parent_ids, engine):
+        raise CacheError(
+            f"step {step_cfg.step}: the outputs on disk were produced for a different "
+            f"configuration — its template, options or upstream results have changed "
+            f"since — so re-parsing them would cache results this configuration never "
+            f"produced. Run `chemrefine rerun {step_cfg.step}` to recompute it."
+        )
     logger.info("step %d: rebuilding cache from existing outputs", step_cfg.step)
     successes, failures = lifecycle.parse_and_record(engine, manifest, ctx)
     if step_cfg.nms and isinstance(engine, NmsCapableEngine):

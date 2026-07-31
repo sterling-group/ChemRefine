@@ -828,6 +828,37 @@ def test_rebuild_cache_step_raises_without_manifest(tmp_path: Path):
         step.rebuild_cache_step(cfg, cfg.steps[0], PipelineState(structures=()))
 
 
+def test_rebuild_cache_step_refuses_outputs_from_another_configuration(tmp_path: Path):
+    """Re-parsing must not attribute results to a configuration that never produced them.
+
+    The cache it would write is internally valid, so the next `resume` serves it instead
+    of computing what was asked for — the edited step silently never runs.
+    """
+    from chemrefine import step
+
+    cfg_a = _config(tmp_path, charge=0)
+    seeds = _seed_state(["0"])
+    run_step(cfg_a, cfg_a.steps[0], seeds, mode=StepMode.EXECUTE)
+
+    cfg_b = _config(tmp_path, charge=-1)  # same outputs on disk, different configuration
+    with pytest.raises(CacheError, match="produced for a different configuration"):
+        step.rebuild_cache_step(cfg_b, cfg_b.steps[0], seeds)
+
+
+def test_rebuild_cache_step_accepts_outputs_from_this_configuration(tmp_path: Path):
+    """The ordinary case — re-parsing after a parser change — still works."""
+    from chemrefine import step
+
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1"])
+    run_step(cfg, cfg.steps[0], seeds, mode=StepMode.EXECUTE)
+    cache.invalidate(step_dir_for(cfg, cfg.steps[0]))
+
+    outcome = step.rebuild_cache_step(cfg, cfg.steps[0], seeds)
+
+    assert [s.id for s in outcome.state.structures] == ["0", "1"]
+
+
 def test_resubmit_failed_raises_without_manifest(tmp_path: Path):
     from chemrefine import step
     from chemrefine.engines.api import get_engine
