@@ -175,7 +175,15 @@ files = ["src/chemrefine", "tests"]
 # `$PLACEHOLDER` tokens and are rendered before anything executes them. Excluded for
 # the same reason ruff excludes them — and because two cases naming their template
 # `step1.py` is the normal convention, not a module-name collision to resolve.
-exclude = ["tests/data/e2e/cases/.*/templates/.*\\.py$"]
+#
+# This list must cover the same files as `[tool.ruff].extend-exclude`, and it is a regex
+# where ruff's is a glob. `files` above means a bare `mypy` (what CI runs) never reaches
+# `examples/`, but `mypy .` did, and failed on a template's bare `$PLACEHOLDER` — a stop
+# that says "invalid syntax" about a file that is not Python and never claimed to be.
+exclude = [
+    "tests/data/e2e/cases/.*/templates/.*\\.py$",
+    "examples/.*/templates/.*\\.py$",
+]
 plugins = ["pydantic.mypy"]
 strict = true
 # The scientific stack publishes no stubs, so every call into it reads as an "untyped
