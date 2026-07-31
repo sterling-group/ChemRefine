@@ -132,7 +132,7 @@ def _unreadable(what: str, text: str, src: str) -> OutputParseError:
     A section can be absent because the parser cannot read it, or because the program
     never got far enough to write it. Those send a reader to different places, so when the
     output shows an abnormal termination this reports the run rather than the section, and
-    :func:`chemrefine.lifecycle.failure_kind_for` files it as ``NOT_TERMINATED``.
+    :func:`chemrefine.lifecycle._parse_job` files it as ``NOT_TERMINATED_NORMALLY``.
 
     ORCA's abort banner names the module it died in but not the cause, which it writes to
     stderr — so the job's ``.err``, which shares the output's stem, is quoted alongside it.

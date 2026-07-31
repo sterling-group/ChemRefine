@@ -68,10 +68,10 @@ class OutputTerminationError(OutputParseError):
 
     A subclass rather than a separate code: it *is* an unreadable output, so the exit
     status is the same. What it adds is the reason — the run died — which
-    :func:`chemrefine.lifecycle.failure_kind_for` turns into
-    :attr:`~chemrefine.state.FailureKind.NOT_TERMINATED` instead of ``UNPARSEABLE``. The
-    distinction is what a reader acts on: one says look at the parser, the other says look
-    at the job.
+    :func:`chemrefine.lifecycle._parse_job` files as
+    :attr:`~chemrefine.state.FailureKind.NOT_TERMINATED_NORMALLY` rather than
+    ``UNPARSEABLE``. The distinction is what a reader acts on: one says look at the
+    parser, the other says look at the job.
     """
 
 

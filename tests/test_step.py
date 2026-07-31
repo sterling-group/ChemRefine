@@ -277,7 +277,7 @@ def test_on_failure_skip_drops_failed_keeps_successes(tmp_path: Path):
         assert {s.id for s in outcome.state.structures} == {"0", "2"}
         step_dir = cfg.output_dir.resolve() / "step1"
         assert [(r.structure_id, r.kind) for r in cache.load_failure_records(step_dir)] == [
-            ("1", FailureKind.NOT_TERMINATED)
+            ("1", FailureKind.NOT_TERMINATED_NORMALLY)
         ]
     finally:
         eng.fail = {}

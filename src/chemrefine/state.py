@@ -65,7 +65,7 @@ class Structure:
     ``True`` means **success**, so the name says ``_normally``: plain ``terminated``
     read as "the job was killed" and inverted the meaning of the flag that decides
     whether a calculation counts. It matches ORCA's own banner
-    (``ORCA TERMINATED NORMALLY``) and :attr:`FailureKind.NOT_TERMINATED`'s wording.
+    (``ORCA TERMINATED NORMALLY``) and :attr:`FailureKind.NOT_TERMINATED_NORMALLY`'s wording.
 
     A structure is a *failure* only when a flag is explicitly ``False`` (see
     :func:`chemrefine.lifecycle.succeeded`)."""
@@ -245,8 +245,13 @@ class FailureKind(StrEnum):
     UNPARSEABLE = "unparseable"
     """An output exists but the engine could not read it (truncated, corrupt)."""
 
-    NOT_TERMINATED = "did not terminate normally"
-    """The program ran but did not exit cleanly."""
+    NOT_TERMINATED_NORMALLY = "did not terminate normally"
+    """The program ran but did not exit cleanly.
+
+    Named for the negation of :attr:`Structure.terminated_normally`, in full. Dropping the
+    adverb reads as "did not terminate" — a job still running, or one whose exit nobody
+    minded — which is the opposite of what it records. The field itself carries the word
+    for the same reason."""
 
     NOT_CONVERGED = "did not converge"
     """It finished, but the SCF or the geometry did not converge. The only kind

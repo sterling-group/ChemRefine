@@ -65,7 +65,7 @@ def test_failure_kind_branches():
     from chemrefine.lifecycle import failure_kind
     from chemrefine.state import FailureKind
 
-    assert failure_kind(_struct(terminated_normally=False)) is FailureKind.NOT_TERMINATED
+    assert failure_kind(_struct(terminated_normally=False)) is FailureKind.NOT_TERMINATED_NORMALLY
     assert failure_kind(_struct(converged=False)) is FailureKind.NOT_CONVERGED
     assert failure_kind(_struct()) is FailureKind.FAILED
 
@@ -109,7 +109,7 @@ def test_a_job_that_died_is_ledgered_as_not_terminated(tmp_path: Path):
     successes, failures = lifecycle.parse_with_failures(get_engine("orca"), inputs, ctx)
 
     assert successes == []
-    assert [f.kind for f in failures] == [FailureKind.NOT_TERMINATED]
+    assert [f.kind for f in failures] == [FailureKind.NOT_TERMINATED_NORMALLY]
     assert "error termination in Startup" in failures[0].reason
     assert "orca_startup: not found" in failures[0].reason
 

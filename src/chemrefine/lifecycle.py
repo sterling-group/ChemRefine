@@ -62,7 +62,7 @@ def failure_kind(s: Structure) -> FailureKind:
     otherwise :attr:`FailureKind.FAILED` (a flag the engine set with no name of its own here).
     """
     if s.terminated_normally is False:
-        return FailureKind.NOT_TERMINATED
+        return FailureKind.NOT_TERMINATED_NORMALLY
     if s.converged is False:
         return FailureKind.NOT_CONVERGED
     return FailureKind.FAILED
@@ -80,7 +80,7 @@ def _parse_job(
     :func:`retry_unconverged` routes on it.
 
     An output that could not be read *because the program died* is filed as
-    :attr:`~chemrefine.state.FailureKind.NOT_TERMINATED` rather than ``UNPARSEABLE``: both
+    :attr:`~chemrefine.state.FailureKind.NOT_TERMINATED_NORMALLY` rather than ``UNPARSEABLE``: both
     describe an unusable output, but only one of them points at the job. A ledger full of
     "unparseable" sends a reader to the parser for what is a cluster or input problem.
     """
@@ -90,7 +90,7 @@ def _parse_job(
     try:
         parsed = list(engine.parse(StepInputs(files=(triple,)), ctx).structures)
     except OutputTerminationError as e:
-        return [], Failure(sid, FailureKind.NOT_TERMINATED, None, detail=str(e))
+        return [], Failure(sid, FailureKind.NOT_TERMINATED_NORMALLY, None, detail=str(e))
     except OutputParseError as e:
         return [], Failure(sid, FailureKind.UNPARSEABLE, None, detail=str(e))
     bad = [s for s in parsed if not succeeded(s)]
