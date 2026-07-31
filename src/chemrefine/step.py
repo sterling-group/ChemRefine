@@ -93,10 +93,23 @@ class StepMode(StrEnum):
 
     CACHE_ONLY = "cache-only"
     """Honour a valid cache and leave pending failures alone — the mode every step
-    that isn't the target of a scoped action runs in."""
+    that isn't the target of a scoped action runs in. Submits nothing: see
+    :meth:`may_submit`."""
 
     REBUILD = "rebuild"
     """Re-parse the outputs already on disk and rewrite the cache. Never submits."""
+
+    def may_submit(self) -> bool:
+        """Whether a step in this mode is allowed to send work to the engine.
+
+        Asked once, at each point in :func:`run_step` that can reach a submission, so the
+        modes that promise not to run anything cannot do so by any route. ``CACHE_ONLY``
+        is the one that says no: it belongs to the steps a scoped action is *not*
+        targeting, and both ``rebuild-cache`` and ``rerun-errors`` are documented to leave
+        those alone. (``REBUILD`` never reaches here — the pipeline routes it to
+        :func:`rebuild_cache_step` instead — but it answers honestly for the same reason.)
+        """
+        return self not in (StepMode.CACHE_ONLY, StepMode.REBUILD)
 
 
 @dataclass(frozen=True)
@@ -173,9 +186,14 @@ def run_step(
     if step_cfg.nms and isinstance(engine, NmsCapableEngine):
         nms_engine = engine
 
+    # Every recovery route below either serves what is already on disk or sends work to
+    # the engine, and which of those a step is allowed to do is the whole of what the mode
+    # decides here. Derived once and passed down, so no route re-asks it in its own words.
+    may_submit = mode.may_submit()
+
     if mode is not StepMode.EXECUTE:
         cached = _cached_outcome(
-            ctx, step_cfg, parent_ids, engine, nms_engine=nms_engine, mode=mode
+            ctx, step_cfg, parent_ids, engine, nms_engine=nms_engine, may_submit=may_submit
         )
         if cached is not None:
             return cached
@@ -184,17 +202,26 @@ def run_step(
         # reuse the round-1 freq + already-resolved children and re-attempt only
         # the ledgered-unresolved parents — instead of re-running the whole step.
         if nms_engine is not None:
-            reused = _nms_reuse_outcome(ctx, step_cfg, parent_ids, nms_engine)
+            reused = _nms_reuse_outcome(
+                ctx, step_cfg, parent_ids, nms_engine, may_submit=may_submit
+            )
             if reused is not None:
                 return reused
         # No cache at all, but possibly a step this configuration already half-ran and
         # was interrupted before it could write one.
         partial = _partial_step_outcome(
-            ctx, step_cfg, parent_ids, engine, nms_engine=nms_engine, mode=mode
+            ctx, step_cfg, parent_ids, engine, nms_engine=nms_engine, may_submit=may_submit
         )
         if partial is not None:
             return partial
 
+    if not may_submit:
+        raise ChemRefineError(
+            f"step {step_cfg.step} has no cache this configuration can use, and "
+            f"`{mode.value}` does not submit work for a step it is not targeting. "
+            f"Run `chemrefine resume` to bring it up to date, or "
+            f"`chemrefine rerun {step_cfg.step}` to redo it."
+        )
     return _run_full_step(ctx, step_cfg, parent_ids, engine, nms_engine=nms_engine)
 
 
@@ -205,12 +232,13 @@ def _cached_outcome(
     engine: CalculationEngine,
     *,
     nms_engine: NmsCapableEngine | None,
-    mode: StepMode,
+    may_submit: bool,
 ) -> StepOutcome | None:
     """Outcome from a valid on-disk cache, or ``None`` if the cache is invalid.
 
-    Under ``RESUME`` a pending ``on_failure: stop`` ledger re-attempts only the
-    still-failed structures; otherwise it's a plain cache hit (refilter).
+    A pending ``on_failure: stop`` ledger re-attempts only the still-failed structures
+    when this step may submit; otherwise it is a plain cache hit (refilter), which is
+    what a step a scoped action is not targeting wants.
     """
     cached = cache.load_if_valid(
         step_cfg=step_cfg,
@@ -222,7 +250,7 @@ def _cached_outcome(
     if cached is None:
         return None
     failed = cache.load_failure_records(ctx.step_dir)
-    if failed and step_cfg.on_failure == "stop" and mode is StepMode.RESUME:
+    if failed and step_cfg.on_failure == "stop" and may_submit:
         results = (
             nms.reattempt_nms(nms_engine, ctx, step_cfg, cached, parent_ids)
             if nms_engine is not None
@@ -242,12 +270,19 @@ def _nms_reuse_outcome(
     step_cfg: StepConfig,
     parent_ids: tuple[str, ...],
     engine: NmsCapableEngine,
+    *,
+    may_submit: bool,
 ) -> StepOutcome | None:
     """Reuse a cached NMS round-1 when only the *search* params changed.
 
     Returns ``None`` (re-run the whole step) unless a cache exists whose reuse
     fingerprint matches; then it re-attempts the ledgered-unresolved parents, or
     re-stamps the cache when everything was already resolved.
+
+    Re-attempting runs round-2 jobs, so it needs ``may_submit``. This branch is reached
+    whenever the *reuse* fingerprint matches — the ordinary state after tuning a search
+    parameter, not an error condition — so it is the likeliest way for a step nobody
+    targeted to start computing.
     """
     try:
         cached = cache.load(ctx.step_dir)
@@ -261,6 +296,8 @@ def _nms_reuse_outcome(
     if cached is None or getattr(cached, "reuse_fingerprint", "") != fingerprint:
         return None
     if cache.load_failure_records(ctx.step_dir):
+        if not may_submit:
+            return None
         results = nms.reattempt_nms(engine, ctx, step_cfg, cached, parent_ids)
     else:
         logger.info(
@@ -305,7 +342,7 @@ def _partial_step_outcome(
     engine: CalculationEngine,
     *,
     nms_engine: NmsCapableEngine | None,
-    mode: StepMode,
+    may_submit: bool,
 ) -> StepOutcome | None:
     """Continue a step the driver died in the middle of, instead of redoing it.
 
@@ -327,14 +364,14 @@ def _partial_step_outcome(
 
     Returns ``None`` — meaning "run the whole step" — unless every condition holds:
 
-    * ``mode is RESUME``. ``EXECUTE`` (``chemrefine run``) means *start over*, and
-      ``CACHE_ONLY`` must not submit anything.
+    * The step may submit. Continuing means resubmitting whatever is still missing, so a
+      mode that promises to run nothing has no use for this route.
     * A manifest exists and its fingerprint matches the current one.
     * The step is not NMS. An interrupted NMS step needs its round-2 children re-resolved,
       not just its round-1 outputs re-parsed, so it falls back to the full re-run rather
       than being silently half-recovered.
     """
-    if mode is not StepMode.RESUME or nms_engine is not None:
+    if not may_submit or nms_engine is not None:
         return None
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:

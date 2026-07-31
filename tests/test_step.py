@@ -729,6 +729,68 @@ def test_halt_if_pending_no_pending_returns(tmp_path: Path):
     halt_if_pending(cfg, cfg.steps[0], StepMode.RESUME)  # no ledger → no raise
 
 
+# ---------------------------------------------------------------------------
+# CACHE_ONLY submits nothing, whatever it finds on disk
+# ---------------------------------------------------------------------------
+#
+# It is the mode every step runs in that a scoped action is *not* targeting, so both
+# `rebuild-cache` (documented "no submission") and `rerun-errors N` ("prior steps
+# cache-hit") depend on it never reaching the engine. There is more than one way out of
+# `run_step` that submits, so these assert the property rather than any one branch.
+
+
+class _SubmitSpy(FakeEngine):
+    """A fake engine that records every submission instead of trusting a log line."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.submissions = 0
+
+    def submit(self, inputs, ctx):
+        self.submissions += 1
+        return super().submit(inputs, ctx)
+
+
+def test_cache_only_refuses_a_step_with_no_valid_cache(tmp_path: Path):
+    """No cache to honour and no permission to make one — say so, do not run the step."""
+    cfg = _config(tmp_path)
+    engine = _SubmitSpy()
+
+    with pytest.raises(ChemRefineError, match="does not submit"):
+        run_step(cfg, cfg.steps[0], _seed_state(["0"]), engine=engine, mode=StepMode.CACHE_ONLY)
+
+    assert engine.submissions == 0
+
+
+def test_cache_only_serves_a_valid_cache(tmp_path: Path):
+    """The other half: a step it *can* honour still costs nothing."""
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0"])
+    run_step(cfg, cfg.steps[0], seeds, engine=FakeEngine(), mode=StepMode.EXECUTE)
+
+    engine = _SubmitSpy()
+    outcome = run_step(cfg, cfg.steps[0], seeds, engine=engine, mode=StepMode.CACHE_ONLY)
+
+    assert outcome.cache_hit is True
+    assert engine.submissions == 0
+
+
+def test_cache_only_leaves_the_outputs_it_was_not_asked_to_touch(tmp_path: Path):
+    """Refusing must also not archive: the outputs are what the caller came to read."""
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0"])
+    run_step(cfg, cfg.steps[0], seeds, engine=FakeEngine(), mode=StepMode.EXECUTE)
+    step_dir = step_dir_for(cfg, cfg.steps[0])
+    before = sorted(p.name for p in (step_dir / "0").iterdir())
+
+    cache.invalidate(step_dir)  # the cache is gone; the outputs are not
+    with pytest.raises(ChemRefineError):
+        run_step(cfg, cfg.steps[0], seeds, engine=_SubmitSpy(), mode=StepMode.CACHE_ONLY)
+
+    assert sorted(p.name for p in (step_dir / "0").iterdir()) == before
+    assert not list(step_dir.glob("*/attempt*"))
+
+
 def _branch_ctx(
     tmp_path: Path, *, options=None, nms: bool = False, engine: str = "fake"
 ) -> StepContext:
@@ -884,7 +946,9 @@ def test_nms_reuse_outcome_none_without_cache(tmp_path: Path, monkeypatch):
     _pin_nms(monkeypatch)
     ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
-    assert step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca")) is None
+    assert (
+        step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"), may_submit=True) is None
+    )
 
 
 def test_nms_reuse_outcome_none_on_corrupt_cache(tmp_path: Path, monkeypatch):
@@ -896,7 +960,9 @@ def test_nms_reuse_outcome_none_on_corrupt_cache(tmp_path: Path, monkeypatch):
     cache_path = cache._cache_path(ctx.step_dir)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_bytes(b"not json")
-    assert step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca")) is None
+    assert (
+        step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"), may_submit=True) is None
+    )
 
 
 def test_nms_reuse_outcome_restamps_when_all_resolved(tmp_path: Path, monkeypatch):
@@ -906,7 +972,7 @@ def test_nms_reuse_outcome_restamps_when_all_resolved(tmp_path: Path, monkeypatc
     _pin_nms(monkeypatch, "FP")
     ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
     _save_reuse_cache(ctx, "FP")  # matching reuse fingerprint, no failed ledger
-    out = step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"))
+    out = step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"), may_submit=True)
     assert out is not None and out.cache_hit is False
 
 
@@ -920,8 +986,30 @@ def test_nms_reuse_outcome_reattempts_when_ledger_present(tmp_path: Path, monkey
     cache.save_failure_records(
         ctx.step_dir, [FailureRecord(structure_id="0", kind=FailureKind.FAILED, reason="x")]
     )
-    out = step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"))
+    out = step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"), may_submit=True)
     assert out is not None and any(s.id == "re" for s in out.state.structures)
+
+
+def test_nms_reuse_outcome_declines_to_reattempt_when_the_step_may_not_submit(
+    tmp_path: Path, monkeypatch
+):
+    """Re-attempting the unresolved parents runs round-2 jobs, so it needs permission.
+
+    This branch fires whenever the *reuse* fingerprint matches — the ordinary state after
+    tuning a search parameter — so it is the likeliest way for a step nobody targeted to
+    start computing under `rebuild-cache` or `rerun-errors`.
+    """
+    from chemrefine import cache, step
+    from chemrefine.engines.api import get_engine
+
+    _pin_nms(monkeypatch, "FP")
+    ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
+    _save_reuse_cache(ctx, "FP")
+    cache.save_failure_records(
+        ctx.step_dir, [FailureRecord(structure_id="0", kind=FailureKind.FAILED, reason="x")]
+    )
+    out = step._nms_reuse_outcome(ctx, ctx.step_cfg, (), get_engine("orca"), may_submit=False)
+    assert out is None
 
 
 # ---------------------------------------------------------------------------

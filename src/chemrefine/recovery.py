@@ -92,9 +92,11 @@ def _action_resume(config: Config, _target: str | int | None) -> None:
 def _action_rerun(config: Config, target: str | int | None) -> None:
     """Redo one whole step from scratch (latest if ``target`` is None), then resume.
 
-    Invalidates the target step's cache so it re-executes end-to-end (both NMS
-    rounds; with current options) while prior steps cache-hit. To repair only
-    failed jobs without redoing successful ones, use ``resume`` (incremental).
+    Invalidates the target step's cache — results *and* manifest, so an NMS step really
+    re-displaces rather than reusing round 1 — and runs the pipeline in ``RESUME``. Prior
+    steps therefore behave as they would under ``resume``: served from cache when it is
+    valid, brought up to date when it is not. To repair only failed jobs without redoing
+    successful ones, use ``resume`` (incremental).
     """
     target_step = _resolve_target_or_last(config, target)
     invalidate_step(config, target_step)
