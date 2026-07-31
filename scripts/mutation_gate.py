@@ -112,6 +112,30 @@ MUTATIONS = (
         "`12345_0`, never the bare parent id — so its outputs are parsed while it writes",
     ),
     Mutation(
+        id="cache-only-may-submit",
+        path="src/chemrefine/step.py",
+        old="return self not in (StepMode.CACHE_ONLY, StepMode.REBUILD)",
+        new="return True",
+        breaks="`rebuild-cache` and `rerun-errors` submit work for steps they were not "
+        "pointed at, archiving the very outputs they were asked to read",
+    ),
+    Mutation(
+        id="rebuild-cache-provenance",
+        path="src/chemrefine/step.py",
+        old="if stamped and stamped != _current_fingerprint(ctx, step_cfg, parent_ids, engine):",
+        new="if False:",
+        breaks="`rebuild-cache` caches results under a configuration that never produced "
+        "them, and the next `resume` serves that instead of computing what was asked for",
+    ),
+    Mutation(
+        id="dead-job-vs-unreadable-file",
+        path="src/chemrefine/engines/orca/output/coordinator.py",
+        old="if status.parse_terminated_normally(text):\n        return OutputParseError",
+        new="if True:\n        return OutputParseError",
+        breaks="a job that died is ledgered as an unreadable file, sending a reader to the "
+        "parser for a cluster or input problem",
+    ),
+    Mutation(
         id="finite-energy-guard",
         path="src/chemrefine/engines/_script/output.py",
         old="if not np.isfinite(number):",
