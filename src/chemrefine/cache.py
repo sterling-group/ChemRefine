@@ -485,7 +485,9 @@ def _npz_bytes(arrays: dict[str, NDArray[Any]]) -> bytes:
     :func:`_atomic_write`, so a killed run never leaves a half-written sidecar.
     """
     buf = io.BytesIO()
-    np.savez(buf, **arrays)
+    # numpy types `savez`'s second parameter as the positional `allow_pickle` flag, so a
+    # `**arrays` splat reads as a bool being passed there. The call is the documented one.
+    np.savez(buf, **arrays)  # type: ignore[arg-type]
     return buf.getvalue()
 
 

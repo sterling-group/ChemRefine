@@ -60,7 +60,14 @@ import numpy as np
 from numpy.typing import NDArray
 
 from chemrefine.errors import EngineNotFoundError
-from chemrefine.state import JobBatch, RunBlock, StepContext, StepInputs, StepResults
+from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
+
+# Part of the contract this module publishes, not an implementation detail of it: an engine
+# returns one from `run_block`, so it reads the type from the same place it reads the
+# Protocol. The redundant alias is how a re-export is spelled explicitly, which
+# `no_implicit_reexport` requires — importing it for our own annotations would not say that
+# the three engines importing it from here are meant to.
+from chemrefine.state import RunBlock as RunBlock
 
 
 @runtime_checkable

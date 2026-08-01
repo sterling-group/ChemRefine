@@ -226,6 +226,13 @@ disable_error_code = [
 [[tool.mypy.overrides]]
 # Full strictness for the package itself.
 module = ["chemrefine.*"]
+# The four codes above are relaxed for *tests*, and `disable_error_code` has no per-module
+# form — set once, it applies everywhere, so leaving it at that silently spent the relaxation
+# on the package too. Every reason given for disabling them is a testing technique; none of
+# them describes `src/`. Re-enabled here, they cost seven suppressions across the package,
+# each naming the published stub it works around — and they are what makes an exhaustive
+# `match` exhaustive, since mypy reports a non-`Never` `assert_never` argument as `arg-type`.
+enable_error_code = ["attr-defined", "arg-type", "union-attr", "type-arg"]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 disallow_untyped_calls = true

@@ -235,5 +235,5 @@ class MlipCalculator:
 
         atoms.calc = self.calculator
         # ase accepts logfile=None (no log) at runtime; its annotation says IO|str.
-        LBFGS(atoms, logfile=None).run(fmax=fmax, steps=steps)
+        LBFGS(atoms, logfile=None).run(fmax=fmax, steps=steps)  # type: ignore[arg-type]
         return atoms

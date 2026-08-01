@@ -181,11 +181,17 @@ def smiles_to_xyz(
             logger.warning("invalid SMILES at row %d: %s", idx, raw)
             continue
         mol = Chem.AddHs(mol)
-        # rdkit populates AllChem dynamically; mypy can't see these attributes.
-        if AllChem.EmbedMolecule(mol, maxAttempts=max_attempts, randomSeed=random_seed) != 0:
+        # rdkit builds AllChem's surface at import, so its members exist at runtime but not
+        # in any stub — these two are real functions mypy cannot see.
+        if (
+            AllChem.EmbedMolecule(  # type: ignore[attr-defined]
+                mol, maxAttempts=max_attempts, randomSeed=random_seed
+            )
+            != 0
+        ):
             logger.warning("failed 3D embedding for SMILES: %s", raw)
             continue
-        AllChem.UFFOptimizeMolecule(mol)
+        AllChem.UFFOptimizeMolecule(mol)  # type: ignore[attr-defined]
 
         lines = _conformer_to_xyz_lines(mol, f"SMILES: {raw}")
         xyz_path = out / f"structure_{idx}.xyz"
