@@ -189,9 +189,25 @@ class RunPlan:
 
     overrides: Mapping[int, StepMode] = field(default_factory=dict)
 
+    stop_after: int | None = None
+    """Last step this plan covers; ``None`` runs to the end of the pipeline.
+
+    ``rebuild-cache N`` is about steps 1..N and nothing else: it re-parses outputs already on
+    disk and promises to submit nothing, so the steps after its target have no part in it.
+    They cannot be left ``CACHE_ONLY`` either — a step the run never reached has no cache, and
+    asking for one raises. Resuming them is not the alternative it is for ``rerun-errors``:
+    that would submit, which is the one thing this command says it will not do, and would put
+    the backend requirement back on a command whose purpose is to run where the backend is
+    not installed (see :func:`chemrefine.pipeline.run`).
+    """
+
     def for_step(self, step: int) -> StepMode:
         """The mode this step runs in."""
         return self.overrides.get(step, self.default)
+
+    def covers(self, step: int) -> bool:
+        """Whether the pipeline should go on to the step *after* ``step``."""
+        return self.stop_after is None or step < self.stop_after
 
 
 # ---------------------------------------------------------------------------

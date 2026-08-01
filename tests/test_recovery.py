@@ -589,6 +589,7 @@ def _recording_engine():
         # targets the final step, which is the one arrangement where "what happens after the
         # target" cannot be observed.
         (Action.RERUN_ERRORS, 1, []),
+        (Action.REBUILD_CACHE, 1, []),
     ],
     ids=[
         "run-reexecutes-everything",
@@ -599,6 +600,7 @@ def _recording_engine():
         "rerun-errors-with-nothing-pending-is-resume",
         "rebuild-cache-never-submits",
         "rerun-errors-on-a-non-last-step",
+        "rebuild-cache-on-a-non-last-step",
     ],
 )
 def test_recovery_matrix(tmp_path: Path, action, target, expected_submits):
@@ -699,6 +701,39 @@ def test_rerun_errors_archives_what_it_replaces_and_leaves_the_rest(tmp_path: Pa
     finally:
         eng.fail_ids, eng.submitted = set(), []
         ENGINES.pop("flaky", None)
+
+
+def test_rebuild_cache_stops_at_its_target(tmp_path: Path):
+    """``rebuild-cache N`` is about steps 1..N, so it must not reach past N.
+
+    Neither mode available to a later step is right: ``CACHE_ONLY`` raises for a cache a step
+    that never ran cannot have, and resuming would submit — the one thing this command
+    promises not to do, and what would put the backend requirement back on a command whose
+    purpose is to run where the backend is not installed.
+    """
+    from chemrefine.engines.api import ENGINES
+
+    eng = _recording_engine()
+    try:
+        cfg = _seeded_config(
+            tmp_path,
+            [
+                StepConfig(step=1, name="one", engine="recorder", operation="opt_sp"),
+                StepConfig(step=2, name="two", engine="recorder", operation="opt_sp"),
+            ],
+        )
+        execute(cfg, Action.RESUME)
+        eng.submitted.clear()
+        (cfg.output_dir / "step2_two" / "_cache" / "step.json").unlink()
+
+        assert execute(cfg, Action.REBUILD_CACHE, target=1) == 0
+        assert eng.submitted == [], "a rebuild submits nothing"
+        assert not (cfg.output_dir / "step2_two" / "_cache" / "step.json").exists(), (
+            "step 2 is past the target, so the run never reached it"
+        )
+    finally:
+        eng.submitted.clear()
+        ENGINES.pop("recorder", None)
 
 
 def test_recovery_matrix_covers_every_action():

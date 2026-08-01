@@ -227,5 +227,9 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
                 step_cfg.step,
             )
             break
+        # A scoped plan can end before the last step — see `RunPlan.stop_after`.
+        if not plan.covers(step_cfg.step):
+            logger.info("step %d is the last this action covers; stopping here", step_cfg.step)
+            break
     logger.info("pipeline finished after %d step(s)", len(outcomes))
     return outcomes

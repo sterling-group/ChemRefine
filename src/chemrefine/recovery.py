@@ -161,11 +161,20 @@ def _action_rebuild_cache(config: Config, target: str | int | None) -> None:
     re-parsed from its existing outputs (and re-resolved, for NMS) and its
     ``StepCache`` rewritten. Use after a parser/cache change to avoid re-running
     finished jobs.
+
+    The run ends at the target (``stop_after``): rebuilding step N says nothing about the
+    steps after it, and neither mode available to them is right — ``CACHE_ONLY`` raises for a
+    cache a step that never ran cannot have, and resuming would submit, which is the one
+    thing this command promises not to do.
     """
     target_step = _resolve_target_or_last(config, target)
     pipeline.run(
         config,
-        RunPlan(default=StepMode.CACHE_ONLY, overrides={target_step.step: StepMode.REBUILD}),
+        RunPlan(
+            default=StepMode.CACHE_ONLY,
+            overrides={target_step.step: StepMode.REBUILD},
+            stop_after=target_step.step,
+        ),
     )
 
 
