@@ -579,8 +579,6 @@ def _recording_engine():
         # follows because step 1's survivors are unchanged, so its fingerprint holds.
         (Action.RERUN, 1, [1]),
         (Action.RERUN, 2, [2]),
-        # rebuild-nms is a named alias of rerun for the NMS-tuning workflow.
-        (Action.REBUILD_NMS, 2, [2]),
         # rerun-errors N: nothing is pending, so it degrades to a plain resume.
         (Action.RERUN_ERRORS, 2, []),
         # rebuild-cache N: re-parses from disk. No submission, by definition.
@@ -596,7 +594,6 @@ def _recording_engine():
         "resume-hits-every-cache",
         "rerun-1-redoes-only-step-1",
         "rerun-2-redoes-only-step-2",
-        "rebuild-nms-is-rerun",
         "rerun-errors-with-nothing-pending-is-resume",
         "rebuild-cache-never-submits",
         "rerun-errors-on-a-non-last-step",
@@ -736,17 +733,139 @@ def test_rebuild_cache_stops_at_its_target(tmp_path: Path):
         ENGINES.pop("recorder", None)
 
 
+#: Actions the matrix above cannot express, and the test that covers each instead. The
+#: matrix runs one config for every row; `rebuild-nms` resolves its target by *what a step
+#: is*, so it needs a config with an NMS step in it and cannot share that one.
+_COVERED_ELSEWHERE = {Action.REBUILD_NMS: "test_rebuild_nms_*"}
+
+
 def test_recovery_matrix_covers_every_action():
-    """A new Action must be given a row above, not silently inherit someone else's."""
+    """A new Action must be given a row above, or named here with the test that covers it.
+
+    Either way it is covered deliberately rather than left to inherit another action's
+    routing by accident.
+    """
     covered = {
         Action.RUN,
         Action.RESUME,
         Action.RERUN,
-        Action.REBUILD_NMS,
         Action.RERUN_ERRORS,
         Action.REBUILD_CACHE,
     }
-    assert covered == set(Action)
+    assert covered | set(_COVERED_ELSEWHERE) == set(Action)
+    assert not covered & set(_COVERED_ELSEWHERE), "an action is covered in two places"
+
+
+# ---------------------------------------------------------------------------
+# rebuild-nms — the rebuild aimed at the NMS step
+# ---------------------------------------------------------------------------
+
+
+def _nms_config(tmp_path: Path, *, second_nms: bool = False) -> Config:
+    """A two-step config whose *first* step is the NMS one.
+
+    First on purpose: the last step is what every other action defaults to, so a command that
+    finds the NMS step by looking at it can only be told apart from one that takes the last
+    when the two are different steps.
+    """
+    steps = [
+        _nms_step(1.0),
+        StepConfig(
+            step=2,
+            name="after",
+            engine="fake-nms2",
+            operation="opt_sp",
+            nms=second_nms,
+            options={"target": "minimum", "displacement_value": 1.0} if second_nms else {},
+        ),
+    ]
+    return _seeded_config(tmp_path, steps)
+
+
+@pytest.mark.parametrize("target", [None, 1], ids=["found-by-nms-flag", "named-explicitly"])
+def test_rebuild_nms_rebuilds_the_nms_step_without_submitting(tmp_path: Path, target):
+    """The command's whole point: re-read the round-2 children, do not recompute round 1.
+
+    Round 1 is a frequency calculation — the expensive part of an NMS step, and already on
+    disk. Re-running it is what `rerun` is for; this re-parses it and re-derives the
+    resolution from the displaced children in their `attemptK/`.
+
+    Both ways of reaching the step behave the same, which is the point of naming one: the
+    v1 flag took a step number (`--rebuild_nms 2`) and still translates to this.
+    """
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        cfg = _nms_config(tmp_path)
+        eng.resolved = {"0", "1"}
+        execute(cfg, Action.RESUME)
+        document = (cfg.output_dir / "step1_s" / "_cache" / "step.json").resolve()
+        before = document.stat().st_mtime_ns
+        eng.submitted, eng.nms_seen = [], []
+
+        assert execute(cfg, Action.REBUILD_NMS, target=target) == 0
+
+        assert eng.submitted == [], "a rebuild submits nothing"
+        assert document.stat().st_mtime_ns != before, "the NMS step's cache was rewritten"
+        assert eng.nms_seen, "round 1 was re-parsed, which is where the frequencies come from"
+    finally:
+        eng.resolved, eng.submitted, eng.nms_seen = set(), [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_rebuild_nms_finds_the_nms_step_rather_than_the_last(tmp_path: Path):
+    """With no target it goes by `nms: true`, where every other action takes the last step."""
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        cfg = _nms_config(tmp_path)
+        eng.resolved = {"0", "1"}
+        execute(cfg, Action.RESUME)
+        step2_doc = (cfg.output_dir / "step2_after" / "_cache" / "step.json").resolve()
+        before = step2_doc.stat().st_mtime_ns
+
+        assert execute(cfg, Action.REBUILD_NMS) == 0
+
+        assert step2_doc.stat().st_mtime_ns == before, (
+            "step 2 is the last step but not the NMS one, so it was never touched"
+        )
+    finally:
+        eng.resolved, eng.submitted, eng.nms_seen = set(), [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_rebuild_nms_refuses_a_step_that_does_no_nms(tmp_path: Path):
+    """Naming a plain step is a request `rebuild-cache` answers, so say so."""
+    from chemrefine.engines.api import ENGINES
+
+    _register_fake_nms()  # registered so the config validates; the class itself is unused
+    try:
+        cfg = _nms_config(tmp_path)
+        with pytest.raises(ChemRefineError, match="rebuild-cache"):
+            execute(cfg, Action.REBUILD_NMS, target=2)
+    finally:
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_rebuild_nms_without_an_nms_step_says_so(tmp_path: Path):
+    cfg = _two_step_config(tmp_path)
+    with pytest.raises(ChemRefineError, match="no step sets `nms: true`"):
+        execute(cfg, Action.REBUILD_NMS)
+
+
+def test_rebuild_nms_with_two_nms_steps_asks_which(tmp_path: Path):
+    """ "The NMS step" names nothing when there are two, so it asks instead of guessing."""
+    from chemrefine.engines.api import ENGINES
+
+    _register_fake_nms()  # registered so the config validates; the class itself is unused
+    try:
+        cfg = _nms_config(tmp_path, second_nms=True)
+        with pytest.raises(ChemRefineError, match="more than one step"):
+            execute(cfg, Action.REBUILD_NMS)
+    finally:
+        ENGINES.pop("fake-nms2", None)
 
 
 def _coverage_cfg(tmp_path: Path, **step_over) -> Config:

@@ -14,10 +14,10 @@ This is the **only** module that calls :func:`sys.exit` or reads
   other step resumes, so one whose fingerprint no longer holds runs again.
 * ``chemrefine rebuild-cache CONFIG [STEP]`` — rebuild one step's cache from
   outputs already on disk (parse only, no submission); the run ends there.
-* ``chemrefine rebuild-nms CONFIG [STEP]`` — a named alias of ``rerun`` for the
-  NMS-tuning workflow. It targets STEP (the last step if none is given), not
-  "the NMS step", and discards the cache, so round 1 is recomputed. To tune only
-  the search parameters, ``resume`` reuses round 1 and is cheaper.
+* ``chemrefine rebuild-nms CONFIG [STEP]`` — the same rebuild aimed at the NMS
+  step: with no STEP it finds the one setting ``nms: true`` rather than taking
+  the last. Round 1 is re-parsed and its displaced children re-read from disk,
+  so re-resolving costs a read rather than a re-run of the frequencies.
 
 ``chemrefine backends {install,list,path}`` manages the per-backend environments
 (conflicting MLIP stacks live in one managed env each, resolved by name — see
@@ -277,10 +277,11 @@ def rebuild_nms(
     maxgpus: MaxGpusOpt = None,
     dry_run: DryRunOpt = False,
 ) -> None:
-    """Redo a step and re-displace it from scratch (default: latest) — a named alias of rerun.
+    """Re-resolve the NMS step from outputs already on disk; no submission.
 
-    Targets the step you name, not "the NMS step", and discards its cache, so round 1 is
-    recomputed. Tuning only the search parameters? `resume` reuses round 1 and is cheaper.
+    Defaults to the step setting `nms: true` rather than the last step. Round 1 is re-parsed
+    and its displaced children re-read from the `attemptK/` they ran in, so re-resolving
+    costs a read, not a re-run of the frequencies. The run ends at that step.
     """
     raise typer.Exit(
         _dispatch(

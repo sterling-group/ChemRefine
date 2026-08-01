@@ -156,28 +156,22 @@ def test_rerun_with_missing_target_errors(tmp_path: Path):
     assert result.exit_code != 0
 
 
-def test_rebuild_nms_is_rerun_under_another_name(tmp_path: Path):
-    """What ``rebuild-nms`` is, asserted on what it does.
+def test_rebuild_nms_on_a_config_with_no_nms_step_says_so(tmp_path: Path):
+    """The command needs a step to act on, and this config has none.
 
-    It carries no NMS-specific path and does not look for an NMS step: it redoes the step it
-    is given, the last one when it is given none. Asserting only its exit code let it pass on
-    a config with no NMS step at all — which is this one — and would go on passing if the
-    command became a no-op. Redoing a step archives the previous attempt, so that is the
-    evidence it ran.
+    Worth asserting at the CLI layer because the exit code is the whole contract here: the
+    error carries one (`ChemRefineError`), where an unhandled exception would reach the user
+    as a traceback. What the command *does* when there is an NMS step belongs with the other
+    routing tests, which have an NMS engine to drive.
     """
     config_path = _write_config(tmp_path)
     runner.invoke(app, ["run", str(config_path)])
-    last_step = tmp_path / "outputs" / "step2_refine"
-    assert not list(last_step.glob("*/attempt*")), "nothing archived by the first run"
 
     result = runner.invoke(app, ["rebuild-nms", str(config_path)])
 
-    assert result.exit_code == 0, result.output
-    assert list(last_step.glob("*/attempt1")), (
-        "the last step was redone — with no target, that is the step rebuild-nms takes"
-    )
-    assert not list((tmp_path / "outputs" / "step1_screen").glob("*/attempt*")), (
-        "and only that step; the earlier one resumed from its cache"
+    assert result.exit_code != 0
+    assert not list((tmp_path / "outputs").glob("*/*/attempt*")), (
+        "and it refused before touching anything — no step was redone"
     )
 
 

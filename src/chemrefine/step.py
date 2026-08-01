@@ -542,7 +542,8 @@ def rebuild_cache_step(
     ``on_failure`` policy and — for NMS steps — re-resolves from the displaced
     children already on disk (under each structure's latest ``attemptK/``), then
     rewrites the ``StepCache`` with the same fingerprint a normal run would produce.
-    Backs ``chemrefine rebuild-cache``.
+    Backs ``chemrefine rebuild-cache`` and ``chemrefine rebuild-nms``, which differ only in
+    which step they aim at.
 
     Refuses when the manifest's stamped fingerprint *disagrees* with the current one.
     Re-parsing outputs produced for a different template, options or upstream survivors
@@ -561,7 +562,12 @@ def rebuild_cache_step(
     key = cache.StepKey.of(step_cfg, prev_state.structures, ctx.template)
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
-        raise CacheError(f"step {step_cfg.step}: cannot rebuild-cache — no manifest on disk")
+        # Named for what is missing rather than for the command that asked: `rebuild-cache`
+        # and `rebuild-nms` both arrive here.
+        raise CacheError(
+            f"step {step_cfg.step}: nothing to rebuild from — no manifest on disk, so there "
+            f"is no record of which output belongs to which structure"
+        )
     stamped = cache.load_manifest_fingerprint(ctx.step_dir)
     if stamped and stamped != key.fingerprint:
         raise CacheError(

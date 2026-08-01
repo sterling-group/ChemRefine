@@ -818,7 +818,7 @@ def test_rebuild_cache_step_raises_without_manifest(tmp_path: Path):
     from chemrefine import step
 
     cfg = _branch_cfg(tmp_path)
-    with pytest.raises(CacheError, match="cannot rebuild-cache"):
+    with pytest.raises(CacheError, match="no manifest on disk"):
         step.rebuild_cache_step(cfg, cfg.steps[0], PipelineState(structures=()))
 
 

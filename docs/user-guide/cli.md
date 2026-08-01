@@ -24,7 +24,7 @@ chemrefine run input.yaml --dry-run          # validate + describe; submit nothi
 | `rerun-errors` | `CONFIG [TARGET]` | Re-attempt one step's pending failed jobs (latest if no target), then continue: earlier steps cache-hit and submit nothing, later ones resume. |
 | `rerun` | `CONFIG [TARGET]` | Redo one whole step from scratch (default: latest); every other step resumes, so one whose fingerprint no longer holds runs again. |
 | `rebuild-cache` | `CONFIG [TARGET]` | Rebuild one step's cache from outputs already on disk (parse only, no submission). The run ends at that step. |
-| `rebuild-nms` | `CONFIG [TARGET]` | A named alias of `rerun` for the NMS-tuning workflow. Targets TARGET (the last step if none), not "the NMS step", and discards its cache, so round 1 is recomputed — to tune only the search parameters, `resume` reuses it. |
+| `rebuild-nms` | `CONFIG [TARGET]` | Re-resolve the NMS step from outputs already on disk (parse only, no submission). With no TARGET it finds the step setting `nms: true` rather than the last one. Round 1 is re-parsed and its displaced children re-read from their `attemptK/`, so re-resolving costs a read rather than a re-run of the frequencies. The run ends at that step. |
 
 ## Backend environments (`chemrefine backends`)
 

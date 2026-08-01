@@ -19,10 +19,10 @@ Only a ``stop`` step leaves failures pending — and these actions recover them:
   whose fingerprint no longer holds re-executes too.
 * ``rebuild-cache [step]`` — rebuild one step's cache from outputs already on
   disk (parse only, no submission). The run ends at that step.
-* ``rebuild-nms [step]`` — a named alias of ``rerun`` for the NMS-tuning workflow. It
-  targets the step named (the last if none is), not "the NMS step", and discards its cache,
-  so round 1 is recomputed; tuning only the search parameters is what ``resume`` reuses
-  round 1 for.
+* ``rebuild-nms [step]`` — the same rebuild, aimed at the NMS step (the one setting
+  ``nms: true``, rather than the last step every other action defaults to). Round 1 is
+  re-parsed and its displaced children re-read from the ``attemptK/`` they ran in, so
+  re-resolving costs a read rather than a re-run of the frequencies.
 """
 
 from __future__ import annotations
@@ -159,28 +159,74 @@ def _action_rerun_errors(config: Config, target: str | int | None) -> None:
     )
 
 
+def _rebuild_plan(step_cfg: StepConfig) -> RunPlan:
+    """Re-parse ``step_cfg`` from the outputs on disk, submit nothing, and end there.
+
+    What both rebuild actions mean, held in one place because they differ only in which step
+    they aim at. Earlier steps cache-hit to supply the upstream state; the target is
+    re-parsed (and, for NMS, re-resolved from the round-2 outputs already under its
+    ``attemptK/``); the steps after it are not this command's business — ``CACHE_ONLY``
+    raises for a cache a step that never ran cannot have, and resuming would submit.
+    """
+    return RunPlan(
+        default=StepMode.CACHE_ONLY,
+        overrides={step_cfg.step: StepMode.REBUILD},
+        stop_after=step_cfg.step,
+    )
+
+
 def _action_rebuild_cache(config: Config, target: str | int | None) -> None:
     """Rebuild one step's cache from outputs already on disk (no submission).
 
-    Prior steps cache-hit to supply the upstream state; the target step is
-    re-parsed from its existing outputs (and re-resolved, for NMS) and its
-    ``StepCache`` rewritten. Use after a parser/cache change to avoid re-running
-    finished jobs.
-
-    The run ends at the target (``stop_after``): rebuilding step N says nothing about the
-    steps after it, and neither mode available to them is right — ``CACHE_ONLY`` raises for a
-    cache a step that never ran cannot have, and resuming would submit, which is the one
-    thing this command promises not to do.
+    The target step (the last, given none) is re-parsed from its existing outputs and its
+    ``StepCache`` rewritten. Use after a parser or cache change to avoid re-running finished
+    jobs. See :func:`_rebuild_plan` for what that does to the steps around it.
     """
-    target_step = _resolve_target_or_last(config, target)
-    pipeline.run(
-        config,
-        RunPlan(
-            default=StepMode.CACHE_ONLY,
-            overrides={target_step.step: StepMode.REBUILD},
-            stop_after=target_step.step,
-        ),
-    )
+    pipeline.run(config, _rebuild_plan(_resolve_target_or_last(config, target)))
+
+
+def _nms_target(config: Config, target: str | int | None) -> StepConfig:
+    """The NMS step ``rebuild-nms`` acts on: the one named, or the only one there is.
+
+    The single action that resolves a target by what a step *is* rather than where it sits,
+    because "the NMS step" is what a user has in mind when reaching for this command — and
+    the last step, which every other action defaults to, is rarely it. Two NMS steps make
+    the phrase ambiguous, so it asks rather than guessing at one of them.
+    """
+    if target is not None:
+        step_cfg = resolve_target(config, target)
+        if not step_cfg.nms:
+            raise ChemRefineError(
+                f"step {step_cfg.step} ({step_cfg.dir_name()}) is not a normal-mode-sampling "
+                f"step, so there is nothing for `rebuild-nms` to re-resolve; "
+                f"`chemrefine rebuild-cache {target}` rebuilds it from its outputs"
+            )
+        return step_cfg
+    nms_steps = [s for s in config.steps if s.nms]
+    if not nms_steps:
+        raise ChemRefineError(
+            "no step sets `nms: true`, so there is no NMS step to rebuild; "
+            f"available steps: {[s.dir_name() for s in config.steps]}"
+        )
+    if len(nms_steps) > 1:
+        raise ChemRefineError(
+            "more than one step sets `nms: true`, so `rebuild-nms` cannot tell which you "
+            f"mean; name one: {[s.dir_name() for s in nms_steps]}"
+        )
+    return nms_steps[0]
+
+
+def _action_rebuild_nms(config: Config, target: str | int | None) -> None:
+    """Re-resolve one NMS step from the outputs already on disk (no submission).
+
+    Round 1 is re-parsed and its displaced children are re-derived and read back from the
+    ``attemptK/`` they ran in, so tuning what counts as *resolved* costs a re-read rather
+    than a re-run. The frequencies are the expensive part of an NMS step and they are
+    already on disk; recomputing them is what ``rerun`` is for.
+
+    Aimed at the NMS step rather than the last one — see :func:`_nms_target`.
+    """
+    pipeline.run(config, _rebuild_plan(_nms_target(config, target)))
 
 
 _HANDLERS: dict[Action, Callable[[Config, str | int | None], None]] = {
@@ -189,9 +235,7 @@ _HANDLERS: dict[Action, Callable[[Config, str | int | None], None]] = {
     Action.RERUN_ERRORS: _action_rerun_errors,
     Action.REBUILD_CACHE: _action_rebuild_cache,
     Action.RERUN: _action_rerun,
-    # rebuild-nms re-runs the NMS step with the current NmsOptions (re-displace +
-    # re-optimise); it's a named alias of rerun for the NMS-tuning workflow.
-    Action.REBUILD_NMS: _action_rerun,
+    Action.REBUILD_NMS: _action_rebuild_nms,
 }
 
 

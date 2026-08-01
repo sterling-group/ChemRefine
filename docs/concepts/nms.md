@@ -91,8 +91,12 @@ round-1 frequencies and the already-resolved structures, re-attempting just the
 unresolved ones — instead of re-running the whole step. Changing the criterion
 (or the parents/template) forces a full re-run.
 
-`rebuild-nms` is a named alias of `rerun` for the NMS-tuning workflow;
-`rebuild-cache` re-resolves NMS from the round-2 outputs already on disk.
+`rebuild-nms` re-resolves the NMS step from the outputs already on disk and submits
+nothing — the same rebuild `rebuild-cache` performs, but aimed at the step setting
+`nms: true` instead of the last one. Reach for it when the round-2 children are already
+computed and only the *reading* of them should change; reach for `resume` when tuning a
+search parameter should re-attempt what stayed unresolved, and for `rerun` when round 1
+itself must be recomputed.
 
 See the [Normal-Mode Sampling API](../api/nms.md) for the coordinator and the two
 engine hooks documented in the [ORCA engine API](../api/engines_orca.md).
