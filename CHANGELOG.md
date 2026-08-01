@@ -71,6 +71,21 @@ for the full map.
 
 ### Changed
 
+- The scoped recovery actions now cover the steps around their target
+  deliberately rather than by accident:
+  - `rerun-errors N` continues the run after repairing step N. The steps after it
+    are exactly the ones the halt stopped from ever running, so holding them to
+    the cache they cannot have failed the command *after* it had done its work —
+    and told you to run `resume`, which is what you had just run.
+  - `rebuild-cache N` ends at the step it rebuilt. Rebuilding step N says nothing
+    about the steps after it, and neither available answer was right: serving them
+    from a cache they never wrote raises, and resuming them would submit.
+  - `rebuild-nms [N]` re-resolves an NMS step from the outputs already on disk and
+    submits nothing — the same rebuild `rebuild-cache` performs, aimed at the step
+    setting `nms: true` rather than the last one. It had become another spelling of
+    `rerun`, which discards the cache and recomputes round 1: the frequency
+    calculation is the expensive part of an NMS step, and it is already on disk.
+    `--rebuild_nms` from the v1 CLI maps here, and means again what it meant there.
 - v2 YAML schema: `engine:` + `operation:` replace `calculation_type`;
   `sample:` replaces `sample_type:`; `nms:` + `options:` replace
   `normal_mode_sampling*`; `executables:` replaces `orca_executable`;
@@ -101,6 +116,17 @@ for the full map.
 ### Fixed
 
 Hardening landed during the 2.0.0 stabilization:
+
+- A step's cache refuses an `arrays.npz` that a different save wrote. The document
+  and its coordinate sidecar are separate atomic writes, so a save interrupted
+  between them — a walltime kill, a node failure, Ctrl-C, and `resume` re-saves a
+  step whenever it repairs one — left a new sidecar beside the previous document.
+  Nothing about that pair is malformed and no check above it could see the
+  difference: the records parse, and the fingerprint still matches because it
+  covers the step's *inputs*, not what is on disk. Read back, each structure kept
+  its own energy and adopted another structure's geometry, which `parents_digest`
+  then carried into every step computed from it. The document now names the digest
+  of the arrays it was written with, and a mismatch is a rebuild.
 
 - A calculation that diverges to a non-finite energy is refused at the parse
   boundary and ledgered, instead of ranking as a real result. Nothing downstream
