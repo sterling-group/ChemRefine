@@ -163,7 +163,12 @@ def smiles_to_xyz(
     """
     import pandas as pd
     from rdkit import Chem
-    from rdkit.Chem import AllChem
+
+    # Imported from the modules that define them rather than from ``rdkit.Chem.AllChem``,
+    # which collects them with ``import *`` — a star import re-exports nothing, so reading
+    # them off ``AllChem`` means reaching for names its stubs do not carry.
+    from rdkit.Chem.rdDistGeom import EmbedMolecule
+    from rdkit.Chem.rdForceFieldHelpers import UFFOptimizeMolecule
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -181,17 +186,10 @@ def smiles_to_xyz(
             logger.warning("invalid SMILES at row %d: %s", idx, raw)
             continue
         mol = Chem.AddHs(mol)
-        # rdkit builds AllChem's surface at import, so its members exist at runtime but not
-        # in any stub — these two are real functions mypy cannot see.
-        if (
-            AllChem.EmbedMolecule(  # type: ignore[attr-defined]
-                mol, maxAttempts=max_attempts, randomSeed=random_seed
-            )
-            != 0
-        ):
+        if EmbedMolecule(mol, maxAttempts=max_attempts, randomSeed=random_seed) != 0:
             logger.warning("failed 3D embedding for SMILES: %s", raw)
             continue
-        AllChem.UFFOptimizeMolecule(mol)  # type: ignore[attr-defined]
+        UFFOptimizeMolecule(mol)
 
         lines = _conformer_to_xyz_lines(mol, f"SMILES: {raw}")
         xyz_path = out / f"structure_{idx}.xyz"

@@ -128,7 +128,14 @@ _ALIASES: Mapping[str, str] = {
     "ang": "angstrom",
 }
 
-T = TypeVar("T", float, int, ArrayLike)
+T = TypeVar("T", float, ArrayLike)
+"""What :func:`convert` preserves: a scalar in, a scalar out; an array-like in, an array out.
+
+``int`` is deliberately not a constraint. A whole number of Hartree converts to a fractional
+number of eV, so binding ``T`` to ``int`` would promise a return type the function cannot
+produce. An ``int`` argument still passes — it binds ``T`` to ``float`` — and the annotation
+then says what comes back.
+"""
 
 
 def _normalize(unit: str) -> str:
@@ -157,8 +164,7 @@ def convert(value: T, from_unit: str, to_unit: str) -> T:
     if factor is None:
         raise ValueError(f"unknown unit conversion: {from_unit!r} → {to_unit!r}")
     if isinstance(value, (int, float)):
-        # An int input converts to a float — the T=int constraint can't hold.
-        return float(value) * factor  # type: ignore[return-value]
+        return float(value) * factor
     return np.asarray(value, dtype=np.float64) * factor
 
 

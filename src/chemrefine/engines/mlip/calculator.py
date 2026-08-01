@@ -57,6 +57,7 @@ install::
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -234,6 +235,8 @@ class MlipCalculator:
         from ase.optimize import LBFGS
 
         atoms.calc = self.calculator
-        # ase accepts logfile=None (no log) at runtime; its annotation says IO|str.
-        LBFGS(atoms, logfile=None).run(fmax=fmax, steps=steps)  # type: ignore[arg-type]
+        # Named rather than passed as `None`: ase's own `IOContext.openfile` turns `None`
+        # into `open(os.devnull)`, so this is the same file by the shorter route — and it
+        # is the `str` the signature asks for.
+        LBFGS(atoms, logfile=os.devnull).run(fmax=fmax, steps=steps)
         return atoms

@@ -63,7 +63,7 @@ import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 import numpy as np
 from ase import Atoms
@@ -230,7 +230,23 @@ def _arrays_path(step_dir: Path) -> Path:
 _ARRAY_KEYS = ("positions", "forces_ev_per_a")
 
 
-def _split_arrays(records: list[dict[str, Any]]) -> dict[str, NDArray[Any]]:
+class _SidecarArrays(TypedDict):
+    """Every member ``arrays.npz`` carries, named once.
+
+    A shape rather than a ``dict[str, NDArray]`` because the members are not
+    interchangeable — two are ``int64`` indices into the other two, and one is a mask —
+    and because ``np.savez`` takes each as its own keyword beside ``allow_pickle``. Spelled
+    out, the payload can be handed to it whole.
+    """
+
+    positions: NDArray[np.float64]
+    position_offsets: NDArray[np.int64]
+    forces: NDArray[np.float64]
+    forces_offsets: NDArray[np.int64]
+    forces_present: NDArray[np.bool_]
+
+
+def _split_arrays(records: list[dict[str, Any]]) -> _SidecarArrays:
     """Move every record's coordinate arrays into one flat ``.npz`` payload.
 
     ``records`` is **mutated**: the two array keys are removed, leaving the metadata
@@ -472,7 +488,7 @@ def write_json(path: Path, data: Any, *, indent: int | None = 2) -> None:
     )
 
 
-def _npz_bytes(arrays: dict[str, NDArray[Any]]) -> bytes:
+def _npz_bytes(arrays: _SidecarArrays) -> bytes:
     """Serialize ``arrays`` to an uncompressed ``.npz`` in memory.
 
     Uncompressed on purpose. A ``.npz`` is an ordinary ZIP of ``.npy`` members, and a ``.npy``
@@ -485,9 +501,7 @@ def _npz_bytes(arrays: dict[str, NDArray[Any]]) -> bytes:
     :func:`_atomic_write`, so a killed run never leaves a half-written sidecar.
     """
     buf = io.BytesIO()
-    # numpy types `savez`'s second parameter as the positional `allow_pickle` flag, so a
-    # `**arrays` splat reads as a bool being passed there. The call is the documented one.
-    np.savez(buf, **arrays)  # type: ignore[arg-type]
+    np.savez(buf, **arrays)
     return buf.getvalue()
 
 

@@ -262,14 +262,18 @@ def test_smiles_to_xyz_skips_nan_and_whitespace_rows(tmp_path: Path):
 
 
 def test_smiles_to_xyz_logs_when_embed_fails(tmp_path: Path):
-    """A non-zero return from ``AllChem.EmbedMolecule`` triggers a warning + skip."""
-    from rdkit.Chem import AllChem
+    """A non-zero return from ``EmbedMolecule`` triggers a warning + skip.
+
+    Patched on ``rdkit.Chem.rdDistGeom``, the module that defines it and the one
+    :func:`~chemrefine.io.smiles_to_xyz` imports it from.
+    """
+    from rdkit.Chem import rdDistGeom
 
     from chemrefine.io import smiles_to_xyz
 
     csv = tmp_path / "one.csv"
     csv.write_text("smiles\nC\n", encoding="utf-8")
-    with patch.object(AllChem, "EmbedMolecule", return_value=1):
+    with patch.object(rdDistGeom, "EmbedMolecule", return_value=1):
         written = smiles_to_xyz(csv, tmp_path / "out")
     assert written == []
 

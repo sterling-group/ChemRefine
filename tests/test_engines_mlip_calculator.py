@@ -10,6 +10,7 @@ a multi-GB ML stack.
 
 from __future__ import annotations
 
+import os
 import sys
 import types
 from pathlib import Path
@@ -277,7 +278,7 @@ def test_optimize_invokes_lbfgs_with_fmax_and_steps(monkeypatch):
 
     atoms = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
     result = calc.optimize(atoms, fmax=0.05, steps=10)
-    lbfgs_class.assert_called_once_with(atoms, logfile=None)
+    lbfgs_class.assert_called_once_with(atoms, logfile=os.devnull)
     lbfgs_instance.run.assert_called_once_with(fmax=0.05, steps=10)
     assert result is atoms
     assert atoms.calc is calc.calculator
