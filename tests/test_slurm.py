@@ -783,7 +783,7 @@ def test_terminate_local_jobs_stops_the_calculation_not_just_its_shell(tmp_path:
         assert out_handle.closed and err_handle.closed
         assert job_id not in dispatch._LOCAL_PROCS
     finally:
-        if _alive(calc_pid):  # pragma: no cover - only on a regression
+        if _alive(calc_pid):  # reached only on a regression, and then it must not linger
             os.kill(calc_pid, signal.SIGKILL)
 
 
@@ -804,7 +804,7 @@ def test_terminate_local_jobs_runs_the_exit_handler_before_the_job_dies(tmp_path
         assert "exit_code=143" in runlog, runlog
         assert "files_copied=" in runlog, runlog
     finally:
-        if _alive(calc_pid):  # pragma: no cover - only on a regression
+        if _alive(calc_pid):  # reached only on a regression, and then it must not linger
             os.kill(calc_pid, signal.SIGKILL)
 
 
@@ -818,7 +818,7 @@ def test_terminate_local_jobs_defaults_to_every_registered_job(tmp_path: Path):
         assert all(i not in dispatch._LOCAL_PROCS for i in ids)
         _await_stopped(calc_pid)
     finally:
-        if _alive(calc_pid):  # pragma: no cover - only on a regression
+        if _alive(calc_pid):  # reached only on a regression, and then it must not linger
             os.kill(calc_pid, signal.SIGKILL)
 
 
@@ -872,7 +872,7 @@ def test_terminate_local_jobs_escalates_to_kill_when_sigterm_is_ignored(
         assert out_handle.closed and err_handle.closed
         assert job_id not in dispatch._LOCAL_PROCS
     finally:
-        if _alive(calc_pid):  # pragma: no cover - only on a regression
+        if _alive(calc_pid):  # reached only on a regression, and then it must not linger
             os.kill(calc_pid, signal.SIGKILL)
 
 

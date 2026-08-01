@@ -55,7 +55,7 @@ def _recorded_outputs() -> Iterator[tuple[str, str]]:
                     continue
                 seen.add(member.name)
                 handle = tf.extractfile(member)
-                if handle is None:  # pragma: no cover - directories have no payload
+                if handle is None:  # a directory member has no payload to read
                     continue
                 yield f"{archive.stem}:{member.name}", handle.read().decode("utf-8", "replace")
 

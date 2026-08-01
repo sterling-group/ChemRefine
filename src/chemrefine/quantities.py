@@ -92,8 +92,8 @@ R_KCALMOL_K: Final[float] = MOLAR_GAS_CONSTANT * 1.0e-3 * KJMOL_TO_KCALMOL
 
 DEFAULT_TEMPERATURE_K: Final[float] = 298.15
 """IUPAC standard ambient temperature (25 °C). Used as the default for
-Boltzmann statistics and as the default value for ``temperature_k`` in
-:class:`chemrefine.config._SampleBase`."""
+Boltzmann statistics, and as the ``temperature_k`` a ``sample:`` filter gets when
+its step names none."""
 
 
 # ---------------------------------------------------------------------------
