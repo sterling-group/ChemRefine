@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 from ase import Atoms
 
+from chemrefine import cache
 from chemrefine.cache import (
     CACHE_FORMAT_VERSION,
     RESULT_FORMAT_VERSION,
@@ -372,11 +373,24 @@ def test_load_rejects_legacy_summary_sidecar(tmp_path: Path):
     step_dir = tmp_path / "step1"
     cache_file = step_dir / "_cache" / "step.json"
     cache_file.parent.mkdir(parents=True)
+    # Carries the *current* format, so what rejects it is the missing `structures` key
+    # rather than the version check standing in front of it.
     cache_file.write_text(
-        '{"cache_format": "v2.0", "chemrefine_version": "2.0.0", "fingerprint": "abc",'
-        ' "reuse_fingerprint": "", "step": 1, "name": null, "engine": "fake",'
-        ' "operation": "opt_sp", "structure_ids": ["0"], "parent_ids": [null],'
-        ' "energies_hartree": [-1.0]}',
+        json.dumps(
+            {
+                "cache_format": CACHE_FORMAT_VERSION,
+                "chemrefine_version": "2.0.0",
+                "fingerprint": "abc",
+                "reuse_fingerprint": "",
+                "step": 1,
+                "name": None,
+                "engine": "fake",
+                "operation": "opt_sp",
+                "structure_ids": ["0"],
+                "parent_ids": [None],
+                "energies_hartree": [-1.0],
+            }
+        ),
         encoding="utf-8",
     )
     with pytest.raises(CacheError, match="stale or corrupt"):
@@ -492,6 +506,58 @@ def test_the_sidecar_refuses_to_unpickle(tmp_path: Path):
         load(step_dir)
 
 
+def _orphan_sidecar(step_dir: Path, *structures: Structure) -> None:
+    """Write a sidecar for ``structures`` over ``step_dir``'s, leaving its document behind.
+
+    A save killed between its two writes: the sidecar has landed, the document has not, so the
+    previous one is still there. `save` writes the sidecar first, so this is that save stopped
+    one statement early.
+    """
+    records = [cache.structure_record(s) for s in structures]
+    arrays = cache._split_arrays(records)
+    cache._atomic_write(cache._arrays_path(step_dir), cache._npz_bytes(arrays))
+
+
+def test_a_sidecar_from_another_save_is_refused_not_read(tmp_path: Path):
+    """A structure must never wear another structure's coordinates.
+
+    The two cache files are separate atomic writes, so a save interrupted between them leaves
+    a new ``arrays.npz`` beside the previous ``step.json`` — which `resume` produces whenever
+    it repairs a step and is killed. Nothing upstream can catch it: the records parse, and the
+    fingerprint matches because it covers the step's *inputs*, not what is on disk. Read, the
+    pair returns each structure's old energy beside another's geometry, and
+    `parents_digest` then carries those coordinates into every step computed from them.
+    """
+    step_dir = _saved(tmp_path)  # ids "0" and "1", both at the origin
+    moved = Structure(id="0", atoms=Atoms("H", positions=[[9.0, 9.0, 9.0]]))
+    _orphan_sidecar(step_dir, moved, moved, moved)
+
+    with pytest.raises(CacheError, match="from different saves"):
+        load(step_dir)
+    assert not load_if_valid(key=_key("0", "1", step_cfg=_cfg()), step_dir=step_dir), (
+        "a mismatched pair is a cache miss, so the step re-runs"
+    )
+
+
+def test_a_sidecar_of_the_same_length_is_still_refused(tmp_path: Path):
+    """Matching the structure count is not evidence the two files belong together.
+
+    The composition of a step changes between saves without changing its length: under
+    ``on_failure: best`` a repaired structure moves out of the backfills and into the
+    successes, which reorders the records. Counting them would pass that pair and hand back
+    coordinates belonging to a different structure.
+    """
+    step_dir = _saved(tmp_path)
+    _orphan_sidecar(
+        step_dir,
+        Structure(id="1", atoms=Atoms("H", positions=[[1.0, 0.0, 0.0]])),
+        Structure(id="0", atoms=Atoms("H", positions=[[2.0, 0.0, 0.0]])),
+    )
+
+    with pytest.raises(CacheError, match="from different saves"):
+        load(step_dir)
+
+
 def test_ragged_structures_round_trip_through_the_sidecar(tmp_path: Path):
     """Structures in one step need not share an atom count, and need not all have forces.
 
@@ -604,10 +670,11 @@ def test_invalidate_missing_is_noop(tmp_path: Path):
 
 def test_cache_format_version_constant():
     """Bumping CACHE_FORMAT_VERSION is a public ABI break we want to notice."""
-    # v2.0: a JSON document (pickle removed) whose fingerprint excludes the
-    # sample config (filtering re-runs on every load, so a filter-only edit
-    # must be a cache hit). Pickle-era summary sidecars are rejected
-    # structurally (no `structures` key), so no bump was needed pre-release.
+    # v2.0: a JSON document whose fingerprint excludes the sample config (filtering re-runs on
+    # every load, so a filter-only edit must be a cache hit) and which names the digest of the
+    # sidecar it was written with. Documents that predate a key are rejected structurally —
+    # a summary without `structures`, or one without `arrays_digest`, raises out of `load` and
+    # rebuilds — so neither needs a bump while 2.0.0 is unreleased.
     assert CACHE_FORMAT_VERSION == "v2.0"
 
 

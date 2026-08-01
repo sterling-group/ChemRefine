@@ -104,6 +104,14 @@ MUTATIONS = (
         "serves results computed from the old coordinates",
     ),
     Mutation(
+        id="cache-pair-is-checked",
+        path="src/chemrefine/cache.py",
+        old='if found != document["arrays_digest"]:',
+        new="if False:",
+        breaks="a `step.json` left by one save is read with the `arrays.npz` of another, so "
+        "each structure keeps its own energy and adopts a different structure's geometry",
+    ),
+    Mutation(
         id="array-task-id-matching",
         path="src/chemrefine/slurm/dispatch.py",
         old='if not any(line == jid or line.startswith(f"{jid}_") for line in running)',

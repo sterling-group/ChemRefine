@@ -35,9 +35,13 @@ the fingerprint changes and the next run re-executes the step. The
 filter must refilter the cached results, not redo the calculations
 (downstream steps still invalidate through the changed survivor set).
 
-Writes are atomic — the JSON is written to a ``.tmp_*`` file inside the
+Writes are atomic — each file is written to a ``.tmp_*`` file inside the
 cache directory and renamed into place, so an interrupted write never
-produces a half-baked cache.
+produces a half-baked file. The *pair* needs one more thing: the two are
+separate writes, so an interrupted save can leave a new ``arrays.npz``
+beside the previous ``step.json``. The document records the digest of the
+arrays it was written with (:func:`_require_paired`), so a mismatched pair
+is a rebuild rather than a structure wearing another's coordinates.
 
 This module also owns the per-step **manifest** (``{step_dir}/_cache/
 manifest.json``): the input→output→structure-ID file layout that
@@ -264,6 +268,47 @@ def _concat(blocks: list[NDArray[np.float64]]) -> NDArray[np.float64]:
 def _offsets(blocks: list[NDArray[np.float64]]) -> NDArray[np.int64]:
     """Row index where each block starts, plus a final total — ``len(blocks) + 1`` entries."""
     return np.concatenate([[0], np.cumsum([len(b) for b in blocks])]).astype(np.int64)
+
+
+def _arrays_digest(arrays: Any) -> str:
+    """Return a 16-char SHA-1 over the sidecar's array *contents*.
+
+    The pairing key between the two files of one save. It covers the values rather than the
+    ``.npz`` bytes because a ZIP member carries a timestamp, so the same coordinates written
+    twice are not the same file — and a key that changed every save would make a parse-only
+    rebuild differ from the recording it rebuilt.
+
+    Two saves whose arrays hash alike hold the same coordinates, which is exactly when
+    pairing either document with either sidecar is harmless.
+    """
+    h = hashlib.sha1(usedforsecurity=False)  # a content fingerprint, not a digest
+    for name in sorted(arrays):
+        h.update(name.encode())
+        h.update(np.ascontiguousarray(arrays[name]).tobytes())
+    return h.hexdigest()[:16]
+
+
+def _require_paired(arrays: Any, document: dict[str, Any], path: Path) -> None:
+    """Raise :class:`CacheError` unless the sidecar was written by the save that wrote ``document``.
+
+    The two files are separate atomic writes, so a save interrupted between them leaves a new
+    sidecar beside the previous document. Nothing about that pair is malformed and no check
+    upstream of this one can see it: the records parse, and the fingerprint still matches the
+    configuration, because it covers the step's *inputs* rather than what is on disk. What
+    reaches the caller is a structure keeping its old energy and adopting another structure's
+    geometry — the value then feeds :func:`parents_digest`, so the wrong coordinates propagate
+    into every step computed from them.
+
+    Checked before :func:`_join_arrays` rather than after, because the same mismatch that
+    misreads coordinates also indexes past the end of a shorter sidecar.
+    """
+    found = _arrays_digest(arrays)
+    if found != document["arrays_digest"]:
+        raise CacheError(
+            f"step.json and arrays.npz at {path.parent} are from different saves "
+            f"(document expects {document['arrays_digest']}, sidecar holds {found}); "
+            f"rebuild the step"
+        )
 
 
 def _join_arrays(records: list[dict[str, Any]], arrays: Any) -> None:
@@ -498,6 +543,8 @@ def save(
     match again.
     """
     records = [structure_record(s) for s in results.structures]
+    # Moves the coordinates out of `records`, leaving the metadata document behind.
+    arrays = _split_arrays(records)
     document = {
         "cache_format": CACHE_FORMAT_VERSION,
         "chemrefine_version": chemrefine_version,
@@ -508,13 +555,18 @@ def save(
         "engine": step_cfg.engine,
         "operation": step_cfg.operation,
         "parent_ids": list(key.parent_ids),
+        # Names the sidecar this document belongs to — see `_require_paired`.
+        "arrays_digest": _arrays_digest(arrays),
         "structures": records,
     }
     # Sidecar first: a crash between the two writes then leaves an orphan `.npz` and no
     # `step.json`, which reads as a plain cache miss. The other order would leave a document
-    # whose arrays are missing — `load` fails closed on that, but a miss is cheaper than an
-    # error, and this way the pair is effectively atomic without a second mechanism.
-    _atomic_write(_arrays_path(step_dir), _npz_bytes(_split_arrays(records)))
+    # whose arrays are missing, and `load` fails closed on that — a miss is cheaper than an
+    # error. The order alone is not enough, though: it makes the *first* save into an empty
+    # `_cache/` atomic, and a step is re-saved whenever `resume` repairs one, which leaves the
+    # previous document beside the new sidecar. `arrays_digest` is what makes the pair
+    # provable rather than merely likely.
+    _atomic_write(_arrays_path(step_dir), _npz_bytes(arrays))
     write_json(_cache_path(step_dir), document, indent=None)
     logger.info("saved step %d cache (fingerprint %s)", step_cfg.step, key.fingerprint)
 
@@ -628,7 +680,9 @@ def load(step_dir: Path) -> StepCache | None:
         # Arrays come from the sidecar or not at all. A document written before the split
         # still carries them inline, and quietly reading those would be the one way to load
         # a cache half in each format — so the absent sidecar is an error, not a fallback.
-        _join_arrays(records, _read_arrays(_arrays_path(step_dir)))
+        arrays = _read_arrays(_arrays_path(step_dir))
+        _require_paired(arrays, data, path)
+        _join_arrays(records, arrays)
         return StepCache(
             cache_format=data["cache_format"],
             chemrefine_version=data["chemrefine_version"],
