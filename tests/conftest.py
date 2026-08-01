@@ -9,9 +9,17 @@ import pytest
 importlib.import_module("fake_engine")
 
 
-@pytest.fixture(autouse=True, scope="session")
-def _isolate_chemrefine_home(tmp_path_factory: pytest.TempPathFactory):
-    """Point ``$CHEMREFINE_HOME`` at a scratch dir for the whole run.
+@pytest.fixture(scope="session")
+def _scratch_chemrefine_home(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """One empty managed-backend root for the whole run, applied per test below."""
+    return str(tmp_path_factory.mktemp("chemrefine-home"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_chemrefine_home(
+    request: pytest.FixtureRequest, _scratch_chemrefine_home: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point ``$CHEMREFINE_HOME`` at a scratch dir — except for the tier-3 live tests.
 
     Without this the suite reads the *developer's* managed backend envs.
     :func:`chemrefine.engines._provision.chemrefine_home` falls back to
@@ -22,13 +30,17 @@ def _isolate_chemrefine_home(tmp_path_factory: pytest.TempPathFactory):
     are fresh and provision nothing, which is precisely the configuration the feature does
     not exist for.
 
-    Session-scoped and autouse because it is an environment property, not a per-test one;
-    the tests in ``test_provision.py`` that care about a *specific* home still set their own
-    over the top.
+    **The ``integration`` tier is exempt, and that exemption is the point of the tier.** Its
+    cases exist to run against the real stacks, which live in exactly the managed envs this
+    fixture hides; applied to them it guarantees the opposite of what they assert, since
+    ``preflight_backends`` then finds an empty root and refuses to start. Marker-scoped
+    rather than session-scoped for that reason — "which home" is a property of the tier, not
+    of the run. The tests in ``test_provision.py`` that care about a *specific* home still
+    set their own over the top.
     """
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setenv("CHEMREFINE_HOME", str(tmp_path_factory.mktemp("chemrefine-home")))
-        yield
+    if request.node.get_closest_marker("integration"):
+        return
+    monkeypatch.setenv("CHEMREFINE_HOME", _scratch_chemrefine_home)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

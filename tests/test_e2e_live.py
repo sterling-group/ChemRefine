@@ -50,13 +50,18 @@ def _backend_available(import_name: str, extra: str) -> bool:
     Deliberately the same two conditions :func:`chemrefine.engines._provision.require_backend`
     accepts, so a case is skipped exactly when the pipeline would refuse to start it, and
     never when it would have run.
+
+    Called per test rather than answered once at import, because ``$CHEMREFINE_HOME`` decides
+    where a managed env is looked for and fixtures run after this module is imported. Sampled
+    at import, the answer is the one from *before* the environment the case will run in, and
+    the agreement with ``require_backend`` that this function exists for is only an agreement
+    when both read the same environment.
     """
     return importlib.util.find_spec(import_name) is not None or backend_env_python(extra).is_file()
 
 
 _ORCA = _real_orca()
-_MACE = _backend_available("mace", "mlip-mace")
-_PYSCF = _backend_available("pyscf", "pyscf")
+"""Resolved once: it reads ``PATH``, which no fixture rewrites."""
 
 _REQUIRES = {
     "conformers": {"orca"},
@@ -83,9 +88,9 @@ def _skip_unless_available(requirements: set[str]) -> None:
     missing = []
     if "orca" in requirements and _ORCA is None:
         missing.append("ORCA on PATH")
-    if "mace" in requirements and not _MACE:
+    if "mace" in requirements and not _backend_available("mace", "mlip-mace"):
         missing.append("a mace stack (importable or `chemrefine backends install mlip-mace`)")
-    if "pyscf" in requirements and not _PYSCF:
+    if "pyscf" in requirements and not _backend_available("pyscf", "pyscf"):
         missing.append("pyscf (importable or `chemrefine backends install pyscf`)")
     if not missing:
         return
