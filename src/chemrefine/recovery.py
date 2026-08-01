@@ -104,11 +104,17 @@ def _action_rerun(config: Config, target: str | int | None) -> None:
 
 
 def _action_rerun_errors(config: Config, target: str | int | None) -> None:
-    """Re-attempt only one step's pending failed jobs (latest if ``target`` is None).
+    """Re-attempt one step's pending failed jobs (latest if ``target`` is None), then continue.
 
-    Like ``resume`` but scoped to a single step: prior steps cache-hit, the
-    target step's still-failed structures are resubmitted (it must be
-    ``on_failure: stop`` to have pending failures), and the run continues.
+    Scoped *backwards* only: steps before the target cache-hit and submit nothing, the target
+    step's still-failed structures are resubmitted (it must be ``on_failure: stop`` to have
+    pending failures), and everything after it resumes.
+
+    Later steps resume rather than cache-hit because the run halted at the target — that is
+    what left the failures pending — so they have no cache to hit and never ran. Left
+    ``CACHE_ONLY`` they raise from :func:`chemrefine.step.run_step` for a cache that could not
+    exist, which failed the command after it had already repaired what it was pointed at, and
+    told the user to run ``resume`` when ``resume`` is what they had just run.
     """
     target_step = _resolve_target_or_last(config, target)
     step_dir = config.step_dir(target_step).resolve()
@@ -137,7 +143,14 @@ def _action_rerun_errors(config: Config, target: str | int | None) -> None:
         )
     pipeline.run(
         config,
-        RunPlan(default=StepMode.CACHE_ONLY, overrides={target_step.step: StepMode.RESUME}),
+        RunPlan(
+            default=StepMode.CACHE_ONLY,
+            overrides={
+                step_cfg.step: StepMode.RESUME
+                for step_cfg in config.steps
+                if step_cfg.step >= target_step.step
+            },
+        ),
     )
 
 

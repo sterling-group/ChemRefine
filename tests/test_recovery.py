@@ -585,6 +585,10 @@ def _recording_engine():
         (Action.RERUN_ERRORS, 2, []),
         # rebuild-cache N: re-parses from disk. No submission, by definition.
         (Action.REBUILD_CACHE, 2, []),
+        # Both scoped actions aimed at a step that is *not* the last one. Every row above
+        # targets the final step, which is the one arrangement where "what happens after the
+        # target" cannot be observed.
+        (Action.RERUN_ERRORS, 1, []),
     ],
     ids=[
         "run-reexecutes-everything",
@@ -594,6 +598,7 @@ def _recording_engine():
         "rebuild-nms-is-rerun",
         "rerun-errors-with-nothing-pending-is-resume",
         "rebuild-cache-never-submits",
+        "rerun-errors-on-a-non-last-step",
     ],
 )
 def test_recovery_matrix(tmp_path: Path, action, target, expected_submits):
@@ -618,6 +623,82 @@ def test_recovery_matrix(tmp_path: Path, action, target, expected_submits):
     finally:
         eng.submitted.clear()
         ENGINES.pop("recorder", None)
+
+
+def test_rerun_errors_repairs_the_target_then_runs_the_rest(tmp_path: Path):
+    """Repairing step N is only half the command; the run has to go on.
+
+    The steps after the target are exactly the ones that never ran — the halt that left the
+    failures pending is what stopped the pipeline there — so they have no cache. Held to
+    ``CACHE_ONLY`` they raise for a cache that cannot exist, and the command fails *after*
+    repairing what it was pointed at, having done its work and reported an error.
+    """
+    from chemrefine import cache
+    from chemrefine.engines.api import ENGINES
+    from chemrefine.errors import ChemRefineError
+
+    eng = _register_flaky()
+    try:
+        cfg = _seeded_config(
+            tmp_path,
+            [
+                StepConfig(
+                    step=1, name="one", engine="flaky", operation="opt_sp", on_failure="stop"
+                ),
+                StepConfig(step=2, name="two", engine="flaky", operation="opt_sp"),
+            ],
+        )
+        eng.fail_ids = {"1"}
+        with pytest.raises(ChemRefineError):
+            execute(cfg, Action.RESUME)  # halts at step 1; step 2 never runs
+        assert not (cfg.output_dir / "step2_two").exists()
+
+        eng.fail_ids, eng.submitted = set(), []
+        assert execute(cfg, Action.RERUN_ERRORS, target=1) == 0
+
+        assert eng.submitted[0] == "1", "the target's failed structure is re-attempted first"
+        assert set(eng.submitted[1:]) == {"0", "1"}, "then step 2 runs, for both survivors"
+        assert not cache.load_failure_records((cfg.output_dir / "step1_one").resolve())
+        assert cache.load((cfg.output_dir / "step2_two").resolve()) is not None
+    finally:
+        eng.fail_ids, eng.submitted = set(), []
+        ENGINES.pop("flaky", None)
+
+
+def test_rerun_errors_archives_what_it_replaces_and_leaves_the_rest(tmp_path: Path):
+    """A re-attempt seals the prior attempt; a structure it does not re-run is untouched.
+
+    The invariant behind every recovery path: what is about to be overwritten moves into
+    ``attemptK/`` first, so no run is lost, and nothing else is disturbed.
+    """
+    from chemrefine.engines.api import ENGINES
+    from chemrefine.errors import ChemRefineError
+
+    eng = _register_flaky()
+    try:
+        cfg = _seeded_config(
+            tmp_path,
+            [StepConfig(step=1, name="one", engine="flaky", operation="opt_sp", on_failure="stop")],
+        )
+        step_dir = (cfg.output_dir / "step1_one").resolve()
+        eng.fail_ids = {"1"}
+        with pytest.raises(ChemRefineError):
+            execute(cfg, Action.RESUME)
+        first_input = (step_dir / "1" / "step1_1.inp").read_text(encoding="utf-8")
+
+        eng.fail_ids = set()
+        assert execute(cfg, Action.RERUN_ERRORS, target=1) == 0
+
+        archived = step_dir / "1" / "attempt1" / "step1_1.inp"
+        assert archived.is_file(), "the re-attempted structure's prior input is sealed away"
+        assert archived.read_text(encoding="utf-8") == first_input
+        assert (step_dir / "1" / "step1_1.out").is_file(), "and canonical holds the new run"
+        assert not list((step_dir / "0").glob("attempt*")), (
+            "the structure that succeeded was never re-run, so nothing of it was moved"
+        )
+    finally:
+        eng.fail_ids, eng.submitted = set(), []
+        ENGINES.pop("flaky", None)
 
 
 def test_recovery_matrix_covers_every_action():
