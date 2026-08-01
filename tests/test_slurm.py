@@ -648,10 +648,9 @@ def test_submit_array_raises_when_output_lacks_job_id(tmp_path: Path):
 def test_finished_jobs_asks_squeue_once_for_the_whole_batch():
     """The point of the batch form: N jobs cost one squeue, not N.
 
-    Polling per job meant a step with N concurrent jobs ran N squeue
-    subprocesses every poll interval — at max_cores 512 with pal 1 that is
-    roughly 50 invocations a second against the controller, sustained, which
-    sites rate-limit or ban for.
+    Polling per job means a step with N concurrent jobs runs N squeue subprocesses every
+    poll interval — at max_cores 512 with pal 1 that is roughly 50 invocations a second
+    against the controller, sustained, which sites rate-limit or ban for.
     """
     fake = MagicMock(returncode=0, stdout="1002\n", stderr="")
     ids = [str(1000 + i) for i in range(200)]
@@ -770,7 +769,7 @@ def test_terminate_local_jobs_stops_the_calculation_not_just_its_shell(tmp_path:
     group, so ``proc.terminate()`` reaches only bash — which is mid-``wait`` on the
     calculation and defers the trap. The grace then expires, bash is SIGKILLed, and the
     calculation survives, reparented to init: cores still burning, and because the EXIT
-    trap never ran, no copy-back, no scratch teardown and no runlog footer.
+    trap never runs, no copy-back, no scratch teardown and no runlog footer.
     """
     script, pidfile = _job_with_a_foreground_calculation(tmp_path)
     job_id = dispatch._submit_local(script)

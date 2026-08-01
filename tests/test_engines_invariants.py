@@ -322,9 +322,9 @@ _ALLOWED_RAW_READS = {
 def _raw_option_reads(source: str) -> list[str]:
     """Every `<raw dict>.get("key")` literal key in ``source``.
 
-    Parsed rather than grepped. A regex over the text also matches prose: the docstring
-    on `gpus_from_options` quotes the very call it exists to have replaced, and a
-    text scan flagged the module that fixed the bug.
+    Parsed rather than grepped. A regex over the text also matches prose: the docstring on
+    `gpus_from_options` quotes the very call it exists to replace, so a text scan flags the
+    module that avoids it.
     """
     keys: list[str] = []
     for node in ast.walk(ast.parse(source)):
@@ -569,8 +569,8 @@ def test_every_template_driven_engine_declares_its_suffix() -> None:
     """`TemplateDriven` is what `build_context` reads to resolve the step's template.
 
     An engine that renders a template but does not declare the capability gets
-    ``ctx.template is None`` and fails at render time — which is how `mlip-train` came to
-    hardcode its suffix inside the trainer instead.
+    ``ctx.template is None`` and fails at render time, which pushes the suffix into the
+    engine's own body instead.
     """
     for name in ENGINES:
         engine = get_engine(name)

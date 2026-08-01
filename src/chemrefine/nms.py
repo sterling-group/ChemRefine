@@ -276,9 +276,8 @@ def _best(structures: list[Structure], fallback: Structure, energy_attr: str) ->
 
     ``energy_attr`` is the step's own ranking energy (see :func:`_energy_attr`), not always the
     electronic one. When several round-2 children reach the target, the one carried forward has
-    to be the one the step's filter would have kept — a TS step sampling on ``gibbs`` picked its
-    winner on electronic energy and could therefore promote a child that the very next filter
-    would have discarded.
+    to be the one the step's filter would keep: ranked on electronic energy, a TS step
+    sampling on ``gibbs`` can promote a child the very next filter discards.
     """
     if not structures:
         return fallback

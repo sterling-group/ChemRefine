@@ -151,8 +151,8 @@ def write_training_slurm(*, ctx: StepContext, config_path: Path) -> Path:
 
     # `job_name` lands inside an #SBATCH directive, where a newline would start an
     # arbitrary extra directive and whitespace would split the value. The pattern that
-    # enforces that is on the field now, so it is declared once next to what it
-    # constrains rather than re-checked wherever the value is read.
+    # enforces that is on the field, so it is declared once next to what it constrains
+    # rather than re-checked wherever the value is read.
     job_name = opts.job_name
     script_path = ctx.step_dir / "train.slurm"
     header_text = header_path.read_text(encoding="utf-8").rstrip()

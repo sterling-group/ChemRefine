@@ -14,9 +14,9 @@ that starts finding failures here is wrong about real ORCA, whatever the unit te
 Marked ``slow``, not ``integration``: it reads every ``.out`` out of six compressed archives,
 which is a second or so, but it invokes no ORCA, no SLURM and no external service. That
 distinction decides whether the file ever runs. ``integration`` is deselected by the default
-``addopts``, so this — the strongest reader-versus-real-output assertion in the suite — was
-excluded from every CI run, and a change to the recordings went unnoticed until a release
-gate hit it thirteen minutes in. ``slow`` still runs by default.
+``addopts``, which would exclude this — the strongest reader-versus-real-output assertion in
+the suite — from every CI run, leaving a change to the recordings unnoticed until a release
+gate. ``slow`` still runs by default.
 """
 
 from __future__ import annotations
@@ -73,8 +73,8 @@ def test_the_corpus_is_actually_there():
 def test_every_recorded_run_reads_as_successful():
     """No false failures across the corpus.
 
-    This is the assertion that would have caught a bare ``NOT CONVERGED`` matching
-    ORCA's ``LOCALIZATION HAS NOT CONVERGED``, or any other over-broad negative.
+    This is the assertion that catches a bare ``NOT CONVERGED`` matching ORCA's
+    ``LOCALIZATION HAS NOT CONVERGED``, or any other over-broad negative.
     """
     bad = [
         label

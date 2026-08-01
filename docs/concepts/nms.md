@@ -58,10 +58,10 @@ stepN/<id>/
 
 **The canonical location always describes one calculation.** Every file there — output,
 geometry, orbitals, Hessian, restart — comes from the job that produced the surviving
-structure, so parsing any of them agrees with the cached record. Earlier only the winning
-*geometry* was written back, which left a `.xyz` from the resolved minimum sitting beside
-round 1's `.out` for the saddle it started from, with nothing in the directory to show
-they described different structures.
+structure, so parsing any of them agrees with the cached record. Writing back only the
+winning *geometry* would leave a `.xyz` from the resolved minimum beside round 1's `.out`
+for the saddle it started from, with nothing in the directory to show they describe
+different structures.
 
 Round 1 is not discarded: it moves into the same `attemptK/` its children ran in, so one
 attempt directory holds both the state that triggered the resolution and everything tried

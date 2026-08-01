@@ -279,8 +279,8 @@ def build_backend_env(extra: str, *, tool: EnvTool | None = None) -> Path:
     than escaping as ``CalledProcessError`` / ``FileNotFoundError``. :mod:`chemrefine.errors`
     promises every exception carries an ``exit_code`` the CLI maps to a deterministic
     status, and ``cli.backends_install`` catches only
-    :class:`~chemrefine.errors.ChemRefineError` — so a bare one left that contract and met
-    the user as a traceback. This is the likeliest failure the command has: it is documented
+    :class:`~chemrefine.errors.ChemRefineError` — so a bare one leaves that contract and
+    reaches the user as a traceback. This is the likeliest failure the command has: it is documented
     as "run once on a login node with internet", so running it without one is the first
     mistake anybody makes. ``FileNotFoundError`` is the second: :func:`detect_env_tool`
     reports ``conda`` from ``$CONDA_PREFIX``, but the build shells out to a ``conda``

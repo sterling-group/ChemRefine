@@ -106,7 +106,7 @@ def _with_energy(
       raises and names the fix.
     * **Some structures have it** — the ones that don't are ``on_failure: best``
       backfills, which carry the best geometry obtained but no thermochemistry by
-      construction. Raising here aborted the whole run at the filter, defeating the
+      construction. Raising here would abort the whole run at the filter, defeating the
       one policy whose entire purpose is to keep going. They are dropped from the
       ranking instead — exactly what already happens to a structure with no electronic
       energy — and stay in the cache and the failure ledger where they are visible.
@@ -141,9 +141,9 @@ def _filter_by_parent(
     """Group by parent ID, filter each group, return concatenated survivors."""
     groups: dict[str, list[Structure]] = defaultdict(list)
     for struct in structures:
-        # Seed structures (parent_id=None) form their own singleton groups
-        # by falling back to their own id, matching the historical behaviour
-        # of ``parent_of`` on flat IDs.
+        # Seed structures (parent_id=None) form their own singleton groups by falling
+        # back to their own id — one group per seed, which is the grouping a flat ID
+        # space gives.
         groups[struct.parent_id or struct.id].append(struct)
     sort_key = operator.attrgetter(energy_attr)
     survivors: list[Structure] = []

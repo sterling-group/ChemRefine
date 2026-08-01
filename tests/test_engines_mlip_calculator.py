@@ -132,7 +132,7 @@ def test_build_fairchem_routes_through_predictor(monkeypatch):
 
 @pytest.mark.parametrize("head", ["omat", "odac", "oc20", "oc22", "oc25", "omc"])
 def test_build_fairchem_passes_non_omol_head_through(monkeypatch, head):
-    """The regression fix: ``task_name: omat`` builds the omat head, not omol."""
+    """Every non-``omol`` head passes through: ``task_name: omat`` builds the omat head."""
     _get_predict_unit, fairchem_calc = _install_fake_fairchem(monkeypatch)
     MlipCalculator(task_name=head, model_name="uma-s-1p2", device="cpu")
     fairchem_calc.assert_called_once_with("PREDICTOR", task_name=head)

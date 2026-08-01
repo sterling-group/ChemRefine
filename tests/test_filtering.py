@@ -285,8 +285,8 @@ def test_every_sample_variant_dispatches_to_its_own_filter():
 # Thermochemical energy_type x partially-missing thermochemistry
 #
 # `on_failure: best` backfills a failed structure with its best geometry, which
-# carries no thermochemistry. Raising on that aborted the whole run at the filter
-# and turned `best` -- the one policy whose purpose is to keep going -- into
+# carries no thermochemistry. Raising on that would abort the whole run at the filter
+# and turn `best` -- the one policy whose purpose is to keep going -- into
 # something worse than `stop`.
 # ---------------------------------------------------------------------------
 

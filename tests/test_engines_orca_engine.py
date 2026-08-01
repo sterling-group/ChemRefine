@@ -200,9 +200,9 @@ def test_the_restart_and_readable_property_files_are_copied_back():
 
     A live ORCA 6.1.1 ``! HF-3c Opt`` writes ``.bibtex``, ``.densities``, ``.densitiesinfo``,
     ``.engrad``, ``.gbw``, ``.opt``, ``.out``, ``.property.txt`` and the ``.xyz`` pair. Only
-    the last few were declared, so every finished run left its optimisation restart file — the
-    one thing that lets a stalled optimisation resume rather than start over — behind in
-    ``$WORK_DIR`` to be deleted. A whole TS project's output tree held zero of either.
+    the last few are result files. Undeclared, the optimisation restart file — the one thing
+    that lets a stalled optimisation resume rather than start over — stays behind in
+    ``$WORK_DIR`` and is deleted with it.
     """
     globs = get_engine("orca").output_globs
     assert "*.opt" in globs
@@ -451,9 +451,9 @@ def test_completed_goat_job_is_a_success(tmp_path: Path):
 def test_crashed_goat_job_is_ledgered_not_silently_accepted(tmp_path: Path):
     """The end-to-end shape of B2: no termination banner → a real, visible failure.
 
-    Before the fix the sidecar's frames carried ``terminated_normally=None``, ``succeeded()``
-    accepted them, and a killed GOAT run produced a clean success with an empty
-    ledger — the partial ensemble flowing downstream as if complete.
+    A sidecar frame carrying ``terminated_normally=None`` must not be accepted by
+    ``succeeded()``: a killed GOAT run would otherwise produce a clean success with an empty
+    ledger, the partial ensemble flowing downstream as if complete.
     """
     ctx, inputs = _goat_job(tmp_path, terminated_normally=False)
     successes, failures = lifecycle.parse_with_failures(get_engine("orca"), inputs, ctx)

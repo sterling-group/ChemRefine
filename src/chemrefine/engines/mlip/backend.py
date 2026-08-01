@@ -5,8 +5,8 @@ The backend a step runs on is a property of the **backend family**, not of the e
 the same library from the same ``task_name``/``model_path`` selection, and both need it in its
 own environment because the MLIP dependency trees conflict and cannot share one.
 
-Declared once, here, and mixed into each engine — rather than repeated per engine, which is
-how the two carried identical copies.
+Declared once, here, and mixed into each engine — rather than repeated per engine, where
+the two are free to drift apart.
 
 ``mlip-train`` **does not use this yet, and adopting it is not a one-line change.** It is not
 a :class:`~chemrefine.engines.api.ProvisionableEngine` at all today: it emits a bare

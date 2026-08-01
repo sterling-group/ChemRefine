@@ -295,11 +295,11 @@ def test_tensor_folder_with_shell_metacharacters_rejected(bad: str):
 
     It is the engine option that lands in the on-exit copy-back as
     `cp -r "<tensor_folder>" "$OUTPUT_DIR/"` — and bash performs command substitution
-    *inside* double quotes, so quoting there is not protection. Verified before the fix:
-    `tensor_folder: 'tensors$(id -un > /abs/path)'` wrote that file when the job ran.
+    *inside* double quotes, so quoting there is not protection:
+    `tensor_folder: 'tensors$(id -un > /abs/path)'` writes that file when the job runs.
 
-    Found by sweeping every value that reaches the generated script rather than patching
-    the one field a report named -- the same omission that left `operation` unguarded.
+    Held to the rule for *every* value that reaches the generated script, rather than for the
+    fields some report happens to name.
     """
     with pytest.raises(ConfigError):
         PyscfOptions.from_raw({"basis": "def2-svp", "xc": "pbe", "tensor_folder": bad})

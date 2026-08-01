@@ -67,10 +67,9 @@ class MlipTrainOptions(MlipOptions):
     ``cpu`` (the floor that always runs).
 
     The point of declaring that here rather than leaving a literal in the trainer
-    is that a default spelled in two places is a default that drifts: the trainer
-    repeated ``"cuda"`` inline, so moving the shared default silently split the
-    two apart, with the options model saying ``cpu`` and the SLURM header saying
-    ``cuda`` for the very same step.
+    is that a default spelled in two places is a default that drifts: a literal repeated
+    in the trainer splits from this one the first time either moves, leaving the options
+    model saying ``cpu`` and the SLURM header ``cuda`` for the very same step.
     """
 
     device: Literal["cuda", "cpu"] = "cuda"
@@ -78,10 +77,9 @@ class MlipTrainOptions(MlipOptions):
     valid_fraction: float = Field(0.1, gt=0, lt=1)
     """Share of the structures held out for validation.
 
-    Bounded here rather than checked in the trainer: ``0`` left no validation set and
-    ``1`` left nothing to train on, and both only surfaced as a ``ValueError`` from
-    :func:`~chemrefine.engines.mlip.trainer.prepare_inputs` after the step had already
-    started."""
+    Bounded here rather than checked in the trainer: ``0`` leaves no validation set and
+    ``1`` nothing to train on, and unbounded either only surfaces as a ``ValueError`` from
+    :func:`~chemrefine.engines.mlip.trainer.prepare_inputs`, once the step has started."""
 
     seed: int = 42
     """Seed for the train/validation split, so a re-run reproduces the same split."""
@@ -89,6 +87,6 @@ class MlipTrainOptions(MlipOptions):
     job_name: str = Field("mlip_train", pattern=r"^[A-Za-z0-9._-]+$")
     """SLURM job name for the training job.
 
-    The pattern is the constraint the trainer already enforced by hand, moved to the
-    field that owns it: this value lands inside an ``#SBATCH`` directive, where a newline
+    The pattern belongs on the field that owns the value rather than to the trainer that
+    reads it: this value lands inside an ``#SBATCH`` directive, where a newline
     would start an arbitrary extra directive and whitespace would split the value."""

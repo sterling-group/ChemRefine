@@ -178,11 +178,10 @@ def test_run_batch_allows_multi_gpu_step_under_slurm(_submit, _finished_jobs, tm
 def test_run_batch_terminates_local_jobs_when_a_submission_fails(tmp_path: Path):
     """A mid-batch failure unwinds through the cleanup, not past it.
 
-    _LOCAL_PROCS is module-global and run_batch had no try/finally, so any
-    exception between the first submit and wait_all — a throttle timeout, a
-    submission error, Ctrl-C — left real background children running. They keep
-    competing for the cores of whatever the user runs next, and their log
-    handles stay open.
+    _LOCAL_PROCS is module-global, so without the try/finally any exception between the
+    first submit and wait_all — a throttle timeout, a submission error, Ctrl-C — leaves real
+    background children running. They keep competing for the cores of whatever the user runs
+    next, and their log handles stay open.
     """
     engine = _FakeJobEngine()
     ctx = _ctx(tmp_path, ids=("0", "1", "2"))

@@ -61,7 +61,7 @@ def bootstrap(config: Config) -> PipelineState:
        - ``.csv``: convert SMILES to per-row XYZ files under ``output_dir/_seed``.
        - ``.xyz``: read every frame (IDs ``"0"``, ``"1"``, … in file order).
     2. ``config.input`` is None → fall back to
-       ``templates/step1.xyz`` (the historic default).
+       ``templates/step1.xyz`` (the conventional default).
 
     Raises :class:`ConfigError` if no seed source can be located.
     """
@@ -137,9 +137,9 @@ def _write_step_csv(config: Config, step_cfg: StepConfig, state: PipelineState) 
     The report summarises **the same energy the step filtered on**: a step sampling
     on ``gibbs`` gets Gibbs energies and Gibbs-derived Boltzmann weights, at that
     step's own ``sample.temperature_k``. Reporting electronic energies for a
-    thermochemistry-filtered step produced a table that silently contradicted the
-    survivor set it was describing. With no sample filter, the electronic energy
-    at the standard reference temperature.
+    thermochemistry-filtered step gives a table that silently contradicts the survivor set
+    it describes. With no sample filter, the electronic energy at the standard reference
+    temperature.
 
     A step with no survivors has nothing to summarise, so no row is written — that
     decision lives in :func:`~chemrefine.io.save_step_csv` along with the step-1
@@ -188,8 +188,8 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
     #
     # Asking `may_submit` rather than excluding `REBUILD` by name is what makes that hold for
     # the whole command. `rebuild-cache N` puts N in `REBUILD` and every *other* step in
-    # `CACHE_ONLY`, which equally cannot submit — so excluding only the named step left the
-    # wall standing on all the others, and a two-step MLIP config still could not be rebuilt
+    # `CACHE_ONLY`, which equally cannot submit — so excluding only the named step leaves the
+    # wall standing on all the others, and a two-step MLIP config still cannot be rebuilt
     # off-cluster. Nothing is weakened by the wider exemption: a step that cannot submit
     # reaches `ChemRefineError` from `run_step` if its cache is unusable, never the engine.
     preflight_backends([cfg for cfg in config.steps if plan.for_step(cfg.step).may_submit()])

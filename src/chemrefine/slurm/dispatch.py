@@ -247,12 +247,12 @@ def terminate_local_jobs(job_ids: Collection[str] = ()) -> None:
     **The signal goes to the process group, not to ``bash``.** What has to stop is the
     calculation, and that is a grandchild — the shell runs it as a foreground child and
     then waits. ``proc.terminate()`` reaches only the shell, which defers its ``TERM``
-    trap until that child returns, so the grace period expired, the shell was SIGKILLed,
-    and the calculation went on running, reparented to init. Nothing said so: the EXIT
-    trap never fired either, so the run lost its copy-back, its scratch teardown and its
-    runlog footer, while ORCA's ``.out`` — redirected straight to ``$OUTPUT_DIR`` — still
-    parsed. Signalling the group reaches both, which is why :func:`_submit_local` gives
-    each job a session of its own.
+    trap until that child returns, so the grace period expires, the shell is SIGKILLed,
+    and the calculation goes on running, reparented to init — silently, because the EXIT
+    trap never fires either: no copy-back, no scratch teardown, no runlog footer, while
+    ORCA's ``.out``, redirected straight to ``$OUTPUT_DIR``, still parses. Signalling the
+    group reaches both, which is why :func:`_submit_local` gives each job a session of its
+    own.
 
     ``ProcessLookupError`` is suppressed because the group can drain between the poll and
     the signal; ``PermissionError`` because a job that re-execs under another uid is the
@@ -341,12 +341,12 @@ def submit(
 def finished_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> set[str]:
     """Return the subset of ``job_ids`` that is no longer running — **one** ``squeue``.
 
-    The whole set is answered by a single scheduler query. Asking per job instead meant
-    a step with N concurrent jobs ran N ``squeue`` subprocesses every poll interval: at
+    The whole set is answered by a single scheduler query. Asking per job means a step
+    with N concurrent jobs runs N ``squeue`` subprocesses every poll interval: at
     ``max_cores: 512`` with ``pal: 1`` that is ~50 invocations a second against the
-    controller, sustained for the length of the step. Sites rate-limit or ban for
-    exactly that, and it is pure waste — the same full job list was being fetched N
-    times to answer N questions about it.
+    controller, sustained for the length of the step. Sites rate-limit or ban for exactly
+    that, and it is pure waste — one full job list fetched N times to answer N questions
+    about it.
 
     ``"local-N"`` ids are polled via their background process
     (:func:`_local_is_finished`, which also reaps them, so each is polled exactly once

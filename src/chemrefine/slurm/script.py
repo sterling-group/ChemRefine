@@ -104,7 +104,7 @@ def _run_body_lines(
 
     ``TERM``/``INT`` are trapped explicitly so a cancelled job records its real exit code:
     the ``EXIT`` trap does fire on a fatal signal, but with ``$?`` already reset to 0, which
-    made a ``scancel``-ed run look successful in its runlog. ``_cr_done`` keeps the handler
+    makes a ``scancel``-ed run look successful in its runlog. ``_cr_done`` keeps the handler
     single-shot, since ``TERM`` then ``EXIT`` would otherwise run it twice.
     """
     dir_copies = [f'  cp -r "{d}" "$OUTPUT_DIR/" 2>/dev/null || true' for d in output_dirs]

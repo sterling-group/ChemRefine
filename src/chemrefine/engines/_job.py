@@ -116,8 +116,8 @@ class JobEngine(abc.ABC):
 
     The four primitives below are abstract, so an incomplete subclass fails at construction —
     which is where :func:`chemrefine.engines.api.get_engine` builds it. Left as runtime
-    ``NotImplementedError``, a subclass missing ``parse_one`` still satisfied ``isinstance``,
-    still registered, and still submitted every job of a step before anything noticed.
+    ``NotImplementedError``, a subclass missing ``parse_one`` still satisfies ``isinstance``,
+    still registers, and still submits every job of a step before anything notices.
     """
 
     name: ClassVar[str]

@@ -292,11 +292,11 @@ def finalize(
 
     Every path that finishes a step does the same two things in the same order: apply
     ``on_failure`` (:func:`apply_failure_policy`), then write the cache
-    (:func:`chemrefine.cache.save`). Four call sites spelled that out
-    identically — the full run, ``rebuild-cache``, the failed-job resubmit, and the NMS
-    re-attempt — and how they *reach* this point differs (some retry unconverged structures
-    first, some run NMS, some filter afterwards and some return the raw results), which is
-    why only the tail is shared and only the tail is extracted.
+    (:func:`chemrefine.cache.save`). Four callers need it — the full run, ``rebuild-cache``,
+    the failed-job resubmit, and the NMS re-attempt — and how they *reach* this point differs
+    (some retry unconverged structures first, some run NMS, some filter afterwards and some
+    return the raw results), which is why only the tail is shared and only the tail is
+    extracted.
 
     One function rather than a convention, because a site that applies the policy and skips
     the write — or writes under a key of its own derivation — produces no crash, just a

@@ -374,8 +374,8 @@ def test_mlip_extopt_run_block_has_a_readiness_loop_and_a_cleanup_hook(tmp_path:
     assert "/healthz" in block.body
     assert "ps -p" in block.body
     # Teardown is returned as data the script places inside its own EXIT handler, never bash
-    # the engine traps: bash keeps one handler per signal, so a `trap ... EXIT` here replaced
-    # the script's and took the copy-back, the runlog footer and the scratch teardown with it.
+    # the engine traps: bash keeps one handler per signal, so a `trap ... EXIT` here replaces
+    # the script's and takes the copy-back, the runlog footer and the scratch teardown with it.
     assert "kill -TERM" in block.cleanup
     assert "trap " not in block.body
     assert "trap " not in block.cleanup

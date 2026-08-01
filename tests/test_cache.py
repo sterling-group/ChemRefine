@@ -365,7 +365,7 @@ def test_load_rejects_old_cache_format(tmp_path: Path):
 
 
 def test_load_rejects_legacy_summary_sidecar(tmp_path: Path):
-    """The pickle-era ``step.json`` was a summary without ``structures``.
+    """A ``step.json`` that is a summary, carrying no ``structures``, is not a cache.
 
     Loading one must raise (→ ``load_if_valid`` None → clean rebuild), never
     misread the summary as a complete cache.
@@ -657,7 +657,7 @@ def test_invalidate_removes_cache_and_legacy_pickle(tmp_path: Path):
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
-    # A pre-JSON run may have left a step.pkl behind — invalidate sweeps it too.
+    # A step.pkl beside the document is a stale binary; invalidate sweeps it too.
     (step_dir / "_cache" / "step.pkl").write_bytes(b"legacy")
     invalidate(step_dir)
     assert not (step_dir / "_cache" / "step.json").exists()

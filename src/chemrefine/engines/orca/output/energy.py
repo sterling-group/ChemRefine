@@ -1,9 +1,9 @@
 """Parse energies from an ORCA ``.out``: the electronic energy + thermochemistry.
 
 One section, one module. ``FINAL SINGLE POINT ENERGY`` and the ``THERMOCHEMISTRY`` block
-(Gibbs / enthalpy / electronic+ZPE) are all *energies*, so they live together here (the
-thermochemistry moved out of :mod:`chemrefine.engines.orca.output.frequencies`, which now owns only
-the vibrational table + normal modes).
+(Gibbs / enthalpy / electronic+ZPE) are all *energies*, so they live together here;
+:mod:`chemrefine.engines.orca.output.frequencies` owns the vibrational table + normal
+modes.
 """
 
 from __future__ import annotations

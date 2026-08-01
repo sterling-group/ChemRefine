@@ -238,9 +238,9 @@ def test_run_writes_steps_csv(tmp_path: Path):
 
 
 def test_run_aligns_csv_and_cache_for_more_than_ten_structures(tmp_path: Path):
-    """Regression for #90: with ≥10 structures every id maps to its *own* energy in
-    both the cache and ``steps.csv`` — no v1-style lexical-sort mismatch (where "10"
-    sorted before "2" and rows desynced from their energies)."""
+    """With ≥10 structures every id maps to its *own* energy, in the cache and in
+    ``steps.csv`` alike: a lexical sort puts "10" before "2" and desyncs the rows from
+    the energies they name."""
     import pandas as pd
     from fake_engine import _fake_energy
 
@@ -403,10 +403,9 @@ def _register_thermo_engine():
 def test_steps_csv_reports_the_energy_the_step_filtered_on(tmp_path: Path):
     """A Gibbs-filtered step must not be summarised with electronic energies.
 
-    Before the fix the report always read ``energy_hartree`` while honouring the
-    step's ``temperature_k`` — so a ``energy_type: gibbs`` step produced Boltzmann
-    weights over electronic energies, a table that silently contradicted the
-    survivor set it claimed to describe.
+    Reading ``energy_hartree`` while honouring the step's ``temperature_k`` gives an
+    ``energy_type: gibbs`` step Boltzmann weights over electronic energies — a table that
+    silently contradicts the survivor set it claims to describe.
     """
     import pandas as pd
 
@@ -483,9 +482,9 @@ def test_rebuild_cache_requires_no_backend_from_any_of_its_steps(
     `preflight_backends` fails fast so a missing MLIP/PySCF env is reported before any job
     submits. `rebuild-cache N` puts N in REBUILD and every *other* step in CACHE_ONLY, and
     neither can submit — so the check has to be keyed on `may_submit`, not on the one named
-    step. Exempting only the target left the wall standing on all the others, which is the
-    whole command: a two-step MLIP config still could not be rebuilt on a login node, or on
-    any machine holding the output tree but not the stack that produced it.
+    step. Exempting only the target leaves the wall standing on all the others, which is the
+    whole command: a two-step MLIP config still cannot be rebuilt on a login node, or on any
+    machine holding the output tree but not the stack that produced it.
     """
     calls = _preflighted(
         tmp_path,

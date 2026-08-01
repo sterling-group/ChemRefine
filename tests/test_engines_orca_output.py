@@ -136,8 +136,8 @@ def test_converged_false_when_the_optimisation_runs_out_of_cycles():
 
     ORCA has no "optimisation failed" banner: it prints "has not yet converged" after
     every non-final cycle and, when the cycles run out, simply stops — so that line is
-    the last word. Nothing matched it before, which meant a cycle-exhausted optimisation
-    was reported converged and its unfinished geometry flowed downstream.
+    the last word. Unmatched, a cycle-exhausted optimisation reads as converged and its
+    unfinished geometry flows downstream.
     """
     assert status.parse_converged("\n".join([_SCF_OK, _GEOM_PENDING])) is False
 

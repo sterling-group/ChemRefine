@@ -90,10 +90,10 @@ def test_registry_holds_only_canonical_engine_names():
 def test_an_incomplete_job_engine_cannot_be_constructed():
     """A subclass missing a primitive fails at construction, not after submitting jobs.
 
-    These four are what a ``JobEngine`` cannot supply for itself. While they raised
-    ``NotImplementedError`` on call, a subclass that forgot one still satisfied ``isinstance``,
-    still registered, and still prepared and submitted every job of a step — the failure
-    surfaced in ``parse``, once the cluster time was already spent. Abstract, it surfaces in
+    These four are what a ``JobEngine`` cannot supply for itself. Raised as
+    ``NotImplementedError`` on call, a subclass that forgets one still satisfies
+    ``isinstance``, still registers, and still prepares and submits every job of a step — the
+    failure surfacing in ``parse``, once the cluster time is spent. Abstract, it surfaces in
     ``get_engine``.
     """
     from chemrefine.engines._job import JobEngine

@@ -222,8 +222,8 @@ def test_best_ranks_by_the_energy_the_step_filters_on():
     """A step sampling on Gibbs must promote the child its own filter would keep.
 
     The two children disagree: ``lo_elec`` wins on electronic energy, ``lo_gibbs`` on Gibbs.
-    Ranking a ``gibbs`` step on electronic energy carried forward a structure the very next
-    filter would have discarded — silently, because both children genuinely reached the target.
+    Ranking a ``gibbs`` step on electronic energy carries forward a structure the very next
+    filter discards — silently, because both children genuinely reach the target.
     """
     lo_elec = replace(_h2("lo_elec"), energy_hartree=-1.0, gibbs_hartree=-0.5)
     lo_gibbs = replace(_h2("lo_gibbs"), energy_hartree=-0.9, gibbs_hartree=-0.7)

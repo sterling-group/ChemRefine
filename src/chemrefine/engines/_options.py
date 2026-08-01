@@ -102,9 +102,9 @@ class EngineOptions(BaseModel):
 
         For the one place strictness would be wrong: a direct ``step{N}.py`` template
         may carry knobs of its own that no engine model declares, and rendering it
-        must not fail over them. Reading the raw dict by hand instead is what led to
-        the alias rules (``model`` / ``size`` for ``model_name``) being spelled out a
-        second time, by hand, next to the model that already declared them.
+        must not fail over them. Reading the raw dict by hand instead means re-spelling
+        the alias rules (``model`` / ``size`` for ``model_name``) next to the model that
+        already declares them.
         """
         raw = raw or {}
         cls._reject_ambiguous_spellings(raw)

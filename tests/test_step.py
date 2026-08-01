@@ -1087,11 +1087,12 @@ def test_resume_reparses_a_finished_structure_instead_of_resubmitting_it(tmp_pat
     """An interrupted step must continue, not start over.
 
     `step.json` is written once, at the end of a step. If the driver dies before that —
-    walltime on the batch job that runs ChemRefine itself, a node failure, Ctrl-C — then
-    `resume` missed the cache, entered the full-run path, and `attempts.archive_previous`
-    moved every finished `.out` into `attemptK/` before resubmitting *everything*. The
-    completed compute was still on disk and was never read: `parse_with_failures` decides
-    success by `out.is_file()` at the canonical path, which had just been emptied.
+    walltime on the batch job that runs ChemRefine itself, a node failure, Ctrl-C — there is
+    no cache to hit. Without this path `resume` enters the full-run path, and
+    `attempts.archive_previous` moves every finished `.out` into `attemptK/` before
+    resubmitting *everything*: the completed compute is still on disk and never read, because
+    `parse_with_failures` decides success by `out.is_file()` at the canonical path, which
+    archiving has just emptied.
 
     On HPC that is cluster-days of work discarded silently.
     """

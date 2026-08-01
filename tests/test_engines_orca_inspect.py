@@ -125,10 +125,10 @@ def test_inspect_ignores_commented_out_scan_block(tmp_path: Path):
 def test_inspect_keeps_a_hash_inside_a_quoted_filename(tmp_path: Path):
     """A ``#`` in a quoted path is part of the filename, not the start of a comment.
 
-    Cutting the line there truncated whatever followed, so a template naming
-    ``"lig#3.xyz"`` lost the rest of its own line — here the `Freq` that gates NMS and the
-    `end` that closes the scan block. The step was then classified with the wrong parser, or
-    refused NMS for a reason that was not true: a chemistry-shaped failure caused by a
+    Cutting the line at the ``#`` truncates whatever follows, so a template naming
+    ``"lig#3.xyz"`` loses the rest of its own line — here the `Freq` that gates NMS and the
+    `end` that closes the scan block — and the step is classified with the wrong parser, or
+    refused NMS for a reason that is not true: a chemistry-shaped failure caused by a
     character in a filename.
     """
     run = inspect_template(_write(tmp_path, '! B3LYP def2-SVP Opt "lig#3.xyz" Freq\n'))

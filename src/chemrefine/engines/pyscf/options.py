@@ -97,7 +97,7 @@ class PyscfOptions(EngineOptions):
         ``tensor_folder`` becomes an ``output_dirs`` entry, which the on-exit handler copies
         with ``cp -r "<tensor_folder>" "$OUTPUT_DIR/"``. The double quotes there are **not**
         protection — bash performs command substitution inside them — so
-        ``tensor_folder: 'tensors$(...)'`` ran that command when the job did.
+        ``tensor_folder: 'tensors$(...)'`` runs that command when the job does.
 
         Held to :func:`chemrefine.config.reject_shell_unsafe`, the same rule as the
         directory paths, ``executables`` and ``operation``, rather than a copy of it. The

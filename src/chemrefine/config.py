@@ -311,8 +311,8 @@ def reject_shell_unsafe(text: str, *, what: str, fix: str) -> None:
     **One rule, one home, keyed to the property rather than to a list of fields.** Every
     config value that reaches generated bash goes through here — the table below is the whole
     set, and `tests/test_engines_invariants.py` fails if a new one appears without a decision
-    about which column it belongs in. Remembered as "the path fields", the rule missed values
-    that reached bash by other routes.
+    about which column it belongs in. Keyed to a list of fields instead, the rule misses every
+    value that reaches bash by another route.
 
     ==========================  ===============================================================
     Value                       How it is protected

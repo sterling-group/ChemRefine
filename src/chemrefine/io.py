@@ -290,7 +290,7 @@ def save_step_csv(
             "% Cumulative": _CSV_PRECISION,
         }
     )
-    # Last column, so the historic header prefix is unchanged for existing tooling.
+    # Last column, so the leading header columns stay stable for existing tooling.
     df["Energy type"] = energy_type
 
     # The header follows the *file*, not the step number. Keyed off `step_number == 1`, a

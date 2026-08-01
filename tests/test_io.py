@@ -198,10 +198,10 @@ def test_save_step_csv_step_one_truncates_stale_file(tmp_path: Path):
 def test_save_step_csv_writes_a_header_when_step_one_wrote_nothing(tmp_path: Path):
     """The report must never start with a data row.
 
-    Truncation and the header were two decisions keyed off the same `step_number == 1`, so a
-    step 1 that summarised nothing left step 2 appending `header=False` onto a file that did
-    not exist -- producing a CSV whose first line is data, which every `read_csv` then eats as
-    the column names.
+    Truncation and the header keyed off the same `step_number == 1` leave a step 1 that
+    summarises nothing followed by a step 2 appending `header=False` onto a file that does not
+    exist -- producing a CSV whose first line is data, which every `read_csv` then eats as the
+    column names.
 
     Reachable without contrivance: `on_failure: best` on step 1 with no `sample:` keeps the
     backfilled seeds, and those carry no energy yet.

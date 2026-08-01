@@ -187,7 +187,7 @@ def fingerprint(
     changed upstream result invalidates the step even when the IDs match.
     ``template_digest`` (of :attr:`~chemrefine.state.StepContext.template`)
     ties it to the *contents* of the resolved template — editing the template
-    in place (which now also drives ORCA's run-type detection when ``operation``
+    in place (it also drives ORCA's run-type detection when ``operation``
     is omitted) re-runs the step, where the template basename alone could not.
     ``sample:`` is excluded on purpose — the cached results are pre-filter
     and filtering re-runs on every load, so a filter-only edit is a cache
@@ -497,7 +497,7 @@ def _read_arrays(path: Path) -> Any:
     ``allow_pickle=False`` is spelled out because it is the whole reason this is not a
     pickle: numpy *enforces* it, raising rather than executing when a file smuggles in an
     object array. The cache's promise that loading it can never run code from the file
-    therefore survives the move off pure JSON, as a check rather than a convention.
+    therefore holds for the ``.npz`` sidecar too, as a check rather than a convention.
     """
     if not path.is_file():
         raise CacheError(f"step cache at {path.parent} has no {path.name}; rebuild the step")
@@ -664,9 +664,8 @@ def load(step_dir: Path) -> StepCache | None:
 
     Raises :class:`CacheError` when the document exists but is malformed —
     bad JSON, missing fields, or a ``cache_format`` this version doesn't
-    read. The summary-only ``step.json`` sidecar that pickle-era versions
-    wrote next to ``step.pkl`` lands here too (it has no ``structures``),
-    forcing a clean rebuild rather than a wrong read.
+    read. A summary-only ``step.json`` sitting beside a ``step.pkl`` lands here too
+    (it has no ``structures``), forcing a clean rebuild rather than a wrong read.
     """
     path = _cache_path(step_dir)
     data = read_json(path, None, label="step cache")
@@ -729,8 +728,8 @@ def invalidate(step_dir: Path) -> None:
     outputs on disk after the results document is gone. Callers that mean "redo this step
     from scratch" want :func:`discard_step` instead.
 
-    Also removes the ``step.pkl`` a pre-JSON version may have left behind, so re-running
-    over an old output tree leaves no stale binary around.
+    Also removes any ``step.pkl`` in the cache directory, so re-running over an old output
+    tree leaves no stale binary around.
     """
     _cache_path(step_dir).unlink(missing_ok=True)
     (step_dir / "_cache" / "step.pkl").unlink(missing_ok=True)

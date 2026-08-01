@@ -3,7 +3,7 @@
 The backend a step runs on is a property of the **backend family**, not of the engine kind:
 ``pyscf`` (a rendered script) and ``pyscf-extopt`` (a gradient server ORCA talks to) both need
 PySCF, whatever their options say. Declared once, here, and mixed into each engine — rather
-than repeated per engine, which is how the two carried identical copies.
+than repeated per engine, where the two are free to drift apart.
 
 Constant where :class:`~chemrefine.engines.mlip.backend.MlipBackend` derives: PySCF is one
 library, so there is nothing to select. That difference is a property of the backends, not an

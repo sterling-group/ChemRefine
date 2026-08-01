@@ -49,7 +49,8 @@ class OrcaEngine(JobEngine):
 
     ``.property.txt`` is the human-readable twin of the property JSON, and ``.opt`` is the
     optimisation restart file — the one artifact that lets a stalled optimisation be picked
-    up where it stopped instead of started over. Both were left behind in scratch.
+    up where it stopped instead of started over. Neither matches any other glob here, so
+    without these two entries both stay in ``$WORK_DIR`` and are deleted with it.
 
     Named exactly rather than as ``*.txt``, which would sweep up whatever a user's template
     happens to write. Note ``*.hess`` also matches ORCA's numbered intermediates

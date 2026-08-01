@@ -72,7 +72,7 @@ def test_max_gpus_and_per_step_slurm_template_accepted(tmp_path: Path):
 
 
 def test_unknown_top_level_field_rejected(tmp_path: Path):
-    data = _minimal_config(orca_excutable="orca")  # historic typo
+    data = _minimal_config(orca_excutable="orca")  # a plausible misspelling
     with pytest.raises(ConfigError):
         load_config(_write_yaml(tmp_path, data))
 
