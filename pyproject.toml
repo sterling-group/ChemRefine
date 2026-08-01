@@ -226,12 +226,13 @@ disable_error_code = [
 [[tool.mypy.overrides]]
 # Full strictness for the package itself.
 module = ["chemrefine.*"]
-# The four codes above are relaxed for *tests*, and `disable_error_code` has no per-module
-# form — set once, it applies everywhere, so leaving it at that silently spent the relaxation
-# on the package too. Every reason given for disabling them is a testing technique; none of
-# them describes `src/`. Re-enabled here, they cost seven suppressions across the package,
-# each naming the published stub it works around — and they are what makes an exhaustive
-# `match` exhaustive, since mypy reports a non-`Never` `assert_never` argument as `arg-type`.
+# The four codes above are relaxed for the *tests*, and every reason given for relaxing them
+# is a testing technique — none of them describes `src/`. They are disabled globally anyway,
+# because a per-module section cannot select the tests: mypy patterns are module paths whose
+# `*` matches a whole component, and `tests/` holds bare top-level modules (`test_cache`,
+# `conftest`), so `test_*` is rejected outright. Turning them back on here is the only way
+# round that, and it is what keeps the package held to them rather than sharing a relaxation
+# written for something else.
 enable_error_code = ["attr-defined", "arg-type", "union-attr", "type-arg"]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
@@ -293,7 +294,7 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PTH", "RET", "C4", "TID"
 [tool.pytest.ini_options]
 # Tier-3 live-integration tests need real binaries (ORCA, an MLIP stack) and
 # real runtime; opt in explicitly with `pytest -m integration`.
-addopts = "-m 'not integration' --strict-markers --strict-config"
+addopts = "-m 'not integration and not perf' --strict-markers --strict-config"
 testpaths = ["tests"]
 # Add `tests/` to sys.path so test files can `from synthetic import …`
 # without making the tests directory a package.
@@ -306,6 +307,10 @@ markers = [
     "slow: tests that take longer than 1 second",
     "gpu: tests that require CUDA",
     "integration: tests that invoke real ORCA / SLURM / external services",
+    # Distinct from `integration`, which is about *what* a test reaches for, and from `slow`,
+    # which still runs by default. This one is about cost: a tier that builds 10⁴ structures
+    # to measure how the bookkeeping scales, and so does not belong in the edit loop.
+    "perf: tests that measure scaling; too costly for the default loop",
 ]
 
 [tool.coverage.run]
