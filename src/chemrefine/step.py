@@ -321,7 +321,7 @@ def _cached_outcome(
     if cached is None:
         return None
     failed = cache.load_failure_records(ctx.step_dir)
-    if failed and step_cfg.on_failure == "stop" and may_submit:
+    if failed and step_cfg.leaves_failures_pending and may_submit:
         results = (
             nms.reattempt_nms(nms_engine, ctx, step_cfg, cached, key)
             if nms_engine is not None
@@ -522,7 +522,7 @@ def halt_if_pending(config: Config, step_cfg: StepConfig, mode: StepMode) -> Non
     visibility but never halt. Which *modes* may halt is :meth:`StepMode.can_halt`, which
     is where the ``CACHE_ONLY`` exemption and its reason live.
     """
-    if step_cfg.on_failure != "stop":
+    if not step_cfg.halts_on_failure:
         return
     if not mode.can_halt():
         return

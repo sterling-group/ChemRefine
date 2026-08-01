@@ -129,7 +129,7 @@ def _action_rerun_errors(config: Config, target: str | int | None) -> None:
             "rerun-errors: %s has no recorded failures to rerun",
             target_step.dir_name(),
         )
-    elif target_step.on_failure == "stop":
+    elif target_step.leaves_failures_pending:
         logger.info(
             "rerun-errors: re-attempting %d failed job(s) in %s",
             n_failed,

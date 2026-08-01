@@ -27,6 +27,7 @@ from chemrefine.engines._job import build_structures
 from chemrefine.engines.api import ParsedResult
 from chemrefine.errors import OutputParseError
 from chemrefine.state import (
+    Failure,
     FailureKind,
     JobBatch,
     PipelineState,
@@ -231,3 +232,31 @@ def test_an_orphaned_retry_would_change_which_structures_survive():
 # ---------------------------------------------------------------------------
 # The numbered-attempt primitive
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Unsupported failure policy
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_on_failure_policy_resolves_nothing(tmp_path: Path):
+    """A policy with no branch must not quietly behave like one that has one.
+
+    ``apply_failure_policy`` matches the closed ``on_failure`` literal with no catch-all, so
+    adding a fourth value without a branch is a mypy error at the ``match`` — the guard that
+    actually protects this, since the wrong outcome is silent: a policy meant to keep
+    structures would drop them exactly as ``skip`` does, and every downstream step would run
+    against the smaller set without anything to show for it.
+
+    What is left to assert at runtime is that the unmatched case resolves *nothing* rather
+    than falling into a neighbour's branch, so the mistake surfaces where it happens. The
+    value has to be forced past validation, which is the point: the config layer is what
+    makes this unreachable in a real run.
+    """
+    ctx = _ctx(tmp_path)
+    bogus = ctx.step_cfg.model_copy(update={"on_failure": "retry-all"})
+    failure = Failure("0", FailureKind.MISSING_OUTPUT, None)
+
+    resolved = lifecycle.apply_failure_policy([_struct()], [failure], ctx, bogus)
+
+    assert resolved is None, "no branch ran, so no survivor set was chosen"

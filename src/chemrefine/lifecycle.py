@@ -255,18 +255,29 @@ def apply_failure_policy(
         step_cfg.on_failure,
     )
 
-    if step_cfg.on_failure == "best":
-        prev_by_id = {s.id: s for s in ctx.prev_state.structures}
-        # Build a new list rather than appending into the caller's: every other value
-        # crossing this module is frozen, and a policy function quietly rewriting its
-        # argument is the one aliasing bug this file would not survive.
-        backfilled = [
-            fallback
-            for f in failures
-            if (fallback := (f.best if f.best is not None else prev_by_id.get(f.sid))) is not None
-        ]
-        return StepResults(structures=(*successes, *backfilled))
-    return StepResults(structures=tuple(successes))
+    # Matched on the closed literal rather than tested with `==`, and with no catch-all —
+    # the same shape, for the same reason, as `chemrefine.filtering._dispatch` over its
+    # discriminated union. A chain of `==` needs a fall-through, and a fall-through cannot be
+    # told apart from a policy nobody wrote a branch for: a fourth value would silently behave
+    # like `skip`, dropping the structures it was meant to keep, with no error anywhere.
+    # Unmatched here, the implicit `None` contradicts the return type and mypy says so.
+    match step_cfg.on_failure:
+        case "best":
+            prev_by_id = {s.id: s for s in ctx.prev_state.structures}
+            # Build a new list rather than appending into the caller's: every other value
+            # crossing this module is frozen, and a policy function quietly rewriting its
+            # argument is the one aliasing bug this file would not survive.
+            backfilled = [
+                fallback
+                for f in failures
+                if (fallback := (f.best if f.best is not None else prev_by_id.get(f.sid)))
+                is not None
+            ]
+            return StepResults(structures=(*successes, *backfilled))
+        case "skip" | "stop":
+            # `stop` keeps the successes too; the run is halted afterwards by
+            # `chemrefine.step.halt_if_pending`, once this cache is written.
+            return StepResults(structures=tuple(successes))
 
 
 def finalize(

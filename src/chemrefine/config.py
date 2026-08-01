@@ -214,6 +214,30 @@ class StepConfig(BaseModel):
     its submitted input). The default is ``stop`` so failures are never silently
     dropped — opt into ``skip``/``best`` per step when that is what you want."""
 
+    @property
+    def halts_on_failure(self) -> bool:
+        """Whether this step's failures stop the run.
+
+        The two predicates below spell what ``on_failure`` *means* to a caller, so the modules
+        that act on it ask a question instead of matching a string. Only ``stop`` answers yes
+        to either, but the two are different questions — one is about the run ending, the
+        other about work still owed — and a policy added later could answer them differently.
+        Compared literally at each site, that difference has nowhere to live and every site
+        has to be found and re-read to know which meaning it wanted.
+        """
+        return self.on_failure == "stop"
+
+    @property
+    def leaves_failures_pending(self) -> bool:
+        """Whether this step's ledgered failures are still owed a re-attempt.
+
+        ``skip`` and ``best`` resolve their failures when the policy is applied, so their
+        ledger entries are a record rather than a queue; ``resume`` and ``rerun-errors``
+        re-attempt only what is pending. See :meth:`halts_on_failure` for why this is a
+        second predicate rather than the same one.
+        """
+        return self.on_failure == "stop"
+
     @field_validator("operation")
     @classmethod
     def _reject_unsafe_operation(cls, v: str | None) -> str | None:
