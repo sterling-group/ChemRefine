@@ -83,6 +83,25 @@ def _gpu_capable() -> list[str]:
     ]
 
 
+def _alias_capable() -> list[str]:
+    """Engines whose options model spells at least one field more than one way.
+
+    Only these can be given one knob twice, so only these have the ambiguity the test below
+    asserts is refused. Selecting them here rather than skipping inside the test keeps a skip
+    from standing permanently in the run, where it says nothing and hides a real one.
+    """
+    return [
+        name
+        for name in _gpu_capable()
+        if any(
+            len(spellings) > 1
+            for spellings in getattr(get_engine(name), "options_cls", EngineOptions)
+            ._spellings_by_field()
+            .values()
+        )
+    ]
+
+
 def _assemble(
     engine_name: str, tmp_path: Path, *, array: bool = False
 ) -> tuple[Path, dict[str, str]]:
@@ -262,16 +281,16 @@ def test_run_block_survives_paths_with_spaces(engine_name: str, tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("engine_name", _gpu_capable())
+@pytest.mark.parametrize("engine_name", _alias_capable())
 def test_every_options_model_refuses_two_spellings_of_one_knob(engine_name: str):
     """A step naming one field twice fails the same way for every reader.
 
     Aliases let each backend read naturally (`task` for `task_name`, `model`/`size` for
-    `model_name`), which means a step *can* set one knob twice. Pydantic rejected that as
+    `model_name`), which means a step *can* set one knob twice. Left to pydantic that is an
     `extra="forbid"` on whichever spelling it did not pick -- a message naming the wrong
-    problem -- and only on the strict path. So `requirement_from_options`, which
-    `preflight_backends` calls, accepted a config that the direct engine's template render
-    then refused: it passed the fail-fast check and died in `prepare`.
+    problem -- and only on the strict path, so `requirement_from_options`, which
+    `preflight_backends` calls, accepts a config that the direct engine's template render
+    then refuses: it passes the fail-fast check and dies in `prepare`.
     """
     options_cls = getattr(get_engine(engine_name), "options_cls", EngineOptions)
     aliased = {
@@ -279,8 +298,7 @@ def test_every_options_model_refuses_two_spellings_of_one_knob(engine_name: str)
         for field, names in options_cls._spellings_by_field().items()
         if len(names) > 1
     }
-    if not aliased:
-        pytest.skip(f"{engine_name} declares no aliases")
+    assert aliased, f"{engine_name} was parametrized as alias-capable but declares none"
 
     for field, spellings in aliased.items():
         raw = dict.fromkeys(spellings, "x")
