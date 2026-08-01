@@ -12,8 +12,11 @@ Vocabulary only: deciding what a failure *means* for a step is
 :mod:`chemrefine.cache`. Both import from here, so neither has to import
 the other to name an outcome.
 
-``StepConfig`` lives in :mod:`chemrefine.config` to avoid pulling Pydantic
-into this module — it is type-hinted as a forward reference where needed.
+``StepConfig`` lives in :mod:`chemrefine.config` and is imported here for
+:class:`StepContext`, which carries a step's own specification alongside the
+state it runs over. That makes this module a Pydantic importer too — seventeen
+modules import it, so it is not a leaf on cost, only on direction: it depends on
+the configuration vocabulary and on nothing above it.
 """
 
 from __future__ import annotations

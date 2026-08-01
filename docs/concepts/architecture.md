@@ -8,14 +8,29 @@ forward as immutable `PipelineState` values.
 ## Module layering
 
 ```
-cli → recovery → pipeline → step → {cache, filtering, nms}
+cli → recovery → pipeline → step → {cache, filtering}
+                                  → nms (a peer of step, not a leaf under it:
+                                         it drives its own two rounds through
+                                         lifecycle, cache, attempts, filtering, io)
                                   → lifecycle (run → classify → policy → persist → cache)
                                        → attempts (attemptK/ directories)
                                   → engines.api (Protocols + ENGINES registry)
                                        → engines/* (orca, mlip, pyscf)
                                             → engines/{_job, _execution, _script} (building blocks)
-                                            → slurm, throttle, io, ids, job_log, quantities
+                                            → slurm, throttle, io, ids, quantities, state, config
 ```
+
+`config` and `state` sit under everything and are drawn nowhere above because nearly
+everything reads them: `state` is the vocabulary every layer passes (17 importers, engines
+included) and `config` the one it is specified in. Neither imports anything above itself,
+which is what makes the direction hold.
+
+The spine is one-directional but not a strict ladder — three edges skip a rung, each
+deliberately. `recovery` reaches `cache` directly (to discard a step's state before running
+one) and `step` directly (for the `RunPlan` / `StepMode` vocabulary a recovery action is
+written in); `pipeline` reaches `filtering` (the per-step CSV must summarise the same energy
+the step filtered on) and `slurm` (the `dispatch:` preflight). `job_log` is written by
+`slurm/script`, not by an engine.
 
 **`engines/` does not import `cache`** — an engine turns a step's specification into a
 calculation and the output back into structures; how a run is resumed and what a cache key is
