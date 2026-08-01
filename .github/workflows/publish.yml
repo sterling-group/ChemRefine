@@ -42,9 +42,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # `upload-name-suffix` is load-bearing, not cosmetic. The `ci` job above calls
+      # ci.yml, whose own `build-package` runs this same action, and a reusable workflow
+      # shares the caller's run — so both uploads land in one run and the default names
+      # (`Packages`, `Package Metadata`, `PyPI README`) collide. upload-artifact refuses a
+      # duplicate name, so one of the two jobs fails and every publish job below, which
+      # needs them both, is skipped.
       - uses: hynek/build-and-inspect-python-package@d44ca7d91762de7a7d5436ddae667c6da6d1c3df # v2.18.0
         with:
           attest-build-provenance-github: true
+          upload-name-suffix: "-release"
 
       # Provenance says who built the artifact; the SBOM says what is inside it. A user
       # auditing a CVE against their install needs the second, and reconstructing it from
@@ -99,7 +106,7 @@ jobs:
       - name: Download packages built by build-and-inspect-python-package
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: Packages
+          name: Packages-release
           path: dist
 
       - name: Check tag matches package version
@@ -136,7 +143,7 @@ jobs:
       - name: Download packages built by build-and-inspect-python-package
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: Packages
+          name: Packages-release
           path: dist
 
       # GITHUB_REF_NAME is the tag on both trigger paths (tag push and
