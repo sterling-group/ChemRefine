@@ -21,10 +21,10 @@ chemrefine run input.yaml --dry-run          # validate + describe; submit nothi
 |---------|-------------|--------------|
 | `run` | `CONFIG` | Run the full pipeline from step 1, invalidating any existing cache. |
 | `resume` | `CONFIG` | Honour the on-disk cache for unchanged steps and re-attempt the pending failed jobs of any `on_failure: stop` step, then continue. |
-| `rerun-errors` | `CONFIG [TARGET]` | Re-attempt only one step's pending failed jobs (latest if no target); like `resume` but scoped to that step. |
-| `rerun` | `CONFIG [TARGET]` | Redo one whole step from scratch (default: latest); others cache-hit. |
-| `rebuild-cache` | `CONFIG [TARGET]` | Rebuild one step's cache from outputs already on disk (parse only, no submission). |
-| `rebuild-nms` | `CONFIG [TARGET]` | Re-run the NMS step with the current options (a named alias of `rerun`). |
+| `rerun-errors` | `CONFIG [TARGET]` | Re-attempt one step's pending failed jobs (latest if no target), then continue: earlier steps cache-hit and submit nothing, later ones resume. |
+| `rerun` | `CONFIG [TARGET]` | Redo one whole step from scratch (default: latest); every other step resumes, so one whose fingerprint no longer holds runs again. |
+| `rebuild-cache` | `CONFIG [TARGET]` | Rebuild one step's cache from outputs already on disk (parse only, no submission). The run ends at that step. |
+| `rebuild-nms` | `CONFIG [TARGET]` | A named alias of `rerun` for the NMS-tuning workflow. Targets TARGET (the last step if none), not "the NMS step", and discards its cache, so round 1 is recomputed — to tune only the search parameters, `resume` reuses it. |
 
 ## Backend environments (`chemrefine backends`)
 

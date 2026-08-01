@@ -50,10 +50,10 @@ pipeline plus per-step overrides. `pipeline.run` then asks `plan.for_step(n)` an
 | --- | --- | --- | --- |
 | `run` | every step | default `EXECUTE` | every step re-runs its engine |
 | `resume` | none | default `RESUME` | caches are honoured; the pending `on_failure: stop` step has its failures re-attempted |
-| `rerun [N]` | step N (default: last) | default `RESUME` | step N misses its cache and re-executes end to end; the rest hit theirs |
+| `rerun [N]` | step N (default: last) | default `RESUME` | step N misses its cache and re-executes end to end; the rest resume, so one whose fingerprint no longer holds re-executes too |
 | `rebuild-nms [N]` | step N | default `RESUME` | a named alias of `rerun`, for the NMS-tuning workflow |
-| `rerun-errors [N]` | none | default `CACHE_ONLY`, `{N: RESUME}` | only step N re-attempts its pending failures; every other step is served from cache and cannot halt the run before N is reached |
-| `rebuild-cache [N]` | none | default `CACHE_ONLY`, `{N: REBUILD}` | step N is re-parsed from the outputs already on disk and its cache rewritten — no submission |
+| `rerun-errors [N]` | none | default `CACHE_ONLY`, `{M: RESUME for M >= N}` | step N re-attempts its pending failures; earlier steps are served from cache and cannot halt the run before N is reached; later steps resume, having never run |
+| `rebuild-cache [N]` | none | default `CACHE_ONLY`, `{N: REBUILD}`, `stop_after=N` | step N is re-parsed from the outputs already on disk and its cache rewritten — no submission, and the run ends there |
 
 The four modes:
 

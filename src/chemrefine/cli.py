@@ -7,14 +7,17 @@ This is the **only** module that calls :func:`sys.exit` or reads
 * ``chemrefine run CONFIG`` — full pipeline from step 1 (caches invalidated).
 * ``chemrefine resume CONFIG`` — honor existing cache and re-attempt the pending
   failed jobs of any ``on_failure: stop`` step, then continue.
-* ``chemrefine rerun-errors CONFIG [STEP]`` — re-attempt only one step's pending
-  failed jobs (latest if no STEP); like ``resume`` but scoped to that step.
-* ``chemrefine rerun CONFIG [STEP]`` — redo one whole step from scratch
-  (others cache-hit).
+* ``chemrefine rerun-errors CONFIG [STEP]`` — re-attempt one step's pending
+  failed jobs (latest if no STEP), then continue: earlier steps cache-hit and
+  submit nothing, later ones resume.
+* ``chemrefine rerun CONFIG [STEP]`` — redo one whole step from scratch; every
+  other step resumes, so one whose fingerprint no longer holds runs again.
 * ``chemrefine rebuild-cache CONFIG [STEP]`` — rebuild one step's cache from
-  outputs already on disk (parse only, no submission).
-* ``chemrefine rebuild-nms CONFIG [STEP]`` — re-run the NMS step with the
-  current options (a named alias of ``rerun``).
+  outputs already on disk (parse only, no submission); the run ends there.
+* ``chemrefine rebuild-nms CONFIG [STEP]`` — a named alias of ``rerun`` for the
+  NMS-tuning workflow. It targets STEP (the last step if none is given), not
+  "the NMS step", and discards the cache, so round 1 is recomputed. To tune only
+  the search parameters, ``resume`` reuses round 1 and is cheaper.
 
 ``chemrefine backends {install,list,path}`` manages the per-backend environments
 (conflicting MLIP stacks live in one managed env each, resolved by name — see
@@ -31,9 +34,10 @@ Legacy v1.3.1 flag-style invocations (``chemrefine CONFIG --rebuild_cache N``,
 ``--rerun_errors N``, ``--skip``, …) are translated to these subcommands by
 :func:`chemrefine.cli_legacy.translate_argv` before Typer parses.
 
-Global flags: ``--maxcores INT`` / ``--maxgpus INT`` override ``max_cores`` /
-``max_gpus`` in the YAML; ``--dry-run`` loads and validates the config without
-executing; ``-v`` turns on debug logging.
+Every run command takes ``--maxcores INT`` / ``--maxgpus INT``, which override
+``max_cores`` / ``max_gpus`` in the YAML, and ``--dry-run``, which loads and
+validates the config without executing. ``-v`` is the one global flag and goes
+before the subcommand; it turns on debug logging.
 """
 
 from __future__ import annotations
@@ -249,7 +253,10 @@ def rebuild_cache(
     maxgpus: MaxGpusOpt = None,
     dry_run: DryRunOpt = False,
 ) -> None:
-    """Rebuild one step's cache from existing outputs (default: latest); no submission."""
+    """Rebuild one step's cache from existing outputs (default: latest); no submission.
+
+    The run ends at that step.
+    """
     raise typer.Exit(
         _dispatch(
             "rebuild-cache",
@@ -270,7 +277,11 @@ def rebuild_nms(
     maxgpus: MaxGpusOpt = None,
     dry_run: DryRunOpt = False,
 ) -> None:
-    """Re-run the NMS step with the current options (alias of rerun)."""
+    """Redo a step and re-displace it from scratch (default: latest) — a named alias of rerun.
+
+    Targets the step you name, not "the NMS step", and discards its cache, so round 1 is
+    recomputed. Tuning only the search parameters? `resume` reuses round 1 and is cheaper.
+    """
     raise typer.Exit(
         _dispatch(
             "rebuild-nms",
@@ -291,7 +302,7 @@ def rerun(
     maxgpus: MaxGpusOpt = None,
     dry_run: DryRunOpt = False,
 ) -> None:
-    """Redo one whole step from scratch (default: latest); others cache-hit."""
+    """Redo one whole step from scratch (default: latest); the others resume."""
     raise typer.Exit(
         _dispatch(
             "rerun", config_path, maxcores=maxcores, maxgpus=maxgpus, target=target, dry_run=dry_run
@@ -307,7 +318,7 @@ def rerun_errors(
     maxgpus: MaxGpusOpt = None,
     dry_run: DryRunOpt = False,
 ) -> None:
-    """Re-attempt only one step's pending failed jobs (default: latest)."""
+    """Re-attempt one step's pending failed jobs (default: latest), then continue the run."""
     raise typer.Exit(
         _dispatch(
             "rerun-errors",

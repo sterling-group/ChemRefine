@@ -11,13 +11,18 @@ Only a ``stop`` step leaves failures pending — and these actions recover them:
   of any ``on_failure: stop`` step (only those: ``skip`` / ``best`` failures are
   already resolved), then continue. The ``failed_jobs.json`` ledger records the
   failures of *every* policy, so they're always visible.
-* ``rerun-errors [step]`` — re-attempt only one step's pending failed jobs
-  (latest if no step given); like ``resume`` but scoped to that step.
-* ``rerun [step]`` — redo one whole step from scratch (others cache-hit).
+* ``rerun-errors [step]`` — re-attempt one step's pending failed jobs (latest if no step
+  given), then continue. Scoped backwards only: the steps before it cache-hit and submit
+  nothing, the steps after it resume, because the halt that left the failures pending is
+  what stopped them running in the first place.
+* ``rerun [step]`` — redo one whole step from scratch; every other step resumes, so one
+  whose fingerprint no longer holds re-executes too.
 * ``rebuild-cache [step]`` — rebuild one step's cache from outputs already on
-  disk (parse only, no submission).
-* ``rebuild-nms [step]`` — re-run the NMS step with the current options
-  (a named alias of ``rerun`` for the NMS-tuning workflow).
+  disk (parse only, no submission). The run ends at that step.
+* ``rebuild-nms [step]`` — a named alias of ``rerun`` for the NMS-tuning workflow. It
+  targets the step named (the last if none is), not "the NMS step", and discards its cache,
+  so round 1 is recomputed; tuning only the search parameters is what ``resume`` reuses
+  round 1 for.
 """
 
 from __future__ import annotations
