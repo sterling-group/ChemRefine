@@ -127,18 +127,26 @@ def test_dry_run_with_target_step_prints_target(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
+def _assert_rebuilds_step_2(tmp_path: Path, config_path: Path, target: str) -> None:
+    """``rebuild-cache TARGET`` re-parses step 2, so its cache document is rewritten."""
+    document = tmp_path / "outputs" / "step2_refine" / "_cache" / "step.json"
+    before = document.stat().st_mtime_ns
+    result = runner.invoke(app, ["rebuild-cache", str(config_path), target])
+    assert result.exit_code == 0, result.output
+    assert document.stat().st_mtime_ns != before, f"step 2's cache was not rewritten for {target!r}"
+
+
 def test_rebuild_cache_targets_by_step_number(tmp_path: Path):
     config_path = _write_config(tmp_path)
     runner.invoke(app, ["run", str(config_path)])
-    result = runner.invoke(app, ["rebuild-cache", str(config_path), "2"])
-    assert result.exit_code == 0
+    _assert_rebuilds_step_2(tmp_path, config_path, "2")
 
 
 def test_rebuild_cache_targets_by_step_name(tmp_path: Path):
+    """A name reaches the same step its number does."""
     config_path = _write_config(tmp_path)
     runner.invoke(app, ["run", str(config_path)])
-    result = runner.invoke(app, ["rebuild-cache", str(config_path), "refine"])
-    assert result.exit_code == 0
+    _assert_rebuilds_step_2(tmp_path, config_path, "refine")
 
 
 def test_rerun_with_missing_target_errors(tmp_path: Path):
@@ -148,11 +156,29 @@ def test_rerun_with_missing_target_errors(tmp_path: Path):
     assert result.exit_code != 0
 
 
-def test_rebuild_nms_runs(tmp_path: Path):
+def test_rebuild_nms_is_rerun_under_another_name(tmp_path: Path):
+    """What ``rebuild-nms`` is, asserted on what it does.
+
+    It carries no NMS-specific path and does not look for an NMS step: it redoes the step it
+    is given, the last one when it is given none. Asserting only its exit code let it pass on
+    a config with no NMS step at all — which is this one — and would go on passing if the
+    command became a no-op. Redoing a step archives the previous attempt, so that is the
+    evidence it ran.
+    """
     config_path = _write_config(tmp_path)
     runner.invoke(app, ["run", str(config_path)])
+    last_step = tmp_path / "outputs" / "step2_refine"
+    assert not list(last_step.glob("*/attempt*")), "nothing archived by the first run"
+
     result = runner.invoke(app, ["rebuild-nms", str(config_path)])
-    assert result.exit_code == 0
+
+    assert result.exit_code == 0, result.output
+    assert list(last_step.glob("*/attempt1")), (
+        "the last step was redone — with no target, that is the step rebuild-nms takes"
+    )
+    assert not list((tmp_path / "outputs" / "step1_screen").glob("*/attempt*")), (
+        "and only that step; the earlier one resumed from its cache"
+    )
 
 
 # ---------------------------------------------------------------------------
