@@ -24,7 +24,7 @@ float64 costs 18 bytes on disk, a `strtod` call to parse and 32 bytes live; as a
 | load | 1.73 s | **0.36 s** |
 | peak memory | 268 MB | **75 MB** |
 
-`tests/test_perf_cache.py` re-measures this (`pytest -m integration -s`); these
+`tests/test_perf_cache.py` re-measures this (`pytest -m perf -s`); these
 figures come from that run.
 
 An `.npz` is an ordinary ZIP of `.npy` members, and a `.npy` is a short ASCII
@@ -126,7 +126,7 @@ rejected the same way rather than pairing one structure's energy with another's 
 The cache is rewritten in full on each save, and `parents_digest` re-hashes every parent's
 coordinates once per step. Both are linear in the structure count, and both are negligible
 next to the calculations they bookkeep. Measured on 30-atom structures
-(`tests/test_perf_cache.py`, run with `-m integration`):
+(`tests/test_perf_cache.py`, run with `-m perf`):
 
 | structures | `parents_digest` | `cache.save` | `cache.load` | `steps.csv` | `_cache/` | live state |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |

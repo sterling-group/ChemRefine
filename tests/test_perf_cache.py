@@ -23,10 +23,11 @@ Two things it reports beyond wall time:
 
 Run it with ``-s`` to see the table:
 
-    pytest tests/test_perf_cache.py -m integration -s
+    pytest tests/test_perf_cache.py -m perf -s
 
-Marked ``integration``: it builds 10⁴ structures and takes a few seconds, which does not
-belong in the default loop.
+Marked ``perf``: it builds 10⁴ structures and takes a few seconds, which does not belong
+in the default loop. Not ``integration`` — it reaches for no binary and no service — and not
+``slow``, which still runs by default.
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ from chemrefine import cache, io
 from chemrefine.config import StepConfig
 from chemrefine.state import PipelineState, StepContext, StepResults, Structure
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.perf
 
 #: Structure counts to time. 200 is a normal conformer screen; 10 000 is well past
 #: anything the tutorials do — the size at which these questions get interesting.

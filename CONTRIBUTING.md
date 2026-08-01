@@ -44,11 +44,12 @@ If you change a public signature in `cache`, `step`, `lifecycle` or `nms`, run t
 uses it:
 
 ```bash
-pytest -m integration tests/test_perf_cache.py   # ~12 s, no external binaries
+pytest -m perf tests/test_perf_cache.py   # ~12 s, no external binaries
 ```
 
-The rest of the tier (`tests/test_e2e_live.py`) does need real ORCA / an MLIP stack; see the
-e2e section below.
+That is its own marker because it is deselected for cost, not because it reaches for
+anything: `integration` (`tests/test_e2e_live.py`) does need real ORCA / an MLIP stack, and
+`slow` still runs by default. See the e2e section below.
 
 ### What 100% coverage does not prove
 

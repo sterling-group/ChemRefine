@@ -88,7 +88,7 @@ sys.exit('py.typed missing from the wheel' if not marker.is_file() else 0)
 # pytest reports "N passed, M skipped" with exit 0 either way. With the variable set, a
 # missing MACE or PySCF stack fails here by name.
 step "tier-3: the real binaries, end to end"
-CHEMREFINE_REQUIRE_LIVE=1 PATH="$orca_dir:$PATH" "$E2E_ENV/bin/pytest" -m integration -q
+CHEMREFINE_REQUIRE_LIVE=1 PATH="$orca_dir:$PATH" "$E2E_ENV/bin/pytest" -m 'integration or perf' -q
 
 step "the tag will match the version"
 version="$("$DEV_ENV/bin/python" -c 'import chemrefine; print(chemrefine.__version__)')"
