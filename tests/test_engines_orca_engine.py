@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+from collections.abc import Collection
 from pathlib import Path
 from unittest.mock import patch
 
@@ -62,6 +63,16 @@ def _ctx(
 
 def _seed_structure(sid: str = "0") -> Structure:
     return Structure(id=sid, atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
+
+
+def _drained(job_ids: Collection[str]) -> slurm.QueueState:
+    """A poll in which everything asked about has left the queue."""
+    return slurm.QueueState(frozenset(job_ids), frozenset())
+
+
+def _still_queued(job_ids: Collection[str]) -> slurm.QueueState:
+    """A poll in which everything asked about is still running."""
+    return slurm.QueueState(frozenset(), frozenset(job_ids))
 
 
 # ---------------------------------------------------------------------------
@@ -222,11 +233,11 @@ def test_submit_missing_slurm_header_raises(_submit, _finished_jobs, tmp_path: P
 
 
 @patch.object(dispatch, "sbatch_available", return_value=True)
-@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
+@patch.object(slurm, "poll_jobs", side_effect=lambda ids: _drained(ids))
 @patch.object(slurm, "submit_array", return_value="777")
 @patch.object(slurm, "submit")
 def test_submit_uses_one_array_when_slurm_array_set(
-    submit_mock, submit_array_mock, _finished_jobs, _sbatch, tmp_path: Path
+    submit_mock, submit_array_mock, _poll_jobs, _sbatch, tmp_path: Path
 ):
     """`slurm_array: true` on a SLURM host → one array submission, zero per-job
     sbatch calls, every input mapped to the parent id, one script + manifest."""
@@ -290,12 +301,13 @@ def test_submit_array_polls_until_the_array_drains(_submit_array, _sbatch, tmp_p
     engine = get_engine("orca")
     ctx = replace(_ctx(tmp_path, structures=(_seed_structure(),)), slurm_array=True)
     inputs = engine.prepare(ctx)
+    polls = [_still_queued({"777"}), _drained({"777"})]
     with (
-        patch.object(slurm, "finished_jobs", side_effect=[set(), {"777"}]) as finished_mock,
+        patch.object(slurm, "poll_jobs", side_effect=lambda ids: polls.pop(0)) as poll_mock,
         patch("chemrefine.slurm.dispatch.time.sleep") as sleep_mock,
     ):
         engine.submit(inputs, ctx)
-    assert finished_mock.call_count == 2
+    assert poll_mock.call_count == 2
     sleep_mock.assert_called_once()
 
 

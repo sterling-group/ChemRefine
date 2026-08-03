@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Collection
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -465,29 +466,31 @@ def test_header_name_for_device():
 
 
 def test_resolve_gpu_budget_explicit_value_wins():
-    assert slurm.resolve_gpu_budget(3) == 3
+    assert slurm.resolve_gpu_budget(3, local=True) == 3
 
 
 def test_resolve_gpu_budget_unlimited_under_slurm():
-    with patch("chemrefine.slurm.dispatch.shutil.which", return_value="/usr/bin/sbatch"):
-        assert slurm.resolve_gpu_budget(None) >= 1000
+    assert slurm.resolve_gpu_budget(None, local=False) >= 1000
 
 
 def test_resolve_gpu_budget_uses_detected_count_locally():
-    with (
-        patch("chemrefine.slurm.dispatch.shutil.which", return_value=None),
-        patch("chemrefine.slurm.dispatch._detect_local_gpus", return_value=2),
-    ):
-        assert slurm.resolve_gpu_budget(None) == 2
+    with patch("chemrefine.slurm.dispatch._detect_local_gpus", return_value=2):
+        assert slurm.resolve_gpu_budget(None, local=True) == 2
 
 
-def test_resolve_gpu_budget_respects_forced_local():
-    """`dispatch: local` uses the detected device count even with sbatch on PATH."""
-    with (
-        patch("chemrefine.slurm.dispatch.shutil.which", return_value="/usr/bin/sbatch"),
-        patch("chemrefine.slurm.dispatch._detect_local_gpus", return_value=2),
-    ):
-        assert slurm.resolve_gpu_budget(None, dispatch="local") == 2
+def test_resolve_gpu_budget_probes_nothing_of_its_own(monkeypatch):
+    """It takes the caller's resolved `local`, so it runs no PATH probe of its own.
+
+    The caller has already asked `dispatch_locally` — that decision is what routes the whole
+    submission — so a probe here would be a second answer to a settled question, free to
+    disagree with the path the batch actually took.
+    """
+    monkeypatch.setattr(
+        dispatch.shutil, "which", MagicMock(side_effect=AssertionError("probed PATH"))
+    )
+    with patch("chemrefine.slurm.dispatch._detect_local_gpus", return_value=2):
+        assert slurm.resolve_gpu_budget(None, local=True) == 2
+        assert slurm.resolve_gpu_budget(None, local=False) >= 1000
 
 
 # ---------------------------------------------------------------------------
@@ -522,7 +525,20 @@ def test_dispatch_slurm_requires_sbatch():
         slurm.dispatch_locally("slurm")
 
 
-def test_detect_local_gpus_counts_mig_instances(monkeypatch):
+@pytest.fixture
+def uncached_gpu_probe():
+    """Clear the device-count cache around a test that varies what ``nvidia-smi`` says.
+
+    The probe is memoized because the device count is a property of the host; a test that
+    fakes a *different* host has to say so, on both sides — a stale entry would answer the
+    test, and the test's answer would otherwise outlive it.
+    """
+    dispatch._detect_local_gpus.cache_clear()
+    yield
+    dispatch._detect_local_gpus.cache_clear()
+
+
+def test_detect_local_gpus_counts_mig_instances(monkeypatch, uncached_gpu_probe):
     """nvidia-smi -L lists MIG instances when the card is MIG-partitioned → count those."""
     out = (
         "GPU 0: NVIDIA H100 NVL (UUID: GPU-x)\n"
@@ -535,9 +551,21 @@ def test_detect_local_gpus_counts_mig_instances(monkeypatch):
     assert dispatch._detect_local_gpus() == 2
 
 
-def test_detect_local_gpus_falls_back_to_one_without_nvidia_smi(monkeypatch):
+def test_detect_local_gpus_falls_back_to_one_without_nvidia_smi(monkeypatch, uncached_gpu_probe):
     monkeypatch.setattr(subprocess, "run", MagicMock(side_effect=FileNotFoundError("nvidia-smi")))
     assert dispatch._detect_local_gpus() == 1
+
+
+def test_detect_local_gpus_forks_nvidia_smi_once_per_process(monkeypatch, uncached_gpu_probe):
+    """The device count is a host constant, and it is asked once per batch.
+
+    Uncached, a run forks `nvidia-smi` per step *and* per retry batch to re-learn a number
+    that cannot have changed.
+    """
+    run = MagicMock(return_value=MagicMock(returncode=0, stdout="GPU 0: X (UUID: g)\n", stderr=""))
+    monkeypatch.setattr(subprocess, "run", run)
+    assert [dispatch._detect_local_gpus() for _ in range(5)] == [1] * 5
+    assert run.call_count == 1
 
 
 def test_submit_local_applies_cuda_visible_devices_env(tmp_path: Path):
@@ -665,6 +693,36 @@ def test_finished_jobs_matches_array_tasks_by_prefix():
     fake = MagicMock(returncode=0, stdout="12345_3\n777\n", stderr="")
     with patch.object(subprocess, "run", return_value=fake):
         assert slurm.finished_jobs(["12345", "777", "999"]) == {"999"}
+
+
+def test_poll_jobs_reports_the_array_task_rows_behind_a_parent_id():
+    """The rows are what let a caller see an array move while its parent id does not."""
+    fake = MagicMock(returncode=0, stdout="12345_3\n12345_[4-999]\n777\n", stderr="")
+    with patch.object(subprocess, "run", return_value=fake):
+        state = slurm.poll_jobs(["12345", "777", "999"])
+    assert state.finished == {"999"}
+    assert state.rows == {"12345_3", "12345_[4-999]", "777"}
+
+
+def test_poll_jobs_answers_the_whole_batch_in_one_squeue():
+    """Both facts come from one query — asking twice would double every loop's poll rate."""
+    fake = MagicMock(returncode=0, stdout="1002\n", stderr="")
+    with patch.object(subprocess, "run", return_value=fake) as run:
+        state = slurm.poll_jobs([str(1000 + i) for i in range(200)])
+    assert run.call_count == 1
+    assert state.rows == {"1002"}
+
+
+def test_poll_jobs_reports_no_movement_when_squeue_fails():
+    """A failed poll learned nothing, and must not look like progress.
+
+    Reporting empty rows would read as "the queue emptied" and re-anchor the caller's stall
+    deadline on every failure — turning a squeue outage into a wait that never times out.
+    """
+    with patch.object(subprocess, "run", side_effect=subprocess.CalledProcessError(1, "squeue")):
+        state = slurm.poll_jobs(["1", "2"])
+    assert state.finished == frozenset()
+    assert state.rows == {"1", "2"}
 
 
 def test_finished_jobs_treats_a_failing_squeue_as_nothing_finished():
@@ -827,6 +885,26 @@ def test_terminate_local_jobs_ignores_unknown_and_finished_ids():
     slurm.terminate_local_jobs(["local-does-not-exist", "12345"])
 
 
+def test_terminate_local_jobs_with_an_empty_batch_spares_everything_else(tmp_path: Path):
+    """An empty collection means empty — it is not the no-argument sweep.
+
+    The scheduler passes its live job ids from a `finally`, and on every clean exit that
+    collection *is* empty; reading falsiness as "everything" made the ordinary end of a batch
+    mean "kill every local job this process started".
+    """
+    script, pidfile = _job_with_a_foreground_calculation(tmp_path)
+    job_id = dispatch._submit_local(script)
+    calc_pid = _await_pid(pidfile)
+    try:
+        slurm.terminate_local_jobs(())
+        assert job_id in dispatch._LOCAL_PROCS
+        assert _alive(calc_pid)
+    finally:
+        slurm.terminate_local_jobs([job_id])
+        if _alive(calc_pid):
+            os.kill(calc_pid, signal.SIGKILL)
+
+
 def test_terminate_local_jobs_closes_handles_of_an_already_exited_job(tmp_path: Path):
     """A job that finished on its own gets no signal — only its handles closed.
 
@@ -958,21 +1036,86 @@ def test_wait_for_jobs_times_out_when_a_deadline_is_set():
     for a `slurm_array: true` step — the sort of split that makes a knob untrustworthy.
     """
     with pytest.raises(ThrottleTimeoutError):
-        slurm.wait_for_jobs(
-            ["1"], poll_interval=0.01, finished=lambda _ids: set(), max_wait_seconds=0.05
-        )
+        slurm.wait_for_jobs(["1"], poll_interval=0.01, poll=_stuck_at("1"), max_wait_seconds=0.05)
 
 
 def test_wait_for_jobs_returns_when_all_drain():
     """No deadline configured (the default) keeps the old wait-forever behaviour."""
-    slurm.wait_for_jobs(["1", "2"], poll_interval=0.01, finished=lambda ids: set(ids))
+    slurm.wait_for_jobs(["1", "2"], poll_interval=0.01, poll=_all_done)
+
+
+def test_wait_for_jobs_deadline_bounds_the_stall_not_the_whole_drain():
+    """An array that keeps draining is making progress, however long the drain takes.
+
+    `job_timeout_seconds` means "nothing has finished for this long" on every path — the
+    throttler re-anchors on each completion and so does this loop. Bounding the *total*
+    instead would make a healthy multi-hour array trip a timeout meant to catch a stuck one,
+    and the two paths would disagree about what the same knob means.
+    """
+    remaining = ["1", "2", "3", "4"]
+
+    def one_at_a_time(ids: Collection[str]) -> slurm.QueueState:
+        time.sleep(0.03)  # each stretch is under the bound; four of them exceed it
+        done = {remaining.pop()} if remaining else set(ids)
+        return slurm.QueueState(frozenset(done), frozenset(set(ids) - done))
+
+    slurm.wait_for_jobs(
+        ["1", "2", "3", "4"], poll_interval=0, poll=one_at_a_time, max_wait_seconds=0.05
+    )
+
+
+def test_wait_for_jobs_re_anchors_on_array_tasks_not_on_the_array():
+    """A draining array is progress even though its one parent id never leaves `pending`.
+
+    A step of ≤1000 structures is a *single* `sbatch --array`, so the wait holds exactly one
+    id and it does not finish until the last task does. Judging progress by that id alone
+    made `job_timeout_seconds` a total-runtime bound on this path and a stall bound on every
+    other — so a healthy long array failed on a timeout meant to catch a stuck one. The task
+    rows underneath the parent are what move.
+    """
+    tasks = [f"12345_{i}" for i in range(8)]
+
+    def one_task_at_a_time(ids: Collection[str]) -> slurm.QueueState:
+        time.sleep(0.03)  # each stretch is under the bound; eight of them are far over it
+        tasks.pop()
+        # The parent leaves the queue only once its last task has exited — the whole reason
+        # this path cannot judge progress by ids.
+        return slurm.QueueState(frozenset() if tasks else frozenset(ids), frozenset(tasks))
+
+    slurm.wait_for_jobs(["12345"], poll_interval=0, poll=one_task_at_a_time, max_wait_seconds=0.05)
+
+
+def test_wait_for_jobs_times_out_on_an_array_whose_tasks_are_all_stuck():
+    """The other half of the same rule: unchanged rows are a stall, however many there are.
+
+    Re-anchoring on task movement must not become "an array never times out" — a queue that
+    looks identical poll after poll is exactly the stuck batch the knob exists to catch.
+    """
+    frozen = frozenset({"12345_0", "12345_[1-999]"})
+    with pytest.raises(ThrottleTimeoutError, match="12345"):
+        slurm.wait_for_jobs(
+            ["12345"],
+            poll_interval=0.01,
+            poll=lambda _ids: slurm.QueueState(frozenset(), frozen),
+            max_wait_seconds=0.05,
+        )
 
 
 def test_wait_for_jobs_with_nothing_to_wait_for_returns_immediately():
     """An empty batch must not poll at all — and must not consult the deadline."""
-    slurm.wait_for_jobs([], poll_interval=0.01, finished=_never_called, max_wait_seconds=0.0)
+    slurm.wait_for_jobs([], poll_interval=0.01, poll=_never_called, max_wait_seconds=0.0)
 
 
-def _never_called(_ids: object) -> set[str]:
-    """A `finished` callable that fails the test if the loop polls when it should not."""
+def _all_done(ids: Collection[str]) -> slurm.QueueState:
+    """Everything the loop asks about has already left the queue."""
+    return slurm.QueueState(frozenset(ids), frozenset())
+
+
+def _stuck_at(*ids: str) -> Callable[[Collection[str]], slurm.QueueState]:
+    """Nothing ever finishes and the queue never changes shape."""
+    return lambda _ids: slurm.QueueState(frozenset(), frozenset(ids))
+
+
+def _never_called(_ids: object) -> slurm.QueueState:
+    """A `poll` callable that fails the test if the loop polls when it should not."""
     raise AssertionError("wait_for_jobs polled with an empty job set")

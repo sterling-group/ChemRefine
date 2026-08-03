@@ -195,7 +195,7 @@ def submit_training(
     slurm.wait_for_jobs(
         [job_id],
         poll_interval=poll_seconds,
-        finished=slurm.finished_jobs,
+        poll=slurm.poll_jobs,
         max_wait_seconds=max_wait_seconds,
     )
     logger.info("MLIP training job %s finished", job_id)

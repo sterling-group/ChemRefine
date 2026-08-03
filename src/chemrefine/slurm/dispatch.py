@@ -25,10 +25,12 @@ import signal
 import subprocess
 import time
 from collections.abc import Callable, Collection
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from chemrefine.errors import ConfigError, JobSubmissionError, ThrottleTimeoutError
+from chemrefine.errors import ConfigError, JobSubmissionError
+from chemrefine.throttle import StallDeadline
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +132,7 @@ def header_name_for_device(device: str) -> str:
     return "cuda.slurm.header" if str(device).lower() == "cuda" else "cpu.slurm.header"
 
 
+@functools.lru_cache(maxsize=1)
 def _detect_local_gpus() -> int:
     """Best-effort count of locally visible CUDA devices via ``nvidia-smi -L``.
 
@@ -137,6 +140,11 @@ def _detect_local_gpus() -> int:
     device) and whole cards otherwise. Falls back to ``1`` when ``nvidia-smi`` is
     absent or errors — a single-device budget serialises GPU jobs, and the
     engine's availability guard reports a genuinely missing GPU separately.
+
+    Cached for the life of the process, like :func:`_current_user` above: the device count
+    is a property of the host, and this is asked once per batch — per step *and* per retry
+    batch — so an uncached probe forks ``nvidia-smi`` throughout a run to re-learn a
+    constant. Tests that vary it call ``_detect_local_gpus.cache_clear()``.
     """
     try:
         # Resolved via PATH on purpose: nvidia-smi lives in different places per driver
@@ -155,16 +163,21 @@ def _detect_local_gpus() -> int:
     return max(1, len(mig) or len(gpus))
 
 
-def resolve_gpu_budget(configured: int | None, *, dispatch: str = "auto") -> int:
+def resolve_gpu_budget(configured: int | None, *, local: bool) -> int:
     """Resolve the concurrent-GPU budget for the throttler.
 
     An explicit ``Config.max_gpus`` wins. Otherwise: **unlimited under SLURM**
     (the scheduler arbitrates GPUs, so chemrefine must not second-guess it) and
     the **detected local device count** off-cluster.
+
+    Takes the resolved ``local`` rather than the raw ``dispatch`` mode: every caller has
+    already asked :func:`dispatch_locally` — it is what decides the whole submission path —
+    so re-deriving it here would be a second ``PATH`` probe for an answer already in hand,
+    and one more place that could disagree with the path actually taken.
     """
     if configured is not None:
         return configured
-    return _detect_local_gpus() if dispatch_locally(dispatch) else _UNLIMITED_GPUS
+    return _detect_local_gpus() if local else _UNLIMITED_GPUS
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +245,7 @@ def _local_is_finished(job_id: str) -> bool:
     return True
 
 
-def terminate_local_jobs(job_ids: Collection[str] = ()) -> None:
+def terminate_local_jobs(job_ids: Collection[str] | None = None) -> None:
     """Kill and reap background local jobs, closing their log handles.
 
     Called from the scheduler's ``finally`` so an abnormal exit — a throttle timeout,
@@ -240,9 +253,15 @@ def terminate_local_jobs(job_ids: Collection[str] = ()) -> None:
     interpreter launched. Left running they keep burning the cores the user's next
     attempt needs, and their ``.runlog`` / ``.err`` handles stay open.
 
-    ``job_ids`` limits the sweep to one batch; the default empty tuple means *every*
+    ``job_ids`` limits the sweep to one batch; ``None`` — no argument at all — means *every*
     registered local job, which is what the interpreter-exit hook wants. Already-finished
     jobs are simply absent from the registry, so this is safe to call unconditionally.
+
+    **An empty collection means empty, not "everything".** The scheduler passes its live job
+    ids from a ``finally``, and on every clean exit that collection is empty; overloading
+    falsiness made the ordinary end of a batch mean "kill every local job this process
+    started", which is the opposite of the caller's intent and would reach another batch's
+    jobs the moment anything ran two.
 
     **The signal goes to the process group, not to ``bash``.** What has to stop is the
     calculation, and that is a grandchild — the shell runs it as a foreground child and
@@ -258,7 +277,7 @@ def terminate_local_jobs(job_ids: Collection[str] = ()) -> None:
     the signal; ``PermissionError`` because a job that re-execs under another uid is the
     scheduler's business, not ours, and neither is a reason to abandon the rest of the sweep.
     """
-    targets = list(job_ids) if job_ids else list(_LOCAL_PROCS)
+    targets = list(_LOCAL_PROCS) if job_ids is None else list(job_ids)
     for job_id in targets:
         entry = _LOCAL_PROCS.pop(job_id, None)
         if entry is None:
@@ -338,8 +357,33 @@ def submit(
     return job_id
 
 
-def finished_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> set[str]:
-    """Return the subset of ``job_ids`` that is no longer running — **one** ``squeue``.
+@dataclass(frozen=True)
+class QueueState:
+    """One poll of the scheduler: which ids are gone, and what is still queued for the rest.
+
+    Two facts from one query, because they come from one query — splitting them into
+    ``finished_jobs`` plus a second "how much is left" call would double the ``squeue`` rate
+    of every polling loop to learn two things about the same output.
+
+    ``rows`` is what makes an *array's* progress visible. A parent id stays in
+    :attr:`finished`'s complement until its very last task exits, so a caller watching ids
+    alone sees a 1000-task array as one motionless job for hours; the rows underneath it
+    (``12345_7`` running, ``12345_[9-999]`` pending) change every time a task starts or ends.
+    A caller compares them between polls — *changed* means the scheduler is doing something.
+    Deliberately not a count: tasks starting split a pending range into more rows and tasks
+    finishing remove them, so the number moves in both directions while the set moves
+    whenever anything happens.
+    """
+
+    finished: frozenset[str]
+    """The polled ids with nothing left in the queue (local jobs: the process has exited)."""
+
+    rows: frozenset[str]
+    """Scheduler rows still queued for the polled ids — array tasks individually."""
+
+
+def poll_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> QueueState:
+    """Poll the whole batch's state in **one** ``squeue``.
 
     The whole set is answered by a single scheduler query. Asking per job means a step
     with N concurrent jobs runs N ``squeue`` subprocesses every poll interval: at
@@ -365,14 +409,18 @@ def finished_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> se
     A **missing** ``squeue`` is treated the same way rather than raising: a host with
     ``sbatch`` but no ``squeue`` (a partially-installed client) would otherwise raise on
     every poll of a batch that is already running, which is the worst moment to fail.
-    :func:`submit` handles both the same way.
+    :func:`submit` handles both the same way. Neither case can be told from a genuinely
+    idle queue, so both report the scheduled ids as still queued under their own names —
+    a caller watching :attr:`~QueueState.rows` then sees no movement, which is the truth:
+    this poll learned nothing.
     """
     ids = set(job_ids)
     local = {jid for jid in ids if jid.startswith(_LOCAL_JOB_PREFIX)}
     done = {jid for jid in local if _local_is_finished(jid)}
     scheduled = ids - local
+    rows = local - done
     if not scheduled:
-        return done
+        return QueueState(frozenset(done), frozenset(rows))
     try:
         result = subprocess.run(  # noqa: S603
             [squeue_cmd, "--noheader", "-u", _current_user(), "-o", "%i"],
@@ -381,14 +429,25 @@ def finished_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> se
             check=True,
         )
     except (subprocess.CalledProcessError, FileNotFoundError):
-        return done
+        return QueueState(frozenset(done), frozenset(rows | scheduled))
     running = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    done |= {
-        jid
-        for jid in scheduled
-        if not any(line == jid or line.startswith(f"{jid}_") for line in running)
-    }
-    return done
+    for jid in scheduled:
+        mine = {line for line in running if line == jid or line.startswith(f"{jid}_")}
+        if mine:
+            rows |= mine
+        else:
+            done.add(jid)
+    return QueueState(frozenset(done), frozenset(rows))
+
+
+def finished_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> set[str]:
+    """Return the subset of ``job_ids`` that is no longer running — **one** ``squeue``.
+
+    The :data:`~chemrefine.throttle.FinishedFn` half of :func:`poll_jobs`, for the caller
+    that only needs to know what finished: :class:`chemrefine.throttle.Throttler` frees a
+    budget per completion and has no use for what is still queued behind it.
+    """
+    return set(poll_jobs(job_ids, squeue_cmd=squeue_cmd).finished)
 
 
 def is_finished(job_id: str, *, squeue_cmd: str = "squeue") -> bool:
@@ -405,7 +464,7 @@ def wait_for_jobs(
     job_ids: Collection[str],
     *,
     poll_interval: float,
-    finished: Callable[[Collection[str]], set[str]],
+    poll: Callable[[Collection[str]], QueueState],
     max_wait_seconds: float | None = None,
 ) -> None:
     """Block until every id in ``job_ids`` reports finished, polling at ``poll_interval``.
@@ -413,25 +472,36 @@ def wait_for_jobs(
     The single canonical "wait for these SLURM jobs to drain" loop — used by the job-array
     path in :mod:`chemrefine.engines._execution` and by the MLIP trainer, which submits one
     job (the per-structure path uses the budget-aware
-    :class:`chemrefine.throttle.Throttler` instead, which reaps as it waits). ``finished``
-    is injected (the caller passes :func:`finished_jobs`) so it stays mockable, mirroring
-    the throttler.
+    :class:`chemrefine.throttle.Throttler` instead, which reaps as it waits). ``poll`` is
+    injected (the caller passes :func:`poll_jobs`) so it stays mockable, mirroring the
+    throttler.
 
-    ``max_wait_seconds`` mirrors :meth:`chemrefine.throttle.Throttler.wait_all` so
+    ``max_wait_seconds`` mirrors :meth:`chemrefine.throttle.Throttler.wait_for_completion` so
     ``Config.job_timeout_seconds`` means the same thing on every path — otherwise setting it
     would silently do nothing for a ``slurm_array: true`` step. ``None`` waits indefinitely.
+    Both share one :class:`~chemrefine.throttle.StallDeadline`, so "the same thing" is one
+    implementation rather than two that agree today.
+
+    It bounds each stretch **without progress**, not the whole drain, and *progress is
+    measured in tasks* — the reason this takes a :class:`QueueState` rather than a set of
+    finished ids. A ≤1000-structure step is a single array, so ``pending`` holds exactly one
+    parent id that does not disappear until the last task exits: re-anchoring on ids alone
+    turned ``job_timeout_seconds`` into a total-runtime bound there, and a healthy long array
+    tripped a timeout meant to catch a stuck one. The rows underneath the parent move
+    whenever a task does, and that is what restarts the clock.
     """
-    deadline = time.monotonic() + max_wait_seconds if max_wait_seconds is not None else None
     pending = set(job_ids)
+    deadline = StallDeadline(max_wait_seconds)
+    rows: frozenset[str] | None = None
     while pending:
-        pending -= finished(pending)
-        if not pending:
+        state = poll(pending)
+        remaining = pending - state.finished
+        if not remaining:
             return
-        if deadline is not None and time.monotonic() >= deadline:
-            raise ThrottleTimeoutError(
-                f"timed out after {max_wait_seconds}s waiting for "
-                f"{len(pending)} job(s) to finish: {sorted(pending)}"
-            )
+        if remaining != pending or state.rows != rows:
+            deadline.progress()
+        pending, rows = remaining, state.rows
+        deadline.check(f"{len(pending)} job(s) to finish: {sorted(pending)}")
         time.sleep(poll_interval)
 
 

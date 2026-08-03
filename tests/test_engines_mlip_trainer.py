@@ -3,11 +3,12 @@
 The actual ``mace_run_train`` invocation is not exercised here — it
 requires a real CUDA stack. We only test the inputs we generate
 (extxyz files, YAML config, SLURM script) and the submit/wait loop
-with a mocked ``slurm.submit`` / ``slurm.finished_jobs``.
+with a mocked ``slurm.submit`` / ``slurm.poll_jobs``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -17,13 +18,18 @@ import pytest
 import yaml
 from ase import Atoms
 
-from chemrefine import cache, ids
+from chemrefine import cache, ids, slurm
 from chemrefine.config import StepConfig
 from chemrefine.engines.mlip import trainer
 from chemrefine.engines.mlip.options import MlipOptions, MlipTrainOptions
 from chemrefine.errors import ChemRefineError, ConfigError, ThrottleTimeoutError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import PipelineState, StepContext, StepResults, Structure
+
+
+def _state(done: set[str], polled: Collection[str]) -> slurm.QueueState:
+    """One scheduler poll: ``done`` has left the queue, the rest is still in it."""
+    return slurm.QueueState(frozenset(done), frozenset(set(polled) - done))
 
 
 def _ctx(tmp_path: Path, **option_overrides) -> StepContext:
@@ -251,7 +257,7 @@ def test_submit_training_blocks_until_finished():
 
     with (
         patch.object(trainer.slurm, "submit", return_value="12345"),
-        patch.object(trainer.slurm, "finished_jobs", side_effect=lambda ids: polls.pop(0)),
+        patch.object(trainer.slurm, "poll_jobs", side_effect=lambda ids: _state(polls.pop(0), ids)),
     ):
         job_id = trainer.submit_training(script_path=Path("train.slurm"), poll_seconds=0)
 
@@ -267,7 +273,7 @@ def test_submit_training_honours_the_configured_job_timeout():
     """
     with (
         patch.object(trainer.slurm, "submit", return_value="12345"),
-        patch.object(trainer.slurm, "finished_jobs", return_value=set()),
+        patch.object(trainer.slurm, "poll_jobs", side_effect=lambda ids: _state(set(), ids)),
         pytest.raises(ThrottleTimeoutError),
     ):
         trainer.submit_training(script_path=Path("train.slurm"), poll_seconds=0, max_wait_seconds=0)
@@ -298,7 +304,7 @@ def test_run_training_drives_pipeline_and_returns_results_unchanged(tmp_path: Pa
     results = StepResults(structures=tuple(_struct(str(i)) for i in range(4)))
     with (
         patch.object(trainer.slurm, "submit", return_value="42") as mock_submit,
-        patch.object(trainer.slurm, "finished_jobs", return_value={"42"}),
+        patch.object(trainer.slurm, "poll_jobs", side_effect=lambda ids: _state({"42"}, ids)),
     ):
         out = trainer.run_training(results, ctx)
     assert out is results

@@ -393,7 +393,7 @@ class Config(BaseModel):
     and the failure ledger are identical to the per-job path. Ignored when
     running locally (no ``sbatch`` on PATH)."""
     job_timeout_seconds: float | None = Field(None, gt=0)
-    """Wall-clock deadline for a step's jobs to finish, in seconds.
+    """How long a step may go with **nothing finishing**, in seconds.
 
     ``None`` (default) waits indefinitely, which is the right thing under SLURM: the
     scheduler already enforces the partition's own time limit and will kill the job itself.
@@ -402,9 +402,20 @@ class Config(BaseModel):
     :class:`~chemrefine.errors.ThrottleTimeoutError` (exit code 8) instead of blocking the
     pipeline with no diagnostic.
 
-    The deadline covers *waiting*, not compute: it is how long ChemRefine will wait for the
-    scheduler to free up room or drain the batch, so set it well above the longest job you
-    expect."""
+    It is a **stall** deadline, not a budget for the step: the clock restarts every time a job
+    completes, so a batch that keeps draining never trips it however long the whole batch
+    takes. Bounding the total instead would mean a healthy multi-hour step failing on a
+    timeout set to catch a stuck one — and it would have to be re-tuned every time a step grew.
+
+    The same meaning on every path — the per-job throttler
+    (:meth:`chemrefine.throttle.Throttler.wait_for_completion`) and the job-array wait
+    (:func:`chemrefine.slurm.wait_for_jobs`) share one
+    :class:`~chemrefine.throttle.StallDeadline` — so a step's dispatch mode never changes what
+    the number means. On the array path progress is counted in *tasks*, not in arrays: a
+    single ``sbatch --array`` covers up to 1000 structures and stays one job id until its last
+    task exits, so anything coarser would make this a total-runtime bound there and nowhere
+    else. It covers *waiting*, not compute: set it above the longest single job you expect,
+    not above the step."""
     dispatch: Dispatch = "auto"
     """How jobs are executed. ``auto`` (default) submits via ``sbatch`` when it
     is on PATH and runs the generated scripts locally via ``bash`` otherwise.
