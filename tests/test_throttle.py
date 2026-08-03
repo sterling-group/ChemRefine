@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
+from itertools import chain, repeat
 from unittest.mock import patch
 
 import pytest
 
 from chemrefine.throttle import Throttler
+
+
+def _clock_that_expires(*before: float, then: float):
+    """A ``time.monotonic`` stand-in: ``before`` readings, then ``then`` forever.
+
+    ``repeat`` rather than a fixed-length list because a finite ``side_effect`` pins the
+    *number of times* the code under test reads the clock, not what it does with the
+    readings — so adding or removing one ``monotonic()`` call makes the test fail with
+    ``StopIteration`` instead of on its actual assertion.
+    """
+    return chain(before, repeat(then))
 
 
 def _never_finished(_job_ids):
@@ -22,6 +34,11 @@ def _always_finished(job_ids):
 def _finishes(*done: str):
     """A poll that reports exactly ``done`` (intersected with what is active)."""
     return lambda job_ids: {j for j in job_ids if j in done}
+
+
+def _never_called(_job_ids):
+    """Asserts it is not reached — for waits that must not poll at all."""
+    raise AssertionError("polled the scheduler with no active jobs")
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +63,16 @@ def test_throttler_rejects_negative_max_gpus():
         Throttler(max_cores=8, max_gpus=-1)
 
 
+def test_throttler_rejects_a_negative_poll_interval():
+    """Checked with the other two, not left to `time.sleep`.
+
+    Unvalidated, a bad cadence raises from inside a wait — after the batch is submitted,
+    which is the expensive moment to learn the number was wrong.
+    """
+    with pytest.raises(ValueError, match="poll_interval"):
+        Throttler(max_cores=8, poll_interval=-1)
+
+
 # ---------------------------------------------------------------------------
 # GPU budget + device assignment
 # ---------------------------------------------------------------------------
@@ -59,35 +86,29 @@ def test_gpus_in_use_tracks_gpu_demand():
     assert t.cores_in_use == 16
 
 
-def test_wait_for_room_blocks_on_gpu_budget_even_when_cores_free():
-    """One GPU, two GPU jobs: the second waits even though cores are plentiful."""
-    t = Throttler(max_cores=64, max_gpus=1, poll_interval=0)
+def test_the_gpu_budget_blocks_a_gpu_job_even_when_cores_are_free():
+    """One GPU, two GPU jobs: the second cannot start though cores are plentiful."""
+    t = Throttler(max_cores=64, max_gpus=1)
     t.register("g0", 1, gpus=1, device=0)
-    state = {"calls": 0}
-
-    def finished(job_ids):
-        state["calls"] += 1
-        return {j for j in job_ids if j == "g0"} if state["calls"] >= 2 else set()
-
-    with patch("time.sleep") as sleeper:
-        t.wait_for_room(1, finished=finished, gpus_needed=1)
-    sleeper.assert_called()  # had to wait for the GPU to free
-    assert t.active_jobs == ()
+    assert t.has_room(1, gpus_needed=1) is False
 
 
-def test_wait_for_room_admits_cpu_job_while_gpu_saturated():
+def test_a_cpu_job_is_admitted_while_the_gpu_budget_is_saturated():
     """A gpus=0 job isn't blocked by a saturated GPU budget (CPU jobs keep flowing)."""
     t = Throttler(max_cores=64, max_gpus=1)
     t.register("g0", 1, gpus=1, device=0)
-    with patch("time.sleep") as sleeper:
-        t.wait_for_room(8, finished=_never_finished, gpus_needed=0)
-    sleeper.assert_not_called()
+    assert t.has_room(8, gpus_needed=0) is True
 
 
-def test_wait_for_room_rejects_gpu_request_above_budget():
+def test_a_gpu_request_above_the_budget_never_has_room():
+    """No guard here any more: an unsatisfiable request is simply never admitted.
+
+    `run_batch` rejects it as a `ConfigError` before a throttler is built
+    (`test_run_batch_rejects_a_gpu_step_over_the_budget`), which is where a config mistake
+    belongs — with an exit code, naming the step and the setting to change.
+    """
     t = Throttler(max_cores=16, max_gpus=1)
-    with pytest.raises(ValueError):
-        t.wait_for_room(1, finished=_always_finished, gpus_needed=2)
+    assert t.has_room(1, gpus_needed=2) is False
 
 
 def test_assign_device_returns_lowest_free_index_and_reuses_freed():
@@ -120,18 +141,16 @@ def test_register_rejects_zero_pal():
 
 
 # ---------------------------------------------------------------------------
-# wait_for_room
+# waiting
 # ---------------------------------------------------------------------------
 
 
-def test_wait_for_room_no_wait_when_budget_available():
-    t = Throttler(max_cores=64)
-    with patch("time.sleep") as sleeper:
-        t.wait_for_room(16, finished=_never_finished)
-    sleeper.assert_not_called()
+def test_one_poll_answers_the_whole_active_batch():
+    """However many jobs are active, a wait costs one scheduler query per tick.
 
-
-def test_wait_for_room_reaps_finished_jobs_to_free_budget():
+    Asking per job is what turned a step with N concurrent jobs into N `squeue` subprocesses
+    every poll interval — see `slurm.finished_jobs`.
+    """
     t = Throttler(max_cores=32, poll_interval=0)
     t.register("done", 16)
     t.register("running", 8)
@@ -142,14 +161,13 @@ def test_wait_for_room_reaps_finished_jobs_to_free_budget():
         return {j for j in job_ids if j == "done"}
 
     with patch("time.sleep"):
-        t.wait_for_room(16, finished=finished)
-    # One poll answers the whole active batch, however many jobs there are.
+        assert t.wait_for_completion(finished=finished) == ("done",)
     assert state["poll_count"] == 1
     assert t.cores_in_use == 8
     assert t.active_jobs == ("running",)
 
 
-def test_wait_for_room_blocks_until_jobs_finish():
+def test_a_wait_sleeps_until_something_actually_finishes():
     t = Throttler(max_cores=8, poll_interval=0)
     t.register("a", 4)
     t.register("b", 4)
@@ -160,8 +178,9 @@ def test_wait_for_room_blocks_until_jobs_finish():
         # Only on the 3rd poll do we report 'a' done.
         return {j for j in job_ids if j == "a"} if state["calls"] >= 3 else set()
 
-    with patch("time.sleep"):
-        t.wait_for_room(4, finished=finished)
+    with patch("time.sleep") as sleeper:
+        assert t.wait_for_completion(finished=finished) == ("a",)
+    sleeper.assert_called()
     assert t.active_jobs == ("b",)
 
 
@@ -176,48 +195,20 @@ def test_reap_logs_freed_cores(caplog):
     assert any("freed 8 cores" in record.message for record in caplog.records)
 
 
-def test_wait_for_room_rejects_request_above_budget():
-    t = Throttler(max_cores=16)
-    with pytest.raises(ValueError):
-        t.wait_for_room(32, finished=_always_finished)
+def test_draining_is_the_callers_loop():
+    """There is no `wait_all`: a drain is `wait_for_completion` until nothing is active.
 
-
-# ---------------------------------------------------------------------------
-# wait_all
-# ---------------------------------------------------------------------------
-
-
-def test_wait_all_empties_active_set():
+    Two lines at the call site, and the same two lines the streaming queue already runs — so
+    a scheduler that also wants to submit as slots free does not need a second kind of wait.
+    """
     t = Throttler(max_cores=64, poll_interval=0)
     t.register("a", 8)
     t.register("b", 16)
     with patch("time.sleep"):
-        t.wait_all(finished=_always_finished)
+        while t.active_jobs:
+            t.wait_for_completion(finished=_always_finished)
     assert t.cores_in_use == 0
     assert t.active_jobs == ()
-
-
-def test_wait_all_returns_immediately_when_no_jobs():
-    t = Throttler(max_cores=64)
-    with patch("time.sleep") as sleeper:
-        t.wait_all(finished=_never_finished)
-    sleeper.assert_not_called()
-
-
-def test_wait_all_sleeps_until_jobs_finish():
-    """wait_all must sleep at least once when an active job is still running."""
-    t = Throttler(max_cores=64, poll_interval=0)
-    t.register("running", 8)
-    state = {"calls": 0}
-
-    def finished(job_ids):
-        state["calls"] += 1
-        return set(job_ids) if state["calls"] >= 2 else set()  # done on the second poll
-
-    with patch("time.sleep") as sleeper:
-        t.wait_all(finished=finished)
-    assert t.active_jobs == ()
-    sleeper.assert_called()
 
 
 # ---------------------------------------------------------------------------
@@ -225,30 +216,19 @@ def test_wait_all_sleeps_until_jobs_finish():
 # ---------------------------------------------------------------------------
 
 
-def test_wait_for_room_raises_on_timeout():
-    """wait_for_room raises ThrottleTimeoutError when deadline expires."""
+def test_a_stalled_wait_raises_on_timeout():
+    """One wait, so one timeout message."""
     from chemrefine.errors import ThrottleTimeoutError
 
     t = Throttler(max_cores=8, poll_interval=0)
     t.register("blocker", 8)
     with (
-        patch("time.monotonic", side_effect=[0.0, 0.0, 99.0]),
-        pytest.raises(ThrottleTimeoutError),
+        patch("time.monotonic", side_effect=_clock_that_expires(0.0, then=99.0)),
+        pytest.raises(
+            ThrottleTimeoutError, match=r"timed out after 5\.0s waiting for a job to finish"
+        ),
     ):
-        t.wait_for_room(4, finished=_never_finished, max_wait_seconds=5.0)
-
-
-def test_wait_all_raises_on_timeout():
-    """wait_all raises ThrottleTimeoutError when deadline expires."""
-    from chemrefine.errors import ThrottleTimeoutError
-
-    t = Throttler(max_cores=8, poll_interval=0)
-    t.register("blocker", 8)
-    with (
-        patch("time.monotonic", side_effect=[0.0, 0.0, 99.0]),
-        pytest.raises(ThrottleTimeoutError),
-    ):
-        t.wait_all(finished=_never_finished, max_wait_seconds=5.0)
+        t.wait_for_completion(finished=_never_finished, max_wait_seconds=5.0)
 
 
 # --- throttle ---------------------------------------------------------------
@@ -264,9 +244,73 @@ def test_throttler_register_rejects_negative_gpus():
 def test_throttler_assign_device_raises_when_all_taken():
     from chemrefine.throttle import Throttler
 
-    # Unreachable on the real call path (wait_for_room admits first), so assign_device
+    # Unreachable on the real call path (`has_room` admits first), so assign_device
     # fails loud rather than silently colliding two GPU jobs on device 0.
     t = Throttler(max_cores=8, max_gpus=1)
     t.register("g", 1, gpus=1, device=0)
     with pytest.raises(RuntimeError, match="no free GPU device"):
         t.assign_device()
+
+
+# --- the two primitives -----------------------------------------------------
+#
+# The whole scheduling surface: `has_room` says whether a job can start, `wait_for_completion`
+# blocks until one ends and says which. Everything else — filling slots, draining, retrying —
+# is a caller's loop over those two.
+
+
+def test_reap_returns_the_ids_it_reaped():
+    """`_reap` reports *which* jobs finished, not just that the budget freed up.
+
+    The streaming queue needs the identity to know whose output to parse; the older
+    callers only ever needed the freed cores, which is why it used to return None.
+    """
+    t = Throttler(max_cores=8)
+    t.register("a", 4)
+    t.register("b", 4)
+
+    assert sorted(t._reap(_finishes("a"))) == ["a"]
+    assert t.active_jobs == ("b",)
+    assert t._reap(_never_finished) == ()
+
+
+def test_has_room_polls_nothing():
+    """`has_room` is pure — it must not reap, or a caller cannot ask before waiting."""
+    t = Throttler(max_cores=8)
+    t.register("a", 8)
+
+    assert t.has_room(4) is False
+    assert t.active_jobs == ("a",), "has_room reaped; it is supposed to be a pure predicate"
+    assert t.has_room(0) is True
+
+
+def test_wait_for_completion_returns_the_first_completion():
+    t = Throttler(max_cores=8, poll_interval=0)
+    t.register("a", 4)
+    t.register("b", 4)
+
+    assert sorted(t.wait_for_completion(finished=_finishes("b"))) == ["b"]
+
+
+def test_wait_for_completion_with_nothing_active_returns_empty():
+    """No jobs means no completions — not an error, and not a wait."""
+    assert Throttler(max_cores=8).wait_for_completion(finished=_never_called) == ()
+
+
+def test_timeout_bounds_the_stall_not_the_whole_drain():
+    """`job_timeout_seconds` means "nothing has finished for this long", everywhere.
+
+    A batch that keeps draining is making progress however long the drain takes, so the
+    deadline is re-anchored on every completion. Bounding the *total* is what would make a
+    healthy multi-hour step trip a timeout set to catch a stuck one.
+    """
+    t = Throttler(max_cores=8, poll_interval=0)
+    for jid in ("a", "b", "c"):
+        t.register(jid, 1)
+    # Clock advances 4s per reading — past a 5s bound in total, never within one stretch.
+    ticking = (float(i) * 4.0 for i in range(1000))
+    with patch("time.monotonic", side_effect=lambda: next(ticking)):
+        while t.active_jobs:
+            t.wait_for_completion(finished=lambda ids: {sorted(ids)[0]}, max_wait_seconds=5.0)
+
+    assert t.active_jobs == ()

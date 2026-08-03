@@ -181,16 +181,25 @@ class StepContext:
     """Job dispatch mode (``Config.dispatch``): auto / local / slurm."""
 
 
+JobTriple = tuple[Path, Path, str]
+"""One prepared job: ``(input_path, output_path, structure_id)``.
+
+Named here rather than in :mod:`chemrefine.engines.api`, which is where the scheduler
+contracts live, because that module imports *this* one — an alias declared there could not be
+used by :class:`StepInputs` itself, and the spelling would stay duplicated at the site that
+defines the shape.
+"""
+
+
 @dataclass(frozen=True)
 class StepInputs:
     """Engine-prepared inputs for one step's job batch.
 
-    ``files`` is an ordered tuple of ``(input_path, output_path,
-    structure_id)`` triples. Order matches the seed structures' order so
-    parse results can be aligned back to parents.
+    ``files`` is an ordered tuple of :data:`JobTriple`. Order matches the seed
+    structures' order so parse results can be aligned back to parents.
     """
 
-    files: tuple[tuple[Path, Path, str], ...]
+    files: tuple[JobTriple, ...]
 
 
 @dataclass(frozen=True)
@@ -235,6 +244,10 @@ class JobBatch:
     ``jobs`` maps each input file path to its job identifier (a SLURM
     job ID, a local-runner PID, or whatever the engine's submitter
     produces). The wait step polls this mapping.
+
+    **Opaque** is the operative word: a structure re-run in the same batch reuses its input
+    path, so the mapping holds that structure's *latest* attempt and there is no longer one
+    entry per prepared job. Nothing reads it back — treat it as a receipt, not an index.
     """
 
     jobs: dict[Path, str]

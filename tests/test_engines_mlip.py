@@ -303,8 +303,8 @@ def test_local_gpu_jobs_get_distinct_cuda_visible_devices(tmp_path: Path, monkey
 
     def fake_finished(job_ids):
         state["polls"] += 1
-        # One poll per wait_for_room; both jobs stay active through the submit
-        # loop so the second must land on a different device than the first.
+        # Both jobs stay active through the submit loop, so the second must land
+        # on a different device than the first.
         return set(job_ids) if state["polls"] > 2 else set()
 
     monkeypatch.setattr("chemrefine.slurm.sbatch_available", lambda **k: False)

@@ -552,8 +552,11 @@ def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypa
 
     calls: list[int] = []
 
-    def _fake_run_nms(engine, round1, failures, ctx):
+    def _fake_run_nms(engine, round1, failures, ctx, *, round2=None):
         calls.append(1)
+        # The step must hand over the round it already ran, not leave the coordinator to
+        # fan out a second time — that is what keeps round 2 in round 1's queue.
+        assert round2 is not None, "the step ran the fan-out; it must pass it on"
         return NmsResolution(survivors=round1.structures, failures=tuple(failures))
 
     monkeypatch.setattr(nms_mod, "run_nms", _fake_run_nms)
@@ -860,13 +863,7 @@ def test_resubmit_failed_raises_without_manifest(tmp_path: Path):
     ctx = _branch_ctx(tmp_path)
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     with pytest.raises(CacheError, match="no manifest to rehydrate"):
-        step._resubmit_failed(
-            get_engine("fake"),
-            ctx,
-            ctx.step_cfg,
-            [FailureRecord("0", FailureKind.MISSING_OUTPUT, "output missing")],
-            (),
-        )
+        step._resubmit_failed(get_engine("fake"), ctx, ctx.step_cfg, ())
 
 
 def test_reattempt_nms_raises_without_manifest(tmp_path: Path):
@@ -1179,3 +1176,286 @@ def test_a_step_derives_its_cache_key_exactly_once(tmp_path: Path, monkeypatch):
     state = _seed_state(["0", "1"])
     run_step(cfg, cfg.steps[0], state, mode=StepMode.RESUME)  # cold: nothing on disk
     assert calls == {"parents_digest": 1, "template_digest": 1, "fingerprint": 1}
+
+
+# ---------------------------------------------------------------------------
+# A streaming engine takes the streaming scheduler through the whole step
+# ---------------------------------------------------------------------------
+
+
+def _register_streaming_conv_engine():
+    """A `conv-retry`-shaped engine that also satisfies `StreamingSubmit`.
+
+    Every other fake in this file is a bare class, so they all take the batched route — good
+    for regression safety, and exactly why the streaming route needs a fake of its own or it
+    gets no step-level coverage at all. It reports completions in reverse to make the
+    scheduler's ordering visible in the results if it ever leaked through.
+    """
+    from typing import ClassVar
+
+    import numpy as np
+
+    from chemrefine.engines.api import register
+    from chemrefine.ids import structure_artifact_path
+    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+
+    @register("conv-stream")
+    class _StreamEngine:
+        name = "conv-stream"
+        never: ClassVar[set[str]] = set()
+        parse_count: ClassVar[dict[str, int]] = {}
+
+        def prepare(self, ctx):
+            ctx.step_dir.mkdir(parents=True, exist_ok=True)
+            files = []
+            for s in ctx.prev_state.structures:
+                step = ctx.step_cfg.step
+                inp = structure_artifact_path(ctx.step_dir, step, s.id, "inp")
+                out = structure_artifact_path(ctx.step_dir, step, s.id, "out")
+                inp.parent.mkdir(parents=True, exist_ok=True)
+                inp.write_text("in\n", encoding="utf-8")
+                out.write_text("out\n", encoding="utf-8")
+                files.append((inp, out, s.id))
+            return StepInputs(files=tuple(files))
+
+        def submit(self, inputs, ctx):
+            return JobBatch(jobs={})
+
+        def submit_streaming(self, inputs, ctx, sink):
+            pending = list(inputs.files)
+            while pending:
+                nxt = []
+                for job in reversed(pending):
+                    nxt.extend(sink.on_complete(job))
+                pending = nxt
+            return JobBatch(jobs={})
+
+        def parse(self, inputs, ctx):
+            seeds = {s.id: s for s in ctx.prev_state.structures}
+            out = []
+            for _inp, _o, sid in inputs.files:
+                _StreamEngine.parse_count[sid] = _StreamEngine.parse_count.get(sid, 0) + 1
+                converged = sid not in _StreamEngine.never and _StreamEngine.parse_count[sid] >= 2
+                seed = seeds[sid]
+                out.append(
+                    Structure(
+                        id=sid,
+                        atoms=seed.atoms,
+                        parent_id=seed.parent_id,
+                        energy_hartree=-1.0 - int(sid) * 1e-3,
+                        forces_ev_per_a=np.zeros((len(seed.atoms), 3)),
+                        terminated_normally=True,
+                        converged=converged,
+                    )
+                )
+            return StepResults(structures=tuple(out))
+
+    return _StreamEngine
+
+
+def test_run_step_streams_retries_and_matches_the_batched_outcome(tmp_path: Path):
+    """The whole step, driven by the streaming scheduler: same cache, same ledger.
+
+    Two structures fail to converge and both are retried from their best geometry. What this
+    adds over the lifecycle tests is everything around them — the manifest, the survivors that
+    reach the cache, and the ledger being cleared once nothing is pending.
+    """
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_streaming_conv_engine()
+    try:
+        eng.never = set()
+        eng.parse_count = {}
+        cfg = _config(tmp_path, engine="conv-stream", on_failure="stop")
+        outcome = run_step(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]))
+
+        step_dir = cfg.output_dir.resolve() / "step1"
+        assert [s.id for s in outcome.state.structures] == ["0", "1", "2"], "manifest order"
+        assert all((step_dir / sid / "attempt1").is_dir() for sid in ("0", "1", "2"))
+        assert cache.load_failure_records(step_dir) == []
+        assert cache.load(step_dir) is not None
+    finally:
+        eng.never = set()
+        eng.parse_count = {}
+        ENGINES.pop("conv-stream", None)
+
+
+def test_run_step_streaming_ledgers_a_structure_that_never_converges(tmp_path: Path):
+    """One structure fails twice, the others succeed — and the step reports exactly that."""
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_streaming_conv_engine()
+    try:
+        eng.never = {"1"}
+        eng.parse_count = {}
+        cfg = _config(tmp_path, engine="conv-stream", on_failure="skip")
+        outcome = run_step(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]))
+
+        step_dir = cfg.output_dir.resolve() / "step1"
+        assert [s.id for s in outcome.state.structures] == ["0", "2"]
+        assert [r.structure_id for r in cache.load_failure_records(step_dir)] == ["1"]
+        # Retried once, not repeatedly, even though the queue could feed itself.
+        assert not (step_dir / "1" / "attempt2").exists()
+    finally:
+        eng.never = set()
+        eng.parse_count = {}
+        ENGINES.pop("conv-stream", None)
+
+
+def _register_interruptible_engine():
+    """A streaming engine whose run can be cut short after a retry has been prepared.
+
+    Unlike `_register_streaming_conv_engine`, `prepare` writes only the *input*: the output
+    appears when a job is run. That is what makes the interrupted state real — a retry that
+    was prepared but never ran leaves no output at the canonical path, because round 1's was
+    archived into `attempt1/` when the retry was prepared.
+    """
+    from collections import deque
+    from typing import ClassVar
+
+    import numpy as np
+
+    from chemrefine.engines.api import register
+    from chemrefine.ids import structure_artifact_path
+    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+
+    @register("interrupt-stream")
+    class _InterruptEngine:
+        name = "interrupt-stream"
+        runs: ClassVar[dict[str, int]] = {}
+        interrupt_before_running: ClassVar[set[str]] = set()
+
+        def prepare(self, ctx):
+            ctx.step_dir.mkdir(parents=True, exist_ok=True)
+            files = []
+            for s in ctx.prev_state.structures:
+                step = ctx.step_cfg.step
+                inp = structure_artifact_path(ctx.step_dir, step, s.id, "inp")
+                out = structure_artifact_path(ctx.step_dir, step, s.id, "out")
+                inp.parent.mkdir(parents=True, exist_ok=True)
+                inp.write_text("in\n", encoding="utf-8")
+                files.append((inp, out, s.id))
+            return StepInputs(files=tuple(files))
+
+        def _run(self, job):
+            _inp, out, sid = job
+            _InterruptEngine.runs[sid] = _InterruptEngine.runs.get(sid, 0) + 1
+            out.write_text("out\n", encoding="utf-8")
+
+        def submit(self, inputs, ctx):
+            for job in inputs.files:
+                self._run(job)
+            return JobBatch(jobs={})
+
+        def submit_streaming(self, inputs, ctx, sink):
+            pending = deque(inputs.files)
+            while pending:
+                job = pending.popleft()
+                self._run(job)
+                for follow in sink.on_complete(job):
+                    if follow[2] in _InterruptEngine.interrupt_before_running:
+                        raise KeyboardInterrupt("walltime kill")
+                    pending.append(follow)
+            return JobBatch(jobs={})
+
+        def parse(self, inputs, ctx):
+            seeds = {s.id: s for s in ctx.prev_state.structures}
+            out = []
+            for _inp, out_path, sid in inputs.files:
+                seed = seeds[sid]
+                text = out_path.read_text(encoding="utf-8")
+                out.append(
+                    Structure(
+                        id=sid,
+                        atoms=seed.atoms,
+                        parent_id=seed.parent_id,
+                        energy_hartree=-1.0 - int(sid) * 1e-3,
+                        forces_ev_per_a=np.zeros((len(seed.atoms), 3)),
+                        terminated_normally=text != "partial\n",
+                        converged=_InterruptEngine.runs.get(sid, 0) >= 2,
+                    )
+                )
+            return StepResults(structures=tuple(out))
+
+    return _InterruptEngine
+
+
+def test_a_run_killed_between_a_retrys_archive_and_its_output_recovers_on_resume(tmp_path: Path):
+    """Streaming widens an existing window; this pins that resume still closes it.
+
+    Preparing a retry archives round 1's output into ``attempt1/`` and writes a fresh input at
+    the canonical path, so between those two moments the structure has *no* output where the
+    manifest says one should be. Streaming does not create that window — ``rerun_from_best``
+    has always had it — but it moves it from the tail of the step to almost all of it, because
+    retries now start as soon as their own job frees a slot.
+
+    Resume must therefore treat "manifest entry with no output" as work to redo, not as a
+    verdict. It does: ``_partial_step_outcome`` files it ``MISSING_OUTPUT`` and
+    ``_resubmit_failed`` re-runs it, because only ``NOT_CONVERGED`` is held back for the
+    retry pass.
+    """
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_interruptible_engine()
+    try:
+        eng.runs = {}
+        eng.interrupt_before_running = {"1"}
+        cfg = _config(tmp_path, engine="interrupt-stream", on_failure="stop")
+        seeds = _seed_state(["0", "1", "2"])
+
+        with pytest.raises(KeyboardInterrupt):
+            run_step(cfg, cfg.steps[0], seeds)
+
+        step_dir = cfg.output_dir.resolve() / "step1"
+        assert (step_dir / "1" / "attempt1").is_dir(), "round 1 was archived"
+        assert not (step_dir / "1" / "step1_1.out").exists(), "the retry never ran"
+        assert cache.load(step_dir) is None, "the step did not finish"
+
+        eng.interrupt_before_running = set()
+        outcome = run_step(cfg, cfg.steps[0], seeds)
+
+        assert [s.id for s in outcome.state.structures] == ["0", "1", "2"]
+        assert cache.load_failure_records(step_dir) == []
+    finally:
+        eng.runs = {}
+        eng.interrupt_before_running = set()
+        ENGINES.pop("interrupt-stream", None)
+
+
+def test_a_retry_whose_output_was_truncated_is_rerun_rather_than_ledgered(tmp_path: Path):
+    """The other half of the same window: the job was killed *after* it wrote something.
+
+    ``_on_exit`` copies back on SIGTERM/INT, so a scancelled retry leaves a partial output at
+    the canonical path while its good round-1 geometry sits in ``attempt1/``. The file exists,
+    so a resume that asked ``out.is_file()`` would call the structure finished, re-parse it as
+    ``NOT_TERMINATED_NORMALLY`` — which ``retryable_best`` refuses, since a crashed job would
+    crash again — and hand it to the failure policy with an attempt it never got to use.
+
+    ``resubmit_unusable`` judges by what *parsed* instead, so the structure is re-run.
+    """
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_interruptible_engine()
+    try:
+        eng.runs = {}
+        eng.interrupt_before_running = {"1"}
+        cfg = _config(tmp_path, engine="interrupt-stream", on_failure="skip")
+        seeds = _seed_state(["0", "1", "2"])
+
+        with pytest.raises(KeyboardInterrupt):
+            run_step(cfg, cfg.steps[0], seeds)
+
+        step_dir = cfg.output_dir.resolve() / "step1"
+        # What a scancel leaves behind: the trap copied a half-written output back.
+        (step_dir / "1" / "step1_1.out").write_text("partial\n", encoding="utf-8")
+        assert (step_dir / "1" / "attempt1" / "step1_1.out").is_file(), "the good one is right here"
+
+        eng.interrupt_before_running = set()
+        outcome = run_step(cfg, cfg.steps[0], seeds)
+
+        assert [s.id for s in outcome.state.structures] == ["0", "1", "2"]
+        assert cache.load_failure_records(step_dir) == []
+    finally:
+        eng.runs = {}
+        eng.interrupt_before_running = set()
+        ENGINES.pop("interrupt-stream", None)

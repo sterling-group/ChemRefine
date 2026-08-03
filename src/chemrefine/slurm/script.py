@@ -22,7 +22,7 @@ from pathlib import Path
 
 from chemrefine import job_log
 from chemrefine.errors import ConfigError
-from chemrefine.state import RunBlock
+from chemrefine.state import JobTriple, RunBlock
 
 logger = logging.getLogger(__name__)
 
@@ -260,11 +260,11 @@ shared script pointed at it via ``--export=ALL,CR_MANIFEST=...``."""
 
 
 def write_array_manifests(
-    files: Sequence[tuple[Path, Path, str]],
+    files: Sequence[JobTriple],
     step_dir: Path,
     *,
     step_label: str,
-) -> list[tuple[Path, tuple[tuple[Path, Path, str], ...]]]:
+) -> list[tuple[Path, tuple[JobTriple, ...]]]:
     """Write the per-chunk task manifests; return ``[(manifest_path, chunk), ...]``.
 
     Line ``i`` of a manifest is the tab-separated ``input<TAB>output<TAB>id``
@@ -272,7 +272,7 @@ def write_array_manifests(
     ``$SLURM_ARRAY_TASK_ID``. Returning the file chunks alongside the paths
     lets the caller map every input to its chunk's parent job id.
     """
-    manifests: list[tuple[Path, tuple[tuple[Path, Path, str], ...]]] = []
+    manifests: list[tuple[Path, tuple[JobTriple, ...]]] = []
     for chunk_no, start in enumerate(range(0, len(files), _MAX_ARRAY_SIZE)):
         chunk = tuple(files[start : start + _MAX_ARRAY_SIZE])
         path = step_dir / f"{step_label}_array.manifest.{chunk_no}"

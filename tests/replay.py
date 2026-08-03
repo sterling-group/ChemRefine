@@ -26,6 +26,8 @@ import tarfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from chemrefine.engines import api
+from chemrefine.engines.api import CompletionSink
 from chemrefine.state import JobBatch, StepContext, StepInputs
 
 DATA_DIR = Path(__file__).resolve().parent / "data" / "e2e" / "recordings"
@@ -79,8 +81,31 @@ class ReplaySubmitter:
     allow_missing: frozenset[str] = frozenset()
     calls: list[StepInputs] = field(default_factory=list)
 
-    def __call__(self, engine: object, inputs: StepInputs, ctx: StepContext) -> JobBatch:
-        self.calls.append(inputs)
+    def __call__(
+        self,
+        engine: object,
+        inputs: StepInputs,
+        ctx: StepContext,
+        *,
+        sink: CompletionSink | None = None,
+    ) -> JobBatch:
+        """Satisfy a batch from the archive, then drive ``sink`` over it.
+
+        Standing in for ``run_batch`` means standing in for *all* of it. A replacement that
+        accepted ``sink`` and ignored it would leave every structure unparsed and the step
+        failing for a reason nothing points at — the same trap the real job-array path has,
+        answered the same way: sweep the drained batch, then run whatever it asks for.
+        """
+        batch = inputs
+        while True:
+            self.calls.append(batch)
+            self._satisfy(batch)
+            if sink is None or not (follow := api.sweep(batch, sink)):
+                return JobBatch(jobs={})
+            batch = StepInputs(follow)
+
+    def _satisfy(self, inputs: StepInputs) -> None:
+        """Copy each job's archived outputs into the place the engine will parse them from."""
         for _inp, out, sid in inputs.files:
             rel = out.parent.relative_to(self.case.output_dir)
             source = self.case.captured / rel
@@ -98,7 +123,6 @@ class ReplaySubmitter:
             for archived in source.iterdir():
                 if archived.is_file():
                     shutil.copy2(archived, out.parent / archived.name)
-        return JobBatch(jobs={})
 
     def submissions(self) -> list[str]:
         """Every structure id submitted, in submission order."""

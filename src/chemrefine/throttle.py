@@ -3,10 +3,17 @@
 A pipeline step typically submits many jobs at once, but a host has a
 fixed CPU budget (``max_cores``) and — locally — a fixed number of GPUs
 (``max_gpus``). The throttler tracks each active job's ``(cores, gpus)``
-demand and blocks new submissions until **both** budgets allow it.
+demand and answers two questions about it: :meth:`~Throttler.has_room`
+(can this job start now?) and :meth:`~Throttler.wait_for_completion`
+(block until one finishes, and say which). A scheduler is those two in a
+loop; the throttler owns neither the queue nor what a finished job means.
 Polling delegates to a caller-supplied ``finished`` callable — set-shaped, so
 one scheduler query answers the whole active batch — which also lets tests
 substitute a fake without monkeypatching :mod:`subprocess`.
+
+:class:`StallDeadline` lives here too, because a stall bound is the same concept as the
+budget it protects: it is what ``job_timeout_seconds`` means, and every wait in the
+codebase — this one and :func:`chemrefine.slurm.wait_for_jobs` — measures it the same way.
 
 The GPU budget only bites locally: under SLURM the scheduler places GPUs
 itself (``--gres=gpu``), so the batch engine sets ``max_gpus`` effectively
@@ -33,6 +40,42 @@ on every tick, and a per-job callable turned that into one scheduler subprocess 
 job per tick (see :func:`chemrefine.slurm.finished_jobs`)."""
 
 
+class StallDeadline:
+    """How long a wait may go **without progress** — what ``job_timeout_seconds`` means.
+
+    One definition for every wait in the codebase. Both polling loops
+    (:meth:`Throttler.wait_for_completion` and :func:`chemrefine.slurm.wait_for_jobs`)
+    used to carry their own arithmetic and raise their own
+    :class:`~chemrefine.errors.ThrottleTimeoutError`, and they drifted: one restarted the
+    clock whenever a job completed, the other only when a whole *array* did, so the same
+    number meant a stall bound on one path and a total-runtime bound on the other. A shared
+    object cannot drift — what remains per-caller is what counts as progress, which is
+    genuinely different (a completion here, any scheduler activity there).
+
+    ``None`` waits forever, which is the default: under SLURM the partition's own time limit
+    already bounds a job, and a deadline chemrefine invents on top of that can only fire
+    early.
+    """
+
+    def __init__(self, max_wait_seconds: float | None) -> None:
+        self._budget = max_wait_seconds
+        self._deadline: float | None = None
+        self.progress()
+
+    def progress(self) -> None:
+        """Restart the clock — the caller saw something move."""
+        self._deadline = time.monotonic() + self._budget if self._budget is not None else None
+
+    def check(self, waiting_for: str) -> None:
+        """Raise :class:`~chemrefine.errors.ThrottleTimeoutError` if the stall has run long enough.
+
+        ``waiting_for`` completes "timed out after Ns waiting for …", so a caller says what
+        its own wait was about without owning the error or the wording around it.
+        """
+        if self._deadline is not None and time.monotonic() >= self._deadline:
+            raise ThrottleTimeoutError(f"timed out after {self._budget}s waiting for {waiting_for}")
+
+
 class Throttler:
     """Track active jobs against CPU-core and GPU budgets."""
 
@@ -41,6 +84,11 @@ class Throttler:
             raise ValueError(f"max_cores must be >= 1; got {max_cores}")
         if max_gpus < 0:
             raise ValueError(f"max_gpus must be >= 0; got {max_gpus}")
+        if poll_interval < 0:
+            # Validated here with the other two rather than left to `time.sleep`, which would
+            # raise from inside a wait — after a batch has been submitted, which is the
+            # expensive moment to learn about a bad number.
+            raise ValueError(f"poll_interval must be >= 0; got {poll_interval}")
         self.max_cores = max_cores
         self.max_gpus = max_gpus
         self.poll_interval = poll_interval
@@ -81,110 +129,84 @@ class Throttler:
     def assign_device(self) -> int:
         """Return the lowest GPU index in ``[0, max_gpus)`` not held by an active job.
 
-        Call **after** :meth:`wait_for_room` has admitted a GPU job (so a slot is
-        guaranteed free) and **before** :meth:`register`, then pass the result as
-        the job's ``CUDA_VISIBLE_DEVICES`` so concurrent local GPU jobs don't all
-        pile onto device 0.
+        Call **after** :meth:`has_room` has said yes (so a slot is guaranteed free) and
+        **before** :meth:`register`, then pass the result as the job's
+        ``CUDA_VISIBLE_DEVICES`` so concurrent local GPU jobs don't all pile onto device 0.
         """
         used = {dev for _c, gpus, dev in self._active.values() if gpus > 0 and dev is not None}
         for idx in range(self.max_gpus):
             if idx not in used:
                 return idx
-        # Unreachable when wait_for_room admitted this job first; fail loud rather
+        # Unreachable when `has_room` admitted this job first; fail loud rather
         # than silently colliding two local GPU jobs on device 0 if that breaks.
         raise RuntimeError(
-            f"no free GPU device in [0, {self.max_gpus}) — call wait_for_room before assign_device"
+            f"no free GPU device in [0, {self.max_gpus}) — call has_room before assign_device"
+        )
+
+    def has_room(self, pal_needed: int, *, gpus_needed: int = 0) -> bool:
+        """Whether both budgets can admit a job of this size **right now**.
+
+        Pure — polls nothing and reaps nothing. The one expression of "does this fit", and the
+        whole of the admission decision: a caller tests this, submits if it is true, and waits
+        in :meth:`wait_for_completion` if it is not. Splitting those into a blocking
+        "wait for room" would mean a second loop that has to agree with this one about the
+        same two budgets.
+        """
+        return (
+            self.cores_in_use + pal_needed <= self.max_cores
+            and self.gpus_in_use + gpus_needed <= self.max_gpus
         )
 
     # -- waiting -----------------------------------------------------------
 
-    def wait_for_room(
-        self,
-        pal_needed: int,
-        *,
-        finished: FinishedFn,
-        gpus_needed: int = 0,
-        max_wait_seconds: float | None = None,
-    ) -> None:
-        """Block until ``pal_needed`` cores **and** ``gpus_needed`` GPUs can be allocated.
-
-        Polls ``finished`` once per loop iteration to reap completed
-        jobs; sleeps ``poll_interval`` seconds before re-checking when
-        room is still insufficient. Returns as soon as both budgets
-        allow the request.
-
-        Parameters
-        ----------
-        max_wait_seconds:
-            Optional deadline in seconds. Raises
-            :class:`~chemrefine.errors.ThrottleTimeoutError` if the
-            budget has not freed up within this many seconds. ``None``
-            (default) waits indefinitely.
-        """
-        if pal_needed > self.max_cores:
-            raise ValueError(
-                f"requested {pal_needed} cores exceeds the total budget {self.max_cores}"
-            )
-        if gpus_needed > self.max_gpus:
-            raise ValueError(
-                f"requested {gpus_needed} gpus exceeds the total budget {self.max_gpus}"
-            )
-        deadline = time.monotonic() + max_wait_seconds if max_wait_seconds is not None else None
-        while True:
-            self._reap(finished)
-            if (
-                self.cores_in_use + pal_needed <= self.max_cores
-                and self.gpus_in_use + gpus_needed <= self.max_gpus
-            ):
-                return
-            if deadline is not None and time.monotonic() >= deadline:
-                raise ThrottleTimeoutError(
-                    f"timed out after {max_wait_seconds}s waiting for "
-                    f"{pal_needed} cores + {gpus_needed} gpus"
-                )
-            logger.debug(
-                "waiting on budget: cores %d+%d/%d, gpus %d+%d/%d",
-                self.cores_in_use,
-                pal_needed,
-                self.max_cores,
-                self.gpus_in_use,
-                gpus_needed,
-                self.max_gpus,
-            )
-            time.sleep(self.poll_interval)
-
-    def wait_all(
+    def wait_for_completion(
         self,
         *,
         finished: FinishedFn,
         max_wait_seconds: float | None = None,
-    ) -> None:
-        """Block until every active job has finished.
+    ) -> tuple[str, ...]:
+        """Block until at least one active job finishes; return the ids that did.
 
-        Parameters
-        ----------
-        max_wait_seconds:
-            Optional deadline. Raises
-            :class:`~chemrefine.errors.ThrottleTimeoutError` if any jobs
-            are still active when the deadline expires.
+        **The class's only wait**, and the only loop that polls. A caller that wants room
+        tests :meth:`has_room` and waits here; a caller that wants the batch drained waits
+        here until :attr:`active_jobs` is empty. Both are two lines at the call site
+        (:func:`chemrefine.engines._execution._run_queue` is both at once), and neither needs
+        a wait of its own — which is what keeps the polling, the reaping and the deadline in
+        one place instead of three.
+
+        Returns ``()`` when nothing is active. The caller decides what that means: for a
+        drain it is success, and for a queue with work left it is impossible.
+
+        ``max_wait_seconds`` bounds *this* wait — how long to sit with nothing completing.
+        That is what :attr:`~chemrefine.config.Config.job_timeout_seconds` means on every path
+        (:func:`chemrefine.slurm.wait_for_jobs` re-anchors it the same way): a bound on the
+        whole drain would make a healthy long batch trip a timeout set to catch a stuck one.
+        The deadline is a fresh :class:`StallDeadline` per call, and this returns on the first
+        completion — so the clock restarts on every completion without this loop tracking that
+        itself.
         """
-        deadline = time.monotonic() + max_wait_seconds if max_wait_seconds is not None else None
+        deadline = StallDeadline(max_wait_seconds)
         while self._active:
-            self._reap(finished)
-            if not self._active:
-                return
-            if deadline is not None and time.monotonic() >= deadline:
-                raise ThrottleTimeoutError(
-                    f"timed out after {max_wait_seconds}s waiting for all jobs to finish"
-                )
+            if done := self._reap(finished):
+                return done
+            deadline.check("a job to finish")
             time.sleep(self.poll_interval)
+        return ()
 
     # -- internals ---------------------------------------------------------
 
-    def _reap(self, finished: FinishedFn) -> None:
-        """Drop every active job the scheduler reports done — one poll for all of them."""
-        if not self._active:
-            return
-        for jid in finished(tuple(self._active)):
+    def _reap(self, finished: FinishedFn) -> tuple[str, ...]:
+        """Drop every active job the scheduler reports done — one poll for all of them.
+
+        Returns the ids it reaped, so a caller can act on each completion rather than only on
+        the budget it freed.
+
+        Its one caller polls only under ``while self._active``, so this does not re-test that:
+        a guard here would be the loop condition written twice, and the second copy is the one
+        that would be left behind if the loop ever changed.
+        """
+        done = tuple(finished(tuple(self._active)))
+        for jid in done:
             cores, gpus, _dev = self._active.pop(jid)
             logger.info("job %s finished, freed %d cores + %d gpus", jid, cores, gpus)
+        return done

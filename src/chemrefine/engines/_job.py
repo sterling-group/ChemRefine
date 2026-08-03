@@ -27,7 +27,7 @@ from ase import Atoms
 
 from chemrefine.engines import _execution
 from chemrefine.engines._options import EngineOptions
-from chemrefine.engines.api import ParsedResult, RunBlock
+from chemrefine.engines.api import CompletionSink, ParsedResult, RunBlock
 from chemrefine.ids import (
     allocate_child_ids,
     input_geometry_path,
@@ -37,6 +37,7 @@ from chemrefine.ids import (
 from chemrefine.io import write_single_xyz
 from chemrefine.state import (
     JobBatch,
+    JobTriple,
     PipelineState,
     StepContext,
     StepInputs,
@@ -150,7 +151,7 @@ class JobEngine(abc.ABC):
         ctx.step_dir.mkdir(parents=True, exist_ok=True)
         template = require_template(ctx.template, label=self.label)
         step = ctx.step_cfg.step
-        files: list[tuple[Path, Path, str]] = []
+        files: list[JobTriple] = []
         for struct in ctx.prev_state.structures:
             xyz_path = write_single_xyz(
                 struct.atoms,
@@ -171,6 +172,17 @@ class JobEngine(abc.ABC):
     def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
         """Run the prepared inputs as a batch of per-structure jobs (blocks until done)."""
         return _execution.run_batch(self, inputs, ctx)
+
+    def submit_streaming(
+        self, inputs: StepInputs, ctx: StepContext, sink: CompletionSink
+    ) -> JobBatch:
+        """:meth:`submit`, reporting each job to ``sink`` the moment it finishes.
+
+        Satisfies :class:`~chemrefine.engines.api.StreamingSubmit` for every job engine at
+        once — the scheduler already works job by job, so this is the whole of what an engine
+        has to provide for a failed structure's re-run to land in the slot it just freed.
+        """
+        return _execution.run_batch(self, inputs, ctx, sink=sink)
 
     def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
         """Parse each output, then assemble structures + fan-out lineage centrally."""

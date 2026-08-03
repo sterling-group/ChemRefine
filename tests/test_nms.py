@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 from ase import Atoms
 
-from chemrefine import cache, nms
+from chemrefine import cache, lifecycle, nms
 from chemrefine.config import Config, MinSample, StepConfig
 from chemrefine.engines.api import NmsInputInfo
 from chemrefine.errors import ConfigError
@@ -365,6 +365,7 @@ class _FakeNms:
         self.fail = fail or set()
         self.fail_children = fail_children  # every displaced child fails to converge
         self._parses: dict[str, int] = {}
+        self.submissions: list[list[str]] = []
 
     def prepare(self, ctx: StepContext) -> StepInputs:
         files = []
@@ -378,6 +379,9 @@ class _FakeNms:
         return StepInputs(files=tuple(files))
 
     def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
+        # One entry per call, so a test can tell "one batch carrying every parent's
+        # children" from "one batch per parent".
+        self.submissions.append([sid for _i, _o, sid in inputs.files])
         return JobBatch(jobs={})
 
     def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
@@ -747,11 +751,11 @@ def test_rebuilding_cannot_install_a_winner():
     """The rebuild does not reach the code that writes — by construction, not by argument.
 
     One loop resolves both modes, so "does a rebuild promote" is not a branch anyone can get
-    wrong: it is `_RebuildAttempt.install`, which does nothing, against `_RunAttempt.install`,
+    wrong: it is `_RebuildAttempt.install`, which does nothing, against `NmsRound.install`,
     which promotes. This asserts that shape rather than the behaviour, so the byte-identical
     snapshot above cannot start passing for an accidental reason.
     """
-    assert "_install_winner" in _calls_in(nms._RunAttempt.install)
+    assert "_install_winner" in _calls_in(nms.NmsRound.install)
     assert not _calls_in(nms._RebuildAttempt.install)
     # Both modes still choose a winner — the shared loop is what guarantees it.
     assert "_select_survivors" in _calls_in(nms._resolve_all)
@@ -780,3 +784,156 @@ def test_an_edited_template_invalidates_the_reuse_before_a_reattempt(tmp_path: P
     first = cache.reuse_fingerprint(cfg, ("0",), template_digest="original")
     edited = cache.reuse_fingerprint(cfg, ("0",), template_digest="edited")
     assert first and first != edited
+
+
+def test_every_parents_children_share_one_queue(tmp_path: Path):
+    """Round 2 is one batch for the whole step, not one batch per parent.
+
+    Submission is budgeted per `run_batch` call, which blocks until its own jobs are done, so
+    resolving parents in a loop handed the throttler one parent's children at a time: with 50
+    unresolved parents that is 50 sequential batches, each using one parent's worth of the
+    core budget and idling the rest. Raising `max_cores` could not help, because the batch
+    was one parent wide.
+    """
+    engine = _FakeNms(
+        freqs={
+            "0": _Freq(imaginary={5: -42.0}, modes=_modes(6)),
+            "1": _Freq(imaginary={5: -42.0}, modes=_modes(6)),
+            "0_m5_pos": _Freq(imaginary={}, modes=None),
+            "0_m5_neg": _Freq(imaginary={}, modes=None),
+            "1_m5_pos": _Freq(imaginary={}, modes=None),
+            "1_m5_neg": _Freq(imaginary={}, modes=None),
+        }
+    )
+    ctx = _ctx(tmp_path, (_h2("0"), _h2("1")))
+    round1 = _seed_round1(engine, ctx)
+    engine.submissions.clear()  # round 1 was seeded by hand, not submitted
+
+    res = nms.run_nms(engine, round1, [], ctx)
+
+    assert sorted(s.id for s in res.survivors) == ["0", "1"]
+    assert engine.submissions == [["0_m5_pos", "0_m5_neg", "1_m5_pos", "1_m5_neg"]], (
+        "both parents' children must go out together, under one budget"
+    )
+
+
+def test_the_round_and_the_loop_agree_about_which_parents_get_an_attempt(tmp_path: Path):
+    """`children_for` returns `None` exactly when the loop would skip `obtain`.
+
+    The queue decides what to submit and the loop decides what to judge; a parent the queue
+    fanned out but the loop skipped would leave orphaned children on disk, and one the loop
+    expected but the queue never ran would resolve from nothing.
+    """
+    cases = {
+        "at-target": _Freq(imaginary={}, modes=_modes(6)),  # minimum already reached
+        "no-modes": _Freq(imaginary={5: -42.0}, modes=None),  # nothing to displace along
+        "out-of-range": _Freq(imaginary={9: -42.0}, modes=_modes(6)),  # mode beyond tensor
+        "displaceable": _Freq(imaginary={5: -42.0}, modes=_modes(6)),  # the real case
+    }
+    engine = _FakeNms(freqs=dict(cases))
+    ctx = _ctx(tmp_path, tuple(_h2(sid) for sid in cases))
+    round1 = _seed_round1(engine, ctx)
+    round_ = nms.child_round(engine, ctx)
+
+    earns = {s.id: round_.children_for(s) is not None for s in round1.structures}
+    assert earns == {
+        "at-target": False,
+        "no-modes": False,
+        "out-of-range": False,
+        "displaceable": True,
+    }
+    # The loop's own two questions, asked independently, must partition the same way.
+    opts = nms._resolved_options(engine, ctx)
+    target = nms.target_imaginary_count(opts)
+    for s in round1.structures:
+        loop_would_run = not nms._already_at_target(s, target) and bool(nms._children_for(s, opts))
+        assert loop_would_run is earns[s.id], f"{s.id}: round and loop disagree"
+
+
+class _StreamingFakeNms(_FakeNms):
+    """`_FakeNms` that reports each job as it finishes — i.e. satisfies `StreamingSubmit`.
+
+    The bare parent takes `lifecycle._drain` (submit the batch, sweep it, repeat); this one
+    takes the streamed queue. Both must resolve identically, which is the point of running
+    every NMS test against the pair.
+    """
+
+    def __init__(self, *a, **kw) -> None:
+        super().__init__(*a, **kw)
+        self.queue_when_spawned: list[list[str]] = []
+
+    def submit_streaming(self, inputs, ctx, sink) -> JobBatch:
+        from collections import deque
+
+        pending = deque(inputs.files)
+        while pending:
+            job = pending.popleft()
+            self.submissions.append([job[2]])
+            # `prepare` already wrote the outputs, and the sink parses through the job's own
+            # context — parsing here would both double-count and use the wrong `prev_state`.
+            follow = sink.on_complete(job)
+            if follow:
+                # What was still waiting at the moment this job earned more work.
+                self.queue_when_spawned.append([t[2] for t in pending])
+            pending.extend(follow)
+        return JobBatch(jobs={})
+
+
+def _resolve_like_a_step(engine, ctx):
+    """What `step._run_full_step` does, minus the caching — round 1 and round 2 in one queue."""
+    round2 = nms.child_round(engine, ctx)
+    inputs = engine.prepare(ctx)
+    succ, fail = lifecycle.run_with_retries(engine, ctx, inputs, children=round2)
+    return nms.run_nms(engine, StepResults(structures=tuple(succ)), fail, ctx, round2=round2)
+
+
+def _two_parents_needing_nms():
+    return {
+        "0": _Freq(imaginary={5: -42.0}, modes=_modes(6)),
+        "1": _Freq(imaginary={5: -42.0}, modes=_modes(6)),
+        "0_m5_pos": _Freq(imaginary={}, modes=None),
+        "0_m5_neg": _Freq(imaginary={}, modes=None),
+        "1_m5_pos": _Freq(imaginary={}, modes=None),
+        "1_m5_neg": _Freq(imaginary={}, modes=None),
+    }
+
+
+def test_children_go_out_before_round_one_drains(tmp_path: Path):
+    """A parent's children are queued while another parent's round-1 job is still waiting.
+
+    The barrier this removes: round 2 used to begin only once every round-1 job had drained,
+    so the slots freed by the early finishers sat idle until the last one landed. Now the
+    fan-out is a follow-up like any other and joins the queue it came from.
+    """
+    engine = _StreamingFakeNms(freqs=_two_parents_needing_nms())
+    ctx = _ctx(tmp_path, (_h2("0"), _h2("1")))
+
+    res = _resolve_like_a_step(engine, ctx)
+
+    assert sorted(s.id for s in res.survivors) == ["0", "1"]
+    assert engine.queue_when_spawned[0] == ["1"], (
+        "structure 0's children were queued while structure 1's round-1 job was still pending"
+    )
+
+
+@pytest.mark.parametrize("cls", [_FakeNms, _StreamingFakeNms], ids=["batched", "streaming"])
+def test_the_two_schedulers_resolve_identically(cls, tmp_path: Path):
+    """One algorithm, two schedulers — they must agree on survivors, failures and lineage.
+
+    Compared by the full cached record rather than by id, so a difference in energy, parent
+    or `resolved_from` fails here rather than surviving into the cache.
+    """
+    engine = cls(freqs={**_two_parents_needing_nms(), "2": _Freq(imaginary={}, modes=None)})
+    ctx = _ctx(tmp_path, (_h2("0"), _h2("1"), _h2("2")))
+
+    res = _resolve_like_a_step(engine, ctx)
+
+    assert [cache.structure_record(s) for s in res.survivors] == [
+        cache.structure_record(s) for s in sorted(res.survivors, key=lambda s: s.id)
+    ], "survivors come back in manifest order"
+    assert [s.id for s in res.survivors] == ["0", "1", "2"]
+    assert [s.resolved_from for s in res.survivors] == ["0_m5_pos", "1_m5_pos", None]
+    assert res.failures == ()
+    for sid in ("0", "1"):
+        assert (ctx.step_dir / sid / "attempt1").is_dir()
+    assert not (ctx.step_dir / "2" / "attempt1").exists(), "already at target, never displaced"

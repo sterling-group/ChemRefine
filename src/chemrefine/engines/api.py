@@ -67,6 +67,7 @@ from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
 # Protocol. The redundant alias is how a re-export is spelled explicitly, which
 # `no_implicit_reexport` requires — importing it for our own annotations would not say that
 # the three engines importing it from here are meant to.
+from chemrefine.state import JobTriple as JobTriple
 from chemrefine.state import RunBlock as RunBlock
 
 
@@ -100,6 +101,75 @@ class CalculationEngine(Protocol):
     def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
         """Parse each output file into a :class:`~chemrefine.state.Structure`."""
         ...
+
+
+class CompletionSink(Protocol):
+    """What a scheduler tells when one job finishes, and asks for more work.
+
+    The seam that lets :func:`chemrefine.engines._execution.run_batch` parse and re-run as it
+    goes without knowing anything about chemistry: it hands over a finished job and enqueues
+    whatever comes back. Everything about *why* a follow-up exists — parsing, classification,
+    the one-attempt budget, lineage — belongs to the implementation
+    (:class:`chemrefine.lifecycle._QueueSink`).
+
+    Deliberately **not** ``runtime_checkable``: nothing tests it with ``isinstance``, and the
+    engine capability that *is* tested is :class:`StreamingSubmit`.
+    """
+
+    def on_complete(self, job: JobTriple) -> tuple[JobTriple, ...]:
+        """Handle one finished job; return follow-up jobs to enqueue (usually empty)."""
+        ...
+
+
+class _NullSink:
+    """A sink that wants to hear nothing and asks for nothing back."""
+
+    def on_complete(self, job: JobTriple) -> tuple[JobTriple, ...]:
+        """Discard the completion; there is no follow-up work."""
+        return ()
+
+
+NULL_SINK: CompletionSink = _NullSink()
+"""The sink for a caller that only wants the batch run.
+
+``run_batch`` takes a sink always, never ``None``, and this is what "no sink" means. That is
+what lets there be **one** submission loop: a queue driven by a sink that never adds to it
+submits exactly what it was given and drains it, which is the whole of what the old
+fixed-batch path did. Keeping the two apart would mean two loops answering the same questions
+about the same budget, differing only in whether anyone was listening.
+"""
+
+
+@runtime_checkable
+class StreamingSubmit(CalculationEngine, Protocol):
+    """An engine that can report each job's completion as it happens.
+
+    A capability, detected with ``isinstance`` like every other one here. It is a **separate
+    method** rather than an optional argument to :meth:`CalculationEngine.submit` because
+    ``runtime_checkable`` only checks that a method *exists*, not its signature — an optional
+    parameter would make every engine answer yes and the narrowing would mean nothing.
+
+    Extending :class:`CalculationEngine` is what keeps the check honest in the other
+    direction: a satisfying engine must also have ``name`` / ``prepare`` / ``submit`` /
+    ``parse``, so a bare object with one convenient method cannot pass.
+    """
+
+    def submit_streaming(
+        self, inputs: StepInputs, ctx: StepContext, sink: CompletionSink
+    ) -> JobBatch:
+        """Run the prepared inputs, calling ``sink.on_complete`` as each job finishes."""
+        ...
+
+
+def sweep(inputs: StepInputs, sink: CompletionSink) -> tuple[JobTriple, ...]:
+    """Hand every job of an already-drained batch to ``sink``; return its follow-ups.
+
+    What a scheduler that cannot report completions *individually* does instead — the SLURM
+    job-array path and :func:`chemrefine.lifecycle._drain`. One function rather than one per
+    caller: they are the same three lines, and two copies of "drive the sink over a finished
+    batch" would be two places for a follow-up to go missing.
+    """
+    return tuple(f for job in inputs.files for f in sink.on_complete(job))
 
 
 @runtime_checkable

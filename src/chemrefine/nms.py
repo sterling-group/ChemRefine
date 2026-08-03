@@ -17,8 +17,16 @@ spawns duplicate minima. ``random`` is the exception: with no resolution gate it
 pure exploration, so it fans out to new child structures.
 
 The displacement maths + :class:`NmsOptions` here are pure and side-effect-free; the
-coordinator (`run_nms` / `rebuild_nms` / `reattempt_nms`) does the I/O, reusing the
-shared retry helper in :mod:`chemrefine.lifecycle` for unconverged children.
+coordinator (`run_nms` / `rebuild_nms` / `reattempt_nms`) does the I/O.
+
+**Round 2 shares round 1's queue.** :class:`NmsRound` is a
+:class:`chemrefine.lifecycle.ChildRound` while the step's queue drains — asked, as each
+round-1 structure lands, which displaced children it earns — and an :class:`_AttemptMode`
+afterwards, when :func:`_resolve_all` picks each parent's winner. So a parent's children are
+submitted the moment its own job finishes, alongside whatever is still running, and every
+parent's children share one core budget. Selection stays deferred to the one loop: it is pure
+plus a promotion, nothing downstream consumes a resolved parent until the step ends, and
+resolving in completion order would hand the next step a different fingerprint every run.
 """
 
 from __future__ import annotations
@@ -334,13 +342,19 @@ class _AttemptMode(Protocol):
     and ``rebuild_nms`` each name their own mode tautologically; nobody chooses one.
     """
 
-    def attempt_dir(self, structure_dir: Path) -> Path | None:
-        """The attempt directory to use, or ``None`` when there is none to work with."""
+    def attempt_dir(self, parent: Structure, ctx: StepContext) -> Path | None:
+        """The attempt directory to use, or ``None`` when there is none to work with.
+
+        Takes the structure rather than its directory because a mode may key on the id, and
+        recovering an id from a path is what :mod:`chemrefine.ids` forbids — a child id like
+        ``0_m5_pos`` contains letters, so a filename is not a reliable place to get one from.
+        """
         ...
 
     def obtain(
         self,
         engine: NmsCapableEngine,
+        parent: Structure,
         children: list[Structure],
         ctx: StepContext,
         attempt: Path,
@@ -360,25 +374,86 @@ class _AttemptMode(Protocol):
         ...
 
 
-class _RunAttempt:
-    """Submit round 2 into a fresh attempt and promote the winner."""
+class NmsRound:
+    """One step's NMS fan-out: which children each parent earns, and what they produced.
 
-    def attempt_dir(self, structure_dir: Path) -> Path | None:
-        """A fresh ``attemptK/`` — never ``None``, so the shared guard's other half is moot."""
-        return next_attempt_dir(structure_dir)
+    Two protocols, one object, one per phase of the step. While the queue drains it is a
+    :class:`chemrefine.lifecycle.ChildRound`, asked — as each round-1 structure lands — which
+    displaced children it earns and where they run. Once the queue has drained it is an
+    :class:`_AttemptMode`, asked by :func:`_resolve_all` where those children ran and what
+    they parsed to.
+
+    **One object, because the two questions have one answer each and it must be the same
+    answer.** Split in two, the writer would pick :func:`~chemrefine.ids.next_attempt_dir` and
+    the reader :func:`~chemrefine.ids.latest_attempt_dir`, and one stray ``attemptK/`` — an
+    interrupted earlier run, a manual copy — is all it would take for them to disagree,
+    silently, about which exploration a winner was promoted from.
+
+    That is also what lets every parent's children share one queue. Submitting them per
+    parent, as this module used to, built a :class:`~chemrefine.throttle.Throttler` per parent
+    and drained it before the next one started: 50 unresolved parents meant 50 sequential
+    batches, each using one parent's worth of the core budget and idling the rest.
+    """
+
+    def __init__(self, ctx: StepContext, opts: NmsOptions) -> None:
+        self._ctx = ctx
+        self._opts = opts
+        self._target = target_imaginary_count(opts)
+        self._attempts: dict[str, Path] = {}
+        self._results: dict[str, list[Structure]] = {}
+
+    # -- lifecycle.ChildRound (while the queue drains) ---------------------
+
+    def children_for(self, structure: Structure) -> lifecycle.ChildRun | None:
+        """The displaced children ``structure`` earns, or ``None`` if it earns none.
+
+        :func:`_resolve_all`'s first two questions, asked in its order, so the set of parents
+        that get an attempt cannot depend on which of the two asked. It does not have to tell
+        the two ``None`` cases apart — a parent already at its target passes through, one with
+        no displaceable mode becomes an ``UNRESOLVED_NMS`` failure — because neither has
+        anything to run and the loop decides that itself.
+        """
+        if _already_at_target(structure, self._target):
+            return None
+        children = _children_for(structure, self._opts)
+        if not children:
+            return None
+        attempt = next_attempt_dir(self._ctx.step_dir / structure.id)
+        self._attempts[structure.id] = attempt
+        return lifecycle.ChildRun(attempt, tuple(children))
+
+    def settled(self, origin_sid: str, successes: list[Structure], failures: list[Failure]) -> None:
+        """Take one parent's drained round 2; its failures are the loop's to judge.
+
+        A child that never converged is not a step failure — the *parent* is, and only if
+        nothing resolved (:func:`_select_survivors`). So they are dropped here, in one place,
+        rather than at each call site.
+        """
+        if failures:
+            logger.debug(
+                "NMS %s: %d of %d round-2 children unusable",
+                origin_sid,
+                len(failures),
+                len(successes) + len(failures),
+            )
+        self._results[origin_sid] = successes
+
+    # -- _AttemptMode (once it has) ----------------------------------------
+
+    def attempt_dir(self, parent: Structure, ctx: StepContext) -> Path | None:
+        """Where this parent's children ran — the very path :meth:`children_for` chose."""
+        return self._attempts.get(parent.id)
 
     def obtain(
         self,
         engine: NmsCapableEngine,
+        parent: Structure,
         children: list[Structure],
         ctx: StepContext,
         attempt: Path,
     ) -> list[Structure]:
-        """Submit + parse the displaced children under ``attempt``; retry unconverged ones."""
-        child_ctx = replace(ctx, step_dir=attempt)
-        succ, fail = lifecycle.submit_and_parse(engine, child_ctx, children)
-        succ, _fail = lifecycle.retry_unconverged(engine, child_ctx, succ, fail)
-        return succ
+        """What the queue already parsed. There is nothing left to submit."""
+        return list(self._results.get(parent.id, []))
 
     def install(
         self,
@@ -395,13 +470,14 @@ class _RunAttempt:
 class _RebuildAttempt:
     """Re-read the latest attempt from disk, changing nothing (``rebuild-cache``)."""
 
-    def attempt_dir(self, structure_dir: Path) -> Path | None:
+    def attempt_dir(self, parent: Structure, ctx: StepContext) -> Path | None:
         """The most recent ``attemptK/``, or ``None`` for children re-derivable but never run."""
-        return latest_attempt_dir(structure_dir)
+        return latest_attempt_dir(ctx.step_dir / parent.id)
 
     def obtain(
         self,
         engine: NmsCapableEngine,
+        parent: Structure,
         children: list[Structure],
         ctx: StepContext,
         attempt: Path,
@@ -592,9 +668,11 @@ def _resolve_all(
     through unchanged.
 
     The attempt is located before the children are checked, which is safe because both
-    lookups are pure on a directory that does not exist yet. That ordering lets one guard
-    cover both modes: a run's ``attempt`` is never ``None``, so for it the second disjunct
-    is dead, and for a rebuild it is the "re-derivable but never ran" case.
+    lookups are side-effect-free. That ordering lets one guard cover every mode: for a
+    rebuild ``attempt is None`` is the "re-derivable but never ran" case, and for a run it is
+    "the queue never fanned this parent out" — reachable only if the round and this loop
+    disagreed about who earns an attempt, and failing safe as unresolved rather than reading
+    an empty result set as a verdict.
     """
     opts = _resolved_options(engine, ctx)
     target = target_imaginary_count(opts)
@@ -605,11 +683,11 @@ def _resolve_all(
             survivors.append(_passthrough(s, ctx.step_dir))
             continue
         children = _children_for(s, opts)
-        attempt = mode.attempt_dir(ctx.step_dir / s.id)
+        attempt = mode.attempt_dir(s, ctx)
         if not children or attempt is None:
             failures.append(Failure(s.id, FailureKind.UNRESOLVED_NMS, s))
             continue
-        round2 = mode.obtain(engine, children, ctx, attempt)
+        round2 = mode.obtain(engine, s, children, ctx, attempt)
         resolved = [c for c in round2 if _is_resolved(c, target)]
         s_surv, s_fail = _select_survivors(resolved, round2, s, ctx.step_cfg, target)
         # A promoted winner is the only case with a `resolved_from`: `random` fans out and
@@ -622,18 +700,40 @@ def _resolve_all(
     return NmsResolution(tuple(survivors), tuple(failures))
 
 
+def child_round(engine: NmsCapableEngine, ctx: StepContext) -> NmsRound:
+    """This step's NMS fan-out, for a scheduler to run in its own queue.
+
+    Built before round 1 submits, which is also where :func:`_resolved_options` first reads
+    the engine's input — so a step whose ``target`` cannot be resolved says so before it
+    spends a batch.
+    """
+    return NmsRound(ctx, _resolved_options(engine, ctx))
+
+
 def run_nms(
     engine: NmsCapableEngine,
     round1: StepResults,
     round1_failures: list[Failure] | tuple[Failure, ...],
     ctx: StepContext,
+    *,
+    round2: NmsRound | None = None,
 ) -> NmsResolution:
     """Resolve each round-1 survivor to its stationary point (submits round-2).
 
     Displaced children run under a fresh ``stepN/<id>/attemptK/`` and the winner is promoted
     to the parent's canonical basenames.
+
+    ``round2`` is a fan-out the caller has already run: :func:`chemrefine.step._run_full_step`
+    hands the same object to :func:`chemrefine.lifecycle.run_with_retries`, so each parent's
+    children go out behind the round-1 jobs still in flight and share their budget. A caller
+    whose round 1 did not run in this process — :func:`reattempt_nms` reads it back off disk —
+    passes nothing, and the fan-out runs here instead: still one queue for every parent, just
+    started after round 1 rather than during it.
     """
-    return _resolve_all(engine, round1, round1_failures, ctx, _RunAttempt())
+    if round2 is None:
+        round2 = child_round(engine, ctx)
+        lifecycle.run_child_rounds(engine, ctx, round1.structures, round2)
+    return _resolve_all(engine, round1, round1_failures, ctx, round2)
 
 
 def rebuild_nms(

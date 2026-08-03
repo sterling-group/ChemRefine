@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
@@ -35,8 +35,6 @@ from chemrefine.engines.api import (
 )
 from chemrefine.errors import CacheError, ChemRefineError, ConfigError
 from chemrefine.state import (
-    FailureKind,
-    FailureRecord,
     PipelineState,
     StepContext,
     StepResults,
@@ -325,7 +323,7 @@ def _cached_outcome(
         results = (
             nms.reattempt_nms(nms_engine, ctx, step_cfg, cached, key)
             if nms_engine is not None
-            else _resubmit_failed(engine, ctx, step_cfg, failed, key)
+            else _resubmit_failed(engine, ctx, step_cfg, key)
         )
         return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
     logger.info(
@@ -400,17 +398,15 @@ def _partial_step_outcome(
     through — the batch job hits its walltime, a node fails, Ctrl-C — leaves no cache at all.
     The alternative is :func:`_run_full_step`, whose first act is to archive every finished
     ``.out`` into ``attemptK/`` and resubmit the lot: on HPC, days of completed compute left
-    on disk and never read back, because
-    :func:`~chemrefine.lifecycle.parse_with_failures` decides success by ``out.is_file()``
-    at the canonical path, which archiving has just emptied.
+    on disk and never read back, because a structure is only ever parsed from the canonical
+    path, which archiving has just emptied.
 
     The manifest is what makes continuing *safe* rather than merely cheap. Written before
     submission and carrying the step's fingerprint, a match proves these outputs were
     produced for this step config and these parents — the distinction ``out.is_file()``
-    cannot make alone, and the reason archiving is otherwise unconditional. Anything still
-    missing is handed to :func:`_resubmit_failed`, the
-    same per-structure archive-and-resubmit path ``rerun-errors`` uses; it re-parses the
-    whole manifest afterwards, so the finished structures come back from disk.
+    cannot make alone, and the reason archiving is otherwise unconditional. The tree is then
+    handed to :func:`_resubmit_failed`, the same archive-and-resubmit path ``rerun-errors``
+    uses: it re-runs whatever has no usable result and reads the rest back from disk.
 
     Returns ``None`` — meaning "run the whole step" — unless every condition holds:
 
@@ -428,22 +424,12 @@ def _partial_step_outcome(
         return None
     if cache.load_manifest_fingerprint(ctx.step_dir) != key.fingerprint:
         return None
-    missing = [
-        FailureRecord(
-            structure_id=sid,
-            kind=FailureKind.MISSING_OUTPUT,
-            reason=FailureKind.MISSING_OUTPUT.value,
-        )
-        for _inp, out, sid in manifest.files
-        if not out.is_file()
-    ]
     logger.info(
-        "step %d: resuming an interrupted step — %d of %d structure(s) still to run",
+        "step %d: resuming an interrupted step — %d structure(s) on disk",
         step_cfg.step,
-        len(missing),
         len(manifest.files),
     )
-    results = _resubmit_failed(engine, ctx, step_cfg, missing, key)
+    results = _resubmit_failed(engine, ctx, step_cfg, key)
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
 
@@ -476,21 +462,28 @@ def _run_full_step(
         fingerprint=key.fingerprint,
     )
 
-    logger.info("step %d: submitting %d jobs", step_cfg.step, len(inputs.files))
-    engine.submit(inputs, ctx)
+    # Built before submission, so a `target` that cannot be resolved says so before the step
+    # spends a batch — and so round 1 and round 2 share one object, and one queue.
+    round2 = nms.child_round(nms_engine, ctx) if nms_engine is not None else None
 
-    logger.info("step %d: parsing outputs", step_cfg.step)
-    successes, failures = lifecycle.parse_and_record(engine, inputs, ctx)
-    # Round-1 convergence failures are retried from best before NMS / the policy.
-    successes, failures = lifecycle.retry_unconverged(engine, ctx, successes, failures)
+    logger.info("step %d: submitting %d round-1 job(s)", step_cfg.step, len(inputs.files))
+    # Submission, parsing, the convergence retries and the NMS fan-out are one call rather
+    # than four phases: a structure that fails to converge is re-run — and one that needs
+    # displacing gets its children — as soon as its own job frees a slot, instead of after
+    # the whole batch has drained. (No "parsing outputs" line any more: parsing is
+    # interleaved with submission now, so a phase banner would be a lie. The count above is
+    # round 1's, for the same reason — it no longer bounds what the step submits.)
+    successes, failures = lifecycle.run_with_retries(engine, ctx, inputs, children=round2)
 
-    if nms_engine is not None:
-        logger.info("step %d: running normal-mode sampling", step_cfg.step)
+    if nms_engine is not None and round2 is not None:
+        # Both come from the same condition; the second test is what narrows `round2`.
+        logger.info("step %d: resolving normal-mode sampling", step_cfg.step)
         resolution = nms.run_nms(
             nms_engine,
             StepResults(structures=tuple(successes)),
             failures,
             ctx,
+            round2=round2,
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
     results = lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
@@ -594,41 +587,26 @@ def _resubmit_failed(
     engine: CalculationEngine,
     ctx: StepContext,
     step_cfg: StepConfig,
-    failed: list[FailureRecord],
     key: cache.StepKey,
 ) -> StepResults:
-    """Re-prepare and resubmit only the failed structures, then re-parse + re-cache the step.
+    """Re-run whatever the manifest has no usable result for, then re-cache the step.
 
-    The failed structures' prior artifacts are archived into ``attemptK/`` and their
-    inputs **regenerated** before resubmission, rather than reusing the input files the
-    original prepare left on disk. Two reasons: archiving is what stops a job that dies
-    without producing output from re-reading the old result, and regenerating means
-    a ``rerun-errors`` after a template edit actually runs the edited template — the
-    on-disk input would otherwise contradict the fingerprint the cache is keyed on.
+    Which structures those are is not passed in but read off the outputs, by
+    :func:`~chemrefine.lifecycle.resubmit_unusable` — one parse that both selects the work and
+    supplies the results for everything it did not select. A ledger of what failed *last* time
+    would be a second opinion about the same tree, and the two disagree exactly when it
+    matters: a run killed while a re-run was being prepared leaves an output that exists and
+    is worthless, which no ledger records and ``out.is_file()`` cannot see.
 
-    The *whole* step is then re-parsed from the manifest so fan-out lineage stays
-    consistent and the ledger is refreshed (cleared if all now succeeded). NMS steps use
-    :func:`chemrefine.nms.reattempt_nms` instead (they reuse round-1 rather than
+    The whole step is re-parsed, so fan-out lineage stays consistent and the ledger is
+    refreshed (cleared if all now succeeded). Convergence failures are handled after, by
+    :func:`~chemrefine.lifecycle.retry_unconverged`, from the geometry they reached. NMS steps
+    use :func:`chemrefine.nms.reattempt_nms` instead (they reuse round-1 rather than
     resubmit it).
     """
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
         raise CacheError(f"step {step_cfg.step}: cannot rerun — no manifest to rehydrate inputs")
-    # Convergence failures are re-attempted from their best geometry by the retry
-    # pass below (resubmitting the identical input would just fail again); the
-    # plain resubmit handles crashed / missing-output jobs.
-    failed_ids = {f.structure_id for f in failed if f.kind is not FailureKind.NOT_CONVERGED}
-    failed_seeds = tuple(s for s in ctx.prev_state.structures if s.id in failed_ids)
-    if failed_seeds:
-        logger.info(
-            "step %d: rerun — resubmitting %d failed job(s)",
-            step_cfg.step,
-            len(failed_seeds),
-        )
-        attempts.archive_previous(ctx.step_dir, (s.id for s in failed_seeds))
-        retry_ctx = replace(ctx, prev_state=PipelineState(structures=failed_seeds))
-        engine.submit(engine.prepare(retry_ctx), retry_ctx)
-
-    successes, failures = lifecycle.parse_and_record(engine, manifest, ctx)
+    successes, failures = lifecycle.resubmit_unusable(engine, ctx, manifest)
     successes, failures = lifecycle.retry_unconverged(engine, ctx, successes, failures)
     return lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
