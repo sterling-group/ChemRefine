@@ -28,12 +28,24 @@ everything else is shared. (Today: ORCA + the ExtOpt engines.)
 
 ## Two rounds + the unified "attempt" model
 
-NMS runs as two throttled rounds, never sharing the core budget at once:
+NMS runs as two rounds sharing **one** core budget:
 
 1. **Round 1** — an opt+freq on each survivor at its canonical `stepN/<id>/`.
 2. **Round 2** — for each structure not already at the target, displace
    ±`displacement_value` along the selected mode(s) and re-optimise the ± children
    under `stepN/<id>/attemptK/`, retrying any that fail to converge.
+
+A structure's children are submitted **the moment its own round-1 job finishes**, into the
+same queue, alongside whatever is still running — so the slots freed by the early finishers
+go to round-2 work instead of idling until the last round-1 job lands. Every parent's
+children share that one queue, too: resolving them one parent at a time meant a step with 50
+unresolved structures ran 50 sequential batches, each using one parent's worth of the budget.
+Raising `max_cores` could not help, because each batch was one parent wide.
+
+Picking each parent's winner still happens once, after the queue drains. It is a decision plus
+a file promotion, nothing downstream consumes a resolved structure until the step ends, and
+deciding in completion order would give the next step a different cache fingerprint on every
+run.
 
 Resolving a structure is an **attempt**, the same shape as the `on_failure`
 convergence retry: the exploration is archived under `stepN/<id>/attemptK/` and the

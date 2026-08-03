@@ -98,8 +98,8 @@ flowchart TD
   LOOP --> STEP["step.run_step"]
   STEP --> CACHE{"cache.load_if_valid\nfingerprint match?"}
   CACHE -- hit --> FILT["filtering.apply"]
-  CACHE -- miss --> LIFE["engine lifecycle:\nprepare → submit → parse"]
-  LIFE --> POL["lifecycle.apply_failure_policy\n(+ nms.run_nms for nms steps)"]
+  CACHE -- miss --> LIFE["lifecycle.run_with_retries:\nprepare → one queue → parse\n(retries + nms round 2 join it)"]
+  LIFE --> POL["lifecycle.apply_failure_policy\n(+ nms.run_nms picks each winner)"]
   POL --> SAVE["cache.save"]
   SAVE --> FILT
   FILT --> CSV["io.save_step_csv → steps.csv"]
@@ -121,7 +121,7 @@ flowchart TD
   BUILD --> SUBMIT["slurm.submit"]
   SUBMIT -- sbatch present --> SBATCH["sbatch (SLURM)"]
   SUBMIT -- local --> POPEN["bash Popen (background)"]
-  SUB --> THR["throttle.Throttler\nwait_for_room (cores + gpus)"]
+  SUB --> THR["throttle.Throttler\nhas_room + wait_for_completion"]
 
   subgraph ExtOpt["ExtOpt engines (mlip-extopt / pyscf-extopt)"]
     RB["run_block starts\n_backend_server.server"] --> ORCA["ORCA %method ProgExt"]

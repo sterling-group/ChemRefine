@@ -62,7 +62,9 @@ for the full map.
   one `sbatch --array` per ≤1000 structures, with the scheduler enforcing
   the `max_cores` budget via the array's `%limit` — large ensembles submit
   in seconds instead of one sbatch call per structure. Outputs, runlogs,
-  and recovery behave identically to the per-job path.
+  recovery, `job_timeout_seconds` (measured per array *task*, so a draining
+  array keeps resetting the clock) and the GPU-budget config checks behave
+  identically to the per-job path.
 - Seeding from a multi-frame `.xyz`, a directory of `.xyz` files (all
   frames), or a CSV of SMILES (deterministic 3D embedding).
 - Engineering gates: 100% line+branch test coverage, 100% docstring
@@ -116,6 +118,60 @@ for the full map.
 ### Fixed
 
 Hardening landed during the 2.0.0 stabilization:
+
+- A structure that fails to converge is re-run as soon as its own job frees a slot,
+  instead of after the entire step has drained. Jobs are now parsed as they finish and
+  a retry joins the same throttled queue, so it overlaps the rest of the batch. Before,
+  nothing was parsed until the last job returned — so no retry could exist yet, and every
+  slot freed after the final submission sat idle until then. On a 277-structure step at
+  `pal: 16` under `max_cores: 128`, two retries ran as a separate half-hour phase after
+  the batch rather than inside it.
+
+  Two consequences worth knowing:
+
+  - **A step that retried will re-run its downstream steps once.** Results now come back
+    in manifest order, with a retry's structures beside the ones from the job they
+    replace; previously retries were appended after every other structure. That ordering
+    feeds `parents_digest`, so the next step's cache fingerprint changes. It settles after
+    one run.
+  - `job_timeout_seconds` **is now a stall deadline** — the longest a step may go with
+    *nothing* finishing — and its clock restarts on every completion. It previously bounded
+    a whole drain on some paths and a single wait on others. A batch that keeps draining no
+    longer trips it however long the step takes, so a value chosen to catch a stuck queue
+    still works and no longer has to be re-tuned as a step grows. Under `slurm_array: true`
+    that clock follows the array's *tasks*: a whole step is one job id that does not finish
+    until its last task does, so anything coarser would have made the same number mean a
+    total-runtime bound there and a stall bound everywhere else.
+
+- NMS round 2 runs in the step's own queue instead of one batch per structure. A structure
+  needing displacement gets its `attemptK/` and its ± children submitted the moment its own
+  round-1 job finishes, alongside whatever is still running. Two things were serial before.
+  Children could not start until *every* round-1 job had drained, so the slots freed by the
+  early finishers idled until the last one landed; and each parent's children were their own
+  throttled batch, submitted and drained before the next parent's began — a step with 50
+  unresolved structures ran 50 sequential batches, each using one parent's worth of
+  `max_cores` and idling the rest. Raising `max_cores` could not help, because a batch was
+  one parent wide. Picking each winner still happens once, after the queue drains, so
+  survivors keep coming back in manifest order and downstream fingerprints do not move.
+
+- `resume` and `rerun-errors` re-run a structure whose output is present but unusable,
+  instead of reporting it as failed. They decided what was left to do by asking whether
+  the output *file existed*, which a truncated one does. Preparing a re-run archives the
+  previous attempt and writes a fresh input, so a run killed in between leaves exactly
+  that: a worthless output at the canonical path and the good geometry sitting in
+  `attemptK/`, unread. The structure then reached the failure policy having never used
+  its second attempt. Both paths now judge by what actually parsed. The window is not
+  new, but retries starting as slots free widened it from the tail of a step to nearly
+  all of it. Resume also stopped reading every output twice to do this.
+
+- Convergence retries go out as one batch instead of one at a time. Submission is
+  budgeted per batch by the throttler, which blocks until that batch's jobs finish,
+  so retrying structure by structure handed it a single job per call — the second
+  structure was not submitted until the first had *finished*. A step with two
+  unconverged structures at `pal: 16` under `max_cores: 128` therefore ran one
+  16-core job at a time, left the other 112 cores idle, and cost the sum of the
+  retries rather than the longest of them. Raising `max_cores` could not help,
+  because the batch size was one.
 
 - A step's cache refuses an `arrays.npz` that a different save wrote. The document
   and its coordinate sidecar are separate atomic writes, so a save interrupted
