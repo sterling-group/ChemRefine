@@ -535,8 +535,22 @@ def _read_resolution(structure_dir: Path) -> str | None:
     attempt = latest_attempt_dir(structure_dir)
     if attempt is None:
         return None
-    record = cache.read_json(attempt / _RESOLUTION_FILE, None, label="NMS resolution")
-    return None if record is None else str(record["resolved_from"])
+    path = attempt / _RESOLUTION_FILE
+    record = cache.read_json(path, None, label="NMS resolution")
+    if record is None:
+        return None
+    try:
+        return str(record["resolved_from"])
+    except (KeyError, TypeError) as e:
+        # `read_json` is typed `Any`, so it guarantees only that the file parsed — not that
+        # it is the object `_write_resolution` writes. An object without the key raises
+        # KeyError and a list or bare string raises TypeError, and both are the same fact as
+        # a corrupt file: they must reach the user with the exit code every other cache read
+        # path uses, rather than as a traceback from a subscript three frames down.
+        raise CacheError(
+            f"corrupt NMS resolution at {path}: no 'resolved_from' — "
+            f"delete the file to re-resolve this attempt"
+        ) from e
 
 
 def _select_survivors(

@@ -21,7 +21,7 @@ from ase import Atoms
 from chemrefine import cache, lifecycle, nms
 from chemrefine.config import Config, MinSample, StepConfig
 from chemrefine.engines.api import NmsInputInfo
-from chemrefine.errors import ConfigError
+from chemrefine.errors import CacheError, ConfigError
 from chemrefine.ids import structure_artifact_path
 from chemrefine.state import (
     Failure,
@@ -937,3 +937,42 @@ def test_the_two_schedulers_resolve_identically(cls, tmp_path: Path):
     for sid in ("0", "1"):
         assert (ctx.step_dir / sid / "attempt1").is_dir()
     assert not (ctx.step_dir / "2" / "attempt1").exists(), "already at target, never displaced"
+
+
+# ---------------------------------------------------------------------------
+# The resolution sidecar — nms owns this format through cache's raw primitives
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("body", "shape"),
+    [("{}", "an object without the key"), ("[]", "a list"), ('"0_m5_pos"', "a bare string")],
+)
+def test_a_resolution_sidecar_without_its_key_is_a_cache_error(tmp_path: Path, body, shape):
+    """`read_json` proves the file parsed, not that it says what we wrote.
+
+    This is the one on-disk format `nms` owns through `cache`'s generic primitives, so it is
+    the one place a sidecar can be well-formed JSON and still be unusable. Subscripting it
+    raised KeyError or TypeError -- a traceback rather than the exit code every other cache
+    read path gives, for a failure a user fixes the same way.
+    """
+    struct_dir = tmp_path / "0"
+    (struct_dir / "attempt1").mkdir(parents=True)
+    (struct_dir / "attempt1" / "resolution.json").write_text(body, encoding="utf-8")
+
+    with pytest.raises(CacheError, match="resolved_from"):
+        nms._read_resolution(struct_dir)
+
+
+def test_an_attempt_that_resolved_nothing_has_no_sidecar_and_is_not_an_error(tmp_path: Path):
+    """An attempt directory with no sidecar means the exploration resolved nothing.
+
+    `_write_resolution` runs last, only once a winner's artifacts are in place, so an
+    attempt that found none simply has no file — distinct from one whose file is unreadable.
+    A structure carried through from such an attempt has `resolved_from is None`, which is
+    the same answer it gets for an untouched round-1 result.
+    """
+    struct_dir = tmp_path / "0"
+    (struct_dir / "attempt1").mkdir(parents=True)
+
+    assert nms._read_resolution(struct_dir) is None
