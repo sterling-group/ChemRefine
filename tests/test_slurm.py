@@ -701,7 +701,7 @@ def test_poll_jobs_reports_the_array_task_rows_behind_a_parent_id():
     with patch.object(subprocess, "run", return_value=fake):
         state = slurm.poll_jobs(["12345", "777", "999"])
     assert state.finished == {"999"}
-    assert state.rows == {"12345_3", "12345_[4-999]", "777"}
+    assert state.rows == frozenset({"12345_3", "12345_[4-999]", "777"})
 
 
 def test_poll_jobs_answers_the_whole_batch_in_one_squeue():
@@ -710,19 +710,23 @@ def test_poll_jobs_answers_the_whole_batch_in_one_squeue():
     with patch.object(subprocess, "run", return_value=fake) as run:
         state = slurm.poll_jobs([str(1000 + i) for i in range(200)])
     assert run.call_count == 1
-    assert state.rows == {"1002"}
+    assert state.rows == frozenset({"1002"})
 
 
-def test_poll_jobs_reports_no_movement_when_squeue_fails():
-    """A failed poll learned nothing, and must not look like progress.
+def test_poll_jobs_says_it_learned_nothing_when_squeue_fails():
+    """A failed poll reports `rows is None` — a third state, not an empty set.
 
-    Reporting empty rows would read as "the queue emptied" and re-anchor the caller's stall
-    deadline on every failure — turning a squeue outage into a wait that never times out.
+    Empty rows would read as "the queue emptied". Reporting the polled *ids* instead, which
+    is what this used to do, is no better in the other direction: `squeue` prints an array's
+    tasks as `12345_0`, never the bare parent, so the fabricated set differs from the real
+    rows on *every* alternation between a working and a failing poll — and a caller watching
+    rows for movement saw it every tick. `None` is the only answer that cannot be mistaken
+    for either the queue draining or the queue moving.
     """
     with patch.object(subprocess, "run", side_effect=subprocess.CalledProcessError(1, "squeue")):
         state = slurm.poll_jobs(["1", "2"])
     assert state.finished == frozenset()
-    assert state.rows == {"1", "2"}
+    assert state.rows is None
 
 
 def test_finished_jobs_treats_a_failing_squeue_as_nothing_finished():
@@ -1098,6 +1102,43 @@ def test_wait_for_jobs_times_out_on_an_array_whose_tasks_are_all_stuck():
             poll_interval=0.01,
             poll=lambda _ids: slurm.QueueState(frozenset(), frozen),
             max_wait_seconds=0.05,
+        )
+
+
+def test_wait_for_jobs_times_out_when_squeue_only_answers_every_other_poll():
+    """An intermittent squeue must not restart the stall clock.
+
+    Driven through the **real** `poll_jobs` against a flapping `subprocess.run`, because
+    both halves of this bug have to be held at once: the producer must not invent rows, and
+    the consumer must read "learned nothing" as no movement. Feeding `wait_for_jobs` a
+    hand-built `QueueState(…, None)` would exercise only the second and pass even with the
+    failure branch reverted — which is exactly what a first draft of this test did.
+
+    The old failure branch reported the polled *ids* as rows, so an alternating ok/error
+    squeue produced `{"12345_0", "12345_[1-999]"}`, `{"12345"}`, … — a different set every
+    tick, which read as an array making progress. `job_timeout_seconds` then never fired on
+    the array path, which is the one path where nothing else bounds the wait: the throttler
+    reaps as it goes, but a drain has only this deadline.
+
+    The poll count is capped so a regression fails here instead of hanging the suite —
+    nothing configures a per-test timeout.
+    """
+    polls = 0
+
+    def flapping_squeue(*_args, **_kwargs):
+        nonlocal polls
+        polls += 1
+        assert polls < 200, "the stall deadline never fired on an alternating squeue"
+        if polls % 2 == 0:
+            raise subprocess.CalledProcessError(1, "squeue")
+        return MagicMock(returncode=0, stdout="12345_0\n12345_[1-999]\n", stderr="")
+
+    with (
+        patch.object(subprocess, "run", side_effect=flapping_squeue),
+        pytest.raises(ThrottleTimeoutError, match="12345"),
+    ):
+        slurm.wait_for_jobs(
+            ["12345"], poll_interval=0.001, poll=slurm.poll_jobs, max_wait_seconds=0.05
         )
 
 

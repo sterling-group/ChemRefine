@@ -378,8 +378,15 @@ class QueueState:
     finished: frozenset[str]
     """The polled ids with nothing left in the queue (local jobs: the process has exited)."""
 
-    rows: frozenset[str]
-    """Scheduler rows still queued for the polled ids — array tasks individually."""
+    rows: frozenset[str] | None
+    """Scheduler rows still queued for the polled ids — array tasks individually.
+
+    ``None`` when the poll never reached the scheduler. That is a third state, not the same
+    as an empty set: no rows says the queue drained, ``None`` says nothing was learned.
+    Reporting the polled *ids* back as though they were rows collapsed the two, and the
+    fabricated set differs from the real task rows every time — so a ``squeue`` alternating
+    between working and failing read as a queue moving on every single poll, and the stall
+    bound behind :attr:`~chemrefine.config.Config.job_timeout_seconds` never fired."""
 
 
 def poll_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> QueueState:
@@ -410,9 +417,12 @@ def poll_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> QueueS
     ``sbatch`` but no ``squeue`` (a partially-installed client) would otherwise raise on
     every poll of a batch that is already running, which is the worst moment to fail.
     :func:`submit` handles both the same way. Neither case can be told from a genuinely
-    idle queue, so both report the scheduled ids as still queued under their own names —
-    a caller watching :attr:`~QueueState.rows` then sees no movement, which is the truth:
-    this poll learned nothing.
+    idle queue, so neither adds to :attr:`~QueueState.finished` — and
+    :attr:`~QueueState.rows` is ``None``, saying the poll learned nothing rather than
+    inventing rows for it. Reporting the polled *ids* there instead is what made an
+    intermittent ``squeue`` restart the stall clock forever: ids made up from the parents
+    differ from the real task rows on every alternation, so a caller watching for movement
+    saw it on every tick.
     """
     ids = set(job_ids)
     local = {jid for jid in ids if jid.startswith(_LOCAL_JOB_PREFIX)}
@@ -429,7 +439,7 @@ def poll_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> QueueS
             check=True,
         )
     except (subprocess.CalledProcessError, FileNotFoundError):
-        return QueueState(frozenset(done), frozenset(rows | scheduled))
+        return QueueState(frozenset(done), None)
     running = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     for jid in scheduled:
         mine = {line for line in running if line == jid or line.startswith(f"{jid}_")}
@@ -498,9 +508,12 @@ def wait_for_jobs(
         remaining = pending - state.finished
         if not remaining:
             return
-        if remaining != pending or state.rows != rows:
+        # A poll that never reached the scheduler carries the last known rows forward, so it
+        # compares equal and cannot be mistaken for the queue moving.
+        seen = rows if state.rows is None else state.rows
+        if remaining != pending or seen != rows:
             deadline.progress()
-        pending, rows = remaining, state.rows
+        pending, rows = remaining, seen
         deadline.check(f"{len(pending)} job(s) to finish: {sorted(pending)}")
         time.sleep(poll_interval)
 
