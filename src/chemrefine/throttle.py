@@ -27,10 +27,39 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable, Collection
+from dataclasses import dataclass
 
 from chemrefine.errors import ThrottleTimeoutError
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class GpuBudget:
+    """How many GPU jobs may run at once, and which devices they may be pinned to.
+
+    One value because the two facts are one decision and have to agree. A count without the
+    matching devices is what let :meth:`Throttler.assign_device` hand out index ``0`` on a
+    host where the run had been granted devices ``2`` and ``3``: the budget was the host's
+    total and the pin was the lowest free *index*, so jobs landed on hardware the run did
+    not own.
+
+    ``devices`` is empty exactly when chemrefine is not the one placing GPUs — under SLURM,
+    where ``--gres`` does it and :attr:`count` is effectively unlimited. Locally the two
+    always match (``count == len(devices)``), an invariant
+    :func:`chemrefine.slurm.resolve_gpu_budget` — the only producer — maintains.
+
+    The tokens are **strings**, not indices: ``CUDA_VISIBLE_DEVICES`` accepts GPU UUIDs and
+    ``MIG-…`` handles as readily as indices, and a MIG instance can be named no other way.
+    An ``int`` would have made an inherited allocation unrepresentable.
+    """
+
+    count: int
+    devices: tuple[str, ...] = ()
+
+
+NO_GPUS = GpuBudget(count=0)
+"""The budget of a batch that asks for no GPU — the default, and the whole of the CPU path."""
 
 FinishedFn = Callable[[Collection[str]], set[str]]
 """Poll the scheduler once for a whole set of job ids; return those that are done.
@@ -79,23 +108,35 @@ class StallDeadline:
 class Throttler:
     """Track active jobs against CPU-core and GPU budgets."""
 
-    def __init__(self, *, max_cores: int, max_gpus: int = 0, poll_interval: float = 10.0):
+    def __init__(
+        self, *, max_cores: int, gpus: GpuBudget = NO_GPUS, poll_interval: float = 10.0
+    ):
         if max_cores < 1:
             raise ValueError(f"max_cores must be >= 1; got {max_cores}")
-        if max_gpus < 0:
-            raise ValueError(f"max_gpus must be >= 0; got {max_gpus}")
+        if gpus.count < 0:
+            raise ValueError(f"max_gpus must be >= 0; got {gpus.count}")
         if poll_interval < 0:
             # Validated here with the other two rather than left to `time.sleep`, which would
             # raise from inside a wait — after a batch has been submitted, which is the
             # expensive moment to learn about a bad number.
             raise ValueError(f"poll_interval must be >= 0; got {poll_interval}")
         self.max_cores = max_cores
-        self.max_gpus = max_gpus
+        self._gpus = gpus
         self.poll_interval = poll_interval
-        # job_id -> (cores, gpus, device_index|None)
-        self._active: dict[str, tuple[int, int, int | None]] = {}
+        # job_id -> (cores, gpus, device_token|None)
+        self._active: dict[str, tuple[int, int, str | None]] = {}
 
     # -- introspection -----------------------------------------------------
+
+    @property
+    def max_gpus(self) -> int:
+        """Concurrent-GPU ceiling — :attr:`GpuBudget.count` of the budget this was built on.
+
+        A property rather than a field so the budget stays the single value, and read-only
+        because the two halves must not drift: raising this without matching devices is the
+        state :class:`GpuBudget` exists to make unrepresentable.
+        """
+        return self._gpus.count
 
     @property
     def cores_in_use(self) -> int:
@@ -114,10 +155,10 @@ class Throttler:
 
     # -- mutation ----------------------------------------------------------
 
-    def register(self, job_id: str, pal: int, *, gpus: int = 0, device: int | None = None) -> None:
+    def register(self, job_id: str, pal: int, *, gpus: int = 0, device: str | None = None) -> None:
         """Mark a newly-submitted job as active, charging ``pal`` cores + ``gpus`` GPUs.
 
-        ``device`` is the local GPU index handed out by :meth:`assign_device`
+        ``device`` is the local GPU token handed out by :meth:`assign_device`
         (``None`` for CPU jobs or under SLURM, where the scheduler pins the GPU).
         """
         if pal < 1:
@@ -126,21 +167,27 @@ class Throttler:
             raise ValueError(f"gpus must be >= 0; got {gpus}")
         self._active[job_id] = (pal, gpus, device)
 
-    def assign_device(self) -> int:
-        """Return the lowest GPU index in ``[0, max_gpus)`` not held by an active job.
+    def assign_device(self) -> str:
+        """Return the first of the budget's devices not held by an active job.
 
         Call **after** :meth:`has_room` has said yes (so a slot is guaranteed free) and
         **before** :meth:`register`, then pass the result as the job's
-        ``CUDA_VISIBLE_DEVICES`` so concurrent local GPU jobs don't all pile onto device 0.
+        ``CUDA_VISIBLE_DEVICES`` so concurrent local GPU jobs don't all pile onto one device.
+
+        Drawn from :attr:`GpuBudget.devices` rather than from ``range(max_gpus)``, because
+        the lowest free *index* is not necessarily a device this run owns: given
+        ``CUDA_VISIBLE_DEVICES=2,3`` the free indices are 0 and 1, which are somebody else's
+        GPUs. The tokens are also what makes a MIG instance addressable at all.
         """
         used = {dev for _c, gpus, dev in self._active.values() if gpus > 0 and dev is not None}
-        for idx in range(self.max_gpus):
-            if idx not in used:
-                return idx
+        for device in self._gpus.devices:
+            if device not in used:
+                return device
         # Unreachable when `has_room` admitted this job first; fail loud rather
-        # than silently colliding two local GPU jobs on device 0 if that breaks.
+        # than silently colliding two local GPU jobs on one device if that breaks.
         raise RuntimeError(
-            f"no free GPU device in [0, {self.max_gpus}) — call has_room before assign_device"
+            f"no free GPU device among {list(self._gpus.devices)} — "
+            f"call has_room before assign_device"
         )
 
     def has_room(self, pal_needed: int, *, gpus_needed: int = 0) -> bool:

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from chemrefine.throttle import Throttler
+from chemrefine.throttle import GpuBudget, Throttler
 
 
 def _clock_that_expires(*before: float, then: float):
@@ -41,6 +41,15 @@ def _never_called(_job_ids):
     raise AssertionError("polled the scheduler with no active jobs")
 
 
+def _idx(count: int) -> tuple[str, ...]:
+    """The device tokens of a plain N-GPU host — what `nvidia-smi` detection yields.
+
+    Spelled out here rather than imported from `slurm.dispatch` so these tests describe a
+    budget directly, without depending on how one is resolved from a host.
+    """
+    return tuple(str(i) for i in range(count))
+
+
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
@@ -60,7 +69,7 @@ def test_throttler_initial_state_is_empty():
 
 def test_throttler_rejects_negative_max_gpus():
     with pytest.raises(ValueError):
-        Throttler(max_cores=8, max_gpus=-1)
+        Throttler(max_cores=8, gpus=GpuBudget(-1))
 
 
 def test_throttler_rejects_a_negative_poll_interval():
@@ -79,7 +88,7 @@ def test_throttler_rejects_a_negative_poll_interval():
 
 
 def test_gpus_in_use_tracks_gpu_demand():
-    t = Throttler(max_cores=64, max_gpus=4)
+    t = Throttler(max_cores=64, gpus=GpuBudget(4, _idx(4)))
     t.register("a", 8, gpus=1)
     t.register("b", 8, gpus=2)
     assert t.gpus_in_use == 3
@@ -88,15 +97,15 @@ def test_gpus_in_use_tracks_gpu_demand():
 
 def test_the_gpu_budget_blocks_a_gpu_job_even_when_cores_are_free():
     """One GPU, two GPU jobs: the second cannot start though cores are plentiful."""
-    t = Throttler(max_cores=64, max_gpus=1)
-    t.register("g0", 1, gpus=1, device=0)
+    t = Throttler(max_cores=64, gpus=GpuBudget(1, _idx(1)))
+    t.register("g0", 1, gpus=1, device="0")
     assert t.has_room(1, gpus_needed=1) is False
 
 
 def test_a_cpu_job_is_admitted_while_the_gpu_budget_is_saturated():
     """A gpus=0 job isn't blocked by a saturated GPU budget (CPU jobs keep flowing)."""
-    t = Throttler(max_cores=64, max_gpus=1)
-    t.register("g0", 1, gpus=1, device=0)
+    t = Throttler(max_cores=64, gpus=GpuBudget(1, _idx(1)))
+    t.register("g0", 1, gpus=1, device="0")
     assert t.has_room(8, gpus_needed=0) is True
 
 
@@ -107,18 +116,18 @@ def test_a_gpu_request_above_the_budget_never_has_room():
     (`test_run_batch_rejects_a_gpu_step_over_the_budget`), which is where a config mistake
     belongs — with an exit code, naming the step and the setting to change.
     """
-    t = Throttler(max_cores=16, max_gpus=1)
+    t = Throttler(max_cores=16, gpus=GpuBudget(1, _idx(1)))
     assert t.has_room(1, gpus_needed=2) is False
 
 
-def test_assign_device_returns_lowest_free_index_and_reuses_freed():
-    t = Throttler(max_cores=64, max_gpus=2)
-    assert t.assign_device() == 0
-    t.register("a", 1, gpus=1, device=0)
-    assert t.assign_device() == 1
-    t.register("b", 1, gpus=1, device=1)
+def test_assign_device_returns_the_first_free_token_and_reuses_freed():
+    t = Throttler(max_cores=64, gpus=GpuBudget(2, _idx(2)))
+    assert t.assign_device() == "0"
+    t.register("a", 1, gpus=1, device="0")
+    assert t.assign_device() == "1"
+    t.register("b", 1, gpus=1, device="1")
     t._reap(_finishes("a"))  # frees device 0
-    assert t.assign_device() == 0
+    assert t.assign_device() == "0"
 
 
 # ---------------------------------------------------------------------------
@@ -235,21 +244,33 @@ def test_a_stalled_wait_raises_on_timeout():
 
 
 def test_throttler_register_rejects_negative_gpus():
-    from chemrefine.throttle import Throttler
+    from chemrefine.throttle import GpuBudget, Throttler
 
     with pytest.raises(ValueError, match="gpus must be >= 0"):
-        Throttler(max_cores=8, max_gpus=1).register("g", 1, gpus=-1)
+        Throttler(max_cores=8, gpus=GpuBudget(1, _idx(1))).register("g", 1, gpus=-1)
 
 
 def test_throttler_assign_device_raises_when_all_taken():
-    from chemrefine.throttle import Throttler
+    from chemrefine.throttle import GpuBudget, Throttler
 
     # Unreachable on the real call path (`has_room` admits first), so assign_device
-    # fails loud rather than silently colliding two GPU jobs on device 0.
-    t = Throttler(max_cores=8, max_gpus=1)
-    t.register("g", 1, gpus=1, device=0)
+    # fails loud rather than silently colliding two GPU jobs on one device.
+    t = Throttler(max_cores=8, gpus=GpuBudget(1, _idx(1)))
+    t.register("g", 1, gpus=1, device="0")
     with pytest.raises(RuntimeError, match="no free GPU device"):
         t.assign_device()
+
+
+def test_assign_device_hands_out_the_granted_tokens_not_indices():
+    """The devices the run owns, not `range(count)` — the whole point of carrying tokens.
+
+    Given `CUDA_VISIBLE_DEVICES=2,3` the free *indices* are 0 and 1, which are somebody
+    else's GPUs. Tokens are also the only way to name a MIG instance.
+    """
+    t = Throttler(max_cores=64, gpus=GpuBudget(2, ("2", "MIG-8a2f")))
+    assert t.assign_device() == "2"
+    t.register("a", 1, gpus=1, device="2")
+    assert t.assign_device() == "MIG-8a2f"
 
 
 # --- the two primitives -----------------------------------------------------

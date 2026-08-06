@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import TextIO
 
 from chemrefine.errors import ConfigError, JobSubmissionError
-from chemrefine.throttle import StallDeadline
+from chemrefine.throttle import GpuBudget, StallDeadline
 
 logger = logging.getLogger(__name__)
 
@@ -132,19 +132,49 @@ def header_name_for_device(device: str) -> str:
     return "cuda.slurm.header" if str(device).lower() == "cuda" else "cpu.slurm.header"
 
 
+def _index_tokens(count: int) -> tuple[str, ...]:
+    """``("0", "1", …)`` — the device tokens of a host addressed by plain index."""
+    return tuple(str(i) for i in range(count))
+
+
+def _inherited_devices() -> tuple[str, ...] | None:
+    """The device tokens ``CUDA_VISIBLE_DEVICES`` grants this process, or ``None`` if unset.
+
+    Deliberately **not** cached, unlike :func:`_detected_devices`: that probes the host,
+    which cannot change under a running process, while this reads an allocation the caller
+    controls and a test can vary.
+
+    Tokens are kept verbatim — the variable takes indices, GPU UUIDs (``GPU-8a2f…``) and MIG
+    handles interchangeably, and a MIG instance can be named no other way. An empty value is
+    a real answer (no devices at all), which is why "unset" is ``None`` rather than an empty
+    tuple.
+    """
+    raw = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if raw is None:
+        return None
+    return tuple(token for token in (part.strip() for part in raw.split(",")) if token)
+
+
 @functools.lru_cache(maxsize=1)
-def _detect_local_gpus() -> int:
-    """Best-effort count of locally visible CUDA devices via ``nvidia-smi -L``.
+def _detected_devices() -> tuple[str, ...]:
+    """Best-effort device tokens for the local host, via ``nvidia-smi -L``.
 
     Counts MIG instances when the card is MIG-partitioned (each is its own CUDA
-    device) and whole cards otherwise. Falls back to ``1`` when ``nvidia-smi`` is
+    device) and whole cards otherwise. Falls back to one device when ``nvidia-smi`` is
     absent or errors — a single-device budget serialises GPU jobs, and the
     engine's availability guard reports a genuinely missing GPU separately.
 
-    Cached for the life of the process, like :func:`_current_user` above: the device count
+    The tokens are plain indices, which is what an unpartitioned host's
+    ``CUDA_VISIBLE_DEVICES`` takes. A MIG instance can only be selected by its handle, so on
+    a MIG host set ``CUDA_VISIBLE_DEVICES`` (SLURM does) and :func:`_inherited_devices`
+    supplies the real names instead — extracting MIG UUIDs from ``nvidia-smi -L`` would be a
+    genuine improvement and is deliberately out of scope here, since handing out indices is
+    what this already did.
+
+    Cached for the life of the process, like :func:`_current_user` above: the device set
     is a property of the host, and this is asked once per batch — per step *and* per retry
     batch — so an uncached probe forks ``nvidia-smi`` throughout a run to re-learn a
-    constant. Tests that vary it call ``_detect_local_gpus.cache_clear()``.
+    constant. Tests that vary it call ``_detected_devices.cache_clear()``.
     """
     try:
         # Resolved via PATH on purpose: nvidia-smi lives in different places per driver
@@ -156,28 +186,52 @@ def _detect_local_gpus() -> int:
             check=True,
         )
     except (OSError, subprocess.CalledProcessError):
-        return 1
+        return _index_tokens(1)
     lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
     mig = [ln for ln in lines if ln.startswith("MIG")]
     gpus = [ln for ln in lines if ln.startswith("GPU")]
-    return max(1, len(mig) or len(gpus))
+    return _index_tokens(max(1, len(mig) or len(gpus)))
 
 
-def resolve_gpu_budget(configured: int | None, *, local: bool) -> int:
-    """Resolve the concurrent-GPU budget for the throttler.
+def resolve_gpu_budget(configured: int | None, *, local: bool) -> GpuBudget:
+    """Resolve the concurrent-GPU budget, and the devices it may hand out.
 
-    An explicit ``Config.max_gpus`` wins. Otherwise: **unlimited under SLURM**
-    (the scheduler arbitrates GPUs, so chemrefine must not second-guess it) and
-    the **detected local device count** off-cluster.
+    **Unlimited under SLURM** and with no device list: the scheduler arbitrates GPUs via
+    ``--gres`` and pins each job itself, so chemrefine must not second-guess it. An explicit
+    ``Config.max_gpus`` still caps the count there, for a user who wants one.
+
+    Locally the devices come from an inherited ``CUDA_VISIBLE_DEVICES`` when there is one,
+    and from the ``nvidia-smi`` probe otherwise. The distinction is between an *allocation*
+    and a *guess*, and it decides what ``max_gpus`` is allowed to do:
+
+    * No inherited variable — the probe is a guess about the host, so an explicit
+      ``max_gpus`` overrides it outright. That is what the knob is for where ``nvidia-smi``
+      is absent or wrong.
+    * An inherited variable — this run owns those devices and no others. ``max_gpus`` may
+      narrow the allocation and must **not** widen it: the throttler pins one job per token
+      and :func:`_submit_local` merges its value *over* the inherited one, so a token this
+      run was never granted would reach the job with nothing downstream to catch it.
 
     Takes the resolved ``local`` rather than the raw ``dispatch`` mode: every caller has
     already asked :func:`dispatch_locally` — it is what decides the whole submission path —
     so re-deriving it here would be a second ``PATH`` probe for an answer already in hand,
     and one more place that could disagree with the path actually taken.
     """
-    if configured is not None:
-        return configured
-    return _detect_local_gpus() if local else _UNLIMITED_GPUS
+    if not local:
+        return GpuBudget(count=_UNLIMITED_GPUS if configured is None else configured)
+    granted = _inherited_devices()
+    if granted is None:
+        devices = _detected_devices() if configured is None else _index_tokens(configured)
+        return GpuBudget(count=len(devices), devices=devices)
+    if configured is not None and configured > len(granted):
+        logger.warning(
+            "max_gpus=%d exceeds the %d device(s) in CUDA_VISIBLE_DEVICES (%s); using those",
+            configured,
+            len(granted),
+            ",".join(granted),
+        )
+    devices = granted if configured is None else granted[:configured]
+    return GpuBudget(count=len(devices), devices=devices)
 
 
 # ---------------------------------------------------------------------------

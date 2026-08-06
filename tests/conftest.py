@@ -43,6 +43,25 @@ def _isolate_chemrefine_home(
     monkeypatch.setenv("CHEMREFINE_HOME", _scratch_chemrefine_home)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_cuda_visible_devices(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unset ``CUDA_VISIBLE_DEVICES`` — except for the tiers that want the real allocation.
+
+    The local GPU budget is *derived* from this variable
+    (:func:`chemrefine.slurm.resolve_gpu_budget`), so a developer running the suite inside
+    an allocation would get a different budget from CI's bare runner, and every test that
+    asserts on devices ``0``/``1`` would pass or fail by where it was run. That is the same
+    class of environment leak as :func:`_isolate_chemrefine_home` above, and it is exempt
+    for the same tiers and the same reason: ``integration`` and ``gpu`` exist to meet the
+    real thing. Tests that care about a specific allocation set it themselves over the top.
+    """
+    if request.node.get_closest_marker("integration") or request.node.get_closest_marker("gpu"):
+        return
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Suite-wide flags: golden regeneration and fixture re-recording."""
     parser.addoption(

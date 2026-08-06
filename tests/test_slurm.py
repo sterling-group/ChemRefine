@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import signal
 import subprocess
@@ -17,6 +18,7 @@ from chemrefine import slurm
 from chemrefine.errors import ConfigError, JobSubmissionError, ThrottleTimeoutError
 from chemrefine.slurm import dispatch
 from chemrefine.state import RunBlock
+from chemrefine.throttle import GpuBudget
 
 
 def _drain_local(job_id: str, *, timeout: float = 5.0) -> None:
@@ -466,16 +468,62 @@ def test_header_name_for_device():
 
 
 def test_resolve_gpu_budget_explicit_value_wins():
-    assert slurm.resolve_gpu_budget(3, local=True) == 3
+    """With no inherited allocation the probe is only a guess, so `max_gpus` overrides it."""
+    assert slurm.resolve_gpu_budget(3, local=True) == GpuBudget(3, ("0", "1", "2"))
 
 
 def test_resolve_gpu_budget_unlimited_under_slurm():
-    assert slurm.resolve_gpu_budget(None, local=False) >= 1000
+    """No device list under SLURM: `--gres` places the GPU, so chemrefine pins nothing."""
+    budget = slurm.resolve_gpu_budget(None, local=False)
+    assert budget.count >= 1000
+    assert budget.devices == ()
 
 
-def test_resolve_gpu_budget_uses_detected_count_locally():
-    with patch("chemrefine.slurm.dispatch._detect_local_gpus", return_value=2):
-        assert slurm.resolve_gpu_budget(None, local=True) == 2
+def test_resolve_gpu_budget_uses_detected_devices_locally():
+    with patch("chemrefine.slurm.dispatch._detected_devices", return_value=("0", "1")):
+        assert slurm.resolve_gpu_budget(None, local=True) == GpuBudget(2, ("0", "1"))
+
+
+def test_resolve_gpu_budget_honours_an_inherited_allocation(monkeypatch):
+    """An inherited CUDA_VISIBLE_DEVICES is what this run owns, not a hint about the host.
+
+    `nvidia-smi -L` reports the whole machine, so on a node that granted this run devices 2
+    and 3 the probe said 8 and the throttler pinned jobs to indices 0..7 — six GPUs
+    belonging to somebody else. `_submit_local` merges its value *over* the inherited one,
+    so nothing downstream would have caught it.
+    """
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2,3")
+    with patch(
+        "chemrefine.slurm.dispatch._detected_devices",
+        side_effect=AssertionError("probed the host despite an explicit allocation"),
+    ):
+        assert slurm.resolve_gpu_budget(None, local=True) == GpuBudget(2, ("2", "3"))
+
+
+def test_resolve_gpu_budget_keeps_uuid_and_mig_tokens_verbatim(monkeypatch):
+    """The variable takes UUIDs and MIG handles, and a MIG instance has no other name."""
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-8a2f, MIG-3b7c ,")
+    assert slurm.resolve_gpu_budget(None, local=True) == GpuBudget(2, ("GPU-8a2f", "MIG-3b7c"))
+
+
+def test_resolve_gpu_budget_reads_an_empty_allocation_as_no_devices(monkeypatch):
+    """`CUDA_VISIBLE_DEVICES=""` is a real answer — no GPUs — not an absent variable."""
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    assert slurm.resolve_gpu_budget(None, local=True) == GpuBudget(0, ())
+
+
+def test_max_gpus_narrows_an_allocation_but_cannot_widen_it(monkeypatch, caplog):
+    """`max_gpus` is a cap on what was granted, never a claim on more of it.
+
+    Against a *probe* the knob overrides outright — the probe is a guess. Against an
+    allocation it can only take less, because the throttler hands out one token per job and
+    there is no token for a device this run was not given.
+    """
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2,3")
+    assert slurm.resolve_gpu_budget(1, local=True) == GpuBudget(1, ("2",))
+    with caplog.at_level(logging.WARNING, logger="chemrefine.slurm.dispatch"):
+        assert slurm.resolve_gpu_budget(4, local=True) == GpuBudget(2, ("2", "3"))
+    assert "exceeds" in caplog.text
 
 
 def test_resolve_gpu_budget_probes_nothing_of_its_own(monkeypatch):
@@ -488,9 +536,9 @@ def test_resolve_gpu_budget_probes_nothing_of_its_own(monkeypatch):
     monkeypatch.setattr(
         dispatch.shutil, "which", MagicMock(side_effect=AssertionError("probed PATH"))
     )
-    with patch("chemrefine.slurm.dispatch._detect_local_gpus", return_value=2):
-        assert slurm.resolve_gpu_budget(None, local=True) == 2
-        assert slurm.resolve_gpu_budget(None, local=False) >= 1000
+    with patch("chemrefine.slurm.dispatch._detected_devices", return_value=("0", "1")):
+        assert slurm.resolve_gpu_budget(None, local=True).count == 2
+        assert slurm.resolve_gpu_budget(None, local=False).count >= 1000
 
 
 # ---------------------------------------------------------------------------
@@ -533,12 +581,12 @@ def uncached_gpu_probe():
     fakes a *different* host has to say so, on both sides — a stale entry would answer the
     test, and the test's answer would otherwise outlive it.
     """
-    dispatch._detect_local_gpus.cache_clear()
+    dispatch._detected_devices.cache_clear()
     yield
-    dispatch._detect_local_gpus.cache_clear()
+    dispatch._detected_devices.cache_clear()
 
 
-def test_detect_local_gpus_counts_mig_instances(monkeypatch, uncached_gpu_probe):
+def test_detected_devices_counts_mig_instances(monkeypatch, uncached_gpu_probe):
     """nvidia-smi -L lists MIG instances when the card is MIG-partitioned → count those."""
     out = (
         "GPU 0: NVIDIA H100 NVL (UUID: GPU-x)\n"
@@ -548,15 +596,15 @@ def test_detect_local_gpus_counts_mig_instances(monkeypatch, uncached_gpu_probe)
     monkeypatch.setattr(
         subprocess, "run", lambda *a, **k: MagicMock(returncode=0, stdout=out, stderr="")
     )
-    assert dispatch._detect_local_gpus() == 2
+    assert dispatch._detected_devices() == ("0", "1")
 
 
-def test_detect_local_gpus_falls_back_to_one_without_nvidia_smi(monkeypatch, uncached_gpu_probe):
+def test_detected_devices_falls_back_to_one_without_nvidia_smi(monkeypatch, uncached_gpu_probe):
     monkeypatch.setattr(subprocess, "run", MagicMock(side_effect=FileNotFoundError("nvidia-smi")))
-    assert dispatch._detect_local_gpus() == 1
+    assert dispatch._detected_devices() == ("0",)
 
 
-def test_detect_local_gpus_forks_nvidia_smi_once_per_process(monkeypatch, uncached_gpu_probe):
+def test_detected_devices_forks_nvidia_smi_once_per_process(monkeypatch, uncached_gpu_probe):
     """The device count is a host constant, and it is asked once per batch.
 
     Uncached, a run forks `nvidia-smi` per step *and* per retry batch to re-learn a number
@@ -564,7 +612,7 @@ def test_detect_local_gpus_forks_nvidia_smi_once_per_process(monkeypatch, uncach
     """
     run = MagicMock(return_value=MagicMock(returncode=0, stdout="GPU 0: X (UUID: g)\n", stderr=""))
     monkeypatch.setattr(subprocess, "run", run)
-    assert [dispatch._detect_local_gpus() for _ in range(5)] == [1] * 5
+    assert [dispatch._detected_devices() for _ in range(5)] == [("0",)] * 5
     assert run.call_count == 1
 
 

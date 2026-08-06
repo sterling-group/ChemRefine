@@ -72,7 +72,7 @@ class _BatchPlan:
     pal: int
     gpus: int
     local: bool
-    max_gpus: int
+    gpu_budget: throttle.GpuBudget
 
     @classmethod
     def of(cls, engine: JobExecutable, ctx: StepContext, *, local: bool) -> _BatchPlan:
@@ -89,7 +89,7 @@ class _BatchPlan:
         header_path = _header_path(engine, ctx)
         pal = min(engine.pal(ctx), ctx.max_cores)
         gpus = engine.gpus(ctx)
-        max_gpus = slurm.resolve_gpu_budget(ctx.max_gpus, local=local)
+        gpu_budget = slurm.resolve_gpu_budget(ctx.max_gpus, local=local)
         if local and gpus > 1:
             # `Throttler.assign_device` hands out a single device index per job and
             # `_submit_one` exports it as one `CUDA_VISIBLE_DEVICES` value, so a job
@@ -100,19 +100,19 @@ class _BatchPlan:
                 f"step {ctx.step_cfg.step} requests {gpus} GPUs, but local dispatch pins one "
                 f"device per job; run this step under SLURM or set `options.device: cpu`"
             )
-        if gpus > max_gpus:
+        if gpus > gpu_budget.count:
             # Surface a config mistake (e.g. `max_gpus: 0` with a CUDA step) as a
             # ConfigError with its documented exit code, not the throttler's traceback.
             raise ConfigError(
                 f"step {ctx.step_cfg.step} needs {gpus} GPU(s) but the budget is "
-                f"{max_gpus}; raise `max_gpus` or set `options.device: cpu`"
+                f"{gpu_budget.count}; raise `max_gpus` or set `options.device: cpu`"
             )
         return cls(
             header_path=header_path,
             pal=pal,
             gpus=gpus,
             local=local,
-            max_gpus=max_gpus,
+            gpu_budget=gpu_budget,
         )
 
 
@@ -150,7 +150,7 @@ def run_batch(
         return batch
     throttler = throttle.Throttler(
         max_cores=ctx.max_cores,
-        max_gpus=plan.max_gpus,
+        gpus=plan.gpu_budget,
         poll_interval=_LOCAL_POLL_SECONDS if local else _SLURM_POLL_SECONDS,
     )
     try:
@@ -183,7 +183,7 @@ def _submit_one(
     # Pin a free GPU per local job so concurrent CUDA jobs don't collide on device
     # 0; under SLURM the scheduler sets CUDA_VISIBLE_DEVICES itself.
     device = throttler.assign_device() if (plan.local and plan.gpus) else None
-    env = {"CUDA_VISIBLE_DEVICES": str(device)} if device is not None else None
+    env = {"CUDA_VISIBLE_DEVICES": device} if device is not None else None
     script_path = inp.with_suffix(".slurm")
     slurm.build_script(
         job_name=inp.stem,
