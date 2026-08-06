@@ -50,7 +50,6 @@ def _current_user() -> str:
         return str(os.getuid())
 
 
-_SBATCH_OVERRIDE_RE = re.compile(r"--(?:ntasks|cpus-per-task|job-name|output|error)(?=[=\s]|$)")
 _JOB_ID_RE = re.compile(r"\b(\d+)\b")
 
 _LOCAL_JOB_PREFIX = "local-"
