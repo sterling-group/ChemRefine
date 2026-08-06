@@ -114,8 +114,8 @@ MUTATIONS = (
     Mutation(
         id="array-task-id-matching",
         path="src/chemrefine/slurm/dispatch.py",
-        old='if not any(line == jid or line.startswith(f"{jid}_") for line in running)',
-        new="if not any(line == jid for line in running)",
+        old='mine = {line for line in running if line == jid or line.startswith(f"{jid}_")}',
+        new="mine = {line for line in running if line == jid}",
         breaks="a running array job reports finished — squeue prints its tasks as "
         "`12345_0`, never the bare parent id — so its outputs are parsed while it writes",
     ),
