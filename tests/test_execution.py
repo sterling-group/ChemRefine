@@ -384,6 +384,38 @@ def test_array_mode_still_drives_the_sink(submit, _finished, tmp_path: Path):
 
 @patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
 @patch.object(slurm, "submit")
+def test_multi_chunk_arrays_share_one_core_budget(_submit, _finished, tmp_path: Path):
+    """A step past the per-array task cap is several arrays, all queued at once.
+
+    Each carries its own `%limit`, so dividing by `pal` alone hands the *whole* budget to
+    every chunk: a 2500-structure step at `pal: 8` against `max_cores: 512` ran 3 x 64
+    tasks = 1536 cores, on a step whose config docstring promises the scheduler is
+    enforcing exactly that number. The chunk size is patched down rather than building
+    2500 structures, because what is under test is the arithmetic, not the chunking.
+    """
+    engine = _FakeJobEngine()
+    ctx = replace(
+        _ctx(tmp_path, ids=tuple(str(i) for i in range(6)), slurm_array=True, dispatch="slurm"),
+        max_cores=12,
+    )
+    inputs = engine.prepare(ctx)
+
+    with (
+        patch.object(dispatch, "sbatch_available", return_value=True),
+        patch("chemrefine.slurm.script._MAX_ARRAY_SIZE", 2),
+        patch.object(slurm, "submit_array", side_effect=["1", "2", "3"]) as submit_array,
+        patch.object(slurm, "wait_for_jobs"),
+    ):
+        _execution.run_batch(engine, inputs, ctx)
+
+    limits = [call.kwargs["max_concurrent"] for call in submit_array.call_args_list]
+    assert len(limits) == 3, "the chunking this test depends on did not happen"
+    # _FakeJobEngine.pal is 1, clamped to max_cores; 12 // (1 * 3) = 4 per chunk.
+    assert sum(limits) * engine.pal(ctx) <= ctx.max_cores
+
+
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
+@patch.object(slurm, "submit")
 def test_pending_work_that_can_never_be_submitted_raises(submit, _finished, tmp_path: Path):
     """Silence is the danger here: the jobs would simply never run.
 

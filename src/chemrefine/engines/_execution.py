@@ -277,8 +277,22 @@ def _run_array(
 ) -> JobBatch:
     """Submit the whole batch as SLURM job array(s); block until they drain.
 
-    One script + one manifest per chunk; the scheduler enforces the core budget
-    natively via ``--array=...%{max_cores // pal}``, so no Python-side throttling runs.
+    One script + one manifest per chunk; the scheduler enforces the core budget natively
+    via each array's ``%limit``, so no Python-side throttling runs. That limit is
+    ``max_cores // pal`` **divided again by the number of chunks**, because a step past the
+    per-array task cap is several arrays and all of them are queued at once — one share
+    each is what makes them add up to the budget rather than to a multiple of it.
+
+    The cost of the division, since it is a real one: a chunk's share is not handed back
+    when a sibling drains early, so the tail of an N-chunk step runs at 1/N of the budget.
+    Chaining the chunks with ``--dependency`` would keep full utilisation inside each, and
+    was rejected for it: the slowest task of one chunk would hold up every task of the
+    next, a cancelled parent leaves its dependents queued forever, and it would have to be
+    ``afterany`` or one failed task would cancel the rest of a batch this pipeline ledgers
+    per structure. ``max(1, …)`` is a floor rather than a guarantee — more chunks than
+    ``max_cores // pal`` still exceeds the budget, because ``%0`` is not submittable, which
+    needs both a >1000-structure step and a budget under one job per chunk.
+
     The run block is rendered **once** against sentinel paths whose *names* are the bash
     variables the script resolves per task — every engine's ``run_block`` uses only
     ``.name``, so it composes unchanged. GPU placement is the scheduler's (``--gres`` in
@@ -312,7 +326,11 @@ def _run_array(
     )
 
     manifests = slurm.write_array_manifests(inputs.files, output_dir, step_label=step_label)
-    max_concurrent = max(1, ctx.max_cores // plan.pal)
+    # Divided by the chunk count as well as by `pal`, because every chunk is submitted now
+    # rather than after the one before it drained, and each carries its own `%limit`. By
+    # `pal` alone each of a 2500-structure step's three arrays got the *whole* budget:
+    # 3 x 64 tasks x pal 8 = 1536 cores against a `max_cores: 512`.
+    max_concurrent = max(1, ctx.max_cores // (plan.pal * len(manifests)))
     jobs: dict[Path, str] = {}
     for manifest, chunk in manifests:
         parent_id = slurm.submit_array(

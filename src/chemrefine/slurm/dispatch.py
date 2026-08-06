@@ -517,8 +517,10 @@ def submit_array(
 
     ``--export=ALL,CR_MANIFEST=...`` points the shared script at this chunk's
     manifest; ``%max_concurrent`` is the scheduler-enforced concurrency cap
-    (the caller computes ``max_cores // PAL``, so the array natively respects
-    the same core budget the per-job throttler enforces). Raises
+    (the caller computes this chunk's *share* of ``max_cores // PAL``, so all
+    of a step's arrays together respect the same core budget the per-job
+    throttler enforces — a per-array limit alone would grant it once per
+    chunk). Raises
     :class:`~chemrefine.errors.JobSubmissionError` like :func:`submit`.
     There is no local fallback — the engine only takes this path under SLURM.
     """

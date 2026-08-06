@@ -387,9 +387,13 @@ class Config(BaseModel):
     slurm_array: bool = False
     """Submit each step as SLURM job array(s) (``sbatch --array``) instead of
     one job per structure. The scheduler then enforces the ``max_cores``
-    budget natively via the array's ``%limit`` (``max_cores // PAL``), and a
-    10⁴-structure step is one submission instead of 10⁴. Steps beyond the
-    per-array task cap are split into chunks. Per-structure outputs, runlogs,
+    budget natively via the array's ``%limit``, and a 10⁴-structure step is
+    one submission instead of 10⁴. Steps beyond the per-array task cap are
+    split into chunks, and each chunk gets a *share* of the budget
+    (``max_cores // PAL // chunks``) rather than all of it — they are all
+    queued at once, so anything else would multiply the budget by the number
+    of chunks. The tail of a multi-chunk step therefore runs below
+    ``max_cores`` once its siblings drain. Per-structure outputs, runlogs,
     and the failure ledger are identical to the per-job path. Ignored when
     running locally (no ``sbatch`` on PATH)."""
     job_timeout_seconds: float | None = Field(None, gt=0)
