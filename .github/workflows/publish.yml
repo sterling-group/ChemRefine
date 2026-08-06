@@ -136,6 +136,19 @@ jobs:
       || github.event.action == 'published'
     runs-on: ubuntu-latest
     needs: [ci, build-package]
+    # An upload to PyPI is permanent: a version can be yanked, but the filename can
+    # never be reused, so a mistaken `git push --tags` is not something a follow-up
+    # commit can undo. This environment carries a required reviewer, which turns the
+    # last step into an explicit human approval rather than a consequence of a tag
+    # reaching the remote. TestPyPI above is deliberately left ungated — it is
+    # disposable, and gating it would only teach people to click through.
+    #
+    # The name is load-bearing beyond the gate: `pypi` is part of the OIDC claim
+    # PyPI verifies, so it has to match the Environment field on the trusted
+    # publisher exactly, or the upload is rejected as an unknown publisher.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/chemrefine
     permissions:
       id-token: write
 
