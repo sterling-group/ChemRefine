@@ -119,6 +119,30 @@ for the full map.
 
 Hardening landed during the 2.0.0 stabilization:
 
+- A `slurm_array` step larger than one array no longer exceeds `max_cores`. Steps past the
+  per-array task cap are split into chunks, and every chunk carried the *whole*
+  `max_cores // PAL` as its own `%limit` — but they are all queued at once, so the budget
+  was granted once per chunk. A 2500-structure step at `pal: 8` ran 1536 cores against a
+  `max_cores: 512`. Each chunk now takes a share. The cost is that a share is not handed
+  back when a sibling drains early, so the tail of an N-chunk step runs at 1/N of the
+  budget.
+- `job_timeout_seconds` is reachable again on the `slurm_array` path when `squeue` is
+  intermittently failing. A failed poll reported the polled job ids back as though they
+  were queue rows; `squeue` prints an array's tasks as `12345_0` and never the bare parent,
+  so that set differed from the real rows on every alternation — and the wait, which
+  re-anchors its stall deadline when the rows move, saw movement on every tick and never
+  timed out. A poll that never reached the scheduler now says so, and the deadline treats
+  it as no progress.
+- Local GPU jobs are pinned to the devices the run was actually granted. The budget came
+  from `nvidia-smi -L` (the whole host) and the pin was the lowest free *index*, so on a
+  node that granted `CUDA_VISIBLE_DEVICES=2,3` the throttler admitted a job per host GPU
+  and pinned them to `0..N-1` — hardware the run did not own. An inherited allocation is
+  now authoritative: `max_gpus` may narrow it and never widen it. Device tokens are carried
+  verbatim, so GPU UUIDs and `MIG-…` handles work where a bare index could not name the
+  device at all.
+- An NMS `resolution.json` that parses but does not carry `resolved_from` now raises
+  `CacheError` (exit code 7) naming the file, instead of a bare `KeyError`.
+
 - A structure that fails to converge is re-run as soon as its own job frees a slot,
   instead of after the entire step has drained. Jobs are now parsed as they finish and
   a retry joins the same throttled queue, so it overlaps the rest of the batch. Before,
