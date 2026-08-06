@@ -39,6 +39,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -209,16 +210,38 @@ def _assert_baseline_is_green(work: Path, env: dict[str, str]) -> None:
         )
 
 
+def stale_anchors(root: Path, mutations: Sequence[Mutation]) -> list[str]:
+    """One report line per mutation whose ``old`` is not unique under ``root``.
+
+    Every anchor is checked before any is applied, and every stale one is reported
+    together. Failing on the first made a single moved line hide the state of the whole
+    gate: the run stopped there, the mutations after it never executed, and the exit code
+    said "gate failed" without saying that most of it had not run.
+
+    Checked against the repository rather than the scratch copy, so a stale anchor costs
+    milliseconds instead of a tree copy plus a baseline suite. Public because
+    ``tests/test_mutation_gate.py`` asks the same question in the edit loop — which is
+    where the developer who moves a line will actually see the answer.
+    """
+    problems: list[str] = []
+    for mutation in mutations:
+        found = (root / mutation.path).read_text(encoding="utf-8").count(mutation.old)
+        if found != 1:
+            problems.append(
+                f"[{mutation.id}] expected exactly one occurrence of\n    {mutation.old}\n"
+                f"in {mutation.path}, found {found}."
+            )
+    return problems
+
+
 def _apply(work: Path, mutation: Mutation) -> None:
-    """Rewrite one occurrence of ``old`` in the copy; fail loudly if it is not unique."""
+    """Rewrite the single occurrence of ``old`` in the copy.
+
+    Uniqueness is :func:`stale_anchors`' job, proven for every selected mutation before
+    this runs — so the rule lives in one place rather than in two that could drift.
+    """
     target = work / mutation.path
     text = target.read_text(encoding="utf-8")
-    found = text.count(mutation.old)
-    if found != 1:
-        raise SystemExit(
-            f"[{mutation.id}] expected exactly one occurrence of\n    {mutation.old}\n"
-            f"in {mutation.path}, found {found}. The code moved; update the mutation."
-        )
     target.write_text(text.replace(mutation.old, mutation.new), encoding="utf-8")
 
 
@@ -262,6 +285,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not selected:
         raise SystemExit(f"no mutation id contains {args.pattern!r}")
+    if stale := stale_anchors(REPO, selected):
+        raise SystemExit("\n".join([*stale, "The code moved; update the mutation(s)."]))
 
     survivors: list[Mutation] = []
     with tempfile.TemporaryDirectory(prefix="chemrefine-mutation-") as tmp:
