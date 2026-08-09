@@ -60,7 +60,7 @@ import json
 import logging
 import os
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypedDict, cast
@@ -172,12 +172,57 @@ def template_digest(path: Path | None) -> str:
     return hashlib.sha1(path.read_bytes(), usedforsecurity=False).hexdigest()[:16]
 
 
+def option_file_digests(options: Mapping[str, Any] | None) -> dict[str, str]:
+    """Digest every ``step.options`` value that names a file on disk, keyed by option.
+
+    The counterpart to :func:`template_digest` for the *other* file a step can be pinned to.
+    A step that names a model — ``model_path``, or a ``model_name`` that is a path — depends
+    on that file's contents exactly as it depends on its template, and the raw ``options``
+    dict in :func:`fingerprint` records only the *string*. Without these digests, retraining
+    a model in place would leave every consuming step's key unchanged and ``resume`` would
+    serve results computed with the previous weights — and nothing else moves that key,
+    because a training step passes its structures through untouched.
+
+    Generic rather than a list of known knobs, and that is the point: it needs no
+    engine vocabulary, so a backend that invents a checkpoint knob tomorrow is covered by
+    existing rather than by remembering to edit this. The cost of the generality is bounded
+    — only values that resolve to a real file are read, and a step naming none pays nothing.
+
+    Relative paths resolve against the working directory, which is how the engines already
+    read them (``backends/mace.py``'s bare ``Path(model_path)``). A value that is not an
+    existing file contributes **no entry at all** rather than an empty one: "not a path" and
+    "a path that is missing" are different claims, and only the latter should later change
+    the key when the file appears.
+
+    Each file is **streamed**, not read whole. This runs on every :meth:`StepKey.of` — for
+    every step, on every run, in the driver process — and the files it is here for are model
+    checkpoints: a UMA one is 1-2 GB, and on a cluster the driver is a login node.
+    """
+    digests: dict[str, str] = {}
+    for name, value in sorted((options or {}).items()):
+        if not isinstance(value, str) or not value:
+            continue
+        try:
+            path = Path(value)
+            if not path.is_file():
+                continue
+            with path.open("rb") as handle:
+                digests[name] = hashlib.file_digest(handle, "sha1").hexdigest()[:16]
+        except OSError:
+            # A value that merely looks like a path — too long for the filesystem, a
+            # permission wall, a dangling mount. Not a file we can pin to, and not a reason
+            # to fail a run that never asked for one.
+            continue
+    return digests
+
+
 def fingerprint(
     step_cfg: StepConfig,
     parent_ids: tuple[str, ...],
     *,
     parents_digest: str = "",
     template_digest: str = "",
+    option_digests: Mapping[str, str] | None = None,
 ) -> str:
     """Return a 16-char SHA-1 over the inputs that determine a step's output.
 
@@ -189,11 +234,14 @@ def fingerprint(
     ties it to the *contents* of the resolved template — editing the template
     in place (it also drives ORCA's run-type detection when ``operation``
     is omitted) re-runs the step, where the template basename alone could not.
+    ``option_digests`` (see :func:`option_file_digests`) does for a file an option
+    *names* what ``template_digest`` does for the template — a step consuming a trained
+    model re-runs when that model is retrained, which the path string alone could not say.
     ``sample:`` is excluded on purpose — the cached results are pre-filter
     and filtering re-runs on every load, so a filter-only edit is a cache
     hit, not a re-run.
     """
-    payload = {
+    payload: dict[str, Any] = {
         "format": CACHE_FORMAT_VERSION,
         "step": step_cfg.step,
         "engine": step_cfg.engine,
@@ -207,6 +255,12 @@ def fingerprint(
         "parent_ids": list(parent_ids),
         "parents_digest": parents_digest,
     }
+    # Added only when the step actually names a file, so a step that names none keys exactly
+    # as it did before this existed. An unconditional key would re-hash every payload in the
+    # world — every cached step invalidated at once, which reads as a bug rather than as the
+    # one narrow change it is, and would strand every recorded e2e archive.
+    if option_digests:
+        payload["option_digests"] = dict(option_digests)
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha1(encoded, usedforsecurity=False).hexdigest()[:16]
 
@@ -600,6 +654,7 @@ def reuse_fingerprint(
     *,
     parents_digest: str = "",
     template_digest: str = "",
+    option_digests: Mapping[str, str] | None = None,
 ) -> str:
     """A coarser :func:`fingerprint` that survives NMS search-param tuning.
 
@@ -620,7 +675,21 @@ def reuse_fingerprint(
         parent_ids,
         parents_digest=parents_digest,
         template_digest=template_digest,
+        option_digests=option_digests,
     )
+
+
+class _KeyDigests(TypedDict):
+    """The content digests both fingerprints are derived from.
+
+    A type rather than a bare dict so the two calls in :meth:`StepKey.of` can keep sharing
+    one ``**`` expansion — which is what stops them disagreeing — while each keyword still
+    type-checks against the signature it lands in.
+    """
+
+    parents_digest: str
+    template_digest: str
+    option_digests: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -660,11 +729,19 @@ class StepKey:
         The one place the derivation happens. ``template`` is
         :attr:`~chemrefine.state.StepContext.template`; ``None`` and a missing file both
         digest to ``""`` (see :func:`template_digest`).
+
+        The files an *option* names are digested here too (:func:`option_file_digests`) and
+        for the same reason the template is: a step's identity includes the contents of every
+        file it was pointed at, not just their names. It is derived here rather than by the
+        engine that understands the knob because :mod:`chemrefine.engines` may not import this
+        module at all — a rule the subsystem is held to by test, and one this generic reader
+        is what makes keepable.
         """
         parent_ids = tuple(s.id for s in parents)
-        digests = {
+        digests: _KeyDigests = {
             "parents_digest": parents_digest(parents),
             "template_digest": template_digest(template),
+            "option_digests": option_file_digests(step_cfg.options),
         }
         return cls(
             parent_ids=parent_ids,

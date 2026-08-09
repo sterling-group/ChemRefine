@@ -21,6 +21,7 @@ from chemrefine.cache import (
     load_if_valid,
     load_manifest,
     manifest_path,
+    option_file_digests,
     parents_digest,
     save,
     save_manifest,
@@ -98,6 +99,86 @@ def test_fingerprint_changes_with_template_digest():
     assert fingerprint(cfg, ("0",), template_digest="aaa") != fingerprint(
         cfg, ("0",), template_digest="bbb"
     )
+
+
+# ---------------------------------------------------------------------------
+# Files an option names (option_file_digests)
+# ---------------------------------------------------------------------------
+
+
+def test_options_that_name_no_file_digest_to_nothing():
+    """Only real files are read, so an ordinary step pays nothing for this."""
+    assert option_file_digests(None) == {}
+    assert option_file_digests({"task_name": "mace_off", "cores": 8, "device": "cuda"}) == {}
+
+
+def test_a_path_that_does_not_exist_contributes_no_entry(tmp_path: Path):
+    """ "Not a path" and "a path that is missing" are different claims.
+
+    A missing file must contribute nothing rather than an empty digest, so that the key
+    *changes* when the file later appears — which is the moment the step's inputs really did.
+    """
+    missing = tmp_path / "model.pt"
+    assert option_file_digests({"model_path": str(missing)}) == {}
+    missing.write_bytes(b"weights")
+    assert set(option_file_digests({"model_path": str(missing)})) == {"model_path"}
+
+
+def test_a_value_that_only_looks_like_a_path_is_not_a_reason_to_fail(tmp_path: Path):
+    """Options are free-form text; most values are not paths and some are hostile to being asked.
+
+    A name past the filesystem's length limit raises from `is_file()` rather than returning
+    False. A step that never asked to be pinned to a file must not fail its whole run over
+    one — the value simply contributes no digest.
+    """
+    assert option_file_digests({"note": "x" * 5000}) == {}
+
+
+def test_a_named_file_is_digested_by_its_contents(tmp_path: Path):
+    model = tmp_path / "model.pt"
+    model.write_bytes(b"first")
+    before = option_file_digests({"model_path": str(model)})
+    model.write_bytes(b"second")
+    after = option_file_digests({"model_path": str(model)})
+
+    assert before["model_path"] != after["model_path"]
+    assert len(after["model_path"]) == 16
+
+
+def test_a_step_that_names_no_file_keys_exactly_as_it_did_before(tmp_path: Path):
+    """The digests join the payload only when there are some — otherwise nothing moves.
+
+    An unconditional key would re-hash every payload there is, invalidating every cached step
+    at once: on a user's disk that reads as a bug rather than as the one narrow change it is,
+    and in this repo it strands every recorded e2e archive, whose caches were captured under
+    the old key. Pinned here because the failure mode is a suite that goes green again only
+    after someone re-records, which looks like flakiness.
+    """
+    cfg = _cfg(options={"task_name": "mace_off", "device": "cpu"})
+    parents = _parents("0")
+
+    assert fingerprint(cfg, ("0",), parents_digest=parents_digest(parents)) == fingerprint(
+        cfg, ("0",), parents_digest=parents_digest(parents), option_digests={}
+    )
+
+
+def test_retraining_a_model_re_runs_the_step_that_consumes_it(tmp_path: Path):
+    """The point of the whole mechanism, at the level the pipeline actually uses.
+
+    A training step passes its structures through unchanged, so retraining moves neither the
+    consumer's parent ids nor their geometries — and the consumer names the model by a path
+    string that did not change either. Without the content digest its fingerprint is identical
+    and `resume` serves a cache computed with the *previous* weights.
+    """
+    model = tmp_path / "model.pt"
+    model.write_bytes(b"first weights")
+    cfg = _cfg(options={"model_path": str(model), "task_name": "mace_off"})
+
+    before = StepKey.of(cfg, _parents("0"), None)
+    model.write_bytes(b"retrained weights")
+    after = StepKey.of(cfg, _parents("0"), None)
+
+    assert before.fingerprint != after.fingerprint
 
 
 def _h2(spacing: float = 0.74, energy: float | None = None) -> Structure:
@@ -671,10 +752,13 @@ def test_invalidate_missing_is_noop(tmp_path: Path):
 def test_cache_format_version_constant():
     """Bumping CACHE_FORMAT_VERSION is a public ABI break we want to notice."""
     # v2.0: a JSON document whose fingerprint excludes the sample config (filtering re-runs on
-    # every load, so a filter-only edit must be a cache hit) and which names the digest of the
-    # sidecar it was written with. Documents that predate a key are rejected structurally —
-    # a summary without `structures`, or one without `arrays_digest`, raises out of `load` and
-    # rebuilds — so neither needs a bump while 2.0.0 is unreleased.
+    # every load, so a filter-only edit must be a cache hit), which names the digest of the
+    # sidecar it was written with, and whose fingerprint covers the *contents* of any file an
+    # option points at (`option_digests`, so retraining a model re-runs its consumers).
+    # Documents that predate a key are rejected structurally — a summary without `structures`,
+    # or one without `arrays_digest`, raises out of `load` and rebuilds — and `option_digests`
+    # joins the payload only for a step that names a file, so every existing key is unmoved.
+    # None of the three needs a bump while 2.0.0 is unreleased.
     assert CACHE_FORMAT_VERSION == "v2.0"
 
 
