@@ -15,7 +15,21 @@ backend-agnostic calculator dispatcher and the YAML option model.
 
 ::: chemrefine.engines.mlip.train_engine
 
-::: chemrefine.engines.mlip.trainer
+## Training: the backend-agnostic half
+
+::: chemrefine.engines.mlip.training
+
+## Library registry
+
+::: chemrefine.engines.mlip.registry
+
+## The MACE library (calculators + trainer)
+
+::: chemrefine.engines.mlip.backends.mace
+
+## The FAIRChem library (calculator + trainer)
+
+::: chemrefine.engines.mlip.backends.fairchem
 
 ## Calculator dispatcher
 

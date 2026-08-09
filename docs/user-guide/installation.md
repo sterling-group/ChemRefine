@@ -98,13 +98,18 @@ only host one backend family. Two ways to add one:
 | Extra | `task_name`(s) it enables | Pulls |
 |-------|---------------------------|-------|
 | `[mlip]` = `[mlip-fairchem]` | `omol`, `omat`, `odac`, `oc20`, `oc22`, `oc25`, `omc` | `fairchem-core`; UMA / eSEN checkpoints, default `uma-s-1p2` |
-| `[mlip-mace]` | `mace_off`, `mace_mp`, `mace_omol`, `custom_mace` | `mace-torch` |
+| `[mlip-mace]` | `mace_off`, `mace_mp`, `mace_omol` | `mace-torch` |
 | `[mlip-sevenn]` | `sevenn` | `sevenn` |
 | `[mlip-orb]` | `orb` | `orb-models`; needs **Python ≥ 3.12** |
 | `[mlip-chgnet]` | `chgnet` | `chgnet` |
 
 `[mlff]` remains an alias of `[mlip]`. The backends don't pin a CUDA build of `torch`, so
 for GPU install the matching `torch` first (or let the extra resolve the default build).
+
+`task_name` is the only key that selects a backend. To run a model you fine-tuned yourself,
+name the library that trained it and point `model_path` at the checkpoint — there is no
+`custom_<library>` task for any of them. (`custom_mace` still resolves, as a MACE alias kept
+for v1 configs.)
 
 ### Multiple MLIP backends in one run
 

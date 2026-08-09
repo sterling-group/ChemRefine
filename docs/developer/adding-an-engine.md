@@ -104,7 +104,8 @@ An external binary reads its path from `ctx.executables.get("<name>")`. An impor
 ships as a `pip install chemrefine[<name>]` extra and is imported **lazily** (inside the function
 that needs it) so the package imports cleanly when the optional dependency is absent — declare
 the extra + pip package + import name at registration so a missing library reports the extra to
-install (see `mlip.calculator.register_backend`).
+install (see `mlip.registry.MlipLibrary` — one declaration per library, shared by its
+calculator and its trainer).
 
 ## The lifecycle
 

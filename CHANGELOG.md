@@ -73,6 +73,70 @@ for the full map.
 
 ### Changed
 
+
+- **FAIRChem is trainable.** `task_name: omol` (and every other head) now selects a trainer as
+  well as a calculator, so the family `[mlip]` installs by default is no longer
+  inference-only. Its dataset is an ASE database per split — labels on a
+  `SinglePointCalculator`, `metadata.npz` beside each, one directory per split because
+  FAIRChem resolves a missing `metadata_path` against the database's *parent*. Verified
+  against the real `AseDBDataset`. **The shipped example config is still outstanding**: no
+  training config ships in the fairchem wheel to adapt, and the UMA weights are behind a
+  gated Hugging Face repo (`403` on the file, model card readable), so it could not be proven
+  by a real run.
+- **A `task_name` you state wins over the `model_path` shortcut.** A checkpoint with no
+  library named still means MACE, as it always has; naming one loads the checkpoint with
+  *that* library. The old rule sent any `model_path` to MACE, which was right while MACE was
+  the only library that could produce one and would now silently load a FAIRChem model with
+  the wrong loader.
+- **One MLIP registry, one module per library.** `task_name` selects a library, and that
+  library declares the environment it needs **once** — `engines/mlip/backends/<library>.py`
+  now holds its ASE calculators *and* its trainer, hanging both off a single `MlipLibrary`.
+  Previously inference and training kept parallel registries, so the pip extra, the
+  distribution, the import name, the task-key list and the dispatch rule were each spelled
+  twice per library with nothing comparing them — and that metadata is what resolves which
+  environment a step launches from. A trainable task is now a runnable task by construction,
+  and resolves the same environment in both directions. Adding a library, or making one
+  trainable, is still one dropped-in module.
+- **`mlip-train` is rebuilt.** It runs through the same scheduler and throttle as every
+  other engine, so a training job is charged against `max_cores` / `max_gpus`, gets the
+  device-aware SLURM header, the runlog, the scratch handling, local dispatch and
+  `job_timeout_seconds` — none of which it had. Which library trains is now `task_name`,
+  resolved through a registry keyed exactly like the calculator's: one word names the
+  library whether a step trains a model or runs one. Adding a trainable backend is one
+  dropped-in module under `engines/mlip/backends/`, beside the calculators for the same
+  library — the environment it needs is then declared once for both.
+
+  The step's YAML changes: `task_name`, `model_name` and `device` are required (none has a
+  default worth guessing — `model_name` is the foundation model a fine-tune starts from),
+  `job_name` is gone (the job is named like every other), `valid_fraction` now means what
+  it says, and `test_fraction` is the separate held-out set it used to be confused with.
+  The template is the trainer's own config `stepN.yaml`, **rendered** through
+  `$PLACEHOLDERS` rather than patched — patching is what could not work across libraries,
+  since the keys the old code inserted are meaningful to MACE and rejected outright by
+  FAIRChem. `operation: mlip_train` is a legacy spelling and still translated.
+
+- **`task_name` is now the only key that selects an MLIP backend.** `model_path` says where
+  the named library's weights come from and selects nothing; every library's builder loads a
+  local checkpoint itself, so there is no `custom_<library>` task for any of them.
+
+  **Migration:** a step that names a `model_path` and no `task_name` used to resolve MACE,
+  and now resolves the `task_name` default (`omol`, FAIRChem). Add the library that produced
+  the checkpoint — the same word the `mlip-train` step trained with:
+
+  ```yaml
+  options:
+    task_name: mace_off          # add this line
+    model_path: ./outputs/step4/train/train_stagetwo.model
+  ```
+
+  `custom_mace` still resolves, as a MACE alias kept for v1 configs; it now needs a
+  `model_path`, since that is the only thing it can mean. The old rule was three-valued —
+  task stated, unstated-with-checkpoint, unstated — while every channel it travelled through
+  (`model_dump()`, a `$TASK_NAME` template placeholder, the ExtOpt server CLI) is two-valued,
+  so the third case was dropped silently at each crossing. It had already made the shipped
+  MLIP-training tutorial's last step fail, and could hand a FAIRChem checkpoint to a MACE
+  loader as soon as a second library could train one.
+
 - The scoped recovery actions now cover the steps around their target
   deliberately rather than by accident:
   - `rerun-errors N` continues the run after repairing step N. The steps after it
@@ -116,6 +180,82 @@ for the full map.
   environment provisioned.
 
 ### Fixed
+
+
+- **A training step no longer swallows the ensemble.** Its structures are the previous
+  step's, passed through — but `parse` was never called, because a step's structures came
+  from the per-structure ledger and a training step prepares no per-structure jobs. Ten
+  structures went in and zero came out, so the pipeline stopped with "produced no
+  survivors" at the step *after* training. No shipped workflow had ever got past it.
+- **A failed training is no longer cached as a success.** The old step waited for its job
+  to leave the scheduler's queue and cached the step either way; a job that exits non-zero
+  leaves the queue too. The trained model's existence is now the success test, and failing
+  it writes no cache — so `chemrefine resume` retrains rather than serving a model that was
+  never produced. A training that *succeeded* before the driver died is adopted by
+  `rebuild-cache` without recomputing it.
+- **A failed *re*-training no longer adopts the previous run's model.** The existence test
+  above cannot tell this run's product from the last one's, so a re-run whose job died
+  having written nothing found run 1's model, digested those bytes into the sidecar, and
+  cached them under the new fingerprint — a run that was internally consistent and described
+  a training that never happened, which the consuming step then cache-hit on too. An
+  artifact step now archives its run directory before preparing, as every per-structure step
+  already did.
+- **A training step under `slurm_array: true` trains on its input.** Both trainers quoted
+  the config basename, and the array path renders one run block against `$INP_NAME`
+  sentinels that each task assigns — single quotes suppress the expansion, so every task ran
+  against a file literally named `$INP_NAME`. Asserted now for every job-executable engine.
+- **A FAIRChem training job stops writing inside its own checkpoint directory.** The
+  scheduler takes a job's output directory from its output path's parent, which for a
+  trainer whose model is nested (`train/checkpoints/final/inference_ckpt.pt`) put the
+  runlog, the `.err` and — with no `scratch_dir` — the working directory three levels inside
+  the tree it was about to write its final checkpoint to. Its dataset splits moved under
+  `data/` for the same reason: the training split and FAIRChem's run id are both `train`.
+- **`mlip-train` copies back every pattern its trainers produce.** The engine's list had
+  drifted from the trainers': it was missing FAIRChem's `*.yaml` and carried a `*.txt` no
+  backend writes. A missing glob is a model left behind when the scratch is cleaned; a test
+  now holds the list to the union.
+- Model checkpoints are digested by streaming rather than read whole into the driver
+  process. This runs on every step's cache key, the files are 1–2 GB, and on a cluster the
+  driver is a login node.
+
+- **The training dataset is readable by the trainer.** ChemRefine wrote `DFT_energy` /
+  `DFT_Forces` while MACE's defaults are `REF_energy` / `REF_forces`, and the shipped
+  template declared a third pair — MACE refuses a file in which it finds none of its keys,
+  so every training job died at data load.
+- **Charge and multiplicity reach the training set.** MACE reads `total_charge` /
+  `total_spin` and silently defaults them to a neutral singlet, so a fine-tune on an ion or
+  an open-shell system was fitted against the wrong species with nothing said in any log.
+- **The training command resolves.** It emitted a bare `mace_run_train`, which is on
+  nobody's `PATH` once MACE lives in its own environment — which it must, since its `e3nn`
+  pin cannot share a prefix with FAIRChem's. `mlip-train` is now a provisionable engine:
+  its backend is checked by the preflight and its job launches from the managed env.
+- **Retraining re-runs the steps that use the model.** A step naming a file in its options
+  now has that file's contents in its cache key, so a step consuming a retrained model no
+  longer serves a result computed with the previous weights. A training step passes its
+  structures through unchanged, which is what left nothing else to move the key.
+- An interrupted step that prepared no jobs re-runs instead of "resuming" into nothing. A
+  zero-job manifest is a real value, not a missing one, and treating it as missing cached
+  an empty result the next run then served.
+- The documented default for `device` (`mlip`, `mlip-extopt`, `pyscf`, `pyscf-extopt`) said
+  `cuda`; the code says `cpu`. Following the docs got you a silent CPU run on a GPU cluster.
+- `mlip-train`'s options are documented at all, in the configuration reference.
+- A relative path in a step's `options` — `model_path` — resolves against the **config file's**
+  directory, like every other path a config names, instead of the process working directory.
+  It reaches a job that runs in a scratch directory, so an unresolved relative path was found
+  by nobody: naming the model a previous step produced worked only when you happened to
+  invoke `chemrefine` from the config's own directory.
+- A FAIRChem checkpoint can be loaded from a path. `get_predict_unit` resolves registry names
+  only and raises `KeyError` for a file, so a fine-tuned FAIRChem model could have been
+  trained and never run.
+- An unknown `task_name` raises `ConfigError` rather than a bare `ValueError`. It is reached
+  from the preflight, where only a `ChemRefineError` carries the exit code the CLI maps — a
+  `ValueError` there reached the user as a traceback instead of a status.
+- A training step that names a runnable-but-untrainable backend is refused by the preflight,
+  before any step submits, and told which it is — rather than after its upstream steps have
+  spent days computing a dataset.
+- A backend can no longer declare a pip extra that `pyproject.toml` does not: `pip install
+  "chemrefine[typo]"` warns and exits 0, so the mistake used to provision an empty
+  environment that satisfied the preflight and failed at the backend import.
 
 Hardening landed during the 2.0.0 stabilization:
 

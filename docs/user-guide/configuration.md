@@ -66,7 +66,7 @@ steps:
 | `step` | int ≥ 1 | — | **Required.** 1-based step number; drives directory naming and order. |
 | `name` | str | `None` | Optional filesystem-safe label (letters/digits/`_`/`-`, not all-digits). Directory becomes `stepN_name/`; usable as a CLI target. |
 | `engine` | str | — | **Required.** One of `orca`, `mlip`, `mlip-extopt`, `mlip-train`, `pyscf`, `pyscf-extopt`. |
-| `operation` | str | `None` | Engine-defined: `opt_sp`, `sp`, `freq`, `pes`, `goat`, `docker`, `solvator`, `mlip_train`. **Optional** — when omitted, ORCA infers the run type from the template's `!` keyword lines (`GOAT`/`DOCKER`/`SOLVATOR`/a `%geom Scan` block/`Opt`/`OptTS`/`Freq`; `#` comments are ignored, matching is case-insensitive), defaulting to a single point if it finds no run-type keyword. An explicit value always wins — give it when inspection can't decide. |
+| `operation` | str | `None` | Engine-defined: `opt_sp`, `sp`, `freq`, `pes`, `goat`, `docker`, `solvator`. (`mlip_train` is a legacy spelling: it named a step *kind*, which `engine: mlip-train` already says. Old configs are still translated.) **Optional** — when omitted, ORCA infers the run type from the template's `!` keyword lines (`GOAT`/`DOCKER`/`SOLVATOR`/a `%geom Scan` block/`Opt`/`OptTS`/`Freq`; `#` comments are ignored, matching is case-insensitive), defaulting to a single point if it finds no run-type keyword. An explicit value always wins — give it when inspection can't decide. |
 | `template` | str | `stepN.{inp,py}` | Engine input template basename (relative to `template_dir` if not absolute). |
 | `slurm_template` | str | global | Per-step SLURM header override. |
 | `charge` / `multiplicity` | int | global | Per-step overrides of the global values. |
@@ -103,9 +103,9 @@ raises a clear error if the chosen energy wasn't computed.
     | Key | Default | Description |
     |-----|---------|-------------|
     | `model_name` (aliases `model`, `size`) | `uma-s-1p2` | Model weights (a MACE size, a FAIRChem checkpoint, a SevenNet/ORB id). |
-    | `task_name` (alias `task`) | `omol` | Method/head — selects the backend builder. |
-    | `model_path` | `None` | Custom MACE checkpoint (selects the `custom_mace` backend). |
-    | `device` | `cuda` | `cuda` or `cpu`. |
+    | `task_name` (alias `task`) | `omol` | Method/head — **the only thing that selects the backend builder**. |
+    | `model_path` | `None` | A local checkpoint to load *instead of* `model_name`, with the library `task_name` named. Selects nothing itself: to run a model an `mlip-train` step produced, name the same `task_name` it trained with. Relative paths resolve against the config file's directory. |
+    | `device` | `cpu` | `cuda` or `cpu`. CPU is the floor that always runs; asking for a GPU is one line, whereas a wrong `cuda` default schedules a CPU job whose script then asks for a device it wasn't given. |
     | `cores` | `1` | Per-structure core budget. |
     | `backend_python` | `None` | Explicit interpreter for the backend (escape hatch). Normally unset: the step's managed env is resolved by name — see [Installation → MLIP backends](installation.md#mlip-backends). |
 
@@ -118,13 +118,57 @@ raises a clear error if the chosen energy wasn't computed.
     | `basis` | — (**required**) | Orbital basis set. No silent default — name it explicitly. |
     | `df` | `True` | Density fitting / RI (defaults on — large speed-up, negligible cost). |
     | `strict_scf` | `True` | Refuse to serve a gradient from an SCF that did not converge. PySCF returns the last iterate rather than raising, and ORCA's `.out` reports only *its own* geometry convergence — so a loose result would rank against converged siblings unmarked. Set `false` for a knowingly loose SCF. |
-    | `device` | `cuda` | Compute device; drives `gpu` when `gpu` is unset (`cuda` ⇒ attempt GPU). |
+    | `device` | `cpu` | Compute device; drives `gpu` when `gpu` is unset (`cuda` ⇒ attempt GPU). |
     | `gpu` | derived from `device` | Attempt `gpu4pyscf` if installed (falls back to CPU). Set explicitly to override the `device`-derived default. |
     | `save_tensors` | `False` | Dump 1e/2e MO tensors after the SCF. |
     | `localized` | `False` | Boys-localize before tensor extraction. |
     | `tensor_folder` | `tensors` | Output dir for `save_tensors` `.npz`. A relative path (the default) is copied back into the structure's own dir (`outputs/stepN/<id>/tensors/`); an absolute path writes there directly. |
     | `cores` | `1` | Per-structure core budget. |
     | `backend_python` | `None` | Explicit interpreter for the backend (escape hatch). Normally unset: the `pyscf` managed env is resolved by name. |
+
+=== "mlip-train"
+
+    | Key | Default | Description |
+    |-----|---------|-------------|
+    | `task_name` (alias `task`) | — (**required**) | Which library trains — the same word that selects a backend for inference. No default: the inference default names a foundation model to *run*, which is a different choice. Trainable today: `mace_off`, `mace_mp`, `mace_omol`, and every FAIRChem head (`omol`, `omat`, `odac`, `oc20`, `oc22`, `oc25`, `omc`) — but see the FAIRChem note below. |
+    | `model_name` (aliases `model`, `size`) | `uma-s-1p2` | The foundation model a run **starts from** — MACE's `foundation_model`. Set it to `""` to train from scratch, which on a few-dozen-structure dataset is rarely what you want. |
+    | `model_path` | `None` | A local checkpoint to continue from, loaded by the library `task_name` names. Relative paths resolve against the config file's directory. |
+    | `device` | — (**required**) | `cuda` or `cpu`. No default either way: `cpu` would silently hand you a job that grinds for days, `cuda` would silently charge the GPU budget and swap the SLURM header for a step that never asked. |
+    | `gpus` | `1` | Data-parallel width (MACE's `--nproc_per_node`). ChemRefine never writes `--gres` — this is what it charges to the GPU budget and passes to the trainer; the *allocation* is the `--gres` line in your own `cuda.slurm.header`, so raise both together. |
+    | `cores` | the step's whole budget | Unset means all of `max_cores`: the single training job *is* the step, unlike a per-structure step that shares the budget. |
+    | `valid_fraction` | `0.1` | Share held out to validate on (steers training). A non-zero fraction always yields at least one structure. |
+    | `test_fraction` | `0.0` | Share held out for a final evaluation the training never sees. Distinct from `valid_fraction`, and off by default — on a small dataset a test set is a luxury the training set cannot afford. |
+    | `seed` | `42` | Seed for the split, so a re-run partitions identically. |
+    | `backend_python` | `None` | Explicit interpreter for the trainer (escape hatch). Normally unset: the managed env is resolved by name. |
+
+    The step's template is the **trainer's own config** (`stepN.yaml`), rendered rather than
+    patched: ChemRefine substitutes `$TRAIN_SET`, `$VALID_SET`, `$TEST_SET`, `$RUN_DIR`,
+    `$RUN_NAME`, `$DEVICE`, `$SEED`, `$NGPUS`, `$CORES`, `$FOUNDATION_MODEL`, `$CHARGE` and
+    `$MULTIPLICITY`, and leaves everything else — including a config's own `${...}`
+    interpolations — untouched. A template that never references the dataset placeholder its
+    backend needs is rejected before anything is submitted.
+
+    The trained model lands at `<step dir>/train/train[_stagetwo].model`, beside a
+    `trained_model.json` recording which run produced it. That path is predictable *before*
+    the training runs, so a later step can name it in `model_path`; retraining changes that
+    step's cache key, so it re-runs rather than serving a result computed with the old weights.
+
+    !!! note "FAIRChem templates must follow fairchem's own fine-tuning recipe"
+
+        The template for a FAIRChem head is FAIRChem's hydra config, and its moving parts
+        are not optional: the dataset stanza needs
+        `transforms: {common_transform: {dataset_name: …}}` (the collater dispatches on the
+        name that transform stamps), `tasks_list` defines fresh `energy`/`forces` tasks
+        bound to that dataset name, and the model node is
+        `initialize_finetuning_model` with replacement heads. This is the shape of
+        fairchem's own `configs/uma/finetune/uma_sm_finetune_template.yaml`, and the
+        shipped example follows it. A config that instead tags data via
+        `a2g_args: {task_name: …}` or reuses the checkpoint's task list fails inside
+        FAIRChem's collater with `TypeError: unhashable type: 'list'`.
+
+        Fine-tuning a UMA checkpoint is a **GPU-scale job**: on CPU the optimizer states and
+        conservative-force graph need roughly 8 GB for `uma-s`. Size `cores`/`device`
+        accordingly.
 
 === "nms (when nms: true)"
 

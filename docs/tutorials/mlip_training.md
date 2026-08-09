@@ -21,7 +21,22 @@ ChemRefine automates this multi-step process:
    Provides high-quality energies and forces for MLIP training.  
 
 4. **MLIP Training (`mlip-train`)**  
-   Trains a potential (e.g., MACE) on the generated DFT dataset. As of writing, ChemRefine can only train/finetune with MACE. We need a MACE input yaml; an explanation can be found [here](https://github.com/ACEsuit/mace).
+   Fine-tunes a potential on the generated DFT dataset. `task_name` picks which library
+   trains — the same word that picks the one that runs — and `model_name` is the foundation
+   model it starts from; both, and `device`, are required. MACE and the FAIRChem heads are
+   trainable (this tutorial trains MACE; see
+   [`examples/fairchem_finetune`](https://github.com/sterling-group/ChemRefine/tree/main/examples/fairchem_finetune)
+   for the FAIRChem counterpart); adding another library is one dropped-in module under
+   `engines/mlip/backends/`, beside that library's calculator and sharing its one
+   environment declaration.
+   The `step4.yaml` template is MACE's own training config with `$PLACEHOLDERS` where the
+   dataset paths go ([MACE docs](https://github.com/ACEsuit/mace)). ChemRefine writes the
+   dataset with MACE's own label keys and carries the system's charge and multiplicity into
+   it, so no `energy_key` / `forces_key` line is needed.
+
+   The structures pass through unchanged — the model is the artifact — so step 5 receives the
+   whole ensemble. The model lands at `outputs/step4/train/train_stagetwo.model`, a path you
+   can write into step 5 before the training has run.
 
 5. **MLIP Validation (`opt_sp` with `mlip-extopt`)**  
    Applies the trained model to evaluate new structures, testing its accuracy and efficiency.  
@@ -112,19 +127,20 @@ steps:
     engine: orca
     sample: { method: min, count: 0 }
 
-  # Train a MACE model on the labelled structures.
+  # Fine-tune a MACE model on the labelled structures.
   - step: 4
     engine: mlip-train
-    operation: mlip_train
+    options: { task_name: mace_off, model_name: medium, device: cuda }
     sample: { method: min, count: 0 }
 
-  # Validate the trained model via the MLIP gradient server.
+  # Validate the trained model via the MLIP gradient server. `task_name` is step 4's word
+  # again — it names the library; `model_path` says where its weights are.
   - step: 5
     operation: opt_sp
     engine: mlip-extopt
     options:
-      model_name: ../step4/checkpoints_dir/goat_model_run-123_stagetwo.model
       task_name: mace_off
+      model_path: ./outputs/step4/train/train_stagetwo.model
       device: cuda
     sample: { method: min, count: 0 }
 ```
