@@ -551,6 +551,14 @@ def _resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
     directory, so a config is portable: ``chemrefine run sub/proj/input.yaml``
     from anywhere finds ``sub/proj/templates`` and writes ``sub/proj/outputs``.
     Absolute paths pass through unchanged.
+
+    A step's ``options`` get the same treatment for the keys in
+    :data:`_STEP_OPTION_PATHS`, and they need it more than the rest: an option's value
+    reaches a *job*, and a job runs neither where the config sits nor where the user stood —
+    the generated script copies its input into a scratch ``$WORK_DIR`` and runs there. A
+    relative ``model_path`` would resolve against that scratch directory and simply not be
+    found. Naming the model a previous step produced (``./outputs/step2/train/train.model``)
+    is the obvious thing to write, so it has to work from anywhere.
     """
     updates: dict[str, Path] = {}
     if not cfg.template_dir.is_absolute():
@@ -561,7 +569,32 @@ def _resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
         updates["scratch_dir"] = base / cfg.scratch_dir
     if cfg.input is not None and not cfg.input.is_absolute():
         updates["input"] = base / cfg.input
+    steps = [_resolve_step_option_paths(step, base=base) for step in cfg.steps]
+    if any(new is not old for new, old in zip(steps, cfg.steps, strict=True)):
+        updates["steps"] = steps  # type: ignore[assignment]
     return cfg.model_copy(update=updates) if updates else cfg
+
+
+_STEP_OPTION_PATHS = ("model_path",)
+"""``step.options`` keys whose value is a filesystem path, resolved like the config's own.
+
+A deliberately short list rather than "anything that looks like a path": an option is
+free-form text and most values are not paths at all, so guessing would rewrite strings that
+merely resemble one. Adding a knob here is the cost of introducing a path-valued option, and
+it is one line."""
+
+
+def _resolve_step_option_paths(step: StepConfig, *, base: Path) -> StepConfig:
+    """Make a step's path-valued options absolute against ``base``; return the step."""
+    options = step.options or {}
+    rewritten = {
+        key: str((base / value).resolve())
+        for key in _STEP_OPTION_PATHS
+        if isinstance(value := options.get(key), str) and value and not Path(value).is_absolute()
+    }
+    if not rewritten:
+        return step
+    return step.model_copy(update={"options": {**options, **rewritten}})
 
 
 def load_config(path: str | Path) -> Config:

@@ -349,6 +349,45 @@ def test_step_options_round_trip(tmp_path: Path):
     assert cfg.steps[0].options == {"model": "mace_off23", "device": "cuda"}
 
 
+def test_a_relative_model_path_resolves_against_the_config_dir(tmp_path: Path):
+    """The value reaches a job that runs in a scratch directory, where `./` means nothing.
+
+    Same rule as `template_dir` / `output_dir`: relative paths in the config resolve against
+    the config file's own directory, so `chemrefine run sub/proj/input.yaml` works from
+    anywhere. A field validator could not do this — it sees only the process working
+    directory — which is why the resolution lives beside the config's other paths.
+    """
+    data = _minimal_config(
+        steps=[
+            {
+                "step": 1,
+                "engine": "mlip",
+                "operation": "sp",
+                "options": {"model_path": "./outputs/step2/train/train.model"},
+            }
+        ]
+    )
+    cfg = load_config(_write_yaml(tmp_path, data))
+    resolved = cfg.steps[0].options["model_path"]
+    assert Path(resolved).is_absolute()
+    assert resolved == str((tmp_path / "outputs/step2/train/train.model").resolve())
+
+
+def test_an_absolute_model_path_passes_through_unchanged(tmp_path: Path):
+    data = _minimal_config(
+        steps=[
+            {
+                "step": 1,
+                "engine": "mlip",
+                "operation": "sp",
+                "options": {"model_path": "/models/mine.model", "device": "cpu"},
+            }
+        ]
+    )
+    cfg = load_config(_write_yaml(tmp_path, data))
+    assert cfg.steps[0].options["model_path"] == "/models/mine.model"
+
+
 def test_step_charge_override(tmp_path: Path):
     data = _minimal_config(
         charge=0,
