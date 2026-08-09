@@ -1,0 +1,46 @@
+# Capture case: label with MACE-OFF, fine-tune on those labels, run the trained model.
+#
+# The point is the *plumbing* of a training step, not the science: that the ensemble reaches
+# the step after training, that a model appears where the next step was told to look, and
+# that the next step can load it.
+#
+# `multiheads_finetuning: False` is what makes it a release-gate case rather than an
+# overnight one. MACE's replay head defaults to `num_samples_pt: 10000`, so the recommended
+# recipe trains on 10,000 pretraining structures beside these six — measured at 2h21m. The
+# flag skips `prepare_pt_head` entirely, and (being the same guard) also legalises
+# `E0s: average`. The shipped tutorial keeps the replay; this does not.
+template_dir: ./templates
+output_dir: ./outputs
+dispatch: auto
+max_cores: 4
+
+input: ./waters.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  # Label the seeds with energies AND forces — training needs both, seeds have neither.
+  - step: 1
+    engine: mlip
+    operation: sp
+    options: { task_name: mace_off, model_name: small, device: cpu, cores: 1 }
+    sample: { method: min, count: 0 }
+
+  # Fine-tune on those labels.
+  - step: 2
+    engine: mlip-train
+    options: { task_name: mace_off, model_name: small, device: cpu, valid_fraction: 0.25 }
+    sample: { method: min, count: 0 }
+
+  # Run what step 2 produced. The path is predictable before the training has run, which is
+  # the whole reason `artifact()` targets MACE's seed-free `model_dir` name. `task_name` is
+  # step 2's word again — it names the library; `model_path` says where its weights are.
+  - step: 3
+    engine: mlip
+    operation: sp
+    options:
+      task_name: mace_off
+      model_path: ./outputs/step2/train/train.model
+      device: cpu
+      cores: 1
+    sample: { method: min, count: 0 }

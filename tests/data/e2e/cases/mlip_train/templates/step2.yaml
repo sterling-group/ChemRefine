@@ -1,0 +1,16 @@
+# MACE training config for the live-tier plumbing case — see input.yaml for why this is a
+# naive fine-tune rather than the multihead replay the tutorial ships.
+name: $RUN_NAME
+work_dir: $RUN_DIR
+train_file: $TRAIN_SET
+valid_file: $VALID_SET
+device: $DEVICE
+seed: $SEED
+
+foundation_model: $FOUNDATION_MODEL
+multiheads_finetuning: False
+E0s: average
+
+max_num_epochs: 1
+batch_size: 2
+default_dtype: float64

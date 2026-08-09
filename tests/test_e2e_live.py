@@ -69,6 +69,7 @@ _REQUIRES = {
     "ts_pes": {"orca"},
     "host_guest": {"orca"},
     "mlip_screen": {"mace"},
+    "mlip_train": {"mace"},
     "mlip_extopt": {"orca", "mace"},
     "pyscf_sp": {"pyscf"},
     "pyscf_extopt": {"orca", "pyscf"},
