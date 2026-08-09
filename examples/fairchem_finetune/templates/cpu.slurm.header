@@ -1,0 +1,2 @@
+#SBATCH --partition=normal
+#SBATCH --time=01:00:00

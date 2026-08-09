@@ -1,0 +1,44 @@
+# Fine-tune a FAIRChem (UMA) model and run the result — the FAIRChem counterpart of the
+# MLIP-training tutorial's MACE pipeline.
+#
+# `task_name: omol` is the one word that names the library in all three steps: it selects
+# the calculator that labels, the trainer that fine-tunes, and the calculator that runs the
+# produced checkpoint. The step2.yaml template is FAIRChem's own fine-tuning config
+# (see the comments in it), sized to prove the plumbing on a CPU in minutes; a production
+# fine-tune restores the template's AdamW settings and runs `device: cuda`.
+template_dir: ./templates
+output_dir: ./outputs
+dispatch: auto
+max_cores: 4
+
+input: ./waters.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  # Label the seeds with energies AND forces — training needs both, seeds have neither.
+  - step: 1
+    engine: mlip
+    operation: sp
+    options: { task_name: omol, model_name: uma-s-1p2, device: cpu, cores: 1 }
+    sample: { method: min, count: 0 }
+
+  # Fine-tune on those labels. The charge/multiplicity above reach every training row —
+  # UMA embeds them, and would otherwise assume a neutral singlet.
+  - step: 2
+    engine: mlip-train
+    options: { task_name: omol, model_name: uma-s-1p2, device: cpu, valid_fraction: 0.25 }
+    sample: { method: min, count: 0 }
+
+  # Run what step 2 produced. FAIRChem writes the loadable model at
+  # <run dir>/<run name>/checkpoints/final/inference_ckpt.pt, predictable before the
+  # training has run — `task_name` names the library again; `model_path` its weights.
+  - step: 3
+    engine: mlip
+    operation: sp
+    options:
+      task_name: omol
+      model_path: ./outputs/step2/train/train/checkpoints/final/inference_ckpt.pt
+      device: cpu
+      cores: 1
+    sample: { method: min, count: 0 }
