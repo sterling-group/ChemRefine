@@ -38,6 +38,19 @@ from chemrefine.errors import ConfigError
 
 _ATTEMPT_DIR_RE = re.compile(r"attempt(\d+)$")
 
+TRAINING_ID = "train"
+"""The job id an artifact step's single job runs under, in place of a structure id.
+
+A training job is one job over the whole ensemble rather than one per structure, but it wants
+the same on-disk shape — its own directory under the step dir, holding its config, its script,
+its runlog and its product — so it takes an id here like everything else. Minted in this
+module because that is what makes it safe to interpolate into generated bash: every value that
+reaches a job script is either quoted at the point of use or comes from here.
+
+It is not a structure id and never collides with one: structure ids are digits and hyphens
+(:func:`allocate_child_ids`), so no ensemble can produce this name.
+"""
+
 
 def allocate_child_ids(parents: Sequence[str], fanouts: Sequence[int]) -> list[str]:
     """Allocate persistent IDs for one step's children given parent IDs and per-parent fanout.

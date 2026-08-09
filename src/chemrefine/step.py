@@ -28,15 +28,17 @@ from pathlib import Path
 from chemrefine import __version__, attempts, cache, filtering, ids, lifecycle, nms
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.api import (
+    ArtifactEngine,
     CalculationEngine,
     NmsCapableEngine,
     TemplateDriven,
     get_engine,
 )
-from chemrefine.errors import CacheError, ChemRefineError, ConfigError
+from chemrefine.errors import CacheError, ChemRefineError, ConfigError, JobFailureError
 from chemrefine.state import (
     PipelineState,
     StepContext,
+    StepInputs,
     StepResults,
 )
 
@@ -262,6 +264,11 @@ def run_step(
     nms_engine: NmsCapableEngine | None = None
     if step_cfg.nms and isinstance(engine, NmsCapableEngine):
         nms_engine = engine
+    # Narrowed the same way and in the same place, so the two step kinds are decided together
+    # rather than one here and one three functions down. An artifact step submits one job over
+    # the whole ensemble and produces a file, so every route below that reasons per structure —
+    # the partial-step resume, the failed-job resubmit — has to know before it starts.
+    artifact_engine: ArtifactEngine | None = engine if isinstance(engine, ArtifactEngine) else None
 
     # Every recovery route below either serves what is already on disk or sends work to
     # the engine, and which of those a step is allowed to do is the whole of what the mode
@@ -285,7 +292,13 @@ def run_step(
         # No cache at all, but possibly a step this configuration already half-ran and
         # was interrupted before it could write one.
         partial = _partial_step_outcome(
-            ctx, step_cfg, key, engine, nms_engine=nms_engine, may_submit=may_submit
+            ctx,
+            step_cfg,
+            key,
+            engine,
+            nms_engine=nms_engine,
+            artifact_engine=artifact_engine,
+            may_submit=may_submit,
         )
         if partial is not None:
             return partial
@@ -297,6 +310,8 @@ def run_step(
             f"Run `chemrefine resume` to bring it up to date, or "
             f"`chemrefine rerun {step_cfg.step}` to redo it."
         )
+    if artifact_engine is not None:
+        return _run_artifact_step(ctx, step_cfg, key, artifact_engine)
     return _run_full_step(ctx, step_cfg, key, engine, nms_engine=nms_engine)
 
 
@@ -390,6 +405,7 @@ def _partial_step_outcome(
     engine: CalculationEngine,
     *,
     nms_engine: NmsCapableEngine | None,
+    artifact_engine: ArtifactEngine | None,
     may_submit: bool,
 ) -> StepOutcome | None:
     """Continue a step the driver died in the middle of, instead of redoing it.
@@ -416,11 +432,20 @@ def _partial_step_outcome(
     * The step is not NMS. An interrupted NMS step needs its round-2 children re-resolved,
       not just its round-1 outputs re-parsed, so it falls back to the full re-run rather
       than being silently half-recovered.
+    * The step is not an artifact step. There is nothing per-structure to continue —
+      :func:`_run_artifact_step` re-runs the one job, and adopting a *finished* product is
+      ``rebuild-cache``'s job, not a resume's.
+    * **The manifest names at least one job.** An empty manifest is a legitimate value, not a
+      missing one: a step that prepares no per-structure inputs writes ``"files": []`` and
+      ``load_manifest`` returns ``StepInputs(files=())``, which is not ``None``. Testing only
+      for ``None`` sent such a step down the resubmit path, where a zero-job re-parse produced
+      zero successes and zero failures — so an interrupted training cached an empty result and
+      was never re-run. Nothing can be continued from a manifest with no jobs in it.
     """
-    if not may_submit or nms_engine is not None:
+    if not may_submit or nms_engine is not None or artifact_engine is not None:
         return None
     manifest = cache.load_manifest(ctx.step_dir)
-    if manifest is None:
+    if manifest is None or not manifest.files:
         return None
     if cache.load_manifest_fingerprint(ctx.step_dir) != key.fingerprint:
         return None
@@ -470,9 +495,9 @@ def _run_full_step(
     # Submission, parsing, the convergence retries and the NMS fan-out are one call rather
     # than four phases: a structure that fails to converge is re-run — and one that needs
     # displacing gets its children — as soon as its own job frees a slot, instead of after
-    # the whole batch has drained. (No "parsing outputs" line any more: parsing is
-    # interleaved with submission now, so a phase banner would be a lie. The count above is
-    # round 1's, for the same reason — it no longer bounds what the step submits.)
+    # the whole batch has drained. (No "parsing outputs" log line: parsing is interleaved
+    # with submission, so a phase banner would be a lie. The count above is round 1's, for
+    # the same reason — it does not bound what the step submits.)
     successes, failures = lifecycle.run_with_retries(engine, ctx, inputs, children=round2)
 
     if nms_engine is not None and round2 is not None:
@@ -487,6 +512,72 @@ def _run_full_step(
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
     results = lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
+    return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
+
+
+def _run_artifact_step(
+    ctx: StepContext, step_cfg: StepConfig, key: cache.StepKey, engine: ArtifactEngine
+) -> StepOutcome:
+    """Run a step that submits one job and produces one file.
+
+    The same three lifecycle calls every other step makes, in the same order and with the
+    manifest stamped between the first two — but without the per-structure ledger, which has
+    nothing to say here: there is one job, it is not a structure, and the structures this step
+    reports are the ones it was given.
+
+    ``prepare`` writes the job's inputs and ``submit`` runs it through the ordinary scheduler,
+    so an artifact step is throttled, headed, scratch-run and copied back like anything else.
+
+    The archive is what makes :func:`_finish_artifact_step`'s success test mean anything. That
+    test is ``artifact.exists()``, which cannot tell this run's product from the last one's —
+    so a re-run (a changed template, a changed dataset) whose job dies having written nothing
+    would find the *previous* model, digest those bytes into the sidecar and cache them under
+    the **new** fingerprint. The consuming step then hashes the same stale file and cache-hits
+    too, leaving a run that is internally consistent and describes a training that never
+    happened. Moving the run directory aside first turns that into the failure it is.
+    """
+    attempts.archive_previous(ctx.step_dir, (ids.TRAINING_ID,))
+    inputs = engine.prepare(ctx)
+    cache.save_manifest(
+        inputs,
+        ctx.step_dir,
+        operation=step_cfg.operation,
+        engine=step_cfg.engine,
+        fingerprint=key.fingerprint,
+    )
+    engine.submit(inputs, ctx)
+    return _finish_artifact_step(ctx, step_cfg, key, engine)
+
+
+def _finish_artifact_step(
+    ctx: StepContext, step_cfg: StepConfig, key: cache.StepKey, engine: ArtifactEngine
+) -> StepOutcome:
+    """Decide an artifact step's outcome from its product, and cache it if there is one.
+
+    **The product is the success test, and a missing one raises rather than ledgers.** A job
+    that leaves the scheduler's queue having written nothing looks exactly like one that
+    worked, so without this the step caches a model it never produced and every later
+    ``resume`` serves that cache. Raising leaves no cache at all, which is what makes the
+    recovery correct: ``resume`` finds nothing to reuse and runs the step again.
+
+    A ledgered failure would not do — it writes a cache with zero structures, which is the
+    same wrong state by a longer route. There is nothing per-structure to ledger anyway.
+
+    Shared with :func:`rebuild_cache_step` so a product whose job finished before the driver
+    died can be adopted without recomputing it — for a training that ran for days, that is the
+    difference between a rebuild and a week.
+    """
+    artifact = engine.artifact(ctx)
+    if not artifact.exists():
+        raise JobFailureError(
+            f"step {step_cfg.step} ({step_cfg.engine}) produced no {artifact.name}: "
+            f"the job finished without writing {artifact}. Its log is under {ctx.step_dir}; "
+            f"fix the cause and re-run — nothing was cached, so `chemrefine resume` will "
+            f"redo this step."
+        )
+    logger.info("step %d: produced %s", step_cfg.step, artifact)
+    results = engine.parse(StepInputs(files=()), ctx)
+    results = lifecycle.finalize(engine, ctx, step_cfg, key, list(results.structures), [])
     return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
 
 
@@ -569,6 +660,13 @@ def rebuild_cache_step(
             f"since — so re-parsing them would cache results this configuration never "
             f"produced. Run `chemrefine rerun {step_cfg.step}` to recompute it."
         )
+    if isinstance(engine, ArtifactEngine):
+        # Past the same fingerprint guard as any other rebuild — the product on disk has to
+        # belong to *this* configuration — but there are no per-structure outputs to re-parse
+        # beyond it. This is the most valuable recovery the command offers for such a step: a
+        # training whose job finished before the driver died is re-cached rather than re-run.
+        logger.info("step %d: rebuilding cache from the product on disk", step_cfg.step)
+        return _finish_artifact_step(ctx, step_cfg, key, engine)
     logger.info("step %d: rebuilding cache from existing outputs", step_cfg.step)
     successes, failures = lifecycle.parse_and_record(engine, manifest, ctx)
     if step_cfg.nms and isinstance(engine, NmsCapableEngine):

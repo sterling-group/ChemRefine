@@ -26,9 +26,9 @@ Per-structure program         :class:`._job.JobEngine`        ``build_input`` / 
 User Python script            :class:`._script.ScriptEngine`  usually only ``_template_vars``
 ORCA-driven gradients         :class:`.orca.extopt.engine.    ``backend`` / ``wrapper_filename`` /
                               ExtOptOrcaEngine`               ``options_cls`` / ``calculator_cls``
-Custom / non-job              :class:`CalculationEngine`       ``prepare`` / ``submit`` / ``parse``
-(mlip-train)                  directly                        (+ ``TemplateDriven`` if it
-                                                              renders a step template)
+One job, one product          :class:`CalculationEngine` +    ``prepare`` / ``submit`` / ``parse`` /
+(mlip-train)                  :class:`ArtifactEngine`         ``artifact`` (+ ``JobExecutable`` to
+                                                              run through the scheduler)
 ============================  ==============================  =====================================
 
 * **Capabilities** — never a flag, always a Protocol detected via ``isinstance``. NMS:
@@ -316,6 +316,40 @@ class NmsCapableEngine(CalculationEngine, StructureArtifacts, Protocol):
 
     def nms_input_info(self, ctx: StepContext) -> NmsInputInfo:
         """Introspect this step's configured input (TS search? computes frequencies?)."""
+        ...
+
+
+@runtime_checkable
+class ArtifactEngine(CalculationEngine, Protocol):
+    """An engine whose product is one **artifact**, and whose structures pass straight through.
+
+    Training is the shape this exists for: a step that submits a single job over the whole
+    prior ensemble, writes a model, and hands the *same* structures to the next step. Nothing
+    about that fits the per-structure lifecycle — there is no input per structure to prepare,
+    no output per structure to parse, and no lineage to assign — so an artifact step runs
+    through :func:`chemrefine.step._run_artifact_step` instead of
+    :func:`~chemrefine.step._run_full_step`.
+
+    A capability detected via ``isinstance``, like every other one here, and one hook for the
+    same reason :class:`NmsCapableEngine` has one: ``prepare`` / ``submit`` / ``parse`` are
+    already :class:`CalculationEngine`'s, and the only thing the orchestrator cannot work out
+    for itself is *where the product is*.
+
+    That hook is what makes the step's outcome decidable. A job that leaves the queue having
+    written nothing is indistinguishable, to the scheduler, from one that succeeded — so the
+    existence of :meth:`artifact` is the success test, and its absence raises
+    :class:`~chemrefine.errors.JobFailureError` **before** any cache is written. No cache is
+    the whole point: ``resume`` then re-runs the step rather than serving a model that was
+    never produced.
+    """
+
+    def artifact(self, ctx: StepContext) -> Path:
+        """Where this step's product lives once its job has run.
+
+        Called both to decide success and — by ``rebuild-cache`` — to adopt a product whose
+        run finished before the driver died, so it must be derivable from ``ctx`` alone
+        rather than from anything the submission returned.
+        """
         ...
 
 
