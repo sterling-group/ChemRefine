@@ -21,6 +21,7 @@ import pytest
 from ase import Atoms
 
 from chemrefine.engines.mlip.calculator import MlipCalculator, build_calculator
+from chemrefine.errors import ConfigError
 
 
 def _fake_module(name: str, **attrs: object) -> types.ModuleType:
@@ -79,31 +80,60 @@ def test_build_mace_default_size_is_none(monkeypatch):
 
 
 def test_build_calculator_unknown_task_raises(monkeypatch):
+    """A `ConfigError` — an unknown task is a config mistake and carries the CLI's exit code."""
     _install_fake_mace(monkeypatch)
-    with pytest.raises(ValueError, match="unsupported MLIP backend"):
+    with pytest.raises(ConfigError, match="unsupported MLIP backend"):
         build_calculator(task_name="mace_weird", model_name="x", device="cpu")
 
 
-def test_build_custom_mace_constructs_with_fake_module(monkeypatch, tmp_path: Path):
-    """``model_path`` selects ``custom_mace`` (``model_paths=`` plural)."""
+@pytest.mark.parametrize("task", ["mace_off", "mace_mp", "mace_omol"])
+def test_a_local_checkpoint_goes_through_the_named_familys_own_loader(
+    monkeypatch, tmp_path: Path, task: str
+):
+    """MACE's foundation loaders take a path, so a checkpoint needs no separate task key.
+
+    ``mace_off``'s ``model`` is typed ``str | Path`` and documented as "path to the model";
+    only a known name or an ``https:`` URL is treated as a download. That is what lets one
+    builder serve released weights and fine-tuned ones alike — and why there is no
+    ``custom_fairchem`` to mirror the old ``custom_mace``.
+    """
     factories = _install_fake_mace(monkeypatch)
     model_file = tmp_path / "fake.model"
     model_file.touch()
-    calc = MlipCalculator(
-        task_name="ignored",
-        model_name="ignored",
-        device="cuda",
-        model_path=str(model_file),
-    )
-    factories["MACECalculator"].assert_called_once_with(model_paths=str(model_file), device="cuda")
-    assert calc.calculator == "CUSTOM_CALC"
+    MlipCalculator(task_name=task, model_name="ignored", device="cuda", model_path=str(model_file))
+    factories[task].assert_called_once_with(model=model_file, device="cuda")
 
 
-def test_build_custom_mace_missing_file_raises(tmp_path: Path):
-    """The ``custom_mace`` builder validates that the model file exists."""
+def test_a_checkpoint_that_is_not_there_names_the_path(tmp_path: Path):
+    """Checked before MACE sees it: its own failure is a `torch.load` traceback.
+
+    That traceback names neither the step nor the option the path came from, which on a
+    pipeline whose training step ran overnight is the difference between a typo and a hunt.
+    """
     missing = tmp_path / "does_not_exist.model"
-    with pytest.raises(FileNotFoundError, match="custom MACE model not found"):
+    with pytest.raises(FileNotFoundError, match=f"MACE checkpoint not found: {missing}"):
         MlipCalculator(task_name="mace_off", model_name="x", model_path=str(missing))
+
+
+def test_the_legacy_alias_without_a_checkpoint_says_what_to_write_instead(monkeypatch):
+    """``custom_mace`` is kept for old configs, and can only mean "load this file".
+
+    Naming it with nothing to load is the one case it cannot serve, so it says which family to
+    name rather than silently picking one — the alias predates the families and has no way to
+    know which was meant.
+    """
+    _install_fake_mace(monkeypatch)
+    with pytest.raises(ConfigError, match="mace_off, mace_mp, mace_omol"):
+        MlipCalculator(task_name="custom_mace", model_name="medium")
+
+
+def test_the_legacy_alias_still_loads_a_checkpoint(monkeypatch, tmp_path: Path):
+    """A v1 config naming ``custom_mace`` + ``model_path`` keeps working unchanged."""
+    factories = _install_fake_mace(monkeypatch)
+    model_file = tmp_path / "fake.model"
+    model_file.touch()
+    MlipCalculator(task_name="custom_mace", model_path=str(model_file), device="cpu")
+    factories["mace_off"].assert_called_once_with(model=model_file, device="cpu")
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +150,48 @@ def _install_fake_fairchem(monkeypatch) -> tuple[MagicMock, MagicMock]:
     monkeypatch.setitem(sys.modules, "fairchem", _fake_module("fairchem", core=core))
     monkeypatch.setitem(sys.modules, "fairchem.core", core)
     return predict.get_predict_unit, fairchem_calc
+
+
+def _install_fake_load_predict_unit(monkeypatch) -> MagicMock:
+    """Add the *other* loader — the one that takes a path — to the fake fairchem.
+
+    It lives in a different submodule from `get_predict_unit`, which is why the builder
+    imports it inside the branch that uses it: a caller running a named release must not need
+    this one to be importable.
+    """
+    loader = MagicMock(return_value="PATH_PREDICTOR")
+    unit = _fake_module("fairchem.core.units.mlip_unit", load_predict_unit=loader)
+    monkeypatch.setitem(sys.modules, "fairchem.core.units", _fake_module("fairchem.core.units"))
+    monkeypatch.setitem(sys.modules, "fairchem.core.units.mlip_unit", unit)
+    return loader
+
+
+def test_build_fairchem_loads_a_local_checkpoint_through_the_path_api(monkeypatch, tmp_path):
+    """A model a training step produced can only be run through `load_predict_unit`.
+
+    `get_predict_unit` resolves a *registry name* and raises `KeyError` for a path — there is
+    no path branch in it — so without this the FAIRChem trainer could produce a checkpoint
+    that nothing in the pipeline could then load.
+    """
+    _get_predict_unit, fairchem_calc = _install_fake_fairchem(monkeypatch)
+    loader = _install_fake_load_predict_unit(monkeypatch)
+    ckpt = tmp_path / "inference_ckpt.pt"
+    ckpt.touch()
+
+    calc = MlipCalculator(task_name="omol", model_path=str(ckpt), device="cpu")
+
+    loader.assert_called_once_with(str(ckpt), device="cpu")
+    _get_predict_unit.assert_not_called()
+    fairchem_calc.assert_called_once_with("PATH_PREDICTOR", task_name="omol")
+    assert calc.calculator == "FAIRCHEM_CALC"
+
+
+def test_build_fairchem_missing_checkpoint_raises(monkeypatch, tmp_path):
+    """Named a checkpoint that is not there — say so, rather than fail inside torch.load."""
+    _install_fake_fairchem(monkeypatch)
+    _install_fake_load_predict_unit(monkeypatch)
+    with pytest.raises(FileNotFoundError, match="FAIRChem checkpoint not found"):
+        MlipCalculator(task_name="omol", model_path=str(tmp_path / "absent.pt"))
 
 
 def test_build_fairchem_routes_through_predictor(monkeypatch):

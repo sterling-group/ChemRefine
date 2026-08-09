@@ -1,11 +1,39 @@
-model: "MACE"
-name: "goat_model"
-valid_fraction: 0.10
-E0s: "average"
-energy_key: "energy_dft"
-forces_key: "forces_dft"
-device: cuda
-batch_size: 10
-max_num_epochs: 100
-swa: True
+# MACE training config, rendered by ChemRefine before the job runs.
+#
+# The $PLACEHOLDERS are substituted with this step's own paths and settings; everything
+# else is ordinary MACE configuration, and every MACE knob is available here. Note what
+# is *absent*: `energy_key` / `forces_key`. ChemRefine writes MACE's own defaults
+# (REF_energy / REF_forces), so naming them is optional rather than required.
+name: $RUN_NAME
+work_dir: $RUN_DIR
+train_file: $TRAIN_SET
+valid_file: $VALID_SET
+device: $DEVICE
+seed: $SEED
 
+# Fine-tune the foundation model named by `model_name`, rather than training from
+# scratch. This is MACE's documented recommendation: on a few dozen structures a
+# from-scratch fit has far too little data, and naive fine-tuning without the replay
+# head causes catastrophic forgetting. `multiheads_finetuning` is already MACE's
+# default — naming the foundation model is what switches fine-tuning on.
+#
+# Budget for it: the replay head trains on a subset of the foundation model's own
+# training data, which MACE downloads on first use. That dominates the cost of a small
+# fine-tune — four structures for ONE epoch measured 2h21m and 2h24m on 4 CPU cores,
+# nearly all of it replay, and the run is a GPU job in any real use. Set
+# `multiheads_finetuning: False` (and then `E0s: average`) for a quick plumbing check;
+# leave it on for a model you intend to use.
+foundation_model: $FOUNDATION_MODEL
+
+# Take the isolated-atom energies from the foundation model. `average` — deriving them
+# from this dataset — is what you would use when training from scratch, and MACE refuses
+# it outright for a multihead fine-tune ("average atomic energies cannot be used for
+# multiheads finetuning"); omitting the key entirely fails too ("Atomic energies must be
+# provided"). For a fine-tune this is the setting that is both accepted and correct.
+E0s: foundation
+
+max_num_epochs: 20
+lr: 1.0e-4
+ema: True
+ema_decay: 0.99
+batch_size: 5

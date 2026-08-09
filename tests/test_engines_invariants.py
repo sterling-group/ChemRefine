@@ -34,7 +34,7 @@ from chemrefine.engines.api import (
     TemplateDriven,
     get_engine,
 )
-from chemrefine.engines.mlip.calculator import requirement_from_options
+from chemrefine.engines.mlip.registry import requirement_from_options
 from chemrefine.errors import ConfigError
 from chemrefine.slurm import script
 from chemrefine.state import PipelineState, StepContext, Structure
@@ -43,6 +43,10 @@ from chemrefine.state import PipelineState, StepContext, Structure
 _REQUIRED_OPTIONS: dict[str, dict[str, object]] = {
     "pyscf": {"basis": "def2-svp", "xc": "pbe"},
     "pyscf-extopt": {"basis": "def2-svp", "xc": "pbe"},
+    # A training step must say what it trains and where. `task_name` has an inference
+    # default (UMA) that would be the wrong thing to *train* by accident, and `device`
+    # cannot default either way without silently costing a GPU or a week of CPU.
+    "mlip-train": {"task_name": "mace_off", "device": "cpu"},
 }
 
 
@@ -222,6 +226,35 @@ def test_the_assembled_array_script_still_runs_its_exit_handler(
     assert "files_copied=" in runlog.read_text(encoding="utf-8"), (
         f"{engine_name}: the array script's _on_exit never fired.\n{runlog.read_text()}"
     )
+
+
+@pytest.mark.parametrize("engine_name", _job_executables())
+def test_an_array_run_block_leaves_its_sentinels_expandable(
+    engine_name: str, tmp_path: Path
+) -> None:
+    """``$INP_NAME`` must reach the script bare, so the array task's assignment applies.
+
+    The array path renders one run block against sentinel paths whose *names* are the bash
+    variables `_run_array` documents (`_execution.py`), and each task assigns them from its own
+    manifest row. Any engine that runs its input through ``shlex.quote`` produces
+    ``'$INP_NAME'`` — single quotes suppress expansion, so every task of the array operates on
+    a file *literally* called ``$INP_NAME`` and the step fails identically for all of them.
+
+    The sibling test above cannot catch it: the exit trap fires whether or not the command it
+    wrapped found its input, so a step can copy its results back and have computed nothing.
+    Asserted for every `JobExecutable` because the trap is what the whole array path shares —
+    the two engines that had this bug were the two most recently written.
+    """
+    engine = get_engine(engine_name)
+    ctx = _ctx(tmp_path, engine_name, {})
+
+    body = engine.run_block(ctx, Path("$INP_NAME"), Path("$OUT_NAME")).body
+
+    for sentinel in ("$INP_NAME", "$OUT_NAME"):
+        assert f"'{sentinel}'" not in body, (
+            f"{engine_name}: {sentinel} is single-quoted in the run block, so the array task's "
+            f"assignment cannot expand it:\n{body}"
+        )
 
 
 @pytest.mark.parametrize("engine_name", _gpu_capable())

@@ -13,8 +13,13 @@ Engines shipped in this package:
   protocol with an MLIP gradient server. The HTTP / backend-server plumbing
   lives in :mod:`chemrefine.engines._backend_server`; only the per-call
   ASE-Atoms → energy/gradient adapter lives here as :mod:`.extopt_calc`.
-* ``MlipTrainEngine`` (``"mlip-train"``) — trains an MLIP on the previous step's
-  structures (energies + forces) via :mod:`.trainer`.
+* ``MlipTrainEngine`` (``"mlip-train"``) — trains or fine-tunes an MLIP on the
+  previous step's structures (energies + forces) and passes them through.
+
+:mod:`.backends` is imported here for its registration side effects. It holds **one module per
+library**, each declaring the environment it needs once and hanging its capabilities off it —
+an ASE calculator, a trainer, or both (:mod:`.registry`). The modules auto-discover, so making
+an MLIP available, or making it trainable, changes no file but its own.
 """
 
 from chemrefine.engines.mlip import backends

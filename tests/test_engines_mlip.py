@@ -29,15 +29,18 @@ from ase import Atoms
 from chemrefine.config import StepConfig
 from chemrefine.engines import _execution as submit
 from chemrefine.engines.api import ENGINES, NmsCapableEngine, get_engine
-from chemrefine.engines.mlip import calculator as mlip_calculator
-from chemrefine.engines.mlip.calculator import BackendSpec, MlipCalculator, build_calculator
+from chemrefine.engines.mlip import registry as mlip_registry
+from chemrefine.engines.mlip.calculator import MlipCalculator, build_calculator
+from chemrefine.engines.mlip.registry import BackendSpec, MlipLibrary
 from chemrefine.errors import ConfigError, OutputParseError
 from chemrefine.state import PipelineState, StepContext, Structure
+
+_TEST_LIB = MlipLibrary(extra="mlip-test", package="test-pkg", import_name="test_mod")
 
 
 def _spec(fn) -> BackendSpec:
     """Wrap a fake builder in a ``BackendSpec`` with placeholder packaging metadata."""
-    return BackendSpec(fn, extra="mlip-test", package="test-pkg", import_name="test_mod")
+    return BackendSpec(_TEST_LIB, builder=fn)
 
 
 # ---------------------------------------------------------------------------
@@ -112,29 +115,44 @@ def test_orca_and_fake_are_not_provisionable():
 
 def test_requirement_from_options_maps_the_task_family():
     """task/task_name aliases resolve; the default (omol) is the FAIRChem env."""
-    from chemrefine.engines.mlip.calculator import requirement_from_options
+    from chemrefine.engines.mlip.registry import requirement_from_options
 
     assert requirement_from_options({"task_name": "sevenn"}).extra == "mlip-sevenn"
     assert requirement_from_options({"task": "chgnet"}).extra == "mlip-chgnet"
     assert requirement_from_options(None).extra == "mlip-fairchem"
 
 
-def test_requirement_from_options_model_path_routes_to_mace():
-    """A ``model_path`` selects custom_mace — same rule as ``build_calculator``."""
-    from chemrefine.engines.mlip.calculator import requirement_from_options
+@pytest.mark.parametrize(
+    ("task", "extra", "import_name"),
+    [("mace_off", "mlip-mace", "mace"), ("omol", "mlip-fairchem", "fairchem")],
+)
+def test_a_named_library_loads_its_own_checkpoint(task: str, extra: str, import_name: str):
+    """`task_name` names the library; `model_path` only says where its weights come from.
 
-    req = requirement_from_options({"task_name": "omol", "model_path": "/some/ckpt.model"})
-    assert (req.extra, req.import_name) == ("mlip-mace", "mace")
+    Dispatching on the checkpoint — as the rule did when MACE was the only library that could
+    produce one — loads a model another step just trained with the *wrong* library, and the
+    failure is a tensor-shape error deep inside someone else's loader.
+    """
+    from chemrefine.engines.mlip.registry import requirement_from_options
+
+    req = requirement_from_options({"task_name": task, "model_path": "/some/ckpt"})
+    assert (req.extra, req.import_name) == (extra, import_name)
 
 
 # ---------------------------------------------------------------------------
 # Backend registry dispatch — task_name keys the registry, model_name = weights
-# (the per-builder behaviour is covered in test_engines_mlip_calculator.py)
+# (the per-builder behaviour is covered in test_engines_mlip_registry.py)
 # ---------------------------------------------------------------------------
 
 
 def test_build_calculator_unknown_backend_raises():
-    with pytest.raises(ValueError, match="unsupported MLIP backend"):
+    """A `ConfigError`, not a bare `ValueError` — an unknown task is a config mistake.
+
+    It matters because this is reached from `preflight_backends`: `chemrefine.errors` promises
+    every exception carries the exit code the CLI maps, and only `ChemRefineError` does. A
+    `ValueError` escaping there reaches the user as a traceback instead of a status.
+    """
+    with pytest.raises(ConfigError, match="unsupported MLIP backend"):
         build_calculator(task_name="not_a_real_task", model_name="x")
 
 
@@ -142,7 +160,7 @@ def test_build_calculator_dispatches_by_task_name():
     """``task_name`` keys the registry and forwards task_name/model_name."""
     seen: list[dict] = []
     with patch.dict(
-        mlip_calculator._BACKENDS,
+        mlip_registry._BACKENDS,
         {"mace_off": _spec(_recording_builder(seen, "MACE_OFF_CALC"))},
         clear=False,
     ):
@@ -152,30 +170,46 @@ def test_build_calculator_dispatches_by_task_name():
     assert seen[0]["model_name"] == "medium"
 
 
-def test_build_calculator_routes_custom_mace_when_model_path_given(tmp_path: Path):
-    """A ``model_path`` selects the custom_mace builder regardless of task_name."""
-    model_file = tmp_path / "fake.model"
+@pytest.mark.parametrize("task", ["mace_off", "omol"])
+def test_the_checkpoint_reaches_the_builder_the_task_name_chose(tmp_path: Path, task: str):
+    """The checkpoint is *forwarded*, never dispatched on — for every library alike.
+
+    This is the whole of the rule, and both halves matter: `task_name` picks the builder, and
+    `model_path` arrives at whichever one that was. The builder then loads it with its own
+    library, which is why no library needs a `custom_<lib>` task key.
+    """
+    model_file = tmp_path / "fake.ckpt"
     model_file.touch()
     seen: list[dict] = []
     with patch.dict(
-        mlip_calculator._BACKENDS,
-        {"custom_mace": _spec(_recording_builder(seen, "CUSTOM_MACE_CALC"))},
+        mlip_registry._BACKENDS,
+        {task: _spec(_recording_builder(seen, "CALC"))},
         clear=False,
     ):
-        result = build_calculator(
-            task_name="mace_off", model_name="ignored", model_path=str(model_file)
-        )
-    assert result == "CUSTOM_MACE_CALC"
+        result = build_calculator(task_name=task, model_name="", model_path=str(model_file))
+    assert result == "CALC"
+    assert seen[0]["task_name"] == task
     assert seen[0]["model_path"] == str(model_file)
 
 
+def test_a_selection_that_names_no_library_uses_the_options_default(tmp_path: Path):
+    """`build_calculator`'s default is read off `MlipOptions`, not restated beside it.
+
+    It is public API a user's `step{N}.py` may call without a YAML in sight, so it needs a
+    default of its own — and a second copy of the string is how a template comes to run a
+    different model from the config that describes it.
+    """
+    from chemrefine.engines.mlip.calculator import DEFAULT_TASK
+    from chemrefine.engines.mlip.options import MlipOptions
+
+    assert MlipOptions().task_name == DEFAULT_TASK
+
+
 def test_register_backend_appends_to_registry():
-    """A new ``@register_backend`` is reachable by its ``task_name`` key with its metadata."""
-    mlip_calculator.register_backend(
-        "test_new_backend", extra="mlip-test", package="test-pkg", import_name="test_mod"
-    )(lambda **_kw: "NEW")
+    """A newly registered calculator is reachable by its ``task_name`` with its metadata."""
+    _TEST_LIB.calculator("test_new_backend")(lambda **_kw: "NEW")
     try:
-        spec = mlip_calculator.backend_spec("test_new_backend")
+        spec = mlip_registry.backend_spec("test_new_backend")
         assert (spec.extra, spec.package, spec.import_name) == (
             "mlip-test",
             "test-pkg",
@@ -183,13 +217,13 @@ def test_register_backend_appends_to_registry():
         )
         assert build_calculator(task_name="test_new_backend", model_name="x") == "NEW"
     finally:
-        mlip_calculator._BACKENDS.pop("test_new_backend", None)
+        mlip_registry._BACKENDS.pop("test_new_backend", None)
 
 
 def test_mlip_calculator_wrapper_routes_through_build_calculator():
     """``MlipCalculator`` is a thin alias — exercises the registry indirectly."""
     with patch.dict(
-        mlip_calculator._BACKENDS,
+        mlip_registry._BACKENDS,
         {"mace_off": _spec(lambda **_kw: "WRAP_CALC")},
         clear=False,
     ):
@@ -419,7 +453,7 @@ def test_mlip_extopt_calculator_from_args_builds_instance():
 
     args = parse_args(["--backend", "mlip", "--model", "small", "--task-name", "mace_off"])
     with patch.dict(
-        mlip_calculator._BACKENDS,
+        mlip_registry._BACKENDS,
         {"mace_off": _spec(lambda **_kw: "MACE_CALC")},
         clear=False,
     ):
@@ -480,12 +514,40 @@ def test_mlip_server_cli_from_options_emits_all_set_flags():
 
 
 def test_mlip_server_cli_from_options_omits_falsy_values():
+    """An unset knob contributes no flag, so the server falls back to its own default."""
     from chemrefine.engines.mlip.extopt_calc import MlipExtOptCalculator
 
     tokens = MlipExtOptCalculator.server_cli_from_options(
-        {"model_name": "", "task_name": None, "device": None, "model_path": None}
+        {"model_name": "", "task_name": "", "device": None, "model_path": None}
     )
     assert tokens == []
+
+
+def test_the_extopt_server_is_told_the_same_backend_the_preflight_provisioned(tmp_path: Path):
+    """The CLI the step launches and the env it was provisioned into must agree.
+
+    This is the crossing the old three-valued rule was dropped at. `ExtOptEngine` builds the
+    server command from `validated.model_dump()`, which materialises every field — so a step
+    that named only a `model_path` was provisioned into MACE (from "the YAML stated no task")
+    and launched a server that resolved the *default* library, failing with "needs
+    'fairchem-core'" for a step that had named a MACE checkpoint.
+
+    Asserted end to end — through `backend_requirement` and through the argv — because each
+    read the selection separately, and agreeing at one of them is what made it look green.
+    """
+    from chemrefine.engines.mlip.extopt_calc import MlipExtOptCalculator
+    from chemrefine.engines.mlip.options import MlipOptions
+
+    ckpt = tmp_path / "trained.model"
+    ckpt.touch()
+    raw = {"task_name": "mace_off", "model_path": str(ckpt), "device": "cpu"}
+
+    engine = get_engine("mlip-extopt")
+    assert engine.backend_requirement(raw).extra == "mlip-mace"
+
+    tokens = MlipExtOptCalculator.server_cli_from_options(MlipOptions.from_raw(raw).model_dump())
+    assert tokens[tokens.index("--task-name") + 1] == "mace_off"
+    assert tokens[tokens.index("--model-path") + 1] == str(ckpt)
 
 
 def _calc_data(charge: int = 0, multiplicity: int = 1):
@@ -511,7 +573,7 @@ def test_mlip_extopt_calculator_calc_converts_units():
 
     with (
         patch.dict(
-            mlip_calculator._BACKENDS,
+            mlip_registry._BACKENDS,
             {"mace_off": _spec(lambda **_kw: object())},  # sentinel calculator
             clear=False,
         ),
@@ -541,7 +603,7 @@ def test_mlip_extopt_calculator_calc_stamps_charge_and_spin():
 
     with (
         patch.dict(
-            mlip_calculator._BACKENDS,
+            mlip_registry._BACKENDS,
             {"omol": _spec(lambda **_kw: object())},
             clear=False,
         ),

@@ -10,10 +10,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from chemrefine.engines.mlip.calculator import register_backend
+from chemrefine.engines.mlip.registry import MlipLibrary
+
+ORB = MlipLibrary(extra="mlip-orb", package="orb-models", import_name="orb_models")
+"""The one declaration of what provides this library."""
 
 
-@register_backend("orb", extra="mlip-orb", package="orb-models", import_name="orb_models")
+@ORB.calculator("orb")
 def _build_orb(*, model_name: str = "", device: str = "cuda", **_: Any) -> Any:
     """ORB potential; ``model_name`` picks a loader from ``orb_models...pretrained``."""
     from orb_models.forcefield import pretrained

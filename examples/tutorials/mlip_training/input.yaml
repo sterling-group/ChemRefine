@@ -32,18 +32,26 @@ steps:
     engine: orca
     sample: { method: min, count: 0 }
 
-  # Train a MACE model; the step4.inp template is the raw MACE training YAML.
+  # Fine-tune a MACE model on those labels. `task_name` picks the library that trains
+  # (the same word that picks the one that runs); `model_name` is the foundation model
+  # it starts from. Both, and `device`, are required — there is no default worth
+  # guessing for any of them. The step4.yaml template is MACE's own training config.
+  # The structures pass through unchanged, so step 5 still gets all of them.
   - step: 4
     engine: mlip-train
-    operation: mlip_train
+    options: { task_name: mace_off, model_name: medium, device: cuda }
     sample: { method: min, count: 0 }
 
-  # Validate the trained model via the MLIP gradient server.
+  # Validate the trained model via the MLIP gradient server. The model's path is
+  # predictable before the training has run — `<step dir>/train/train[_stagetwo].model` —
+  # so it can be written here. `task_name` is the same word step 4 trained with: it names
+  # the library, and `model_path` only says to take that library's weights from a file.
+  # Retraining step 4 re-runs this step: its cache key covers the model's contents.
   - step: 5
     operation: opt_sp
     engine: mlip-extopt
     options:
-      model_name: ../step4/checkpoints_dir/goat_model_run-123_stagetwo.model
       task_name: mace_off
+      model_path: ./outputs/step4/train/train_stagetwo.model
       device: cuda
     sample: { method: min, count: 0 }

@@ -1,162 +1,70 @@
 """Backend-agnostic factory for ASE calculators across MLIP libraries.
 
-A *registry of small builders* pattern: each supported MLIP library
-contributes a tiny ``_build_<name>`` function decorated with
-:func:`register_backend`, living in its own module under
-:mod:`chemrefine.engines.mlip.backends`. Adding a new MLIP backend is
-**one small dropped-in module** — auto-discovered, no edits anywhere else.
+The public face of the MLIP backends: :func:`build_calculator` dispatches a task/model
+selection to the right library's builder, and :class:`MlipCalculator` wraps it for callers
+that want an object. Users' ``step{N}.py`` templates and the ExtOpt server adapter both come
+through here, so the direct engine and the gradient server share one selection path.
 
-The public entry point is :func:`build_calculator` (used by users'
-templates and by the ExtOpt server adapter). The :class:`MlipCalculator`
-class is a thin wrapper that calls :func:`build_calculator` under the
-hood, so the direct engine and the ExtOpt server share one selection path.
+*Which* library a selection resolves to, and what it can do, belongs to
+:mod:`chemrefine.engines.mlip.registry` — one registry shared with training, so ``task_name``
+names one library whether a step runs a model or trains one. This module only builds.
 
 Two axes map the same way across libraries (the mace↔fairchem equivalence):
 ``task_name`` is the **method/head** that keys the registry; ``model_name`` is
 the **weights** handed to that builder.
 
-==================  ===============  =========================================
-``task_name`` (key) backend          ``model_name`` (weights)
-==================  ===============  =========================================
-``omol`` … ``omc``  ``_build_fairchem`` FAIRChem checkpoint (``uma-s-1``/``esen-…``)
-``mace_off``        ``mace_off``     MACE-OFF size (``small``/``medium``/``large``)
-``mace_mp``         ``mace_mp``      MACE-MP size / named model
-``mace_omol``       ``mace_omol``    MACE-OMOL size (``extra_large``)
-``sevenn``          ``sevenn``       SevenNet id (``7net-0``)
-``orb``             ``orb``          ORB loader (``orb_v3_…``)
-``chgnet``          ``chgnet``       — (single model)
-*(model_path set)*  ``custom_mace``  local MACE checkpoint
-==================  ===============  =========================================
+==================  ===================  =========================================
+``task_name`` (key) backend              ``model_name`` (weights)
+==================  ===================  =========================================
+``omol`` … ``omc``  ``_build_fairchem``  FAIRChem checkpoint (``uma-s-1``/``esen-…``)
+``mace_off``        ``_build_mace``      MACE-OFF size (``small``/``medium``/``large``)
+``mace_mp``         ``_build_mace``      MACE-MP size / named model
+``mace_omol``       ``_build_mace``      MACE-OMOL size (``extra_large``)
+``sevenn``          ``sevenn``           SevenNet id (``7net-0``)
+``orb``             ``orb``              ORB loader (``orb_v3_…``)
+``chgnet``          ``chgnet``           — (single model)
+==================  ===================  =========================================
 
-The 7 FAIRChem heads (``omol``/``omat``/``odac``/``oc20``/``oc22``/``oc25``/
-``omc``) all register the one ``_build_fairchem`` and pass the head straight
-through to ``FAIRChemCalculator``. Backend imports happen inside each builder so
-this module imports cleanly even when the optional MLIP deps aren't installed;
-:func:`build_calculator` converts a missing library into an error naming the
-``chemrefine[mlip-<backend>]`` extra to install (every backend is a dedicated-env
-extra — their torch/e3nn trees conflict; ``[mlip]`` = FAIRChem/UMA).
+``model_path`` is the third knob and appears in no row, because it selects nothing: it is
+handed to whichever builder ``task_name`` chose, and that library loads the file itself. A
+model fine-tuned by an ``mlip-train`` step is therefore run by naming the library that trained
+it — the same word, in the same place, as for a released one.
 
-Adding a new backend = a new ``backends/<name>.py`` (decorated builder) — dropped in and
-auto-discovered. The decorator carries the backend's packaging metadata — the pip
-extra that provides it, the pip distribution named in the actionable import error, and the
-top-level module the provisioner probes — so the backend module is the **single** declaration
-point (no central table anywhere) and a missing library is reported with the extra to
-install::
+Backend imports happen inside each builder so this module imports cleanly even when the
+optional MLIP deps aren't installed; :func:`build_calculator` converts a missing library into
+an error naming the ``chemrefine[mlip-<backend>]`` extra to install (every backend is a
+dedicated-env extra — their torch/e3nn trees conflict; ``[mlip]`` = FAIRChem/UMA).
 
-    from chemrefine.engines.mlip.calculator import register_backend
-
-    @register_backend(
-        "my_mlip", extra="mlip-my_mlip", package="my-mlip-lib", import_name="my_mlip_library"
-    )
-    def _build_my_mlip(*, model_name="", device="cuda", **_):
-        from my_mlip_library import MyCalculator
-
-        return MyCalculator(model=model_name, device=device)
+Adding a backend is one dropped-in module under
+:mod:`chemrefine.engines.mlip.backends` — see :mod:`chemrefine.engines.mlip.registry` for the
+shape.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ase import Atoms
 
-from chemrefine.engines.api import BackendRequirement
 from chemrefine.engines.mlip.options import MlipOptions
+from chemrefine.engines.mlip.registry import backend_spec, calculator_for
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_TASK: str = MlipOptions.model_fields["task_name"].default
+"""The library a caller who names none gets — read off the options model, not restated.
 
-# ---------------------------------------------------------------------------
-# Backend registry
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class BackendSpec:
-    """One registered MLIP backend: its builder plus the packaging metadata.
-
-    ``extra`` is the pip extra that provides the backend (``chemrefine[<extra>]`` — also the
-    managed-env name the provisioner uses); ``package`` is the pip distribution named in the
-    actionable import error; ``import_name`` is the top-level module the provisioner probes
-    with :func:`importlib.util.find_spec`. Declared once, at ``@register_backend`` in the
-    backend's own module — there is no central backend table.
-    """
-
-    builder: Callable[..., Any]
-    extra: str
-    package: str
-    import_name: str
-
-
-_BACKENDS: dict[str, BackendSpec] = {}
-
-
-def register_backend(
-    name: str, *, extra: str, package: str, import_name: str
-) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Register a builder + its packaging metadata under ``name``; return the function.
-
-    The builder takes keyword arguments (``task_name``, ``model_name``, ``device``,
-    ``model_path``, plus a catch-all ``**_``) and returns an ASE calculator; its lazy backend
-    import needs no guard — :func:`build_calculator` converts an ``ImportError`` into the
-    actionable install hint from this metadata. Stackable: applying the decorator twice
-    registers one function under two keys (the FAIRChem builder uses this — one function,
-    every head).
-    """
-
-    def _wrap(fn: Callable[..., Any]) -> Callable[..., Any]:
-        _BACKENDS[name] = BackendSpec(fn, extra=extra, package=package, import_name=import_name)
-        return fn
-
-    return _wrap
-
-
-def backend_spec(task_name: str, model_path: str | Path | None = None) -> BackendSpec:
-    """The :class:`BackendSpec` a task/model selection dispatches to.
-
-    The one dispatch rule, shared by :func:`build_calculator` and the provisioner: a
-    ``model_path`` selects ``custom_mace`` (a local checkpoint), else ``task_name`` keys the
-    registry. Raises :class:`ValueError` listing known keys if nothing is registered.
-    """
-    key = "custom_mace" if model_path is not None else task_name
-    spec = _BACKENDS.get(key)
-    if spec is None:
-        raise ValueError(
-            f"unsupported MLIP backend: task_name={task_name!r} (known: {sorted(_BACKENDS)})"
-        )
-    return spec
-
-
-def registered_extras() -> frozenset[str]:
-    """Every pip extra a registered MLIP backend declares (drives CLI listing/validation)."""
-    return frozenset(spec.extra for spec in _BACKENDS.values())
-
-
-def requirement_from_options(options: dict[str, Any] | None) -> BackendRequirement:
-    """The :class:`BackendRequirement` a step's raw ``options`` imply.
-
-    Reads the task/model selection through :class:`~chemrefine.engines.mlip.options.MlipOptions`
-    and maps it through :func:`backend_spec` — so the env requirement always matches what
-    :func:`build_calculator` would actually load.
-
-    Through the model, not by hand. ``preflight_backends`` calls this, so a second copy of
-    the ``task``/``task_name`` alias rules here could accept a step that the direct engine's
-    template render then rejects — the fail-fast check at the top of the run passing a step
-    that dies in ``prepare``, which is exactly what it exists to prevent.
-    """
-    opts = MlipOptions.from_raw_lenient(options)
-    spec = backend_spec(opts.task_name, opts.model_path)
-    return BackendRequirement(extra=spec.extra, import_name=spec.import_name)
+This function is public API a user's ``step{N}.py`` may call without going through the YAML at
+all, so it needs a default of its own; taking it from the field means the template and the
+config cannot come to disagree about what "unspecified" runs."""
 
 
 def build_calculator(
     *,
-    task_name: str,
+    task_name: str = DEFAULT_TASK,
     model_name: str = "",
     device: str = "cuda",
     model_path: str | Path | None = None,
@@ -164,15 +72,24 @@ def build_calculator(
 ) -> Any:
     """Dispatch to the builder registered for ``task_name``; return the calculator.
 
-    ``task_name`` is the registry key (the method/head — a FAIRChem head,
-    ``mace_off``…, ``chgnet``, ``sevenn``, ``orb``). ``model_name`` is the weights
-    handed to it. A ``model_path`` selects ``custom_mace`` (a local checkpoint).
-    Raises :class:`ValueError` listing known keys if nothing is registered; a missing
-    backend library surfaces as an ``ImportError`` naming the extra to install.
+    ``task_name`` names the library (a FAIRChem head, ``mace_off``…, ``chgnet``, ``sevenn``,
+    ``orb``) and is the **only** thing that selects one. ``model_name`` is the weights handed
+    to it, and ``model_path`` says to take those weights from a local file instead — both are
+    passed to the builder, which loads whichever it was given with *its own* library.
+
+    So running a fine-tuned model means naming the library that produced it — explicitly.
+    Inferring the library from the checkpoint is not possible: a ``.pt`` file does not say
+    which loader it belongs to, and handing it to the wrong one fails as a tensor-shape error
+    deep inside that library rather than as anything naming the actual mistake.
+
+    Raises :class:`~chemrefine.errors.ConfigError` listing known keys if nothing is
+    registered; a missing backend *library* surfaces as an ``ImportError`` naming the extra
+    to install.
     """
-    spec = backend_spec(task_name, model_path)
+    spec = backend_spec(task_name)
+    builder = calculator_for(task_name)
     try:
-        return spec.builder(
+        return builder(
             task_name=task_name,
             model_name=model_name,
             device=device,
@@ -204,11 +121,12 @@ class MlipCalculator:
     def __init__(
         self,
         *,
-        model_name: str,
-        task_name: str = "omol",
+        model_name: str = "",
+        task_name: str = DEFAULT_TASK,
         device: str = "cuda",
         model_path: str | Path | None = None,
     ):
+        """``task_name`` selects the library; ``model_path`` only says where its weights are."""
         self.model_name = model_name
         self.task_name = task_name
         self.device = device

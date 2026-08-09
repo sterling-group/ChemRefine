@@ -5,16 +5,19 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from chemrefine.engines.mlip.calculator import register_backend
+from chemrefine.engines.mlip.registry import MlipLibrary
+
+CHGNET = MlipLibrary(extra="mlip-chgnet", package="chgnet", import_name="chgnet")
+"""The one declaration of what provides this library."""
 
 
-@register_backend("chgnet", extra="mlip-chgnet", package="chgnet", import_name="chgnet")
+@CHGNET.calculator("chgnet")
 def _build_chgnet(*, model_path: str | Path | None = None, device: str = "cuda", **_: Any) -> Any:
     """CHGNet universal potential (a local checkpoint via ``model_path``).
 
-    Note: ``model_path`` reaches here only if a caller selects ``chgnet``
-    explicitly with a checkpoint; the YAML ``model_path`` shortcut routes to
-    ``custom_mace`` (matching main). The canonical import is
+    ``model_path`` reaches here whenever a step names ``task_name: chgnet`` with one, which is
+    the same rule every library follows: the task names the library, and the path only says
+    where its weights come from. The canonical import is
     ``from chgnet.model import CHGNet, CHGNetCalculator``.
     """
     from chgnet.model import CHGNet, CHGNetCalculator

@@ -844,9 +844,13 @@ def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
 
     # Fake mace.calculators so MlipExtOptCalculator.from_args succeeds without
     # pulling a real backend in.
+    # All three families, because one builder imports them together — a fake with only the
+    # one this test calls would fail at the import rather than at anything it asserts.
     mace_factory = MagicMock(return_value="MACE_OFF_CALC")
     mace_mod = types.ModuleType("mace.calculators")
     mace_mod.mace_off = mace_factory
+    mace_mod.mace_mp = MagicMock(return_value="MACE_MP_CALC")
+    mace_mod.mace_omol = MagicMock(return_value="MACE_OMOL_CALC")
     mace_parent = types.ModuleType("mace")
     mace_parent.calculators = mace_mod
     monkeypatch.setitem(sys.modules, "mace", mace_parent)

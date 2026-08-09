@@ -28,7 +28,7 @@ from chemrefine.config import (
 from chemrefine.engines._job import gpus_from_options
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import get_engine
-from chemrefine.engines.mlip.options import MlipOptions
+from chemrefine.engines.mlip.options import MlipOptions, MlipTrainOptions
 from chemrefine.engines.orca.inspect import inspect_template
 from chemrefine.engines.pyscf.options import PyscfOptions
 from chemrefine.io import read_xyz_frames
@@ -217,6 +217,9 @@ REQUIRED = {
     "nms": {"target", "displacement_value", "num_random_displacements"},
     "mlip": {"model_name", "task_name", "device", "cores"},
     "pyscf": {"method", "xc", "basis", "device", "cores"},
+    # A training step must name all three: which library trains, what it starts from, and
+    # where it runs. None of them has a default, so an example that omitted one would not run.
+    "trainer": {"task_name", "model_name", "device"},
 }
 
 TESTS_ONLY = {
@@ -236,7 +239,15 @@ TESTS_ONLY = {
         "backend_python",
         "strict_scf",
     },
-    "trainer": {"valid_fraction", "seed", "job_name", "device"},
+    "trainer": {
+        "valid_fraction",
+        "test_fraction",
+        "seed",
+        "gpus",
+        "cores",
+        "model_path",
+        "backend_python",
+    },
 }
 
 _SAMPLE_FIELDS = (
@@ -251,8 +262,7 @@ _UNIVERSE = {
     "mlip": set(MlipOptions.model_fields),
     # `cores` is read by the script engine (ScriptEngine.pal), not PyscfOptions.
     "pyscf": set(PyscfOptions.model_fields) | {"cores"},
-    # mlip-train reads its options as a raw dict (trainer.py), not a model.
-    "trainer": TESTS_ONLY["trainer"],
+    "trainer": set(MlipTrainOptions.model_fields),
 }
 
 
@@ -283,7 +293,12 @@ def test_examples_cover_required_knobs() -> None:
             engine = step.get("engine", "")
             if step.get("nms"):
                 used["nms"] |= options
-            if engine.startswith("mlip"):
+            # `mlip-train` before the prefix test: its options are a different model with
+            # different required knobs, and a prefix match would file them as the inference
+            # engine's — letting a knob count as demonstrated by a step that cannot take it.
+            if engine == "mlip-train":
+                used["trainer"] |= options
+            elif engine.startswith("mlip"):
                 used["mlip"] |= options
             if engine.startswith("pyscf"):
                 used["pyscf"] |= options
@@ -319,7 +334,11 @@ def test_examples_cover_required_variants() -> None:
             step_overrides |= set(step) & {"charge", "multiplicity"}
 
     assert engines >= {"orca", "mlip", "mlip-extopt", "mlip-train", "pyscf"}
-    assert operations >= {"goat", "docker", "solvator", "pes", "opt_sp", "sp", "mlip_train"}
+    # `mlip_train` is not here: it was never an operation the way the others are — it named
+    # a *step kind*, which `engine: mlip-train` already says. The config normalizer still
+    # rewrites the old spelling, and `test_config.py` covers that; an example carrying it
+    # would only be demonstrating a legacy form to new readers.
+    assert operations >= {"goat", "docker", "solvator", "pes", "opt_sp", "sp"}
     assert sample_variants >= {
         ("boltzmann",),
         ("min", "count"),

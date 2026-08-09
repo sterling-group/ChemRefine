@@ -82,7 +82,7 @@ class MlipExtOptCalculator(ComputeBackend):
         parser.add_argument(
             "--model-path",
             default=None,
-            help="Custom MACE checkpoint path (selects the custom_mace backend)",
+            help="Local checkpoint to load instead of --model, with the --task-name library",
         )
 
     @classmethod
