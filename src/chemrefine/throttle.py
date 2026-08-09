@@ -108,9 +108,7 @@ class StallDeadline:
 class Throttler:
     """Track active jobs against CPU-core and GPU budgets."""
 
-    def __init__(
-        self, *, max_cores: int, gpus: GpuBudget = NO_GPUS, poll_interval: float = 10.0
-    ):
+    def __init__(self, *, max_cores: int, gpus: GpuBudget = NO_GPUS, poll_interval: float = 10.0):
         if max_cores < 1:
             raise ValueError(f"max_cores must be >= 1; got {max_cores}")
         if gpus.count < 0:
