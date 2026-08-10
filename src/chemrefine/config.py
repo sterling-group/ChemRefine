@@ -560,7 +560,7 @@ def _resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
     found. Naming the model a previous step produced (``./outputs/step2/train/train.model``)
     is the obvious thing to write, so it has to work from anywhere.
     """
-    updates: dict[str, Path] = {}
+    updates: dict[str, Path | list[StepConfig]] = {}
     if not cfg.template_dir.is_absolute():
         updates["template_dir"] = base / cfg.template_dir
     if not cfg.output_dir.is_absolute():
@@ -571,7 +571,7 @@ def _resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
         updates["input"] = base / cfg.input
     steps = [_resolve_step_option_paths(step, base=base) for step in cfg.steps]
     if any(new is not old for new, old in zip(steps, cfg.steps, strict=True)):
-        updates["steps"] = steps  # type: ignore[assignment]
+        updates["steps"] = steps
     return cfg.model_copy(update=updates) if updates else cfg
 
 
