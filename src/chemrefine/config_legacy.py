@@ -132,7 +132,7 @@ def _normalize_nms_keys(s: dict[str, Any]) -> None:
 
 
 def _normalize_step(step: Any) -> Any:
-    """Rewrite one legacy step dict to the current schema (helper for :func:`_normalize_legacy`)."""
+    """Rewrite one legacy step dict to the current schema (helper for :func:`normalize`)."""
     if not isinstance(step, dict):
         return step
     s = dict(step)

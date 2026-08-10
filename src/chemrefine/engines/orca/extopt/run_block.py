@@ -60,9 +60,9 @@ def _build_extopt_run_block(
       exiting fast if the server process dies during startup.
 
     The ``cleanup`` stops the server — ``kill -TERM`` + ``wait``, which gives it a chance to
-    release GPU memory — and :func:`chemrefine.slurm._run_body_lines` interpolates it into the
-    script's one ``EXIT`` handler, so it runs on any exit path including SLURM cancellation and
-    Ctrl-C.
+    release GPU memory — and :func:`chemrefine.slurm.script._run_body_lines` interpolates it
+    into the script's one ``EXIT`` handler, so it runs on any exit path including SLURM
+    cancellation and Ctrl-C.
 
     Returning teardown as *data* is the whole point of the two-field type. A ``trap
     _on_extopt_exit EXIT INT TERM`` emitted inline here would *replace* the surrounding

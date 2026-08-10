@@ -2,7 +2,7 @@
 
 Legacy ``mlff`` / ``mlff-extopt`` / ``mlff-train`` engine keys (and other v1.3.1
 spellings) are rewritten to these canonical names by the config normalizer
-(:func:`chemrefine.config._normalize_legacy`) — the single place that knows the
+(:func:`chemrefine.config_legacy.normalize`) — the single place that knows the
 old vocabulary — so existing YAML keeps working.
 
 Engines shipped in this package:

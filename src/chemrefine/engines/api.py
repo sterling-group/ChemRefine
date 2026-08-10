@@ -41,7 +41,7 @@ One job, one product          :class:`CalculationEngine` +    ``prepare`` / ``su
 * **Register** — import the class in ``engines/<name>/__init__.py``; the bare-named package is
   **auto-discovered** when :mod:`chemrefine.engines` loads (registration is a side effect), so
   nothing outside the new package changes. Legacy YAML spellings map to the canonical name in
-  :func:`chemrefine.config._normalize_legacy`.
+  :func:`chemrefine.config_legacy.normalize`.
 * **Resources** — an external binary reads its path from ``ctx.executables.get("<name>")``; an
   importable backend ships as a ``pip install chemrefine[<name>]`` extra (imported lazily).
 * **Tests** go in ``tests/test_engines_<name>*.py``, and every engine ships a trimmed
@@ -394,7 +394,7 @@ ENGINES: dict[str, type[CalculationEngine]] = {}
 
 Only **canonical** names live here. Old spellings (``mlff*``, ``dft``) are
 rewritten to canonical names by the config normalizer
-(:func:`chemrefine.config._normalize_legacy`) — the single place that knows the
+(:func:`chemrefine.config_legacy.normalize`) — the single place that knows the
 legacy vocabulary — before any lookup, so the registry stays alias-free.
 """
 

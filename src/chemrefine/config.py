@@ -474,7 +474,7 @@ class Config(BaseModel):
         """Reject directory paths carrying characters that break the generated bash.
 
         These three paths are interpolated into the generated SLURM script (see
-        :func:`chemrefine.slurm._run_body_lines`), which exports them inside
+        :func:`chemrefine.slurm.script._run_body_lines`), which exports them inside
         double quotes — so a metacharacter would end the quoted string or introduce a
         command substitution. Refused at config-load time rather than producing a
         corrupt — or actively dangerous — job script much later.
