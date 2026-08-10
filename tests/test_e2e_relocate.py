@@ -39,11 +39,11 @@ The ORCA-only list above is for replays that submit through a stubbed `run_batch
 parse-only rebuild needs no backend at all, so the drift detector — the one thing standing
 between a recording and becoming a fossil — covers every case that has an archive.
 
-`mlip_train` is the one live case with no archive, and cannot have one: an artifact step's
-success test is its *product*, a 4.7 MB MACE checkpoint, and recordings are capped at 1 MB
-so they stay reviewable in git. A rebuild replay of it would have to ship the model it is
-meant to prove was produced. It is covered live (`pytest -m integration`) and offline by
-`tests/test_step_artifact.py`, which drives the same lifecycle with a stub product."""
+`mlip_train` has an archive but sits out of this list: the parse-only rebuild of its step 3
+validates a fingerprint that covers the trained model's **bytes** (`option_file_digests`),
+and the 4.7 MB model cannot live in a 1 MB recording — no stub can hash like the original.
+Its offline coverage is `test_e2e_replay.test_mlip_train_full_pipeline`, a fresh replay
+that computes its fingerprints from a stubbed model self-consistently."""
 
 
 def _with_step_update(config: Config, step_number: int, **updates: object) -> Config:

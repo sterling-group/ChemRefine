@@ -77,19 +77,6 @@ _REQUIRES = {
 }
 
 
-_UNRECORDABLE = {"mlip_train"}
-"""Live cases ``--record`` deliberately skips, because a replay of them cannot exist.
-
-An artifact step's success test is its **product** — for ``mlip_train`` a 4.7 MB MACE
-checkpoint — and recordings are capped at 1 MB (``replay.MAX_ARCHIVE_BYTES``) so they stay
-reviewable in git. An archive without the model replays into a step that correctly reports
-having produced nothing, so packing one would ship a recording guaranteed to fail. Recording
-it anyway is worse than not: the archive would sit in the tree looking like coverage.
-
-The lifecycle is covered where it can be: live here, and offline in
-``tests/test_step_artifact.py``, which drives the same path with a stub product."""
-
-
 def _skip_unless_available(requirements: set[str]) -> None:
     """Skip a case whose backend is absent — or fail, under ``CHEMREFINE_REQUIRE_LIVE``.
 
@@ -190,6 +177,6 @@ def test_live_case(name: str, tmp_path: Path, request: pytest.FixtureRequest) ->
             tensor_files = list((outputs / "step1").rglob("tensors/*.npz"))
             assert tensor_files, "save_tensors must deliver the tensors/ directory"
 
-    if request.config.getoption("--record") and name not in _UNRECORDABLE:
+    if request.config.getoption("--record"):
         archive = replay.pack_case(tmp_path, name)
         assert archive.is_file()

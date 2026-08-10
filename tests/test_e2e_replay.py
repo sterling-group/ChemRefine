@@ -9,16 +9,18 @@ fixtures never stales them.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import pytest
 from replay import ReplayCase, ReplaySubmitter, extract_case, replay_run_batch
 
-from chemrefine import pipeline
+from chemrefine import ids, pipeline
 from chemrefine.config import Config, load_config
 from chemrefine.engines.orca.output import parse_output
 from chemrefine.io import read_xyz_frames
+from chemrefine.state import StepInputs
 
 RUN_BATCH = "chemrefine.engines._execution.run_batch"
 
@@ -249,3 +251,94 @@ def test_mlip_extopt_renders_server_block_and_parses(
     (survivor,) = outcomes[0].state.structures
     assert survivor.converged
     assert survivor.energy_hartree is not None
+
+
+# ---------------------------------------------------------------------------
+# mlip_train: label -> fine-tune (artifact step) -> run the trained model
+# ---------------------------------------------------------------------------
+
+
+class _StubModelSubmitter(ReplaySubmitter):
+    """`ReplaySubmitter` that materialises the one artifact too big to record.
+
+    The archive keeps everything the parsers read. The trained model is 4.7 MB of torch
+    weights that nothing offline ever *parses* — the pipeline checks it exists and digests
+    its bytes — so recording it would dwarf every other archive combined for a file whose
+    content no offline assertion can see. Stub bytes keep both facts true; the real model
+    is the live tier's business, and the parse-only rebuild that genuinely needs its bytes
+    (step 3's fingerprint) is excluded in `test_e2e_relocate.ALL_CASES` for the same reason.
+    """
+
+    def _satisfy(self, inputs: StepInputs) -> None:
+        super()._satisfy(inputs)
+        for _inp, out, sid in inputs.files:
+            if sid == ids.TRAINING_ID and not out.exists():
+                out.write_bytes(b"replayed-stub-model")
+
+
+def test_mlip_train_full_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Label -> train -> run-the-model, replayed with no MACE installed anywhere.
+
+    This is the one offline test in which `MlipTrainEngine` runs its whole lifecycle
+    against a real captured run: the dataset really gets written from the labelled
+    ensemble, the real MACE template really renders (placeholder validation included),
+    the one job flows through the scheduler seam under the training id, the artifact
+    decides success, the sidecar cites the model, and the next step consumes it.
+    """
+    case = extract_case("mlip_train", tmp_path)
+    submitter = _StubModelSubmitter(case)
+    monkeypatch.setattr(RUN_BATCH, submitter)
+    config = load_config(case.config_path)
+    for step in (1, 2, 3):
+        config = _with_backend_python(config, step)
+
+    outcomes = pipeline.run(config)
+
+    # One job over the whole ensemble, under the training id — not one per structure.
+    train_calls = [
+        call for call in submitter.calls if any(sid == ids.TRAINING_ID for *_x, sid in call.files)
+    ]
+    assert len(train_calls) == 1 and len(train_calls[0].files) == 1
+
+    # The rendered trainer config names the dataset the step just wrote.
+    run_dir = case.output_dir / "step2" / "train"
+    rendered = (run_dir / "step2_train.yaml").read_text()
+    assert str(run_dir / "train.xyz") in rendered and (run_dir / "train.xyz").is_file()
+    assert str(run_dir / "valid.xyz") in rendered and (run_dir / "valid.xyz").is_file()
+
+    # The sidecar cites what was produced, and for which library.
+    sidecar = json.loads((run_dir / "trained_model.json").read_text())
+    assert sidecar["task_name"] == "mace_off"
+    assert sidecar["backend"] == "mlip-mace"
+    assert sidecar["n_structures"] == 4
+
+    # The ensemble passes through training untouched; step 3 runs all of it on the model.
+    labelled = [s.id for s in outcomes[0].state.structures]
+    assert [s.id for s in outcomes[1].state.structures] == labelled
+    rendered3 = (case.output_dir / "step3" / "0" / "step3_0.py").read_text()
+    assert str(run_dir / "train.model") in rendered3, "step 3 loads the model step 2 produced"
+    assert len(outcomes[2].state.structures) == 4
+    assert all(s.energy_hartree is not None for s in outcomes[2].state.structures)
+
+
+def test_mlip_train_second_run_hits_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A re-run serves every step from cache — including the training step.
+
+    The training step's key covers the config and the parents; the consuming step's key
+    covers the model's bytes (`option_file_digests`). Both must hold across a resume, or a
+    pipeline with a trained model in the middle would retrain on every invocation.
+    """
+    case = extract_case("mlip_train", tmp_path)
+    submitter = _StubModelSubmitter(case)
+    monkeypatch.setattr(RUN_BATCH, submitter)
+    config = load_config(case.config_path)
+    for step in (1, 2, 3):
+        config = _with_backend_python(config, step)
+    first = pipeline.run(config)
+    calls_after_first = len(submitter.calls)
+
+    second = pipeline.run(config)
+
+    assert all(outcome.cache_hit for outcome in second)
+    assert len(submitter.calls) == calls_after_first, "a cache hit submits nothing"
+    assert [s.id for s in second[-1].state.structures] == [s.id for s in first[-1].state.structures]
