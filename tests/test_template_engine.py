@@ -235,6 +235,25 @@ def test_positions_of_the_wrong_shape_are_refused(positions: list):
         _atoms_from_output({"energy_hartree": -1.0, "positions_angstrom": positions}, fallback=seed)
 
 
+def test_atoms_from_output_copies_rather_than_mutating_the_seed():
+    """An optimised geometry must land on a copy of the seed, never on the seed.
+
+    The fallback is the pipeline's own structure, shared by reference; written in place,
+    the input geometry every later reader sees — including the `parents_digest` behind
+    downstream cache keys — would silently become the output geometry. The `.copy()` is
+    the whole protection (`Structure.atoms` cannot be write-locked the way the force
+    arrays are), so this pins it.
+    """
+    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    before = seed.get_positions().copy()
+    moved = [[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]]
+    updated = _atoms_from_output(
+        {"energy_hartree": -1.0, "positions_angstrom": moved}, fallback=seed
+    )
+    assert np.array_equal(seed.get_positions(), before)
+    assert np.array_equal(updated.get_positions(), np.asarray(moved))
+
+
 def test_a_ragged_gradient_is_refused():
     """The other half of the same shape contract — `np.asarray` would raise bare, too."""
     with pytest.raises(OutputParseError, match="gradient_hartree_per_bohr"):

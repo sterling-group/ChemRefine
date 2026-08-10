@@ -89,6 +89,21 @@ def test_displace_along_mode_shape_mismatch_raises():
         nms.displace_along_mode(np.zeros((2, 3)), np.zeros((3, 3)), displacement=1.0)
 
 
+def test_displaced_copies_rather_than_mutating_the_parent():
+    """A displaced child must be built on a copy — the parent's positions are shared.
+
+    `Structure.atoms` travels by reference and, unlike the force arrays, cannot have its
+    write flag cleared (ASE writes through it), so the `.copy()` is the whole protection.
+    Dropped, nothing crashes: the parent's geometry silently becomes the child's, and
+    `parents_digest` re-fingerprints every downstream step's cache key.
+    """
+    parent = _h2("0")
+    before = parent.atoms.get_positions().copy()
+    child_atoms = nms._displaced(parent, before + 1.0)
+    assert np.array_equal(parent.atoms.get_positions(), before)
+    assert np.array_equal(child_atoms.get_positions(), before + 1.0)
+
+
 def test_select_displacements_minimum_displaces_every_imaginary():
     out = nms.select_displacements(
         _h2("0"), {5: -42.0}, _modes(6), nms.NmsOptions(target="minimum"), np.random.default_rng(0)

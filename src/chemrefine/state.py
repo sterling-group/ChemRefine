@@ -54,6 +54,17 @@ class Structure:
 
     id: str
     atoms: Atoms
+    """The geometry — shared by reference, so **copy before deriving a mutated one**.
+
+    ``frozen=True`` cannot reach inside an :class:`~ase.Atoms`, and unlike the two array
+    fields below its position buffer cannot have its write flag cleared — ASE's own code
+    writes through it. The protection is therefore a rule rather than a flag: any code
+    that moves atoms or attaches labels works on ``struct.atoms.copy()``, never in place
+    (see :func:`chemrefine.nms._displaced` and the trainer dataset writers).
+    :func:`chemrefine.cache.parents_digest` hashes these positions into every downstream
+    step's cache key, so an in-place write would not crash anything — it would silently
+    re-fingerprint work that was already done. Each copy site carries a test asserting
+    the source structure comes through untouched."""
     parent_id: str | None = None
     energy_hartree: float | None = None
     forces_ev_per_a: NDArray[np.float64] | None = None

@@ -36,6 +36,7 @@ from chemrefine.engines.mlip.backends.mace import (
     FORCES_KEY,
     SPIN_KEY,
     MaceTrainer,
+    _to_atoms,
 )
 from chemrefine.engines.mlip.registry import requirement_from_options
 from chemrefine.engines.mlip.training import DatasetSplit, TrainingPlan, split_structures
@@ -188,6 +189,24 @@ def test_charge_and_multiplicity_reach_the_dataset(tmp_path: Path):
 
     assert frame.info[CHARGE_KEY] == -1.0
     assert frame.info[SPIN_KEY] == 3.0, "total_spin is the multiplicity, not the unpaired count"
+
+
+def test_labelling_copies_rather_than_mutating_the_pipeline_structure(tmp_path: Path):
+    """The dataset labels must land on a copy — the structure goes on through the pipeline.
+
+    `_to_atoms` attaches MACE's label keys and the charge/spin; done in place, every
+    structure the trainer saw would carry them onward, and the positions buffer it shares
+    is the one `parents_digest` hashes into downstream cache keys. The `.copy()` is the
+    whole protection (`Structure.atoms` cannot be write-locked the way the force arrays
+    are), so this pins it.
+    """
+    struct = _labelled("0")
+    before = struct.atoms.get_positions().copy()
+    labelled = _to_atoms(struct, _plan(tmp_path))
+    assert struct.atoms.info == {}
+    assert FORCES_KEY not in struct.atoms.arrays
+    assert np.array_equal(struct.atoms.get_positions(), before)
+    assert ENERGY_KEY in labelled.info and FORCES_KEY in labelled.arrays
 
 
 def test_energies_are_converted_to_electronvolts(tmp_path: Path):
