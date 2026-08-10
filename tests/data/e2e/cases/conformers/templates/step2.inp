@@ -1,4 +1,3 @@
-!OPT FREQ PBE def2-SVP TightSCF
+!OPT FREQ XTB2
 
 %pal nprocs 2 end
-%maxcore 1500
