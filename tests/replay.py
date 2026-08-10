@@ -154,12 +154,13 @@ def relocate(case: ReplayCase) -> None:
 # the pipeline does to a tree *after* its jobs finish is replayed, not recorded.
 #
 # NMS promotion is the case where that distinction bites. Once a parent is resolved, its
-# canonical `.out` is a copy of the winning child's, and round 1 has moved into `attemptK/`.
-# Packing that tree yields an archive whose round-1 submission returns a structure already at
-# the target, so a fresh replay resolves it in one round and never runs round 2 — the behaviour
-# the recording exists to exercise. `nms_minimum` is therefore packed from a tree whose
-# canonical output is still round 1's; `rebuild_nms` re-derives the children from `attemptK/`,
-# which is the same answer by a different route.
+# canonical `.out` is a copy of the winning child's, and round 1 has moved into `attempt1/`.
+# Packing that tree as-is would yield an archive whose round-1 submission returns a structure
+# already at the target, so a fresh replay would resolve it in one round and never run round 2
+# — the behaviour the recording exists to exercise. `pack_case` therefore restores the
+# pre-promotion view while staging: wherever a structure directory holds an `attempt1/`, the
+# attempt's loose files (round 1's originals) overwrite their canonical namesakes, and the
+# children stay inside the attempt, where round 2's submissions are served from.
 #
 # The post-promotion tree is covered where it belongs: `tests/test_nms.py` pins the passthrough
 # reading `attemptK/resolution.json`, and `pytest -m integration` runs it against real ORCA.
@@ -238,6 +239,14 @@ def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
                 shutil.copy2(path, target)
             kept += 1
         assert kept, f"nothing matched the keep patterns under {outputs}"
+
+        # Restore the pre-promotion view (see the module comment above): round 1's own
+        # outputs back at the canonical paths, so a replayed round-1 submission returns the
+        # structure that *triggers* the resolution rather than its winner.
+        for attempt in sorted(captured.rglob("attempt1")):
+            for item in attempt.iterdir():
+                if item.is_file() and (attempt.parent / item.name).exists():
+                    shutil.copy2(item, attempt.parent / item.name)
 
         dest_dir.mkdir(parents=True, exist_ok=True)
         archive = dest_dir / f"{name}.tar.xz"
