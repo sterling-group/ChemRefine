@@ -60,7 +60,7 @@ class ExtOptOrcaEngine(OrcaEngine):
         validated = self.options_cls.from_raw(ctx.step_cfg.options)
         tokens = self.calculator_cls.server_cli_from_options(validated.model_dump())
         interpreter = _provision.launcher_for(self, ctx.step_cfg.options)
-        return run_block._server_command(
+        return run_block.server_command(
             backend=self.backend, extra_tokens=tokens, interpreter=interpreter
         )
 

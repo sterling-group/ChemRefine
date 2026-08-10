@@ -17,7 +17,7 @@ from chemrefine.state import RunBlock
 _SERVER_READY_TIMEOUT_SECONDS: int = 120
 
 
-def _server_command(
+def server_command(
     *,
     backend: str,
     extra_tokens: list[str],
