@@ -52,3 +52,35 @@ jobs:
       - name: Audit for known vulnerabilities
         # --skip-editable: the local chemrefine checkout isn't on PyPI.
         run: pip-audit --skip-editable
+
+      # The environment audit above covers what the base install resolves to — which
+      # excludes every heavy extra, so the MLIP/PySCF stacks' pins (torch, e3nn,
+      # gpu4pyscf, …) were never audited by anything. Installing them is out of the
+      # question here, but auditing needs only names and versions: resolve each extra
+      # with `--dry-run --report` (metadata only, the same trick ci.yml's
+      # extras-resolve uses — no torch wheel is downloaded), merge the pinned
+      # closures, and audit the list with `--no-deps`, which is sound because the
+      # report already *is* the fully-resolved set for this platform.
+      - name: Audit every extra's resolved closure
+        run: |
+          extras=$(python -c "import tomllib;print(' '.join(sorted(tomllib.load(open('pyproject.toml','rb'))['project']['optional-dependencies'])))")
+          for extra in $extras; do
+            echo "::group::resolve [$extra]"
+            pip install --dry-run --quiet --report "resolve-$extra.json" ".[$extra]"
+            echo "::endgroup::"
+          done
+          python - <<'PY'
+          import glob, json
+
+          pins: set[str] = set()
+          for path in glob.glob("resolve-*.json"):
+              for item in json.load(open(path))["install"]:
+                  meta = item["metadata"]
+                  if meta["name"].lower() == "chemrefine":  # local checkout, not on PyPI
+                      continue
+                  pins.add(f"{meta['name']}=={meta['version']}")
+          with open("resolved-extras.txt", "w") as fh:
+              fh.write("\n".join(sorted(pins)) + "\n")
+          print(f"{len(pins)} pinned requirement(s) to audit")
+          PY
+          pip-audit --no-deps -r resolved-extras.txt
