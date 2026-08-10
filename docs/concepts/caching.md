@@ -103,6 +103,23 @@ mistaken for one that was merely interrupted.
 Writes are atomic (temp file + rename), so an interrupted write never leaves a
 half-baked cache.
 
+### One driver per output tree
+
+Everything above assumes a single driver, and the assumption is load-bearing:
+the manifest fingerprint proves *what configuration* produced the outputs on
+disk, not *whether the run that produced them is still alive*. A live driver
+mid-step leaves exactly the state an interrupted one does, so a second driver
+resuming over it would read half-written outputs as failures, archive them out
+from under the running jobs, and resubmit duplicates.
+
+So each run holds an advisory lock — `<output_dir>/.chemrefine.lock`, naming
+its pid, host and start time — for its whole duration, and a second run against
+the same tree fails fast with exit code `10` instead. A lock whose holder died
+on the same host is detected and reclaimed automatically; one left by a run
+killed on *another* host cannot be liveness-checked from here and must be
+deleted by hand — see
+[troubleshooting](../user-guide/troubleshooting.md#another-run-holds-this-output-tree).
+
 ## Result records
 
 Beside every parsed output the pipeline drops `step{N}_{id}.result.json` — the

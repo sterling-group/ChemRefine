@@ -17,6 +17,7 @@ wrapper script or a SLURM chain can branch on it without parsing log text.
 | `7` | Cache corrupt or unwritable | An interrupted write, a full disk, or a cache written by a different ChemRefine version | `chemrefine rebuild-cache N` re-parses from the outputs already on disk without re-running anything |
 | `8` | Wait deadline expired | Nothing finished for `job_timeout_seconds` | The queue has stalled, not merely slowed — a step that keeps completing jobs restarts the clock each time. Check whether the jobs are stuck (`squeue -u $USER`), or raise the limit. Only reachable when you set `job_timeout_seconds`; the default waits indefinitely |
 | `9` | Backend env could not be built | `chemrefine backends install <extra>` failed — no network on the node, a resolver conflict, a full disk, or an env tool that is a shell function rather than a binary on `PATH` | The message quotes the command that failed. Run it on a machine with internet (on HPC: a login node); the half-built env is removed, so a re-run starts clean |
+| `10` | Another run holds this output tree | A second `chemrefine` was pointed at an `output_dir` a first one is still working in — a double-submitted driver script, or a second terminal because the first "looks hung" while waiting on the queue | Wait for the other run. If it is known dead, see [another run holds this output tree](#another-run-holds-this-output-tree) |
 
 ## A step halted with pending failures
 
@@ -68,6 +69,30 @@ Two things deliberately do *not* reuse that work:
 If you would rather drive it by hand — to inspect what survived before
 continuing — `chemrefine rebuild-cache N` re-parses step N's outputs without
 submitting anything, and ledgers whatever is missing.
+
+## Another run holds this output tree
+
+Every run takes an advisory lock (`<output_dir>/.chemrefine.lock`) for its whole
+duration, and a second run pointed at the same tree exits with code `10` instead
+of starting. That refusal is protecting your data: the on-disk state of a *live*
+run is indistinguishable from an interrupted one, so a second driver would
+re-parse outputs the first one's jobs are still writing, archive their
+directories out from under those jobs, and resubmit duplicates.
+
+The lock names its holder — pid, host, start time. What to do depends on that
+holder:
+
+- **It is alive**: wait for it, or stop it deliberately, then re-run.
+- **It died on *this* host** (killed, OOM): nothing to do — a run on the same
+  host detects the dead pid and reclaims the lock by itself.
+- **It died on *another* host** (a batch job's node was drained, `kill -9` on a
+  different login node): liveness cannot be probed across hosts, so the lock
+  stays. Once you know that run is dead, delete the lock file and re-run:
+
+```bash
+rm outputs/.chemrefine.lock
+chemrefine resume input.yaml
+```
 
 ## A structure keeps failing to converge
 

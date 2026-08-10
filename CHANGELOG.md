@@ -24,6 +24,13 @@ for the full map.
 
 ### Added
 
+- One driver per output tree: every run holds an advisory lock
+  (`<output_dir>/.chemrefine.lock`) for its whole duration, and a second
+  `chemrefine` pointed at the same tree exits with code `10` instead of
+  archiving and resubmitting the first one's in-flight work. A lock left by a
+  driver that died on the same host is reclaimed automatically; one left on
+  another host must be deleted by hand once that run is known dead (the error
+  says so).
 - Engine plugin system: a `CalculationEngine` protocol plus a registry, with
   four documented base shapes for new engines (`engines/api.py`). Plugins and
   MLIP backends are **auto-discovered** — a new engine package or backend
