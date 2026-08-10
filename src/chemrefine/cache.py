@@ -188,8 +188,12 @@ def option_file_digests(options: Mapping[str, Any] | None) -> dict[str, str]:
     existing rather than by remembering to edit this. The cost of the generality is bounded
     — only values that resolve to a real file are read, and a step naming none pays nothing.
 
-    Relative paths resolve against the working directory, which is how the engines already
-    read them (``backends/mace.py``'s bare ``Path(model_path)``). A value that is not an
+    ``model_path`` — the shipped option this exists for — arrives here already absolute: the
+    config loader resolves it against the config file's directory
+    (:func:`chemrefine.config._resolve_step_option_paths`), exactly as it resolves the
+    config's own paths, so the digest and the engine that later loads the file read the same
+    one. Any *other* value that happens to name a file resolves against the working
+    directory, nothing having declared a better anchor for it. A value that is not an
     existing file contributes **no entry at all** rather than an empty one: "not a path" and
     "a path that is missing" are different claims, and only the latter should later change
     the key when the file appears.
