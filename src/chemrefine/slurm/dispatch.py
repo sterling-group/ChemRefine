@@ -50,7 +50,32 @@ def _current_user() -> str:
         return str(os.getuid())
 
 
-_JOB_ID_RE = re.compile(r"\b(\d+)\b")
+_PARSABLE_ID_RE = re.compile(r"^(\d+)(?:;.*)?$")
+"""One line of ``sbatch --parsable`` output: the job id alone, or ``id;cluster`` on a
+federation."""
+
+_SUBMITTED_LINE_RE = re.compile(r"Submitted batch job (\d+)")
+"""sbatch's human-facing line — the fallback for a site wrapper that swallows
+``--parsable``."""
+
+
+def _parse_job_id(stdout: str) -> str:
+    """The job id in sbatch's output — anchored, never "the first integer anywhere".
+
+    Both submitters pass ``--parsable``, so the id is normally a line of its own. The scan
+    is per line rather than one search over the whole output because site wrappers prepend
+    banners, and an unanchored search took the first number in one: a "90% of quota used"
+    warning became job 90, the throttler polled a job that did not exist, ``squeue``
+    reported it absent, and the whole batch was ledgered ``MISSING_OUTPUT`` while the real
+    jobs ran. The human ``Submitted batch job N`` line stays as an explicit fallback for a
+    wrapper that swallows the flag entirely.
+    """
+    for line in stdout.splitlines():
+        if m := _PARSABLE_ID_RE.match(line.strip()):
+            return m.group(1)
+    if m := _SUBMITTED_LINE_RE.search(stdout):
+        return m.group(1)
+    raise JobSubmissionError(f"could not parse job ID from sbatch output: {stdout!r}")
 
 _LOCAL_JOB_PREFIX = "local-"
 """Synthetic job-ID prefix used by :func:`_submit_local`.
@@ -390,7 +415,7 @@ def submit(
         return _submit_local(script_path, env=env)
     try:
         result = subprocess.run(  # noqa: S603
-            [sbatch_cmd, str(script_path)],
+            [sbatch_cmd, "--parsable", str(script_path)],
             capture_output=True,
             text=True,
             check=True,
@@ -402,10 +427,7 @@ def submit(
             + (f"\nsbatch said: {detail}" if detail else "")
             + "\n(to run without SLURM set `dispatch: local` in the YAML)"
         ) from e
-    m = _JOB_ID_RE.search(result.stdout)
-    if not m:
-        raise JobSubmissionError(f"could not parse job ID from sbatch output: {result.stdout!r}")
-    job_id = m.group(1)
+    job_id = _parse_job_id(result.stdout)
     logger.info("submitted %s as job %s", script_path, job_id)
     return job_id
 
@@ -595,6 +617,7 @@ def submit_array(
         result = subprocess.run(  # noqa: S603
             [
                 sbatch_cmd,
+                "--parsable",
                 f"--export=ALL,CR_MANIFEST={manifest}",
                 f"--array=0-{n_tasks - 1}%{max_concurrent}",
                 str(script_path),
@@ -610,10 +633,7 @@ def submit_array(
             + (f"\nsbatch said: {detail}" if detail else "")
             + "\n(to run without SLURM set `dispatch: local` in the YAML)"
         ) from e
-    m = _JOB_ID_RE.search(result.stdout)
-    if not m:
-        raise JobSubmissionError(f"could not parse job ID from sbatch output: {result.stdout!r}")
-    job_id = m.group(1)
+    job_id = _parse_job_id(result.stdout)
     logger.info(
         "submitted %s as array job %s (%d tasks, max %d concurrent)",
         script_path,

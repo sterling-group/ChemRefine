@@ -225,7 +225,22 @@ def test_build_script_without_extra_header_fields_is_engine_neutral(tmp_path: Pa
 
 
 def test_submit_parses_job_id_from_sbatch_output():
+    """The human `Submitted batch job N` line still parses — the fallback for a site
+    wrapper that swallows `--parsable` — and the flag itself is requested."""
     fake = MagicMock(returncode=0, stdout="Submitted batch job 12345\n", stderr="")
+    with (
+        patch("chemrefine.slurm.dispatch.shutil.which", return_value="/usr/bin/sbatch"),
+        patch.object(subprocess, "run", return_value=fake) as run,
+    ):
+        assert slurm.submit("script.slurm") == "12345"
+    assert "--parsable" in run.call_args[0][0]
+
+
+def test_submit_takes_the_parsable_id_not_the_first_integer():
+    """A wrapper banner with a number in it must not become the job id: the old
+    unanchored search read this stdout as job 90, so the throttler polled a job that
+    didn't exist and the whole batch was ledgered as missing output."""
+    fake = MagicMock(returncode=0, stdout="sbatch: 90% of quota used\n12345;cluster\n", stderr="")
     with (
         patch("chemrefine.slurm.dispatch.shutil.which", return_value="/usr/bin/sbatch"),
         patch.object(subprocess, "run", return_value=fake),
@@ -694,6 +709,7 @@ def test_submit_array_passes_array_and_export_flags(tmp_path: Path):
         )
     assert job_id == "777"
     argv = run.call_args[0][0]
+    assert "--parsable" in argv
     assert f"--export=ALL,CR_MANIFEST={tmp_path / 'm.0'}" in argv
     assert "--array=0-9%4" in argv
 
