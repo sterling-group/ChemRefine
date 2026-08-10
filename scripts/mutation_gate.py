@@ -180,10 +180,11 @@ MUTATIONS = (
 
 
 #: Everything a pytest run reads. ``examples`` belongs here because the shipped tutorials
-#: are living documentation and several tests resolve their templates; an incomplete copy
-#: fails on its own, which :func:`_assert_baseline_is_green` catches whatever the missing
-#: input turns out to be.
-_INPUTS = ("src", "tests", "examples", "pyproject.toml")
+#: are living documentation and several tests resolve their templates; ``README.md`` and
+#: ``docs`` because ``test_docs_examples`` validates every full config their prose shows.
+#: An incomplete copy fails on its own, which :func:`_assert_baseline_is_green` catches
+#: whatever the missing input turns out to be — it is how these two earned their entries.
+_INPUTS = ("src", "tests", "examples", "docs", "README.md", "pyproject.toml")
 
 
 def _copy_tree(dest: Path) -> None:
