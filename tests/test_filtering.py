@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import numpy as np
 import pytest
 from ase import Atoms
 
@@ -114,6 +115,22 @@ def test_min_window_negative_results_are_sorted():
     assert state.structures[0].id == "a"
 
 
+def test_min_window_keeps_a_structure_exactly_on_the_boundary():
+    """The window is inclusive: an energy exactly at ``min + window`` survives.
+
+    The boundary energy is computed with the same operations on the same float64
+    values the filter uses, so the equality is exact rather than approximate — which
+    is what makes this pin the ``<=`` and not merely a point near it. One ulp past
+    the boundary must be dropped, so the test fails in both directions of a
+    boundary edit.
+    """
+    min_e = -1.0
+    boundary = min_e + 1.0 / HARTREE_TO_KCALMOL
+    r = _results(("a", min_e), ("edge", boundary), ("past", np.nextafter(boundary, np.inf)))
+    state = apply(r, MinSample(method="min", window_kcalmol=1.0))
+    assert [s.id for s in state.structures] == ["a", "edge"]
+
+
 # ---------------------------------------------------------------------------
 # boltzmann
 # ---------------------------------------------------------------------------
@@ -187,6 +204,19 @@ def test_max_window_keeps_structures_within_window_of_max():
     assert ids[0] == "c"  # highest first
     assert "b" in ids
     assert "a" not in ids
+
+
+def test_max_window_keeps_a_structure_exactly_on_the_boundary():
+    """The window is inclusive on this side too: exactly ``max - window`` survives.
+
+    Mirrors the ``min`` boundary test — same exact-float construction, so it pins the
+    ``>=`` itself: the edge structure is kept and one ulp below it is dropped.
+    """
+    max_e = -0.5
+    boundary = max_e - 1.0 / HARTREE_TO_KCALMOL
+    r = _results(("edge", boundary), ("past", np.nextafter(boundary, -np.inf)), ("c", max_e))
+    state = apply(r, MaxSample(method="max", window_kcalmol=1.0))
+    assert [s.id for s in state.structures] == ["c", "edge"]
 
 
 # ---------------------------------------------------------------------------

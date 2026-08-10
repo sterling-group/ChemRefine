@@ -89,6 +89,22 @@ MUTATIONS = (
         "a 99% filter silently keeps less than it promises",
     ),
     Mutation(
+        id="min-window-boundary",
+        path="src/chemrefine/filtering.py",
+        old="if cast(float, getattr(s, energy_attr)) <= min_e + window_h",
+        new="if cast(float, getattr(s, energy_attr)) < min_e + window_h",
+        breaks="a structure exactly on the window edge is silently dropped, so the filter "
+        "keeps less than it promises",
+    ),
+    Mutation(
+        id="max-window-boundary",
+        path="src/chemrefine/filtering.py",
+        old=">= max_e - window_h]",
+        new="> max_e - window_h]",
+        breaks="a structure exactly on the window edge is silently dropped, so the filter "
+        "keeps less than it promises — the high-energy mirror of min-window-boundary",
+    ),
+    Mutation(
         id="succeeded-ignores-convergence",
         path="src/chemrefine/lifecycle.py",
         old="return s.terminated_normally is not False and s.converged is not False",
