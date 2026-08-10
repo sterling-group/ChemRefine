@@ -1,0 +1,20 @@
+# Capture case: one UMA single point. The FAIRChem head is ChemRefine's *default* backend
+# (`task_name` defaults to omol), so the release gate must run it for real at least once —
+# the checkpoint resolution through HuggingFace, the calculator build, and the energy path
+# are all things only the real stack can prove. One water molecule keeps it to the model
+# load plus a second of compute.
+template_dir: ./templates
+output_dir: ./outputs
+dispatch: auto
+max_cores: 4
+
+input: ./water.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  - step: 1
+    engine: mlip
+    operation: sp
+    options: { task_name: omol, model_name: uma-s-1p2, device: cpu, cores: 2 }
+    sample: { method: min, count: 1 }

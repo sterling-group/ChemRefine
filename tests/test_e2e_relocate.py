@@ -25,12 +25,25 @@ RUN_BATCH = "chemrefine.engines._execution.run_batch"
 
 ORCA_CASES = ["conformers", "nms_minimum", "ts_pes", "host_guest"]
 
-ALL_CASES = [*ORCA_CASES, "mlip_screen", "mlip_extopt", "pyscf_sp", "pyscf_extopt"]
+ALL_CASES = [
+    *ORCA_CASES,
+    "mlip_screen",
+    "mlip_extopt",
+    "fairchem_sp",
+    "pyscf_sp",
+    "pyscf_extopt",
+]
 """Every recorded case, for the checks that only re-parse.
 
 The ORCA-only list above is for replays that submit through a stubbed `run_batch`; a
 parse-only rebuild needs no backend at all, so the drift detector — the one thing standing
-between a recording and becoming a fossil — covers all eight."""
+between a recording and becoming a fossil — covers every case that has an archive.
+
+`mlip_train` is the one live case with no archive, and cannot have one: an artifact step's
+success test is its *product*, a 4.7 MB MACE checkpoint, and recordings are capped at 1 MB
+so they stay reviewable in git. A rebuild replay of it would have to ship the model it is
+meant to prove was produced. It is covered live (`pytest -m integration`) and offline by
+`tests/test_step_artifact.py`, which drives the same lifecycle with a stub product."""
 
 
 def _with_step_update(config: Config, step_number: int, **updates: object) -> Config:

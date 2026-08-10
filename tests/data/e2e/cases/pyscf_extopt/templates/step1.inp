@@ -1,3 +1,3 @@
-!ExtOpt OPT
+!ExtOpt OPT NumFreq
 
-%pal nprocs 1 end
+%pal nprocs 2 end

@@ -1,11 +1,20 @@
-# Capture case: ORCA ExtOpt optimisation of ethanol over a CPU MACE server.
+# Capture case: ORCA ExtOpt optimisation + NumFreq of water over a CPU MACE server.
+#
+# The NumFreq half is the point: the ExtOpt engines are NMS-capable *because* ORCA computes
+# the numerical Hessian over the server's gradients, and no fake-server contract can produce
+# ORCA's NumFreq output. (`NumFreq`, spelled out — a bare `FREQ` is silently dropped in
+# ExtOpt mode, since ORCA has no analytic Hessian to fall back to.) Water keeps that Hessian
+# to ~20 gradient calls against the one resident model. The pyscf_extopt case runs the same
+# template shape and additionally asserts the modes are all real — MACE-small's own surface
+# gives optimised water a spurious imaginary bend, which is the model's physics, not the
+# protocol's.
 template_dir: ./templates
 output_dir: ./outputs
 executables: { orca: orca }  # the live harness injects the resolved absolute path
 dispatch: auto
 max_cores: 8
 
-input: ./ethanol.xyz
+input: ./water.xyz
 charge: 0
 multiplicity: 1
 

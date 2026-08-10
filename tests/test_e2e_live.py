@@ -68,12 +68,26 @@ _REQUIRES = {
     "nms_minimum": {"orca"},
     "ts_pes": {"orca"},
     "host_guest": {"orca"},
+    "fairchem_sp": {"fairchem"},
     "mlip_screen": {"mace"},
     "mlip_train": {"mace"},
     "mlip_extopt": {"orca", "mace"},
     "pyscf_sp": {"pyscf"},
     "pyscf_extopt": {"orca", "pyscf"},
 }
+
+
+_UNRECORDABLE = {"mlip_train"}
+"""Live cases ``--record`` deliberately skips, because a replay of them cannot exist.
+
+An artifact step's success test is its **product** — for ``mlip_train`` a 4.7 MB MACE
+checkpoint — and recordings are capped at 1 MB (``replay.MAX_ARCHIVE_BYTES``) so they stay
+reviewable in git. An archive without the model replays into a step that correctly reports
+having produced nothing, so packing one would ship a recording guaranteed to fail. Recording
+it anyway is worse than not: the archive would sit in the tree looking like coverage.
+
+The lifecycle is covered where it can be: live here, and offline in
+``tests/test_step_artifact.py``, which drives the same path with a stub product."""
 
 
 def _skip_unless_available(requirements: set[str]) -> None:
@@ -91,6 +105,11 @@ def _skip_unless_available(requirements: set[str]) -> None:
         missing.append("ORCA on PATH")
     if "mace" in requirements and not _backend_available("mace", "mlip-mace"):
         missing.append("a mace stack (importable or `chemrefine backends install mlip-mace`)")
+    if "fairchem" in requirements and not _backend_available("fairchem", "mlip-fairchem"):
+        missing.append(
+            "a fairchem stack (importable or `chemrefine backends install mlip-fairchem`; "
+            "the UMA checkpoint also needs HuggingFace access to facebook/UMA)"
+        )
     if "pyscf" in requirements and not _backend_available("pyscf", "pyscf"):
         missing.append("pyscf (importable or `chemrefine backends install pyscf`)")
     if not missing:
@@ -136,6 +155,23 @@ def test_live_case(name: str, tmp_path: Path, request: pytest.FixtureRequest) ->
         assert ts.imaginary_freqs is not None and len(ts.imaginary_freqs) == 1
     elif name == "host_guest":
         assert outcomes[1].state.structures, "solvator output must parse"
+    elif name == "fairchem_sp":
+        # UMA's omol head on water sits near -76.4 Eh (-2079.9 eV). Asserting the number is
+        # what makes this a test of the *default backend* rather than of the harness: the
+        # checkpoint resolved through HuggingFace, the head built, and the energy is one a
+        # quantum chemist would recognise for water.
+        (structure,) = outcomes[0].state.structures
+        assert structure.energy_hartree is not None
+        assert -77.0 < structure.energy_hartree < -76.0, structure.energy_hartree
+    elif name == "mlip_extopt":
+        # The NumFreq half of the template ran through the server: ORCA's numerical Hessian
+        # over the backend's gradients. No fake-server contract can produce this output, so
+        # this is the proof of the NMS-capability claim on the ExtOpt engines. Only *parsed*
+        # is asserted here — MACE-small's surface gives optimised water a large spurious
+        # imaginary bend (verified against HF through the identical server machinery, which
+        # gives all-real textbook modes) — the clean-minimum assertion lives on pyscf_extopt.
+        (structure,) = outcomes[0].state.structures
+        assert structure.imaginary_freqs is not None, "NumFreq must yield parsed frequencies"
     elif name in ("pyscf_sp", "pyscf_extopt"):
         # Water/HF/STO-3G is ~-74.96 Eh. Asserting the number, not just that something
         # parsed, is the point of running PySCF for real: the contract goldens for both
@@ -144,7 +180,16 @@ def test_live_case(name: str, tmp_path: Path, request: pytest.FixtureRequest) ->
         (structure,) = outcomes[0].state.structures
         assert structure.energy_hartree is not None
         assert -75.5 < structure.energy_hartree < -74.5, structure.energy_hartree
+        if name == "pyscf_extopt":
+            # NumFreq over the server's HF gradients: an optimised minimum on a clean
+            # surface must show computed, all-real modes.
+            assert structure.imaginary_freqs is not None, "NumFreq must yield frequencies"
+            assert structure.imaginary_freqs == {}, "HF water minimum has no imaginary modes"
+            # `save_tensors: true` delivers through `output_dirs` — the one copy-back path
+            # that moves a whole directory, live-proven only here.
+            tensor_files = list((outputs / "step1").rglob("tensors/*.npz"))
+            assert tensor_files, "save_tensors must deliver the tensors/ directory"
 
-    if request.config.getoption("--record"):
+    if request.config.getoption("--record") and name not in _UNRECORDABLE:
         archive = replay.pack_case(tmp_path, name)
         assert archive.is_file()

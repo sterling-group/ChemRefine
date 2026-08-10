@@ -18,5 +18,5 @@ steps:
   - step: 1
     engine: pyscf-extopt
     operation: opt_sp
-    options: { method: hf, basis: sto-3g, device: cpu }
+    options: { method: hf, basis: sto-3g, device: cpu, save_tensors: true }
     sample: { method: min, count: 1 }
