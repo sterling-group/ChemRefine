@@ -86,6 +86,12 @@ def read_extinp(
 def _read_xyz(xyz_path: Path) -> tuple[list[str], NDArray[np.float64]]:
     """Return ``(symbols, positions)`` from a plain-format ``.xyz``.
 
+    **Not** :func:`chemrefine.io.read_xyz_frames`, and the price is measured: that module
+    imports ``ase.io`` at its top (~0.5 s), and this reader runs in a fresh wrapper process
+    once per ORCA optimizer step — so routing through it would add half a second to every
+    gradient of every ExtOpt optimisation to parse a single-frame file whose format ORCA
+    controls. :mod:`chemrefine.io`'s charter names this exception.
+
     Held to the same rule as the ``.extinp.tmp`` header above, because it is the same
     file event: ORCA writes both per ProgExt call, so the kill or full disk that
     truncates one truncates the other. Unguarded, a short file surfaced as a bare

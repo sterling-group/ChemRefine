@@ -4,6 +4,18 @@ Keeps every concrete file format in one place so individual engine
 modules don't grow their own XYZ-handling code. ``write_xyz`` accepts
 either :class:`ase.Atoms` objects or ``(symbol, x, y, z)`` tuples for
 back-compatibility with parsers that produce raw coordinate lists.
+
+Two engine-side XYZ *readers* stay deliberately outside this module, each for a
+stated price — the rule for a new engine is "use :func:`read_xyz_frames` /
+:func:`write_single_xyz` unless you can name your price too":
+
+* the ExtOpt wrapper's plain-format reader
+  (``chemrefine.engines.orca.extopt.protocol._read_xyz``) runs in a fresh process
+  once per ORCA optimizer step, and importing this module costs ~0.5 s of
+  ``ase.io`` before it reads a thing;
+* the ORCA ensemble walkers (:mod:`chemrefine.engines.orca.output.ensembles`)
+  parse per-format energy headers and skip corrupt frames mid-file — neither of
+  which ASE's reader can express.
 """
 
 from __future__ import annotations
@@ -132,16 +144,20 @@ def read_xyz_frames(path: str | Path) -> list[Atoms]:
 # ---------------------------------------------------------------------------
 
 
-def _conformer_to_xyz_lines(mol: Any, comment: str) -> list[str]:
-    """Render an embedded RDKit ``mol``'s conformer as XYZ-format text lines."""
+def _conformer_rows(mol: Any) -> CoordList:
+    """An embedded RDKit ``mol``'s conformer as ``(symbol, x, y, z)`` rows.
+
+    Rows rather than rendered text, so the writing goes through
+    :func:`write_single_xyz` like every other geometry this module emits. Its
+    predecessor rendered the lines itself — a second XYZ writer one function away from
+    the canonical one, byte-identical only for as long as nobody edited either.
+    """
     conf = mol.GetConformer()
-    natoms = mol.GetNumAtoms()
-    lines = [str(natoms), comment]
-    for atom_idx in range(natoms):
-        atom = mol.GetAtomWithIdx(atom_idx)
+    rows: list[tuple[str, float, float, float]] = []
+    for atom_idx in range(mol.GetNumAtoms()):
         pos = conf.GetAtomPosition(atom_idx)
-        lines.append(f"{atom.GetSymbol():2s} {pos.x:.6f} {pos.y:.6f} {pos.z:.6f}")
-    return lines
+        rows.append((mol.GetAtomWithIdx(atom_idx).GetSymbol(), pos.x, pos.y, pos.z))
+    return rows
 
 
 def smiles_to_xyz(
@@ -191,10 +207,11 @@ def smiles_to_xyz(
             continue
         UFFOptimizeMolecule(mol)
 
-        lines = _conformer_to_xyz_lines(mol, f"SMILES: {raw}")
-        xyz_path = out / f"structure_{idx}.xyz"
-        xyz_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        written.append(xyz_path)
+        written.append(
+            write_single_xyz(
+                _conformer_rows(mol), out / f"structure_{idx}.xyz", comment=f"SMILES: {raw}"
+            )
+        )
     return written
 
 
