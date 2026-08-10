@@ -244,9 +244,17 @@ def execute(
     action: Action,
     target: str | int | None = None,
 ) -> int:
-    """Dispatch ``action`` for ``config`` and return a process exit code."""
+    """Dispatch ``action`` for ``config`` and return a process exit code.
+
+    The lock is taken around the whole action, not just the pipeline inside it:
+    :func:`_action_run` and :func:`_action_rerun` invalidate caches *before*
+    :func:`chemrefine.pipeline.run` starts, and a second driver arriving in that window
+    would delete state the first is about to reuse. ``pipeline.run`` acquires the same
+    lock reentrantly, so a caller driving it directly is equally guarded.
+    """
     handler = _HANDLERS.get(action)
     if handler is None:
         raise ChemRefineError(f"unknown action: {action!r}")
-    handler(config, target)
+    with pipeline.run_lock(config.output_dir):
+        handler(config, target)
     return 0

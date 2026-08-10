@@ -508,3 +508,133 @@ def test_a_step_that_can_submit_is_still_preflighted(
         RunPlan(default=StepMode.CACHE_ONLY, overrides={2: StepMode.RESUME}),
     )
     assert calls == [["fake"]], "the step that will submit must still be checked"
+
+
+# ---------------------------------------------------------------------------
+# run lock — one driver per output tree
+# ---------------------------------------------------------------------------
+
+
+def _write_lock(output_dir: Path, *, host: str, pid: int) -> Path:
+    """Plant a lock file as another driver would have left it."""
+    import json
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    lock = output_dir / pipeline.RUN_LOCK_NAME
+    lock.write_text(
+        json.dumps({"pid": pid, "host": host, "started": "2026-08-10T00:00:00+00:00"}),
+        encoding="utf-8",
+    )
+    return lock
+
+
+def _dead_pid() -> int:
+    """A pid guaranteed to name no live process: a child spawned and already reaped."""
+    import subprocess
+
+    proc = subprocess.Popen(["true"])  # a no-op child, only for its pid
+    proc.wait()
+    return proc.pid
+
+
+def test_run_lock_is_released_after_a_clean_run(tmp_path: Path):
+    seed = tmp_path / "step0_seed.xyz"
+    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    cfg = _config(tmp_path, input=seed)
+    pipeline.run(cfg)
+    assert not (cfg.output_dir / pipeline.RUN_LOCK_NAME).exists()
+
+
+def test_run_lock_is_released_when_the_run_raises(tmp_path: Path):
+    """A failed run must not leave the tree locked — the retry is the very next command."""
+    cfg = _config(tmp_path, input=None)  # no seed source: bootstrap raises inside the lock
+    with pytest.raises(ConfigError):
+        pipeline.run(cfg)
+    assert not (cfg.output_dir / pipeline.RUN_LOCK_NAME).exists()
+
+
+def test_run_lock_is_reentrant_within_one_process(tmp_path: Path):
+    """The inner acquisition neither raises nor releases; the outer exit releases.
+
+    This is the ``recovery.execute`` → ``pipeline.run`` shape: the action takes the lock
+    around cache invalidation, and the run inside takes it again.
+    """
+    lock = tmp_path / "outputs" / pipeline.RUN_LOCK_NAME
+    with pipeline.run_lock(tmp_path / "outputs"):
+        with pipeline.run_lock(tmp_path / "outputs"):
+            assert lock.exists()
+        assert lock.exists(), "the inner exit must not release the outer's lock"
+    assert not lock.exists()
+
+
+def test_a_live_holders_lock_raises_and_survives(tmp_path: Path):
+    """A lock naming a live pid on this host refuses the run and is left in place."""
+    import socket
+    import subprocess
+
+    from chemrefine.errors import RunLockError
+
+    child = subprocess.Popen(["sleep", "30"])  # a provably-live pid
+    try:
+        lock = _write_lock(tmp_path / "outputs", host=socket.gethostname(), pid=child.pid)
+        with (
+            pytest.raises(RunLockError, match=rf"pid {child.pid}"),
+            pipeline.run_lock(tmp_path / "outputs"),
+        ):
+            pass
+        assert lock.exists(), "a refused acquisition must not clobber the holder's lock"
+    finally:
+        child.kill()
+        child.wait()
+
+
+def test_a_dead_holders_lock_is_reclaimed(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+    """A same-host holder that no longer runs is stale: reclaimed, run proceeds."""
+    import socket
+
+    _write_lock(tmp_path / "outputs", host=socket.gethostname(), pid=_dead_pid())
+    with caplog.at_level("WARNING"), pipeline.run_lock(tmp_path / "outputs"):
+        assert (tmp_path / "outputs" / pipeline.RUN_LOCK_NAME).exists()
+    assert "reclaiming stale run lock" in caplog.text
+    assert not (tmp_path / "outputs" / pipeline.RUN_LOCK_NAME).exists()
+
+
+def test_a_foreign_hosts_lock_is_never_reclaimed(tmp_path: Path):
+    """Liveness cannot be probed across hosts, so a foreign lock is always treated as live.
+
+    Even a pid that is dead *here* proves nothing about the host in the record — the error
+    tells the user to delete the lock once that run is known dead.
+    """
+    from chemrefine.errors import RunLockError
+
+    _write_lock(tmp_path / "outputs", host="some-other-node", pid=_dead_pid())
+    with (
+        pytest.raises(RunLockError, match="some-other-node"),
+        pipeline.run_lock(tmp_path / "outputs"),
+    ):
+        pass
+
+
+def test_an_unreadable_lock_raises(tmp_path: Path):
+    """A lock with no readable holder cannot be liveness-checked, so it refuses the run."""
+    from chemrefine.errors import RunLockError
+
+    (tmp_path / "outputs").mkdir(parents=True)
+    (tmp_path / "outputs" / pipeline.RUN_LOCK_NAME).write_text("", encoding="utf-8")
+    with pytest.raises(RunLockError, match="unreadable"), pipeline.run_lock(tmp_path / "outputs"):
+        pass
+
+
+def test_pid_alive_reads_permission_denied_as_alive(monkeypatch: pytest.MonkeyPatch):
+    """EPERM means the process exists and is somebody else's — alive, not stale.
+
+    Deterministic via monkeypatch: probing a real foreign pid (e.g. 1) answers differently
+    for root, and a suite whose verdict depends on who runs it pins nothing.
+    """
+    import os
+
+    def _deny(pid: int, sig: int) -> None:
+        raise PermissionError
+
+    monkeypatch.setattr(os, "kill", _deny)
+    assert pipeline._pid_alive(12345) is True

@@ -17,8 +17,13 @@ orchestrator never imports a concrete engine directly.
 
 from __future__ import annotations
 
+import contextlib
+import json
 import logging
-from collections.abc import Iterable
+import os
+import socket
+from collections.abc import Iterable, Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ase import Atoms
@@ -26,7 +31,7 @@ from ase import Atoms
 from chemrefine import filtering, io, slurm
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines import preflight_backends
-from chemrefine.errors import ConfigError
+from chemrefine.errors import ConfigError, RunLockError
 from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 from chemrefine.state import PipelineState, Structure
 
@@ -127,6 +132,123 @@ def _seed_from_smiles_csv(csv_path: Path, out_dir: Path) -> PipelineState:
 
 
 # ---------------------------------------------------------------------------
+# Run lock — one driver per output tree
+# ---------------------------------------------------------------------------
+
+RUN_LOCK_NAME = ".chemrefine.lock"
+"""The advisory lock file :func:`run_lock` holds at the root of ``output_dir``."""
+
+
+def _lock_holder(lock: Path) -> tuple[str, int, str] | None:
+    """The ``(host, pid, started)`` recorded in ``lock``, or ``None`` if unreadable.
+
+    ``None`` covers both a lock vacated between the failed claim and this read, and one
+    whose writer died between creating the file and writing it — the caller treats the
+    two alike, because neither names a holder whose liveness can be checked.
+    """
+    try:
+        record = json.loads(lock.read_text(encoding="utf-8"))
+        return str(record["host"]), int(record["pid"]), str(record["started"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _pid_alive(pid: int) -> bool:
+    """Whether ``pid`` names a live process on *this* host.
+
+    ``PermissionError`` means the process exists and belongs to someone else — alive.
+    Only :class:`ProcessLookupError` proves it gone.
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+@contextlib.contextmanager
+def run_lock(output_dir: Path) -> Iterator[None]:
+    """Hold ``output_dir`` for one driver; raise :class:`RunLockError` if another has it.
+
+    **Why a lock at all.** The resume machinery cannot tell a live concurrent driver from
+    a dead one: :func:`chemrefine.step._partial_step_outcome` treats a manifest whose
+    fingerprint matches as proof it is safe to continue, and a *running* driver leaves
+    exactly that state on disk. A second driver would then parse outputs the first one's
+    jobs are still writing, archive their directories out from under those jobs, and
+    resubmit duplicates — silently, since nothing in that sequence is an error.
+
+    **Why a pidfile and not ``flock``.** The output tree lives on a shared filesystem on
+    HPC, where ``flock`` semantics are the least reliable part of NFS; an ``O_EXCL``
+    create is atomic everywhere. The cost is that a lock can outlive a driver killed with
+    SIGKILL, so a holder on *this* host is probed with ``os.kill(pid, 0)`` and reclaimed
+    when dead. A holder on another host cannot be probed from here — that lock is treated
+    as live, and the error says to delete it once its run is known dead.
+
+    **Reentrant by pid**: :func:`chemrefine.recovery.execute` takes the lock around a
+    whole action — ``run``'s cache invalidation mutates the tree *before*
+    :func:`run` starts — and :func:`run` takes it again for callers that drive the
+    pipeline directly. The inner acquisition sees its own pid in the record and yields
+    without ownership, so the one release still happens at the outermost exit.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    lock = output_dir / RUN_LOCK_NAME
+    reclaimed = False
+    while True:
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            holder = _lock_holder(lock)
+            if holder is not None and holder[0] == socket.gethostname():
+                host, pid, started = holder
+                if pid == os.getpid():
+                    # Ours, taken further out — see "reentrant by pid" above.
+                    yield
+                    return
+                if not reclaimed and not _pid_alive(pid):
+                    logger.warning(
+                        "reclaiming stale run lock %s (pid %d on %s, started %s, now dead)",
+                        lock,
+                        pid,
+                        host,
+                        started,
+                    )
+                    lock.unlink(missing_ok=True)
+                    reclaimed = True
+                    continue
+            # `from None`: the FileExistsError is this branch's condition, not a cause —
+            # everything it could say is already in the message.
+            raise RunLockError(
+                f"another ChemRefine run holds this output tree: {lock} "
+                + (
+                    f"names pid {holder[1]} on {holder[0]}, started {holder[2]}"
+                    if holder is not None
+                    else "exists but is unreadable"
+                )
+                + ". Two drivers on one tree archive and resubmit each other's work, so "
+                "this run stops here. Wait for that run to finish — or, if it is known "
+                "dead (e.g. killed on another node), delete the lock file and retry."
+            ) from None
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(
+                {
+                    "pid": os.getpid(),
+                    "host": socket.gethostname(),
+                    "started": datetime.now(UTC).isoformat(timespec="seconds"),
+                },
+                fh,
+            )
+        yield
+    finally:
+        # On success and on failure alike: a raise must not leave the tree locked, and
+        # back-to-back runs in one process (tests, notebooks) must each acquire cleanly.
+        lock.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 
@@ -169,67 +291,73 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
 
     If a step produces no survivors the pipeline stops early — there is nothing to
     feed the next step.
+
+    The whole run holds the output tree's :func:`run_lock`: a second driver pointed at
+    the same ``output_dir`` raises :class:`~chemrefine.errors.RunLockError` instead of
+    archiving and resubmitting this one's in-flight work.
     """
     plan = plan if plan is not None else RunPlan()
-    logger.info(
-        "config: max_cores=%d, max_gpus=%s, output_dir=%s",
-        config.max_cores,
-        config.max_gpus if config.max_gpus is not None else "auto",
-        config.output_dir,
-    )
-    # Fail fast: every step's backend env must be resolvable before ANY job submits,
-    # and `dispatch: slurm` must actually have sbatch available.
-    #
-    # The steps checked are the ones that *can* submit, which is `StepMode.may_submit` and
-    # nothing else. A guard for something that will not happen is just a wall: it would make
-    # `chemrefine rebuild-cache` refuse to run wherever the backend is not installed, which
-    # is exactly where you want to rebuild — a login node, or any machine holding the output
-    # tree but not the MLIP/PySCF stack that produced it.
-    #
-    # Asking `may_submit` rather than excluding `REBUILD` by name is what makes that hold for
-    # the whole command. `rebuild-cache N` puts N in `REBUILD` and every *other* step in
-    # `CACHE_ONLY`, which equally cannot submit — so excluding only the named step leaves the
-    # wall standing on all the others, and a two-step MLIP config still cannot be rebuilt
-    # off-cluster. Nothing is weakened by the wider exemption: a step that cannot submit
-    # reaches `ChemRefineError` from `run_step` if its cache is unusable, never the engine.
-    preflight_backends([cfg for cfg in config.steps if plan.for_step(cfg.step).may_submit()])
-    slurm.dispatch_locally(config.dispatch)
-    state = bootstrap(config)
-    logger.info("bootstrapped pipeline with %d seed structure(s)", len(state.structures))
-
-    outcomes: list[StepOutcome] = []
-    for step_cfg in config.steps:
+    with run_lock(config.output_dir):
         logger.info(
-            "=== step %d (%s, engine=%s) ===",
-            step_cfg.step,
-            step_cfg.dir_name(),
-            step_cfg.engine,
+            "config: max_cores=%d, max_gpus=%s, output_dir=%s",
+            config.max_cores,
+            config.max_gpus if config.max_gpus is not None else "auto",
+            config.output_dir,
         )
-        mode = plan.for_step(step_cfg.step)
-        outcome = (
-            run_step(config, step_cfg, state, mode=mode)
-            if mode.runs_through_run_step()
-            else rebuild_cache_step(config, step_cfg, state)
-        )
-        outcomes.append(outcome)
-        # Summarise before halting, so a run that stops still reports the work it
-        # actually completed — otherwise the halted step's cached successes are
-        # missing from steps.csv.
-        _write_step_csv(config, step_cfg, outcome.state)
-        state = outcome.state
-        # Single halt point, reached by every mode: an on_failure=stop step with
-        # pending failures stops the run here, after its successes are cached and
-        # summarised. Which modes may halt is `StepMode.can_halt`.
-        halt_if_pending(config, step_cfg, mode)
-        if not state:
-            logger.warning(
-                "step %d produced no survivors; stopping pipeline early",
+        # Fail fast: every step's backend env must be resolvable before ANY job submits,
+        # and `dispatch: slurm` must actually have sbatch available.
+        #
+        # The steps checked are the ones that *can* submit, which is `StepMode.may_submit` and
+        # nothing else. A guard for something that will not happen is just a wall: it would
+        # make `chemrefine rebuild-cache` refuse to run wherever the backend is not installed,
+        # which is exactly where you want to rebuild — a login node, or any machine holding
+        # the output tree but not the MLIP/PySCF stack that produced it.
+        #
+        # Asking `may_submit` rather than excluding `REBUILD` by name is what makes that hold
+        # for the whole command. `rebuild-cache N` puts N in `REBUILD` and every *other* step
+        # in `CACHE_ONLY`, which equally cannot submit — so excluding only the named step
+        # leaves the wall standing on all the others, and a two-step MLIP config still cannot
+        # be rebuilt off-cluster. Nothing is weakened by the wider exemption: a step that
+        # cannot submit reaches `ChemRefineError` from `run_step` if its cache is unusable,
+        # never the engine.
+        preflight_backends([cfg for cfg in config.steps if plan.for_step(cfg.step).may_submit()])
+        slurm.dispatch_locally(config.dispatch)
+        state = bootstrap(config)
+        logger.info("bootstrapped pipeline with %d seed structure(s)", len(state.structures))
+
+        outcomes: list[StepOutcome] = []
+        for step_cfg in config.steps:
+            logger.info(
+                "=== step %d (%s, engine=%s) ===",
                 step_cfg.step,
+                step_cfg.dir_name(),
+                step_cfg.engine,
             )
-            break
-        # A scoped plan can end before the last step — see `RunPlan.stop_after`.
-        if not plan.covers(step_cfg.step):
-            logger.info("step %d is the last this action covers; stopping here", step_cfg.step)
-            break
-    logger.info("pipeline finished after %d step(s)", len(outcomes))
-    return outcomes
+            mode = plan.for_step(step_cfg.step)
+            outcome = (
+                run_step(config, step_cfg, state, mode=mode)
+                if mode.runs_through_run_step()
+                else rebuild_cache_step(config, step_cfg, state)
+            )
+            outcomes.append(outcome)
+            # Summarise before halting, so a run that stops still reports the work it
+            # actually completed — otherwise the halted step's cached successes are
+            # missing from steps.csv.
+            _write_step_csv(config, step_cfg, outcome.state)
+            state = outcome.state
+            # Single halt point, reached by every mode: an on_failure=stop step with
+            # pending failures stops the run here, after its successes are cached and
+            # summarised. Which modes may halt is `StepMode.can_halt`.
+            halt_if_pending(config, step_cfg, mode)
+            if not state:
+                logger.warning(
+                    "step %d produced no survivors; stopping pipeline early",
+                    step_cfg.step,
+                )
+                break
+            # A scoped plan can end before the last step — see `RunPlan.stop_after`.
+            if not plan.covers(step_cfg.step):
+                logger.info("step %d is the last this action covers; stopping here", step_cfg.step)
+                break
+        logger.info("pipeline finished after %d step(s)", len(outcomes))
+        return outcomes

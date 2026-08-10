@@ -23,6 +23,7 @@ Exit code     Meaning
 ``8``         :class:`ThrottleTimeoutError` — wait deadline expired
 ``9``         :class:`BackendProvisionError` — a managed backend env
               could not be built
+``10``        :class:`RunLockError` — another run holds this output tree
 ============  ============================================
 """
 
@@ -100,3 +101,17 @@ class BackendProvisionError(ChemRefineError):
     """
 
     exit_code = 9
+
+
+class RunLockError(ChemRefineError):
+    """Another driver holds this output tree's run lock.
+
+    Its own code because the fix is unlike any other failure's: nothing is wrong with the
+    config, the jobs, or this machine — a second ``chemrefine`` invocation was pointed at
+    an output tree a first one is still working in, and the resume machinery cannot tell a
+    *live* concurrent driver from a dead one by the files alone (a matching manifest
+    fingerprint is exactly what both leave). The remedy is to wait, or to delete a lock
+    whose holder is known dead — see :func:`chemrefine.pipeline.run_lock`.
+    """
+
+    exit_code = 10
