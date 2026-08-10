@@ -526,12 +526,14 @@ def test_every_value_reaching_generated_bash_is_classified():
     assert stale == set(), f"_BASH_PARAM_SAFETY classifies values that no longer exist: {stale}"
 
 
-@pytest.mark.parametrize("hostile", ['"', "$", "`", "\\", "\n"])
+@pytest.mark.parametrize("hostile", ['"', "$", "`", "\\", "\n", "\t"])
 def test_the_rule_rejects_every_character_it_claims_to(hostile: str):
     """The classification above is only worth anything if `VALIDATED` actually bites.
 
-    Each of these ends a quoted string, starts a substitution, or breaks the line -- the four
-    ways a value interpolated into the generated script stops being a value.
+    Each of these ends a quoted string, starts a substitution, or breaks the line -- the
+    ways a value interpolated into the generated script stops being a value. The tab is
+    the odd one out: it breaks no quoting, but the array manifest is tab-delimited, so a
+    tab in a path shifts every field after it.
     """
     with pytest.raises(ValueError, match="cannot be safely embedded"):
         reject_shell_unsafe(f"/tmp/x{hostile}y", what="path", fix="rename it")

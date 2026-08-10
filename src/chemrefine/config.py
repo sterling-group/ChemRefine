@@ -366,6 +366,12 @@ PyscfOptions`) — reaches ``cp -r "…"``, and bash substitutes *inside* double
     bad = {c for c in _SHELL_UNSAFE if c in text}
     if "\n" in text or "\r" in text:
         bad.add("newline")
+    # A tab breaks a different contract than the quoting characters above: the job-array
+    # manifest is tab-delimited (`IFS=$'\t' read -r INP OUT SID` in the generated array
+    # script), and every field embeds these paths — so a tab in one shifts every field
+    # after it, and each task silently reads the wrong input or writes the wrong place.
+    if "\t" in text:
+        bad.add("tab")
     if bad:
         raise ValueError(
             f"{what} {text!r} contains {sorted(bad)}, which cannot be safely embedded "
