@@ -110,10 +110,14 @@ pyscf = [
 # prebuilt wheels are the CUDA-tagged `gpu4pyscf-cudaNNx` + matching `cutensor-cuNN`.
 # This targets CUDA 12.x — CUDA-11 hosts swap in `gpu4pyscf-cuda11x` + `cutensor-cu11`.
 # gpu4pyscf needs pyscf, so cross-reference `[pyscf]` for a complete stack.
+# The floors are the first stable line that resolves alongside `pyscf>=2.6` (verified by
+# a pinned `--dry-run` resolution): 1.0 is gpu4pyscf's first stable release, and the
+# cutensor 2.x line is what it requires. These were the last unfloored pins in the file —
+# an extra with no floor promises whatever pip picks today, which is no promise at all.
 # downloads: gpu4pyscf-cuda12x (→ cupy/CUDA), cutensor-cu12, + pyscf (heavy, GPU)
 pyscf-gpu = [
-    "gpu4pyscf-cuda12x",
-    "cutensor-cu12",
+    "gpu4pyscf-cuda12x>=1.0",
+    "cutensor-cu12>=2.0.0",
     "chemrefine[pyscf]",
 ]
 # downloads: pytest, pytest-cov, hypothesis (tiny)
