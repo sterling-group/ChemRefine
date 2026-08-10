@@ -7,6 +7,8 @@ predict its behaviour and extend it confidently.
   diagram of what calls what, from the CLI down to job submission.
 - [Caching & Resume](caching.md) — the per-step fingerprint cache that makes
   re-runs skip unchanged work.
+- [Recovery & Reruns](recovery.md) — the decision tables behind the six CLI
+  actions: what each plans, what a mode may do, and the route through one step.
 - [Filtering](filtering.md) — how survivors are selected at the end of each step.
 - [Normal-Mode Sampling](nms.md) — the two-round imaginary-mode removal / TS search.
 - [Security & Trust Boundaries](security.md) — which inputs run as code, and what

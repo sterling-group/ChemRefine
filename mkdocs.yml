@@ -113,6 +113,7 @@ nav:
       - concepts/index.md
       - Architecture & Code Flow: concepts/architecture.md
       - Caching & Resume: concepts/caching.md
+      - Recovery & Reruns: concepts/recovery.md
       - Filtering: concepts/filtering.md
       - Normal-Mode Sampling: concepts/nms.md
       - Security & Trust Boundaries: concepts/security.md

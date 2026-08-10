@@ -10,7 +10,7 @@ chemrefine resume input.yaml                 # honour the cache; retry pending f
 chemrefine rerun input.yaml refine           # redo one whole step (others cache-hit)
 chemrefine rerun-errors input.yaml 2         # re-attempt only step 2's failed jobs
 chemrefine rebuild-cache input.yaml          # re-parse outputs on disk (no submission)
-chemrefine rebuild-nms input.yaml 3          # re-run the NMS step with current options
+chemrefine rebuild-nms input.yaml 3          # re-resolve NMS from outputs on disk (no submission)
 chemrefine run input.yaml --maxcores 128     # override max_cores from the YAML
 chemrefine run input.yaml --dry-run          # validate + describe; submit nothing
 ```
