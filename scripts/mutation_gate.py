@@ -161,6 +161,15 @@ MUTATIONS = (
         "them, and the next `resume` serves that instead of computing what was asked for",
     ),
     Mutation(
+        id="policy-change-over-cache",
+        path="src/chemrefine/step.py",
+        old='return (stored == "best") != (current == "best")',
+        new="return False",
+        breaks="editing on_failure over a cached step silently serves the previous "
+        "policy's survivor set — a step switched to `best` quietly behaves as `skip`, "
+        "and one switched away from `best` keeps carrying its backfills",
+    ),
+    Mutation(
         id="dead-job-vs-unreadable-file",
         path="src/chemrefine/engines/orca/output/coordinator.py",
         old="if status.parse_terminated_normally(text):\n        return OutputParseError",

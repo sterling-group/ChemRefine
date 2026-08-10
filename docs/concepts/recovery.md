@@ -93,3 +93,24 @@ completed, and the next `resume` re-attempts *only* the ledgered failures. `skip
 `best` resolve their failures the moment the policy is applied; their ledger entries are a
 record, not a queue, which is why `rerun-errors` tells you it has nothing to re-attempt
 for them and points at `rerun` instead.
+
+### Changing the policy over a cached step
+
+The cache stores a step's results **after** the policy is applied — `stop` and `skip`
+persist the successes alone, `best` persists the backfilled failures too — and the
+fingerprint deliberately excludes `on_failure`, so editing the policy alone never
+invalidates a step. What happens instead depends on whether the stored results already
+wear the shape the new policy wants:
+
+| edit | what `resume` does |
+|---|---|
+| `stop` ↔ `skip` | a free cache hit — both store the successes alone, so nothing changes |
+| `skip` → `stop` | the ledgered failures become pending and are re-attempted |
+| to or from `best`, with a non-empty ledger | the ledgered failures are re-attempted and the step re-finalizes under the new policy — successes are never recomputed |
+| any edit with a clean ledger | a free cache hit — with no failures, every policy produces identical results |
+
+The cross-`best` case is the one that needs the machinery: without it, a step halted
+under `stop` and switched to `best` would serve the cached successes-only set — `skip`
+semantics — with nothing said anywhere. A mode that may not submit (`rebuild-cache` /
+`rerun-errors` aimed elsewhere) cannot make that repair and raises the ordinary "no
+cache this configuration can use" error instead of serving the wrong survivor set.

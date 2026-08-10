@@ -124,6 +124,19 @@ class StepCache:
     only the unresolved parents and reuse the round-1 freq. ``""`` for steps
     that don't use it. See :func:`reuse_fingerprint`."""
 
+    on_failure: str = ""
+    """The ``on_failure`` policy the stored results were finalized under.
+
+    The policy shapes what :func:`save` persists — ``stop`` and ``skip`` store the
+    successes alone, ``best`` stores the backfilled failures too — so a cache can only
+    *serve* a config whose policy wants that same shape.
+    :func:`chemrefine.step._policy_conflict` compares this against the current config; a
+    step whose policy moved across that line re-attempts its ledgered failures and
+    re-finalizes rather than serving the previous policy's survivor set as if it were its
+    own. ``""`` is a document written before this key existed and is treated as serving
+    any policy — an additive key read with ``.get``, so older caches and the recorded e2e
+    archives are not stranded (which is also why there is no format bump)."""
+
 
 # ---------------------------------------------------------------------------
 # Fingerprint
@@ -628,6 +641,8 @@ def save(
         "name": step_cfg.name,
         "engine": step_cfg.engine,
         "operation": step_cfg.operation,
+        # The policy these results were finalized under — see StepCache.on_failure.
+        "on_failure": step_cfg.on_failure,
         "parent_ids": list(key.parent_ids),
         # Names the sidecar this document belongs to — see `_require_paired`.
         "arrays_digest": _arrays_digest(arrays),
@@ -790,6 +805,7 @@ def load(step_dir: Path) -> StepCache | None:
             parent_ids=tuple(data["parent_ids"]),
             results=StepResults(structures=tuple(structure_from_record(d) for d in records)),
             reuse_fingerprint=data.get("reuse_fingerprint", ""),
+            on_failure=data.get("on_failure", ""),
         )
     except (KeyError, TypeError, ValueError) as e:
         raise CacheError(f"stale or corrupt cache at {path}: {e!r}") from e

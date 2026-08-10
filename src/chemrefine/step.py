@@ -338,6 +338,26 @@ def run_step(
     return _run_full_step(ctx, step_cfg, key, engine, nms_engine=nms_engine)
 
 
+def _policy_conflict(stored: str, current: str) -> bool:
+    """Whether results finalized under ``stored`` cannot be served as ``current``.
+
+    The fingerprint deliberately excludes ``on_failure`` — like ``sample:``, it shapes the
+    *output* rather than the calculations — but unlike the filter, the policy is applied
+    **before** :func:`chemrefine.cache.save`, so what is on disk already wears one policy's
+    shape. ``stop`` and ``skip`` both persist the successes alone, so they serve each
+    other; ``best`` persists the backfilled failures too, so a change across that line
+    hands the user the previous policy's survivor set — silently, since the fingerprint
+    still matches. ``""`` is a cache written before the policy was recorded and is treated
+    as serving any policy, so older caches are not stranded.
+
+    Only :func:`_cached_outcome` asks, and only when the failure ledger is non-empty: with
+    no failures, every policy produces identical results and any edit is a free hit.
+    """
+    if not stored:
+        return False
+    return (stored == "best") != (current == "best")
+
+
 def _cached_outcome(
     ctx: StepContext,
     step_cfg: StepConfig,
@@ -352,12 +372,24 @@ def _cached_outcome(
     A pending ``on_failure: stop`` ledger re-attempts only the still-failed structures
     when this step may submit; otherwise it is a plain cache hit (refilter), which is
     what a step a scoped action is not targeting wants.
+
+    A ledgered step whose ``on_failure`` moved across the storage line
+    (:func:`_policy_conflict`) takes the same re-attempt route: the stored results wear
+    the previous policy's shape, and re-attempting the failures then re-finalizing under
+    the *current* config is what makes every direction of the edit honest — ``best``
+    backfills what still fails, ``skip`` drops it, ``stop`` re-ledgers it — without ever
+    recomputing a success. A mode that may not submit cannot make that repair, so it
+    falls through to :func:`run_step`'s "no cache this configuration can use" error
+    rather than serving the wrong survivor set.
     """
     cached = cache.load_if_valid(key=key, step_dir=ctx.step_dir)
     if cached is None:
         return None
     failed = cache.load_failure_records(ctx.step_dir)
-    if failed and step_cfg.leaves_failures_pending and may_submit:
+    stale_policy = _policy_conflict(cached.on_failure, step_cfg.on_failure)
+    if failed and stale_policy and not may_submit:
+        return None
+    if failed and (step_cfg.leaves_failures_pending or stale_policy) and may_submit:
         results = (
             nms.reattempt_nms(nms_engine, ctx, step_cfg, cached, key)
             if nms_engine is not None

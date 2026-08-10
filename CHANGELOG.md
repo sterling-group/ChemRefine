@@ -196,6 +196,15 @@ for the full map.
 ### Fixed
 
 
+- **Editing `on_failure` over a cached step now takes effect.** The cache stores a step's
+  results after the policy is applied, and the fingerprint deliberately excludes
+  `on_failure` — so a step halted under `stop` and switched to `best` served the cached
+  successes-only set, `skip` semantics, with nothing said anywhere (and a step switched
+  away from `best` kept carrying its backfills). A policy edit across the `best` line
+  over a non-empty ledger now re-attempts the ledgered failures and re-finalizes under
+  the new policy; successes are never recomputed, and `stop` ↔ `skip` stays a free hit
+  because both store the same results. The cache document records the policy it was
+  finalized under (additive key — existing caches are read as before).
 - **A corrupt `failed_jobs.json` now fails like every other corrupt cache file.** Valid
   JSON of the wrong shape escaped the ledger reader as a bare `TypeError` — a traceback
   with the generic exit code naming neither the file nor the fix — where every sibling

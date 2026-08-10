@@ -342,6 +342,128 @@ def test_on_failure_best_backfills_all(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Changing on_failure over a cached step
+# ---------------------------------------------------------------------------
+#
+# The cache stores post-policy results while the fingerprint deliberately excludes
+# `on_failure`, so a policy edit alone never misses. `stop` and `skip` both store the
+# successes alone (storage-equivalent → a free hit); `best` stores backfills too, so a
+# change across that line re-attempts the ledgered failures and re-finalizes under the
+# current policy — never recomputing a success. Without the `_policy_conflict` check,
+# stop→best silently served skip semantics.
+
+
+def _run_policy_change(tmp_path: Path, first: str, then: str, *, mode=StepMode.RESUME):
+    """Run a fail-one step under ``first``, then run it again under ``then``.
+
+    Structure ``1`` leaves no output on both runs, so the second run's outcome is purely
+    the policy machinery's answer. Returns ``(second_outcome, step_dir)``.
+    """
+    from chemrefine.engines.api import ENGINES
+
+    seeds = _seed_state(["0", "1", "2"])
+    eng = _register_fail_engine()
+    try:
+        eng.fail = {"1": "missing"}
+        first_cfg = _config(tmp_path, engine="fake-fail", on_failure=first)
+        run_step(first_cfg, first_cfg.steps[0], seeds)
+        then_cfg = _config(tmp_path, engine="fake-fail", on_failure=then)
+        outcome = run_step(then_cfg, then_cfg.steps[0], seeds, mode=mode)
+        return outcome, then_cfg.output_dir.resolve() / "step1"
+    finally:
+        eng.fail = {}
+        ENGINES.pop("fake-fail", None)
+
+
+def test_policy_change_stop_to_best_backfills_instead_of_serving_skip(tmp_path: Path):
+    """The audit's F1 reproduction: stop→best must yield the backfilled set, not {0, 2}."""
+    outcome, step_dir = _run_policy_change(tmp_path, "stop", "best")
+    assert outcome.cache_hit is False
+    assert {s.id for s in outcome.state.structures} == {"0", "1", "2"}
+    cached = cache.load(step_dir)
+    assert cached is not None
+    assert cached.on_failure == "best"
+    assert {s.id for s in cached.results.structures} == {"0", "1", "2"}
+    # The re-attempted failure stays visible in the ledger, as under a fresh `best` run.
+    assert {f.structure_id for f in cache.load_failure_records(step_dir)} == {"1"}
+
+
+def test_policy_change_best_to_skip_drops_the_backfill(tmp_path: Path):
+    outcome, step_dir = _run_policy_change(tmp_path, "best", "skip")
+    assert outcome.cache_hit is False
+    assert {s.id for s in outcome.state.structures} == {"0", "2"}
+    cached = cache.load(step_dir)
+    assert cached is not None
+    assert {s.id for s in cached.results.structures} == {"0", "2"}
+
+
+def test_policy_change_best_to_stop_leaves_the_failure_pending(tmp_path: Path):
+    outcome, _step_dir = _run_policy_change(tmp_path, "best", "stop")
+    assert {s.id for s in outcome.state.structures} == {"0", "2"}
+    cfg = _config(tmp_path, engine="fake-fail", on_failure="stop")
+    with pytest.raises(ChemRefineError):
+        halt_if_pending(cfg, cfg.steps[0], StepMode.RESUME)
+
+
+def test_policy_change_stop_to_skip_is_a_free_hit(tmp_path: Path):
+    """Both policies store the successes alone, so nothing needs re-attempting."""
+    outcome, _step_dir = _run_policy_change(tmp_path, "stop", "skip")
+    assert outcome.cache_hit is True
+    assert {s.id for s in outcome.state.structures} == {"0", "2"}
+
+
+def test_policy_change_skip_to_stop_reattempts_the_pending_failures(tmp_path: Path):
+    """Same storage class, but `stop` makes the ledger pending — the existing branch."""
+    outcome, step_dir = _run_policy_change(tmp_path, "skip", "stop")
+    assert outcome.cache_hit is False
+    assert {s.id for s in outcome.state.structures} == {"0", "2"}
+    assert {f.structure_id for f in cache.load_failure_records(step_dir)} == {"1"}
+
+
+def test_policy_change_with_a_clean_ledger_is_a_free_hit(tmp_path: Path):
+    """With no failures every policy produces identical results, so any edit hits."""
+    from chemrefine.engines.api import ENGINES
+
+    seeds = _seed_state(["0", "1"])
+    _register_fail_engine()
+    try:
+        cfg = _config(tmp_path, engine="fake-fail", on_failure="stop")
+        run_step(cfg, cfg.steps[0], seeds)
+        cfg2 = _config(tmp_path, engine="fake-fail", on_failure="best")
+        outcome = run_step(cfg2, cfg2.steps[0], seeds, mode=StepMode.RESUME)
+        assert outcome.cache_hit is True
+        assert {s.id for s in outcome.state.structures} == {"0", "1"}
+    finally:
+        ENGINES.pop("fake-fail", None)
+
+
+def test_policy_change_under_cache_only_raises_instead_of_serving_it(tmp_path: Path):
+    """A mode that may not submit cannot repair the shape mismatch — it must say so."""
+    with pytest.raises(ChemRefineError, match="no cache this configuration can use"):
+        _run_policy_change(tmp_path, "stop", "best", mode=StepMode.CACHE_ONLY)
+
+
+def test_policy_change_over_a_legacy_cache_stays_a_hit(tmp_path: Path):
+    """A document written before `on_failure` was recorded serves any policy."""
+    outcome, step_dir = _run_policy_change(tmp_path, "stop", "stop")
+    document = json.loads((step_dir / "_cache" / "step.json").read_text(encoding="utf-8"))
+    document.pop("on_failure")
+    (step_dir / "_cache" / "step.json").write_text(json.dumps(document), encoding="utf-8")
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fail_engine()
+    try:
+        eng.fail = {"1": "missing"}
+        cfg = _config(tmp_path, engine="fake-fail", on_failure="best")
+        outcome = run_step(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]), mode=StepMode.RESUME)
+        assert outcome.cache_hit is True
+        assert {s.id for s in outcome.state.structures} == {"0", "2"}
+    finally:
+        eng.fail = {}
+        ENGINES.pop("fake-fail", None)
+
+
+# ---------------------------------------------------------------------------
 # Auto-retry-once on convergence failure
 # ---------------------------------------------------------------------------
 
