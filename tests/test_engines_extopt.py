@@ -118,6 +118,30 @@ def test_read_extinp_rejects_a_truncated_file(tmp_path: Path, kept_lines: int):
         protocol.read_extinp(inp)
 
 
+@pytest.mark.parametrize(
+    ("xyz_text", "match"),
+    [
+        ("", "not an atom count"),  # empty file: no count line at all
+        ("two\ncomment\n", "not an atom count"),  # count line that is not a number
+        ("2\ncomment\nH 0.0 0.0 0.0\n", "truncated"),  # killed mid-atom-block
+        ("2\ncomment\nH 0.0 0.0 0.0\nH 0.74 0.0\n", "bad atom row"),  # row cut short
+        ("1\ncomment\nH 0.0 zero 0.0\n", "bad atom row"),  # corrupt coordinate token
+    ],
+)
+def test_read_extinp_rejects_a_bad_xyz(tmp_path: Path, xyz_text: str, match: str):
+    """The referenced `.xyz` is held to the same rule as the `.extinp.tmp` header.
+
+    ORCA writes both files per ProgExt call, so the same kill or full disk that
+    truncates one truncates the other — and this one raised a bare IndexError in the
+    wrapper's runlog instead of a failure naming the file.
+    """
+    inp = _write_extinp(tmp_path)
+    (tmp_path / "struct.xyz").write_text(xyz_text, encoding="utf-8")
+
+    with pytest.raises(JobFailureError, match=match):
+        protocol.read_extinp(inp)
+
+
 def test_read_extinp_handles_absolute_xyz_path(tmp_path: Path):
     xyz = tmp_path / "abs_struct.xyz"
     xyz.write_text("1\nc\nH 1.0 2.0 3.0\n", encoding="utf-8")

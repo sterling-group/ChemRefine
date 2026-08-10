@@ -84,18 +84,42 @@ def read_extinp(
 
 
 def _read_xyz(xyz_path: Path) -> tuple[list[str], NDArray[np.float64]]:
-    """Return ``(symbols, positions)`` from a plain-format ``.xyz``."""
+    """Return ``(symbols, positions)`` from a plain-format ``.xyz``.
+
+    Held to the same rule as the ``.extinp.tmp`` header above, because it is the same
+    file event: ORCA writes both per ProgExt call, so the kill or full disk that
+    truncates one truncates the other. Unguarded, a short file surfaced as a bare
+    ``IndexError`` in the runlog — a message about a list, three frames from the file
+    that caused it — where the header's guard names the file and the cause.
+    """
     import numpy as np
 
-    with xyz_path.open(encoding="utf-8") as fh:
-        natoms = int(fh.readline().strip())
-        fh.readline()  # comment line
-        symbols: list[str] = []
-        coords: list[list[float]] = []
-        for _ in range(natoms):
-            parts = fh.readline().split()
-            symbols.append(parts[0])
-            coords.append([float(x) for x in parts[1:4]])
+    lines = xyz_path.read_text(encoding="utf-8").splitlines()
+    try:
+        natoms = int(lines[0].strip())
+    except (IndexError, ValueError) as e:
+        raise JobFailureError(
+            f"malformed ExtOpt geometry {xyz_path}: the first line is not an atom count"
+        ) from e
+    if len(lines) < 2 + natoms:
+        raise JobFailureError(
+            f"truncated ExtOpt geometry {xyz_path}: expected {natoms} atom row(s), "
+            f"got {max(0, len(lines) - 2)}"
+        )
+    symbols: list[str] = []
+    coords: list[list[float]] = []
+    for line in lines[2 : 2 + natoms]:
+        parts = line.split()
+        if len(parts) < 4:
+            raise JobFailureError(f"malformed ExtOpt geometry {xyz_path}: bad atom row {line!r}")
+        try:
+            row = [float(x) for x in parts[1:4]]
+        except ValueError as e:
+            raise JobFailureError(
+                f"malformed ExtOpt geometry {xyz_path}: bad atom row {line!r}"
+            ) from e
+        symbols.append(parts[0])
+        coords.append(row)
     return symbols, np.asarray(coords, dtype=np.float64)
 
 
