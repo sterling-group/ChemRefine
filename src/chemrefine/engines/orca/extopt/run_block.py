@@ -49,6 +49,7 @@ def _build_extopt_run_block(
     *,
     server_cmd: str,
     orca_command: str,
+    pal: int,
 ) -> RunBlock:
     """Return the :class:`~chemrefine.engines.api.RunBlock` orchestrating the ExtOpt server + ORCA.
 
@@ -88,6 +89,13 @@ def _build_extopt_run_block(
         f'LOG_FILE="$OUTPUT_DIR/server_${{SLURM_JOB_ID:-$$}}.log"\n'
         f'URL_FILE="$WORK_DIR/{SERVER_URL_FILENAME}"\n'
         f"SERVER_TIMEOUT={_SERVER_READY_TIMEOUT_SECONDS}\n"
+        # The server is the compute half of this job, and it inherits its thread count from
+        # this environment at launch: exported before the `&`, so torch/MKL see the step's
+        # own budget. Left uncapped they take every core on the node while the throttler
+        # charges this job `pal` — invisible under SLURM's cgroups, an oversubscription on
+        # every local run.
+        f"export OMP_NUM_THREADS={pal}\n"
+        f"export MKL_NUM_THREADS={pal}\n"
         f"{server_cmd} &\n"
         "SERVER_PID=$!\n"
         "\n"
@@ -114,6 +122,8 @@ def _build_extopt_run_block(
         "  exit 1\n"
         "}\n"
         "\n"
+        # Re-exported down to 1 for ORCA only: in ExtOpt mode ORCA is a stepper whose math
+        # is done by the server, and the server keeps the threads it inherited above.
         "export OMP_NUM_THREADS=1\n"
         f"{orca_command}"
     )

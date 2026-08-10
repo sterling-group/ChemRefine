@@ -107,6 +107,7 @@ class ExtOptOrcaEngine(OrcaEngine):
         return run_block._build_extopt_run_block(
             server_cmd=self._server_cmd(ctx),
             orca_command=self.orca_command(ctx, inp_path.name, out_path.name),
+            pal=self.pal(ctx),
         )
 
     def _wrapper_path(self, ctx: StepContext) -> Path:

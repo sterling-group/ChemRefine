@@ -415,6 +415,33 @@ def test_mlip_extopt_run_block_has_a_readiness_loop_and_a_cleanup_hook(tmp_path:
     assert "trap " not in block.cleanup
 
 
+def test_the_server_gets_the_steps_threads_and_orca_gets_one(tmp_path: Path):
+    """The server is the compute half of an ExtOpt job; ORCA is only the stepper.
+
+    The server inherits its thread count from the environment at launch, so the pal export
+    must come *before* the backgrounded server command and the `OMP_NUM_THREADS=1` re-export
+    must come after it, for ORCA alone. In the other order the server takes every core on
+    the node while the throttler charges the job its pal — invisible under SLURM's cgroups,
+    an oversubscription on every local run.
+    """
+    engine = get_engine("mlip-extopt")
+    ctx = _mlip_extopt_ctx(tmp_path)
+    # A pal that cannot be confused with ORCA's own `OMP_NUM_THREADS=1` re-export.
+    assert ctx.template is not None
+    ctx.template.write_text("! B3LYP def2-SVP\n%pal nprocs 3 end\n", encoding="utf-8")
+    body = engine.run_block(
+        ctx,
+        inp_path=ctx.step_dir / "step1_structure_0.inp",
+        out_path=ctx.step_dir / "step1_structure_0.out",
+    ).body
+
+    pal_export = body.index("export OMP_NUM_THREADS=3\n")
+    server_start = body.index("SERVER_PID=$!")
+    orca_export = body.index("export OMP_NUM_THREADS=1\n")
+    assert pal_export < server_start < orca_export
+    assert "export MKL_NUM_THREADS=3\n" in body
+
+
 def test_mlip_extopt_prepare_writes_inp_with_method_block(tmp_path: Path):
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path)

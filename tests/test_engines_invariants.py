@@ -51,18 +51,30 @@ _REQUIRED_OPTIONS: dict[str, dict[str, object]] = {
 
 
 def _ctx(tmp_path: Path, engine_name: str, options: dict[str, object]) -> StepContext:
-    """A minimal context for asking an engine about one step's options."""
+    """A minimal context for asking an engine about one step's options.
+
+    The template file really exists, with a ``%pal`` line for the ORCA-family engines:
+    the ExtOpt engines read their pal from it inside ``run_block`` (the server's thread
+    budget), so a context whose template is only a path would fail exactly the invariants
+    this module exists to hold.
+    """
     step_cfg = StepConfig(
         step=1,
         engine=engine_name,
         operation="opt_sp",
         options={**_REQUIRED_OPTIONS.get(engine_name, {}), **options},
     )
+    suffix = get_engine(engine_name).template_suffix
+    template = tmp_path / f"step1.{suffix}"
+    if not template.exists():
+        template.write_text(
+            "! Opt\n%pal nprocs 2 end\n" if suffix == "inp" else "", encoding="utf-8"
+        )
     return StepContext(
         step_cfg=step_cfg,
         step_dir=tmp_path,
         template_dir=tmp_path,
-        template=tmp_path / f"step1.{get_engine(engine_name).template_suffix}",
+        template=template,
         scratch_dir=None,
         prev_state=PipelineState(),
         charge=0,
