@@ -63,7 +63,7 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import Any, TypedDict
 
 import numpy as np
 from ase import Atoms
@@ -940,12 +940,21 @@ def load_failure_records(step_dir: Path) -> list[FailureRecord]:
     The ledger is a ``_cache/`` file, so this module owns it end to end — bytes through to
     :class:`~chemrefine.state.FailureRecord`. The recovery paths read these back to decide
     what to re-attempt.
+
+    Valid JSON of the wrong *shape* is held to the same rule as malformed JSON:
+    :func:`read_json` guarantees only that the file parsed, not that it is the list of
+    records :func:`save_failure_records` writes, and an object or a list of strings must
+    reach the user as the :class:`CacheError` every other ``_cache/`` reader raises — not
+    as a ``TypeError`` from a subscript three frames down. ``ValueError`` is in the net
+    for the same reason: a ``kind`` this version's :class:`~chemrefine.state.FailureKind`
+    does not know is the same fact as a corrupt file.
     """
-    raw = cast(
-        list[dict[str, str]],
-        read_json(failed_jobs_path(step_dir), [], label="failed-jobs ledger"),
-    )
-    return [FailureRecord.from_json(rec) for rec in raw]
+    path = failed_jobs_path(step_dir)
+    raw = read_json(path, [], label="failed-jobs ledger")
+    try:
+        return [FailureRecord.from_json(rec) for rec in raw]
+    except (KeyError, TypeError, ValueError) as e:
+        raise CacheError(f"corrupt failed-jobs ledger at {path}: {e!r}") from e
 
 
 def clear_failed_jobs(step_dir: Path) -> None:

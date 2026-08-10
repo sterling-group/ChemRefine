@@ -886,3 +886,31 @@ def test_load_failure_records_raises_on_corrupt_ledger(tmp_path: Path):
     path.write_text("{not json", encoding="utf-8")
     with pytest.raises(CacheError, match="corrupt failed-jobs ledger"):
         cache.load_failure_records(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param('{"oops": 1}', id="an object where the record list belongs"),
+        pytest.param('["a", "b"]', id="a list of strings instead of records"),
+        pytest.param(
+            '[{"structure_id": "0", "kind": "no-such-kind", "reason": ""}]',
+            id="a record whose kind this version does not know",
+        ),
+    ],
+)
+def test_load_failure_records_raises_on_wrong_shape_ledger(tmp_path: Path, body: str):
+    """Valid JSON of the wrong shape must become a CacheError naming the file.
+
+    `read_json` only proves the file parsed; without the shape guard these escaped as a
+    bare TypeError/ValueError — a traceback with the generic exit code, naming neither the
+    file nor the fix — where every sibling `_cache/` reader raises CacheError (exit 7).
+    """
+    from chemrefine import cache
+
+    path = cache.failed_jobs_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    with pytest.raises(CacheError, match="corrupt failed-jobs ledger") as excinfo:
+        cache.load_failure_records(tmp_path)
+    assert str(path) in str(excinfo.value)

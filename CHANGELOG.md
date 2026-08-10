@@ -196,6 +196,10 @@ for the full map.
 ### Fixed
 
 
+- **A corrupt `failed_jobs.json` now fails like every other corrupt cache file.** Valid
+  JSON of the wrong shape escaped the ledger reader as a bare `TypeError` — a traceback
+  with the generic exit code naming neither the file nor the fix — where every sibling
+  `_cache/` reader raises `CacheError` (exit `7`) with the path. It now does the same.
 - **An ExtOpt gradient server now runs on the step's own core budget.** The server — the
   compute half of an `mlip-extopt` / `pyscf-extopt` job — inherited an uncapped thread
   environment, so torch/MKL took every core on the node while the scheduler charged the job
