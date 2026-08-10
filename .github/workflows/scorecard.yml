@@ -1,0 +1,45 @@
+name: OpenSSF Scorecard
+
+# Continuous measurement of the repo's supply-chain posture — branch protection,
+# token permissions, pinned dependencies, dangerous workflow patterns. The other
+# security workflows check the *code and its dependencies*; this one checks the
+# *project configuration*, which none of them see and which can regress without
+# any commit landing (a branch-protection rule relaxed in the UI, say).
+on:
+  # Re-evaluate when the thing most of the checks measure changes.
+  branch_protection_rule:
+  schedule:
+    - cron: "30 3 * * 2" # weekly, Tuesday morning UTC
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      # Upload the SARIF so findings land in the Security tab beside CodeQL's.
+      security-events: write
+      # publish_results signs the result set via OIDC so the public Scorecard
+      # API (and the README badge, if one is added) can serve it.
+      id-token: write
+      contents: read
+      actions: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ossf/scorecard-action@05b42c624433fc40578a4040d5cf5e36ddca8cde # v2.4.2
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          sarif_file: results.sarif
