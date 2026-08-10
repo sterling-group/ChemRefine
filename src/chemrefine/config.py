@@ -30,6 +30,7 @@ Schema shape (see ``examples/`` for full examples):
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -237,6 +238,33 @@ class StepConfig(BaseModel):
         second predicate rather than the same one.
         """
         return self.on_failure == "stop"
+
+    @field_validator("options")
+    @classmethod
+    def _reject_unrepresentable_options(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """Refuse an option value the step's cache key cannot be computed from.
+
+        Options are folded into the cache fingerprint by ``json.dumps``
+        (:func:`chemrefine.cache.fingerprint`); this probe mirrors that encoder —
+        ``sort_keys`` included, since a nested dict with mixed-type keys fails in the
+        sort rather than in the encoding. Without it the first thing to meet such a
+        value is the fingerprint itself, and what reaches the user is a bare
+        ``TypeError`` traceback from inside the cache — outside the exit-code contract
+        every other config mistake honours — three layers from the YAML that caused it.
+
+        The likeliest trigger is YAML's own typing, not exotic input: an unquoted
+        ``2024-01-01`` parses to ``datetime.date``, which JSON has no spelling for.
+        Refused here, at the boundary, the failure names the key and the fix.
+        """
+        for key, value in v.items():
+            try:
+                json.dumps(value, sort_keys=True)
+            except (TypeError, ValueError) as e:
+                raise ValueError(
+                    f"option {key!r} has a value the cache key cannot be computed from "
+                    f"({e}); quote it in the YAML so it stays a plain string"
+                ) from e
+        return v
 
     @field_validator("operation")
     @classmethod

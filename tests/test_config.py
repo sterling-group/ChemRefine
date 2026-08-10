@@ -152,6 +152,31 @@ def test_step_name_validator_accepts_explicit_none():
     assert sc.name is None
 
 
+def test_step_options_reject_a_yaml_date(tmp_path: Path):
+    """An unquoted date in `options` fails at load, naming the key — not as a
+    TypeError traceback from inside the cache fingerprint three layers later."""
+    p = tmp_path / "input.yaml"
+    p.write_text(
+        "steps:\n"
+        "  - step: 1\n"
+        "    engine: fake\n"
+        "    options: { calibration_date: 2024-01-01 }\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="calibration_date"):
+        load_config(p)
+
+
+def test_step_options_accept_nested_json_values():
+    """Anything JSON can encode — nested dicts, lists, floats, bools — stays legal."""
+    sc = StepConfig(
+        step=1,
+        engine="fake",
+        options={"model": "uma-s-1p2", "windows": [0.5, 1.0], "flags": {"gpu": True}},
+    )
+    assert sc.options["windows"] == [0.5, 1.0]
+
+
 def test_empty_steps_list_rejected(tmp_path: Path):
     data = _minimal_config(steps=[])
     with pytest.raises(ConfigError):
