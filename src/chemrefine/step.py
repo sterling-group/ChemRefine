@@ -24,6 +24,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import assert_never
 
 from chemrefine import __version__, attempts, cache, filtering, ids, lifecycle, nms
 from chemrefine.config import Config, StepConfig
@@ -141,7 +142,13 @@ class StepMode(StrEnum):
         those alone. (``REBUILD`` never reaches here — see :meth:`runs_through_run_step` —
         but it answers honestly for the same reason.)
         """
-        return self not in (StepMode.CACHE_ONLY, StepMode.REBUILD)
+        match self:
+            case StepMode.EXECUTE | StepMode.RESUME:
+                return True
+            case StepMode.CACHE_ONLY | StepMode.REBUILD:
+                return False
+            case _:
+                assert_never(self)
 
     def runs_through_run_step(self) -> bool:
         """Whether :func:`chemrefine.pipeline.run` drives this mode through :func:`run_step`.
@@ -155,9 +162,19 @@ class StepMode(StrEnum):
         reason :meth:`may_submit` is one: three separate questions are asked about
         :class:`StepMode` — may it submit, does it go through ``run_step``, can it halt —
         and each answered in a different module means adding a fourth mode is a search
-        rather than a compiler error.
+        rather than a compiler error. The exhaustive ``match`` — every member named, the
+        wildcard arm holding only :func:`typing.assert_never` — is what makes it the
+        compiler error, in all three predicates: a fifth member stops narrowing to
+        ``Never`` there and strict mypy rejects the call, where a negative membership test
+        would hand the new mode the *permissive* answer silently.
         """
-        return self is not StepMode.REBUILD
+        match self:
+            case StepMode.REBUILD:
+                return False
+            case StepMode.EXECUTE | StepMode.RESUME | StepMode.CACHE_ONLY:
+                return True
+            case _:
+                assert_never(self)
 
     def can_halt(self) -> bool:
         """Whether an ``on_failure: stop`` step in this mode may stop the run.
@@ -169,7 +186,13 @@ class StepMode(StrEnum):
         cannot make a failed structure succeed, and continuing would run the next step
         against the partial survivor set the user asked to stop on.
         """
-        return self is not StepMode.CACHE_ONLY
+        match self:
+            case StepMode.CACHE_ONLY:
+                return False
+            case StepMode.EXECUTE | StepMode.RESUME | StepMode.REBUILD:
+                return True
+            case _:
+                assert_never(self)
 
 
 @dataclass(frozen=True)

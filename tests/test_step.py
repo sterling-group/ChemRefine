@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -723,6 +724,20 @@ def test_halt_if_pending_no_pending_returns(tmp_path: Path):
     cfg = _config(tmp_path, on_failure="stop")
     step_dir_for(cfg, cfg.steps[0]).mkdir(parents=True, exist_ok=True)
     halt_if_pending(cfg, cfg.steps[0], StepMode.RESUME)  # no ledger → no raise
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [StepMode.may_submit, StepMode.runs_through_run_step, StepMode.can_halt],
+    ids=["may_submit", "runs_through_run_step", "can_halt"],
+)
+def test_a_value_outside_the_mode_enum_fails_loud_in_every_predicate(predicate):
+    """The predicates' wildcard arm holds only `assert_never` — the guard that keeps the
+    match exhaustive for mypy, so a fifth mode fails type-checking instead of inheriting
+    the permissive answer. Anything that reaches the arm at runtime fails loud, like
+    `Throttler.assign_device`'s unreachable guard."""
+    with pytest.raises(AssertionError):
+        predicate(cast(StepMode, "bogus"))
 
 
 # ---------------------------------------------------------------------------

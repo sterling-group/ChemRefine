@@ -147,8 +147,8 @@ MUTATIONS = (
     Mutation(
         id="cache-only-may-submit",
         path="src/chemrefine/step.py",
-        old="return self not in (StepMode.CACHE_ONLY, StepMode.REBUILD)",
-        new="return True",
+        old="case StepMode.CACHE_ONLY | StepMode.REBUILD:\n                return False",
+        new="case StepMode.CACHE_ONLY | StepMode.REBUILD:\n                return True",
         breaks="`rebuild-cache` and `rerun-errors` submit work for steps they were not "
         "pointed at, archiving the very outputs they were asked to read",
     ),
