@@ -131,6 +131,39 @@ def test_parse_with_failures_records_unparseable(tmp_path: Path):
     assert failures[0].reason.startswith("unparseable")
 
 
+def test_a_fanout_failure_carries_its_lowest_energy_bad_frame(tmp_path: Path):
+    """Among several bad frames, the *lowest-energy* one is the failure's geometry.
+
+    That frame is what a convergence retry restarts from, what ``on_failure: best``
+    backfills, and what the failure is classified by — so a job with two unconverged
+    frames must be described by the better of them, not by whichever the parse
+    happened to yield last.
+    """
+    out = tmp_path / "s.out"
+    out.write_text("fine", encoding="utf-8")
+
+    def _frame(sid: str, energy: float) -> Structure:
+        return Structure(id=sid, atoms=Atoms("H"), energy_hartree=energy, converged=False)
+
+    class _Engine:
+        def parse(self, inputs, ctx):
+            return StepResults(
+                structures=(
+                    Structure(id="0-0", atoms=Atoms("H"), energy_hartree=-2.0, converged=True),
+                    _frame("0-1", -0.5),
+                    _frame("0-2", -1.0),  # lower energy: the geometry the failure must carry
+                )
+            )
+
+    inputs = StepInputs(files=((tmp_path / "s.inp", out, "0"),))
+    successes, failures = lifecycle.parse_with_failures(_Engine(), inputs, _ctx(tmp_path))
+    assert [s.id for s in successes] == ["0-0"]
+    assert [f.sid for f in failures] == ["0"]
+    assert failures[0].kind is FailureKind.NOT_CONVERGED
+    assert failures[0].best is not None
+    assert failures[0].best.id == "0-2"
+
+
 def test_parse_with_failures_writes_nothing_and_parse_and_record_does(tmp_path: Path):
     """The one thing separating the two, pinned where it is decided.
 

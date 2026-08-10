@@ -105,6 +105,14 @@ MUTATIONS = (
         "keeps less than it promises — the high-energy mirror of min-window-boundary",
     ),
     Mutation(
+        id="retry-best-frame",
+        path="src/chemrefine/lifecycle.py",
+        old="best = min(bad, key=lambda s: (s.energy_hartree is None, s.energy_hartree or 0.0))",
+        new="best = max(bad, key=lambda s: (s.energy_hartree is None, s.energy_hartree or 0.0))",
+        breaks="a fan-out job's retry restarts from the worst unconverged frame, and "
+        "`on_failure: best` backfills the worst geometry obtained",
+    ),
+    Mutation(
         id="succeeded-ignores-convergence",
         path="src/chemrefine/lifecycle.py",
         old="return s.terminated_normally is not False and s.converged is not False",
