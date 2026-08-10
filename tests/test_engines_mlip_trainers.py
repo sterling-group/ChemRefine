@@ -3,11 +3,24 @@
 These are the tests the trainer this replaced never had. It wrote a dataset MACE could not
 read and a command that could not resolve, under 100% line coverage, because every test
 asserted on what the code produced rather than on what the library consumes.
+
+The cross-validation tests (the ones needing a real MLIP stack) are **integration-tier**
+and run their library half in a subprocess under the interpreter the provisioner
+resolves — see :func:`_backend_python`. Both halves of that follow from the same fact:
+the orchestrator's env deliberately does not hold MACE (the e3nn conflict is why managed
+envs exist), so an in-process ``find_spec`` says "absent" on the very machine where
+``chemrefine backends install`` has provisioned it — and the managed envs are visible
+only to the tier ``conftest._isolate_chemrefine_home`` exempts. Running the half out of
+process is also what production does, and it keeps a backend's own import-time warnings
+— torch's env-var notices, FAIRChem's pydantic deprecations — out of this suite's
+``filterwarnings = error`` regime, which exists for warnings *our* calls trigger.
 """
 
 from __future__ import annotations
 
-import importlib.util
+import functools
+import json
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +28,7 @@ import pytest
 from ase import Atoms
 from ase.io import read as ase_read
 
+from chemrefine.engines import _provision
 from chemrefine.engines.mlip.backends.fairchem import _METADATA_NAME, FairchemTrainer
 from chemrefine.engines.mlip.backends.mace import (
     CHARGE_KEY,
@@ -23,12 +37,64 @@ from chemrefine.engines.mlip.backends.mace import (
     SPIN_KEY,
     MaceTrainer,
 )
+from chemrefine.engines.mlip.registry import requirement_from_options
 from chemrefine.engines.mlip.training import DatasetSplit, TrainingPlan, split_structures
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
 
-_HAS_MACE = importlib.util.find_spec("mace") is not None
+
+@functools.cache
+def _backend_python(task_name: str) -> str | None:
+    """The interpreter that can import this backend, or ``None`` when nothing here can.
+
+    Resolved through the provisioner itself — the same seam ``launcher_for`` uses in
+    production — so the answer is "this interpreter, or the managed env `chemrefine
+    backends install` built", never only the first. The final probe (a cheap
+    ``find_spec`` in the resolved interpreter, importing nothing) is what keeps the
+    suite independent of *fake* provisioned envs: the CI job that plants a bare
+    symlink per extra must see a skip, not an ImportError dressed as a failure.
+    """
+    requirement = requirement_from_options({"task_name": task_name})
+    try:
+        _provision.require_backend(requirement)
+    except ConfigError:
+        return None
+    python = _provision.resolve_launcher(requirement)
+    probe = subprocess.run(
+        [
+            python,
+            "-c",
+            f"import importlib.util as u, sys;"
+            f"sys.exit(0 if u.find_spec({requirement.import_name!r}) else 1)",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    return python if probe.returncode == 0 else None
+
+
+def _require_backend_python(task_name: str) -> str:
+    """Skip the calling test when no interpreter — local or managed — has the backend."""
+    python = _backend_python(task_name)
+    if python is None:
+        pytest.skip(f"no {task_name} stack — neither importable here nor in a managed env")
+    return python
+
+
+def _in_backend(python: str, script: str, *args: str) -> dict:
+    """Run ``script`` under the backend's interpreter; return the JSON it prints.
+
+    The JSON is the script's *last* stdout line, not its whole stdout: the libraries chat
+    on import — MACE prints a cuequivariance notice straight to stdout — and a scripted
+    print cannot get in front of one.
+    """
+    result = subprocess.run(
+        [python, "-c", script, *args], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    loaded: dict = json.loads(result.stdout.strip().splitlines()[-1])
+    return loaded
 
 
 def _labelled(sid: str, *, energy: float = -1.5) -> Structure:
@@ -80,19 +146,31 @@ def test_the_dataset_uses_maces_own_label_keys(tmp_path: Path):
     assert FORCES_KEY in text
 
 
-@pytest.mark.skipif(not _HAS_MACE, reason="needs a mace stack to read its own defaults")
+@pytest.mark.integration
 def test_the_label_keys_are_the_ones_mace_declares():
     """Pinned against the library rather than against a literal we chose.
 
     A copy of MACE's defaults is only correct until MACE moves them, and the failure mode is
     silent — a dataset that loads with zero-weighted labels, or refuses to load at all.
     """
-    from mace.tools.default_keys import DefaultKeys
-
-    assert DefaultKeys.ENERGY.value == ENERGY_KEY
-    assert DefaultKeys.FORCES.value == FORCES_KEY
-    assert DefaultKeys.TOTAL_CHARGE.value == CHARGE_KEY
-    assert DefaultKeys.TOTAL_SPIN.value == SPIN_KEY
+    python = _require_backend_python("mace_off")
+    declared = _in_backend(
+        python,
+        "import json\n"
+        "from mace.tools.default_keys import DefaultKeys\n"
+        "print(json.dumps({\n"
+        '    "energy": DefaultKeys.ENERGY.value,\n'
+        '    "forces": DefaultKeys.FORCES.value,\n'
+        '    "charge": DefaultKeys.TOTAL_CHARGE.value,\n'
+        '    "spin": DefaultKeys.TOTAL_SPIN.value,\n'
+        "}))\n",
+    )
+    assert declared == {
+        "energy": ENERGY_KEY,
+        "forces": FORCES_KEY,
+        "charge": CHARGE_KEY,
+        "spin": SPIN_KEY,
+    }
 
 
 def test_charge_and_multiplicity_reach_the_dataset(tmp_path: Path):
@@ -155,26 +233,37 @@ def test_the_pipelines_own_structures_are_left_alone(tmp_path: Path):
     assert not struct.atoms.info, "the seed's own info dict must not gain training keys"
 
 
-@pytest.mark.skipif(not _HAS_MACE, reason="needs a mace stack")
+@pytest.mark.integration
 def test_mace_loads_the_dataset_we_write(tmp_path: Path):
     """End to end against the real loader: the labels arrive, and they carry full weight.
 
     A dataset MACE can open but whose labels it weights at zero trains a model on nothing —
     which is what a key mismatch did on MACE < 0.3.13, before it began refusing outright.
+    The dataset is written here, in the orchestrator's process, exactly as a run writes it;
+    only the *loading* runs under MACE's own interpreter, exactly as a training job loads it.
     """
-    from mace.data.utils import KeySpecification, load_from_xyz
-
+    python = _require_backend_python("mace_off")
     plan = _plan(tmp_path, charge=-1, multiplicity=1)
     split = DatasetSplit(train=tuple(_labelled(str(i)) for i in range(4)), valid=(), test=())
     data = MaceTrainer().write_dataset(plan, split)
 
-    _, configs = load_from_xyz(
-        file_path=str(data.train), key_specification=KeySpecification.from_defaults()
+    loaded = _in_backend(
+        python,
+        "import json, sys\n"
+        "from mace.data.utils import KeySpecification, load_from_xyz\n"
+        "_, configs = load_from_xyz(\n"
+        "    file_path=sys.argv[1], key_specification=KeySpecification.from_defaults()\n"
+        ")\n"
+        "print(json.dumps({\n"
+        '    "energy_weight": configs[0].property_weights["energy"],\n'
+        '    "forces_weight": configs[0].property_weights["forces"],\n'
+        '    "total_charge": configs[0].properties["total_charge"],\n'
+        "}))\n",
+        str(data.train),
     )
-
-    assert configs[0].property_weights["energy"] == 1.0
-    assert configs[0].property_weights["forces"] == 1.0
-    assert configs[0].properties["total_charge"] == -1.0
+    assert loaded["energy_weight"] == 1.0
+    assert loaded["forces_weight"] == 1.0
+    assert loaded["total_charge"] == -1.0
 
 
 # ---------------------------------------------------------------------------
@@ -232,8 +321,6 @@ def test_a_two_stage_run_is_found_by_its_own_name(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # FAIRChem — a different dataset format, a different launcher, a different product
 # ---------------------------------------------------------------------------
-
-_HAS_FAIRCHEM = importlib.util.find_spec("fairchem") is not None
 
 
 def _fc_plan(tmp_path: Path, **overrides: object) -> TrainingPlan:
@@ -387,22 +474,34 @@ def test_the_fairchem_product_is_the_inference_checkpoint(tmp_path: Path):
     )
 
 
-@pytest.mark.skipif(not _HAS_FAIRCHEM, reason="needs a fairchem stack")
+@pytest.mark.integration
 def test_fairchem_loads_the_dataset_we_write(tmp_path: Path):
     """End to end against the real loader, as the MACE half is."""
-    from fairchem.core.datasets.ase_datasets import AseDBDataset
-
+    python = _require_backend_python("omol")
     plan = _fc_plan(tmp_path)
     data = FairchemTrainer().write_dataset(plan, _fc_split(n_train=4))
 
-    ds = AseDBDataset(
-        config={
-            "src": str(data.train),
-            "metadata_path": str(data.train.parent / _METADATA_NAME),
-            "a2g_args": {"r_energy": True, "r_forces": True},
-        }
+    loaded = _in_backend(
+        python,
+        "import json, sys\n"
+        "from fairchem.core.datasets.ase_datasets import AseDBDataset\n"
+        "ds = AseDBDataset(\n"
+        "    config={\n"
+        '        "src": sys.argv[1],\n'
+        '        "metadata_path": sys.argv[2],\n'
+        '        "a2g_args": {"r_energy": True, "r_forces": True},\n'
+        "    }\n"
+        ")\n"
+        "print(json.dumps({\n"
+        '    "n": len(ds),\n'
+        '    "energy0": float(ds[0].energy),\n'
+        '    "forces_shape": list(ds[0].forces.shape),\n'
+        '    "natoms": [int(n) for n in ds.get_metadata("natoms", [0, 1])],\n'
+        "}))\n",
+        str(data.train),
+        str(data.train.parent / _METADATA_NAME),
     )
-    assert len(ds) == 4
-    assert float(ds[0].energy) == pytest.approx(-1.5 * HARTREE_TO_EV, rel=1e-5)
-    assert tuple(ds[0].forces.shape) == (3, 3)
-    assert list(ds.get_metadata("natoms", [0, 1])) == [3, 3]
+    assert loaded["n"] == 4
+    assert loaded["energy0"] == pytest.approx(-1.5 * HARTREE_TO_EV, rel=1e-5)
+    assert loaded["forces_shape"] == [3, 3]
+    assert loaded["natoms"] == [3, 3]
