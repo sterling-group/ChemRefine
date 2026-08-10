@@ -9,20 +9,23 @@ is no list here to update.
 
 from __future__ import annotations
 
-from chemrefine.engines._backend_server.base import ComputeBackend
+from chemrefine.engines._backend_server.base import ComputeBackend, ExtOptServed
 
 
 def _calculators() -> dict[str, type[ComputeBackend]]:
-    """Scan the engine registry for ExtOpt engines and their calculators."""
+    """Scan the engine registry for ExtOpt engines and their calculators.
+
+    Detected via :class:`ExtOptServed` — a capability Protocol, like every other
+    ``isinstance`` test in ``engines/`` — so the two ClassVars the ExtOpt engines declare
+    are read as their declared types rather than through an untyped ``getattr`` probe.
+    """
     from chemrefine.engines.api import ENGINES, get_engine
 
     found: dict[str, type[ComputeBackend]] = {}
     for name in ENGINES:
         engine = get_engine(name)
-        backend = getattr(engine, "backend", None)
-        calculator = getattr(engine, "calculator_cls", None)
-        if isinstance(backend, str) and calculator is not None:
-            found[backend] = calculator
+        if isinstance(engine, ExtOptServed):
+            found[engine.backend] = engine.calculator_cls
     return found
 
 

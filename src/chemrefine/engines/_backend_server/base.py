@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -128,6 +128,26 @@ class ComputeBackend(Protocol):
         list of three-component ``[gx, gy, gz]`` rows.
         """
         ...
+
+
+@runtime_checkable
+class ExtOptServed(Protocol):
+    """An engine that names an ExtOpt backend this server subsystem can host.
+
+    The registry's side of the contract the ExtOpt engines already declare: ``backend`` is
+    the name the server's ``--backend`` flag takes, and ``calculator_cls`` is the
+    :class:`ComputeBackend` it loads. A capability detected via ``isinstance`` like every
+    other one in ``engines/`` (:mod:`chemrefine.engines.api` sets the rule) — this used to
+    be the subsystem's one ``getattr`` duck-probe, which said the same thing without the
+    type checker watching either side of it.
+
+    ``runtime_checkable`` on data members checks only that both attributes *exist* — the
+    same evidence the probe read — while the static half now holds the registry's reads to
+    the declared types.
+    """
+
+    backend: ClassVar[str]
+    calculator_cls: ClassVar[type[ComputeBackend]]
 
 
 def tokens_from_options(

@@ -312,6 +312,26 @@ def test_registry_discovers_mlip_and_pyscf():
     assert registry.known_backends() == ["mlip", "pyscf"]
 
 
+def test_discovery_is_the_extopt_served_capability():
+    """Detection is the `ExtOptServed` Protocol: both declarations or nothing.
+
+    An engine carrying only `backend` (or only `calculator_cls`) is not an ExtOpt engine —
+    the old `getattr` probe read the same two attributes but nothing typed the contract, so
+    a half-declared engine was silently skipped with no name for what it was missing.
+    """
+    from chemrefine.engines._backend_server.base import ExtOptServed
+    from chemrefine.engines.api import get_engine
+
+    assert isinstance(get_engine("mlip-extopt"), ExtOptServed)
+    assert isinstance(get_engine("pyscf-extopt"), ExtOptServed)
+    assert not isinstance(get_engine("orca"), ExtOptServed)
+
+    class _HalfDeclared:
+        backend = "half"
+
+    assert not isinstance(_HalfDeclared(), ExtOptServed)
+
+
 def test_load_calculator_returns_class():
     cls = registry.load_calculator("mlip")
     assert isinstance(cls, type)
