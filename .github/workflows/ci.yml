@@ -136,6 +136,44 @@ jobs:
           print("marker holds: orb-models excluded on 3.11")
           PY
 
+  # extras-resolve proves the declared versions *resolve*; nothing proved the floors
+  # *run*. Every other job tests whatever pip picks today — always the newest allowed —
+  # so a floor could sit years behind the first version the code actually needs and the
+  # matrix would stay green until a distro or a cluster site pinned low and hit it.
+  # This installs exactly the declared minima and runs the suite on them, on the oldest
+  # supported Python, where the floors bind. A floor this job fails is a wrong floor:
+  # raise it in pyproject rather than loosening anything here.
+  floors:
+    name: Suite passes on the dependency floors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Pin every runtime dependency to its floor
+        # Read the floors out of the metadata that declares them, like extras-resolve
+        # does — a hand-written pin list here would drift the moment a floor moved.
+        # Runtime deps only: the test tools float, because the promise under test is
+        # what `pip install chemrefine` guarantees users, not what pytest needs.
+        run: |
+          python - <<'PY'
+          import re, tomllib
+          deps = tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]
+          pins = [f"{m.group(1)}=={m.group(2)}"
+                  for dep in deps
+                  if (m := re.match(r"^([A-Za-z0-9_.-]+)\s*>=\s*([^,;]+?)\s*$", dep))]
+          open("floors.txt", "w").write("\n".join(pins) + "\n")
+          print(*pins, sep="\n")
+          PY
+      - name: Install the floors and the test tools
+        run: pip install -e ".[test]" -c floors.txt
+      - name: The suite must pass on the floors
+        run: pytest -q
+
   type-check:
     runs-on: ubuntu-latest
     steps:
@@ -291,6 +329,7 @@ jobs:
       - pre-commit
       - test
       - extras-resolve
+      - floors
       - type-check
       - mutation-gate
       - provisioned-backend
