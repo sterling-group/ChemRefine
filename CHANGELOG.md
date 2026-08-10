@@ -178,10 +178,23 @@ for the full map.
   the matrix could not reach: a mutation gate that breaks each critical predicate
   and requires a red test, and a run of the suite with a managed backend
   environment provisioned.
+- The live release tier (`scripts/release-check.sh`, tier-3) covers more and runs in
+  under half the time. New coverage: a UMA single point (`fairchem_sp` — the default
+  backend, previously never run by the gate), numerical frequencies computed through the
+  ExtOpt gradient server for both backends (a bare `FREQ` is silently dropped in ExtOpt
+  mode — the cases spell `NumFreq`), and `save_tensors` delivery through the
+  directory copy-back. The DFT-heavy cases moved to XTB2 where the parsing contract is
+  method-agnostic; `nms_minimum` stays PBE/def2-SVP as the one real-DFT parse.
 
 ### Fixed
 
 
+- **An ExtOpt gradient server now runs on the step's own core budget.** The server — the
+  compute half of an `mlip-extopt` / `pyscf-extopt` job — inherited an uncapped thread
+  environment, so torch/MKL took every core on the node while the scheduler charged the job
+  its `%pal`. Invisible under SLURM's cgroups; an oversubscription on every local run. The
+  job script now exports the pal thread count before launching the server, and `1` for ORCA
+  alone, which in ExtOpt mode is only the stepper.
 - **A training step no longer swallows the ensemble.** Its structures are the previous
   step's, passed through — but `parse` was never called, because a step's structures came
   from the per-structure ledger and a training step prepares no per-structure jobs. Ten
