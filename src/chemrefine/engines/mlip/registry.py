@@ -233,7 +233,7 @@ def backend_spec(task_name: str) -> BackendSpec:
 def calculator_for(task_name: str) -> Callable[..., Any]:
     """The builder a ``task_name`` dispatches to; raises if the library cannot be run."""
     spec = backend_spec(task_name)
-    if spec.builder is None:  # pragma: no cover - no shipped library registers only a trainer
+    if spec.builder is None:
         raise ConfigError(f"MLIP backend {task_name!r} declares no calculator")
     return spec.builder
 

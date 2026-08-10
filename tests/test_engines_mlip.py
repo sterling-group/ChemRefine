@@ -205,6 +205,23 @@ def test_a_selection_that_names_no_library_uses_the_options_default(tmp_path: Pa
     assert MlipOptions().task_name == DEFAULT_TASK
 
 
+def test_a_trainer_only_task_cannot_be_run():
+    """A task whose library registered only a trainer is refused with its own message.
+
+    No shipped library does this — which is exactly why the branch needs a synthetic
+    spec: reachable through no bundled backend, it would otherwise ship unchecked.
+    """
+    with (
+        patch.dict(
+            mlip_registry._BACKENDS,
+            {"train_only": BackendSpec(_TEST_LIB, trainer=type("TrainerStub", (), {}))},
+            clear=False,
+        ),
+        pytest.raises(ConfigError, match="declares no calculator"),
+    ):
+        mlip_registry.calculator_for("train_only")
+
+
 def test_register_backend_appends_to_registry():
     """A newly registered calculator is reachable by its ``task_name`` with its metadata."""
     _TEST_LIB.calculator("test_new_backend")(lambda **_kw: "NEW")
