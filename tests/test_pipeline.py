@@ -597,6 +597,98 @@ def test_a_dead_holders_lock_is_reclaimed(tmp_path: Path, caplog: pytest.LogCapt
         assert (tmp_path / "outputs" / pipeline.RUN_LOCK_NAME).exists()
     assert "reclaiming stale run lock" in caplog.text
     assert not (tmp_path / "outputs" / pipeline.RUN_LOCK_NAME).exists()
+    # The rename-claim is transient: a successful reclaim leaves no residue behind.
+    assert not list((tmp_path / "outputs").glob(f"{pipeline.RUN_LOCK_NAME}.reclaim.*"))
+
+
+def test_two_reclaimers_cannot_both_acquire(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The loser of a reclaim race answers to the winner's lock instead of acquiring.
+
+    Both drivers probe the same dead holder; the winner's `os.replace` takes the stale
+    lock's inode and its fresh lock lands before the loser moves. With the old
+    `unlink()` reclaim this interleaving deleted the winner's fresh lock and both
+    acquired — the one state the lock exists to prevent.
+    """
+    import os
+    import socket
+
+    from chemrefine.errors import RunLockError
+
+    outputs = tmp_path / "outputs"
+    _write_lock(outputs, host=socket.gethostname(), pid=_dead_pid())
+    lock = outputs / pipeline.RUN_LOCK_NAME
+    winner_pid = os.getppid()  # a live pid that is not this process's
+    real_replace = os.replace
+
+    def winner_got_there_first(src: object, dst: object) -> None:
+        # The winner completes its whole reclaim-and-create inside the loser's window:
+        # the stale lock is gone and a live one stands before the loser's rename runs.
+        lock.unlink()
+        _write_lock(outputs, host=socket.gethostname(), pid=winner_pid)
+        raise FileNotFoundError(src)
+
+    monkeypatch.setattr(os, "replace", winner_got_there_first)
+    with pytest.raises(RunLockError, match=rf"pid {winner_pid}"), pipeline.run_lock(outputs):
+        pass
+    monkeypatch.setattr(os, "replace", real_replace)
+    holder = pipeline._lock_holder(lock)
+    assert holder is not None and holder[1] == winner_pid, "the winner's lock must survive"
+
+
+def test_a_fresh_lock_swept_up_by_a_reclaim_is_restored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A claim that grabbed a lock re-created in the read window is put back, not kept.
+
+    Between reading the stale record and renaming, another driver can finish its own
+    reclaim *and* create a live lock at the same path; the rename cannot tell. The
+    claim's record no longer matches the one that justified it, so the lock is restored
+    (`os.link`, atomic fail-if-exists) and this driver answers to it — instead of
+    silently holding a lock that names somebody else.
+    """
+    import os
+    import socket
+
+    from chemrefine.errors import RunLockError
+
+    outputs = tmp_path / "outputs"
+    _write_lock(outputs, host=socket.gethostname(), pid=_dead_pid())
+    lock = outputs / pipeline.RUN_LOCK_NAME
+    winner_pid = os.getppid()
+    real_replace = os.replace
+
+    def overtaken(src: object, dst: object) -> None:
+        # The winner's reclaim-and-create lands first; the loser's rename then sweeps
+        # up the *fresh* lock rather than the stale one it probed.
+        _write_lock(outputs, host=socket.gethostname(), pid=winner_pid)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", overtaken)
+    with pytest.raises(RunLockError, match=rf"pid {winner_pid}"), pipeline.run_lock(outputs):
+        pass
+    monkeypatch.setattr(os, "replace", real_replace)
+    holder = pipeline._lock_holder(lock)
+    assert holder is not None and holder[1] == winner_pid, "the swept-up lock must be restored"
+    assert not list(outputs.glob(f"{pipeline.RUN_LOCK_NAME}.reclaim.*"))
+
+
+def test_release_leaves_a_lock_that_is_no_longer_ours(tmp_path: Path):
+    """Exit must not unlink a lock another driver now holds.
+
+    The error message tells users to delete a lock whose run is known dead; followed
+    against a run that was in fact alive, the unconditional release then removed the
+    *new* holder's lock on exit, reopening the tree to a third driver.
+    """
+    import os
+    import socket
+
+    outputs = tmp_path / "outputs"
+    lock = outputs / pipeline.RUN_LOCK_NAME
+    with pipeline.run_lock(outputs):
+        lock.unlink()  # an operator deletes it, believing this run dead …
+        _write_lock(outputs, host=socket.gethostname(), pid=os.getppid())  # … a new run locks
+    holder = pipeline._lock_holder(lock)
+    assert holder is not None and holder[1] == os.getppid(), "the new holder's lock survives"
 
 
 def test_a_foreign_hosts_lock_is_never_reclaimed(tmp_path: Path):

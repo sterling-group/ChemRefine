@@ -168,6 +168,39 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+def _reclaim_stale(lock: Path, holder: tuple[str, int, str]) -> bool:
+    """Atomically take a dead holder's lock off its path; ``True`` if this process did.
+
+    Reclaiming by ``unlink()`` was a race: two drivers that both probed the same dead pid
+    could interleave — A unlinks, A creates, B unlinks *A's fresh lock*, B creates — and
+    both acquire, which is the one state the lock exists to prevent. ``os.replace`` moves
+    the inode to a per-pid claim name instead: exactly one process wins the rename (atomic
+    on POSIX, and on NFS where this tree lives), and the loser sees
+    :class:`FileNotFoundError` and re-reads whatever now holds the path.
+
+    The claim is then verified against ``holder`` — the record that justified it. Between
+    the caller's read and the rename, another process can have completed its *own* reclaim
+    **and** created a fresh live lock at the same path, and the rename cannot tell those
+    apart. A claim whose record no longer matches is therefore put back with ``os.link``,
+    the atomic fail-if-exists primitive: if a third process created a lock meanwhile, the
+    link fails and that lock stands, which leaves the swept-up holder no worse off than
+    before this function ran. Either way the reclaim is reported as not-ours, and the
+    caller's next pass answers to whatever the path now holds.
+    """
+    claim = lock.with_name(f"{RUN_LOCK_NAME}.reclaim.{os.getpid()}")
+    try:
+        lock.replace(claim)
+    except FileNotFoundError:
+        return False
+    if _lock_holder(claim) != holder:
+        with contextlib.suppress(OSError):
+            os.link(claim, lock)
+        claim.unlink(missing_ok=True)
+        return False
+    claim.unlink(missing_ok=True)
+    return True
+
+
 @contextlib.contextmanager
 def run_lock(output_dir: Path) -> Iterator[None]:
     """Hold ``output_dir`` for one driver; raise :class:`RunLockError` if another has it.
@@ -185,6 +218,17 @@ def run_lock(output_dir: Path) -> Iterator[None]:
     SIGKILL, so a holder on *this* host is probed with ``os.kill(pid, 0)`` and reclaimed
     when dead. A holder on another host cannot be probed from here — that lock is treated
     as live, and the error says to delete it once its run is known dead.
+
+    **Reclaim is an atomic rename, and release is ownership-checked.** Deleting a stale
+    lock with ``unlink()`` let two drivers that both probed the same dead pid interleave —
+    one deleted the other's freshly created lock — and both acquire; :func:`_reclaim_stale`
+    renames the stale lock to a per-pid claim instead, so exactly one process wins, and
+    verifies the claim against the record that justified it in case a fresh lock was swept
+    up in the window. The release mirrors it: unlinking whatever sits at the lock path
+    would let a driver whose lock was deleted out from under it (the error message's own
+    advice, followed against a run that was in fact alive) remove the *current* holder's
+    lock on exit, reopening the tree to a third driver — so the ``finally`` deletes the
+    file only while it still names this process.
 
     **Reentrant by pid**: :func:`chemrefine.recovery.execute` takes the lock around a
     whole action — ``run``'s cache invalidation mutates the tree *before*
@@ -208,15 +252,17 @@ def run_lock(output_dir: Path) -> Iterator[None]:
                     yield
                     return
                 if not reclaimed and not _pid_alive(pid):
-                    logger.warning(
-                        "reclaiming stale run lock %s (pid %d on %s, started %s, now dead)",
-                        lock,
-                        pid,
-                        host,
-                        started,
-                    )
-                    lock.unlink(missing_ok=True)
+                    # One attempt per process, won or lost: a lost claim means another
+                    # driver got there first, and the next pass answers to its lock.
                     reclaimed = True
+                    if _reclaim_stale(lock, holder):
+                        logger.warning(
+                            "reclaiming stale run lock %s (pid %d on %s, started %s, now dead)",
+                            lock,
+                            pid,
+                            host,
+                            started,
+                        )
                     continue
             # `from None`: the FileExistsError is this branch's condition, not a cause —
             # everything it could say is already in the message.
@@ -231,21 +277,18 @@ def run_lock(output_dir: Path) -> Iterator[None]:
                 "this run stops here. Wait for that run to finish — or, if it is known "
                 "dead (e.g. killed on another node), delete the lock file and retry."
             ) from None
+    # The record in `_lock_holder`'s field order, so the release below can compare whole.
+    me = (socket.gethostname(), os.getpid(), datetime.now(UTC).isoformat(timespec="seconds"))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(
-                {
-                    "pid": os.getpid(),
-                    "host": socket.gethostname(),
-                    "started": datetime.now(UTC).isoformat(timespec="seconds"),
-                },
-                fh,
-            )
+            json.dump({"pid": me[1], "host": me[0], "started": me[2]}, fh)
         yield
     finally:
         # On success and on failure alike: a raise must not leave the tree locked, and
         # back-to-back runs in one process (tests, notebooks) must each acquire cleanly.
-        lock.unlink(missing_ok=True)
+        # Only while the file is still ours, though — see "release is ownership-checked".
+        if _lock_holder(lock) == me:
+            lock.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------

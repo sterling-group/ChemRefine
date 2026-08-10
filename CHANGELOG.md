@@ -205,6 +205,14 @@ for the full map.
   the new policy; successes are never recomputed, and `stop` ↔ `skip` stays a free hit
   because both store the same results. The cache document records the policy it was
   finalized under (additive key — existing caches are read as before).
+- **Two drivers racing to reclaim the same stale lock can no longer both acquire.**
+  Reclaim deleted the dead holder's lock and re-created it, so two `resume`s arriving
+  together after a crash could interleave — one deleting the other's fresh lock — and
+  both drive the tree, the exact state the lock exists to prevent. Reclaim is now an
+  atomic rename that exactly one process can win, verified against the record that
+  justified it; and release only deletes the lock file while it still names the exiting
+  process, so a driver whose lock was removed out from under it cannot take the new
+  holder's with it on exit.
 - **A corrupt `failed_jobs.json` now fails like every other corrupt cache file.** Valid
   JSON of the wrong shape escaped the ledger reader as a bare `TypeError` — a traceback
   with the generic exit code naming neither the file nor the fix — where every sibling
