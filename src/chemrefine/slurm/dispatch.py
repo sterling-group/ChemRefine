@@ -77,6 +77,7 @@ def _parse_job_id(stdout: str) -> str:
         return m.group(1)
     raise JobSubmissionError(f"could not parse job ID from sbatch output: {stdout!r}")
 
+
 _LOCAL_JOB_PREFIX = "local-"
 """Synthetic job-ID prefix used by :func:`_submit_local`.
 

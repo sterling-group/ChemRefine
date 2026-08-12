@@ -157,10 +157,7 @@ def test_step_options_reject_a_yaml_date(tmp_path: Path):
     TypeError traceback from inside the cache fingerprint three layers later."""
     p = tmp_path / "input.yaml"
     p.write_text(
-        "steps:\n"
-        "  - step: 1\n"
-        "    engine: fake\n"
-        "    options: { calibration_date: 2024-01-01 }\n",
+        "steps:\n  - step: 1\n    engine: fake\n    options: { calibration_date: 2024-01-01 }\n",
         encoding="utf-8",
     )
     with pytest.raises(ConfigError, match="calibration_date"):
