@@ -192,10 +192,22 @@ outputs/
 │   ├── 0/                     step1_0_inp.xyz  step1_0.{inp,out,xyz,...}  step1_0.runlog
 │   │   └── 0_m5_pos/          NMS round-2 (a displaced re-run) nests under its parent
 │   ├── 1/                     …
+│   ├── step1_ensemble.xyz     every final structure of the step, one multi-frame XYZ
+│   ├── step1_survivors.xyz    the subset the `sample:` filter kept for the next step
 │   └── _cache/                step.json + arrays.npz, manifest.json, failed_jobs.json
 ├── step2_refine/<id>/…
 └── steps.csv                  Boltzmann summary per surviving structure
 ```
+
+The two ensemble files are the step's results as geometry: `stepN_ensemble.xyz`
+holds **every** parsed final structure (a GOAT step's whole conformer ensemble,
+say), `stepN_survivors.xyz` only what the `sample:` filter passed on. Frames are
+sorted ascending by the step's own ranking energy (the `sample.energy_type`,
+electronic by default — the same energy `steps.csv` reports), and each comment
+line carries `stepN id=<id> E=<hartree> Eh`, so a frame is traceable to its
+structure directory and its `steps.csv` row. Both files are rewritten
+deterministically on every run of the step — `resume`, a cache hit, and
+`rebuild-cache` regenerate them byte-identically.
 
 NMS round-2 — re-optimising a displaced geometry — is treated like any "redo this
 structure" step: the child lives in a sub-directory *inside* its parent's directory
