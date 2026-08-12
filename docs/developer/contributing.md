@@ -48,6 +48,10 @@ line and branch, and every module/class/function carries a docstring
   (`pytest -m integration`, deselected by default) runs the case
   definitions in `tests/data/e2e/cases/` against real ORCA/MLIP
   binaries; add `--record` to re-pack the recordings from a passing run.
+  After a parser-only change, re-pack offline instead — no binaries needed:
+  run the drift-detector test
+  (`tests/test_e2e_relocate.py::test_rebuilt_records_match_the_archived_ones_field_for_field`)
+  with `--update-recordings`.
 - **Commits** are short, present-tense, and prefixed
   (`feat:`/`fix:`/`refactor:`/`docs:`/`ci:`/`test:`/`harden:`), matching `git log`.
 

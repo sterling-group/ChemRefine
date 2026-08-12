@@ -89,6 +89,16 @@ that drifts. Rebuilding is parse-only — it re-derives the cached records from
 the archived outputs already in the tree, so it needs no ORCA and no MLIP
 stack. An archive that no longer matches the code is a fossil, not a fixture.
 
+```bash
+pytest 'tests/test_e2e_relocate.py::test_rebuilt_records_match_the_archived_ones_field_for_field' \
+    --update-recordings
+```
+
+Review the re-packed archives in the git diff like any golden. This covers a
+*parser* change only — a behavioural change (different jobs, different
+survivors, a new operation) is not a re-parse, and needs the live tier:
+`pytest -m integration --record` on a machine with the binaries.
+
 ## Conventions
 
 - **Engines** are plugins. Read the
@@ -110,6 +120,10 @@ stack. An archive that no longer matches the code is a fossil, not a fixture.
   (`pytest -m integration`, deselected by default) runs the case
   definitions in `tests/data/e2e/cases/` against real ORCA/MLIP
   binaries; add `--record` to re-pack the recordings from a passing run.
+  After a parser-only change, re-pack offline instead — no binaries needed:
+  run the drift-detector test
+  (`tests/test_e2e_relocate.py::test_rebuilt_records_match_the_archived_ones_field_for_field`)
+  with `--update-recordings`.
 - **Commits** are short, present-tense, and prefixed
   (`feat:`/`fix:`/`refactor:`/`docs:`/`ci:`/`test:`/`harden:`), matching `git log`.
   No `Co-Authored-By:` trailers and no generated-by/AI attribution footers —
