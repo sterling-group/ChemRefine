@@ -312,15 +312,14 @@ def _write_step_csv(config: Config, step_cfg: StepConfig, state: PipelineState) 
     """
     sample = step_cfg.sample
     temperature_k = sample.temperature_k if sample is not None else DEFAULT_TEMPERATURE_K
-    energy_type = sample.energy_type if sample is not None else "electronic"
-    energy_attr = filtering.ENERGY_ATTR[energy_type]
+    ranking = filtering.ranking_energy(sample)
     io.save_step_csv(
-        energies_hartree=[getattr(s, energy_attr) for s in state.structures],
+        energies_hartree=[getattr(s, ranking.attr) for s in state.structures],
         structure_ids=[s.id for s in state.structures],
         step_number=step_cfg.step,
         output_dir=config.output_dir,
         temperature_k=temperature_k,
-        energy_type=energy_type,
+        energy_type=ranking.energy_type,
     )
 
 

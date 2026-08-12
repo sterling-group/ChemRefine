@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import operator
 from collections import defaultdict
-from typing import cast
+from typing import NamedTuple, cast
 
 import numpy as np
 
@@ -56,6 +56,49 @@ ENERGY_ATTR = {
     "enthalpy": "enthalpy_hartree",
     "electronic_zero_point": "energy_zpe_hartree",
 }
+
+# ``sample.energy_type`` → the short label a human artifact prints beside the value
+# (the ensemble XYZ comment lines). Beside :data:`ENERGY_ATTR` because the two are one
+# vocabulary: a type that gained an attribute without a label — or the reverse — would be
+# an energy a step can rank on but not report, which :func:`ranking_energy` makes
+# impossible by reading both from the same key.
+ENERGY_LABEL = {
+    "electronic": "E",
+    "gibbs": "G",
+    "enthalpy": "H",
+    "electronic_zero_point": "E_ZPE",
+}
+
+
+class RankingEnergy(NamedTuple):
+    """One step's ranking energy, in every spelling a consumer needs.
+
+    Three fields because the consumers genuinely differ: the filter and NMS read the
+    :class:`~chemrefine.state.Structure` attribute, ``steps.csv`` records the type name
+    verbatim in its ``Energy type`` column, and the ensemble XYZ captions frames with the
+    short label. One value carrying all three is what stops the "no sample means
+    electronic" rule being re-spelled at each site.
+    """
+
+    energy_type: str
+    attr: str
+    label: str
+
+
+def ranking_energy(sample: SampleConfig | None) -> RankingEnergy:
+    """The energy a step ranks and reports on, resolved from its ``sample`` filter.
+
+    **The one answer to "which energy is this step's energy".** The filter sorts on it,
+    ``steps.csv`` summarises it, NMS promotes the child its own filter would keep by it,
+    and the ensemble XYZ orders and captions by it — four readers, so the rule lives here,
+    in the module that owns the energy vocabulary, rather than being re-derived at each.
+
+    A step with no ``sample`` has declared no preference, so electronic — the energy every
+    calculation reports — matching what :func:`chemrefine.io.save_step_csv` is handed in
+    the same situation.
+    """
+    energy_type = "electronic" if sample is None else sample.energy_type
+    return RankingEnergy(energy_type, ENERGY_ATTR[energy_type], ENERGY_LABEL[energy_type])
 
 
 def apply(results: StepResults, sample: SampleConfig | None) -> PipelineState:

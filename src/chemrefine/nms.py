@@ -270,13 +270,11 @@ def _displaced(structure: Structure, positions: NDArray[np.float64]) -> Atoms:
 def _energy_attr(step_cfg: StepConfig) -> str:
     """The :class:`~chemrefine.state.Structure` attribute this step ranks structures by.
 
-    The step's own ``sample.energy_type``, through :data:`chemrefine.filtering.ENERGY_ATTR` —
-    the single home of that mapping. A step with no ``sample`` filter has declared no
-    preference, so electronic energy, matching what
-    :func:`chemrefine.pipeline._write_step_csv` reports in the same situation.
+    The step's own ranking energy, through :func:`chemrefine.filtering.ranking_energy` —
+    the single home of that rule, shared with ``steps.csv`` and the ensemble XYZ so a
+    promoted NMS winner is the child those reports would call best.
     """
-    sample = step_cfg.sample
-    return filtering.ENERGY_ATTR["electronic" if sample is None else sample.energy_type]
+    return filtering.ranking_energy(step_cfg.sample).attr
 
 
 def _best(structures: list[Structure], fallback: Structure, energy_attr: str) -> Structure:
