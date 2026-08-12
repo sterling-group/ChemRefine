@@ -1,20 +1,32 @@
-# pre-commit.ci keeps the hook revs below current (Dependabot doesn't watch
-# this file). Requires the pre-commit.ci GitHub App installed on the repo;
-# its autoupdate PRs come from the app, so normal CI runs on them.
+# Every rev below is pinned to a full commit SHA with the release tag in a
+# trailing `# frozen:` comment — the same discipline as the SHA-pinned actions
+# in .github/workflows/, and for the same reason: a tag is mutable, and these
+# repos' code executes on every contributor machine (`pre-commit install` is
+# required) as well as in CI. `pre-commit autoupdate --freeze` writes this
+# format.
+#
+# The pre-commit.ci app keeps the pins current — Dependabot cannot, pre-commit
+# is not one of its ecosystems — and its autoupdate PRs preserve the frozen-SHA
+# format, so the pin costs no freshness.
 ci:
   autoupdate_schedule: monthly
   autoupdate_commit_msg: "ci: autoupdate pre-commit hooks"
+  # No fix commits pushed onto PR branches: hook failures are the author's to
+  # fix, and `git log` stays free of bot-authored commits — the same rule
+  # CONTRIBUTING states for trailers. The app still reports the hooks as a PR
+  # status and still opens the autoupdate PRs.
+  autofix_prs: false
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.10
+    rev: 7c55798a78262d14b2074abf623d8a992ebb70d4  # frozen: v0.16.2
     hooks:
       - id: ruff-check
         args: [--fix]
       - id: ruff-format
 
   - repo: https://github.com/econchick/interrogate
-    rev: 1.7.0
+    rev: a6268877efd41a21197445cc04cbf28f9c6facba  # frozen: 1.7.0
     hooks:
       - id: interrogate
         args: [src/chemrefine/, -v, --fail-under=100]

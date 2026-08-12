@@ -144,7 +144,7 @@ dev = [
     "chemrefine[test,docs]",
     # Matched to the pinned pre-commit hook rev — that hook is what actually gates,
     # so a floor years behind it is decorative.
-    "ruff>=0.15",
+    "ruff>=0.16",
     "mypy>=1.11",
     "types-PyYAML",
     "pre-commit>=3.5",
