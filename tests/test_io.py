@@ -16,9 +16,12 @@ from ase.io import read as ase_read
 from chemrefine.io import (
     gather_output_files,
     natural_key,
+    read_xyz_frames,
     save_step_csv,
+    write_ensemble_xyz,
     write_xyz,
 )
+from chemrefine.state import Structure
 
 
 def test_importing_io_does_not_pull_pandas():
@@ -116,6 +119,122 @@ def test_write_xyz_accepts_tuple_form(tmp_path: Path):
 def test_write_xyz_length_mismatch_raises(tmp_path: Path):
     with pytest.raises(ValueError):
         write_xyz([_h2o()], ["0", "1"], step_number=1, output_dir=tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# write_ensemble_xyz — the per-step multi-frame files
+# ---------------------------------------------------------------------------
+
+
+def _ensemble_structure(sid: str, *, energy: float | None, gibbs: float | None = None) -> Structure:
+    return Structure(
+        id=sid,
+        atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]),
+        energy_hartree=energy,
+        gibbs_hartree=gibbs,
+    )
+
+
+def test_write_ensemble_xyz_round_trips_through_the_one_reader(tmp_path: Path):
+    """Every frame comes back through ``read_xyz_frames`` — ragged atom counts included.
+
+    The file exists to be opened by external viewers, but the round-trip that has to hold
+    by contract is our own extxyz reader: seeding a next project from a step's ensemble is
+    the natural workflow, and it must not lose frames.
+    """
+    structures = (
+        Structure(id="0", atoms=Atoms("H", positions=[[0, 0, 0]]), energy_hartree=-1.0),
+        Structure(
+            id="1",
+            atoms=Atoms("OH2", positions=[[0, 0, 0.117], [0, 0.757, -0.467], [0, -0.757, -0.467]]),
+            energy_hartree=-76.4,
+        ),
+    )
+    path = write_ensemble_xyz(structures, tmp_path / "step1_ensemble.xyz", step=1)
+
+    frames = read_xyz_frames(path)
+
+    assert [len(f) for f in frames] == [3, 1]  # energy ascending: water first
+    assert frames[0].get_chemical_symbols() == ["O", "H", "H"]
+    np.testing.assert_allclose(
+        frames[0].get_positions(), structures[1].atoms.get_positions(), atol=1e-6
+    )
+
+
+def test_write_ensemble_xyz_orders_by_energy_with_energyless_last(tmp_path: Path):
+    """Ascending by the ranking energy; frames without one keep their incoming order, last.
+
+    The incoming order is the cache's stable manifest order, so the tail is deterministic
+    too — an ``on_failure: best`` backfill (no energy yet) lands after every ranked frame
+    without shuffling against its fellow backfills.
+    """
+    structures = (
+        _ensemble_structure("no-e-first", energy=None),
+        _ensemble_structure("high", energy=-1.0),
+        _ensemble_structure("no-e-second", energy=None),
+        _ensemble_structure("low", energy=-2.0),
+    )
+    path = write_ensemble_xyz(structures, tmp_path / "step1_ensemble.xyz", step=1)
+
+    ids = [line.split()[1] for line in path.read_text().splitlines() if line.startswith("step1 ")]
+
+    assert ids == ["id=low", "id=high", "id=no-e-first", "id=no-e-second"]
+
+
+def test_write_ensemble_xyz_comment_carries_step_id_and_energy(tmp_path: Path):
+    """The exact caption contract: id ties the frame to its directory and steps.csv row."""
+    path = write_ensemble_xyz(
+        (_ensemble_structure("0-3", energy=-153.123456789),),
+        tmp_path / "step1_ensemble.xyz",
+        step=1,
+    )
+    assert path.read_text().splitlines()[1] == "step1 id=0-3 E=-153.12345679 Eh"
+
+
+def test_write_ensemble_xyz_captions_the_steps_own_ranking_energy(tmp_path: Path):
+    """A Gibbs-ranked step sorts and captions by Gibbs — the same energy its filter uses.
+
+    The two structures disagree on purpose: electronic order is 0 < 1, Gibbs order is
+    1 < 0, so a writer still reading electronic energy would fail on both the order and
+    the caption.
+    """
+    structures = (
+        _ensemble_structure("0", energy=-2.0, gibbs=-1.0),
+        _ensemble_structure("1", energy=-1.0, gibbs=-2.0),
+    )
+    path = write_ensemble_xyz(
+        structures,
+        tmp_path / "step2_ensemble.xyz",
+        step=2,
+        energy_attr="gibbs_hartree",
+        energy_label="G",
+    )
+    comments = [line for line in path.read_text().splitlines() if line.startswith("step2 ")]
+    assert comments == ["step2 id=1 G=-2.00000000 Eh", "step2 id=0 G=-1.00000000 Eh"]
+
+
+def test_write_ensemble_xyz_marks_a_missing_energy_as_na(tmp_path: Path):
+    """No value is a stated ``n/a``, never a fabricated number the frame would rank by."""
+    path = write_ensemble_xyz(
+        (_ensemble_structure("0", energy=None),), tmp_path / "step1_ensemble.xyz", step=1
+    )
+    assert path.read_text().splitlines()[1] == "step1 id=0 E=n/a"
+
+
+def test_write_ensemble_xyz_empty_input_removes_a_stale_file(tmp_path: Path):
+    """A step that kept nothing must not leave the previous run's survivors lying about.
+
+    Same reasoning as ``save_step_csv``'s step-1 truncation: the file describes *this*
+    run's outcome, and an empty outcome is an absent file, not a zero-frame one ase would
+    refuse to read anyway.
+    """
+    path = tmp_path / "step1_survivors.xyz"
+    path.write_text("stale\n", encoding="utf-8")
+
+    write_ensemble_xyz((), path, step=1)
+
+    assert not path.exists()
+    write_ensemble_xyz((), path, step=1)  # absent stays absent, no raise
 
 
 # ---------------------------------------------------------------------------

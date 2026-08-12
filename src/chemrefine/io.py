@@ -24,7 +24,7 @@ import logging
 import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 from ase import Atoms
@@ -36,6 +36,11 @@ from chemrefine.quantities import (
     HARTREE_TO_KCALMOL,
     boltzmann_weights,
 )
+
+if TYPE_CHECKING:
+    # Annotation-only: the ensemble writer reads `Structure` fields via getattr, so the
+    # runtime import graph stays as it is — this module keeps importing no pydantic.
+    from chemrefine.state import Structure
 
 _CSV_PRECISION = 8
 _NATURAL_PART = re.compile(r"(\d+)")
@@ -64,6 +69,19 @@ def natural_key(name: str | Path) -> list[object]:
 CoordList = Sequence[tuple[str, float, float, float]]
 
 
+def _xyz_frame_lines(atoms: Atoms, comment: str) -> list[str]:
+    """One plain-XYZ frame: the count line, the comment line, one row per atom.
+
+    The single spelling of the frame format, shared by the one-geometry writer and the
+    multi-frame ensemble writer — two writers with their own row formatting are
+    byte-identical only until one of them is edited.
+    """
+    lines = [str(len(atoms)), comment]
+    for symbol, (x, y, z) in zip(atoms.get_chemical_symbols(), atoms.get_positions(), strict=True):
+        lines.append(f"{symbol:2s} {x:.6f} {y:.6f} {z:.6f}")
+    return lines
+
+
 def write_single_xyz(geometry: Atoms | CoordList, path: str | Path, *, comment: str = "") -> Path:
     """Write one geometry to ``path`` as plain XYZ; return ``path``.
 
@@ -79,10 +97,57 @@ def write_single_xyz(geometry: Atoms | CoordList, path: str | Path, *, comment: 
             symbols=[row[0] for row in geometry],
             positions=np.array([row[1:] for row in geometry], dtype=float),
         )
-    lines = [str(len(atoms)), comment]
-    for symbol, (x, y, z) in zip(atoms.get_chemical_symbols(), atoms.get_positions(), strict=True):
-        lines.append(f"{symbol:2s} {x:.6f} {y:.6f} {z:.6f}")
     target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(_xyz_frame_lines(atoms, comment)) + "\n", encoding="utf-8")
+    return target
+
+
+def write_ensemble_xyz(
+    structures: Sequence[Structure],
+    path: str | Path,
+    *,
+    step: int,
+    energy_attr: str = "energy_hartree",
+    energy_label: str = "E",
+) -> Path:
+    """Write ``structures`` as one multi-frame XYZ at ``path``; return ``path``.
+
+    The human-facing ensemble a step leaves behind — every frame is a final geometry, so a
+    user opens one file in Avogadro/VMD instead of walking per-structure directories.
+    Written whole, never appended: completion order is nondeterministic, and a file built
+    as jobs land would differ between two runs of the same step, where this one is
+    byte-identical on a re-run, a resume, and a rebuild.
+
+    Frames are sorted ascending by ``energy_attr`` — the step's own ranking energy
+    (:func:`chemrefine.filtering.ranking_energy`), so the file leads with the conformer
+    the step's filter would keep first. The sort is stable and sends energy-less
+    structures (``on_failure: best`` backfills, missing thermochemistry) to the end in
+    their incoming results order, which is the cache's stable manifest order.
+
+    Each comment line carries ``step{N} id={id} {label}={value:.8f} Eh`` (``n/a`` when the
+    energy is absent): the id is what ties a frame back to its structure directory and its
+    ``steps.csv`` row. ase's extxyz reader parses these frames, so
+    :func:`read_xyz_frames` round-trips the file.
+
+    An **empty** ``structures`` removes any stale file rather than writing a zero-frame
+    one: a step whose filter kept nothing must not leave the previous run's survivors
+    lying about — the same reasoning as :func:`save_step_csv`'s step-1 truncation.
+    """
+    target = Path(path)
+    if not structures:
+        target.unlink(missing_ok=True)
+        return target
+
+    def _key(s: Structure) -> tuple[bool, float]:
+        value = getattr(s, energy_attr)
+        return (value is None, 0.0 if value is None else float(value))
+
+    lines: list[str] = []
+    for s in sorted(structures, key=_key):
+        value = getattr(s, energy_attr)
+        caption = f"{energy_label}=n/a" if value is None else f"{energy_label}={value:.8f} Eh"
+        lines.extend(_xyz_frame_lines(s.atoms, f"step{step} id={s.id} {caption}"))
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return target
