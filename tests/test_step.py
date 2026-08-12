@@ -12,7 +12,7 @@ import pytest
 from ase import Atoms
 from fake_engine import FakeEngine
 
-from chemrefine import cache
+from chemrefine import cache, io
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.api import get_engine
 from chemrefine.errors import CacheError, ChemRefineError
@@ -1596,3 +1596,89 @@ def test_a_retry_whose_output_was_truncated_is_rerun_rather_than_ledgered(tmp_pa
         eng.runs = {}
         eng.interrupt_before_running = set()
         ENGINES.pop("interrupt-stream", None)
+
+
+# ---------------------------------------------------------------------------
+# The step's ensemble XYZ files — every route leaves both behind
+# ---------------------------------------------------------------------------
+
+
+def test_run_step_writes_results_and_survivors_ensembles(tmp_path: Path):
+    """``stepN_ensemble.xyz`` holds every parsed result; ``stepN_survivors.xyz`` the kept set.
+
+    The pair is the point: the first answers "what did this step produce", the second
+    "what does the next step start from", and only together do they make a filter's
+    effect visible as geometry rather than as a row count.
+    """
+    cfg = _config(tmp_path, sample={"method": "min", "count": 1})
+    run_step(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]))
+
+    step_dir = cfg.output_dir.resolve() / "step1"
+    assert len(io.read_xyz_frames(step_dir / "step1_ensemble.xyz")) == 3
+    survivors = (step_dir / "step1_survivors.xyz").read_text(encoding="utf-8")
+    # The fake engine's energy is monotonic in the id, so "2" is the one min keeps —
+    # and the caption ties the frame back to its structure directory.
+    assert survivors.splitlines()[1].startswith("step1 id=2 E=-1.000")
+    assert len(io.read_xyz_frames(step_dir / "step1_survivors.xyz")) == 1
+
+
+def test_ensemble_files_are_byte_identical_across_a_cache_hit(tmp_path: Path):
+    """A cache hit rewrites the files with exactly the bytes the computing run left.
+
+    Deterministic content is what makes writing on every route safe: the sort is stable
+    over the cache's manifest order, so a resume or a relocated tree regenerates the
+    file rather than perturbing it.
+    """
+    cfg = _config(tmp_path, sample={"method": "min", "count": 2})
+    seeds = _seed_state(["0", "1", "2"])
+    run_step(cfg, cfg.steps[0], seeds)
+    step_dir = cfg.output_dir.resolve() / "step1"
+    names = ("step1_ensemble.xyz", "step1_survivors.xyz")
+    before = {name: (step_dir / name).read_bytes() for name in names}
+
+    outcome = run_step(cfg, cfg.steps[0], seeds)
+
+    assert outcome.cache_hit is True
+    assert {name: (step_dir / name).read_bytes() for name in names} == before
+
+
+def test_a_halted_stop_step_still_writes_its_successes_ensemble(tmp_path: Path):
+    """The ensemble is written before the pipeline halts, like the cache and steps.csv.
+
+    A run stopped by ``on_failure: stop`` should hand the user the geometries it *did*
+    finish — the failed structure is in the ledger, not silently missing from a file
+    that never got written.
+    """
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fail_engine()
+    try:
+        eng.fail = {"1": "missing"}
+        cfg = _config(tmp_path, engine="fake-fail", on_failure="stop")
+        run_step(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]))
+
+        step_dir = cfg.output_dir.resolve() / "step1"
+        text = (step_dir / "step1_ensemble.xyz").read_text(encoding="utf-8")
+        assert "id=0 " in text and "id=2 " in text
+        assert "id=1 " not in text, "the failed structure has no final geometry to show"
+    finally:
+        eng.fail = {}
+        ENGINES.pop("fake-fail", None)
+
+
+def test_rebuild_cache_step_regenerates_the_ensemble_files(tmp_path: Path):
+    """``rebuild-cache`` leaves the same files a run would — deleted ones come back."""
+    from chemrefine import step
+
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1"])
+    run_step(cfg, cfg.steps[0], seeds, mode=StepMode.EXECUTE)
+    step_dir = step_dir_for(cfg, cfg.steps[0])
+    for name in ("step1_ensemble.xyz", "step1_survivors.xyz"):
+        (step_dir / name).unlink()
+    cache.invalidate(step_dir)
+
+    step.rebuild_cache_step(cfg, cfg.steps[0], seeds)
+
+    assert len(io.read_xyz_frames(step_dir / "step1_ensemble.xyz")) == 2
+    assert len(io.read_xyz_frames(step_dir / "step1_survivors.xyz")) == 2

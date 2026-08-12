@@ -24,6 +24,13 @@ for the full map.
 
 ### Added
 
+- Per-step ensemble XYZ files: every step leaves `stepN_ensemble.xyz` (all of
+  its final structures, one multi-frame XYZ) and `stepN_survivors.xyz` (the
+  subset the `sample:` filter kept) in its step directory. Frames are sorted
+  ascending by the step's own ranking energy and captioned
+  `stepN id=<id> E=<hartree> Eh`, so each is traceable to its structure
+  directory and `steps.csv` row; `resume` and `rebuild-cache` regenerate both
+  files byte-identically.
 - One driver per output tree: every run holds an advisory lock
   (`<output_dir>/.chemrefine.lock`) for its whole duration, and a second
   `chemrefine` pointed at the same tree exits with code `10` instead of

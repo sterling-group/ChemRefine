@@ -26,7 +26,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import assert_never
 
-from chemrefine import __version__, attempts, cache, filtering, ids, lifecycle, nms
+from chemrefine import __version__, attempts, cache, filtering, ids, io, lifecycle, nms
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.api import (
     ArtifactEngine,
@@ -246,6 +246,49 @@ class StepOutcome:
     cache_hit: bool
 
 
+def _step_outcome(
+    ctx: StepContext, step_cfg: StepConfig, results: StepResults, *, cache_hit: bool
+) -> StepOutcome:
+    """Filter ``results``, write the step's two ensemble XYZ files, return the outcome.
+
+    **The one way a step's results become a :class:`StepOutcome`.** Every route out of
+    :func:`run_step` — the fresh run, the cache hit, the policy re-attempt, the NMS reuse,
+    the partial-step resume, the artifact step and ``rebuild-cache`` — ends here, which is
+    what guarantees the ensemble files exist on a resumed, relocated or rebuilt tree and
+    not only on the run that computed the results. Their content is a pure function of the
+    results (stable energy sort over the cache's manifest order), so a cache-hit rewrite is
+    byte-identical rather than churn.
+
+    Two files, because a step has two survivor sets worth seeing as geometry: the full
+    parsed results (``stepN_ensemble.xyz`` — what the cache holds, pre-filter) and what the
+    ``sample:`` filter kept (``stepN_survivors.xyz`` — what feeds the next step). Both are
+    ordered and captioned by the step's own ranking energy
+    (:func:`chemrefine.filtering.ranking_energy`), the same energy ``steps.csv`` reports.
+
+    An artifact step (``mlip-train``) passes its structures through unchanged, so its
+    ensemble duplicates the previous step's geometries under this step's number —
+    deliberate uniformity: every step directory answers "what did this step end with" the
+    same way.
+    """
+    state = filtering.apply(results, step_cfg.sample)
+    ranking = filtering.ranking_energy(step_cfg.sample)
+    io.write_ensemble_xyz(
+        results.structures,
+        ids.step_ensemble_path(ctx.step_dir, step_cfg.step),
+        step=step_cfg.step,
+        energy_attr=ranking.attr,
+        energy_label=ranking.label,
+    )
+    io.write_ensemble_xyz(
+        state.structures,
+        ids.step_survivors_path(ctx.step_dir, step_cfg.step),
+        step=step_cfg.step,
+        energy_attr=ranking.attr,
+        energy_label=ranking.label,
+    )
+    return StepOutcome(state=state, cache_hit=cache_hit)
+
+
 def run_step(
     config: Config,
     step_cfg: StepConfig,
@@ -395,13 +438,13 @@ def _cached_outcome(
             if nms_engine is not None
             else _resubmit_failed(engine, ctx, step_cfg, key)
         )
-        return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
+        return _step_outcome(ctx, step_cfg, results, cache_hit=False)
     logger.info(
         "step %d: cache hit, reusing %d structures",
         step_cfg.step,
         len(cached.results.structures),
     )
-    return StepOutcome(state=filtering.apply(cached.results, step_cfg.sample), cache_hit=True)
+    return _step_outcome(ctx, step_cfg, cached.results, cache_hit=True)
 
 
 def _nms_reuse_outcome(
@@ -450,7 +493,7 @@ def _nms_reuse_outcome(
             chemrefine_version=__version__,
         )
         results = cached.results
-    return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
+    return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
 
 def _partial_step_outcome(
@@ -510,7 +553,7 @@ def _partial_step_outcome(
         len(manifest.files),
     )
     results = _resubmit_failed(engine, ctx, step_cfg, key)
-    return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
+    return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
 
 def _run_full_step(
@@ -567,7 +610,7 @@ def _run_full_step(
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
     results = lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
-    return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
+    return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
 
 def _run_artifact_step(
@@ -633,7 +676,7 @@ def _finish_artifact_step(
     logger.info("step %d: produced %s", step_cfg.step, artifact)
     results = engine.parse(StepInputs(files=()), ctx)
     results = lifecycle.finalize(engine, ctx, step_cfg, key, list(results.structures), [])
-    return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
+    return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
 
 def _check_nms_freq_gate(engine: NmsCapableEngine, ctx: StepContext, step_cfg: StepConfig) -> None:
@@ -733,7 +776,7 @@ def rebuild_cache_step(
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
     results = lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
-    return StepOutcome(state=filtering.apply(results, step_cfg.sample), cache_hit=False)
+    return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
 
 def _resubmit_failed(

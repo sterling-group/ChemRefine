@@ -101,6 +101,27 @@ def structure_artifact_path(step_dir: Path, step: int, structure_id: str, ext: s
     return step_dir / structure_id / f"{structure_stem(step, structure_id)}.{ext}"
 
 
+def step_ensemble_path(step_dir: Path, step: int) -> Path:
+    """The step's multi-frame ensemble XYZ — every parsed result, pre-filter.
+
+    Lives at the step dir's root rather than in a structure directory because it describes
+    the whole step. It cannot collide with a structure's artifacts: those live inside per-id
+    subdirectories, and no minted id (digits, hyphens, NMS ``_m…`` suffixes,
+    :data:`TRAINING_ID`) is ever ``ensemble``.
+    """
+    return step_dir / f"step{step}_ensemble.xyz"
+
+
+def step_survivors_path(step_dir: Path, step: int) -> Path:
+    """The step's multi-frame survivors XYZ — what the ``sample:`` filter kept.
+
+    The sibling of :func:`step_ensemble_path` for the post-filter set that feeds the next
+    step; the pair is what makes a filter's effect visible as geometry rather than only as
+    a row count in ``steps.csv``.
+    """
+    return step_dir / f"step{step}_survivors.xyz"
+
+
 def result_record_path(job_dir: Path, step: int, structure_id: str) -> Path:
     """Canonical parsed-result record path for one structure of a job.
 
