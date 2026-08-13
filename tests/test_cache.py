@@ -914,3 +914,34 @@ def test_load_failure_records_raises_on_wrong_shape_ledger(tmp_path: Path, body:
     with pytest.raises(CacheError, match="corrupt failed-jobs ledger") as excinfo:
         cache.load_failure_records(tmp_path)
     assert str(path) in str(excinfo.value)
+
+
+def test_cache_documents_honour_the_umask(tmp_path: Path):
+    """``mkstemp``'s 0600 must not survive into the documents a shared tree serves.
+
+    The temp file is rightly private, but the rename preserved its mode — so a colleague
+    handed an output tree could read every ``.out`` beside a cache they could not: the
+    step document, the manifest and the failure ledger were all owner-only. The atomic
+    writer re-modes to what a plain ``open()`` would have given, 0666 through the umask.
+    (The server *token* sidecar keeps its 0600 — there the restriction is the point, and
+    it does not go through this writer.)
+    """
+    import os
+
+    previous = os.umask(0o022)
+    try:
+        save(
+            step_cfg=_cfg(),
+            key=_key("0", step_cfg=_cfg()),
+            results=_results(),
+            step_dir=tmp_path / "step1",
+            chemrefine_version="2.0.0",
+        )
+    finally:
+        os.umask(previous)
+
+    for name in ("step.json", "arrays.npz"):
+        mode = (tmp_path / "step1" / "_cache" / name).stat().st_mode & 0o777
+        assert mode == 0o644, (
+            f"{name} is {oct(mode)}, unreadable to the group the tree is shared with"
+        )

@@ -518,6 +518,15 @@ def _atomic_write(path: Path, data: bytes) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp_", suffix=".part")
+    # ``mkstemp`` creates 0600 and the rename preserves it — right for a private temp
+    # file, wrong for the cache document it becomes. Left alone, every ``_cache/`` file on
+    # a shared tree was owner-only: a colleague handed the outputs could read the ``.out``
+    # files but not the cache, the manifest or the failure ledger beside them. Re-moded to
+    # what a plain ``open()`` would have given — 0666 honouring the umask. (The server
+    # *token* sidecar keeps mkstemp's 0600; there the restriction is the point.)
+    mask = os.umask(0)
+    os.umask(mask)
+    os.fchmod(fd, 0o666 & ~mask)
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
