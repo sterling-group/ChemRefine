@@ -203,6 +203,25 @@ for the full map.
 ### Fixed
 
 
+- **An ExtOpt step whose environment cannot host the gradient server fails before
+  submission, not inside the job.** The preflight accepted "the backend is importable
+  here" without checking the server half it implies — so a bare install beside a
+  hand-installed backend passed, and the job died hours later on `import waitress`
+  with the traceback stranded in a log nothing pointed at. The single-env case now
+  requires flask and waitress up front, with the error naming both fixes
+  (`chemrefine[server]`, or `chemrefine backends install <extra>`); and a server that
+  still cannot start logs one actionable line in its own `--log-file` — the file the
+  job's failure path tails — instead of crashing before that file exists.
+- **A `scancel`-ed (SIGTERM'd) driver releases the run lock and its local jobs.**
+  Python's default SIGTERM disposition terminates without unwinding, so the lock stayed
+  behind and a cross-host resume demanded a manual delete for a run that was genuinely
+  dead. The lock now scopes a handler that turns SIGTERM into an orderly exit (code
+  143); only a genuine SIGKILL can strand a lock, and the same-host dead-pid reclaim
+  remains the net for that.
+- **`_cache/` documents are readable on a shared tree.** The atomic writer's temp file
+  is created 0600 and the rename preserved it, so the cache, manifest and failure
+  ledger were owner-only beside world-readable outputs; they now honour the umask like
+  any other written file (the server's token sidecar stays 0600 on purpose).
 - **Editing `on_failure` over a cached step now takes effect.** The cache stores a step's
   results after the policy is applied, and the fingerprint deliberately excludes
   `on_failure` — so a step halted under `stop` and switched to `best` served the cached
