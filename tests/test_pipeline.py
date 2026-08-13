@@ -730,3 +730,105 @@ def test_pid_alive_reads_permission_denied_as_alive(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(os, "kill", _deny)
     assert pipeline._pid_alive(12345) is True
+
+
+# ---------------------------------------------------------------------------
+# SIGTERM unwinds — scancel must not strand the lock or the local jobs
+# ---------------------------------------------------------------------------
+
+
+def test_sigterm_inside_the_lock_unwinds_and_releases_it(tmp_path: Path):
+    """A SIGTERM while the lock is held becomes SystemExit(143) and the lock is released.
+
+    Python's default SIGTERM disposition terminates without unwinding — no ``finally``,
+    no ``atexit`` — which is how a ``scancel``-ed driver left the tree locked. Raising
+    from the handler is what lets every ``finally`` on the stack do its job.
+    """
+    import os
+    import signal
+
+    lock = tmp_path / "outputs" / pipeline.RUN_LOCK_NAME
+    with pytest.raises(SystemExit) as excinfo, pipeline.run_lock(tmp_path / "outputs"):
+        assert lock.exists()
+        os.kill(os.getpid(), signal.SIGTERM)
+    assert excinfo.value.code == 143
+    assert not lock.exists()
+
+
+def test_the_previous_sigterm_disposition_is_restored_on_exit(tmp_path: Path):
+    """The handler is scoped to the lock — a host application's own handler survives."""
+    import signal
+
+    before = signal.getsignal(signal.SIGTERM)
+    with pipeline.run_lock(tmp_path / "outputs"):
+        assert signal.getsignal(signal.SIGTERM) is not before, "the unwind handler is active"
+    assert signal.getsignal(signal.SIGTERM) is before
+
+
+def test_the_sigterm_handler_is_not_installed_off_the_main_thread(tmp_path: Path):
+    """`signal.signal` raises off the main thread; the lock must still work there.
+
+    A host application driving the pipeline from a worker thread gives up the graceful
+    SIGTERM release — that is the signal module's constraint, not a choice — but it must
+    not gain a crash for it.
+    """
+    import signal
+    import threading
+
+    before = signal.getsignal(signal.SIGTERM)
+    seen: dict[str, object] = {}
+
+    def worker() -> None:
+        with pipeline.run_lock(tmp_path / "outputs"):
+            seen["during"] = signal.getsignal(signal.SIGTERM)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join()
+
+    assert seen["during"] is before, "no handler was installed off the main thread"
+    assert not (tmp_path / "outputs" / pipeline.RUN_LOCK_NAME).exists()
+
+
+def test_a_sigtermed_driver_process_releases_the_lock_on_disk(tmp_path: Path):
+    """The whole point, end to end: SIGTERM a real driver and the tree is unlocked.
+
+    This is the ``scancel`` shape — the driver runs as its own process, the signal is a
+    real one, and the assertion is about what the next driver finds on disk: no lock, and
+    exit code 143 saying what stopped the run.
+    """
+    import subprocess
+    import sys
+    import textwrap
+    import time
+
+    outputs = tmp_path / "outputs"
+    script = tmp_path / "driver.py"
+    script.write_text(
+        textwrap.dedent(f"""
+            import time
+            from pathlib import Path
+
+            from chemrefine import pipeline
+
+            with pipeline.run_lock(Path({str(outputs)!r})):
+                print("locked", flush=True)
+                time.sleep(60)
+        """),
+        encoding="utf-8",
+    )
+    with subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, text=True) as proc:
+        try:
+            assert proc.stdout is not None and proc.stdout.readline().strip() == "locked"
+            assert (outputs / pipeline.RUN_LOCK_NAME).exists()
+
+            proc.terminate()  # SIGTERM — what scancel and a walltime kill deliver
+
+            assert proc.wait(timeout=30) == 143
+            deadline = time.monotonic() + 5.0
+            while (outputs / pipeline.RUN_LOCK_NAME).exists() and time.monotonic() < deadline:
+                time.sleep(0.05)  # NFS-free here, but give the unlink a beat on slow CI
+            assert not (outputs / pipeline.RUN_LOCK_NAME).exists()
+        finally:
+            if proc.poll() is None:
+                proc.kill()

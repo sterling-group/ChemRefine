@@ -21,10 +21,14 @@ import contextlib
 import json
 import logging
 import os
+import signal
 import socket
-from collections.abc import Iterable, Iterator
+import threading
+from collections.abc import Generator, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
+from types import FrameType
+from typing import NoReturn
 
 from ase import Atoms
 
@@ -202,7 +206,39 @@ def _reclaim_stale(lock: Path, holder: tuple[str, int, str]) -> bool:
 
 
 @contextlib.contextmanager
-def run_lock(output_dir: Path) -> Iterator[None]:
+def _sigterm_unwinds() -> Generator[None]:
+    """Turn SIGTERM into an orderly unwind while a run holds resources.
+
+    ``scancel`` and a walltime kill deliver SIGTERM, and Python's default disposition
+    terminates without unwinding — no ``finally``, no ``atexit`` — so the run lock stayed
+    behind (stranding a cross-host resume on a lock nobody could probe) and the local jobs
+    kept burning their cores. Raising :class:`SystemExit` from the handler makes the signal
+    an ordinary exception at whatever bytecode is executing: :func:`run_lock`'s ``finally``
+    releases the lock, :func:`chemrefine.engines._execution.run_batch`'s ``finally`` reaps
+    the local jobs, and ``atexit`` still fires. ``143`` is the conventional ``128+SIGTERM``
+    status, so the driver's exit code still says what stopped it. A genuine SIGKILL remains
+    unhandleable — the same-host dead-pid reclaim stays as the net for that.
+
+    The previous handler is restored on exit, and off the main thread this is a no-op:
+    ``signal.signal`` raises there, and a host application driving the pipeline from a
+    worker thread must not fail over a nicety it cannot have.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def _raise(signum: int, frame: FrameType | None) -> NoReturn:
+        raise SystemExit(143)
+
+    previous = signal.signal(signal.SIGTERM, _raise)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+@contextlib.contextmanager
+def run_lock(output_dir: Path) -> Generator[None]:
     """Hold ``output_dir`` for one driver; raise :class:`RunLockError` if another has it.
 
     **Why a lock at all.** The resume machinery cannot tell a live concurrent driver from
@@ -214,10 +250,12 @@ def run_lock(output_dir: Path) -> Iterator[None]:
 
     **Why a pidfile and not ``flock``.** The output tree lives on a shared filesystem on
     HPC, where ``flock`` semantics are the least reliable part of NFS; an ``O_EXCL``
-    create is atomic everywhere. The cost is that a lock can outlive a driver killed with
-    SIGKILL, so a holder on *this* host is probed with ``os.kill(pid, 0)`` and reclaimed
-    when dead. A holder on another host cannot be probed from here — that lock is treated
-    as live, and the error says to delete it once its run is known dead.
+    create is atomic everywhere. The cost is that a lock can outlive a killed driver.
+    :func:`_sigterm_unwinds` narrows that to SIGKILL alone — a ``scancel`` or walltime
+    SIGTERM unwinds and releases — and a SIGKILLed holder on *this* host is probed with
+    ``os.kill(pid, 0)`` and reclaimed when dead. A holder on another host cannot be probed
+    from here — that lock is treated as live, and the error says to delete it once its run
+    is known dead.
 
     **Reclaim is an atomic rename, and release is ownership-checked.** Deleting a stale
     lock with ``unlink()`` let two drivers that both probed the same dead pid interleave —
@@ -236,59 +274,60 @@ def run_lock(output_dir: Path) -> Iterator[None]:
     pipeline directly. The inner acquisition sees its own pid in the record and yields
     without ownership, so the one release still happens at the outermost exit.
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
-    lock = output_dir / RUN_LOCK_NAME
-    reclaimed = False
-    while True:
+    with _sigterm_unwinds():
+        output_dir.mkdir(parents=True, exist_ok=True)
+        lock = output_dir / RUN_LOCK_NAME
+        reclaimed = False
+        while True:
+            try:
+                fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                break
+            except FileExistsError:
+                holder = _lock_holder(lock)
+                if holder is not None and holder[0] == socket.gethostname():
+                    host, pid, started = holder
+                    if pid == os.getpid():
+                        # Ours, taken further out — see "reentrant by pid" above.
+                        yield
+                        return
+                    if not reclaimed and not _pid_alive(pid):
+                        # One attempt per process, won or lost: a lost claim means another
+                        # driver got there first, and the next pass answers to its lock.
+                        reclaimed = True
+                        if _reclaim_stale(lock, holder):
+                            logger.warning(
+                                "reclaiming stale run lock %s (pid %d on %s, started %s, now dead)",
+                                lock,
+                                pid,
+                                host,
+                                started,
+                            )
+                        continue
+                # `from None`: the FileExistsError is this branch's condition, not a cause —
+                # everything it could say is already in the message.
+                raise RunLockError(
+                    f"another ChemRefine run holds this output tree: {lock} "
+                    + (
+                        f"names pid {holder[1]} on {holder[0]}, started {holder[2]}"
+                        if holder is not None
+                        else "exists but is unreadable"
+                    )
+                    + ". Two drivers on one tree archive and resubmit each other's work, so "
+                    "this run stops here. Wait for that run to finish — or, if it is known "
+                    "dead (e.g. killed on another node), delete the lock file and retry."
+                ) from None
+        # The record in `_lock_holder`'s field order, so the release below compares whole.
+        me = (socket.gethostname(), os.getpid(), datetime.now(UTC).isoformat(timespec="seconds"))
         try:
-            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            break
-        except FileExistsError:
-            holder = _lock_holder(lock)
-            if holder is not None and holder[0] == socket.gethostname():
-                host, pid, started = holder
-                if pid == os.getpid():
-                    # Ours, taken further out — see "reentrant by pid" above.
-                    yield
-                    return
-                if not reclaimed and not _pid_alive(pid):
-                    # One attempt per process, won or lost: a lost claim means another
-                    # driver got there first, and the next pass answers to its lock.
-                    reclaimed = True
-                    if _reclaim_stale(lock, holder):
-                        logger.warning(
-                            "reclaiming stale run lock %s (pid %d on %s, started %s, now dead)",
-                            lock,
-                            pid,
-                            host,
-                            started,
-                        )
-                    continue
-            # `from None`: the FileExistsError is this branch's condition, not a cause —
-            # everything it could say is already in the message.
-            raise RunLockError(
-                f"another ChemRefine run holds this output tree: {lock} "
-                + (
-                    f"names pid {holder[1]} on {holder[0]}, started {holder[2]}"
-                    if holder is not None
-                    else "exists but is unreadable"
-                )
-                + ". Two drivers on one tree archive and resubmit each other's work, so "
-                "this run stops here. Wait for that run to finish — or, if it is known "
-                "dead (e.g. killed on another node), delete the lock file and retry."
-            ) from None
-    # The record in `_lock_holder`'s field order, so the release below can compare whole.
-    me = (socket.gethostname(), os.getpid(), datetime.now(UTC).isoformat(timespec="seconds"))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump({"pid": me[1], "host": me[0], "started": me[2]}, fh)
-        yield
-    finally:
-        # On success and on failure alike: a raise must not leave the tree locked, and
-        # back-to-back runs in one process (tests, notebooks) must each acquire cleanly.
-        # Only while the file is still ours, though — see "release is ownership-checked".
-        if _lock_holder(lock) == me:
-            lock.unlink(missing_ok=True)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump({"pid": me[1], "host": me[0], "started": me[2]}, fh)
+            yield
+        finally:
+            # On success and on failure alike: a raise must not leave the tree locked, and
+            # back-to-back runs in one process (tests, notebooks) must each acquire cleanly.
+            # Only while the file is still ours — see "release is ownership-checked".
+            if _lock_holder(lock) == me:
+                lock.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
