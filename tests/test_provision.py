@@ -172,6 +172,90 @@ def test_preflight_passes_with_managed_envs(monkeypatch, tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# preflight — the server half of an ExtOpt backend
+# ---------------------------------------------------------------------------
+
+
+def _importable(*names: str):
+    """A ``find_spec`` stand-in that resolves exactly ``names`` and nothing else."""
+    return lambda name: object() if name in names else None
+
+
+def _extopt_step(**extra_options) -> StepConfig:
+    return StepConfig(
+        step=1,
+        engine="mlip-extopt",
+        operation="opt_sp",
+        options={"task_name": "mace_off", **extra_options},
+    )
+
+
+def test_preflight_requires_server_deps_for_extopt_in_the_single_env(monkeypatch, tmp_path: Path):
+    """A hand-assembled env — backend importable, no ``[server]`` — fails before submission.
+
+    The report behind this: ``pip install -e .`` beside a pre-existing backend passed
+    preflight, and the gradient server died on ``import waitress`` *inside the job*, after
+    the upstream step had spent 19 hours. The message must name both fixes, like the
+    backend check's does.
+    """
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    monkeypatch.setattr(provision.importlib.util, "find_spec", _importable("mace"))
+
+    with pytest.raises(ConfigError, match=r"chemrefine\[server\]") as excinfo:
+        preflight_backends([_extopt_step()])
+
+    assert "flask and waitress" in str(excinfo.value)
+    assert "backends install mlip-mace" in str(excinfo.value)
+
+
+def test_preflight_names_only_the_server_dep_that_is_missing(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    monkeypatch.setattr(provision.importlib.util, "find_spec", _importable("mace", "flask"))
+
+    with pytest.raises(ConfigError, match="needs waitress —"):
+        preflight_backends([_extopt_step()])
+
+
+def test_preflight_passes_when_the_single_env_carries_the_server_deps(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        provision.importlib.util, "find_spec", _importable("mace", "flask", "waitress")
+    )
+    preflight_backends([_extopt_step()])  # no raise
+
+
+def test_preflight_trusts_a_managed_env_for_the_server_deps(monkeypatch, tmp_path: Path):
+    """A managed env is built as ``chemrefine[<extra>]``, which cross-references ``[server]``.
+
+    Probing it from here is not possible anyway — ``find_spec`` answers for *this*
+    interpreter — and not necessary: the env's own install is the guarantee.
+    """
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    _provisioned(tmp_path, "mlip-mace")
+    monkeypatch.setattr(provision.importlib.util, "find_spec", _importable())
+    preflight_backends([_extopt_step()])  # no raise
+
+
+def test_preflight_trusts_a_backend_python_override_for_the_server_deps(
+    monkeypatch, tmp_path: Path
+):
+    """The documented escape hatch stays an escape hatch — trusted whole."""
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    monkeypatch.setattr(provision.importlib.util, "find_spec", _importable())
+    preflight_backends([_extopt_step(backend_python="/envs/x/bin/python")])  # no raise
+
+
+def test_preflight_asks_nothing_of_a_direct_engine_about_the_server(monkeypatch, tmp_path: Path):
+    """The direct engines run scripts, not a server — flask/waitress are not their business."""
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    monkeypatch.setattr(provision.importlib.util, "find_spec", _importable("mace"))
+    steps = [
+        StepConfig(step=1, engine="mlip", operation="opt_sp", options={"task_name": "mace_off"})
+    ]
+    preflight_backends(steps)  # no raise
+
+
+# ---------------------------------------------------------------------------
 # detect_env_tool
 # ---------------------------------------------------------------------------
 

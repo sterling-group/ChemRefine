@@ -41,6 +41,7 @@ from urllib.request import url2pathname
 
 from chemrefine import __version__
 from chemrefine.config import StepConfig
+from chemrefine.engines._backend_server.base import ExtOptServed
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import (
     ENGINES,
@@ -162,18 +163,53 @@ def require_backend(requirement: BackendRequirement, override: str | None = None
     )
 
 
+def _require_server_deps(requirement: BackendRequirement) -> None:
+    """Raise :class:`ConfigError` unless flask and waitress are importable here.
+
+    The server half of an ExtOpt backend, held to the same fail-fast rule as the backend
+    import itself. ``require_backend`` accepting "the backend is importable in the current
+    env" is what admits the single-env case — and in that case the gradient server runs
+    under this same interpreter, so a `pip install -e .` without extras beside a
+    hand-installed backend passed preflight and died at server startup *inside the job*,
+    after every upstream step had already been paid for. The error names both fixes,
+    like the backend one does.
+    """
+    missing = [name for name in ("flask", "waitress") if importlib.util.find_spec(name) is None]
+    if missing:
+        raise ConfigError(
+            f"backend '{requirement.extra}' serves gradients over HTTP, which needs "
+            f"{' and '.join(missing)} — not importable in this environment. Install "
+            f"`chemrefine[server]` into it, or provision the backend in its own managed "
+            f"env with `chemrefine backends install {requirement.extra}`."
+        )
+
+
 def preflight_backends(steps: Sequence[StepConfig]) -> None:
     """Validate every step's backend availability before any job submits.
 
     Called at the top of :func:`chemrefine.pipeline.run` so a missing backend fails the run
     up front (fail-fast) instead of at its step. Engines that aren't
     :class:`~chemrefine.engines.api.ProvisionableEngine` have nothing to check.
+
+    An :class:`~chemrefine.engines._backend_server.base.ExtOptServed` engine is also held
+    to the *server* half of its contract, but only when the launcher resolves to this very
+    interpreter (:func:`_require_server_deps`): a managed env carries ``[server]`` by
+    construction — every backend extra cross-references it — and an explicit
+    ``backend_python`` is the documented escape hatch, trusted like everything else about
+    it.
     """
     for step_cfg in steps:
         engine = get_engine(step_cfg.engine)
         if isinstance(engine, ProvisionableEngine):
             raw = step_cfg.options or {}
-            require_backend(engine.backend_requirement(raw), _backend_python(engine, raw))
+            requirement = engine.backend_requirement(raw)
+            override = _backend_python(engine, raw)
+            require_backend(requirement, override)
+            if (
+                isinstance(engine, ExtOptServed)
+                and resolve_launcher(requirement, override) == sys.executable
+            ):
+                _require_server_deps(requirement)
 
 
 def detect_env_tool() -> EnvTool:
