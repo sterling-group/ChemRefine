@@ -171,11 +171,10 @@ def main() -> int:
     ``server.run()``. The token gates ``/calculate`` so other users on the
     same node can't drive this server.
     """
+    import importlib.util
     import os
     import sys
     from pathlib import Path
-
-    from waitress.server import create_server
 
     from chemrefine.engines._backend_server import sidecar
 
@@ -185,6 +184,32 @@ def main() -> int:
         filename=args.log_file,
         format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
     )
+
+    # Probed after logging is configured and before anything imports them, so a missing
+    # server stack is an actionable line in the ``--log-file`` the run block tails on
+    # failure. Importing first crashed before the log file existed, and the job reported
+    # ``cat: …server_….log: No such file or directory`` instead of the reason — with the
+    # traceback stranded in the job's ``.err``, which nothing pointed at.
+    #
+    # A module already in ``sys.modules`` counts as importable — ``import`` would return
+    # it — and must not reach ``find_spec``, which raises on one whose ``__spec__`` is
+    # ``None`` (exactly what a test injecting a fake module leaves there).
+    missing = [
+        name
+        for name in ("flask", "waitress")
+        if name not in sys.modules and importlib.util.find_spec(name) is None
+    ]
+    if missing:
+        logger.error(
+            "cannot start: %s not importable in %s. Install `chemrefine[server]` into "
+            "this environment, or provision the backend in its own managed env with "
+            "`chemrefine backends install <extra>`.",
+            " and ".join(missing),
+            sys.executable,
+        )
+        return 1
+
+    from waitress.server import create_server
 
     backend_cls = load_calculator(args.backend)
     calculator = backend_cls.from_args(args)

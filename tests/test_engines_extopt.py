@@ -947,3 +947,32 @@ def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
     assert token_file.is_file()
     assert len(token_file.read_text(encoding="utf-8").strip()) == 64  # token_hex(32)
     assert token_file.stat().st_mode & 0o777 == 0o600
+
+
+def test_server_main_logs_why_it_cannot_start_when_the_server_deps_are_missing(monkeypatch, caplog):
+    """A missing flask/waitress is a logged, actionable line — not a bare traceback.
+
+    The import used to precede ``logging.basicConfig``, so the crash happened before the
+    ``--log-file`` existed: the run block's ``cat "$LOG_FILE"`` printed ``No such file or
+    directory`` and the traceback was stranded in the job's ``.err``, which nothing pointed
+    at. Probing after logging is configured puts the reason where the failure path already
+    looks, and exits nonzero so the readiness loop still bails out fast.
+    """
+    import importlib.util
+    import sys
+
+    real_find_spec = importlib.util.find_spec
+
+    def _no_waitress(name: str, *args: object) -> object:
+        return None if name == "waitress" else real_find_spec(name, *args)
+
+    monkeypatch.delitem(sys.modules, "waitress", raising=False)
+    monkeypatch.setattr(importlib.util, "find_spec", _no_waitress)
+    monkeypatch.setattr(sys, "argv", ["extopt-server", "--backend", "mlip"])
+
+    rc = server.main()
+
+    assert rc == 1
+    assert "waitress" in caplog.text
+    assert "chemrefine[server]" in caplog.text
+    assert "backends install" in caplog.text
