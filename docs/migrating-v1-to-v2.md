@@ -172,3 +172,77 @@ always see them), but only a `stop` step leaves failures *pending*. To recover:
 request a GPU node — the engine auto-picks `cuda.slurm.header` over the global `slurm_template`. A per-step
 `slurm_template:` override wins over that pick (for multiple GPU partitions). ORCA is CPU-only, so a "GPU run"
 is ORCA-on-CPUs + the gradient server-on-GPU, **one job** on a GPU (or MIG) node.
+
+## Adopting a v1 output tree
+
+The compatibility layer reads v1 **configs**; it does not read v1 **output trees**. If you
+have a finished v1 run whose calculations you want to keep — days of DFT that v2's
+`rebuild-cache` could re-parse instead of re-running — the tree has to be brought to the
+v2 layout first. The differences are mechanical:
+
+| | v1.3.1 | v2 |
+|---|--------|----|
+| File layout | flat: `step1/step1_structure_0.out` | per-structure dirs: `step1/0/step1_0.out` |
+| Basenames | `step{N}_structure_{id}.*` | `step{N}_{id}.*` |
+| Ensemble sidecars | on an `_opt` base: `step1_structure_0_opt.finalensemble.xyz` | on the `.out` stem: `step1_0.finalensemble.xyz` |
+| Step metadata | `step1_manifest.json`, `_cache/step1.json` + `step1.pkl` | `_cache/manifest.json` (v2 ignores the v1 files) |
+
+What v2's parsers actually read is small: the `.out` (all ORCA operations), plus — for
+`goat` / `docker` / `solvator` — the ensemble sidecar **named after the `.out` stem**. The
+`_opt` rename is the step most hand-migrations miss: everything else can be in place and
+the step still ledgers as `unparseable`, because a successful GOAT run's ensemble sits
+under a stem v2 never looks at. For one structure of a GOAT step:
+
+```bash
+cd outputs/<run>/step1
+mkdir 0
+for f in step1_structure_0*; do mv "$f" "0/${f/step1_structure_0/step1_0}"; done
+# fold v1's `_opt` base into the v2 stem for the files the parser reads:
+mv 0/step1_0_opt.finalensemble.xyz 0/step1_0.finalensemble.xyz
+```
+
+Then write the step's `_cache/manifest.json` — the record `rebuild-cache` requires, naming
+which input produced which output for which structure id (absolute paths):
+
+```json
+{
+  "operation": "goat",
+  "engine": "orca",
+  "fingerprint": "",
+  "files": [
+    {
+      "input": "/abs/path/outputs/<run>/step1/0/step1_0.inp",
+      "output": "/abs/path/outputs/<run>/step1/0/step1_0.out",
+      "id": "0"
+    }
+  ]
+}
+```
+
+The empty `fingerprint` is accepted deliberately: a manifest that cannot *prove* the
+outputs match the current config is exactly what a pre-v2 tree looks like, and you — by
+writing it — are the one asserting they do. That assertion is real: the YAML you rebuild
+under must be the configuration that produced these outputs (template, options, charge,
+multiplicity), because a re-parse checks none of that.
+
+Then rebuild step by step, in order — each `rebuild-cache N` serves steps `1..N-1` from
+the caches the previous rounds wrote and ends the run at `N`:
+
+```bash
+chemrefine rebuild-cache input.yaml 1
+chemrefine rebuild-cache input.yaml 2
+# … up to the last step
+```
+
+Two things to expect. A trailing
+`ChemRefineError: step N halted (on_failure=stop)` after a rebuild is **not** the rebuild
+failing — the cache was written; it is the failure ledger reporting structures the
+re-parse classified as failed, exactly as a fresh run would (check
+`_cache/failed_jobs.json`, and note v2's default `on_failure` is `stop` where v1 skipped).
+And the v1 metadata (`step1_manifest.json`, `_cache/step1.json`, `step1.pkl`) can stay put:
+v2 ignores it, and sweeps the `.pkl` on the next `run`/`rerun`.
+
+This recipe is validated for single-structure operations (`opt_sp` / `sp` / `freq`) and
+the ensemble ones (`goat` / `docker` / `solvator`). A v1 NMS step's displaced-child layout
+differs more deeply — re-running it under v2 (`chemrefine rerun N`) is the supported path
+there.
