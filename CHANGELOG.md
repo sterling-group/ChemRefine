@@ -203,6 +203,17 @@ for the full map.
 ### Fixed
 
 
+- **The `.err` tail a dead job's error quotes is decoded as UTF-8.** The tail was read
+  with the driver's locale encoding, so under `LANG=C` — a login-node default — every
+  non-ASCII byte in the one message that explains why a job died arrived as a
+  replacement character. It is now read as UTF-8 like every other text file the
+  package touches.
+- **A stale-lock reclaim that sweeps up a fresh lock it cannot put back now reports
+  it.** If a third driver's lock lands in the reclaim's rename→restore window, the
+  restore fails and the swept-up run is left running with no lock on the path — and
+  previously nothing said so. The reclaim now logs an error naming both drivers and
+  keeps its claim file as the only surviving copy of the swept-up lock record, instead
+  of deleting the evidence and passing silently.
 - **An ExtOpt step whose environment cannot host the gradient server fails before
   submission, not inside the job.** The preflight accepted "the backend is importable
   here" without checking the server half it implies — so a bare install beside a
