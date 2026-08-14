@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -70,6 +71,82 @@ def _read_header(template_path: Path) -> tuple[list[str], list[str]]:
 
 _SCRATCH_CLEANUP = 'scratch_kept=false; cd "$OUTPUT_DIR" && rm -rf "$WORK_DIR"'
 """On-exit scratch removal shared by the per-job and array scripts."""
+
+# ``--mem`` and ``--mem-per-cpu`` in either ``=`` or space form. ``--mem-per-gpu`` cannot
+# match: after ``--mem`` the optional group rejects ``-per-gpu`` and the mandatory ``[=\s]``
+# rejects the ``-`` that follows, so a GPU memory directive is neither read nor stripped.
+_MEM_DIRECTIVE_RE = re.compile(r"--mem(?:-per-cpu)?[=\s]+(\d+)([KkMmGgTt]?)")
+
+
+def _directive_mb(value: int, unit: str) -> int:
+    """One SLURM memory value in MB. Bare numbers are MB (SLURM's default unit).
+
+    ``K`` floors to MB — understating the header's grant errs toward extending it, which
+    only ever raises an allocation, never starves one.
+    """
+    unit = unit.upper()
+    if unit == "K":
+        return value // 1024
+    return value * {"": 1, "M": 1, "G": 1024, "T": 1024 * 1024}[unit]
+
+
+def _header_memory_mb(sbatch_lines: list[str], *, ntasks: int, cpus_per_task: int) -> int | None:
+    """Per-job MB the header's own memory directives grant; ``None`` when it has none.
+
+    ``--mem-per-cpu`` multiplies by the layout; ``--mem`` is the per-node total, which for
+    the single-node jobs this builder emits is the job's. ``--mem=0`` is SLURM's "all the
+    node's memory" — granted as unbounded rather than nothing. With several directives the
+    most generous wins, mirroring how sbatch resolves duplicates (last wins) closely enough
+    for a sufficiency test that only decides whether to extend.
+    """
+    granted: int | None = None
+    for line in sbatch_lines:
+        m = _MEM_DIRECTIVE_RE.search(line)
+        if not m:
+            continue
+        value = _directive_mb(int(m.group(1)), m.group(2))
+        if "per-cpu" in m.group(0):
+            total = value * ntasks * cpus_per_task
+        elif int(m.group(1)) == 0:
+            total = sys.maxsize
+        else:
+            total = value
+        granted = max(granted or 0, total)
+    return granted
+
+
+def _apply_memory(
+    sbatch_lines: list[str],
+    memory_mb: int | None,
+    *,
+    ntasks: int,
+    cpus_per_task: int,
+    job_name: str,
+) -> list[str]:
+    """Honour a header allocation that covers ``memory_mb``; extend one that falls short.
+
+    ``None`` — the engine declares nothing — leaves the header byte-untouched, which is
+    what every job got before engines could declare memory. With a requirement, a header
+    whose own ``--mem``/``--mem-per-cpu`` already covers it stands as written: the cluster's
+    policy wins whenever it is adequate. Only a short or absent allocation is replaced, with
+    the derived ``--mem-per-cpu`` and one log line naming both numbers, so an override never
+    happens silently.
+    """
+    if memory_mb is None:
+        return sbatch_lines
+    granted = _header_memory_mb(sbatch_lines, ntasks=ntasks, cpus_per_task=cpus_per_task)
+    if granted is not None and granted >= memory_mb:
+        return sbatch_lines
+    per_cpu = -(-memory_mb // (ntasks * cpus_per_task))  # ceil
+    logger.info(
+        "%s: the input declares %d MB; the header grants %s — requesting --mem-per-cpu=%d",
+        job_name,
+        memory_mb,
+        f"{granted} MB" if granted is not None else "no memory",
+        per_cpu,
+    )
+    kept = [line for line in sbatch_lines if not _MEM_DIRECTIVE_RE.search(line)]
+    return [*kept, f"#SBATCH --mem-per-cpu={per_cpu}"]
 
 
 def _run_body_lines(
@@ -163,6 +240,7 @@ def build_script(
     job_name: str,
     ntasks: int,
     cpus_per_task: int = 1,
+    memory_mb: int | None = None,
     template_path: Path,
     script_path: Path,
     input_path: Path,
@@ -192,6 +270,10 @@ def build_script(
       engine's :meth:`~chemrefine.engines.api.JobExecutable.slurm_layout`: MPI ranks are
       ``(pal, 1)``, one threaded process is ``(1, threads)`` — the same core count, spelled
       the way the program will actually use it.
+    * ``memory_mb`` → the engine's declared requirement
+      (:meth:`~chemrefine.engines.api.JobExecutable.memory_mb`). A header allocation that
+      covers it stands untouched; a short or absent one is replaced by the derived
+      ``--mem-per-cpu`` — see :func:`_apply_memory`. ``None`` never touches the header.
     * ``scratch_dir`` → base for the per-calc ``$WORK_DIR``; ``None`` auto-derives
       ``_work_<jobid>_<ts>_<rand>`` under ``output_dir`` (see :class:`Config`).
     * ``run_block`` → engine bash run after ``cd $WORK_DIR`` (may use
@@ -202,6 +284,9 @@ def build_script(
       runlog header/footer.
     """
     sbatch_lines, body_lines = _read_header(template_path)
+    sbatch_lines = _apply_memory(
+        sbatch_lines, memory_mb, ntasks=ntasks, cpus_per_task=cpus_per_task, job_name=job_name
+    )
     runlog_path = output_dir / f"{job_name}.runlog"
     err_path = output_dir / f"{job_name}.err"
     sbatch_lines += [
@@ -293,6 +378,7 @@ def build_array_script(
     step_label: str,
     ntasks: int,
     cpus_per_task: int = 1,
+    memory_mb: int | None = None,
     template_path: Path,
     script_path: Path,
     output_dir: Path,
@@ -320,6 +406,13 @@ def build_array_script(
     ``array_%A_%a.log`` (under the step dir).
     """
     sbatch_lines, body_lines = _read_header(template_path)
+    sbatch_lines = _apply_memory(
+        sbatch_lines,
+        memory_mb,
+        ntasks=ntasks,
+        cpus_per_task=cpus_per_task,
+        job_name=f"{step_label}_array",
+    )
     fallback_log = output_dir / "array_%A_%a.log"
     sbatch_lines += [
         f"#SBATCH --job-name={step_label}_array",

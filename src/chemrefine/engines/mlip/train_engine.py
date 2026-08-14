@@ -323,6 +323,15 @@ class MlipTrainEngine(MlipBackend):
         """
         return (min(self.pal(ctx), ctx.max_cores), 1)
 
+    def memory_mb(self, ctx: StepContext) -> int | None:
+        """No declared memory — a trainer config carries no ``mem_total``-like knob.
+
+        Declared explicitly because this class satisfies
+        :class:`~chemrefine.engines.api.JobExecutable` directly; the header's memory
+        policy stands untouched, as it always has for training jobs.
+        """
+        return None
+
     def pal(self, ctx: StepContext) -> int:
         """Cores for the training job — the step's whole budget unless it names fewer.
 

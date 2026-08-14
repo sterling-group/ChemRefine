@@ -278,6 +278,17 @@ class JobExecutable(Protocol):
         """GPUs one job needs (``0`` = CPU)."""
         ...
 
+    def memory_mb(self, ctx: StepContext) -> int | None:
+        """Total MB one job requires, or ``None`` when the engine declares nothing.
+
+        Read from the step's own input where the program reads it — ORCA's ``%maxcore``,
+        Q-Chem's ``mem_total`` — and already carrying the engine's headroom rule, so the
+        script builder can compare it against the header's allocation whole. ``None``
+        leaves the header's memory policy untouched, which is what every engine did before
+        this existed.
+        """
+        ...
+
     def output_dirs(self, ctx: StepContext) -> tuple[str, ...]:
         """Scratch sub-directories to copy back wholesale."""
         ...

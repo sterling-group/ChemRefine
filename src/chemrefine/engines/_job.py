@@ -234,6 +234,15 @@ class JobEngine(abc.ABC):
         """GPUs this job needs (default ``0`` = CPU); GPU engines override."""
         return 0
 
+    def memory_mb(self, ctx: StepContext) -> int | None:
+        """Total MB one job requires; ``None`` (the default) leaves the header's policy alone.
+
+        An engine whose input declares its memory — ORCA's ``%maxcore``, Q-Chem's
+        ``mem_total`` — overrides this with that declaration (plus its own headroom rule),
+        and the script builder then extends a header allocation that falls short of it.
+        """
+        return None
+
     def output_dirs(self, ctx: StepContext) -> tuple[str, ...]:
         """Scratch sub-directories to copy back wholesale (default none)."""
         return ()

@@ -147,6 +147,19 @@ def test_a_layout_exceeding_the_budget_is_refused(_submit, _finished, tmp_path: 
         _execution.run_batch(engine, inputs, ctx)
 
 
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
+@patch.object(slurm, "submit", return_value="1001")
+def test_declared_memory_reaches_the_generated_script(_submit, _finished, tmp_path: Path):
+    """An engine's `memory_mb` becomes the job's `--mem-per-cpu`; the default touches nothing."""
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path)
+    inputs = engine.prepare(ctx)
+    with patch.object(_FakeJobEngine, "memory_mb", return_value=2000):
+        _execution.run_batch(engine, inputs, ctx)
+    text = inputs.files[0][0].with_suffix(".slurm").read_text()
+    assert "#SBATCH --mem-per-cpu=2000" in text
+
+
 def test_header_name_picks_cuda_for_a_gpu_step(tmp_path: Path):
     """A GPU-demanding engine auto-selects the cuda header; a per-step override wins."""
     engine = _FakeJobEngine()

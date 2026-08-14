@@ -87,6 +87,7 @@ def test_build_script_overrides_ntasks_and_writes_script(tmp_path: Path):
     assert "#SBATCH --cpus-per-task=1" in text
     # the user's --ntasks=1 must not survive
     assert "--ntasks=1" not in text or "--ntasks=12" in text
+    assert "module load orca/6.0" in text
 
 
 def test_build_script_spells_a_threads_layout(tmp_path: Path):
@@ -101,7 +102,77 @@ def test_build_script_spells_a_threads_layout(tmp_path: Path):
     assert "#SBATCH --ntasks=1" in text
     assert "#SBATCH --cpus-per-task=8" in text
     assert "cores=8" in text
-    assert "module load orca/6.0" in text
+
+
+def _write_header_with(tmp_path: Path, *directives: str) -> Path:
+    """A header template carrying extra ``#SBATCH`` lines (for the memory tests)."""
+    header = tmp_path / "mem.slurm.header"
+    header.write_text(
+        "#!/bin/bash\n#SBATCH --partition=normal\n"
+        + "".join(f"#SBATCH {d}\n" for d in directives)
+        + "module load orca/6.0\n",
+        encoding="utf-8",
+    )
+    return header
+
+
+def test_no_memory_declaration_leaves_the_header_alone(tmp_path: Path):
+    """Engines that declare nothing get exactly the header's memory policy, untouched."""
+    header = _write_header_with(tmp_path, "--mem-per-cpu=1000")
+    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header))
+    text = script.read_text()
+    assert "#SBATCH --mem-per-cpu=1000" in text
+    assert text.count("--mem-per-cpu") == 1
+
+
+def test_a_sufficient_header_memory_allocation_stands(tmp_path: Path):
+    """The cluster's own policy wins whenever it covers the input's requirement."""
+    header = _write_header_with(tmp_path, "--mem-per-cpu=4000")
+    script = slurm.build_script(
+        **_build_kwargs(tmp_path, template_path=header, ntasks=1, cpus_per_task=8, memory_mb=16000)
+    )
+    text = script.read_text()
+    assert "#SBATCH --mem-per-cpu=4000" in text  # 8 cpus x 4000 = 32000 >= 16000
+    assert text.count("--mem-per-cpu") == 1
+
+
+def test_a_sufficient_total_memory_header_counts_its_units(tmp_path: Path):
+    """A ``--mem=64G`` grant is read as 65536 MB, not compared as the bare number 64."""
+    header = _write_header_with(tmp_path, "--mem=64G")
+    script = slurm.build_script(
+        **_build_kwargs(tmp_path, template_path=header, ntasks=1, cpus_per_task=8, memory_mb=60000)
+    )
+    text = script.read_text()
+    assert "#SBATCH --mem=64G" in text
+    assert "--mem-per-cpu" not in text
+
+
+def test_a_short_header_memory_allocation_is_extended(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """A header grant below the input's requirement is replaced, loudly; GPU memory is not.
+
+    ``--mem-per-gpu`` only shares a prefix with the directives this owns — stripping it
+    would starve a GPU job of the memory its header deliberately granted.
+    """
+    header = _write_header_with(tmp_path, "--mem-per-cpu=1000", "--mem-per-gpu=8G")
+    with caplog.at_level("INFO"):
+        script = slurm.build_script(
+            **_build_kwargs(
+                tmp_path, template_path=header, ntasks=1, cpus_per_task=8, memory_mb=32000
+            )
+        )
+    text = script.read_text()
+    assert "#SBATCH --mem-per-cpu=4000" in text  # ceil(32000 / 8)
+    assert "--mem-per-cpu=1000" not in text
+    assert "#SBATCH --mem-per-gpu=8G" in text
+    assert "32000" in caplog.text and "8000 MB" in caplog.text
+
+
+def test_an_absent_header_memory_grant_is_requested(tmp_path: Path):
+    """With no header memory at all, the input's requirement becomes the request."""
+    script = slurm.build_script(**_build_kwargs(tmp_path, memory_mb=1000))
+    assert "#SBATCH --mem-per-cpu=1000" in script.read_text()
 
 
 def test_build_script_keeps_ntasks_per_node_directive(tmp_path: Path):
