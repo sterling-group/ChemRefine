@@ -30,6 +30,7 @@ from chemrefine.engines.api import (
     ENGINES,
     JobExecutable,
     NmsCapableEngine,
+    OptionsDeclaring,
     StructureArtifacts,
     TemplateDriven,
     get_engine,
@@ -296,6 +297,38 @@ def test_unset_device_never_silently_requests_a_gpu(engine_name: str, tmp_path: 
     """CPU is the floor: a step that names no device must schedule as a CPU job."""
     engine = get_engine(engine_name)
     assert engine.gpus(_ctx(tmp_path, engine_name, {})) == 0
+
+
+def test_options_capability_matches_the_getattr_consumers():
+    """The Protocol and the ``getattr`` readers must partition the registry identically.
+
+    ``_provision._backend_python`` and ``gpus_from_options`` read ``options_cls`` via
+    ``getattr`` with a fallback; :class:`OptionsDeclaring` formalizes the same seam for
+    ``isinstance`` consumers (schema introspection). Two detection idioms for one
+    capability may not disagree about a single engine — or the fallback reader and the
+    introspector would describe different knobs for the same step.
+    """
+    by_protocol = {n for n in ENGINES if isinstance(get_engine(n), OptionsDeclaring)}
+    by_getattr = {n for n in ENGINES if getattr(get_engine(n), "options_cls", None) is not None}
+    assert by_protocol == by_getattr
+    for name in sorted(by_protocol):
+        engine = get_engine(name)
+        assert isinstance(engine, OptionsDeclaring)
+        assert issubclass(engine.options_cls, EngineOptions)
+
+
+def test_declaring_an_options_model_stays_a_claim_not_boilerplate():
+    """Exactly the engines that read their options declare a model — no more, no fewer.
+
+    ORCA is the deliberate holdout: its knobs live in the step template, ``options:`` on
+    an ORCA step is read only by NMS, and a declared model would advertise ``device`` to
+    the GPU invariants above while its ``gpus()`` stays 0. The fake engine is the minimal
+    third-party shape — three methods and a name — and must keep registering without the
+    capability. A new engine belongs in the declaring set the moment it reads one knob;
+    extend this pin rather than defaulting ``options_cls`` onto a base class.
+    """
+    declaring = {n for n in ENGINES if isinstance(get_engine(n), OptionsDeclaring)}
+    assert sorted(set(ENGINES) - declaring) == ["fake", "orca"]
 
 
 @pytest.mark.parametrize("engine_name", _job_executables())

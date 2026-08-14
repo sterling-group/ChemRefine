@@ -37,7 +37,9 @@ One job, one product          :class:`CalculationEngine` +    ``prepare`` / ``su
   is :mod:`chemrefine.nms`). Managed backend envs: implement :class:`ProvisionableEngine`'s
   ``backend_requirement`` (the generic provisioner is :mod:`chemrefine.engines._provision`).
 * **YAML knobs** — a Pydantic model in ``engines/<name>/options.py`` subclassing
-  :class:`~chemrefine.engines._options.EngineOptions`; read it in the primitives.
+  :class:`~chemrefine.engines._options.EngineOptions`; read it in the primitives and declare
+  it as ``options_cls`` (the :class:`OptionsDeclaring` capability), so second readers —
+  provisioning, schema introspection — resolve the knobs through the engine's own model.
 * **Register** — import the class in ``engines/<name>/__init__.py``; the bare-named package is
   **auto-discovered** when :mod:`chemrefine.engines` loads (registration is a side effect), so
   nothing outside the new package changes. Legacy YAML spellings map to the canonical name in
@@ -59,6 +61,7 @@ from typing import Any, ClassVar, Protocol, runtime_checkable
 import numpy as np
 from numpy.typing import NDArray
 
+from chemrefine.engines._options import EngineOptions
 from chemrefine.errors import EngineNotFoundError
 from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
 
@@ -199,6 +202,32 @@ class TemplateDriven(CalculationEngine, Protocol):
 
     label: ClassVar[str]
     """Human name for this engine's inputs, used in "…​ template not found" errors."""
+
+
+@runtime_checkable
+class OptionsDeclaring(Protocol):
+    """An engine that declares the Pydantic model validating its ``step.options``.
+
+    Declarations only, like :class:`TemplateDriven` — one ClassVar naming the
+    :class:`~chemrefine.engines._options.EngineOptions` subclass the engine itself reads
+    its knobs through. A *second* reader of those knobs — provisioning's
+    ``backend_python`` (:func:`chemrefine.engines._provision._backend_python`), the GPU
+    demand helper (:func:`chemrefine.engines._job.gpus_from_options`), schema
+    introspection — resolves aliases and defaults through the same model the engine
+    will, so two readers of one knob cannot disagree.
+
+    A capability and a **claim**, not boilerplate: declaring a model asserts the engine
+    reads its fields, and the cross-engine invariants hold every declaring engine's
+    ``gpus()`` to its model's ``device``. That is why ORCA declares nothing — its knobs
+    live in the step template, its ``options:`` dict is read only by NMS, and a model
+    here would advertise a ``device`` knob the engine ignores. A consumer meeting a
+    non-declaring engine reports "no engine options" (introspection) or falls back to
+    the base :class:`~chemrefine.engines._options.EngineOptions` for the shared knobs
+    (provisioning), rather than inventing a schema the engine does not honour.
+    """
+
+    options_cls: ClassVar[type[EngineOptions]]
+    """The model validating this engine's ``step.options`` — the engine's one reader."""
 
 
 @dataclass(frozen=True)
