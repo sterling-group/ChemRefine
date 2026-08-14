@@ -25,6 +25,7 @@ import signal
 import socket
 import threading
 from collections.abc import Generator, Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
@@ -170,6 +171,41 @@ def _pid_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+@dataclass(frozen=True)
+class LockStatus:
+    """One read of the run lock, for a *reporting* caller (status tools, the GUI).
+
+    ``held`` is what a would-be driver cares about: a lock file naming a holder this
+    read cannot prove dead. ``alive`` is three-valued — ``True`` / ``False`` only for a
+    same-host holder, ``None`` when the holder is on another host and liveness cannot be
+    probed from here (still ``held``: the reclaim machinery, not a status read, is the
+    only thing entitled to call a foreign lock stale). Reporting only — claiming the
+    lock remains :func:`run_lock`'s job, with its atomic-rename reclaim dance.
+    """
+
+    held: bool
+    host: str | None
+    pid: int | None
+    started: str | None
+    alive: bool | None
+
+
+def lock_status(output_dir: Path) -> LockStatus:
+    """Read ``output_dir``'s run lock without touching it.
+
+    The status view :func:`run_lock`'s internals already imply, made public for the
+    agent tools and the GUI: *is a driver running this tree, and which one?* A lock
+    naming a same-host dead pid reports ``held=False`` — that is exactly the stale case
+    :func:`run_lock` would reclaim on the next claim.
+    """
+    holder = _lock_holder(output_dir / RUN_LOCK_NAME)
+    if holder is None:
+        return LockStatus(held=False, host=None, pid=None, started=None, alive=None)
+    host, pid, started = holder
+    alive = _pid_alive(pid) if host == socket.gethostname() else None
+    return LockStatus(held=alive is not False, host=host, pid=pid, started=started, alive=alive)
 
 
 def _reclaim_stale(lock: Path, holder: tuple[str, int, str]) -> bool:

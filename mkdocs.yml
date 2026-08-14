@@ -142,6 +142,8 @@ nav:
           - MLIP: api/engines_mlip.md
           - PySCF: api/engines_pyscf.md
           - Q-Chem: api/engines_qchem.md
+      - Agent Integration:
+          - Agent Tools: api/agent_tools.md
       - Infrastructure:
           - SLURM: api/slurm.md
           - Throttle: api/throttle.md

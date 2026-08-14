@@ -1,0 +1,300 @@
+"""The agent tool layer: JSON in, JSON out, filesystem truth, and a submit that never blocks.
+
+These tests drive :mod:`chemrefine.agent_tools` the way an MCP client or the embedded
+agent will — through the public functions only — against real config trees under
+``tmp_path``. The two properties everything else leans on: :func:`start_run` launches a
+*detached* child (pinned by inspecting the recorded ``Popen`` call, never by running
+one) and refuses a held lock; the status/results/failures readers answer purely from
+what the pipeline persists, so they are exercised against files written by the
+pipeline's own writers (``io.save_step_csv``, ``cache.save_failure_records``), not
+hand-rolled lookalikes.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import socket
+import subprocess
+from pathlib import Path
+from typing import Any, ClassVar
+
+import pytest
+import yaml
+
+from chemrefine import agent_tools, io, pipeline
+from chemrefine.cache import save_failure_records
+from chemrefine.errors import ConfigError, RunLockError
+from chemrefine.state import FailureKind, FailureRecord
+
+
+def _write_config(tmp_path: Path, *steps: dict[str, object]) -> Path:
+    listed = list(steps) or [{"step": 1, "engine": "fake"}]
+    path = tmp_path / "input.yaml"
+    path.write_text(yaml.safe_dump({"steps": listed}), encoding="utf-8")
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Introspection + validation re-exposures
+# ---------------------------------------------------------------------------
+
+
+def test_schema_and_engines_are_json_shaped():
+    document = json.loads(json.dumps(agent_tools.get_schema()))
+    assert "config" in document
+    names = [d["name"] for d in json.loads(json.dumps(agent_tools.list_engines()))]
+    assert "orca" in names
+
+
+def test_validate_config_text_and_path_agree(tmp_path: Path):
+    path = _write_config(tmp_path)
+    from_text = agent_tools.validate_config(path.read_text(encoding="utf-8"), str(tmp_path))
+    from_path = agent_tools.validate_config_path(str(path))
+    assert from_text == from_path
+    assert from_text["ok"] is True
+
+
+def test_validate_config_without_base_dir_still_reports(tmp_path: Path):
+    report = agent_tools.validate_config("steps: [unclosed")
+    assert report["ok"] is False
+    assert report["issues"][0]["kind"] == "yaml"
+
+
+def test_summarize_config_rows_mirror_the_steps(tmp_path: Path):
+    path = _write_config(
+        tmp_path,
+        {"step": 1, "name": "screen", "engine": "fake", "sample": {"method": "min", "count": 3}},
+        {"step": 2, "engine": "fake", "on_failure": "skip"},
+    )
+    summary = agent_tools.summarize_config(str(path))
+    assert summary["max_cores"] == 4  # the schema default, surfaced not invented
+    first, second = summary["steps"]
+    assert first["name"] == "screen"
+    assert first["sample"]["count"] == 3
+    assert second["on_failure"] == "skip"
+
+
+# ---------------------------------------------------------------------------
+# Templates
+# ---------------------------------------------------------------------------
+
+
+def test_template_roundtrip_by_number_and_name(tmp_path: Path):
+    path = _write_config(
+        tmp_path,
+        {"step": 1, "engine": "orca"},
+        {"step": 2, "name": "refine", "engine": "orca"},
+    )
+    agent_tools.scaffold_templates(str(path))
+    by_number = agent_tools.read_template(str(path), 2)  # walks past step 1's plan row
+    assert "%pal" in by_number["text"]
+
+    agent_tools.write_template(str(path), "refine", "! MyKeywords\n")
+    by_name = agent_tools.read_template(str(path), "refine")
+    assert by_name["text"] == "! MyKeywords\n"
+    assert by_name["path"] == by_number["path"]
+
+
+def test_reading_a_missing_template_names_the_fix(tmp_path: Path):
+    path = _write_config(tmp_path, {"step": 1, "engine": "orca"})
+    with pytest.raises(ConfigError, match="scaffold_templates"):
+        agent_tools.read_template(str(path), 1)
+
+
+def test_template_tools_refuse_nonsense_targets(tmp_path: Path):
+    path = _write_config(tmp_path)
+    with pytest.raises(ConfigError, match="no step matches"):
+        agent_tools.read_template(str(path), 7)
+    with pytest.raises(ConfigError, match="does not read a template"):
+        agent_tools.read_template(str(path), 1)  # the fake engine is template-free
+
+
+def test_scaffold_templates_reports_written_then_kept(tmp_path: Path):
+    path = _write_config(tmp_path, {"step": 1, "engine": "orca"})
+    first = agent_tools.scaffold_templates(str(path))
+    assert any(p.endswith("step1.inp") for p in first["written"])
+    assert first["kept"] == []
+    second = agent_tools.scaffold_templates(str(path))
+    assert second["written"] == []
+    assert any(p.endswith("step1.inp") for p in second["kept"])
+
+
+# ---------------------------------------------------------------------------
+# start_run — detached, validated, lock-aware
+# ---------------------------------------------------------------------------
+
+
+class _RecordedPopen:
+    """Stands in for the detached child: records how it was launched, goes nowhere."""
+
+    calls: ClassVar[list[dict[str, Any]]] = []
+
+    def __init__(self, argv: list[str], **kwargs: Any) -> None:
+        self.pid = 4242
+        type(self).calls.append({"argv": argv, **kwargs})
+
+
+@pytest.fixture
+def recorded_popen(monkeypatch: pytest.MonkeyPatch) -> type[_RecordedPopen]:
+    _RecordedPopen.calls = []
+    monkeypatch.setattr(subprocess, "Popen", _RecordedPopen)
+    return _RecordedPopen
+
+
+def test_start_run_launches_a_detached_chemrefine(tmp_path: Path, recorded_popen):
+    path = _write_config(tmp_path)
+    result = agent_tools.start_run(str(path), max_cores=2)
+    [call] = recorded_popen.calls
+    assert call["argv"][1:4] == ["-m", "chemrefine", "run"]
+    assert call["argv"][-2:] == ["--maxcores", "2"]
+    assert call["start_new_session"] is True  # survives the agent session ending
+    assert result["pid"] == 4242
+    assert Path(result["log"]).parent.name == "agent_runs"
+
+
+def test_start_run_passes_the_target_through(tmp_path: Path, recorded_popen):
+    path = _write_config(
+        tmp_path, {"step": 1, "name": "screen", "engine": "fake"}, {"step": 2, "engine": "fake"}
+    )
+    agent_tools.start_run(str(path), action="rerun", target="screen", max_gpus=0)
+    [call] = recorded_popen.calls
+    assert call["argv"][3:6] == ["rerun", str(path.resolve()), "screen"]
+    assert call["argv"][-2:] == ["--maxgpus", "0"]
+
+
+def test_start_run_refuses_before_launching(tmp_path: Path, recorded_popen):
+    path = _write_config(tmp_path)
+    with pytest.raises(ConfigError, match="unknown action"):
+        agent_tools.start_run(str(path), action="format-disk")
+    with pytest.raises(ConfigError, match="no step matches target"):
+        agent_tools.start_run(str(path), action="rerun", target="nope")
+    assert recorded_popen.calls == []
+
+
+def test_start_run_refuses_a_live_lock_but_ignores_a_dead_one(tmp_path: Path, recorded_popen):
+    path = _write_config(tmp_path)
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    lock = outputs / pipeline.RUN_LOCK_NAME
+
+    lock.write_text(
+        json.dumps({"host": socket.gethostname(), "pid": os.getpid(), "started": "now"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(RunLockError, match=str(os.getpid())):
+        agent_tools.start_run(str(path))
+    assert recorded_popen.calls == []
+
+    lock.write_text(
+        json.dumps({"host": socket.gethostname(), "pid": 2**22 + 1, "started": "then"}),
+        encoding="utf-8",
+    )
+    agent_tools.start_run(str(path))  # a dead holder is the stale case run_lock reclaims
+    assert len(recorded_popen.calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# lock_status (the pipeline seam start_run and the GUI read)
+# ---------------------------------------------------------------------------
+
+
+def test_lock_status_reads_without_touching(tmp_path: Path):
+    assert pipeline.lock_status(tmp_path).held is False
+
+    lock = tmp_path / pipeline.RUN_LOCK_NAME
+    lock.write_text("not json", encoding="utf-8")
+    assert pipeline.lock_status(tmp_path).held is False  # unreadable = nobody provable
+
+    lock.write_text(
+        json.dumps({"host": socket.gethostname(), "pid": os.getpid(), "started": "now"}),
+        encoding="utf-8",
+    )
+    live = pipeline.lock_status(tmp_path)
+    assert (live.held, live.alive, live.pid) == (True, True, os.getpid())
+
+    lock.write_text(
+        json.dumps({"host": "somewhere-else", "pid": 1, "started": "now"}), encoding="utf-8"
+    )
+    foreign = pipeline.lock_status(tmp_path)
+    assert (foreign.held, foreign.alive) == (True, None)  # cannot probe, must assume held
+
+
+# ---------------------------------------------------------------------------
+# Status / results / failures — filesystem truth
+# ---------------------------------------------------------------------------
+
+
+def _reported_tree(tmp_path: Path) -> Path:
+    """A config whose output tree carries what the pipeline's own writers persist."""
+    path = _write_config(
+        tmp_path, {"step": 1, "name": "screen", "engine": "fake"}, {"step": 2, "engine": "fake"}
+    )
+    outputs = tmp_path / "outputs"
+    io.save_step_csv(
+        energies_hartree=[-1.0, -0.9], structure_ids=["0", "1"], step_number=1, output_dir=outputs
+    )
+    io.save_step_csv(
+        energies_hartree=[-1.1], structure_ids=["0"], step_number=2, output_dir=outputs
+    )
+    step1 = outputs / "step1_screen"
+    save_failure_records(
+        step1,
+        [FailureRecord(structure_id="2", kind=FailureKind.MISSING_OUTPUT, reason="no output")],
+    )
+    log_dir = outputs / "agent_runs"
+    log_dir.mkdir(parents=True)
+    (log_dir / "20260815T000000Z-run.log").write_text("line1\nline2\nline3\n", encoding="utf-8")
+    return path
+
+
+def test_run_status_reads_the_persisted_truth(tmp_path: Path):
+    status = agent_tools.run_status(str(_reported_tree(tmp_path)), log_tail_lines=2)
+    assert status["running"] is False
+    assert status["holder"] is None
+    screen, refine = status["steps"]
+    assert (screen["reported_survivors"], screen["failures"]) == (2, 1)
+    assert (refine["reported_survivors"], refine["failures"]) == (1, 0)
+    assert status["log_tail"] == ["line2", "line3"]
+
+
+def test_run_status_on_a_fresh_tree_is_all_zeros(tmp_path: Path):
+    status = agent_tools.run_status(str(_write_config(tmp_path)))
+    assert status["steps"][0]["reported_survivors"] == 0
+    assert status["log"] is None
+    assert status["log_tail"] is None
+
+
+def test_get_results_paginates_and_filters(tmp_path: Path):
+    path = _reported_tree(tmp_path)
+    everything = agent_tools.get_results(str(path))
+    assert everything["total"] == 3
+
+    page = agent_tools.get_results(str(path), limit=1, offset=1)
+    assert page["total"] == 3
+    assert len(page["rows"]) == 1
+
+    screen_only = agent_tools.get_results(str(path), step="screen")
+    assert screen_only["total"] == 2
+    assert {row["Step"] for row in screen_only["rows"]} == {"1"}
+
+    with pytest.raises(ConfigError, match="no step matches"):
+        agent_tools.get_results(str(path), step=9)
+
+
+def test_get_failures_carries_the_taxonomy_and_the_next_move(tmp_path: Path):
+    path = _reported_tree(tmp_path)
+    everything = agent_tools.get_failures(str(path))
+    [failure] = everything["failures"]
+    assert failure == {
+        "step": 1,
+        "structure_id": "2",
+        "kind": "output missing",
+        "reason": "no output",
+    }
+    assert everything["exit_codes"]["ConfigError"] == 2
+    assert everything["suggested_action"] == "rerun-errors"
+
+    clean = agent_tools.get_failures(str(path), step=2)
+    assert clean["failures"] == []
+    assert clean["suggested_action"] is None
