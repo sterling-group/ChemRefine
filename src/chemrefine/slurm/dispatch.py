@@ -400,9 +400,9 @@ def submit(
     when :func:`dispatch_locally` says so (``dispatch: local``, or
     ``auto`` with no ``sbatch_cmd`` on ``PATH``), so a user can run
     ChemRefine on a laptop without SLURM the same way it runs on an
-    HPC node. The local fallback executes synchronously and returns a
-    synthetic ``"local-N"`` job ID; :func:`is_finished` treats that
-    prefix as already-complete.
+    HPC node. The local fallback launches the script in the background
+    and returns a synthetic ``"local-N"`` job ID; :func:`is_finished`
+    polls (and reaps) the process.
 
     Raises :class:`~chemrefine.errors.JobSubmissionError` if ``sbatch``
     exits non-zero or its output lacks a numeric job ID. The local
