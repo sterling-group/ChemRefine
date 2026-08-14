@@ -109,6 +109,30 @@ def test_validate_exits_two_on_an_unrunnable_config(tmp_path: Path):
     assert json.loads(as_json.stdout)["ok"] is False
 
 
+def test_scaffold_writes_then_keeps(tmp_path: Path):
+    """First run fills the gaps; the second finds nothing to write and says so."""
+    config = _write_config(
+        tmp_path, steps=[{"step": 1, "engine": "orca", "operation": "opt_sp"}]
+    )
+    first = runner.invoke(app, ["scaffold", str(config)])
+    assert first.exit_code == 0
+    assert "wrote" in first.stdout
+    assert "step1.inp" in first.stdout
+    assert (tmp_path / "templates" / "step1.inp").is_file()
+
+    second = runner.invoke(app, ["scaffold", str(config)])
+    assert second.exit_code == 0
+    assert "wrote" not in second.stdout
+    assert "kept" in second.stdout
+
+
+def test_scaffold_surfaces_config_errors_with_their_exit_code(tmp_path: Path):
+    config = tmp_path / "broken.yaml"
+    config.write_text("steps: [unclosed", encoding="utf-8")
+    result = runner.invoke(app, ["scaffold", str(config)])
+    assert result.exit_code == 2
+
+
 def test_engines_lists_the_registry_in_both_shapes():
     """Human table and `--json` must both cover the registry, sorted.
 

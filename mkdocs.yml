@@ -123,6 +123,7 @@ nav:
           - Configuration: api/config.md
           - Introspection: api/introspect.md
           - Validation: api/validate.md
+          - Scaffolding: api/scaffold.md
           - Runtime State: api/state.md
           - Errors: api/errors.md
           - Quantities: api/quantities.md

@@ -172,13 +172,11 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
             continue
         engine = get_engine(step.engine)
         declared: set[str] = set()
-        options_ok = True
         if isinstance(engine, OptionsDeclaring):
             declared |= engine.options_cls._accepted_names()
             try:
                 engine.options_cls.from_raw_lenient(step.options)
             except ConfigError as e:
-                options_ok = False
                 issues.append(
                     ValidationIssue(loc=("steps", index, "options"), kind="options", message=str(e))
                 )
@@ -237,9 +235,7 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
         if isinstance(engine, JobExecutable):
             # Only scheduler-run engines resolve a header (locally too); an inline engine
             # like the test fake never reads one, and warning about it would be noise.
-            headers.setdefault(_effective_header(config, step, engine, options_ok), []).append(
-                step.step
-            )
+            headers.setdefault(effective_header(config, step, engine), []).append(step.step)
     for name, steps in sorted(headers.items()):
         path = config.template_dir / name
         if not path.is_file():
@@ -256,24 +252,24 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
     return issues, warnings
 
 
-def _effective_header(
-    config: Config, step: StepConfig, engine: CalculationEngine, options_ok: bool
-) -> str:
+def effective_header(config: Config, step: StepConfig, engine: CalculationEngine) -> str:
     """The header dispatch would pick — per-step override, cuda on GPU demand, else global.
 
     Mirrors ``_execution._header_name`` without needing a :class:`StepContext`: the GPU
     demand is read through the engine's declared options model via
     :func:`~chemrefine.engines._job.gpus_from_options`, the same read the scheduler
-    performs. Skipped (global header assumed) when the step's options already failed
-    validation — the failure is reported on its own line, and a second exception here
-    would bury it.
+    performs. Options too broken to read fall back to the global header — the breakage
+    is the validation report's own row, and a second exception here would bury it.
+    Shared with :mod:`chemrefine.scaffold`, so the plan and the run cannot disagree
+    about a header file's name.
     """
     if step.slurm_template:
         return step.slurm_template
-    if (
-        options_ok
-        and isinstance(engine, OptionsDeclaring)
-        and gpus_from_options(step.options, engine.options_cls) > 0
-    ):
-        return slurm.header_name_for_device("cuda")
+    if isinstance(engine, OptionsDeclaring):
+        try:
+            demands_gpu = gpus_from_options(step.options, engine.options_cls) > 0
+        except ConfigError:
+            demands_gpu = False
+        if demands_gpu:
+            return slurm.header_name_for_device("cuda")
     return config.slurm_template

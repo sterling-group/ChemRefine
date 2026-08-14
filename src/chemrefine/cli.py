@@ -392,6 +392,33 @@ def validate(
 
 
 @app.command()
+def scaffold(
+    config_path: ConfigArg,
+    overwrite: Annotated[
+        bool,
+        typer.Option("--overwrite", help="Rewrite existing template files with starters."),
+    ] = False,
+) -> None:
+    """Write starter templates for every file the config expects but lacks.
+
+    Step templates for each template-driven step and the SLURM header(s) dispatch would
+    pick. Existing files are kept unless --overwrite. See :mod:`chemrefine.scaffold`.
+    """
+    try:
+        from chemrefine.config import load_config
+        from chemrefine.scaffold import plan_templates, scaffold_templates
+
+        config = load_config(config_path)
+        written = set(scaffold_templates(config, overwrite=overwrite))
+        for plan in plan_templates(config):
+            state = "wrote" if plan.path in written else "kept"
+            typer.echo(f"{state} {plan.path}")
+    except ChemRefineError as e:
+        logger.error("%s: %s", type(e).__name__, e)
+        raise typer.Exit(code=e.exit_code) from e
+
+
+@app.command()
 def engines(
     as_json: Annotated[
         bool, typer.Option("--json", help="Emit the full engine descriptors as JSON.")
