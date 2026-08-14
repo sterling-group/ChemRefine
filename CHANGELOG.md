@@ -24,6 +24,27 @@ for the full map.
 
 ### Added
 
+- **Q-Chem engine** (`engine: qchem`): per-structure Q-Chem jobs from a `stepN.in`
+  template, with the geometry generated into job 1's `$molecule` block (a multi-job
+  `@@@` chain's later `$molecule read $end` survives untouched). Parallelism is
+  CLI-side, as Q-Chem wants it: `options.cores` renders `-nt N` and is allocated as
+  `--ntasks=1 --cpus-per-task=N`; `options.nprocs` opts into MPI (`-mpi -np P [-nt N]`,
+  allocated `P×N` — partial method support, so never a default). The install environment
+  comes from `executables: {qchem, qc, qcaux}` — `qc` exports `QC`/`PATH` and Q-Chem's
+  own documented `QCAUX=$QC/qcaux` default, `qcaux` overrides it for sibling layouts —
+  or from a `module load` in the SLURM header. `QCSCRATCH` is the per-job work dir; the
+  job always runs with a savename so key scratch (MOs) survives, and `options.save`
+  copies it back to the structure dir. NMS-capable: `jobtype ts`/`freq` gate and target
+  the sampling, and the frequency parse maps Q-Chem's 3N−6 vibrational modes onto the
+  trivial-modes-first tensor the coordinator expects. The output reader is deliberately
+  minimal (final energy + last geometry) pending the full parser set.
+- **Memory-aware SLURM requests**: an input that declares its memory now shapes its
+  allocation. ORCA's `%maxcore` requests `ceil(maxcore × pal ÷ 0.75)` (maxcore is a
+  promise ORCA overshoots per process — the 75% rule); Q-Chem's `mem_total` requests its
+  declared peak. A header whose own `--mem`/`--mem-per-cpu` already covers the
+  requirement stands untouched; a short or absent one is extended to `--mem-per-cpu`,
+  with the override logged. Inputs that declare nothing keep the header's policy,
+  exactly as before.
 - Per-step ensemble XYZ files: every step leaves `stepN_ensemble.xyz` (all of
   its final structures, one multi-frame XYZ) and `stepN_survivors.xyz` (the
   subset the `sample:` filter kept) in its step directory. Frames are sorted

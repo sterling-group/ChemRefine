@@ -138,6 +138,7 @@ nav:
           - ORCA: api/engines_orca.md
           - MLIP: api/engines_mlip.md
           - PySCF: api/engines_pyscf.md
+          - Q-Chem: api/engines_qchem.md
       - Infrastructure:
           - SLURM: api/slurm.md
           - Throttle: api/throttle.md
