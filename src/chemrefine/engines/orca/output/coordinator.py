@@ -157,9 +157,10 @@ def _stderr_tail(src: str) -> str:
     """The last few non-empty lines of the job's ``.err``, or ``""`` if there is none."""
     err_path = Path(src).with_suffix(".err")
     try:
-        lines = [ln.strip() for ln in err_path.read_text(errors="replace").splitlines()]
+        text = err_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
+    lines = [ln.strip() for ln in text.splitlines()]
     tail = [ln for ln in lines if ln][-_ERR_TAIL_LINES:]
     return f"; {err_path.name} ends: " + " | ".join(tail) if tail else ""
 

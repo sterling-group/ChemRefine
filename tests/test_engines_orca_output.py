@@ -443,6 +443,25 @@ def test_an_error_terminated_run_quotes_the_stderr_that_says_why():
         parse_dft(ERROR_TERMINATION_FIXTURE)
 
 
+def test_the_err_tail_survives_a_non_utf8_locale(tmp_path: Path):
+    """The `.err` tail is decoded as UTF-8 whatever locale the driver runs under."""
+    import locale
+    import sys
+
+    if sys.flags.utf8_mode:
+        pytest.skip("UTF-8 mode ignores the locale, so this pin cannot bite")
+    out = tmp_path / "step1_0.out"
+    out.write_text("ORCA finished by error termination in SCF\n", encoding="utf-8")
+    (tmp_path / "step1_0.err").write_text("café: Datei nicht gefunden\n", encoding="utf-8")
+    saved = locale.setlocale(locale.LC_CTYPE)
+    locale.setlocale(locale.LC_CTYPE, "C")
+    try:
+        with pytest.raises(OutputTerminationError, match="café"):
+            parse_dft(out)
+    finally:
+        locale.setlocale(locale.LC_CTYPE, saved)
+
+
 def test_a_termination_error_is_still_a_parse_error(tmp_path: Path):
     """Callers that only care that the output was unusable keep working unchanged."""
     assert issubclass(OutputTerminationError, OutputParseError)
