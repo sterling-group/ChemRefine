@@ -182,3 +182,25 @@ def test_a_keyword_merely_containing_opt_is_not_an_optimisation(tmp_path: Path):
     template = tmp_path / "step1.inp"
     template.write_text("! B3LYP def2-SVP Optimizer-Is-Not-A-Keyword\n", encoding="utf-8")
     assert inspect_template(template).operation == "sp"
+
+
+# ---------------------------------------------------------------------------
+# %maxcore — the memory declaration the SLURM request is derived from
+# ---------------------------------------------------------------------------
+
+
+def test_inspect_reads_maxcore(tmp_path: Path):
+    """``%maxcore`` is per-core MB, read with qorca's grammar, case-insensitively."""
+    info = inspect_template(_write(tmp_path, "! B3LYP Opt\n%MaxCore 3000\n%pal nprocs 4 end\n"))
+    assert info.maxcore == 3000
+    assert info.pal == 4
+
+
+def test_a_template_without_maxcore_declares_no_memory(tmp_path: Path):
+    """Absence is ``None``, not a default: no declaration means the header's policy stands."""
+    assert inspect_template(_write(tmp_path, "! B3LYP Opt\n")).maxcore is None
+
+
+def test_a_commented_maxcore_is_not_a_declaration(tmp_path: Path):
+    """The same comment-stripping the keywords get: ``# %maxcore 9000`` declares nothing."""
+    assert inspect_template(_write(tmp_path, "! B3LYP Opt\n# %maxcore 9000\n")).maxcore is None

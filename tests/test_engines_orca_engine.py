@@ -512,3 +512,35 @@ def test_plain_executable_name_is_not_needlessly_quoted(tmp_path: Path):
         "orca step1_0.inp"
         in engine.run_block(ctx, tmp_path / "step1_0.inp", tmp_path / "step1_0.out").body
     )
+
+
+# ---------------------------------------------------------------------------
+# memory_mb — the SLURM request %maxcore implies
+# ---------------------------------------------------------------------------
+
+
+def test_memory_mb_inverts_the_75_percent_rule(tmp_path: Path):
+    """The request sizes the allocation so the declared maxcore is 75% of it.
+
+    %maxcore is a promise ORCA routinely overshoots per process, which is why qorca holds
+    it to at most 75% of the granted memory; ceil(3000 x 2 / 0.75) = 8000.
+    """
+    ctx = _ctx(tmp_path, (_seed_structure("0"),))
+    ctx.template.write_text(
+        "! B3LYP def2-SVP\n%maxcore 3000\n%pal\n  nprocs 2\nend\n", encoding="utf-8"
+    )
+    assert get_engine("orca").memory_mb(ctx) == 8000
+
+
+def test_memory_mb_uses_the_granted_core_count(tmp_path: Path):
+    """The multiplier is the clamped PAL — the cores the job actually gets, not the ask."""
+    ctx = _ctx(tmp_path, (_seed_structure("0"),))  # max_cores=4
+    ctx.template.write_text(
+        "! B3LYP def2-SVP\n%maxcore 1000\n%pal\n  nprocs 16\nend\n", encoding="utf-8"
+    )
+    assert get_engine("orca").memory_mb(ctx) == -(-(1000 * 4 * 4) // 3)  # ceil(1000*4/0.75)
+
+
+def test_memory_mb_is_none_without_a_maxcore(tmp_path: Path):
+    """No %maxcore, no request: the header's memory policy stands, as it always has."""
+    assert get_engine("orca").memory_mb(_ctx(tmp_path, (_seed_structure("0"),))) is None

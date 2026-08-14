@@ -2,7 +2,8 @@
 
 The writer half — generating the per-structure ``.inp`` — lives in
 :mod:`chemrefine.engines.orca.input`. This module only *reads* a template: it infers the
-run type (for parser dispatch + NMS) and the PAL count, in a single pass.
+run type (for parser dispatch + NMS), the PAL count, and the ``%maxcore`` memory, in a
+single pass.
 
 When a step omits ``operation``, ChemRefine inspects the resolved ORCA template to decide
 which parser to use and (for NMS) whether the run optimises a TS and whether it computes
@@ -57,6 +58,10 @@ _PAL_PATTERNS = (
     re.compile(r"(^\s*PAL\s+)(\d+)\b", re.IGNORECASE | re.MULTILINE),
 )
 
+# ORCA's per-core memory declaration, in MB — qorca's grammar, which submits against real
+# clusters with it. ``%maxcore`` takes no ``end``; the number is the whole block.
+_MAXCORE_RE = re.compile(r"%maxcore\s+(\d+)", re.IGNORECASE)
+
 
 @dataclass(frozen=True)
 class OrcaInputInfo:
@@ -64,13 +69,16 @@ class OrcaInputInfo:
 
     ``operation`` is the parser key (see :mod:`chemrefine.engines.orca.output`); ``is_ts``
     marks an ``OptTS`` (drives the NMS ``ts`` target); ``has_freq`` marks a frequency calc
-    (gates NMS); ``pal`` is the declared core count (``1`` if none).
+    (gates NMS); ``pal`` is the declared core count (``1`` if none); ``maxcore`` is the
+    declared per-core memory in MB (``None`` if the template names none — absence means
+    "the header's memory policy stands", so it is not defaulted).
     """
 
     operation: str
     is_ts: bool
     has_freq: bool
     pal: int
+    maxcore: int | None = None
 
 
 def _strip_orca_comments(text: str) -> str:
@@ -140,9 +148,11 @@ def inspect_template(template_path: str | Path) -> OrcaInputInfo:
         operation = "opt_sp"
     else:
         operation = "sp"  # ORCA's own fallback: a single point
+    maxcore = _MAXCORE_RE.search(decommented)
     return OrcaInputInfo(
         operation=operation,
         is_ts="optts" in keywords,
         has_freq=any(_FREQ_TOKEN_RE.fullmatch(token) for token in keywords),
         pal=_read_pal(decommented),
+        maxcore=int(maxcore.group(1)) if maxcore else None,
     )

@@ -91,6 +91,27 @@ class OrcaEngine(JobEngine):
         """PAL is a property of the template (one ``%pal`` for the step), read once."""
         return inspect.inspect_template(require_template(ctx.template, label=self.label)).pal
 
+    def memory_mb(self, ctx: StepContext) -> int | None:
+        """The SLURM total ``%maxcore`` implies: ``ceil(maxcore * pal / 0.75)``.
+
+        ``%maxcore`` is per core and it is a *promise to ORCA*, not a bound ORCA honours —
+        it routinely overshoots it per process, which is why qorca holds maxcore to at most
+        75% of the granted allocation (and its ``-m`` flag *sets* maxcore to 75% of the
+        given amount). Inverting that rule here sizes the request so the declared maxcore
+        is exactly 75% of it. The core count is the one the job is actually granted —
+        the template's PAL clamped to ``max_cores``, matching :meth:`slurm_layout` and the
+        ``.inp`` rewrite in ``build_input``.
+
+        No ``%maxcore`` in the template → ``None``: the header's memory policy stands, as
+        it always has. The builder also keeps a header whose own grant already covers this
+        — see :func:`chemrefine.slurm.script._apply_memory`.
+        """
+        info = inspect.inspect_template(require_template(ctx.template, label=self.label))
+        if info.maxcore is None:
+            return None
+        cores = min(info.pal, ctx.max_cores)
+        return -(-(info.maxcore * cores * 4) // 3)  # ceil(maxcore * cores / 0.75)
+
     @staticmethod
     def orca_command(ctx: StepContext, inp_name: str, out_name: str) -> str:
         """The quoted ``orca <input> > <output>`` invocation, for every ORCA run block.
