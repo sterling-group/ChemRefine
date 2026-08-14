@@ -147,6 +147,17 @@ def test_a_layout_exceeding_the_budget_is_refused(_submit, _finished, tmp_path: 
         _execution.run_batch(engine, inputs, ctx)
 
 
+def test_a_degenerate_layout_is_an_engine_bug(tmp_path: Path):
+    """A zero in either factor is a broken engine, reported as such — not a throttler crash."""
+    engine = _ThreadedJobEngine()
+    ctx = _ctx(tmp_path)
+    with (
+        patch.object(_ThreadedJobEngine, "slurm_layout", return_value=(0, 4)),
+        pytest.raises(ChemRefineError, match="both must be at least 1"),
+    ):
+        _execution._BatchPlan.of(engine, ctx, local=True)
+
+
 @patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
 @patch.object(slurm, "submit", return_value="1001")
 def test_declared_memory_reaches_the_generated_script(_submit, _finished, tmp_path: Path):
