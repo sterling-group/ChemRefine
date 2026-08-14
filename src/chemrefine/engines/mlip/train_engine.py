@@ -312,6 +312,17 @@ class MlipTrainEngine(MlipBackend):
             )
         )
 
+    def slurm_layout(self, ctx: StepContext) -> tuple[int, int]:
+        """The ranks spelling, matching what this job has always been granted.
+
+        A training run is one threaded process, so ``(1, cores)`` would be the more honest
+        SLURM spelling — but flipping it changes every user's allocation shape and belongs
+        to the same follow-up decision as the threaded script engines. Declared explicitly
+        because this class satisfies :class:`~chemrefine.engines.api.JobExecutable` directly
+        rather than through :class:`~chemrefine.engines._job.JobEngine`.
+        """
+        return (min(self.pal(ctx), ctx.max_cores), 1)
+
     def pal(self, ctx: StepContext) -> int:
         """Cores for the training job — the step's whole budget unless it names fewer.
 

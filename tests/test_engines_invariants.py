@@ -140,7 +140,7 @@ def _assemble(
     inp.write_text("! SP\n", encoding="utf-8")
 
     common = {
-        "pal": 1,
+        "ntasks": 1,
         "template_path": header,
         "output_dir": out_dir,
         "scratch_dir": None,

@@ -70,6 +70,8 @@ class _BatchPlan:
 
     header_path: Path
     pal: int
+    ntasks: int
+    cpus_per_task: int
     gpus: int
     local: bool
     gpu_budget: throttle.GpuBudget
@@ -83,11 +85,29 @@ class _BatchPlan:
         below used to sit after that fork: the same ``max_gpus: 0`` that raised a
         :class:`~chemrefine.errors.ConfigError` per job submitted silently as an array, and
         ``pal`` and the header were re-resolved in the array branch by hand.
+
+        The core count is the engine's ``slurm_layout`` product, not a bare ``pal``: the
+        default layout carries the historical ``min(pal, max_cores)`` clamp itself, and a
+        layout that *names* both factors (an MPI x threads step) cannot be clamped by
+        squeezing the product — the factorization is the job's shape — so exceeding the
+        budget is refused outright instead of silently reshaped.
         """
         # Header first, so a missing template still reports itself before anything about
         # GPUs — the order these were resolved in before they moved here.
         header_path = _header_path(engine, ctx)
-        pal = min(engine.pal(ctx), ctx.max_cores)
+        ntasks, cpus_per_task = engine.slurm_layout(ctx)
+        if ntasks < 1 or cpus_per_task < 1:
+            raise ChemRefineError(
+                f"step {ctx.step_cfg.step}: engine laid out {ntasks} task(s) x "
+                f"{cpus_per_task} cpu(s); both must be at least 1"
+            )
+        pal = ntasks * cpus_per_task
+        if pal > ctx.max_cores:
+            raise ConfigError(
+                f"step {ctx.step_cfg.step} lays out {ntasks} task(s) x {cpus_per_task} "
+                f"cpu(s) = {pal} cores, more than max_cores={ctx.max_cores}; lower the "
+                f"step's cores/nprocs or raise max_cores"
+            )
         gpus = engine.gpus(ctx)
         gpu_budget = slurm.resolve_gpu_budget(ctx.max_gpus, local=local)
         if local and gpus > 1:
@@ -110,6 +130,8 @@ class _BatchPlan:
         return cls(
             header_path=header_path,
             pal=pal,
+            ntasks=ntasks,
+            cpus_per_task=cpus_per_task,
             gpus=gpus,
             local=local,
             gpu_budget=gpu_budget,
@@ -187,7 +209,8 @@ def _submit_one(
     script_path = inp.with_suffix(".slurm")
     slurm.build_script(
         job_name=inp.stem,
-        pal=plan.pal,
+        ntasks=plan.ntasks,
+        cpus_per_task=plan.cpus_per_task,
         template_path=plan.header_path,
         script_path=script_path,
         input_path=inp,
@@ -311,7 +334,8 @@ def _run_array(
     script_path = output_dir / f"{step_label}_array.slurm"
     slurm.build_array_script(
         step_label=step_label,
-        pal=plan.pal,
+        ntasks=plan.ntasks,
+        cpus_per_task=plan.cpus_per_task,
         template_path=plan.header_path,
         script_path=script_path,
         output_dir=output_dir,

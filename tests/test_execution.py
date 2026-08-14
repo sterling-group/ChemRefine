@@ -101,6 +101,52 @@ def test_run_batch_submits_one_job_per_structure(submit_mock, _finished_jobs, tm
         assert inp.with_suffix(".slurm").read_text().splitlines()[-1].startswith("echo run")
 
 
+class _ThreadedJobEngine(_FakeJobEngine):
+    """A job engine that spells its cores as one threaded task, Q-Chem-style."""
+
+    name: ClassVar[str] = "fake-threaded"
+    label: ClassVar[str] = "FakeThreaded"
+
+    def pal(self, ctx) -> int:
+        return 4
+
+    def slurm_layout(self, ctx) -> tuple[int, int]:
+        return (1, min(self.pal(ctx), ctx.max_cores))
+
+
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
+@patch.object(slurm, "submit", return_value="1001")
+def test_a_threads_layout_reaches_the_generated_script(_submit, _finished, tmp_path: Path):
+    """The engine's `slurm_layout` decides the SBATCH pair, not a hardcoded ranks spelling."""
+    engine = _ThreadedJobEngine()
+    ctx = _ctx(tmp_path)
+    inputs = engine.prepare(ctx)
+    _execution.run_batch(engine, inputs, ctx)
+    text = inputs.files[0][0].with_suffix(".slurm").read_text()
+    assert "#SBATCH --ntasks=1" in text
+    assert "#SBATCH --cpus-per-task=4" in text
+    assert "cores=4" in text  # the runlog reports the product
+
+
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
+@patch.object(slurm, "submit", return_value="1001")
+def test_a_layout_exceeding_the_budget_is_refused(_submit, _finished, tmp_path: Path):
+    """A named factorization cannot be silently clamped — over budget is a ConfigError.
+
+    The default layout clamps itself to `max_cores` (the historical behavior); a layout
+    that names both factors is the job's shape, and squeezing the product would quietly
+    hand an MPI x threads job a different shape than its input was built for.
+    """
+    engine = _ThreadedJobEngine()
+    ctx = _ctx(tmp_path)  # max_cores=4
+    inputs = engine.prepare(ctx)
+    with (
+        patch.object(_ThreadedJobEngine, "slurm_layout", return_value=(2, 4)),
+        pytest.raises(ConfigError, match=r"8 cores, more than max_cores=4"),
+    ):
+        _execution.run_batch(engine, inputs, ctx)
+
+
 def test_header_name_picks_cuda_for_a_gpu_step(tmp_path: Path):
     """A GPU-demanding engine auto-selects the cuda header; a per-step override wins."""
     engine = _FakeJobEngine()

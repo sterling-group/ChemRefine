@@ -51,7 +51,7 @@ def _build_kwargs(tmp_path: Path, **overrides):
     """Default kwargs for ``slurm.build_script`` tests."""
     base = {
         "job_name": "step1_structure_0",
-        "pal": 1,
+        "ntasks": 1,
         "template_path": _write_header(tmp_path),
         "script_path": tmp_path / "out" / "step1_structure_0.slurm",
         "input_path": tmp_path / "in" / "step1_structure_0.inp",
@@ -73,7 +73,7 @@ def test_build_script_overrides_ntasks_and_writes_script(tmp_path: Path):
     script = slurm.build_script(
         **_build_kwargs(
             tmp_path,
-            pal=12,
+            ntasks=12,
             run_block=RunBlock(
                 body="$ORCA step1_structure_0.inp > $OUTPUT_DIR/step1_structure_0.out"
             ),
@@ -87,6 +87,20 @@ def test_build_script_overrides_ntasks_and_writes_script(tmp_path: Path):
     assert "#SBATCH --cpus-per-task=1" in text
     # the user's --ntasks=1 must not survive
     assert "--ntasks=1" not in text or "--ntasks=12" in text
+
+
+def test_build_script_spells_a_threads_layout(tmp_path: Path):
+    """``cpus_per_task`` reaches the SBATCH pair, and the runlog reports the product.
+
+    The pair is an engine's ``slurm_layout``: MPI ranks are ``(pal, 1)``, one threaded
+    process is ``(1, threads)`` — N single-cpu tasks can be granted across nodes, where a
+    threaded program can only use the first node's share.
+    """
+    script = slurm.build_script(**_build_kwargs(tmp_path, ntasks=1, cpus_per_task=8))
+    text = script.read_text()
+    assert "#SBATCH --ntasks=1" in text
+    assert "#SBATCH --cpus-per-task=8" in text
+    assert "cores=8" in text
     assert "module load orca/6.0" in text
 
 
@@ -105,7 +119,7 @@ def test_build_script_keeps_ntasks_per_node_directive(tmp_path: Path):
         "#SBATCH --output=old.log\n",
         encoding="utf-8",
     )
-    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, pal=8))
+    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, ntasks=8))
     text = script.read_text()
     assert "#SBATCH --ntasks-per-node=16" in text
     assert "#SBATCH --ntasks-per-core=1" in text
@@ -652,7 +666,7 @@ def test_build_array_script_resolves_task_from_manifest(tmp_path: Path):
     resolved basenames — the per-job script's values, computed in bash."""
     script = slurm.build_array_script(
         step_label="step2_refine",
-        pal=8,
+        ntasks=8,
         template_path=_write_header(tmp_path),
         script_path=tmp_path / "out" / "step2_refine_array.slurm",
         output_dir=tmp_path / "out",

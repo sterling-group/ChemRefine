@@ -263,6 +263,17 @@ class JobExecutable(Protocol):
         """Per-job core count (PAL) before the scheduler clamps it to ``max_cores``."""
         ...
 
+    def slurm_layout(self, ctx: StepContext) -> tuple[int, int]:
+        """How this job's cores are spelled to SLURM: ``(ntasks, cpus_per_task)``.
+
+        The same core count means different directives to different programs: MPI ranks
+        (ORCA) are ``(pal, 1)``, one threaded process (Q-Chem's ``-nt``) is ``(1, pal)``,
+        and a hybrid MPI+OpenMP job is ``(ranks, threads)``. The scheduler charges the
+        product against ``max_cores`` and writes both directives, so the allocation and
+        the program's own idea of its parallelism cannot disagree.
+        """
+        ...
+
     def gpus(self, ctx: StepContext) -> int:
         """GPUs one job needs (``0`` = CPU)."""
         ...

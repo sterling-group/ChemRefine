@@ -161,7 +161,8 @@ def _run_body_lines(
 def build_script(
     *,
     job_name: str,
-    pal: int,
+    ntasks: int,
+    cpus_per_task: int = 1,
     template_path: Path,
     script_path: Path,
     input_path: Path,
@@ -182,12 +183,15 @@ def build_script(
 
     Reads ``template_path`` (a cluster header), strips any ``#SBATCH``
     directives we own (``--ntasks``/``--cpus-per-task``/``--job-name``/
-    ``--output``/``--error``) and re-adds them so PAL + log paths stay
+    ``--output``/``--error``) and re-adds them so the core layout + log paths stay
     consistent, then appends a scratch-setup + on-exit trap that runs the
     engine's ``run_block`` in a fresh ``$WORK_DIR`` and copies ``output_globs``
     back to ``output_dir``. Notable args:
 
-    * ``pal`` → ``#SBATCH --ntasks`` (``--cpus-per-task`` pinned to 1).
+    * ``ntasks`` / ``cpus_per_task`` → the SBATCH pair, straight through. The pair is the
+      engine's :meth:`~chemrefine.engines.api.JobExecutable.slurm_layout`: MPI ranks are
+      ``(pal, 1)``, one threaded process is ``(1, threads)`` — the same core count, spelled
+      the way the program will actually use it.
     * ``scratch_dir`` → base for the per-calc ``$WORK_DIR``; ``None`` auto-derives
       ``_work_<jobid>_<ts>_<rand>`` under ``output_dir`` (see :class:`Config`).
     * ``run_block`` → engine bash run after ``cd $WORK_DIR`` (may use
@@ -204,8 +208,8 @@ def build_script(
         f"#SBATCH --job-name={job_name}",
         f'#SBATCH --output="{runlog_path}"',
         f'#SBATCH --error="{err_path}"',
-        f"#SBATCH --ntasks={pal}",
-        "#SBATCH --cpus-per-task=1",
+        f"#SBATCH --ntasks={ntasks}",
+        f"#SBATCH --cpus-per-task={cpus_per_task}",
     ]
 
     cleanup = (
@@ -218,7 +222,7 @@ def build_script(
         structure_id=structure_id,
         step_label=step_label,
         step_dir=output_dir,
-        cores=pal,
+        cores=ntasks * cpus_per_task,
         extra_fields=extra_header_fields,
     )
     footer = job_log.bash_footer(engine=engine, step_label=step_label)
@@ -287,7 +291,8 @@ def write_array_manifests(
 def build_array_script(
     *,
     step_label: str,
-    pal: int,
+    ntasks: int,
+    cpus_per_task: int = 1,
     template_path: Path,
     script_path: Path,
     output_dir: Path,
@@ -320,8 +325,8 @@ def build_array_script(
         f"#SBATCH --job-name={step_label}_array",
         f'#SBATCH --output="{fallback_log}"',
         f'#SBATCH --error="{fallback_log}"',
-        f"#SBATCH --ntasks={pal}",
-        "#SBATCH --cpus-per-task=1",
+        f"#SBATCH --ntasks={ntasks}",
+        f"#SBATCH --cpus-per-task={cpus_per_task}",
     ]
     # ``$SID`` expands inside the runlog heredoc at runtime, like $(hostname).
     header = job_log.bash_header(
@@ -331,7 +336,7 @@ def build_array_script(
         structure_id="$SID",
         step_label=step_label,
         step_dir=output_dir,
-        cores=pal,
+        cores=ntasks * cpus_per_task,
         extra_fields=extra_header_fields,
     )
     footer = job_log.bash_footer(engine=engine, step_label=step_label)

@@ -219,6 +219,17 @@ class JobEngine(abc.ABC):
     def pal(self, ctx: StepContext) -> int:
         """Per-job core count (PAL) before the scheduler clamps it to ``max_cores``."""
 
+    def slurm_layout(self, ctx: StepContext) -> tuple[int, int]:
+        """The MPI-ranks spelling ``(min(pal, max_cores), 1)`` — every engine's until now.
+
+        One task per core, clamped to the budget exactly as the scheduler always has; the
+        clamp lives here rather than in the scheduler so an override cannot silently
+        disagree with it. A threaded engine overrides this to ``(1, threads)`` — N tasks
+        with one CPU each can be granted across nodes, where a single threaded process can
+        only use the first node's share.
+        """
+        return (min(self.pal(ctx), ctx.max_cores), 1)
+
     def gpus(self, ctx: StepContext) -> int:
         """GPUs this job needs (default ``0`` = CPU); GPU engines override."""
         return 0
