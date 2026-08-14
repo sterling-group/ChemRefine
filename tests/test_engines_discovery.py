@@ -18,7 +18,7 @@ from chemrefine.engines.api import ENGINES, get_engine
 from chemrefine.engines.mlip import backends as backends_pkg
 from chemrefine.engines.mlip.registry import _BACKENDS
 
-_BUNDLED = {"orca", "mlip", "mlip-extopt", "mlip-train", "pyscf", "pyscf-extopt"}
+_BUNDLED = {"orca", "mlip", "mlip-extopt", "mlip-train", "pyscf", "pyscf-extopt", "qchem"}
 
 
 def test_every_bundled_plugin_is_discovered():

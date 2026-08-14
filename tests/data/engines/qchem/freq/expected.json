@@ -1,0 +1,64 @@
+{
+  "result_format": "v1.0",
+  "structures": [
+    {
+      "id": "0",
+      "parent_id": null,
+      "energy_hartree": -153.830111089,
+      "gibbs_hartree": null,
+      "enthalpy_hartree": null,
+      "energy_zpe_hartree": null,
+      "converged": null,
+      "terminated_normally": null,
+      "symbols": [
+        "H",
+        "C",
+        "H",
+        "H",
+        "C",
+        "H",
+        "O"
+      ],
+      "positions": [
+        [
+          -1.71373,
+          0.219516,
+          0.880805
+        ],
+        [
+          -1.17114,
+          -0.148534,
+          0.0
+        ],
+        [
+          -1.155873,
+          -1.24084,
+          -0.0
+        ],
+        [
+          -1.71373,
+          0.219516,
+          -0.880805
+        ],
+        [
+          0.234133,
+          0.399512,
+          0.0
+        ],
+        [
+          0.301802,
+          1.511772,
+          0.0
+        ],
+        [
+          1.237946,
+          -0.276979,
+          -0.0
+        ]
+      ],
+      "forces_ev_per_a": null,
+      "imaginary_freqs": {},
+      "resolved_from": null
+    }
+  ]
+}
