@@ -672,6 +672,60 @@ def test_a_fresh_lock_swept_up_by_a_reclaim_is_restored(
     assert not list(outputs.glob(f"{pipeline.RUN_LOCK_NAME}.reclaim.*"))
 
 
+def test_a_swept_up_lock_that_cannot_be_restored_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    """A restore that loses to a third driver's lock is reported, and its claim kept.
+
+    Once a third lock lands in the rename→link window the swept-up driver is already
+    running with no lock on the path — nothing can un-overlap the two, so the residue
+    must at least be loud: an error names both drivers, and the claim file survives as
+    the only remaining copy of the swept-up record.
+    """
+    import os
+    import socket
+
+    from chemrefine.errors import RunLockError
+
+    outputs = tmp_path / "outputs"
+    _write_lock(outputs, host=socket.gethostname(), pid=_dead_pid())
+    lock = outputs / pipeline.RUN_LOCK_NAME
+    winner_pid = os.getppid()
+    third_pid = 1  # a live pid that is neither this process nor its parent
+    real_replace = os.replace
+    real_link = os.link
+
+    def overtaken(src: object, dst: object) -> None:
+        # The winner's reclaim-and-create lands first; the loser's rename then sweeps
+        # up the *fresh* lock rather than the stale one it probed.
+        _write_lock(outputs, host=socket.gethostname(), pid=winner_pid)
+        real_replace(src, dst)
+
+    def third_driver_got_there_first(src: object, dst: object) -> None:
+        # A third driver's O_EXCL create lands inside the rename→link window, so the
+        # real os.link fails with the real OS answer: FileExistsError.
+        _write_lock(outputs, host=socket.gethostname(), pid=third_pid)
+        real_link(src, dst)
+
+    monkeypatch.setattr(os, "replace", overtaken)
+    monkeypatch.setattr(os, "link", third_driver_got_there_first)
+    with (
+        caplog.at_level("ERROR"),
+        pytest.raises(RunLockError, match=rf"pid {third_pid} on"),
+        pipeline.run_lock(outputs),
+    ):
+        pass
+    monkeypatch.setattr(os, "replace", real_replace)
+    monkeypatch.setattr(os, "link", real_link)
+    assert f"pid {winner_pid}" in caplog.text, "the swept-up run must be named"
+    holder = pipeline._lock_holder(lock)
+    assert holder is not None and holder[1] == third_pid, "the third driver's lock stands"
+    claims = list(outputs.glob(f"{pipeline.RUN_LOCK_NAME}.reclaim.*"))
+    assert claims, "the claim must survive as the swept-up record"
+    swept = pipeline._lock_holder(claims[0])
+    assert swept is not None and swept[1] == winner_pid
+
+
 def test_release_leaves_a_lock_that_is_no_longer_ours(tmp_path: Path):
     """Exit must not unlink a lock another driver now holds.
 

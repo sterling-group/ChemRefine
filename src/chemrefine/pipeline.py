@@ -186,19 +186,39 @@ def _reclaim_stale(lock: Path, holder: tuple[str, int, str]) -> bool:
     the caller's read and the rename, another process can have completed its *own* reclaim
     **and** created a fresh live lock at the same path, and the rename cannot tell those
     apart. A claim whose record no longer matches is therefore put back with ``os.link``,
-    the atomic fail-if-exists primitive: if a third process created a lock meanwhile, the
-    link fails and that lock stands, which leaves the swept-up holder no worse off than
-    before this function ran. Either way the reclaim is reported as not-ours, and the
-    caller's next pass answers to whatever the path now holds.
+    the atomic fail-if-exists primitive. If a third process created a lock in that window,
+    the link fails and the restore is impossible: the swept-up driver is already running
+    with no lock on the path, beside the third one, and nothing here can un-overlap them.
+    That residue is reported rather than swallowed — an error names both drivers, and the
+    claim file is kept as the only surviving copy of the swept-up record. Either way the
+    reclaim is reported as not-ours, and the caller's next pass answers to whatever the
+    path now holds.
     """
     claim = lock.with_name(f"{RUN_LOCK_NAME}.reclaim.{os.getpid()}")
     try:
         lock.replace(claim)
     except FileNotFoundError:
         return False
-    if _lock_holder(claim) != holder:
-        with contextlib.suppress(OSError):
+    swept = _lock_holder(claim)
+    if swept != holder:
+        try:
             os.link(claim, lock)
+        except OSError:
+            # The restore lost to a third driver's fresh lock. The swept-up driver is
+            # already running unlocked beside it and nothing here can un-overlap them,
+            # so the residue is reported — loudly — and the claim survives as the only
+            # remaining copy of the swept-up record.
+            current = _lock_holder(lock)
+            logger.error(
+                "run lock %s: a stale-lock reclaim swept up a live lock and could not "
+                "restore it (the path is now held by %s); the swept-up run %s may be "
+                "sharing this tree — its record is kept at %s",
+                lock,
+                f"pid {current[1]} on {current[0]}" if current else "an unreadable lock",
+                f"(pid {swept[1]} on {swept[0]}, started {swept[2]})" if swept else "(unreadable)",
+                claim,
+            )
+            return False
         claim.unlink(missing_ok=True)
         return False
     claim.unlink(missing_ok=True)
