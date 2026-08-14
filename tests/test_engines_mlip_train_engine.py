@@ -335,3 +335,15 @@ def test_the_runlog_records_what_the_job_asked_for(tmp_path: Path):
 def test_training_from_scratch_says_so_in_the_runlog(tmp_path: Path):
     fields = dict(MlipTrainEngine().extra_header_fields(_ctx(tmp_path, model_name="")))
     assert fields["started_from"] == "scratch"
+
+
+def test_the_training_job_keeps_the_ranks_layout_and_declares_no_memory(tmp_path: Path):
+    """The explicit JobExecutable members: the historical SBATCH spelling, no memory ask.
+
+    Declared on the class because it satisfies the protocol directly; flipping training to
+    the `(1, cores)` threads spelling is a named follow-up, not an accident of this test.
+    """
+    engine = MlipTrainEngine()
+    ctx = _ctx(tmp_path, cores=4)
+    assert engine.slurm_layout(ctx) == (4, 1)
+    assert engine.memory_mb(ctx) is None
