@@ -348,7 +348,10 @@ def reject_shell_unsafe(text: str, *, what: str, fix: str) -> None:
     ``template_dir`` /          this rule — interpolated into ``export WORK_DIR=…``
     ``output_dir`` /
     ``scratch_dir``
-    ``executables``             this rule — embedded raw in the runlog heredoc
+    ``executables``             this rule — embedded raw in the runlog heredoc; the
+                                engine-documented root paths (qchem's ``qc``/``qcaux``)
+                                are additionally shell-quoted where their run block
+                                exports them
     ``operation``               this rule — same heredoc
     ``tensor_folder``           this rule (via :class:`~chemrefine.engines.pyscf.options.\
 PyscfOptions`) — reaches ``cp -r "…"``, and bash substitutes *inside* double quotes
@@ -462,10 +465,17 @@ class Config(BaseModel):
     ``slurm`` requires ``sbatch`` and fails fast when it is missing instead of
     silently running locally."""
     executables: dict[str, str] = Field(default_factory=dict)
-    """Global tool-name → binary-path map for external-binary engines (e.g.
+    """Global tool-name → path map for external-binary engines (e.g.
     ``{"orca": "/opt/orca/orca"}``). Set once and shared by every step using
     that engine. Importable backends (mlip, pyscf, …) are installed as extras
-    and need no entry here; conda/module activation belongs in the SLURM header."""
+    and need no entry here; conda/module activation belongs in the SLURM header.
+
+    An engine may document keys of its own beyond its binary — the qchem engine reads
+    ``qc`` and ``qcaux`` as *install-root* paths and exports them as ``QC``/``QCAUX`` in
+    its run block. They live in this map rather than in ``step.options`` because they are
+    facts about the machine, not about a step: one install serves every qchem step, exactly
+    as one ``orca`` binary does. Every value here is held to the same shell-safety rule and
+    warned about when it names an absent path, whatever kind of path it is."""
     steps: list[StepConfig]
 
     @field_validator("template_dir", "output_dir", "scratch_dir")
