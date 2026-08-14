@@ -225,6 +225,35 @@ def _conformer_rows(mol: Any) -> CoordList:
     return rows
 
 
+def embed_smiles(smiles: str, *, max_attempts: int = 10, random_seed: int = 42) -> CoordList:
+    """One SMILES → embedded, UFF-relaxed 3D coordinate rows; raises on failure.
+
+    The single-molecule seam under :func:`smiles_to_xyz`'s CSV loop, public because the
+    two callers want opposite failure behaviour: a CSV sweep logs a bad row and keeps
+    going, while a caller embedding one *explicit* SMILES (the agent's structure-building
+    tool) wants the :class:`ValueError` raised at the molecule it names.
+
+    ``random_seed`` seeds RDKit's conformer embedding (which is otherwise
+    non-deterministic), so repeated calls regenerate identical 3D geometries.
+    """
+    from rdkit import Chem
+
+    # Imported from the modules that define them rather than from ``rdkit.Chem.AllChem``,
+    # which collects them with ``import *`` — a star import re-exports nothing, so reading
+    # them off ``AllChem`` means reaching for names its stubs do not carry.
+    from rdkit.Chem.rdDistGeom import EmbedMolecule
+    from rdkit.Chem.rdForceFieldHelpers import UFFOptimizeMolecule
+
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise ValueError(f"invalid SMILES: {smiles}")
+    mol = Chem.AddHs(mol)
+    if EmbedMolecule(mol, maxAttempts=max_attempts, randomSeed=random_seed) != 0:
+        raise ValueError(f"failed 3D embedding for SMILES: {smiles}")
+    UFFOptimizeMolecule(mol)
+    return _conformer_rows(mol)
+
+
 def smiles_to_xyz(
     csv_file: str | Path,
     output_dir: str | Path,
@@ -237,19 +266,9 @@ def smiles_to_xyz(
 
     Each successful conversion writes ``output_dir/structure_{row}.xyz``.
     Invalid SMILES are logged and skipped — they do not abort the run.
-
-    ``random_seed`` seeds RDKit's conformer embedding (which is otherwise
-    non-deterministic), so repeated runs — and ``resume``, which
-    re-bootstraps the seeds — regenerate identical 3D geometries.
+    Embedding itself is :func:`embed_smiles`, per row.
     """
     import pandas as pd
-    from rdkit import Chem
-
-    # Imported from the modules that define them rather than from ``rdkit.Chem.AllChem``,
-    # which collects them with ``import *`` — a star import re-exports nothing, so reading
-    # them off ``AllChem`` means reaching for names its stubs do not carry.
-    from rdkit.Chem.rdDistGeom import EmbedMolecule
-    from rdkit.Chem.rdForceFieldHelpers import UFFOptimizeMolecule
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -262,20 +281,13 @@ def smiles_to_xyz(
     for idx, raw in enumerate(df[smiles_column]):
         if not isinstance(raw, str) or not raw.strip():
             continue
-        mol = Chem.MolFromSmiles(raw)
-        if mol is None:
-            logger.warning("invalid SMILES at row %d: %s", idx, raw)
+        try:
+            rows = embed_smiles(raw, max_attempts=max_attempts, random_seed=random_seed)
+        except ValueError as e:
+            logger.warning("row %d: %s", idx, e)
             continue
-        mol = Chem.AddHs(mol)
-        if EmbedMolecule(mol, maxAttempts=max_attempts, randomSeed=random_seed) != 0:
-            logger.warning("failed 3D embedding for SMILES: %s", raw)
-            continue
-        UFFOptimizeMolecule(mol)
-
         written.append(
-            write_single_xyz(
-                _conformer_rows(mol), out / f"structure_{idx}.xyz", comment=f"SMILES: {raw}"
-            )
+            write_single_xyz(rows, out / f"structure_{idx}.xyz", comment=f"SMILES: {raw}")
         )
     return written
 

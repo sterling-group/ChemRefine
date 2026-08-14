@@ -32,11 +32,15 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from chemrefine import introspect, pipeline, scaffold
+import numpy as np
+from numpy.typing import NDArray
+
+from chemrefine import cache, introspect, io, pipeline, scaffold
 from chemrefine.cache import load_failure_records
 from chemrefine.config import Config, StepConfig, load_config
+from chemrefine.engines.api import ParsedResult
 from chemrefine.errors import ChemRefineError, ConfigError, RunLockError
 from chemrefine.validate import validate_config_file, validate_config_text
 
@@ -294,6 +298,300 @@ def get_results(
         wanted = {s.step for s in _steps_for(config, step)}
         rows = [row for row in rows if int(row["Step"]) in wanted]
     return {"total": len(rows), "offset": offset, "rows": rows[offset : offset + limit]}
+
+
+# ---------------------------------------------------------------------------
+# Chemistry grounding — structures in, spectroscopic judgment calls out
+# ---------------------------------------------------------------------------
+
+_PUBCHEM_URL = (
+    "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{}/property/CanonicalSMILES/TXT"
+)
+
+
+def lookup_smiles(name: str) -> dict[str, Any]:
+    """A compound name → its canonical SMILES, via PubChem's PUG REST service.
+
+    The one tool here that needs the network, kept separate so everything else works on
+    an offline compute node; a failed lookup says so and names the offline alternative
+    (pass a SMILES to :func:`build_structures` directly).
+    """
+    from urllib.error import URLError
+    from urllib.parse import quote
+    from urllib.request import urlopen
+
+    url = _PUBCHEM_URL.format(quote(name))
+    try:
+        with urlopen(url, timeout=15) as response:  # noqa: S310 — scheme is fixed https
+            smiles = response.read().decode("utf-8").strip().splitlines()[0]
+    except (URLError, OSError, IndexError) as e:
+        raise ConfigError(
+            f"PubChem lookup for {name!r} failed ({e}); offline or unknown name — "
+            "pass a SMILES to build_structures instead"
+        ) from e
+    return {"name": name, "smiles": smiles}
+
+
+def _parity_warning(symbols: tuple[str, ...], charge: int, multiplicity: int) -> str | None:
+    """The impossibility message when electron count and multiplicity disagree, else None.
+
+    ``multiplicity - 1`` unpaired electrons must share parity with the electron count —
+    a neutral even-electron molecule cannot be a doublet. This is the classic silent
+    setup error: every engine will happily run it and produce garbage.
+    """
+    from ase.data import atomic_numbers
+
+    electrons = sum(atomic_numbers[s] for s in symbols) - charge
+    if electrons % 2 != (multiplicity - 1) % 2:
+        return (
+            f"{electrons} electrons (charge {charge}) cannot have multiplicity "
+            f"{multiplicity}: unpaired-electron parity does not match"
+        )
+    return None
+
+
+def build_structures(
+    out_dir: str,
+    smiles: list[str] | None = None,
+    xyz_text: str | None = None,
+    charge: int = 0,
+    multiplicity: int = 1,
+) -> dict[str, Any]:
+    """Build seed ``.xyz`` structures from SMILES or raw XYZ text, sanity-checked.
+
+    Writes ``structure_{i}.xyz`` files into ``out_dir`` — point the config's ``input:``
+    at that directory. SMILES go through ChemRefine's own embedding path
+    (:func:`chemrefine.io.embed_smiles`: RDKit, deterministic seed, UFF clean-up), and a
+    bad SMILES raises rather than skips — the caller named this exact molecule. Raw XYZ
+    text is written then re-read through the pipeline's reader, so a malformed block
+    fails here instead of at step 1. Both paths check the charge/multiplicity electron
+    parity per structure (:func:`_parity_warning`) and, for SMILES, that RDKit's formal
+    charge agrees with ``charge`` — warnings, not errors, because open-shell intent is
+    the caller's call.
+    """
+    if (smiles is None) == (xyz_text is None):
+        raise ConfigError("provide exactly one of smiles or xyz_text")
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    written: list[str] = []
+    build_warnings: list[str] = []
+    if smiles is not None:
+        from rdkit import Chem
+
+        for i, one in enumerate(smiles):
+            try:
+                rows = io.embed_smiles(one)
+            except ValueError as e:
+                raise ConfigError(str(e)) from e
+            path = io.write_single_xyz(
+                rows, out / f"structure_{i}.xyz", comment=f"SMILES: {one}"
+            )
+            written.append(str(path))
+            mol = Chem.MolFromSmiles(one)
+            formal = Chem.GetFormalCharge(mol)
+            if formal != charge:
+                build_warnings.append(
+                    f"structure_{i}: SMILES formal charge {formal} != requested {charge}"
+                )
+            parity = _parity_warning(tuple(row[0] for row in rows), charge, multiplicity)
+            if parity is not None:
+                build_warnings.append(f"structure_{i}: {parity}")
+    else:
+        path = out / "structure_0.xyz"
+        path.write_text(xyz_text or "", encoding="utf-8")
+        try:
+            frames = io.read_xyz_frames(path)
+        except (ValueError, IndexError, KeyError, OSError) as e:
+            path.unlink(missing_ok=True)
+            raise ConfigError(f"xyz_text is not valid XYZ: {e}") from e
+        written.append(str(path))
+        for i, atoms in enumerate(frames):
+            parity = _parity_warning(
+                tuple(atoms.get_chemical_symbols()), charge, multiplicity
+            )
+            if parity is not None:
+                build_warnings.append(f"frame {i}: {parity}")
+    return {
+        "written": written,
+        "warnings": build_warnings,
+        "charge": charge,
+        "multiplicity": multiplicity,
+    }
+
+
+def _required_step(config: Config, step: int | str) -> StepConfig:
+    """The one step ``step`` names, or the :class:`ConfigError` saying it doesn't."""
+    step_cfg = config.find_step(step)
+    if step_cfg is None:
+        raise ConfigError(f"no step matches {step!r}")
+    return step_cfg
+
+
+def get_frequencies(
+    config_path: str, step: int | str, structure_id: str | None = None
+) -> dict[str, Any]:
+    """Cached frequency and thermochemistry facts for a step's structures.
+
+    Read from the step cache — ``imaginary_freqs`` (mode index → cm⁻¹) and the
+    thermochemistry fields are persisted with every parsed structure, so this answers
+    "is it a minimum (0 imaginary) or a TS (exactly 1)?" without touching output files.
+    ``imaginary_count: null`` means the calculation produced no frequency table at all —
+    distinct from a table with zero imaginary modes, and not evidence of a minimum.
+    """
+    config = load_config(Path(config_path))
+    step_cfg = _required_step(config, step)
+    cached = cache.load(config.step_dir(step_cfg))
+    if cached is None:
+        raise ConfigError(
+            f"step {step_cfg.step} has no cached results yet — run it (or rebuild-cache) first"
+        )
+    structures = cached.results.structures
+    if structure_id is not None:
+        structures = tuple(s for s in structures if s.id == structure_id)
+        if not structures:
+            raise ConfigError(f"no structure {structure_id!r} in step {step_cfg.step}'s cache")
+    return {
+        "step": step_cfg.step,
+        "operation": cached.operation,
+        "structures": [
+            {
+                "id": s.id,
+                "imaginary_count": None if s.imaginary_freqs is None else len(s.imaginary_freqs),
+                "imaginary_freqs": (
+                    None
+                    if s.imaginary_freqs is None
+                    else {str(mode): cm1 for mode, cm1 in sorted(s.imaginary_freqs.items())}
+                ),
+                "energy_hartree": s.energy_hartree,
+                "gibbs_hartree": s.gibbs_hartree,
+                "enthalpy_hartree": s.enthalpy_hartree,
+                "energy_zpe_hartree": s.energy_zpe_hartree,
+                "converged": s.converged,
+                "terminated_normally": s.terminated_normally,
+            }
+            for s in structures
+        ],
+    }
+
+
+def _parse_output_frames(engine_name: str, output: Path) -> list[ParsedResult]:
+    """Re-parse one output file with the engine family's own parser.
+
+    Only the ORCA-format family and Q-Chem write the frequency/normal-mode sections the
+    mode analysis needs; anything else gets a plain refusal naming that fact.
+    """
+    if engine_name in ("orca", "mlip-extopt", "pyscf-extopt"):
+        from chemrefine.engines.orca.output.coordinator import parse_dft
+
+        return parse_dft(output)
+    if engine_name == "qchem":
+        from chemrefine.engines.qchem.output import parse_qchem
+
+        return parse_qchem(output)
+    raise ConfigError(
+        f"mode analysis is not supported for engine {engine_name!r} "
+        "(ORCA-format and Q-Chem outputs only)"
+    )
+
+
+def analyze_mode(
+    config_path: str,
+    step: int | str,
+    structure_id: str,
+    mode_index: int,
+    top_atoms: int = 5,
+) -> dict[str, Any]:
+    """Which atoms and bonds a normal mode moves — the reaction-coordinate check.
+
+    The semantic half of TS validation: :func:`get_frequencies` says *whether* there is
+    exactly one imaginary mode; this says *what that mode does* — the dominant atomic
+    displacements and the bond-length change rates along the mode — so the caller can
+    judge whether 512i cm⁻¹ is the intended H-transfer coordinate or a methyl rotor.
+    The displacement tensor is deliberately not cached (it is a transient the pipeline
+    displaces along), so the structure's output file is re-parsed with the engine's own
+    parser; a tree whose outputs were cleaned gets told to rerun or rebuild instead.
+    """
+    config = load_config(Path(config_path))
+    step_cfg = _required_step(config, step)
+    step_dir = config.step_dir(step_cfg)
+    manifest = cache.load_manifest(step_dir)
+    if manifest is None:
+        raise ConfigError(f"step {step_cfg.step} has no manifest — it has not run here")
+    output = next((out for _inp, out, sid in manifest.files if sid == structure_id), None)
+    if output is None:
+        raise ConfigError(f"no structure {structure_id!r} in step {step_cfg.step}'s manifest")
+    if not output.is_file():
+        raise ConfigError(f"output {output} no longer exists; rerun the step to regenerate it")
+    frame = next(
+        (f for f in _parse_output_frames(step_cfg.engine, output) if f.normal_modes is not None),
+        None,
+    )
+    if frame is None:
+        raise ConfigError(
+            f"{output} carries no normal-mode tensor — was this a frequency calculation?"
+        )
+    # The generator above filtered on it; cast() states the invariant mypy cannot see.
+    modes = cast("NDArray[np.float64]", frame.normal_modes)
+    n_modes = modes.shape[2]
+    if not 0 <= mode_index < n_modes:
+        raise ConfigError(f"mode_index {mode_index} out of range (0..{n_modes - 1})")
+    displacement = modes[:, :, mode_index]
+    norms = np.linalg.norm(displacement, axis=1)
+    total = float(norms.sum()) or 1.0
+    leaders = np.argsort(norms)[::-1][:top_atoms]
+    imaginary = frame.imaginary_freqs or {}
+    return {
+        "structure_id": structure_id,
+        "mode_index": mode_index,
+        "frequency_cm1": imaginary.get(mode_index),
+        "is_imaginary": mode_index in imaginary,
+        "imaginary_freqs": {str(mode): cm1 for mode, cm1 in sorted(imaginary.items())},
+        "top_atoms": [
+            {
+                "index": int(i),
+                "symbol": frame.symbols[int(i)],
+                "displacement": float(norms[int(i)]),
+                "fraction": float(norms[int(i)] / total),
+            }
+            for i in leaders
+        ],
+        "bond_changes": _bond_change_rates(frame, displacement),
+    }
+
+
+def _bond_change_rates(frame: ParsedResult, displacement: Any) -> list[dict[str, Any]]:
+    """How fast each bonded distance changes along the mode, largest movers first.
+
+    Bonded = within 1.3x the covalent-radius sum (the conventional slack that keeps
+    stretched TS bonds counted). The rate is the directional derivative of the pair
+    distance along the mode — sign says forming (negative) vs breaking (positive) —
+    which needs no arbitrary displacement magnitude the way a finite step would.
+    """
+    from ase.data import atomic_numbers, covalent_radii
+
+    positions = np.asarray(frame.positions, dtype=float)
+    rates: list[dict[str, Any]] = []
+    n = len(frame.symbols)
+    for i in range(n):
+        for j in range(i + 1, n):
+            bond = positions[i] - positions[j]
+            distance = float(np.linalg.norm(bond))
+            cutoff = 1.3 * (
+                covalent_radii[atomic_numbers[frame.symbols[i]]]
+                + covalent_radii[atomic_numbers[frame.symbols[j]]]
+            )
+            if distance > cutoff or distance == 0.0:
+                continue
+            rate = float(bond @ (displacement[i] - displacement[j]) / distance)
+            rates.append(
+                {
+                    "atoms": f"{frame.symbols[i]}{i}-{frame.symbols[j]}{j}",
+                    "distance": distance,
+                    "rate": rate,
+                }
+            )
+    rates.sort(key=lambda r: abs(r["rate"]), reverse=True)
+    return rates[:5]
 
 
 def get_failures(config_path: str, step: int | str | None = None) -> dict[str, Any]:
