@@ -132,3 +132,104 @@ def test_the_transdip_row_is_not_a_displacement_row():
     assert modes is not None
     assert modes[1, :, 6] == pytest.approx([0.000, 0.000, -0.004])  # atom 2, not TransDip
     assert not np.isclose(modes[1, 2, 6], 0.017)  # TransDip's z never enters
+
+
+# ---------------------------------------------------------------------------
+# Failure paths — the coverage gate's findings, each pinned
+# ---------------------------------------------------------------------------
+
+
+def test_an_orientation_block_at_end_of_text_still_parses():
+    """A file cut right after the atom rows (no closing separator) keeps its geometry."""
+    no_separator = _ORIENTATION.rstrip().rsplit("\n", 1)[0]
+    parsed = parse_qchem_text(_ENERGY + no_separator)
+    assert parsed[0].symbols == ("H", "O")
+
+
+def test_an_orientation_block_with_no_atoms_is_unparseable():
+    """The marker alone proves nothing; zero rows must fail, not return an empty molecule."""
+    with pytest.raises(OutputParseError, match="has no atoms"):
+        parse_qchem_text(_ENERGY + "       Standard Nuclear Orientation (Angstroms)\n done\n")
+
+
+def test_a_mode_block_without_its_frequency_row_is_skipped():
+    """A ``Mode:`` line with no ``Frequency:`` beneath it contributes nothing, quietly."""
+    text = (
+        _ORIENTATION + _ENERGY + " **  VIBRATIONAL ANALYSIS  **\n Mode:                 1\n done\n"
+    )
+    parsed = parse_qchem_text(text)[0]
+    assert parsed.imaginary_freqs == {}
+    assert parsed.normal_modes is None
+
+
+def test_a_frequency_row_of_the_wrong_width_skips_the_block():
+    """Two mode indices with one value cannot be zipped honestly — the block is dropped."""
+    text = (
+        _ORIENTATION
+        + _ENERGY
+        + " **  VIBRATIONAL ANALYSIS  **\n"
+        + " Mode:                 1                      2\n"
+        + " Frequency:      -151.64\n"
+    )
+    parsed = parse_qchem_text(text)[0]
+    assert parsed.imaginary_freqs == {}
+    assert parsed.normal_modes is None
+
+
+def test_a_block_without_a_displacement_table_keeps_its_frequencies():
+    """A block cut short by the next ``Mode:`` line still contributes its frequencies.
+
+    Its tensor column stays zero-padded; the block that does carry a table fills its own.
+    """
+    text = (
+        _ORIENTATION
+        + _ENERGY
+        + " **  VIBRATIONAL ANALYSIS  **\n"
+        + " Mode:                 1\n"
+        + " Frequency:      -100.00\n"
+        + " Mode:                 2\n"
+        + " Frequency:       500.00\n"
+        + " Raman Active:       YES\n"
+        + "               X      Y      Z\n"
+        + " H          0.100  0.200  0.300\n"
+        + " O          0.400  0.500  0.600\n"
+    )
+    parsed = parse_qchem_text(text)[0]
+    assert parsed.imaginary_freqs == {6: -100.00}
+    modes = parsed.normal_modes
+    assert modes is not None and modes.shape == (2, 3, 8)
+    assert not modes[:, :, 6].any(), "the table-less mode's column stays zero"
+    assert modes[0, :, 7] == pytest.approx([0.100, 0.200, 0.300])
+
+
+def test_a_corrupt_displacement_token_drops_the_tensor_not_the_frequencies():
+    """A non-float token of the right row width loses the tensor; the spectrum survives."""
+    parsed = parse_qchem_text(_ORIENTATION + _ENERGY + _FREQ_BLOCK.replace("-0.279", "*.279*"))[0]
+    assert parsed.imaginary_freqs == {6: -151.64}
+    assert parsed.normal_modes is None
+
+
+def test_a_truncated_displacement_table_drops_the_tensor():
+    """Fewer rows than atoms at end-of-file cannot be reshaped — the tensor is withheld."""
+    lines = _FREQ_BLOCK.splitlines()
+    truncated = "\n".join(
+        lines[
+            : lines.index(
+                " H         -0.279  0.388 -0.343    0.013  0.333 -0.015    0.453  0.202  0.137"
+            )
+            + 1
+        ]
+    )
+    parsed = parse_qchem_text(_ORIENTATION + _ENERGY + truncated)[0]
+    assert parsed.imaginary_freqs == {6: -151.64}
+    assert parsed.normal_modes is None
+
+
+def test_a_blank_line_inside_the_displacement_table_is_skipped():
+    """Formatting noise between rows (a blank line) is passed over, not read as a row."""
+    header_row = "               X      Y      Z        X      Y      Z        X      Y      Z\n"
+    spaced = _FREQ_BLOCK.replace(header_row, header_row + "\n")
+    parsed = parse_qchem_text(_ORIENTATION + _ENERGY + spaced)[0]
+    modes = parsed.normal_modes
+    assert modes is not None and modes.shape == (2, 3, 9)
+    assert modes[0, :, 6] == pytest.approx([-0.279, 0.388, -0.343])
