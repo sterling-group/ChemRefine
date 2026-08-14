@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import subprocess
 import sys
 import textwrap
@@ -54,8 +55,45 @@ def _write_config(tmp_path: Path, **overrides) -> Path:
 def test_help_lists_every_subcommand():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for cmd in ("run", "resume", "rebuild-cache", "rebuild-nms", "rerun", "rerun-errors"):
+    for cmd in (
+        "run",
+        "resume",
+        "rebuild-cache",
+        "rebuild-nms",
+        "rerun",
+        "rerun-errors",
+        "schema",
+        "engines",
+    ):
         assert cmd in result.stdout
+
+
+def test_schema_prints_the_introspection_document():
+    """`chemrefine schema` emits the whole document as parseable JSON on stdout."""
+    result = runner.invoke(app, ["schema"])
+    assert result.exit_code == 0
+    document = json.loads(result.stdout)
+    assert document["chemrefine_version"] == __version__
+    assert "StepConfig" in document["config"]["$defs"]
+    assert "fake" in document["engines"]
+
+
+def test_engines_lists_the_registry_in_both_shapes():
+    """Human table and `--json` must both cover the registry, sorted.
+
+    The human line spells out ORCA's options story ("template-configured") — the fact a
+    reader needs before hunting for an options block that doesn't exist.
+    """
+    human = runner.invoke(app, ["engines"])
+    assert human.exit_code == 0
+    assert "orca" in human.stdout
+    assert "template-configured" in human.stdout
+
+    as_json = runner.invoke(app, ["engines", "--json"])
+    assert as_json.exit_code == 0
+    names = [d["name"] for d in json.loads(as_json.stdout)]
+    assert names == sorted(names)
+    assert "orca" in names
 
 
 def test_version_prints_package_version():

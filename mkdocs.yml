@@ -121,6 +121,7 @@ nav:
       - api/index.md
       - Core:
           - Configuration: api/config.md
+          - Introspection: api/introspect.md
           - Runtime State: api/state.md
           - Errors: api/errors.md
           - Quantities: api/quantities.md

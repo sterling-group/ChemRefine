@@ -23,6 +23,10 @@ This is the **only** module that calls :func:`sys.exit` or reads
 (conflicting MLIP stacks live in one managed env each, resolved by name — see
 :mod:`chemrefine.engines._provision`).
 
+``chemrefine schema`` / ``chemrefine engines [--json]`` print the machine-readable
+config schema document and the engine registry (see :mod:`chemrefine.introspect`) —
+what a GUI form or an agent reads instead of the prose docs.
+
 Per-step ``on_failure: stop | skip | best`` (in the YAML) decides in-run
 behaviour: ``stop`` (default) halts the run after caching the step's successes,
 ``skip`` drops the failures and continues, ``best`` keeps all (backfilling the
@@ -330,6 +334,50 @@ def rerun_errors(
             dry_run=dry_run,
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# Introspection — the machine-readable schema and registry views
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def schema() -> None:
+    """Print the machine-readable config schema document as JSON.
+
+    The document assembled by :func:`chemrefine.introspect.schema_document`: the config
+    schema, the NMS knob schema, and a descriptor per registered engine. Consumers that
+    cannot import chemrefine (the GUI's forms, an agent writing a config) read this
+    instead of the docs, so it is generated from the validating models and cannot drift.
+    """
+    import json
+
+    from chemrefine.introspect import schema_document
+
+    typer.echo(json.dumps(schema_document(), indent=2))
+
+
+@app.command()
+def engines(
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit the full engine descriptors as JSON.")
+    ] = False,
+) -> None:
+    """List registered engines: template kind, options model, capabilities."""
+    import dataclasses
+    import json
+
+    from chemrefine.introspect import describe_engines
+
+    descriptors = describe_engines()
+    if as_json:
+        typer.echo(json.dumps([dataclasses.asdict(d) for d in descriptors], indent=2))
+        return
+    for d in descriptors:
+        template = f"template .{d.template_suffix}" if d.template_driven else "no template"
+        options = "options model" if d.options_schema is not None else "template-configured"
+        caps = ", ".join(d.capabilities) if d.capabilities else "-"
+        typer.echo(f"{d.name:14} {template:14} {options:20} {caps}")
 
 
 # ---------------------------------------------------------------------------
