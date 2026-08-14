@@ -26,6 +26,18 @@ chemrefine run input.yaml --dry-run          # validate + describe; submit nothi
 | `rebuild-cache` | `CONFIG [TARGET]` | Rebuild one step's cache from outputs already on disk (parse only, no submission). The run ends at that step. |
 | `rebuild-nms` | `CONFIG [TARGET]` | Re-resolve the NMS step from outputs already on disk (parse only, no submission). With no TARGET it finds the step setting `nms: true` rather than the last one. Round 1 is re-parsed and its displaced children re-read from their `attemptK/`, so re-resolving costs a read rather than a re-run of the frequencies. The run ends at that step. |
 
+## Config tooling (`validate`, `scaffold`, `schema`, `engines`)
+
+| Command | Argument(s) | What it does |
+|---------|-------------|--------------|
+| `validate` | `CONFIG [--json]` | Validate without running and report **every** finding at once: pydantic errors with their field locations, unknown engines, bad values for declared option knobs, invalid NMS knobs, plus warnings for silent no-ops (undeclared option keys, `nms: true` on an engine that cannot NMS) and for step templates or SLURM headers that do not exist yet. Warnings never affect the exit code; an unrunnable config exits 2. |
+| `scaffold` | `CONFIG [--overwrite]` | Write a commented starter into every template file the config expects but lacks — step templates and the SLURM header(s) dispatch would pick. Existing files are kept unless `--overwrite`. |
+| `schema` | — | Print the machine-readable schema document as JSON: the config schema, the NMS knob schema, and a descriptor per registered engine (capabilities, declared options schema). What a GUI form or an agent reads instead of this page. |
+| `engines` | `[--json]` | List the registered engines: template kind, whether the engine declares an options model or is configured entirely through its template, and its capabilities. |
+
+A first run usually goes: `chemrefine validate input.yaml` → `chemrefine scaffold
+input.yaml` → edit the starters → `chemrefine run input.yaml`.
+
 ## Backend environments (`chemrefine backends`)
 
 Conflicting MLIP stacks each live in one managed environment, provisioned once and
