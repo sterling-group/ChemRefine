@@ -78,6 +78,37 @@ def test_schema_prints_the_introspection_document():
     assert "fake" in document["engines"]
 
 
+def test_validate_reports_ok_and_exits_zero(tmp_path: Path):
+    config = _write_config(tmp_path)
+    result = runner.invoke(app, ["validate", str(config)])
+    assert result.exit_code == 0
+    assert "OK: 2 step(s) validated" in result.stdout
+
+
+def test_validate_prints_warnings_without_failing(tmp_path: Path):
+    """Warnings reach the human output but leave the exit code at 0."""
+    config = _write_config(
+        tmp_path,
+        steps=[{"step": 1, "engine": "fake", "operation": "opt_sp", "options": {"typoed": 1}}],
+    )
+    result = runner.invoke(app, ["validate", str(config)])
+    assert result.exit_code == 0
+    assert "warning [options] at steps.0.options" in result.stdout
+    assert "OK: 1 step(s) validated" in result.stdout
+
+
+def test_validate_exits_two_on_an_unrunnable_config(tmp_path: Path):
+    """Exit 2 mirrors ConfigError's documented code; findings print one per line."""
+    config = _write_config(tmp_path, steps=[{"step": 1, "engine": "no-such-engine"}])
+    human = runner.invoke(app, ["validate", str(config)])
+    assert human.exit_code == 2
+    assert "error [engine] at steps.0.engine" in human.stdout
+
+    as_json = runner.invoke(app, ["validate", str(config), "--json"])
+    assert as_json.exit_code == 2
+    assert json.loads(as_json.stdout)["ok"] is False
+
+
 def test_engines_lists_the_registry_in_both_shapes():
     """Human table and `--json` must both cover the registry, sorted.
 

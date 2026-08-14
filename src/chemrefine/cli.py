@@ -358,6 +358,40 @@ def schema() -> None:
 
 
 @app.command()
+def validate(
+    config_path: ConfigArg,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit the structured validation report as JSON.")
+    ] = False,
+) -> None:
+    """Validate a config and report every finding at once; exit 2 if it cannot run.
+
+    The non-raising twin of loading: pydantic errors keep their field locations,
+    registry-aware checks (unknown engine, bad option values, missing templates) are
+    included, and warnings do not affect the exit code. See :mod:`chemrefine.validate`.
+    """
+    import json
+
+    from chemrefine.validate import validate_config_file
+
+    report = validate_config_file(config_path)
+    if as_json:
+        typer.echo(json.dumps(report.to_json(), indent=2))
+    else:
+        for issue in report.issues:
+            where = ".".join(str(part) for part in issue.loc) or "config"
+            typer.echo(f"error [{issue.kind}] at {where}: {issue.message}")
+        for warning in report.warnings:
+            where = ".".join(str(part) for part in warning.loc) or "config"
+            typer.echo(f"warning [{warning.kind}] at {where}: {warning.message}")
+        if report.ok:
+            steps = report.config.steps if report.config is not None else ()
+            typer.echo(f"OK: {len(steps)} step(s) validated")
+    if not report.ok:
+        raise typer.Exit(code=2)
+
+
+@app.command()
 def engines(
     as_json: Annotated[
         bool, typer.Option("--json", help="Emit the full engine descriptors as JSON.")
