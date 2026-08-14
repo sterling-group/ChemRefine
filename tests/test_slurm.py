@@ -175,6 +175,24 @@ def test_an_absent_header_memory_grant_is_requested(tmp_path: Path):
     assert "#SBATCH --mem-per-cpu=1000" in script.read_text()
 
 
+def test_a_kilobyte_header_grant_is_floored_to_mb(tmp_path: Path):
+    """``2048K`` reads as 2 MB — flooring understates the grant, which only ever extends."""
+    header = _write_header_with(tmp_path, "--mem-per-cpu=2048K")
+    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, memory_mb=2))
+    text = script.read_text()
+    assert "#SBATCH --mem-per-cpu=2048K" in text  # 2 MB covers the 2 MB requirement
+    assert text.count("--mem-per-cpu") == 1
+
+
+def test_a_whole_node_grant_satisfies_any_requirement(tmp_path: Path):
+    """``--mem=0`` is SLURM's "all the node's memory" — never extended, whatever is asked."""
+    header = _write_header_with(tmp_path, "--mem=0")
+    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, memory_mb=999999))
+    text = script.read_text()
+    assert "#SBATCH --mem=0" in text
+    assert "--mem-per-cpu" not in text
+
+
 def test_build_script_keeps_ntasks_per_node_directive(tmp_path: Path):
     """``--ntasks-per-*`` directives only share a prefix with ``--ntasks`` — keep them.
 
