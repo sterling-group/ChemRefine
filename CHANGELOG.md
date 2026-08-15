@@ -215,6 +215,7 @@ for the full map.
   after a tag↔version consistency check) — and now run the full CI matrix
   first. `ci.yml` triggers on pushes to `main` and on pull requests, neither of
   which a tag is, so the release path had been running metadata validation only.
+  The tested matrix covers Python 3.11 through 3.14.
 - The sdist carries the test suite **and** the shipped examples, and CI proves the
   combination: the smoke-test job unpacks the built tarball and runs the suite
   inside it, so "a distro packager can run the tests from the sdist" is a gated

@@ -34,18 +34,21 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Chemistry",
     "Topic :: Scientific/Engineering :: Physics",
     "Typing :: Typed",
 ]
 dependencies = [
-    # Each floor is the lowest version pip can actually install for every Python in
-    # `requires-python` (3.11, 3.12, 3.13) — held by CI's `floors` job, which installs
-    # exactly these versions and runs the suite. numpy's 1.26.0/1.26.1 and rdkit's bare
-    # 2024.9 are not on PyPI (yanked / never published), so naming them would promise a
-    # minimum nobody can resolve. On Python 3.13 pip will always resolve numpy to 2.x —
-    # pandas 2.2.3 (and later) supports both numpy 1.26 and 2.x, so the matrix is
-    # internally consistent.
+    # Each floor is the lowest version pip can actually install on the oldest supported
+    # Python — held by CI's `floors` job, which installs exactly these versions on 3.11
+    # and runs the suite. The tested matrix is 3.11 through 3.14; newer Pythons resolve
+    # above some floors on wheel availability alone, which is fine — the floor is a
+    # promise about the range, not a pin. numpy's 1.26.0/1.26.1 and rdkit's bare 2024.9
+    # are not on PyPI (yanked / never published), so naming them would promise a minimum
+    # nobody can resolve; on Python 3.13+ pip always resolves numpy to 2.x — pandas
+    # 2.2.3 (and later) supports both numpy 1.26 and 2.x, so the matrix is internally
+    # consistent.
     "numpy>=1.26.2",
     "pyyaml>=6.0.2",
     # pandas is a hard requirement — every run writes steps.csv — but it is imported
