@@ -119,6 +119,18 @@ _ENSEMBLE_OPERATIONS: dict[str, _Ensemble] = {
 """The sidecar-reading operations, as data — so the dispatch below is one branch that
 applies the same termination rule to all of them rather than three that could diverge."""
 
+
+def known_operations() -> frozenset[str]:
+    """The canonical ``operation:`` vocabulary — what a config may name, legacy excluded.
+
+    Derived from the two dispatch sets above rather than restated, so a new operation is
+    in the answer the moment its parser exists. ``dft`` stays out: the parser accepts it
+    as a legacy spelling of ``opt_sp``, but nothing should *offer* it — this is what the
+    GUI's operation dropdown and the schema document serve.
+    """
+    return (frozenset(TEXT_BASED_OPERATIONS) | frozenset(_ENSEMBLE_OPERATIONS)) - {"dft"}
+
+
 _ERROR_TERMINATION_RE = re.compile(r"^ORCA finished by error termination in .*$", re.MULTILINE)
 """ORCA's own verdict when it aborts, naming the module it died in."""
 

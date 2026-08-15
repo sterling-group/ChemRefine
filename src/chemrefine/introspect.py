@@ -116,16 +116,24 @@ def describe_engines() -> tuple[EngineDescriptor, ...]:
 def schema_document() -> dict[str, Any]:
     """The complete machine-readable schema document, JSON-serializable.
 
-    Four parts: the package version (a consumer caches against it), the config schema
+    Five parts: the package version (a consumer caches against it), the config schema
     (:class:`~chemrefine.config.Config` — steps, sampling and top-level keys, with the
     nested models under ``$defs``), the NMS knob schema
     (:class:`~chemrefine.nms.NmsOptions` — read from ``step.options`` by the NMS
     coordinator, not by any engine, so it is schema'd once here rather than merged into
-    every engine's model), and one :class:`EngineDescriptor` per registered engine.
+    every engine's model), one :class:`EngineDescriptor` per registered engine, and the
+    ``operation:`` vocabulary. That last one is deliberately *not* in the config schema
+    — the model keeps the field a free string because engines interpret it themselves
+    (ORCA even infers it from the template) — so the dropdown-worthy list comes from the
+    dispatch that actually implements it
+    (:func:`chemrefine.engines.orca.output.coordinator.known_operations`).
     """
+    from chemrefine.engines.orca.output.coordinator import known_operations
+
     return {
         "chemrefine_version": __version__,
         "config": Config.model_json_schema(),
         "nms": NmsOptions.model_json_schema(),
         "engines": {d.name: dataclasses.asdict(d) for d in describe_engines()},
+        "operations": sorted(known_operations()),
     }

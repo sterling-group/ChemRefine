@@ -89,3 +89,13 @@ def test_schema_document_serializes_whole_and_carries_the_config_schema():
     assert "target" in document["nms"]["properties"]
     fake = document["engines"]["fake"]
     assert fake == dataclasses.asdict(_by_name()["fake"])
+
+
+def test_the_operation_vocabulary_is_served_canonical_and_sorted():
+    """The config schema keeps ``operation`` a free string (engines interpret it), so
+    the document carries the dropdown-worthy vocabulary from the dispatch that
+    implements it — canonical spellings only, the legacy ``dft`` excluded."""
+    operations = schema_document()["operations"]
+    assert operations == sorted(operations)
+    assert set(operations) >= {"opt_sp", "sp", "freq", "pes", "goat", "docker", "solvator"}
+    assert "dft" not in operations

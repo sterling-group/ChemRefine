@@ -34,11 +34,12 @@
           <label :title="field.doc">
             <span x-text="field.key"></span>
             <template x-if="field.kind === 'select'">
-              <select :value="cfg[field.key] ?? ''"
-                      @change="setTop(field, $event.target.value)">
-                <option value="" x-text="'(default: ' + field.fallback + ')'"></option>
+              <select @change="setTop(field, $event.target.value)">
+                <option value="" :selected="(cfg[field.key] ?? '') === ''"
+                        x-text="'(default: ' + field.fallback + ')'"></option>
                 <template x-for="option in field.options" :key="option">
-                  <option :value="option" x-text="option"></option>
+                  <option :value="option" :selected="option === cfg[field.key]"
+                          x-text="option"></option>
                 </template>
               </select>
             </template>
@@ -84,18 +85,20 @@
                    @input="setStep(index, 'name', $event.target.value || undefined)">
           </label>
           <label><span>engine</span>
-            <select :value="step.engine" @change="setEngine(index, $event.target.value)">
+            <!-- :selected per option, not :value on the select: the options render
+                 after the select binds, so a bare :value falls back to the first
+                 option and the display lies about the state. -->
+            <select @change="setEngine(index, $event.target.value)">
               <template x-for="name in engineNames" :key="name">
-                <option :value="name" x-text="name"></option>
+                <option :value="name" :selected="name === step.engine" x-text="name"></option>
               </template>
             </select>
           </label>
           <label><span>operation</span>
-            <select :value="step.operation ?? ''"
-                    @change="setStep(index, 'operation', $event.target.value || undefined)">
-              <option value="">(from template)</option>
+            <select @change="setStep(index, 'operation', $event.target.value || undefined)">
+              <option value="" :selected="!step.operation">(from template)</option>
               <template x-for="op in operations" :key="op">
-                <option :value="op" x-text="op"></option>
+                <option :value="op" :selected="op === step.operation" x-text="op"></option>
               </template>
             </select>
           </label>
@@ -130,11 +133,13 @@
               <label :title="field.doc">
                 <span x-text="field.key"></span>
                 <template x-if="field.kind === 'select'">
-                  <select :value="(step.options || {})[field.key] ?? ''"
-                          @change="setOption(index, field, $event.target.value)">
-                    <option value="" x-text="'(default: ' + field.fallback + ')'"></option>
+                  <select @change="setOption(index, field, $event.target.value)">
+                    <option value="" :selected="((step.options || {})[field.key] ?? '') === ''"
+                            x-text="'(default: ' + field.fallback + ')'"></option>
                     <template x-for="option in field.options" :key="option">
-                      <option :value="option" x-text="option"></option>
+                      <option :value="option"
+                              :selected="option === (step.options || {})[field.key]"
+                              x-text="option"></option>
                     </template>
                   </select>
                 </template>
@@ -169,15 +174,17 @@
         <div class="subform" x-show="step.nms">
           <h3>NMS knobs</h3>
           <div class="fields">
-            <template x-for="field in nmsFields" :key="'nms-' + field.key">
+            <template x-for="field in nmsFieldsFor(step)" :key="'nms-' + field.key">
               <label :title="field.doc">
                 <span x-text="field.key"></span>
                 <template x-if="field.kind === 'select'">
-                  <select :value="(step.options || {})[field.key] ?? ''"
-                          @change="setOption(index, field, $event.target.value)">
-                    <option value="" x-text="'(default: ' + field.fallback + ')'"></option>
+                  <select @change="setOption(index, field, $event.target.value)">
+                    <option value="" :selected="((step.options || {})[field.key] ?? '') === ''"
+                            x-text="'(default: ' + field.fallback + ')'"></option>
                     <template x-for="option in field.options" :key="option">
-                      <option :value="option" x-text="option"></option>
+                      <option :value="option"
+                              :selected="option === (step.options || {})[field.key]"
+                              x-text="option"></option>
                     </template>
                   </select>
                 </template>
@@ -203,16 +210,18 @@
           </label>
         </div>
         <div class="subform" x-show="step.sample">
+          <h3>Sample knobs</h3>
           <div class="fields">
             <template x-for="field in sampleFields(step)" :key="'s-' + field.key">
               <label :title="field.doc">
                 <span x-text="field.key"></span>
                 <template x-if="field.kind === 'select'">
-                  <select :value="step.sample[field.key] ?? ''"
-                          @change="setSample(index, field, $event.target.value)">
-                    <option value="" x-text="'(default: ' + field.fallback + ')'"></option>
+                  <select @change="setSample(index, field, $event.target.value)">
+                    <option value="" :selected="(step.sample[field.key] ?? '') === ''"
+                            x-text="'(default: ' + field.fallback + ')'"></option>
                     <template x-for="option in field.options" :key="option">
-                      <option :value="option" x-text="option"></option>
+                      <option :value="option" :selected="option === step.sample[field.key]"
+                              x-text="option"></option>
                     </template>
                   </select>
                 </template>

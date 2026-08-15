@@ -61,12 +61,20 @@ function builder() {
       return fieldSpecs(this.schema.config, ["steps", "executables"]);
     },
     get engineNames() { return Object.keys(this.schema.engines).sort(); },
-    get operations() {
-      const prop = this.schema.config.$defs.StepConfig.properties.operation;
-      const real = (prop.anyOf || []).find((alt) => alt.enum);
-      return real ? real.enum : [];
-    },
+    get operations() { return this.schema.operations || []; },
     get nmsFields() { return fieldSpecs(this.schema.nms); },
+    nmsFieldsFor(step) {
+      // Knobs only meaningful for one target stay hidden until that target is chosen;
+      // passthroughKeys still counts the full set as declared, so nothing gets flagged.
+      const target = (step.options || {}).target || "minimum";
+      return this.nmsFields.filter((field) => {
+        if (field.key === "num_random_displacements" || field.key === "seed") {
+          return target === "random";
+        }
+        if (field.key === "ts_mode_index") return target === "ts";
+        return true;
+      });
+    },
     engineFields(engine) {
       const descriptor = this.schema.engines[engine];
       if (!descriptor || !descriptor.options_schema) return [];
