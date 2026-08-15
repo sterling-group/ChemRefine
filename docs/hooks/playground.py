@@ -34,6 +34,4 @@ def on_post_build(config: Any, **kwargs: Any) -> None:
     shutil.copytree(STATIC_DIR, playground / "static")
     # The page sits above its assets, exactly as the Flask app serves it.
     (playground / "static" / "index.html").rename(playground / "index.html")
-    (playground / "schema.json").write_text(
-        json.dumps(schema_document()), encoding="utf-8"
-    )
+    (playground / "schema.json").write_text(json.dumps(schema_document()), encoding="utf-8")

@@ -52,8 +52,10 @@ printf 'version %s\n' "$("$DEV_ENV/bin/python" -c 'import chemrefine; print(chem
 # -- the gate ---------------------------------------------------------------
 
 step "lint + format"
-"$DEV_ENV/bin/ruff" check src tests
-"$DEV_ENV/bin/ruff" format --check src tests
+# The whole tree, not src+tests: the pre-commit gate formats every Python file it is
+# handed, and docs/hooks/ is where a narrower scope let a drifted file reach CI red.
+"$DEV_ENV/bin/ruff" check .
+"$DEV_ENV/bin/ruff" format --check .
 
 step "types"
 "$DEV_ENV/bin/mypy"

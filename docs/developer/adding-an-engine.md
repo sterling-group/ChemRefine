@@ -253,7 +253,8 @@ class DemoqmEngine(JobEngine):
     ) -> list[ParsedResult]:
         """Parse one ``.out`` into a ``ParsedResult`` (return ≥2 to fan out to an ensemble)."""
         text = output_path.read_text(encoding="utf-8", errors="replace")
-        symbols, positions, energy = _read_demoqm_out(text)  # your regexes; cf. engines/orca/output/
+        # your regexes; cf. engines/orca/output/
+        symbols, positions, energy = _read_demoqm_out(text)
         return [
             ParsedResult(
                 symbols=symbols,
