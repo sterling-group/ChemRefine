@@ -637,12 +637,15 @@ register (:mod:`chemrefine.mcp_server` and the embedded agent), living here so n
 optional extra has to import the other's SDK to know the surface."""
 
 MUTATING_TOOLS = frozenset(
-    {"write_template", "scaffold_templates", "start_run", "build_structures", "save"}
+    {"write_template", "scaffold_templates", "start_run", "build_structures"}
 )
 """Tool names that change files or launch work — what a harness gates behind approval.
 
 MCP clients gate on their side (every client confirms tool calls); the embedded chat
-agent wraps exactly these in its own confirmation prompt."""
+agent wraps exactly these in its own confirmation prompt. Every name must match a
+member of :data:`TOOLS` — the gate matches by name, so an entry naming nothing gates
+nothing, and a mutating tool renamed without this set would silently go ungated. A test
+holds the subset relation."""
 
 
 def guide_text() -> str:

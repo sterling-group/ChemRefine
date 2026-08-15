@@ -36,6 +36,23 @@ def _write_config(tmp_path: Path, *steps: dict[str, object]) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# The shared surface
+# ---------------------------------------------------------------------------
+
+
+def test_every_mutating_tool_name_names_a_tool():
+    """``MUTATING_TOOLS`` must be a subset of the registered tool names.
+
+    The confirmation gate matches by name (`agent.harness.build_agent`), so an entry
+    naming nothing gates nothing — and, the direction that matters, a mutating tool
+    renamed without this set would silently go ungated. The set once carried a ``"save"``
+    that matched no tool; this is what makes that impossible to reintroduce.
+    """
+    phantom = agent_tools.MUTATING_TOOLS - {tool.__name__ for tool in agent_tools.TOOLS}
+    assert not phantom, f"MUTATING_TOOLS entries naming no tool: {sorted(phantom)}"
+
+
+# ---------------------------------------------------------------------------
 # Introspection + validation re-exposures
 # ---------------------------------------------------------------------------
 
