@@ -10,6 +10,22 @@
  */
 "use strict";
 
+/** Numeric bounds from the schema (pydantic's ge/gt/le/lt), inclusive for the input. */
+function numericBounds(p) {
+  let min = null;
+  let max = null;
+  if (typeof p.minimum === "number") min = p.minimum;
+  if (typeof p.exclusiveMinimum === "number") {
+    // gt: for integers the next representable value; for floats HTML min is close enough.
+    min = p.type === "integer" ? p.exclusiveMinimum + 1 : p.exclusiveMinimum;
+  }
+  if (typeof p.maximum === "number") max = p.maximum;
+  if (typeof p.exclusiveMaximum === "number") {
+    max = p.type === "integer" ? p.exclusiveMaximum - 1 : p.exclusiveMaximum;
+  }
+  return { min, max };
+}
+
 /** One property schema -> a field spec (null = not renderable, e.g. steps/objects). */
 function fieldSpec(key, prop) {
   let p = prop || {};
@@ -24,14 +40,19 @@ function fieldSpec(key, prop) {
   const fallback = prop.default === undefined || prop.default === null
     ? "" : String(prop.default);
   if (Array.isArray(p.enum)) {
-    return { key, kind: "select", options: p.enum, fallback, doc, path: false };
+    return { key, kind: "select", options: p.enum, fallback, doc, path: false,
+             min: null, max: null };
   }
-  if (p.type === "boolean") return { key, kind: "checkbox", options: [], fallback, doc, path: false };
+  if (p.type === "boolean") {
+    return { key, kind: "checkbox", options: [], fallback, doc, path: false,
+             min: null, max: null };
+  }
   if (p.type === "integer" || p.type === "number") {
-    return { key, kind: "number", options: [], fallback, doc, path: false };
+    const { min, max } = numericBounds(p);
+    return { key, kind: "number", options: [], fallback, doc, path: false, min, max };
   }
   const path = /(_dir|^input$)/.test(key);
-  return { key, kind: "text", options: [], fallback, doc, path };
+  return { key, kind: "text", options: [], fallback, doc, path, min: null, max: null };
 }
 
 /** All renderable fields of an object schema, minus `skip`, in schema order. */
@@ -46,13 +67,20 @@ function fieldSpecs(objectSchema, skip) {
   return out;
 }
 
-/** Coerce an <input> string back to the schema's type ("" -> undefined = use default). */
+/** Coerce an <input> string back to the schema's type ("" -> undefined = use default).
+
+ * Numbers are clamped to the schema's bounds: the input's min/max attributes stop the
+ * spinner, but nothing stops typing "0" into max_cores — the clamp does, and the YAML
+ * pane shows the corrected value immediately. */
 function coerceField(field, raw) {
   if (raw === "" || raw === undefined || raw === null) return undefined;
   if (field.kind === "checkbox") return raw ? true : undefined;
   if (field.kind === "number") {
     const n = Number(raw);
-    return Number.isNaN(n) ? raw : n;
+    if (Number.isNaN(n)) return raw;
+    if (field.min !== null && field.min !== undefined && n < field.min) return field.min;
+    if (field.max !== null && field.max !== undefined && n > field.max) return field.max;
+    return n;
   }
   return raw;
 }

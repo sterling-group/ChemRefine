@@ -190,6 +190,13 @@ function builder() {
       this.syncYaml();
     },
     numOrUndef(raw) { return raw === "" ? undefined : Number(raw); },
+    minOneOrUndef(raw) {
+      // Multiplicity floor: the schema says >= 1, and 0 or negatives typed past the
+      // spinner must not reach the YAML.
+      if (raw === "") return undefined;
+      const n = Number(raw);
+      return Number.isNaN(n) ? undefined : Math.max(1, Math.round(n));
+    },
 
     // ---------------- executables (dict → editable rows) ----------------
     syncExecRows() {
@@ -367,14 +374,19 @@ function builder() {
     },
     async _chatTurn(extra) {
       this.chat.busy = true;
-      const data = await this.api("POST", "/api/agent/chat", this._chatPayload(extra));
-      this.chat.busy = false;
-      if (!data) return;
-      if (data.pending) {
-        this.chat.pending = data.pending;
-        this.chat.decisions = {};
-      } else if (data.reply !== null && data.reply !== undefined) {
-        this.chat.msgs.push({ who: "agent", text: data.reply });
+      try {
+        const data = await this.api("POST", "/api/agent/chat", this._chatPayload(extra));
+        if (!data) return;
+        if (data.pending) {
+          this.chat.pending = data.pending;
+          this.chat.decisions = {};
+        } else if (data.reply !== null && data.reply !== undefined) {
+          this.chat.msgs.push({ who: "agent", text: data.reply });
+        }
+      } catch (err) {
+        this.flash = "chat request failed: " + err;
+      } finally {
+        this.chat.busy = false; // never leave the panel stuck on a failed request
       }
     },
     async sendChat() {
@@ -394,10 +406,19 @@ function builder() {
       await this._chatTurn({ approvals });
     },
     async resetChat() {
-      await this.api("POST", "/api/agent/chat", { reset: true });
+      // Clear locally FIRST — reset must work even when the server call cannot
+      // (a stuck busy flag, a dropped connection), or the panel stays dead.
       this.chat.msgs = [];
       this.chat.pending = [];
       this.chat.decisions = {};
+      this.chat.draft = "";
+      this.chat.busy = false;
+      this.flash = "";
+      try {
+        await this.api("POST", "/api/agent/chat", { reset: true });
+      } catch (err) {
+        // Local state is already fresh; the server forgets on its next reset/turn.
+      }
     },
 
     // ---------------- browse / save ----------------

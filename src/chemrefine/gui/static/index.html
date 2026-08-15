@@ -26,7 +26,9 @@
   <nav>
     <button @click="validateNow()" :disabled="staticMode"
             :title="staticMode ? 'needs the local chemrefine gui' : ''">Validate</button>
-    <button class="mini" @click="downloadYaml()">⬇ input.yaml</button>
+    <!-- Download is the playground's way out (no filesystem there); locally,
+         Save… writes the real file and Copy covers grabbing the text. -->
+    <button class="mini" x-show="staticMode" @click="downloadYaml()">⬇ input.yaml</button>
     <button x-show="!staticMode" @click="openSave()">Save…</button>
     <button x-show="!staticMode" :disabled="!savedPath" @click="scaffold()">
       Scaffold templates</button>
@@ -59,7 +61,8 @@
                      @change="setTop(field, $event.target.checked)">
             </template>
             <template x-if="field.kind === 'number'">
-              <input type="number" :value="cfg[field.key] ?? ''" :placeholder="field.fallback"
+              <input type="number" :min="field.min" :max="field.max"
+                     :value="cfg[field.key] ?? ''" :placeholder="field.fallback"
                      @input="setTop(field, $event.target.value)">
             </template>
             <template x-if="field.kind === 'text'">
@@ -156,7 +159,7 @@
               <input type="number" :value="step.charge ?? ''" placeholder="inherit"
                      @input="setStep(index, 'charge', numOrUndef($event.target.value))">
               <input type="number" min="1" :value="step.multiplicity ?? ''" placeholder="inherit"
-                     @input="setStep(index, 'multiplicity', numOrUndef($event.target.value))">
+                     @input="setStep(index, 'multiplicity', minOneOrUndef($event.target.value))">
             </span>
           </label>
         </div>
@@ -183,7 +186,7 @@
                          @change="setOption(index, field, $event.target.checked)">
                 </template>
                 <template x-if="field.kind === 'number'">
-                  <input type="number" step="any"
+                  <input type="number" step="any" :min="field.min" :max="field.max"
                          :value="(step.options || {})[field.key] ?? ''" :placeholder="field.fallback"
                          @input="setOption(index, field, $event.target.value)">
                 </template>
@@ -224,7 +227,7 @@
                   </select>
                 </template>
                 <template x-if="field.kind !== 'select'">
-                  <input type="number" step="any"
+                  <input type="number" step="any" :min="field.min" :max="field.max"
                          :value="(step.options || {})[field.key] ?? ''" :placeholder="field.fallback"
                          @input="setOption(index, field, $event.target.value)">
                 </template>
@@ -265,7 +268,8 @@
                          @change="setSample(index, field, $event.target.checked)">
                 </template>
                 <template x-if="field.kind === 'number'">
-                  <input type="number" step="any" :value="step.sample[field.key] ?? ''"
+                  <input type="number" step="any" :min="field.min" :max="field.max"
+                         :value="step.sample[field.key] ?? ''"
                          :placeholder="field.fallback"
                          @input="setSample(index, field, $event.target.value)">
                 </template>
