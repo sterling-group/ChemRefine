@@ -23,7 +23,10 @@ chemrefine agent input.yaml --provider ollama --model qwen3
 ```
 
 Configuration precedence: flags → `CHEMREFINE_LLM_MODEL` / `CHEMREFINE_LLM_BASE_URL` /
-`CHEMREFINE_LLM_API_KEY` → the provider preset. Other native providers (Anthropic,
+`CHEMREFINE_LLM_API_KEY` → the provider preset. Add `--check` to any of the commands
+above to verify the setup without starting a chat: it probes the endpoint's model
+listing and names the fix (`ollama serve`, `ollama pull <model>`, set the key) —
+verification only, it never downloads models or starts services for you. Other native providers (Anthropic,
 Gemini, …) work through their own `pydantic-ai-slim[<provider>]` extra and environment
 variables.
 

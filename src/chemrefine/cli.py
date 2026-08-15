@@ -367,6 +367,10 @@ def agent(
         str | None,
         typer.Option("--base-url", help="OpenAI-compatible endpoint URL override."),
     ] = None,
+    check_only: Annotated[
+        bool,
+        typer.Option("--check", help="Verify the configured provider/model and exit."),
+    ] = False,
 ) -> None:
     """Chat with an embedded agent that authors and triages workflows (terminal REPL).
 
@@ -374,14 +378,27 @@ def agent(
     OpenAI-compatible endpoints (local Ollama/vLLM included) or PydanticAI's native
     provider strings. Mutating tools always ask for confirmation first. Needs the
     ``chemrefine[agent]`` extra; configuration also via CHEMREFINE_LLM_MODEL /
-    _BASE_URL / _API_KEY.
+    _BASE_URL / _API_KEY. ``--check`` probes the endpoint and names the fix
+    (start the daemon, pull the model, set the key) without starting a chat — and
+    works before the extra is even installed.
     """
     try:
-        from chemrefine.agent import chat
-    except ImportError as e:
-        logger.error("the embedded agent needs PydanticAI: pip install 'chemrefine[agent]' (%s)", e)
-        raise typer.Exit(code=1) from e
-    try:
+        if check_only:
+            from chemrefine.agent import providers
+
+            report = providers.check(
+                providers.ProviderConfig.resolve(provider, model=model, base_url=base_url)
+            )
+            for finding in report.findings:
+                typer.echo(finding)
+            raise typer.Exit(code=0 if report.ok else 1)
+        try:
+            from chemrefine.agent import chat
+        except ImportError as e:
+            logger.error(
+                "the embedded agent needs PydanticAI: pip install 'chemrefine[agent]' (%s)", e
+            )
+            raise typer.Exit(code=1) from e
         chat.main(
             provider=provider,
             model=model,

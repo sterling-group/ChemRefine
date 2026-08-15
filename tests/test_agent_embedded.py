@@ -11,6 +11,7 @@ structured refusal the model continues from, and the mutation did not happen.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +74,136 @@ def test_build_model_pins_an_endpoint_or_passes_the_string_through(
 
     inferred = ProviderConfig.resolve("custom", model="openai:gpt-5-mini").build_model()
     assert inferred == "openai:gpt-5-mini"
+
+
+# ---------------------------------------------------------------------------
+# --check: verification, never provisioning
+# ---------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def _listing_server(payload: bytes, status: int = 200) -> Any:
+    """A one-endpoint OpenAI-compatible ``/models`` stub on a kernel-assigned port."""
+    import http.server
+    import threading
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args: Any) -> None:
+            """Keep the test output quiet."""
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/v1"
+    finally:
+        server.shutdown()
+        server.server_close()  # both halves, or the listening socket trips filterwarnings=error
+
+
+def _cfg(base_url: str | None, model: str = "m1") -> ProviderConfig:
+    return ProviderConfig(model=model, base_url=base_url, api_key="k")
+
+
+def test_check_reports_a_served_model_usable():
+    from chemrefine.agent.providers import check
+
+    with _listing_server(b'{"data": [{"id": "m1"}, {"id": "m2"}]}') as base:
+        report = check(_cfg(base))
+    assert report.ok is True
+    assert "m1" in report.findings[0]
+
+
+def test_check_names_the_missing_model_and_what_is_served():
+    from chemrefine.agent.providers import check
+
+    with _listing_server(b'{"data": [{"id": "other"}]}') as base:
+        report = check(_cfg(base, model="qwen3:4b"))
+    assert report.ok is False
+    assert "qwen3:4b" in report.findings[0]
+    assert "other" in report.findings[0]
+
+
+def test_check_maps_auth_rejection_to_the_key_fix():
+    from chemrefine.agent.providers import check
+
+    with _listing_server(b"{}", status=401) as base:
+        report = check(_cfg(base))
+    assert report.ok is False
+    assert any("CHEMREFINE_LLM_API_KEY" in line for line in report.findings)
+
+
+def test_check_reports_other_http_statuses_plainly():
+    from chemrefine.agent.providers import check
+
+    with _listing_server(b"{}", status=500) as base:
+        report = check(_cfg(base))
+    assert report.ok is False
+    assert "HTTP 500" in report.findings[0]
+
+
+def test_check_reports_an_unreachable_endpoint():
+    from chemrefine.agent.providers import check
+
+    with _listing_server(b"{}") as base:
+        pass  # the context closed the server — the port now refuses connections
+    report = check(_cfg(base), timeout=2.0)
+    assert report.ok is False
+    assert "unreachable" in report.findings[0]
+
+
+def test_check_passes_native_strings_through_unprobed():
+    from chemrefine.agent.providers import check
+
+    report = check(_cfg(None, model="openai:gpt-5-mini"))
+    assert report.ok is True
+    assert "not probed" in report.findings[0]
+
+
+def test_check_refuses_a_non_http_url():
+    from chemrefine.agent.providers import check
+
+    report = check(_cfg("ftp://somewhere/v1"))
+    assert report.ok is False
+    assert "not HTTP" in report.findings[0]
+
+
+def test_check_fixes_name_ollamas_own_commands():
+    """The conventional port earns the verbatim one-command fixes; suggestions only."""
+    from chemrefine.agent.providers import _fixes
+
+    assert _fixes("http://127.0.0.1:11434/v1/models", "unreachable") == (
+        "start it with: ollama serve",
+    )
+    assert "ollama pull" in _fixes("http://127.0.0.1:11434/v1/models", "missing-model")[0]
+    assert "endpoint URL" in _fixes("https://api.groq.com/openai/v1/models", "unreachable")[0]
+
+
+def test_cli_check_exits_by_verdict(monkeypatch: pytest.MonkeyPatch):
+    from typer.testing import CliRunner
+
+    from chemrefine.agent import providers
+    from chemrefine.cli import app
+
+    monkeypatch.setenv("CHEMREFINE_LLM_MODEL", "m1")
+    monkeypatch.setattr(
+        providers, "check", lambda cfg: providers.CheckReport(ok=True, findings=("fine",))
+    )
+    good = CliRunner().invoke(app, ["agent", "--check"])
+    assert good.exit_code == 0
+    assert "fine" in good.stdout
+
+    monkeypatch.setattr(
+        providers, "check", lambda cfg: providers.CheckReport(ok=False, findings=("broken",))
+    )
+    bad = CliRunner().invoke(app, ["agent", "--check"])
+    assert bad.exit_code == 1
+    assert "broken" in bad.stdout
 
 
 # ---------------------------------------------------------------------------

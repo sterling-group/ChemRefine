@@ -12,6 +12,7 @@ PydanticAI verbatim, which resolves its native providers (``anthropic:…``,
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -82,3 +83,87 @@ class ProviderConfig:
             self.model,
             provider=OpenAIProvider(base_url=self.base_url, api_key=self.api_key or "unset"),
         )
+
+
+@dataclass(frozen=True)
+class CheckReport:
+    """What ``chemrefine agent --check`` found: usable or not, and the fixes by name."""
+
+    ok: bool
+    findings: tuple[str, ...]
+
+
+def _fixes(base_url: str, problem: str) -> tuple[str, ...]:
+    """The actionable next step(s) for one problem class at one endpoint.
+
+    Ollama is recognized by its conventional port so its one-command fixes can be named
+    verbatim; every other endpoint gets the generic remedy. Deliberately *suggestions*,
+    never actions — verification must not download models or start services on the
+    user's behalf (model choice is a site-policy decision; see the docs disclaimer).
+    """
+    ollama = ":11434" in base_url
+    if problem == "unreachable":
+        return ("start it with: ollama serve",) if ollama else ("is the endpoint URL right?",)
+    if problem == "missing-model":
+        return (
+            ("pull it with: ollama pull <model>",)
+            if ollama
+            else ("if this endpoint does not enumerate models, retry without --check",)
+        )
+    return ("set CHEMREFINE_LLM_API_KEY",)
+
+
+def check(config: ProviderConfig, *, timeout: float = 5.0) -> CheckReport:
+    """Probe the resolved provider without starting a chat: reachable, and model listed?
+
+    Verification, not provisioning — one ``GET {base_url}/models`` (the OpenAI-compatible
+    listing Ollama, vLLM, Groq and friends all serve), never a download. A
+    provider-native ``provider:model`` string (no ``base_url``) cannot be probed
+    generically; it reports usable with a note, and PydanticAI checks credentials on the
+    first real request. Works without the ``[agent]`` extra installed — this module
+    imports no SDK at runtime — so the preflight can run before anything else is set up.
+    """
+    if config.base_url is None:
+        return CheckReport(
+            ok=True,
+            findings=(
+                f"model {config.model!r} is provider-native; not probed — credentials "
+                "come from that provider's own environment on first use",
+            ),
+        )
+    if not config.base_url.startswith(("http://", "https://")):
+        return CheckReport(ok=False, findings=(f"base URL {config.base_url!r} is not HTTP(S)",))
+    from urllib.error import HTTPError, URLError
+    from urllib.request import Request, urlopen
+
+    url = config.base_url.rstrip("/") + "/models"
+    request = Request(  # noqa: S310 — scheme constrained to http(s) above
+        url, headers={"Authorization": f"Bearer {config.api_key or 'unset'}"}
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:  # noqa: S310 — scheme checked above
+            listing = json.loads(response.read().decode("utf-8"))
+    except HTTPError as e:
+        if e.code in (401, 403):
+            return CheckReport(
+                ok=False,
+                findings=(f"{url}: authentication rejected ({e.code})", *_fixes(url, "auth")),
+            )
+        return CheckReport(ok=False, findings=(f"{url}: HTTP {e.code}",))
+    except (URLError, OSError, TimeoutError) as e:
+        return CheckReport(
+            ok=False, findings=(f"{url}: unreachable ({e})", *_fixes(url, "unreachable"))
+        )
+    served = [entry.get("id", "") for entry in listing.get("data", [])]
+    if config.model in served:
+        return CheckReport(
+            ok=True, findings=(f"{url}: reachable; model {config.model!r} is served",)
+        )
+    shown = ", ".join(sorted(served)[:8]) or "none listed"
+    return CheckReport(
+        ok=False,
+        findings=(
+            f"{url}: reachable, but model {config.model!r} is not served (has: {shown})",
+            *_fixes(url, "missing-model"),
+        ),
+    )
