@@ -610,6 +610,31 @@ def get_failures(config_path: str, step: int | str | None = None) -> dict[str, A
     }
 
 
+def save_config(path: str, yaml_text: str) -> dict[str, Any]:
+    """Validate config YAML text and, only if it is runnable, write it to ``path``.
+
+    The agent-side closer of the authoring loop (draft → validate → **save** →
+    scaffold): an MCP client with its own file tools never needs this, but the terminal
+    chat and the GUI's agent panel have no other way to put the reviewed artifact on
+    disk. Validation gates the write — an unrunnable config is *returned* as its report
+    (``written: false``) rather than saved, so no tool call can leave a broken
+    ``input.yaml`` where a later ``start_run`` would trip over it; warnings (missing
+    templates and the like) do not block, exactly as ``chemrefine validate`` treats
+    them. The write itself is atomic (:func:`chemrefine.cache._atomic_write`), and
+    relative paths inside the text are judged against the file's own directory, the way
+    :func:`~chemrefine.config.load_config` will resolve them later.
+    """
+    destination = Path(path).expanduser().resolve()
+    report = validate_config_text(yaml_text, base_dir=destination.parent)
+    payload: dict[str, Any] = {"path": str(destination), "written": False, **report.to_json()}
+    if not report.ok:
+        return payload
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    cache._atomic_write(destination, yaml_text.encode("utf-8"))
+    payload["written"] = True
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # The shared surface — what every harness registers
 # ---------------------------------------------------------------------------
@@ -620,6 +645,7 @@ TOOLS = (
     validate_config,
     validate_config_path,
     summarize_config,
+    save_config,
     read_template,
     write_template,
     scaffold_templates,
@@ -637,7 +663,7 @@ register (:mod:`chemrefine.mcp_server` and the embedded agent), living here so n
 optional extra has to import the other's SDK to know the surface."""
 
 MUTATING_TOOLS = frozenset(
-    {"write_template", "scaffold_templates", "start_run", "build_structures"}
+    {"save_config", "write_template", "scaffold_templates", "start_run", "build_structures"}
 )
 """Tool names that change files or launch work — what a harness gates behind approval.
 

@@ -93,6 +93,42 @@ def test_summarize_config_rows_mirror_the_steps(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# save_config — validation gates the write
+# ---------------------------------------------------------------------------
+
+
+def test_save_config_writes_a_runnable_config(tmp_path: Path):
+    destination = tmp_path / "proj" / "input.yaml"
+    text = yaml.safe_dump({"steps": [{"step": 1, "engine": "fake"}]})
+    result = agent_tools.save_config(str(destination), text)
+    assert result["written"] is True
+    assert result["ok"] is True
+    assert destination.read_text(encoding="utf-8") == text
+
+
+def test_save_config_refuses_an_unrunnable_config_and_writes_nothing(tmp_path: Path):
+    destination = tmp_path / "input.yaml"
+    result = agent_tools.save_config(
+        str(destination), yaml.safe_dump({"steps": [{"step": 1, "engine": "no-such"}]})
+    )
+    assert result["written"] is False
+    assert result["ok"] is False
+    assert result["issues"][0]["kind"] == "engine"
+    assert not destination.exists()
+
+
+def test_save_config_passes_warnings_through_without_blocking(tmp_path: Path):
+    """Missing templates warn — exactly as `chemrefine validate` treats them."""
+    destination = tmp_path / "input.yaml"
+    result = agent_tools.save_config(
+        str(destination), yaml.safe_dump({"steps": [{"step": 1, "engine": "orca"}]})
+    )
+    assert result["written"] is True
+    assert any(w["kind"] == "template" for w in result["warnings"])
+    assert destination.exists()
+
+
+# ---------------------------------------------------------------------------
 # Templates
 # ---------------------------------------------------------------------------
 

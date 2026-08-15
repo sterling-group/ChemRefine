@@ -34,7 +34,7 @@ Every tool is a function from `chemrefine.agent_tools` — the same layer the CL
 |---|---|
 | Schema & registry | `get_schema`, `list_engines` |
 | Seed structures | `lookup_smiles` (PubChem, needs network), `build_structures` (SMILES/XYZ, with charge-parity sanity checks) |
-| Authoring | `validate_config`, `validate_config_path`, `summarize_config` |
+| Authoring | `validate_config`, `validate_config_path`, `summarize_config`, `save_config` (validation gates the write) |
 | Templates | `scaffold_templates`, `read_template`, `write_template` |
 | Execution | `start_run`, `run_status` |
 | Results | `get_results` (paginated `steps.csv`), `get_failures` (ledger + suggested recovery) |

@@ -21,6 +21,8 @@ at HPC scale without you in the loop.
 3. **Write the config**, then **`validate_config` until `ok` with no surprising
    warnings**. Issues carry the field location (`loc`); warnings name silent no-ops
    (undeclared option keys, `nms: true` on an engine that cannot NMS, missing files).
+   Then **`save_config`** puts the reviewed YAML on disk — it re-validates and refuses
+   to write anything unrunnable, so it is also the final check.
 4. **`scaffold_templates`**, then edit each starter (`read_template` /
    `write_template`) — the template *is* the calculation for template-driven engines:
    ORCA keywords, `%pal`, `%maxcore` all live there.
