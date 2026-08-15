@@ -87,8 +87,27 @@ sys.exit('py.typed missing from the wheel' if not marker.is_file() else 0)
 # having tested nothing — but that reasoning covers every backend, not just ORCA, and
 # pytest reports "N passed, M skipped" with exit 0 either way. With the variable set, a
 # missing MACE or PySCF stack fails here by name.
+#
+# Memory discipline: the UMA single point alone peaks at 5.1 GB RSS (measured), and on a
+# desktop this tier has OOM-killed VS Code instead of the test — the snap ships the
+# editor with oom_score_adj=300, which makes it the kernel's *preferred* victim over any
+# plain process. So: refuse to start without headroom, and run the tier inside a
+# memory-capped scope sized below what is available, so a shortage kills the tier with
+# this script's message rather than whatever the kernel fancies.
 step "tier-3: the real binaries, end to end"
-CHEMREFINE_REQUIRE_LIVE=1 PATH="$orca_dir:$PATH" "$E2E_ENV/bin/pytest" -m 'integration or perf' -q
+tier3=(env CHEMREFINE_REQUIRE_LIVE=1 PATH="$orca_dir:$PATH"
+       "$E2E_ENV/bin/pytest" -m 'integration or perf' -q)
+if command -v systemd-run >/dev/null 2>&1; then
+    avail_g="$(awk '/MemAvailable/ {printf "%d", $2/1048576}' /proc/meminfo)"
+    if [ "$avail_g" -lt 7 ]; then
+        fail "only ${avail_g}G of memory available — tier-3 needs ~7G free (the UMA load alone peaks at 5.1G); close some applications first"
+    fi
+    systemd-run --user --scope --collect --quiet \
+        -p MemoryMax="$((avail_g - 1))G" -p MemorySwapMax=512M \
+        "${tier3[@]}"
+else
+    "${tier3[@]}"
+fi
 
 step "the tag will match the version"
 version="$("$DEV_ENV/bin/python" -c 'import chemrefine; print(chemrefine.__version__)')"
