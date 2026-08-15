@@ -109,6 +109,7 @@ nav:
       - GUI (workflow builder): user-guide/gui.md
       - MCP Server (AI agents): user-guide/mcp.md
       - Embedded Agent: user-guide/agent.md
+      - Platforms, Shells & Model Policy: user-guide/platforms.md
       - Troubleshooting: user-guide/troubleshooting.md
   - Tutorials:
       - tutorials/index.md

@@ -5,6 +5,12 @@ tools the [MCP server](mcp.md) exposes — for machines and users without an MCP
 The model is yours to choose: any OpenAI-compatible endpoint (OpenAI, OpenRouter, Groq,
 a local **Ollama** or **vLLM**) or a PydanticAI `provider:model` string.
 
+!!! warning "Check your site's model policy first"
+    ChemRefine never ships, downloads, or endorses a model — the choice, its license,
+    and your institution's acceptable-use / export-control rules are yours to check
+    before pulling weights or calling an endpoint. Details:
+    [Platforms, Shells & Model Policy](platforms.md#model-licensing-site-policy-ai-features).
+
 ```bash
 pip install 'chemrefine[agent]'
 
