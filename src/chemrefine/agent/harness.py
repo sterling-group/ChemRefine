@@ -84,3 +84,32 @@ def build_agent(
         else:
             agent.tool_plain(tool)
     return agent
+
+
+def build_web_agent(
+    model: Model | str,
+    *,
+    config_path: str | None = None,
+) -> Agent[None, Any]:
+    """The deferred-approval variant, for harnesses that cannot block on a prompt.
+
+    The terminal chat's gate is a blocking ``confirm`` — impossible in the middle of an
+    HTTP request. Here the mutating tools are registered with
+    ``requires_approval=True`` instead: a gated call *suspends* the run, the result
+    comes back as a ``DeferredToolRequests`` naming each call and its arguments (the
+    GUI renders allow/deny cards), and the next request resumes the same run with a
+    ``DeferredToolResults`` verdict — the tool executes only on an explicit yes,
+    exactly the guarantee the terminal gate gives, enforced by the SDK rather than a
+    wrapper.
+    """
+    from pydantic_ai import Agent, DeferredToolRequests
+
+    agent: Agent[None, Any] = Agent(
+        model,
+        instructions=instructions(config_path),
+        output_type=[str, DeferredToolRequests],
+    )
+    for tool in agent_tools.TOOLS:
+        register = agent.tool_plain(requires_approval=tool.__name__ in agent_tools.MUTATING_TOOLS)
+        register(tool)
+    return agent

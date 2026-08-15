@@ -104,3 +104,12 @@ h3 { font-size: .8rem; margin: .5rem 0 .2rem; color: var(--muted);
 .runsteps th { color: var(--muted); font-weight: 600; }
 .logtail { max-height: 26vh; overflow: auto; background: #0e1620; color: #d8e2ec;
   border-radius: 6px; padding: .5rem .7rem; font-size: 11.5px; }
+
+#chat { margin-top: .6rem; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: .3rem .8rem .6rem; }
+#chatlog { max-height: 34vh; overflow: auto; margin: .4rem 0; }
+#chatlog p { margin: .3rem 0; font-size: .87rem; }
+#chatlog p b { margin-right: .4rem; color: var(--muted); font-weight: 600; }
+#chatlog p.you b { color: var(--accent); }
+#chatlog .mono { font-family: ui-monospace, Consolas, monospace; font-size: .8rem; }
+.approval { border-left: 3px solid var(--warn); padding-left: .6rem; }

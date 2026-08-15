@@ -66,6 +66,17 @@ Once a config is saved (local GUI only — the playground stays build-and-copy),
 - The **results table** pages through `steps.csv` for a chosen step — energies,
   ΔE, and Boltzmann weights exactly as the pipeline reported them.
 
+## The Agent chat panel
+
+With the `[agent]` extra installed, an **Agent chat** section joins the right column —
+the [embedded agent](agent.md) inside the GUI. Pick the provider/model in the panel
+(saved in your browser; local **Ollama** works with no key — see the
+[model-policy note](platforms.md#model-licensing-site-policy-ai-features)), then talk:
+the agent uses the same tools as everywhere else. Mutating actions **suspend** the
+agent and appear as allow/deny cards naming the exact call and its arguments; nothing
+touches disk or starts compute until you click *allow*. The panel needs the local
+server, so the online playground shows a note instead.
+
 A first workflow, end to end: add steps → pick engines and options → Validate →
 Save… → Scaffold templates → edit the ORCA keywords in the template editor → **Run**
 (or `chemrefine run input.yaml` in your terminal — same thing).

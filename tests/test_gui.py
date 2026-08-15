@@ -282,6 +282,161 @@ def test_dashboard_run_surfaces_a_held_lock_as_exit_code_10(client: Any, tmp_pat
     assert refused.get_json()["exit_code"] == 10
 
 
+# ---------------------------------------------------------------------------
+# Agent chat endpoints — deferred approvals over HTTP, proven offline
+# ---------------------------------------------------------------------------
+
+
+def _script_model(config_path: Path) -> Any:
+    """A model that asks to scaffold ``config_path`` once, then reports done."""
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("scaffold_templates", {"config_path": str(config_path)})]
+            )
+        return ModelResponse(parts=[TextPart("finished")])
+
+    return FunctionModel(script)
+
+
+@pytest.fixture
+def chat_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
+    monkeypatch.setenv("CHEMREFINE_LLM_MODEL", "scripted")
+    return monkeypatch
+
+
+def _inject_model(monkeypatch: pytest.MonkeyPatch, model: Any) -> None:
+    from chemrefine.agent.providers import ProviderConfig
+
+    monkeypatch.setattr(ProviderConfig, "build_model", lambda self: model)
+
+
+def test_agent_availability_reports_the_three_states(client: Any, monkeypatch: pytest.MonkeyPatch):
+    import sys
+
+    monkeypatch.setenv("CHEMREFINE_LLM_MODEL", "some-model")
+    ready = _get(client, "/api/agent/availability").get_json()
+    assert ready == {"installed": True, "configured": True, "detail": "some-model"}
+
+    monkeypatch.delenv("CHEMREFINE_LLM_MODEL")
+    unconfigured = _get(client, "/api/agent/availability").get_json()
+    assert unconfigured["installed"] is True
+    assert unconfigured["configured"] is False
+
+    monkeypatch.setitem(sys.modules, "pydantic_ai", None)
+    missing = _get(client, "/api/agent/availability").get_json()
+    assert missing["installed"] is False
+    assert "chemrefine[agent]" in missing["detail"]
+
+
+def test_chat_turns_thread_history(client: Any, chat_env: pytest.MonkeyPatch):
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.models.function import FunctionModel
+
+    seen: list[int] = []
+
+    def script(messages: Any, info: Any) -> ModelResponse:
+        seen.append(len(messages))
+        return ModelResponse(parts=[TextPart("reply " + str(len(seen)))])
+
+    _inject_model(chat_env, FunctionModel(script))
+    first = _post(client, "/api/agent/chat", {"message": "hello"}).get_json()
+    assert first == {"reply": "reply 1", "pending": None}
+    _post(client, "/api/agent/chat", {"message": "again"})
+    assert seen[1] > seen[0]  # the second turn carried the first turn's messages
+
+
+def test_chat_gates_mutations_behind_http_approvals(
+    client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path
+):
+    config = _saved_config(tmp_path)
+    _inject_model(chat_env, _script_model(config))
+
+    suspended = _post(client, "/api/agent/chat", {"message": "scaffold it"}).get_json()
+    [request_card] = suspended["pending"]
+    assert request_card["tool"] == "scaffold_templates"
+    assert str(config) in str(request_card["args"])
+    assert not (tmp_path / "templates").exists()  # suspended means nothing ran
+
+    resumed = _post(client, "/api/agent/chat", {"approvals": {request_card["id"]: True}}).get_json()
+    assert resumed["reply"] == "finished"
+    assert (tmp_path / "templates" / "step1.inp").is_file()
+
+
+def test_chat_denial_keeps_the_disk_untouched(
+    client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path
+):
+    config = _saved_config(tmp_path)
+    _inject_model(chat_env, _script_model(config))
+    suspended = _post(client, "/api/agent/chat", {"message": "scaffold it"}).get_json()
+    [request_card] = suspended["pending"]
+    resumed = _post(
+        client, "/api/agent/chat", {"approvals": {request_card["id"]: False}}
+    ).get_json()
+    assert resumed["reply"] == "finished"
+    assert not (tmp_path / "templates").exists()
+
+
+def test_chat_refuses_approvals_with_nothing_pending(client: Any, chat_env: pytest.MonkeyPatch):
+    from pydantic_ai.models.test import TestModel
+
+    _inject_model(chat_env, TestModel(call_tools=[]))
+    refused = _post(client, "/api/agent/chat", {"approvals": {"x": True}})
+    assert refused.status_code == 400
+    assert "no suspended run" in refused.get_json()["error"]
+
+
+def test_chat_keeps_tool_errors_in_the_documented_shape(client: Any, chat_env: pytest.MonkeyPatch):
+    """A ChemRefineError from a tool is a 400 with its exit code — never a 502."""
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("summarize_config", {"config_path": "/absent.yaml"})]
+            )
+        return ModelResponse(parts=[TextPart("unreached")])
+
+    _inject_model(chat_env, FunctionModel(script))
+    failed = _post(client, "/api/agent/chat", {"message": "summarize"})
+    assert failed.status_code == 400
+    assert failed.get_json()["exit_code"] == 2
+
+
+def test_chat_maps_endpoint_failures_to_502(client: Any, chat_env: pytest.MonkeyPatch):
+    from pydantic_ai.models.function import FunctionModel
+
+    def explode(messages: Any, info: Any) -> Any:
+        raise RuntimeError("connection refused by nobody:11434")
+
+    _inject_model(chat_env, FunctionModel(explode))
+    failed = _post(client, "/api/agent/chat", {"message": "hi"})
+    assert failed.status_code == 502
+    assert "model endpoint failed" in failed.get_json()["error"]
+
+
+def test_chat_reset_forgets_the_conversation(client: Any, chat_env: pytest.MonkeyPatch):
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.models.function import FunctionModel
+
+    seen: list[int] = []
+
+    def script(messages: Any, info: Any) -> ModelResponse:
+        seen.append(len(messages))
+        return ModelResponse(parts=[TextPart("ok")])
+
+    _inject_model(chat_env, FunctionModel(script))
+    _post(client, "/api/agent/chat", {"message": "one"})
+    reset = _post(client, "/api/agent/chat", {"reset": True}).get_json()
+    assert reset["reset"] is True
+    _post(client, "/api/agent/chat", {"message": "two"})
+    assert seen[0] == seen[1]  # the second conversation started fresh
+
+
 def test_non_chemrefine_errors_are_not_swallowed(client: Any):
     """Only ChemRefineError gets the JSON shape; a genuine bug must stay a loud bug."""
     with pytest.raises(KeyError):

@@ -388,6 +388,56 @@
         </div>
       </template>
     </div>
+    <!-- ============ Agent chat (local GUI; needs chemrefine[agent]) ============ -->
+    <details id="chat" @toggle="$event.target.open && chatAvailability()">
+      <summary><b>Agent chat</b>
+        <span class="muted" x-text="chat.detail"></span>
+      </summary>
+      <p class="muted" x-show="staticMode">
+        The chat runs with the local <code>chemrefine gui</code> — this online playground
+        builds configs only.
+      </p>
+      <div x-show="!staticMode">
+        <div class="row">
+          <input type="text" x-model="chat.model" placeholder="model (e.g. qwen3:4b)"
+                 @change="saveChatSettings()">
+          <select x-model="chat.provider" @change="saveChatSettings()">
+            <option value="custom">custom</option>
+            <option value="ollama">ollama</option>
+            <option value="vllm">vllm</option>
+            <option value="openai">openai</option>
+          </select>
+          <input type="text" x-model="chat.baseUrl" placeholder="base URL (optional)"
+                 @change="saveChatSettings()">
+          <button class="mini" title="Forget this conversation" @click="resetChat()">reset</button>
+        </div>
+        <div id="chatlog">
+          <template x-for="(entry, i) in chat.msgs" :key="'m' + i">
+            <p :class="entry.who"><b x-text="entry.who === 'you' ? 'you' : 'agent'"></b>
+              <span x-text="entry.text"></span></p>
+          </template>
+          <div class="approval" x-show="chat.pending.length">
+            <p class="warn"><b>The agent asks to run:</b></p>
+            <template x-for="req in chat.pending" :key="req.id">
+              <p class="mono">
+                <span x-text="req.tool + '(' + JSON.stringify(req.args) + ')'"></span>
+                <button class="mini" @click="decide(req.id, true)">allow</button>
+                <button class="mini" @click="decide(req.id, false)">deny</button>
+              </p>
+            </template>
+          </div>
+          <p class="muted" x-show="chat.busy">thinking…</p>
+        </div>
+        <div class="row">
+          <input type="text" x-model="chat.draft" placeholder="ask the agent…"
+                 :disabled="chat.busy || chat.pending.length > 0"
+                 @keydown.enter="sendChat()">
+          <button :disabled="chat.busy || chat.pending.length > 0" @click="sendChat()">
+            Send</button>
+        </div>
+      </div>
+    </details>
+
     <p id="flash" class="muted" x-text="flash"></p>
   </section>
 </main>

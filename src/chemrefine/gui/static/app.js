@@ -26,6 +26,10 @@ function builder() {
     runResults: null,
     resultsStep: "",
     _statusTimer: null,
+    chat: { detail: "", msgs: [], pending: [], decisions: {}, draft: "", busy: false,
+            provider: localStorage.getItem("cr-provider") || "ollama",
+            model: localStorage.getItem("cr-model") || "",
+            baseUrl: localStorage.getItem("cr-baseurl") || "" },
     browse: { open: false, mode: "save", title: "", path: "", parent: "",
               entries: [], filename: "input.yaml", onPick: null },
     tmpl: { open: false, step: null, path: "", text: "" },
@@ -338,6 +342,62 @@ function builder() {
       this.runResults = await this.api("POST", "/api/results", {
         config_path: this.savedPath, step: Number(step), limit: 20, offset,
       });
+    },
+
+    // ---------------- agent chat ----------------
+    saveChatSettings() {
+      localStorage.setItem("cr-provider", this.chat.provider);
+      localStorage.setItem("cr-model", this.chat.model);
+      localStorage.setItem("cr-baseurl", this.chat.baseUrl);
+    },
+    async chatAvailability() {
+      if (this.staticMode) return;
+      const state = await this.api("GET", "/api/agent/availability");
+      if (!state) return;
+      if (!state.installed) this.chat.detail = state.detail;
+      else if (!state.configured && !this.chat.model) {
+        this.chat.detail = "pick a model above (or set CHEMREFINE_LLM_MODEL)";
+      } else this.chat.detail = "";
+    },
+    _chatPayload(extra) {
+      const payload = { provider: this.chat.provider, ...extra };
+      if (this.chat.model) payload.model = this.chat.model;
+      if (this.chat.baseUrl) payload.base_url = this.chat.baseUrl;
+      return payload;
+    },
+    async _chatTurn(extra) {
+      this.chat.busy = true;
+      const data = await this.api("POST", "/api/agent/chat", this._chatPayload(extra));
+      this.chat.busy = false;
+      if (!data) return;
+      if (data.pending) {
+        this.chat.pending = data.pending;
+        this.chat.decisions = {};
+      } else if (data.reply !== null && data.reply !== undefined) {
+        this.chat.msgs.push({ who: "agent", text: data.reply });
+      }
+    },
+    async sendChat() {
+      const message = this.chat.draft.trim();
+      if (!message || this.chat.busy) return;
+      this.chat.msgs.push({ who: "you", text: message });
+      this.chat.draft = "";
+      await this._chatTurn({ message });
+    },
+    async decide(callId, allow) {
+      // Every pending call needs a verdict before the run can resume.
+      this.chat.decisions[callId] = allow;
+      if (Object.keys(this.chat.decisions).length < this.chat.pending.length) return;
+      const approvals = this.chat.decisions;
+      this.chat.pending = [];
+      this.chat.decisions = {};
+      await this._chatTurn({ approvals });
+    },
+    async resetChat() {
+      await this.api("POST", "/api/agent/chat", { reset: true });
+      this.chat.msgs = [];
+      this.chat.pending = [];
+      this.chat.decisions = {};
     },
 
     // ---------------- browse / save ----------------

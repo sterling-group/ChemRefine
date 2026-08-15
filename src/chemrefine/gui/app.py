@@ -207,6 +207,94 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         payload = request.get_json(force=True)
         return jsonify(agent_tools.get_failures(payload["config_path"], step=payload.get("step")))
 
+    # One user, one browser, one conversation: the chat state lives on the app instance
+    # (history = PydanticAI's own message list; pending = the suspended run awaiting the
+    # human's allow/deny verdicts).
+    chat_state: dict[str, Any] = {"history": None, "pending": None}
+
+    @app.get("/api/agent/availability")
+    def agent_availability() -> Any:
+        """Whether the chat panel can work here: extra installed, model configured."""
+        try:
+            import pydantic_ai  # noqa: F401 — the probe is the import itself
+        except ImportError:
+            return jsonify(
+                {
+                    "installed": False,
+                    "configured": False,
+                    "detail": "pip install 'chemrefine[agent]'",
+                }
+            )
+        from chemrefine.agent.providers import ProviderConfig
+
+        try:
+            resolved = ProviderConfig.resolve()
+            return jsonify({"installed": True, "configured": True, "detail": resolved.model})
+        except ChemRefineError as e:
+            return jsonify({"installed": True, "configured": False, "detail": str(e)})
+
+    @app.post("/api/agent/chat")
+    def agent_chat() -> Any:
+        """One agent turn: a message, or the verdicts that resume a suspended run.
+
+        Non-streaming by design (a local-model turn takes seconds to a minute inside
+        this worker thread); the reply is either text or a list of approval requests
+        the frontend renders as allow/deny cards. Provider errors — an unreachable
+        Ollama, a bad key — come back as a 502 with the message, not a traceback: at
+        the network boundary the failure is the answer.
+        """
+        from pydantic_ai import DeferredToolRequests, DeferredToolResults
+
+        from chemrefine.agent.harness import build_web_agent
+        from chemrefine.agent.providers import ProviderConfig
+
+        payload = request.get_json(force=True)
+        if payload.get("reset"):
+            chat_state["history"] = None
+            chat_state["pending"] = None
+            return jsonify({"reply": None, "pending": None, "reset": True})
+        resolved = ProviderConfig.resolve(
+            payload.get("provider", "custom"),
+            model=payload.get("model"),
+            base_url=payload.get("base_url"),
+        )
+        agent = build_web_agent(
+            resolved.build_model(),
+            config_path=str(config_path) if config_path is not None else None,
+        )
+        try:
+            if payload.get("approvals"):
+                pending = chat_state["pending"]
+                if pending is None:
+                    return jsonify({"error": "no suspended run to resume"}), 400
+                result = agent.run_sync(
+                    message_history=pending,
+                    deferred_tool_results=DeferredToolResults(
+                        approvals={k: bool(v) for k, v in payload["approvals"].items()}
+                    ),
+                )
+            else:
+                result = agent.run_sync(payload["message"], message_history=chat_state["history"])
+        except ChemRefineError:
+            # A tool's own failure keeps its documented {error, exit_code} shape.
+            raise
+        except Exception as e:  # the model endpoint is the outside world
+            return jsonify({"error": f"model endpoint failed: {e}"}), 502
+        if isinstance(result.output, DeferredToolRequests):
+            chat_state["pending"] = result.all_messages()
+            return jsonify(
+                {
+                    "reply": None,
+                    "pending": [
+                        {"id": call.tool_call_id, "tool": call.tool_name, "args": call.args}
+                        for call in result.output.approvals
+                    ],
+                }
+            )
+        chat_state["history"] = result.all_messages()
+        chat_state["pending"] = None
+        return jsonify({"reply": result.output, "pending": None})
+
     @app.post("/api/run")
     def run() -> Any:
         """Launch a detached run — same semantics as the agent's start_run.
