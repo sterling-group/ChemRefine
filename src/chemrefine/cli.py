@@ -342,6 +342,36 @@ def rerun_errors(
 
 
 @app.command()
+def gui(
+    config_path: Annotated[
+        Path | None,
+        typer.Argument(exists=True, dir_okay=False, readable=True,
+                       help="Existing config to load into the builder."),
+    ] = None,
+    port: Annotated[
+        int, typer.Option("--port", min=0, help="Port to bind on 127.0.0.1 (0 = pick free).")
+    ] = 0,
+    no_browser: Annotated[
+        bool, typer.Option("--no-browser", help="Print the URL instead of opening a browser.")
+    ] = False,
+) -> None:
+    """Open the click-through YAML builder in a browser (local web app).
+
+    Left pane: steps, engines and options as forms driven by the live schema; right
+    pane: the YAML being built. Binds 127.0.0.1 behind a per-session token — reach a
+    cluster with SSH port forwarding. Needs the ``chemrefine[gui]`` extra.
+    """
+    try:
+        from chemrefine.gui.serve import launch
+    except ImportError as e:
+        logger.error(
+            "the GUI needs flask/waitress: pip install 'chemrefine[gui]' (%s)", e
+        )
+        raise typer.Exit(code=1) from e
+    launch(config_path, port=port, open_browser=not no_browser)
+
+
+@app.command()
 def mcp() -> None:
     """Serve ChemRefine's agent tools over the Model Context Protocol (stdio).
 

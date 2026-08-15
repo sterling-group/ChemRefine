@@ -26,6 +26,7 @@ _SUBCOMMANDS = frozenset(
         "rebuild-nms",
         "backends",
         "engines",
+        "gui",
         "mcp",
         "scaffold",
         "schema",
