@@ -226,9 +226,7 @@ def test_cli_gui_hands_off_to_launch(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     )
     config = tmp_path / "input.yaml"
     config.write_text("steps: []\n", encoding="utf-8")
-    result = CliRunner().invoke(
-        cli_app, ["gui", str(config), "--port", "8123", "--no-browser"]
-    )
+    result = CliRunner().invoke(cli_app, ["gui", str(config), "--port", "8123", "--no-browser"])
     assert result.exit_code == 0
     assert calls == [{"config": config, "port": 8123, "open_browser": False}]
 

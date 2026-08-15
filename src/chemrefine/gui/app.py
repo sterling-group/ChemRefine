@@ -97,9 +97,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     def validate() -> Any:
         """The structured validation report for the current editor text."""
         payload = request.get_json(force=True)
-        return jsonify(
-            agent_tools.validate_config(payload["yaml_text"], payload.get("base_dir"))
-        )
+        return jsonify(agent_tools.validate_config(payload["yaml_text"], payload.get("base_dir")))
 
     @app.post("/api/yaml")
     def to_yaml() -> Any:
@@ -160,9 +158,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     def read_template() -> Any:
         """One step's template text for the inline editor."""
         return jsonify(
-            agent_tools.read_template(
-                request.args["config_path"], _step_key(request.args["step"])
-            )
+            agent_tools.read_template(request.args["config_path"], _step_key(request.args["step"]))
         )
 
     @app.post("/api/template")

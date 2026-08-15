@@ -47,9 +47,7 @@ def _documented_universe() -> dict[str, set[str]]:
 )
 def test_every_schema_field_is_named_in_the_configuration_page(model: str, fields: set[str]):
     text = _DOC.read_text(encoding="utf-8")
-    missing = sorted(
-        field for field in fields if not re.search(rf"\b{re.escape(field)}\b", text)
-    )
+    missing = sorted(field for field in fields if not re.search(rf"\b{re.escape(field)}\b", text))
     assert not missing, (
         f"{model} field(s) {missing} are not mentioned in {_DOC.name}; the schema moved "
         "and the hand-written reference did not. Document them (or generate the page)."

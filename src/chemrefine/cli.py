@@ -345,8 +345,12 @@ def rerun_errors(
 def agent(
     config_path: Annotated[
         Path | None,
-        typer.Argument(exists=True, dir_okay=False, readable=True,
-                       help="Config file this session works on (optional)."),
+        typer.Argument(
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="Config file this session works on (optional).",
+        ),
     ] = None,
     provider: Annotated[
         str,
@@ -372,9 +376,7 @@ def agent(
     try:
         from chemrefine.agent import chat
     except ImportError as e:
-        logger.error(
-            "the embedded agent needs PydanticAI: pip install 'chemrefine[agent]' (%s)", e
-        )
+        logger.error("the embedded agent needs PydanticAI: pip install 'chemrefine[agent]' (%s)", e)
         raise typer.Exit(code=1) from e
     try:
         chat.main(
@@ -392,8 +394,12 @@ def agent(
 def gui(
     config_path: Annotated[
         Path | None,
-        typer.Argument(exists=True, dir_okay=False, readable=True,
-                       help="Existing config to load into the builder."),
+        typer.Argument(
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="Existing config to load into the builder.",
+        ),
     ] = None,
     port: Annotated[
         int, typer.Option("--port", min=0, help="Port to bind on 127.0.0.1 (0 = pick free).")
@@ -411,9 +417,7 @@ def gui(
     try:
         from chemrefine.gui.serve import launch
     except ImportError as e:
-        logger.error(
-            "the GUI needs flask/waitress: pip install 'chemrefine[gui]' (%s)", e
-        )
+        logger.error("the GUI needs flask/waitress: pip install 'chemrefine[gui]' (%s)", e)
         raise typer.Exit(code=1) from e
     launch(config_path, port=port, open_browser=not no_browser)
 

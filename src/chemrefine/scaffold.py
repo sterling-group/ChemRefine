@@ -113,10 +113,7 @@ _GENERIC_STARTER = "# ChemRefine step template — this engine documents its own
 
 _HEADER_STARTERS: dict[str, str] = {
     "cuda.slurm.header": (
-        "#!/bin/bash\n"
-        "#SBATCH --partition=EDIT_ME\n"
-        "#SBATCH --time=24:00:00\n"
-        "#SBATCH --gres=gpu:1\n"
+        "#!/bin/bash\n#SBATCH --partition=EDIT_ME\n#SBATCH --time=24:00:00\n#SBATCH --gres=gpu:1\n"
     ),
 }
 _HEADER_DEFAULT = "#!/bin/bash\n#SBATCH --partition=EDIT_ME\n#SBATCH --time=24:00:00\n"

@@ -48,8 +48,7 @@ _ACTIONS = ("run", "resume", "rerun", "rerun-errors", "rebuild-cache", "rebuild-
 """CLI actions :func:`start_run` may launch — the recovery vocabulary, nothing else."""
 
 _EXIT_CODES: dict[str, int] = {
-    cls.__name__: cls.exit_code
-    for cls in (ChemRefineError, *ChemRefineError.__subclasses__())
+    cls.__name__: cls.exit_code for cls in (ChemRefineError, *ChemRefineError.__subclasses__())
 }
 """The documented failure taxonomy, shipped with every failure payload."""
 
@@ -127,9 +126,7 @@ def _step_template_plan(config: Config, step: int | str) -> scaffold.TemplatePla
     for plan in scaffold.plan_templates(config):
         if plan.kind == "step" and plan.step == step_cfg.step:
             return plan
-    raise ConfigError(
-        f"step {step_cfg.step} (engine {step_cfg.engine!r}) does not read a template"
-    )
+    raise ConfigError(f"step {step_cfg.step} (engine {step_cfg.engine!r}) does not read a template")
 
 
 def read_template(config_path: str, step: int | str) -> dict[str, Any]:
@@ -254,9 +251,7 @@ def run_status(config_path: str, log_tail_lines: int = 40) -> dict[str, Any]:
     log_path = _latest_log(config.output_dir)
     tail: list[str] | None = None
     if log_path is not None:
-        tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[
-            -log_tail_lines:
-        ]
+        tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-log_tail_lines:]
     return {
         "running": status.held,
         "holder": (
@@ -383,9 +378,7 @@ def build_structures(
                 rows = io.embed_smiles(one)
             except ValueError as e:
                 raise ConfigError(str(e)) from e
-            path = io.write_single_xyz(
-                rows, out / f"structure_{i}.xyz", comment=f"SMILES: {one}"
-            )
+            path = io.write_single_xyz(rows, out / f"structure_{i}.xyz", comment=f"SMILES: {one}")
             written.append(str(path))
             mol = Chem.MolFromSmiles(one)
             formal = Chem.GetFormalCharge(mol)
@@ -406,9 +399,7 @@ def build_structures(
             raise ConfigError(f"xyz_text is not valid XYZ: {e}") from e
         written.append(str(path))
         for i, atoms in enumerate(frames):
-            parity = _parity_warning(
-                tuple(atoms.get_chemical_symbols()), charge, multiplicity
-            )
+            parity = _parity_warning(tuple(atoms.get_chemical_symbols()), charge, multiplicity)
             if parity is not None:
                 build_warnings.append(f"frame {i}: {parity}")
     return {
@@ -662,6 +653,4 @@ def guide_text() -> str:
     """
     from importlib import resources
 
-    return (
-        resources.files("chemrefine").joinpath("data/agent_guide.md").read_text(encoding="utf-8")
-    )
+    return resources.files("chemrefine").joinpath("data/agent_guide.md").read_text(encoding="utf-8")

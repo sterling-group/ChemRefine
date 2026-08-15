@@ -43,9 +43,7 @@ def _gated(fn: Callable[..., Any], confirm: ConfirmFn) -> Callable[..., Any]:
     def gate(*args: Any, **kwargs: Any) -> Any:
         rendered = json.dumps(kwargs) if kwargs else json.dumps(list(args))
         if not confirm(fn.__name__, rendered):
-            return {
-                "denied": f"the user declined {fn.__name__}; ask what they would like instead"
-            }
+            return {"denied": f"the user declined {fn.__name__}; ask what they would like instead"}
         return fn(*args, **kwargs)
 
     return gate

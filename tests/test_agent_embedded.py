@@ -155,9 +155,7 @@ def test_an_allowed_mutation_runs_and_names_itself_to_the_human(tmp_path: Path):
 
 def test_a_declined_mutation_does_not_happen_and_the_loop_survives(tmp_path: Path):
     config = _orca_config(tmp_path)
-    agent = harness.build_agent(
-        _scripted_scaffold(config), confirm=lambda _tool, _args: False
-    )
+    agent = harness.build_agent(_scripted_scaffold(config), confirm=lambda _tool, _args: False)
     result = agent.run_sync("scaffold my templates")
     assert result.output == "finished"  # the refusal was an answer, not a crash
     assert not (tmp_path / "templates").exists()
@@ -211,9 +209,7 @@ def test_chat_repl_threads_history_until_exit(monkeypatch: pytest.MonkeyPatch):
     from chemrefine.agent import chat
 
     monkeypatch.setenv("CHEMREFINE_LLM_MODEL", "test-model")
-    monkeypatch.setattr(
-        ProviderConfig, "build_model", lambda self: TestModel(call_tools=[])
-    )
+    monkeypatch.setattr(ProviderConfig, "build_model", lambda self: TestModel(call_tools=[]))
     prompts = iter(["hello there", "exit"])
     monkeypatch.setattr(typer, "prompt", lambda *a, **k: next(prompts))
     echoed: list[str] = []
@@ -230,9 +226,7 @@ def test_chat_repl_ends_on_eof(monkeypatch: pytest.MonkeyPatch):
     from chemrefine.agent import chat
 
     monkeypatch.setenv("CHEMREFINE_LLM_MODEL", "test-model")
-    monkeypatch.setattr(
-        ProviderConfig, "build_model", lambda self: TestModel(call_tools=[])
-    )
+    monkeypatch.setattr(ProviderConfig, "build_model", lambda self: TestModel(call_tools=[]))
 
     def eof(*args: Any, **kwargs: Any) -> str:
         raise EOFError

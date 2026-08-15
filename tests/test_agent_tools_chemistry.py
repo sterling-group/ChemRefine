@@ -97,9 +97,7 @@ def test_build_structures_flags_charge_and_parity_mistakes(tmp_path: Path):
 
 
 def test_build_structures_flags_an_impossible_multiplicity(tmp_path: Path):
-    result = agent_tools.build_structures(
-        str(tmp_path / "seeds"), smiles=["O"], multiplicity=2
-    )
+    result = agent_tools.build_structures(str(tmp_path / "seeds"), smiles=["O"], multiplicity=2)
     assert any("cannot have multiplicity 2" in w for w in result["warnings"])
 
 

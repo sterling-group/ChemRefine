@@ -174,9 +174,7 @@ def test_an_explicit_step_header_wins_over_the_gpu_default(tmp_path: Path):
             }
         ],
     )
-    assert any(
-        w.kind == "slurm-header" and "special.header" in w.message for w in report.warnings
-    )
+    assert any(w.kind == "slurm-header" and "special.header" in w.message for w in report.warnings)
 
 
 def test_options_errors_suppress_the_gpu_header_probe(tmp_path: Path):

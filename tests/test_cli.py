@@ -135,9 +135,7 @@ def test_validate_exits_two_on_an_unrunnable_config(tmp_path: Path):
 
 def test_scaffold_writes_then_keeps(tmp_path: Path):
     """First run fills the gaps; the second finds nothing to write and says so."""
-    config = _write_config(
-        tmp_path, steps=[{"step": 1, "engine": "orca", "operation": "opt_sp"}]
-    )
+    config = _write_config(tmp_path, steps=[{"step": 1, "engine": "orca", "operation": "opt_sp"}])
     first = runner.invoke(app, ["scaffold", str(config)])
     assert first.exit_code == 0
     assert "wrote" in first.stdout
