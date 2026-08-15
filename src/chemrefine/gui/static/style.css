@@ -96,3 +96,11 @@ h3 { font-size: .8rem; margin: .5rem 0 .2rem; color: var(--muted);
 .row { display: flex; gap: .5rem; margin: .6rem 0 .3rem; }
 .row input { flex: 1; padding: .3rem .5rem; border: 1px solid var(--line); border-radius: 5px; }
 #flash { min-height: 1.2em; }
+
+#run { margin-top: .6rem; }
+.runsteps { width: 100%; border-collapse: collapse; font-size: .84rem; margin: .4rem 0; }
+.runsteps th, .runsteps td { text-align: left; padding: .2rem .5rem;
+  border-bottom: 1px solid var(--line); }
+.runsteps th { color: var(--muted); font-weight: 600; }
+.logtail { max-height: 26vh; overflow: auto; background: #0e1620; color: #d8e2ec;
+  border-radius: 6px; padding: .5rem .7rem; font-size: 11.5px; }

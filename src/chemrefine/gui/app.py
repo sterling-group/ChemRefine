@@ -177,6 +177,55 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         payload = request.get_json(force=True)
         return jsonify(agent_tools.summarize_config(payload["config_path"]))
 
+    @app.post("/api/status")
+    def status() -> Any:
+        """Where the tree stands — lock holder, per-step progress, log tail."""
+        payload = request.get_json(force=True)
+        return jsonify(
+            agent_tools.run_status(
+                payload["config_path"],
+                log_tail_lines=int(payload.get("log_tail_lines", 40)),
+            )
+        )
+
+    @app.post("/api/results")
+    def results() -> Any:
+        """A paginated slice of steps.csv for the dashboard's results table."""
+        payload = request.get_json(force=True)
+        return jsonify(
+            agent_tools.get_results(
+                payload["config_path"],
+                step=payload.get("step"),
+                limit=int(payload.get("limit", 20)),
+                offset=int(payload.get("offset", 0)),
+            )
+        )
+
+    @app.post("/api/failures")
+    def failures() -> Any:
+        """The failure ledger plus the suggested recovery action."""
+        payload = request.get_json(force=True)
+        return jsonify(agent_tools.get_failures(payload["config_path"], step=payload.get("step")))
+
+    @app.post("/api/run")
+    def run() -> Any:
+        """Launch a detached run — same semantics as the agent's start_run.
+
+        A held lock surfaces through the error handler as the documented
+        ``{error, exit_code: 10}`` shape; the browser confirmed the action already,
+        and the child outlives this server exactly as it outlives an agent session.
+        """
+        payload = request.get_json(force=True)
+        return jsonify(
+            agent_tools.start_run(
+                payload["config_path"],
+                action=payload.get("action", "run"),
+                target=payload.get("target"),
+                max_cores=payload.get("max_cores"),
+                max_gpus=payload.get("max_gpus"),
+            )
+        )
+
     return app
 
 

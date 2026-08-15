@@ -21,6 +21,11 @@ function builder() {
     report: null,
     flash: "",
     savedPath: null,
+    runStatus: null,
+    runFailures: null,
+    runResults: null,
+    resultsStep: "",
+    _statusTimer: null,
     browse: { open: false, mode: "save", title: "", path: "", parent: "",
               entries: [], filename: "input.yaml", onPick: null },
     tmpl: { open: false, step: null, path: "", text: "" },
@@ -294,6 +299,45 @@ function builder() {
         this.flash = "scaffold: " + data.written.length + " written, "
                    + data.kept.length + " kept";
       }
+    },
+
+    // ---------------- run dashboard ----------------
+    async refreshStatus() {
+      if (!this.savedPath) return;
+      const status = await this.api("POST", "/api/status", { config_path: this.savedPath });
+      if (status) this.runStatus = status;
+      this.runFailures = await this.api("POST", "/api/failures",
+                                        { config_path: this.savedPath });
+      clearTimeout(this._statusTimer);
+      if (status && status.running) {
+        // Poll while a driver holds the tree; stop the moment it lets go.
+        this._statusTimer = setTimeout(() => this.refreshStatus(), 5000);
+      }
+    },
+    async launch(action) {
+      const blurb = action === "run"
+        ? "start the full pipeline from step 1 (invalidates the cache)"
+        : action === "resume" ? "resume, honouring the cache" : "re-attempt failed jobs";
+      if (!window.confirm(action + " on " + this.savedPath + "?\nThis will " + blurb
+                          + " — real compute on this machine.")) {
+        return;
+      }
+      const started = await this.api("POST", "/api/run",
+                                     { config_path: this.savedPath, action });
+      if (started) {
+        this.flash = action + " started (pid " + started.pid + "); log: " + started.log;
+        this.refreshStatus();
+      }
+    },
+    async loadResults(step, offset = 0) {
+      this.resultsStep = step;
+      if (!step) {
+        this.runResults = null;
+        return;
+      }
+      this.runResults = await this.api("POST", "/api/results", {
+        config_path: this.savedPath, step: Number(step), limit: 20, offset,
+      });
     },
 
     // ---------------- browse / save ----------------

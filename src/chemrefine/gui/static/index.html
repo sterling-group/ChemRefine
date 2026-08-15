@@ -298,6 +298,75 @@
     </div>
     <textarea id="yaml" x-model="yamlText" :readonly="!rawEdit" spellcheck="false"></textarea>
 
+    <!-- ============ Run dashboard (local GUI, saved config only) ============ -->
+    <details id="run" x-show="savedPath && !staticMode" style="display:none"
+             @toggle="$event.target.open && refreshStatus()">
+      <summary><b>Run</b>
+        <span class="muted" x-show="runStatus"
+              x-text="runStatus ? (runStatus.running ? 'running (pid ' + runStatus.holder.pid + ')' : 'idle') : ''"></span>
+      </summary>
+      <div class="row">
+        <button @click="launch('run')">Run</button>
+        <button @click="launch('resume')">Resume</button>
+        <button @click="launch('rerun-errors')">Rerun errors</button>
+        <button class="mini" @click="refreshStatus()">↻ Refresh</button>
+      </div>
+      <table class="runsteps" x-show="runStatus">
+        <thead><tr><th>step</th><th>engine</th><th>survivors</th><th>failures</th>
+                   <th>cached</th></tr></thead>
+        <tbody>
+          <template x-for="row in (runStatus ? runStatus.steps : [])" :key="row.step">
+            <tr>
+              <td x-text="row.step + (row.dir !== 'step' + row.step ? ' · ' + row.dir : '')"></td>
+              <td x-text="row.engine"></td>
+              <td x-text="row.reported_survivors"></td>
+              <td :class="row.failures ? 'err' : ''" x-text="row.failures"></td>
+              <td x-text="row.cached ? '✓' : '—'"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+      <p class="warn" x-show="runFailures && runFailures.failures.length"
+         x-text="runFailures ? (runFailures.failures.length + ' ledgered failure(s); suggested: '
+                 + runFailures.suggested_action) : ''"></p>
+      <details x-show="runStatus && runStatus.log_tail">
+        <summary class="muted">driver log tail</summary>
+        <pre class="logtail"
+             x-text="runStatus && runStatus.log_tail ? runStatus.log_tail.join('\n') : ''"></pre>
+      </details>
+      <div class="row">
+        <label class="muted">results for step
+          <select @change="loadResults($event.target.value)">
+            <option value="">—</option>
+            <template x-for="step in cfg.steps" :key="'r' + step.step">
+              <option :value="step.step" x-text="step.step"></option>
+            </template>
+          </select>
+        </label>
+        <span class="muted" x-show="runResults"
+              x-text="runResults ? (runResults.offset + 1) + '–'
+                      + (runResults.offset + runResults.rows.length) + ' of ' + runResults.total : ''"></span>
+        <button class="mini" x-show="runResults && runResults.offset > 0"
+                @click="loadResults(resultsStep, runResults.offset - 20)">‹ prev</button>
+        <button class="mini"
+                x-show="runResults && runResults.offset + runResults.rows.length < runResults.total"
+                @click="loadResults(resultsStep, runResults.offset + 20)">next ›</button>
+      </div>
+      <table class="runsteps" x-show="runResults && runResults.rows.length">
+        <thead><tr><th>conformer</th><th>E (kcal/mol)</th><th>ΔE</th><th>weight</th></tr></thead>
+        <tbody>
+          <template x-for="row in (runResults ? runResults.rows : [])" :key="row.Conformer">
+            <tr>
+              <td x-text="row.Conformer"></td>
+              <td x-text="Number(row['Energy (kcal/mol)']).toFixed(2)"></td>
+              <td x-text="Number(row['dE (kcal/mol)']).toFixed(2)"></td>
+              <td x-text="Number(row['Boltzmann Weight']).toFixed(3)"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </details>
+
     <div id="report" x-show="report">
       <template x-if="report">
         <div>

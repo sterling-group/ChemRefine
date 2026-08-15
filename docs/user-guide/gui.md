@@ -52,6 +52,20 @@ writes the file (with a directory browser); **Scaffold templates** then fills ev
 missing step template and SLURM header with a commented starter, and each
 template-driven step gains an *Edit template…* editor.
 
+## The Run panel
+
+Once a config is saved (local GUI only — the playground stays build-and-copy), a
+**Run** section appears under the YAML pane:
+
+- **Run / Resume / Rerun errors** launch the same detached driver the CLI would —
+  each behind a confirmation naming the config, because this is real compute. A tree
+  already held by a live driver is refused (the run-lock, exit code 10).
+- The **status table** shows per-step survivors, ledgered failures, and cache state,
+  with the driver's log tail underneath; it polls every 5 seconds while a run is live
+  and stops when the lock is released.
+- The **results table** pages through `steps.csv` for a chosen step — energies,
+  ΔE, and Boltzmann weights exactly as the pipeline reported them.
+
 A first workflow, end to end: add steps → pick engines and options → Validate →
-Save… → Scaffold templates → edit the ORCA keywords in the template editor → run
-`chemrefine run input.yaml` in your terminal.
+Save… → Scaffold templates → edit the ORCA keywords in the template editor → **Run**
+(or `chemrefine run input.yaml` in your terminal — same thing).

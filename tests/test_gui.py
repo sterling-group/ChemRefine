@@ -188,6 +188,100 @@ def test_library_errors_carry_the_exit_code_shape(client: Any, tmp_path: Path):
     assert body["exit_code"] == 2
 
 
+# ---------------------------------------------------------------------------
+# Run dashboard endpoints — thin over agent_tools, against pipeline-writer fixtures
+# ---------------------------------------------------------------------------
+
+
+def _reported_tree(tmp_path: Path) -> Path:
+    """A saved config whose output tree carries pipeline-written status artifacts."""
+    from chemrefine import io
+    from chemrefine.cache import save_failure_records
+    from chemrefine.state import FailureKind, FailureRecord
+
+    path = tmp_path / "input.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "steps": [
+                    {"step": 1, "name": "screen", "engine": "fake"},
+                    {"step": 2, "engine": "fake"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    outputs = tmp_path / "outputs"
+    io.save_step_csv(
+        energies_hartree=[-1.0, -0.9], structure_ids=["0", "1"], step_number=1, output_dir=outputs
+    )
+    save_failure_records(
+        outputs / "step1_screen",
+        [FailureRecord(structure_id="2", kind=FailureKind.MISSING_OUTPUT, reason="no output")],
+    )
+    return path
+
+
+def test_dashboard_status_results_failures(client: Any, tmp_path: Path):
+    config = _reported_tree(tmp_path)
+
+    status = _post(client, "/api/status", {"config_path": str(config)}).get_json()
+    assert status["running"] is False
+    assert status["steps"][0]["reported_survivors"] == 2
+    assert status["steps"][0]["failures"] == 1
+
+    results = _post(
+        client, "/api/results", {"config_path": str(config), "step": 1, "limit": 1}
+    ).get_json()
+    assert results["total"] == 2
+    assert len(results["rows"]) == 1
+
+    failures = _post(client, "/api/failures", {"config_path": str(config)}).get_json()
+    assert failures["failures"][0]["structure_id"] == "2"
+    assert failures["suggested_action"] == "rerun-errors"
+
+
+def test_dashboard_run_launches_detached(
+    client: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import subprocess
+
+    calls: list[dict[str, Any]] = []
+
+    class _Recorded:
+        def __init__(self, argv: list[str], **kwargs: Any) -> None:
+            self.pid = 4242
+            calls.append({"argv": argv, **kwargs})
+
+    monkeypatch.setattr(subprocess, "Popen", _Recorded)
+    config = _reported_tree(tmp_path)
+    started = _post(
+        client, "/api/run", {"config_path": str(config), "action": "rerun-errors"}
+    ).get_json()
+    assert started["pid"] == 4242
+    [call] = calls
+    assert call["argv"][3] == "rerun-errors"
+    assert call["start_new_session"] is True
+
+
+def test_dashboard_run_surfaces_a_held_lock_as_exit_code_10(client: Any, tmp_path: Path):
+    import json as jsonlib
+    import os
+    import socket
+
+    from chemrefine import pipeline
+
+    config = _reported_tree(tmp_path)
+    outputs = tmp_path / "outputs"
+    (outputs / pipeline.RUN_LOCK_NAME).write_text(
+        jsonlib.dumps({"host": socket.gethostname(), "pid": os.getpid(), "started": "now"}),
+        encoding="utf-8",
+    )
+    refused = _post(client, "/api/run", {"config_path": str(config)})
+    assert refused.status_code == 400
+    assert refused.get_json()["exit_code"] == 10
+
+
 def test_non_chemrefine_errors_are_not_swallowed(client: Any):
     """Only ChemRefineError gets the JSON shape; a genuine bug must stay a loud bug."""
     with pytest.raises(KeyError):
