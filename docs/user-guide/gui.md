@@ -5,6 +5,12 @@ left pane: workflow settings and steps as forms; right pane: the `input.yaml` be
 built, live. The layout follows the IQmol submission window: select on the left, read
 the resulting input on the right.
 
+!!! tip "Try it online"
+    The builder also runs on this site, no install needed:
+    **[open the playground](https://sterling-group.github.io/ChemRefine/playground/)**.
+    The online copy builds and copies/downloads YAML from the same live schema; running
+    validation, saving files, and editing templates need the local `chemrefine gui`.
+
 ```bash
 pip install 'chemrefine[gui]'
 chemrefine gui                     # start from scratch

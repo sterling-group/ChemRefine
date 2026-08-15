@@ -5,20 +5,31 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,"><!-- no favicon request; keeps the server log quiet -->
 <title>ChemRefine — workflow builder</title>
-<link rel="stylesheet" href="/static/style.css">
-<script src="/static/forms.js"></script>
-<script src="/static/app.js"></script>
-<script src="/static/vendor/alpine.min.js" defer></script>
+<!-- Relative asset paths on purpose: the same page serves from the local Flask app
+     (at /) and from the docs site's /playground/ copy. -->
+<link rel="stylesheet" href="static/style.css">
+<script src="static/forms.js"></script>
+<script src="static/app.js"></script>
+<script src="static/vendor/js-yaml.min.js"></script>
+<script src="static/vendor/alpine.min.js" defer></script>
 </head>
 <body x-data="builder()" x-init="init()">
 
 <header>
   <h1>ChemRefine</h1>
-  <span class="muted" x-text="savedPath ? savedPath : 'unsaved workflow'"></span>
+  <span class="muted" x-show="!staticMode"
+        x-text="savedPath ? savedPath : 'unsaved workflow'"></span>
+  <span class="muted" x-show="staticMode" style="display:none">
+    online playground — build and copy; validation, saving and templates need
+    <code>chemrefine gui</code> locally
+  </span>
   <nav>
-    <button @click="validateNow()">Validate</button>
-    <button @click="openSave()">Save…</button>
-    <button :disabled="!savedPath" @click="scaffold()">Scaffold templates</button>
+    <button @click="validateNow()" :disabled="staticMode"
+            :title="staticMode ? 'needs the local chemrefine gui' : ''">Validate</button>
+    <button class="mini" @click="downloadYaml()">⬇ input.yaml</button>
+    <button x-show="!staticMode" @click="openSave()">Save…</button>
+    <button x-show="!staticMode" :disabled="!savedPath" @click="scaffold()">
+      Scaffold templates</button>
   </nav>
 </header>
 
@@ -55,7 +66,7 @@
               <span class="pathrow">
                 <input type="text" :value="cfg[field.key] ?? ''" :placeholder="field.fallback"
                        @input="setTop(field, $event.target.value)">
-                <button x-show="field.path" class="mini" title="Browse"
+                <button x-show="field.path && !staticMode" class="mini" title="Browse"
                         @click="openBrowse(field.key)">📁</button>
               </span>
             </template>
@@ -243,7 +254,7 @@
            x-text="'Untouched option keys kept as-is: ' + passthroughKeys(step).join(', ')"></p>
 
         <button class="mini" :disabled="!savedPath" @click="openTemplate(step)"
-                x-show="isTemplateDriven(step.engine)">Edit template…</button>
+                x-show="isTemplateDriven(step.engine) && !staticMode">Edit template…</button>
       </details>
     </template>
     <button id="addstep" @click="addStep()">＋ Add step</button>

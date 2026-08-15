@@ -11,6 +11,7 @@
 function builder() {
   return {
     token: new URLSearchParams(window.location.search).get("token") || "",
+    staticMode: false,
     ready: false,
     schema: null,
     cfg: { steps: [] },
@@ -26,13 +27,27 @@ function builder() {
 
     // ---------------- boot ----------------
     async init() {
-      const data = await this.api("GET", "/api/bootstrap");
-      this.schema = data.schema;
-      if (data.initial) {
-        this.savedPath = data.initial.path;
-        const parsed = await this.api("POST", "/api/parse",
-                                      { yaml_text: data.initial.yaml_text });
-        if (parsed && parsed.config) this.cfg = this.withSteps(parsed.config);
+      // One page, two worlds: served by the local Flask app there is an /api behind
+      // us; copied onto the static docs site there is only schema.json, baked at docs
+      // build time. Probe once and let every later call route accordingly.
+      let data = null;
+      try {
+        data = await this.api("GET", "/api/bootstrap");
+      } catch (err) {
+        data = null;
+      }
+      if (data) {
+        this.schema = data.schema;
+        if (data.initial) {
+          this.savedPath = data.initial.path;
+          const parsed = await this.api("POST", "/api/parse",
+                                        { yaml_text: data.initial.yaml_text });
+          if (parsed && parsed.config) this.cfg = this.withSteps(parsed.config);
+        }
+      } else {
+        this.staticMode = true;
+        this.flash = "";
+        this.schema = await (await fetch("schema.json")).json();
       }
       if (!this.cfg.steps.length) this.addStep();
       this.ready = true;
@@ -40,6 +55,7 @@ function builder() {
     },
 
     async api(method, url, body) {
+      if (this.staticMode) return this.staticApi(url, body);
       const options = { method, headers: { "X-ChemRefine-Token": this.token } };
       if (body !== undefined) {
         options.headers["Content-Type"] = "application/json";
@@ -52,6 +68,29 @@ function builder() {
         return null;
       }
       return data;
+    },
+
+    staticApi(url, body) {
+      // The playground's stand-ins. YAML runs on vendored js-yaml here ONLY — the
+      // local GUI keeps emission server-side, the system's single implementation.
+      if (url === "/api/yaml") {
+        return { yaml_text: jsyaml.dump(body.config, { noRefs: true }) };
+      }
+      if (url === "/api/parse") {
+        try {
+          const config = jsyaml.load(body.yaml_text);
+          if (!config || typeof config !== "object" || Array.isArray(config)) {
+            this.flash = "config is not a YAML mapping";
+            return null;
+          }
+          return { config };
+        } catch (err) {
+          this.flash = "malformed YAML: " + err.message;
+          return null;
+        }
+      }
+      this.flash = "not available in the online playground — pip install chemrefine[gui]";
+      return null;
     },
 
     withSteps(config) { return { steps: [], ...config }; },
@@ -169,6 +208,14 @@ function builder() {
         if (data) this.yamlText = data.yaml_text;
       }, 150);
     },
+    downloadYaml() {
+      const blob = new Blob([this.yamlText], { type: "text/yaml" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "input.yaml";
+      link.click();
+      URL.revokeObjectURL(link.href);
+    },
     async copyYaml() {
       // 127.0.0.1 is a secure context, so the async Clipboard API is available;
       // the execCommand path covers browsers that still refuse it.
@@ -195,6 +242,10 @@ function builder() {
 
     // ---------------- actions ----------------
     async validateNow() {
+      if (this.staticMode) {
+        this.flash = "validation runs the real models — pip install chemrefine[gui]";
+        return;
+      }
       const base = this.savedPath
         ? this.savedPath.slice(0, this.savedPath.lastIndexOf("/")) : null;
       this.report = await this.api("POST", "/api/validate",

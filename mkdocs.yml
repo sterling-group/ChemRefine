@@ -43,6 +43,11 @@ validation:
     omitted_files: warn
     not_found: warn
 
+# Post-build: copy the GUI assets to site/playground/ with a baked schema.json, so the
+# workflow builder is usable on the published docs (static mode: build + copy/download).
+hooks:
+  - docs/hooks/playground.py
+
 plugins:
   - search
   - mkdocstrings:
