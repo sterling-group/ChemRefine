@@ -22,6 +22,14 @@ from chemrefine.nms import NmsOptions
 
 _DOC = Path(__file__).resolve().parent.parent / "docs" / "user-guide" / "configuration.md"
 
+# A guard on the repository's prose, not on the package: the sdist ships the suite so a
+# distro packager can run it, but `docs/` (14 MB of site assets) deliberately does not
+# ship — so with no page to check, the guard has nothing to say. In the repo the file
+# always exists and the guard always runs.
+pytestmark = pytest.mark.skipif(
+    not _DOC.is_file(), reason="docs/ is a repository artifact and does not ship in the sdist"
+)
+
 
 def _documented_universe() -> dict[str, set[str]]:
     """Every field name the reference must mention, grouped by the model owning it."""

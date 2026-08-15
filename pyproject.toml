@@ -181,13 +181,23 @@ packages = ["src/chemrefine"]
 # `tests` ships so a distro packager can actually run the suite from the sdist —
 # the fixtures are ~1.3 MB, most of it trimmed real ORCA output and the compressed
 # e2e recordings, which is what makes the tests meaningful in the first place.
+# `examples` ships for the same reason (and as the paper artifacts they are): the
+# example sweep and one ORCA-inspect fixture read them, so without them the suite
+# the sdist promises fails 4 tests. `docs` stays out on size (14 MB of site
+# assets); its drift tests skip themselves when the tree is absent.
+#
+# Every pattern is anchored with a leading `/`. Hatchling patterns are
+# gitignore-style and a bare name matches at any depth — the unanchored
+# `README.md` shipped `examples/README.md` alone, which is how the drift went
+# unnoticed. CI runs this suite from the built sdist, so the promise is gated.
 include = [
-    "src/chemrefine",
-    "tests",
-    "README.md",
-    "LICENSE",
-    "CHANGELOG.md",
-    "pyproject.toml",
+    "/src/chemrefine",
+    "/tests",
+    "/examples",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/pyproject.toml",
 ]
 
 [tool.mypy]
