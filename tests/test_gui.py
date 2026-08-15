@@ -63,10 +63,15 @@ def test_a_tokenless_app_is_the_unit_test_affordance(tmp_path: Path):
 
 
 def test_bootstrap_carries_the_schema_and_no_initial_without_a_config(client: Any):
+    import socket
+
     data = _get(client, "/api/bootstrap").get_json()
     assert "config" in data["schema"]
     assert "engines" in data["schema"]
     assert data["initial"] is None
+    # Over SSH forwarding the address bar always says 127.0.0.1 — this is how the UI
+    # can say where Save… actually writes.
+    assert data["host"] == socket.gethostname()
 
 
 def test_bootstrap_preloads_a_launched_config(tmp_path: Path):

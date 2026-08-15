@@ -26,10 +26,11 @@
   <nav>
     <button @click="validateNow()" :disabled="staticMode"
             :title="staticMode ? 'needs the local chemrefine gui' : ''">Validate</button>
-    <!-- Download is the playground's way out (no filesystem there); locally,
-         Save… writes the real file and Copy covers grabbing the text. -->
-    <button class="mini" x-show="staticMode" @click="downloadYaml()">⬇ input.yaml</button>
-    <button x-show="!staticMode" @click="openSave()">Save…</button>
+    <!-- Two destinations, not duplicates: Save… writes on the machine the server runs
+         on (the HPC node when port-forwarded — the tooltip names it); Download in the
+         YAML pane goes through the browser to THIS machine. -->
+    <button x-show="!staticMode" @click="openSave()"
+            :title="serverHost ? 'writes on ' + serverHost : ''">Save…</button>
     <button x-show="!staticMode" :disabled="!savedPath" @click="scaffold()">
       Scaffold templates</button>
   </nav>
@@ -295,6 +296,10 @@
       <button class="mini" @click="copyYaml()" title="Copy the YAML to the clipboard">
         ⧉ Copy
       </button>
+      <button class="mini" @click="downloadYaml()"
+              title="Download through the browser — lands on this machine, even when the GUI runs on a cluster">
+        ⬇ Download
+      </button>
       <label class="muted">
         <input type="checkbox" x-model="rawEdit"> edit as text
       </label>
@@ -413,7 +418,9 @@
           </select>
           <input type="text" x-model="chat.baseUrl" placeholder="base URL (optional)"
                  @change="saveChatSettings()">
-          <button class="mini" title="Forget this conversation" @click="resetChat()">reset</button>
+          <button class="mini" @click="resetChat()"
+                  title="Clear the conversation and reset provider settings to defaults">
+            reset</button>
         </div>
         <div id="chatlog">
           <template x-for="(entry, i) in chat.msgs" :key="'m' + i">

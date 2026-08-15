@@ -12,6 +12,7 @@ function builder() {
   return {
     token: new URLSearchParams(window.location.search).get("token") || "",
     staticMode: false,
+    serverHost: "",
     ready: false,
     schema: null,
     cfg: { steps: [] },
@@ -48,6 +49,7 @@ function builder() {
       }
       if (data) {
         this.schema = data.schema;
+        this.serverHost = data.host || "";
         if (data.initial) {
           this.savedPath = data.initial.path;
           const parsed = await this.api("POST", "/api/parse",
@@ -363,7 +365,7 @@ function builder() {
       if (!state) return;
       if (!state.installed) this.chat.detail = state.detail;
       else if (!state.configured && !this.chat.model) {
-        this.chat.detail = "pick a model above (or set CHEMREFINE_LLM_MODEL)";
+        this.chat.detail = "pick a model in the settings below (or set CHEMREFINE_LLM_MODEL)";
       } else this.chat.detail = "";
     },
     _chatPayload(extra) {
@@ -406,19 +408,28 @@ function builder() {
       await this._chatTurn({ approvals });
     },
     async resetChat() {
-      // Clear locally FIRST — reset must work even when the server call cannot
-      // (a stuck busy flag, a dropped connection), or the panel stays dead.
+      // Reset everything the user can see — conversation AND the settings drawer —
+      // and say so: a reset that only clears hidden server state looks broken.
+      // Local state clears FIRST, so reset works even when the server call cannot
+      // (a stuck busy flag, a dropped connection).
       this.chat.msgs = [];
       this.chat.pending = [];
       this.chat.decisions = {};
       this.chat.draft = "";
       this.chat.busy = false;
-      this.flash = "";
+      this.chat.provider = "ollama";
+      this.chat.model = "";
+      this.chat.baseUrl = "";
+      localStorage.removeItem("cr-provider");
+      localStorage.removeItem("cr-model");
+      localStorage.removeItem("cr-baseurl");
+      this.flash = "agent chat reset — conversation cleared, provider settings back to defaults";
       try {
         await this.api("POST", "/api/agent/chat", { reset: true });
       } catch (err) {
         // Local state is already fresh; the server forgets on its next reset/turn.
       }
+      this.chatAvailability();
     },
 
     // ---------------- browse / save ----------------

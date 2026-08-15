@@ -84,14 +84,28 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
 
     @app.get("/api/bootstrap")
     def bootstrap() -> Any:
-        """Everything the frontend needs to render: schema document + launch context."""
+        """Everything the frontend needs to render: schema document + launch context.
+
+        ``host`` names the machine the server runs on: over SSH port forwarding the
+        browser's address bar always says 127.0.0.1, so this is the only way the UI can
+        tell the user *where* Save… writes — the disambiguation from Download, which
+        goes through the browser to the local machine.
+        """
+        import socket
+
         initial: dict[str, Any] | None = None
         if config_path is not None and config_path.is_file():
             initial = {
                 "path": str(config_path),
                 "yaml_text": config_path.read_text(encoding="utf-8"),
             }
-        return jsonify({"schema": introspect.schema_document(), "initial": initial})
+        return jsonify(
+            {
+                "schema": introspect.schema_document(),
+                "initial": initial,
+                "host": socket.gethostname(),
+            }
+        )
 
     @app.post("/api/validate")
     def validate() -> Any:
