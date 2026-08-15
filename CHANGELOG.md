@@ -24,6 +24,46 @@ for the full map.
 
 ### Added
 
+- **Config tooling** (`chemrefine validate | scaffold | schema | engines`):
+  `validate` reports every finding at once — pydantic errors with field locations,
+  unknown engines, bad values for declared option knobs, invalid NMS knobs — plus
+  warnings for the silent no-ops (undeclared option keys, `nms: true` on an engine
+  that cannot NMS, step templates and SLURM headers that do not exist yet, resolved
+  the way dispatch resolves them); warnings never block, an unrunnable config exits 2.
+  `scaffold` writes commented starter templates into every gap the config expects.
+  `schema` prints a machine-readable document generated from the validating models —
+  the config schema, the NMS knobs, one descriptor per registered engine (declared
+  options schema, capabilities, `operation:` vocabulary) — and `engines` lists the
+  registry. What the GUI's forms and any AI agent read instead of the prose docs.
+- **MCP server** (`chemrefine mcp`, extra `chemrefine[mcp]`): ChemRefine's agent tools
+  served over the Model Context Protocol on stdio, so Claude Code/Desktop, Cursor and
+  friends can author, run, and triage workflows (`claude mcp add chemrefine --
+  chemrefine mcp`; over SSH for a cluster). The surface: schema/introspection,
+  validation, `save_config` (validation gates the write), template read/write/scaffold,
+  detached `start_run` with filesystem-read `run_status`/paginated `get_results`/
+  `get_failures`, and chemistry grounding — `build_structures` (SMILES/XYZ with
+  charge-parity checks), `lookup_smiles` (PubChem), `get_frequencies`
+  (minimum-vs-TS from cached imaginary modes) and `analyze_mode` (which atoms and
+  bonds a normal mode moves — reaction-coordinate validation). The packaged operating
+  guide ships as the `chemrefine://guide` resource, with its vocabulary pinned to the
+  code by tests.
+- **Workflow-builder GUI** (`chemrefine gui`, extra `chemrefine[gui]`): a local
+  two-pane web app (127.0.0.1 behind a per-session token) — click-through forms
+  rendered from the live schema on the left, the `input.yaml` on the right, emitted
+  and parsed server-side only. Validate anchors findings to fields; Save…/scaffold/
+  inline template editing; a run dashboard (start/resume/rerun-errors behind
+  confirmations, polling status, paginated `steps.csv` results); and, with the
+  `[agent]` extra, an agent chat panel whose mutating tool calls arrive as allow/deny
+  cards. The builder also publishes on the docs site as the **Playground** (top
+  navigation) in a build-and-copy static mode.
+- **Embedded agent** (`chemrefine agent`, extra `chemrefine[agent]`): a terminal chat
+  over the same tool surface, harnessed by PydanticAI — multi-provider (presets for
+  local Ollama/vLLM, any OpenAI-compatible endpoint via `--base-url`, or native
+  `provider:model` strings; configuration via `CHEMREFINE_LLM_*`). Every mutating tool
+  sits behind a y/N confirmation whose refusal is reported to the model as an answer.
+  `--check` verifies the configured endpoint and names the fix without downloading
+  anything — model choice and site policy stay the user's (see the new
+  platforms/model-policy docs page).
 - **Q-Chem engine** (`engine: qchem`): per-structure Q-Chem jobs from a `stepN.in`
   template, with the geometry generated into job 1's `$molecule` block (a multi-job
   `@@@` chain's later `$molecule read $end` survives untouched). Parallelism is
