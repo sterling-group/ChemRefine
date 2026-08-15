@@ -15,13 +15,14 @@ function builder() {
     ready: false,
     schema: null,
     cfg: { steps: [] },
+    execRows: [],
     yamlText: "",
     rawEdit: false,
     report: null,
     flash: "",
     savedPath: null,
     browse: { open: false, mode: "save", title: "", path: "", parent: "",
-              entries: [], filename: "input.yaml", target: null },
+              entries: [], filename: "input.yaml", onPick: null },
     tmpl: { open: false, step: null, path: "", text: "" },
     _timer: null,
 
@@ -50,6 +51,7 @@ function builder() {
         this.schema = await (await fetch("schema.json")).json();
       }
       if (!this.cfg.steps.length) this.addStep();
+      this.syncExecRows();
       this.ready = true;
       this.syncYaml();
     },
@@ -180,6 +182,40 @@ function builder() {
     },
     numOrUndef(raw) { return raw === "" ? undefined : Number(raw); },
 
+    // ---------------- executables (dict → editable rows) ----------------
+    syncExecRows() {
+      this.execRows = Object.entries(this.cfg.executables || {})
+        .map(([name, path]) => ({ name, path: String(path) }));
+    },
+    writeExecBack() {
+      const entries = this.execRows
+        .filter((row) => row.name.trim())
+        .map((row) => [row.name.trim(), row.path]);
+      if (entries.length) this.cfg.executables = Object.fromEntries(entries);
+      else delete this.cfg.executables;
+      this.syncYaml();
+    },
+    addExec() { this.execRows.push({ name: "", path: "" }); },
+    removeExec(index) {
+      this.execRows.splice(index, 1);
+      this.writeExecBack();
+    },
+    setExecName(index, name) {
+      this.execRows[index].name = name;
+      this.writeExecBack();
+    },
+    setExecPath(index, path) {
+      this.execRows[index].path = path;
+      this.writeExecBack();
+    },
+    browseExec(index) {
+      this.openBrowseWith("Pick the " + (this.execRows[index].name || "executable") +
+                          " binary", (path) => {
+        this.execRows[index].path = path;
+        this.writeExecBack();
+      });
+    },
+
     addStep() {
       this.cfg.steps.push({ step: this.cfg.steps.length + 1, engine: "orca" });
       this.syncYaml();
@@ -234,6 +270,7 @@ function builder() {
       const parsed = await this.api("POST", "/api/parse", { yaml_text: this.yamlText });
       if (parsed && parsed.config) {
         this.cfg = this.withSteps(parsed.config);
+        this.syncExecRows();
         this.rawEdit = false;
         this.flash = "text applied to the form";
         this.syncYaml();
@@ -261,12 +298,17 @@ function builder() {
 
     // ---------------- browse / save ----------------
     async openBrowse(fieldKey) {
-      this.browse = { ...this.browse, open: true, mode: "pick", target: fieldKey,
-                      title: "Pick " + fieldKey };
+      await this.openBrowseWith("Pick " + fieldKey, (path) => {
+        this.cfg[fieldKey] = path;
+        this.syncYaml();
+      });
+    },
+    async openBrowseWith(title, onPick) {
+      this.browse = { ...this.browse, open: true, mode: "pick", onPick, title };
       await this.navigate(null);
     },
     async openSave() {
-      this.browse = { ...this.browse, open: true, mode: "save", target: null,
+      this.browse = { ...this.browse, open: true, mode: "save", onPick: null,
                       title: "Save workflow as…" };
       await this.navigate(null);
     },
@@ -280,10 +322,9 @@ function builder() {
       }
     },
     pickFile(entry) {
-      if (this.browse.mode === "pick" && this.browse.target) {
-        this.cfg[this.browse.target] = entry.path;
+      if (this.browse.mode === "pick" && this.browse.onPick) {
+        this.browse.onPick(entry.path);
         this.browse.open = false;
-        this.syncYaml();
       } else {
         this.browse.filename = entry.name;
       }

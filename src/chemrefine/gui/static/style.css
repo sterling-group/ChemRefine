@@ -52,6 +52,7 @@ h3 { font-size: .8rem; margin: .5rem 0 .2rem; color: var(--muted);
 .pair { display: flex; gap: .3rem; flex: 1; }
 .pair input { width: 50%; }
 .pathrow { display: flex; gap: .2rem; flex: 1; }
+.fields input.execname { flex: 0 0 9.5em; }
 .subform { border-left: 3px solid var(--line); margin: .4rem 0 .4rem .4rem; padding-left: .6rem; }
 .passthrough { font-style: italic; }
 

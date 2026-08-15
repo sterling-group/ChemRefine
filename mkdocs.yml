@@ -106,6 +106,7 @@ nav:
       - Configuration: user-guide/configuration.md
       - CLI Reference: user-guide/cli.md
       - GUI (workflow builder): user-guide/gui.md
+      - Workflow Builder (playground): user-guide/playground.md
       - MCP Server (AI agents): user-guide/mcp.md
       - Embedded Agent: user-guide/agent.md
       - Troubleshooting: user-guide/troubleshooting.md

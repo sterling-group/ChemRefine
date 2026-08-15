@@ -73,6 +73,30 @@
           </label>
         </template>
       </div>
+      <div class="subform">
+        <h3>Executables</h3>
+        <div class="fields">
+          <template x-for="(row, ei) in execRows" :key="'exec-' + ei">
+            <label title="Program name → binary path (e.g. orca, or Q-Chem's qc/qcaux)">
+              <input class="execname" type="text" :value="row.name" placeholder="orca"
+                     list="exec-names" @input="setExecName(ei, $event.target.value)">
+              <span class="pathrow">
+                <input type="text" :value="row.path" placeholder="/opt/orca/orca"
+                       @input="setExecPath(ei, $event.target.value)">
+                <button class="mini" x-show="!staticMode" title="Browse"
+                        @click="browseExec(ei)">📁</button>
+                <button class="mini" title="Remove" @click="removeExec(ei)">✕</button>
+              </span>
+            </label>
+          </template>
+        </div>
+        <button class="mini" @click="addExec()">＋ executable</button>
+        <datalist id="exec-names">
+          <option value="orca"></option>
+          <option value="qc"></option>
+          <option value="qcaux"></option>
+        </datalist>
+      </div>
     </details>
 
     <h2>Steps</h2>
