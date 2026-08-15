@@ -110,10 +110,28 @@ function builder() {
 
     // ---------------- schema-derived field lists ----------------
     get topFields() {
-      return fieldSpecs(this.schema.config, ["steps", "executables"]);
+      // Presentation order only (the emitted YAML uses the schema's canonical order):
+      // where things live, what the molecule is, what resources it gets, how it runs.
+      const curated = [
+        "input", "template_dir", "output_dir", "scratch_dir",
+        "charge", "multiplicity",
+        "max_cores", "max_gpus", "job_timeout_seconds",
+        "dispatch", "slurm_template", "slurm_array",
+      ];
+      const rank = Object.fromEntries(curated.map((key, i) => [key, i]));
+      return fieldSpecs(this.schema.config, ["steps", "executables"])
+        .sort((a, b) => (rank[a.key] ?? 99) - (rank[b.key] ?? 99));
     },
     get engineNames() { return Object.keys(this.schema.engines).sort(); },
-    get operations() { return this.schema.operations || []; },
+    operationsFor(step) {
+      // Each engine's own vocabulary (ORCA family today; empty = the field is a free
+      // label for this engine). A loaded config's off-list value stays selectable so
+      // the display never lies about the state.
+      const descriptor = this.schema.engines[step.engine];
+      const ops = descriptor && descriptor.operations ? [...descriptor.operations] : [];
+      if (step.operation && !ops.includes(step.operation)) ops.unshift(step.operation);
+      return ops;
+    },
     get nmsFields() { return fieldSpecs(this.schema.nms); },
     nmsFieldsFor(step) {
       // Knobs only meaningful for one target stay hidden until that target is chosen;
@@ -191,13 +209,18 @@ function builder() {
       else sample[field.key] = value;
       this.syncYaml();
     },
-    numOrUndef(raw) { return raw === "" ? undefined : Number(raw); },
-    minOneOrUndef(raw) {
-      // Multiplicity floor: the schema says >= 1, and 0 or negatives typed past the
-      // spinner must not reach the YAML.
-      if (raw === "") return undefined;
-      const n = Number(raw);
-      return Number.isNaN(n) ? undefined : Math.max(1, Math.round(n));
+    setStepCharge(index, raw) {
+      // The step's baseline is the *inherited* workflow charge: stepping starts there,
+      // and an override equal to it is no override at all — the YAML stays clean.
+      const inherited = this.cfg.charge ?? 0;
+      const n = raw === "" ? Number.NaN : Number(raw);
+      this.setStep(index, "charge", Number.isNaN(n) || n === inherited ? undefined : n);
+    },
+    setStepMult(index, raw) {
+      // Same inherit-baseline rule, with the schema's floor of 1 enforced on typing.
+      const inherited = this.cfg.multiplicity ?? 1;
+      const n = raw === "" ? Number.NaN : Math.max(1, Math.round(Number(raw)));
+      this.setStep(index, "multiplicity", Number.isNaN(n) || n === inherited ? undefined : n);
     },
 
     // ---------------- executables (dict → editable rows) ----------------

@@ -63,7 +63,10 @@
             </template>
             <template x-if="field.kind === 'number'">
               <input type="number" :min="field.min" :max="field.max"
-                     :value="cfg[field.key] ?? ''" :placeholder="field.fallback"
+                     :value="cfg[field.key] ?? field.fallbackNum ?? ''"
+                     :placeholder="field.fallbackNum === null ? '(unset)' : ''"
+                     :class="(cfg[field.key] ?? null) === null && field.fallbackNum !== null
+                             ? 'isdefault' : ''"
                      @input="setTop(field, $event.target.value)">
             </template>
             <template x-if="field.kind === 'text'">
@@ -135,8 +138,10 @@
           </label>
           <label><span>operation</span>
             <select @change="setStep(index, 'operation', $event.target.value || undefined)">
-              <option value="" :selected="!step.operation">(from template)</option>
-              <template x-for="op in operations" :key="op">
+              <option value="" :selected="!step.operation"
+                      x-text="operationsFor(step).length ? '(from template)' : '(not used)'">
+              </option>
+              <template x-for="op in operationsFor(step)" :key="op">
                 <option :value="op" :selected="op === step.operation" x-text="op"></option>
               </template>
             </select>
@@ -157,10 +162,14 @@
           </label>
           <label><span>charge / mult</span>
             <span class="pair">
-              <input type="number" :value="step.charge ?? ''" placeholder="inherit"
-                     @input="setStep(index, 'charge', numOrUndef($event.target.value))">
-              <input type="number" min="1" :value="step.multiplicity ?? ''" placeholder="inherit"
-                     @input="setStep(index, 'multiplicity', minOneOrUndef($event.target.value))">
+              <input type="number" :value="step.charge ?? cfg.charge ?? 0"
+                     :class="step.charge === undefined ? 'isdefault' : ''"
+                     title="inherits the workflow charge until changed"
+                     @input="setStepCharge(index, $event.target.value)">
+              <input type="number" min="1" :value="step.multiplicity ?? cfg.multiplicity ?? 1"
+                     :class="step.multiplicity === undefined ? 'isdefault' : ''"
+                     title="inherits the workflow multiplicity until changed"
+                     @input="setStepMult(index, $event.target.value)">
             </span>
           </label>
         </div>
@@ -188,7 +197,10 @@
                 </template>
                 <template x-if="field.kind === 'number'">
                   <input type="number" step="any" :min="field.min" :max="field.max"
-                         :value="(step.options || {})[field.key] ?? ''" :placeholder="field.fallback"
+                         :value="(step.options || {})[field.key] ?? field.fallbackNum ?? ''"
+                         :placeholder="field.fallbackNum === null ? '(unset)' : ''"
+                         :class="((step.options || {})[field.key] ?? null) === null
+                                 && field.fallbackNum !== null ? 'isdefault' : ''"
                          @input="setOption(index, field, $event.target.value)">
                 </template>
                 <template x-if="field.kind === 'text'">
@@ -229,7 +241,10 @@
                 </template>
                 <template x-if="field.kind !== 'select'">
                   <input type="number" step="any" :min="field.min" :max="field.max"
-                         :value="(step.options || {})[field.key] ?? ''" :placeholder="field.fallback"
+                         :value="(step.options || {})[field.key] ?? field.fallbackNum ?? ''"
+                         :placeholder="field.fallbackNum === null ? '(unset)' : ''"
+                         :class="((step.options || {})[field.key] ?? null) === null
+                                 && field.fallbackNum !== null ? 'isdefault' : ''"
                          @input="setOption(index, field, $event.target.value)">
                 </template>
               </label>
@@ -270,8 +285,10 @@
                 </template>
                 <template x-if="field.kind === 'number'">
                   <input type="number" step="any" :min="field.min" :max="field.max"
-                         :value="step.sample[field.key] ?? ''"
-                         :placeholder="field.fallback"
+                         :value="step.sample[field.key] ?? field.fallbackNum ?? ''"
+                         :placeholder="field.fallbackNum === null ? '(unset)' : ''"
+                         :class="(step.sample[field.key] ?? null) === null
+                                 && field.fallbackNum !== null ? 'isdefault' : ''"
                          @input="setSample(index, field, $event.target.value)">
                 </template>
               </label>

@@ -61,6 +61,9 @@ h3 { font-size: .8rem; margin: .5rem 0 .2rem; color: var(--muted);
   font-size: .8rem; border: 1px solid var(--line); border-radius: 5px;
 }
 .fields input.execname { flex: 0 0 8em; min-width: 0; }
+/* A muted value is a schema default (or an inherited per-step value): it steps like a
+   real value but stays OUT of the YAML until changed. */
+.fields input.isdefault, .pair input.isdefault { color: var(--muted); }
 /* Executables rows carry name + path + two buttons: one row per line, full width. */
 .fields.execrows { grid-template-columns: 1fr; }
 .subform { border-left: 3px solid var(--line); margin: .4rem 0 .4rem .4rem; padding-left: .6rem; }

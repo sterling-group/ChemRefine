@@ -30,6 +30,7 @@ from chemrefine.engines.api import (
     ArtifactEngine,
     CalculationEngine,
     NmsCapableEngine,
+    OperationsDeclaring,
     OptionsDeclaring,
     ProvisionableEngine,
     StreamingSubmit,
@@ -67,6 +68,11 @@ class EngineDescriptor:
     """Detected capability Protocols, sorted, from the stable vocabulary above."""
     backend_extras: tuple[str, ...]
     """Pip extras this engine's backends install from (``chemrefine backends install``)."""
+    operations: tuple[str, ...]
+    """The ``operation:`` vocabulary this engine interprets — empty for an engine that
+    treats the field as a label (see
+    :class:`~chemrefine.engines.api.OperationsDeclaring`); the GUI's dropdown offers
+    exactly this."""
 
 
 def _describe(name: str, engine: CalculationEngine) -> EngineDescriptor:
@@ -100,6 +106,9 @@ def _describe(name: str, engine: CalculationEngine) -> EngineDescriptor:
             tuple(sorted(engine.backend_extras()))
             if isinstance(engine, ProvisionableEngine)
             else ()
+        ),
+        operations=(
+            tuple(sorted(engine.operations)) if isinstance(engine, OperationsDeclaring) else ()
         ),
     )
 

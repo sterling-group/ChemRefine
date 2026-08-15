@@ -36,6 +36,10 @@ class OrcaEngine(JobEngine):
     label: ClassVar[str] = "ORCA"
     template_suffix: ClassVar[str] = "inp"
     output_suffix: ClassVar[str] = "out"
+    operations: ClassVar[tuple[str, ...]] = tuple(sorted(output.known_operations()))
+    """The ``operation:`` vocabulary this family interprets — the parser dispatch's own
+    set (see :class:`~chemrefine.engines.api.OperationsDeclaring`), inherited by the
+    ExtOpt engines, which are ORCA-driven and parse the same outputs."""
     output_globs: ClassVar[tuple[str, ...]] = (
         "*.out",
         "*.xyz",

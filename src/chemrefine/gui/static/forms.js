@@ -41,18 +41,24 @@ function fieldSpec(key, prop) {
     ? "" : String(prop.default);
   if (Array.isArray(p.enum)) {
     return { key, kind: "select", options: p.enum, fallback, doc, path: false,
-             min: null, max: null };
+             min: null, max: null, fallbackNum: null };
   }
   if (p.type === "boolean") {
     return { key, kind: "checkbox", options: [], fallback, doc, path: false,
-             min: null, max: null };
+             min: null, max: null, fallbackNum: null };
   }
   if (p.type === "integer" || p.type === "number") {
     const { min, max } = numericBounds(p);
-    return { key, kind: "number", options: [], fallback, doc, path: false, min, max };
+    // A real numeric default becomes the input's *displayed* value (muted), so the
+    // spinner steps from it — an empty input steps from min-or-0, which is how
+    // "max_cores shows 4 but the arrow gives 1" happened. null = genuinely unset-able.
+    const fallbackNum = typeof prop.default === "number" ? prop.default : null;
+    return { key, kind: "number", options: [], fallback, doc, path: false,
+             min, max, fallbackNum };
   }
   const path = /(_dir|^input$)/.test(key);
-  return { key, kind: "text", options: [], fallback, doc, path, min: null, max: null };
+  return { key, kind: "text", options: [], fallback, doc, path,
+           min: null, max: null, fallbackNum: null };
 }
 
 /** All renderable fields of an object schema, minus `skip`, in schema order. */
@@ -68,19 +74,25 @@ function fieldSpecs(objectSchema, skip) {
 }
 
 /** Coerce an <input> string back to the schema's type ("" -> undefined = use default).
-
- * Numbers are clamped to the schema's bounds: the input's min/max attributes stop the
- * spinner, but nothing stops typing "0" into max_cores — the clamp does, and the YAML
- * pane shows the corrected value immediately. */
+ *
+ * Two rules beyond typing: numbers are clamped to the schema's bounds (the min/max
+ * attributes stop the spinner, but nothing stops typing "0" into max_cores — the clamp
+ * does), and any value equal to the schema default coerces to undefined, so the YAML
+ * carries only deviations — never a duplicate restatement of a default. */
 function coerceField(field, raw) {
   if (raw === "" || raw === undefined || raw === null) return undefined;
-  if (field.kind === "checkbox") return raw ? true : undefined;
+  if (field.kind === "checkbox") {
+    return raw === (field.fallback === "true") ? undefined : raw;
+  }
   if (field.kind === "number") {
     const n = Number(raw);
     if (Number.isNaN(n)) return raw;
-    if (field.min !== null && field.min !== undefined && n < field.min) return field.min;
-    if (field.max !== null && field.max !== undefined && n > field.max) return field.max;
-    return n;
+    let value = n;
+    if (field.min !== null && field.min !== undefined && value < field.min) value = field.min;
+    if (field.max !== null && field.max !== undefined && value > field.max) value = field.max;
+    if (field.fallbackNum !== null && value === field.fallbackNum) return undefined;
+    return value;
   }
+  if (field.fallback !== "" && String(raw) === field.fallback) return undefined;
   return raw;
 }

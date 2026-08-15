@@ -38,6 +38,10 @@ validates with — so every knob, enum and default is current by construction:
 - **NMS**: toggling `nms` reveals the NMS knobs.
 - Unknown option keys in a loaded config are **kept untouched** (script templates may
   read them as placeholders); the step notes them.
+- **Muted values are defaults** (or, for per-step charge/multiplicity, the inherited
+  workflow value): the spinner steps from them like real values, but they stay out of
+  the YAML until you change them — the file carries only your deviations. Setting a
+  field back to its default removes it from the YAML again.
 
 ## The right pane is the file
 

@@ -230,6 +230,23 @@ class OptionsDeclaring(Protocol):
     """The model validating this engine's ``step.options`` — the engine's one reader."""
 
 
+@runtime_checkable
+class OperationsDeclaring(Protocol):
+    """An engine that declares which ``operation:`` values it interprets.
+
+    Declarations only, like :class:`TemplateDriven`. The config schema keeps
+    ``operation`` a free string because engines interpret it themselves; this ClassVar
+    is how an engine *publishes* its vocabulary so introspection (and the GUI's
+    dropdown) can offer exactly the values that engine will act on — the ORCA family
+    declares its parser dispatch's own set, a script engine that treats the field as a
+    label declares nothing, and a future engine with operations of its own declares
+    them here without touching any consumer.
+    """
+
+    operations: ClassVar[tuple[str, ...]]
+    """The ``operation:`` spellings this engine interprets, canonical only."""
+
+
 @dataclass(frozen=True)
 class NmsInputInfo:
     """What an engine's configured input does, for the generic NMS coordinator.

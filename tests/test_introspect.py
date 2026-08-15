@@ -73,6 +73,25 @@ def test_orca_descriptor_pins_the_template_facts():
     assert orca.options_schema is None
 
 
+def test_operations_belong_to_the_family_that_interprets_them():
+    """The ORCA family declares the parser dispatch's vocabulary; nobody else invents one.
+
+    The GUI's dropdown renders exactly a descriptor's ``operations`` — an engine that
+    treats the field as a free label (the script engines, qchem, the fake) must report
+    an empty tuple, or the UI would offer ORCA's ensemble operations to an engine that
+    would silently ignore them.
+    """
+    from chemrefine.engines.orca.output.coordinator import known_operations
+
+    by_name = _by_name()
+    family = {"orca", "mlip-extopt", "pyscf-extopt"}
+    for name, descriptor in by_name.items():
+        if name in family:
+            assert descriptor.operations == tuple(sorted(known_operations())), name
+        else:
+            assert descriptor.operations == (), name
+
+
 def test_schema_document_serializes_whole_and_carries_the_config_schema():
     """The document must round-trip JSON and contain what the loader validates with.
 
