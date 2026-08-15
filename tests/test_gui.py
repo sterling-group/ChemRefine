@@ -98,6 +98,31 @@ def test_yaml_emit_and_parse_round_trip(client: Any):
     assert parsed == config
 
 
+def test_yaml_emits_settings_first_and_steps_last(client: Any):
+    """Click order must not leak into the file: a fresh session builds cfg from
+    ``{steps: []}``, but the YAML reads like the shipped examples — settings above."""
+    config = {
+        "steps": [{"engine": "orca", "name": "refine", "step": 1}],
+        "output_dir": "./outputs",
+        "template_dir": "./templates",
+        "unknown_key": 1,
+    }
+    emitted = _post(client, "/api/yaml", {"config": config}).get_json()["yaml_text"]
+    lines = [line.split(":")[0] for line in emitted.splitlines() if line and line[0] != " "]
+    assert lines.index("template_dir") < lines.index("output_dir") < lines.index("steps")
+    assert lines.index("steps") < lines.index("unknown_key")  # junk sorts last, validation's job
+    # Step keys follow StepConfig order: step before name before engine.
+    body = emitted[emitted.index("steps:") :]
+    assert body.index("step:") < body.index("name:") < body.index("engine:")
+
+    # Degenerate raw-edit shapes pass through the emitter unharmed — complaining
+    # about them is validation's job.
+    non_dict = _post(client, "/api/yaml", {"config": ["not", "a", "mapping"]}).get_json()
+    assert "not" in non_dict["yaml_text"]
+    odd_steps = _post(client, "/api/yaml", {"config": {"steps": "tbd"}}).get_json()
+    assert "tbd" in odd_steps["yaml_text"]
+
+
 def test_parse_reports_bad_yaml_as_400(client: Any):
     bad = _post(client, "/api/parse", {"yaml_text": "steps: [unclosed"})
     assert bad.status_code == 400

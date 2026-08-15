@@ -115,9 +115,17 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
 
     @app.post("/api/yaml")
     def to_yaml() -> Any:
-        """Form state (a raw config mapping) → YAML text. The one emitter."""
+        """Form state (a raw config mapping) → YAML text. The one emitter.
+
+        Keys are emitted in the schema's declaration order — workflow settings first,
+        ``steps`` last, and each step's keys in :class:`StepConfig` order — so the file
+        reads like every shipped example regardless of the order the user clicked
+        things together in.
+        """
         payload = request.get_json(force=True)
-        text = yaml.safe_dump(payload["config"], sort_keys=False, allow_unicode=True)
+        text = yaml.safe_dump(
+            _canonical_order(payload["config"]), sort_keys=False, allow_unicode=True
+        )
         return jsonify({"yaml_text": text})
 
     @app.post("/api/parse")
@@ -335,3 +343,32 @@ def _step_key(value: str | int) -> int | str:
     """A step selector from the wire: digits mean the step number, anything else a name."""
     text = str(value)
     return int(text) if text.isdigit() else text
+
+
+def _canonical_order(raw: Any) -> Any:
+    """Reorder a raw config mapping into the schema's declaration order.
+
+    The form assembles ``cfg`` in click order — a fresh session starts from
+    ``{steps: []}``, so without this the emitted YAML led with the steps block and
+    trailed the settings, unlike every example in the repository. The authority on
+    ordering is the model itself: :class:`~chemrefine.config.Config`'s fields for the
+    top level (``steps`` is declared last), :class:`~chemrefine.config.StepConfig`'s
+    for each step. Unknown keys sort to the end, order preserved — validation is the
+    place that complains about them, not the emitter.
+    """
+    from chemrefine.config import Config, StepConfig
+
+    if not isinstance(raw, dict):
+        return raw
+    top_rank = {name: i for i, name in enumerate(Config.model_fields)}
+    step_rank = {name: i for i, name in enumerate(StepConfig.model_fields)}
+    ordered = dict(sorted(raw.items(), key=lambda kv: top_rank.get(kv[0], len(top_rank))))
+    steps = ordered.get("steps")
+    if isinstance(steps, list):
+        ordered["steps"] = [
+            dict(sorted(s.items(), key=lambda kv: step_rank.get(kv[0], len(step_rank))))
+            if isinstance(s, dict)
+            else s
+            for s in steps
+        ]
+    return ordered
