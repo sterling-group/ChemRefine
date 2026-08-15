@@ -68,6 +68,30 @@ def test_help_lists_every_subcommand():
         assert cmd in result.stdout
 
 
+def test_the_legacy_translator_knows_every_subcommand():
+    """A subcommand the translator doesn't know is rewritten to `chemrefine run <cmd>`.
+
+    That is exactly how `chemrefine mcp` once became `run mcp` ("File 'mcp' does not
+    exist"): CliRunner-based tests bypass main() and its argv translation, so only this
+    pin holds the two vocabularies together.
+    """
+    from chemrefine import cli_legacy
+
+    commands = {
+        c.name or c.callback.__name__.replace("_", "-")
+        for c in app.registered_commands
+        if c.name is not None or c.callback is not None
+    }
+    groups = {g.name for g in app.registered_groups if g.name is not None}
+    registered = {name for name in commands | groups if isinstance(name, str)}
+    assert registered <= cli_legacy._SUBCOMMANDS
+    assert len(registered) >= 12  # nothing silently fell out of the derivation
+
+    for command in sorted(registered):
+        argv = [command, "whatever.yaml"]
+        assert _translate_legacy_argv(argv) == argv
+
+
 def test_schema_prints_the_introspection_document():
     """`chemrefine schema` emits the whole document as parseable JSON on stdout."""
     result = runner.invoke(app, ["schema"])

@@ -17,8 +17,29 @@ logger = logging.getLogger(__name__)
 
 
 _SUBCOMMANDS = frozenset(
-    {"run", "resume", "rerun", "rerun-errors", "rebuild-cache", "rebuild-nms", "backends"}
+    {
+        "run",
+        "resume",
+        "rerun",
+        "rerun-errors",
+        "rebuild-cache",
+        "rebuild-nms",
+        "backends",
+        "engines",
+        "mcp",
+        "scaffold",
+        "schema",
+        "validate",
+    }
 )
+"""Every current subcommand — the translator's pass-through list.
+
+A name missing here is treated as a v1.3.1 positional CONFIG and rewritten to
+``chemrefine run <name>``, which is how ``chemrefine mcp`` once became ``run mcp``
+with a "File 'mcp' does not exist" error. ``test_the_legacy_translator_knows_every_
+subcommand`` pins this set against the Typer app, so adding a command without
+extending it fails CI instead of failing users.
+"""
 
 
 def translate_argv(argv: list[str]) -> list[str]:
