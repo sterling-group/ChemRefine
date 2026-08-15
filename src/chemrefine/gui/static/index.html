@@ -244,6 +244,9 @@
   <section id="right">
     <div class="paneheader">
       <h2>input.yaml</h2>
+      <button class="mini" @click="copyYaml()" title="Copy the YAML to the clipboard">
+        ⧉ Copy
+      </button>
       <label class="muted">
         <input type="checkbox" x-model="rawEdit"> edit as text
       </label>

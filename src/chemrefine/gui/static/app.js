@@ -161,6 +161,20 @@ function builder() {
         if (data) this.yamlText = data.yaml_text;
       }, 150);
     },
+    async copyYaml() {
+      // 127.0.0.1 is a secure context, so the async Clipboard API is available;
+      // the execCommand path covers browsers that still refuse it.
+      try {
+        await navigator.clipboard.writeText(this.yamlText);
+        this.flash = "YAML copied to clipboard";
+      } catch (err) {
+        const box = document.getElementById("yaml");
+        box.select();
+        document.execCommand("copy");
+        window.getSelection().removeAllRanges();
+        this.flash = "YAML copied to clipboard";
+      }
+    },
     async applyRaw() {
       const parsed = await this.api("POST", "/api/parse", { yaml_text: this.yamlText });
       if (parsed && parsed.config) {

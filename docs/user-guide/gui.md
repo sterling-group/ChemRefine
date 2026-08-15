@@ -37,7 +37,8 @@ validates with — so every knob, enum and default is current by construction:
 
 YAML is emitted and parsed **server-side only** — the browser never serializes YAML, so
 the form pane and the text pane cannot disagree. Tick *edit as text* to type YAML
-directly, then *Apply to form* to continue clicking.
+directly, then *Apply to form* to continue clicking. *Copy* puts the current YAML on
+the clipboard — handy for pasting straight into an editor on a cluster.
 
 **Validate** runs the same structured check as `chemrefine validate`: errors and
 warnings appear under the YAML, each anchored to the field that caused it. **Save…**
