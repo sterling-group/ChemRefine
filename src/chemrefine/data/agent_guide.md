@@ -40,12 +40,16 @@ at HPC scale without you in the loop.
 
 ## Recipes
 
+The ORCA-family `operation:` vocabulary (also in `get_schema`'s `operations`):
+`opt_sp` (optimize + single point), `sp`, `freq`, `pes` (scans), and the ensemble
+generators `goat` (conformers), `docker` (poses), `solvator` (explicit solvent).
+
 **Conformer funnel** (the canonical ChemRefine job): step 1 generates/screens cheaply
-(xtb via an ORCA GOAT template, or an MLIP step), sampling
-`{method: boltzmann, percent_cumulative: 99}`; step 2 refines the survivors at DFT with
-`{method: min, window_kcalmol: 3}`; a final step does the high-level single point or
-frequency job. Sample on `gibbs` instead of `electronic` when a frequency calculation
-provides it and the question is thermodynamic.
+(`operation: goat` on an xtb-keyword ORCA template, or an MLIP step), sampling
+`{method: boltzmann, percent_cumulative: 99}`; step 2 refines the survivors at DFT
+(`operation: opt_sp`) with `{method: min, window_kcalmol: 3}`; a final `sp` or `freq`
+step does the high-level energies. Sample on `gibbs` instead of `electronic` when a
+frequency calculation provides it and the question is thermodynamic.
 
 **Transition states**: OptTS in the ORCA template (`!OptTS Freq ...`), then **verify
 before trusting**: `get_frequencies` must show *exactly one* imaginary mode
@@ -63,6 +67,36 @@ until the count is verified, mechanically.
 **MLIP fine-tuning**: the `mlip-train` engine trains on the prior ensemble as a
 pipeline step; its template is the backend's own config — start from the shipped
 fine-tune example, not from scratch.
+
+**Spin-state ladders** (the shipped spin tutorial's shape): optimise once in the
+ground-state guess, then score the same survivors at each multiplicity with per-step
+`multiplicity:` overrides and `sample: {method: min, count: 0}` — `count: 0` keeps
+*everything*, because a ladder compares energies rather than filtering. Check electron
+parity on every rung.
+
+**Redox ladders** (the redox tutorial's shape): per-step `charge:` overrides
+(−1 / 0 / +1 with multiplicities 2 / 1 / 2 for a closed-shell parent), `count: 0`
+throughout; potentials come from energy differences between the charge-state steps.
+Score the ladder on the MLIP surface first (`mlip-extopt` — the `omol` task carries
+charge and spin), then repeat the rungs on `orca` to confirm. `pyscf` /
+`pyscf-extopt` are the DFT alternatives when ORCA is not available.
+
+**Docking & microsolvation**: `operation: docker` generates guest poses (sample the
+best few), `operation: solvator` adds explicit solvent through the template's
+`%solvator` block; refine survivors with `mlip-extopt` then `orca`, overriding
+`charge` where the guest is an ion. `qchem` steps follow the same pattern with `.in`
+templates.
+
+## Failure triage (the ledger's vocabulary)
+
+| ledger kind | it means | the usual move |
+|---|---|---|
+| `output missing` | crashed, killed, or never started (OOM and walltime look like this) | fix resources, then `rerun-errors` |
+| `unparseable` | an output exists but is truncated/corrupt | inspect the file, then `rerun-errors` |
+| `did not terminate normally` | the program aborted with its own error | read the log tail via `run_status`, fix the input/template, `rerun-errors` |
+| `did not converge` | SCF or geometry unconverged | `rerun-errors` retries from the best geometry; consider a better start or looser thresholds |
+| `NMS: target stationary point not reached` | displacing + rerunning never hit the target imaginary count | inspect with `get_frequencies`/`analyze_mode`; adjust `displacement_value` or the template, then `rebuild-nms` or `rerun-errors` |
+| `failed` | a generic engine-reported failure | read the step's output via `run_status`'s log tail, then `rerun-errors` |
 
 ## Hard rules
 

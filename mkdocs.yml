@@ -119,6 +119,7 @@ nav:
       - MLIP Training & Normal-Mode Sampling: tutorials/mlip_training.md
       - Redox: tutorials/redox.md
       - Spin: tutorials/spin.md
+      - Agentic Workflows: tutorials/agentic_workflows.md
   - Concepts:
       - concepts/index.md
       - Architecture & Code Flow: concepts/architecture.md
