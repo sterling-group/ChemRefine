@@ -323,6 +323,19 @@ jobs:
           print(f"py.typed present at {marker}")
           PY
 
+      # The sdist ships tests and examples precisely so the suite can be run from it —
+      # and nothing else executes that suite, which is exactly how docs/ and examples/
+      # silently fell out of it (16 tests failed from the tarball while every other job
+      # stayed green). Unpack the artifact, install it with the same extras the test job
+      # uses, and run the suite inside the unpacked tree; the repo-only guards skip
+      # themselves there with named reasons.
+      - name: The suite must pass from the unpacked sdist
+        run: |
+          tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP"/chemrefine-*/
+          pip install ".[test,mcp,gui,agent]"
+          python -m pytest -q -p no:cacheprovider
+
   required-checks-pass:
     if: always()
     needs:
