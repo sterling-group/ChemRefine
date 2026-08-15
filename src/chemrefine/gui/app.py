@@ -42,6 +42,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     the package without the extra keeps working.
     """
     from flask import Flask, jsonify, request, send_from_directory
+    from werkzeug.exceptions import HTTPException
 
     app = Flask("chemrefine-gui", static_folder=str(STATIC_DIR), static_url_path="/static")
     app.config["PROPAGATE_EXCEPTIONS"] = True
@@ -70,8 +71,13 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         """A ChemRefineError becomes its documented shape; anything else re-raises.
 
         The exit-code taxonomy is the GUI's error contract exactly as it is the CLI's
-        and the MCP server's — one vocabulary for one failure.
+        and the MCP server's — one vocabulary for one failure. Routine HTTP errors
+        (a 404 for a URL nobody serves, e.g. a browser probing /favicon.ico) pass
+        through as themselves — re-raising them turned every stray request into a
+        logged traceback.
         """
+        if isinstance(error, HTTPException):
+            return error
         if isinstance(error, ChemRefineError):
             return jsonify({"error": str(error), "exit_code": error.exit_code}), 400
         raise error

@@ -194,6 +194,17 @@ def test_non_chemrefine_errors_are_not_swallowed(client: Any):
         _post(client, "/api/validate", {})  # missing yaml_text → KeyError, not a 400
 
 
+def test_routine_http_errors_stay_routine(client: Any):
+    """A stray URL is a plain 404 response, never a logged traceback.
+
+    Browsers probe /favicon.ico on every visit; re-raising the NotFound through the
+    catch-all handler printed a full traceback per page load.
+    """
+    response = client.get("/favicon.ico")
+    assert response.status_code == 404
+    response.close()
+
+
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
