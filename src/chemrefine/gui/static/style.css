@@ -51,8 +51,18 @@ h3 { font-size: .8rem; margin: .5rem 0 .2rem; color: var(--muted);
 }
 .pair { display: flex; gap: .3rem; flex: 1; }
 .pair input { width: 50%; }
-.pathrow { display: flex; gap: .2rem; flex: 1; }
-.fields input.execname { flex: 0 0 9.5em; }
+.pathrow { display: flex; gap: .25rem; flex: 1; align-items: center; min-width: 0; }
+.pathrow input { flex: 1 1 auto; min-width: 0; }
+/* Icon buttons sit inside input rows: pin them to the input's height and keep them
+   from flexing, or the emoji glyph's line box grows past the row and overlaps. */
+.pathrow button.mini, .fields button.mini {
+  flex: 0 0 auto; align-self: center;
+  height: 1.75rem; padding: 0 .35rem; line-height: 1;
+  font-size: .8rem; border: 1px solid var(--line); border-radius: 5px;
+}
+.fields input.execname { flex: 0 0 8em; min-width: 0; }
+/* Executables rows carry name + path + two buttons: one row per line, full width. */
+.fields.execrows { grid-template-columns: 1fr; }
 .subform { border-left: 3px solid var(--line); margin: .4rem 0 .4rem .4rem; padding-left: .6rem; }
 .passthrough { font-style: italic; }
 

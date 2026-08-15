@@ -75,7 +75,7 @@
       </div>
       <div class="subform">
         <h3>Executables</h3>
-        <div class="fields">
+        <div class="fields execrows">
           <template x-for="(row, ei) in execRows" :key="'exec-' + ei">
             <label title="Program name → binary path (e.g. orca, or Q-Chem's qc/qcaux)">
               <input class="execname" type="text" :value="row.name" placeholder="orca"
