@@ -1,0 +1,87 @@
+/* ChemRefine GUI — two panes, IQmol-submission-window layout. */
+
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #1c2733; --muted: #6b7a8c;
+  --line: #d7dee6; --accent: #2264ad; --ok: #1e7d38; --warn: #9a6700; --err: #b33131;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+header {
+  display: flex; align-items: center; gap: 1rem;
+  padding: .5rem 1rem; background: var(--panel); border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 5;
+}
+header h1 { font-size: 1.05rem; margin: 0; color: var(--accent); }
+header nav { margin-left: auto; display: flex; gap: .5rem; }
+.muted { color: var(--muted); font-size: .85rem; }
+
+main { display: flex; gap: 1rem; padding: 1rem; align-items: flex-start; }
+#left  { flex: 1 1 52%; min-width: 380px; }
+#right { flex: 1 1 48%; min-width: 340px; position: sticky; top: 3.2rem; }
+
+button {
+  background: var(--accent); color: #fff; border: 0; border-radius: 6px;
+  padding: .4rem .8rem; cursor: pointer; font-size: .85rem;
+}
+button:disabled { opacity: .45; cursor: default; }
+button.mini { background: transparent; color: var(--accent); padding: .15rem .4rem; }
+#addstep { width: 100%; margin-top: .6rem; background: transparent;
+  color: var(--accent); border: 1px dashed var(--accent); }
+
+details { background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; margin-bottom: .6rem; padding: .3rem .8rem .6rem; }
+summary { cursor: pointer; padding: .35rem 0; display: flex; align-items: center; gap: .6rem; }
+.stepbtns { margin-left: auto; }
+h2 { font-size: .95rem; margin: 1rem 0 .4rem; }
+h3 { font-size: .8rem; margin: .5rem 0 .2rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .04em; }
+
+.fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: .35rem .9rem; }
+.fields label { display: flex; align-items: center; gap: .5rem; min-height: 1.9rem; }
+.fields label > span:first-child { flex: 0 0 9.5em; color: var(--muted);
+  font-size: .82rem; text-align: right; }
+.fields input[type="text"], .fields input[type="number"], .fields select {
+  flex: 1; min-width: 0; padding: .25rem .4rem; border: 1px solid var(--line);
+  border-radius: 5px; background: #fff; color: var(--ink); font-size: .85rem;
+}
+.pair { display: flex; gap: .3rem; flex: 1; }
+.pair input { width: 50%; }
+.pathrow { display: flex; gap: .2rem; flex: 1; }
+.subform { border-left: 3px solid var(--line); margin: .4rem 0 .4rem .4rem; padding-left: .6rem; }
+.passthrough { font-style: italic; }
+
+.paneheader { display: flex; align-items: center; gap: .8rem; }
+.paneheader h2 { margin: 0; }
+#yaml {
+  width: 100%; height: 52vh; resize: vertical;
+  font: 12.5px/1.5 ui-monospace, "SF Mono", Consolas, monospace;
+  background: #0e1620; color: #d8e2ec; border: 1px solid var(--line);
+  border-radius: 8px; padding: .8rem; white-space: pre; overflow: auto;
+}
+#yaml[readonly] { opacity: .93; }
+#report { background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; margin-top: .6rem; padding: .5rem .8rem; max-height: 24vh; overflow: auto; }
+#report p { margin: .25rem 0; font-size: .84rem; }
+#report b { margin-right: .4rem; }
+.ok   { color: var(--ok); }
+.warn { color: var(--warn); }
+.err  { color: var(--err); }
+
+.modal { position: fixed; inset: 0; background: rgba(10, 20, 30, .45);
+  display: flex; align-items: center; justify-content: center; z-index: 10; }
+.dialog { background: var(--panel); border-radius: 10px; padding: 1rem 1.2rem;
+  width: min(480px, 92vw); max-height: 84vh; overflow: auto; }
+.dialog.wide { width: min(760px, 94vw); }
+.dialog textarea { width: 100%; height: 46vh;
+  font: 12.5px/1.5 ui-monospace, Consolas, monospace; }
+.listing { list-style: none; margin: .5rem 0; padding: 0; max-height: 44vh; overflow: auto; }
+.listing a { color: var(--ink); text-decoration: none; display: block; padding: .15rem .3rem; }
+.listing a:hover { background: var(--bg); border-radius: 4px; }
+.row { display: flex; gap: .5rem; margin: .6rem 0 .3rem; }
+.row input { flex: 1; padding: .3rem .5rem; border: 1px solid var(--line); border-radius: 5px; }
+#flash { min-height: 1.2em; }

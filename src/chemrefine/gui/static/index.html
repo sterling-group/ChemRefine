@@ -1,4 +1,316 @@
 <!doctype html>
+<html lang="en">
+<head>
 <meta charset="utf-8">
-<title>ChemRefine</title>
-<p>Frontend assets load here (P2.2).</p>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChemRefine — workflow builder</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/forms.js"></script>
+<script src="/static/app.js"></script>
+<script src="/static/vendor/alpine.min.js" defer></script>
+</head>
+<body x-data="builder()" x-init="init()">
+
+<header>
+  <h1>ChemRefine</h1>
+  <span class="muted" x-text="savedPath ? savedPath : 'unsaved workflow'"></span>
+  <nav>
+    <button @click="validateNow()">Validate</button>
+    <button @click="openSave()">Save…</button>
+    <button :disabled="!savedPath" @click="scaffold()">Scaffold templates</button>
+  </nav>
+</header>
+
+<main x-show="ready" style="display:none">
+
+  <!-- ============ LEFT: the click-through builder ============ -->
+  <section id="left">
+
+    <details open>
+      <summary>Workflow settings</summary>
+      <div class="fields">
+        <template x-for="field in topFields" :key="field.key">
+          <label :title="field.doc">
+            <span x-text="field.key"></span>
+            <template x-if="field.kind === 'select'">
+              <select :value="cfg[field.key] ?? ''"
+                      @change="setTop(field, $event.target.value)">
+                <option value="" x-text="'(default: ' + field.fallback + ')'"></option>
+                <template x-for="option in field.options" :key="option">
+                  <option :value="option" x-text="option"></option>
+                </template>
+              </select>
+            </template>
+            <template x-if="field.kind === 'checkbox'">
+              <input type="checkbox" :checked="cfg[field.key] ?? field.fallback === 'true'"
+                     @change="setTop(field, $event.target.checked)">
+            </template>
+            <template x-if="field.kind === 'number'">
+              <input type="number" :value="cfg[field.key] ?? ''" :placeholder="field.fallback"
+                     @input="setTop(field, $event.target.value)">
+            </template>
+            <template x-if="field.kind === 'text'">
+              <span class="pathrow">
+                <input type="text" :value="cfg[field.key] ?? ''" :placeholder="field.fallback"
+                       @input="setTop(field, $event.target.value)">
+                <button x-show="field.path" class="mini" title="Browse"
+                        @click="openBrowse(field.key)">📁</button>
+              </span>
+            </template>
+          </label>
+        </template>
+      </div>
+    </details>
+
+    <h2>Steps</h2>
+    <template x-for="(step, index) in cfg.steps" :key="index">
+      <details class="step" open>
+        <summary>
+          <b x-text="'Step ' + step.step"></b>
+          <span class="muted" x-text="(step.name || '') + ' · ' + step.engine"></span>
+          <span class="stepbtns">
+            <button class="mini" title="Move up" :disabled="index === 0"
+                    @click.prevent="moveStep(index, -1)">↑</button>
+            <button class="mini" title="Move down" :disabled="index === cfg.steps.length - 1"
+                    @click.prevent="moveStep(index, 1)">↓</button>
+            <button class="mini" title="Remove" @click.prevent="removeStep(index)">✕</button>
+          </span>
+        </summary>
+
+        <div class="fields">
+          <label><span>name</span>
+            <input type="text" :value="step.name ?? ''" placeholder="(optional)"
+                   @input="setStep(index, 'name', $event.target.value || undefined)">
+          </label>
+          <label><span>engine</span>
+            <select :value="step.engine" @change="setEngine(index, $event.target.value)">
+              <template x-for="name in engineNames" :key="name">
+                <option :value="name" x-text="name"></option>
+              </template>
+            </select>
+          </label>
+          <label><span>operation</span>
+            <select :value="step.operation ?? ''"
+                    @change="setStep(index, 'operation', $event.target.value || undefined)">
+              <option value="">(from template)</option>
+              <template x-for="op in operations" :key="op">
+                <option :value="op" x-text="op"></option>
+              </template>
+            </select>
+          </label>
+          <label><span>template</span>
+            <input type="text" :value="step.template ?? ''"
+                   :placeholder="templatePlaceholder(step)"
+                   @input="setStep(index, 'template', $event.target.value || undefined)">
+          </label>
+          <label><span>on_failure</span>
+            <select :value="step.on_failure ?? 'stop'"
+                    @change="setStep(index, 'on_failure',
+                             $event.target.value === 'stop' ? undefined : $event.target.value)">
+              <option value="stop">stop (default)</option>
+              <option value="skip">skip</option>
+              <option value="best">best</option>
+            </select>
+          </label>
+          <label><span>charge / mult</span>
+            <span class="pair">
+              <input type="number" :value="step.charge ?? ''" placeholder="inherit"
+                     @input="setStep(index, 'charge', numOrUndef($event.target.value))">
+              <input type="number" min="1" :value="step.multiplicity ?? ''" placeholder="inherit"
+                     @input="setStep(index, 'multiplicity', numOrUndef($event.target.value))">
+            </span>
+          </label>
+        </div>
+
+        <div class="subform" x-show="engineFields(step.engine).length">
+          <h3>Engine options</h3>
+          <div class="fields">
+            <template x-for="field in engineFields(step.engine)" :key="field.key">
+              <label :title="field.doc">
+                <span x-text="field.key"></span>
+                <template x-if="field.kind === 'select'">
+                  <select :value="(step.options || {})[field.key] ?? ''"
+                          @change="setOption(index, field, $event.target.value)">
+                    <option value="" x-text="'(default: ' + field.fallback + ')'"></option>
+                    <template x-for="option in field.options" :key="option">
+                      <option :value="option" x-text="option"></option>
+                    </template>
+                  </select>
+                </template>
+                <template x-if="field.kind === 'checkbox'">
+                  <input type="checkbox" :checked="(step.options || {})[field.key] ?? false"
+                         @change="setOption(index, field, $event.target.checked)">
+                </template>
+                <template x-if="field.kind === 'number'">
+                  <input type="number" step="any"
+                         :value="(step.options || {})[field.key] ?? ''" :placeholder="field.fallback"
+                         @input="setOption(index, field, $event.target.value)">
+                </template>
+                <template x-if="field.kind === 'text'">
+                  <input type="text" :value="(step.options || {})[field.key] ?? ''"
+                         :placeholder="field.fallback"
+                         @input="setOption(index, field, $event.target.value)">
+                </template>
+              </label>
+            </template>
+          </div>
+        </div>
+        <p class="muted" x-show="!engineFields(step.engine).length">
+          This engine is configured through its template file — no options form.
+        </p>
+
+        <div class="fields">
+          <label><span>nms</span>
+            <input type="checkbox" :checked="step.nms ?? false"
+                   @change="setStep(index, 'nms', $event.target.checked || undefined)">
+          </label>
+        </div>
+        <div class="subform" x-show="step.nms">
+          <h3>NMS knobs</h3>
+          <div class="fields">
+            <template x-for="field in nmsFields" :key="'nms-' + field.key">
+              <label :title="field.doc">
+                <span x-text="field.key"></span>
+                <template x-if="field.kind === 'select'">
+                  <select :value="(step.options || {})[field.key] ?? ''"
+                          @change="setOption(index, field, $event.target.value)">
+                    <option value="" x-text="'(default: ' + field.fallback + ')'"></option>
+                    <template x-for="option in field.options" :key="option">
+                      <option :value="option" x-text="option"></option>
+                    </template>
+                  </select>
+                </template>
+                <template x-if="field.kind !== 'select'">
+                  <input type="number" step="any"
+                         :value="(step.options || {})[field.key] ?? ''" :placeholder="field.fallback"
+                         @input="setOption(index, field, $event.target.value)">
+                </template>
+              </label>
+            </template>
+          </div>
+        </div>
+
+        <div class="fields">
+          <label><span>sample</span>
+            <select :value="step.sample ? step.sample.method : ''"
+                    @change="setSampleMethod(index, $event.target.value)">
+              <option value="">(keep everything)</option>
+              <option value="boltzmann">boltzmann</option>
+              <option value="min">min (lowest-energy)</option>
+              <option value="max">max (highest-energy)</option>
+            </select>
+          </label>
+        </div>
+        <div class="subform" x-show="step.sample">
+          <div class="fields">
+            <template x-for="field in sampleFields(step)" :key="'s-' + field.key">
+              <label :title="field.doc">
+                <span x-text="field.key"></span>
+                <template x-if="field.kind === 'select'">
+                  <select :value="step.sample[field.key] ?? ''"
+                          @change="setSample(index, field, $event.target.value)">
+                    <option value="" x-text="'(default: ' + field.fallback + ')'"></option>
+                    <template x-for="option in field.options" :key="option">
+                      <option :value="option" x-text="option"></option>
+                    </template>
+                  </select>
+                </template>
+                <template x-if="field.kind === 'checkbox'">
+                  <input type="checkbox" :checked="step.sample[field.key] ?? false"
+                         @change="setSample(index, field, $event.target.checked)">
+                </template>
+                <template x-if="field.kind === 'number'">
+                  <input type="number" step="any" :value="step.sample[field.key] ?? ''"
+                         :placeholder="field.fallback"
+                         @input="setSample(index, field, $event.target.value)">
+                </template>
+              </label>
+            </template>
+          </div>
+        </div>
+
+        <p class="muted passthrough" x-show="passthroughKeys(step).length"
+           x-text="'Untouched option keys kept as-is: ' + passthroughKeys(step).join(', ')"></p>
+
+        <button class="mini" :disabled="!savedPath" @click="openTemplate(step)"
+                x-show="isTemplateDriven(step.engine)">Edit template…</button>
+      </details>
+    </template>
+    <button id="addstep" @click="addStep()">＋ Add step</button>
+  </section>
+
+  <!-- ============ RIGHT: the YAML ============ -->
+  <section id="right">
+    <div class="paneheader">
+      <h2>input.yaml</h2>
+      <label class="muted">
+        <input type="checkbox" x-model="rawEdit"> edit as text
+      </label>
+      <button class="mini" x-show="rawEdit" @click="applyRaw()">Apply to form</button>
+    </div>
+    <textarea id="yaml" x-model="yamlText" :readonly="!rawEdit" spellcheck="false"></textarea>
+
+    <div id="report" x-show="report">
+      <template x-if="report">
+        <div>
+          <p class="ok" x-show="report.ok && !report.warnings.length">
+            ✓ valid — no findings</p>
+          <p class="ok" x-show="report.ok && report.warnings.length">✓ runnable, with warnings</p>
+          <template x-for="(issue, i) in (report ? report.issues : [])" :key="'e' + i">
+            <p class="err">
+              <b x-text="'[' + issue.kind + '] ' + issue.loc.join('.')"></b>
+              <span x-text="issue.message"></span>
+            </p>
+          </template>
+          <template x-for="(warning, i) in (report ? report.warnings : [])" :key="'w' + i">
+            <p class="warn">
+              <b x-text="'[' + warning.kind + '] ' + warning.loc.join('.')"></b>
+              <span x-text="warning.message"></span>
+            </p>
+          </template>
+        </div>
+      </template>
+    </div>
+    <p id="flash" class="muted" x-text="flash"></p>
+  </section>
+</main>
+
+<!-- ============ Browse / Save modal ============ -->
+<div class="modal" x-show="browse.open" style="display:none" @click.self="browse.open = false">
+  <div class="dialog">
+    <h3 x-text="browse.title"></h3>
+    <p class="muted" x-text="browse.path"></p>
+    <ul class="listing">
+      <li><a href="#" @click.prevent="navigate(browse.parent)">⬑ ..</a></li>
+      <template x-for="entry in browse.entries" :key="entry.path">
+        <li>
+          <a href="#" x-show="entry.dir" @click.prevent="navigate(entry.path)"
+             x-text="'📁 ' + entry.name"></a>
+          <a href="#" x-show="!entry.dir" @click.prevent="pickFile(entry)"
+             x-text="entry.name"></a>
+        </li>
+      </template>
+    </ul>
+    <div class="row" x-show="browse.mode === 'save'">
+      <input type="text" x-model="browse.filename" placeholder="input.yaml">
+      <button @click="saveTo()">Save here</button>
+    </div>
+    <button class="mini" @click="browse.open = false">Close</button>
+  </div>
+</div>
+
+<!-- ============ Template editor modal ============ -->
+<div class="modal" x-show="tmpl.open" style="display:none" @click.self="tmpl.open = false">
+  <div class="dialog wide">
+    <h3 x-text="'Template — step ' + tmpl.step"></h3>
+    <p class="muted" x-text="tmpl.path"></p>
+    <textarea x-model="tmpl.text" spellcheck="false"></textarea>
+    <div class="row">
+      <button @click="saveTemplate()">Save template</button>
+      <button class="mini" @click="tmpl.open = false">Close</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
