@@ -35,7 +35,13 @@ from chemrefine.engines.api import (
     TemplateDriven,
     get_engine,
 )
-from chemrefine.errors import CacheError, ChemRefineError, ConfigError, JobFailureError
+from chemrefine.errors import (
+    CacheError,
+    ChemRefineError,
+    ConfigError,
+    JobFailureError,
+    NoUsableCacheError,
+)
 from chemrefine.state import (
     PipelineState,
     StepContext,
@@ -213,24 +219,34 @@ class RunPlan:
     overrides: Mapping[int, StepMode] = field(default_factory=dict)
 
     stop_after: int | None = None
-    """Last step this plan covers; ``None`` runs to the end of the pipeline.
+    """Last step this plan *targets*; ``None`` runs the whole pipeline normally.
 
-    ``rebuild-cache N`` is about steps 1..N and nothing else: it re-parses outputs already on
-    disk and promises to submit nothing, so the steps after its target have no part in it.
-    They cannot be left ``CACHE_ONLY`` either — a step the run never reached has no cache, and
-    asking for one raises. Resuming them is not the alternative it is for ``rerun-errors``:
-    that would submit, which is the one thing this command says it will not do, and would put
-    the backend requirement back on a command whose purpose is to run where the backend is
-    not installed (see :func:`chemrefine.pipeline.run`).
+    ``rebuild-cache N`` re-parses step N from outputs already on disk and promises to
+    submit nothing — the steps after N are not its business to *compute*. But the
+    cumulative report (``steps.csv``) is rewritten from step 1 on every run, so ending the
+    run at N would silently drop the later steps' rows even when their caches are still
+    valid. The steps past ``stop_after`` therefore run **best-effort**
+    (:meth:`best_effort`): still ``CACHE_ONLY``, still submitting nothing and needing no
+    backend, but a step whose cache the current configuration cannot serve ends the run
+    quietly (:class:`~chemrefine.errors.NoUsableCacheError`) instead of failing it. The
+    report then covers exactly what the current configuration can vouch for — complete
+    when the rebuild changed nothing, honestly cut where validity ends when it did.
     """
 
     def for_step(self, step: int) -> StepMode:
         """The mode this step runs in."""
         return self.overrides.get(step, self.default)
 
-    def covers(self, step: int) -> bool:
-        """Whether the pipeline should go on to the step *after* ``step``."""
-        return self.stop_after is None or step < self.stop_after
+    def best_effort(self, step: int) -> bool:
+        """Whether ``step`` is past the plan's target and runs as best-effort reporting.
+
+        Past the target, a cache the configuration cannot serve is an ordinary place for
+        the report to end — the pipeline stops there without error. At or before the
+        target, and everywhere on an unscoped plan, the same miss is a real failure and
+        must raise: ``rerun-errors`` over a broken earlier step has to say so, not
+        silently report a shorter pipeline.
+        """
+        return self.stop_after is not None and step > self.stop_after
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +386,23 @@ def run_step(
             return partial
 
     if not may_submit:
-        raise ChemRefineError(
+        # The two ways out cost very different things, and which one applies is decidable
+        # here: the manifest's stamped fingerprint against the key in hand — the same
+        # provenance test `rebuild_cache_step` and `_partial_step_outcome` use. A match
+        # means the outputs on disk were produced for exactly this configuration and only
+        # the cache document cannot serve it, so `rebuild-cache` re-adopts them without
+        # recomputing — which for an NMS or artifact step is what `resume` cannot promise.
+        # A mismatch means `rebuild-cache` would refuse by that same guard, so only the
+        # commands that recompute are honest advice.
+        if cache.load_manifest_fingerprint(ctx.step_dir) == key.fingerprint:
+            raise NoUsableCacheError(
+                f"step {step_cfg.step} has no cache this configuration can use, and "
+                f"`{mode.value}` does not submit work for a step it is not targeting. "
+                f"Its outputs on disk still match this configuration, so "
+                f"`chemrefine rebuild-cache {step_cfg.step}` re-adopts them without "
+                f"recomputing anything."
+            )
+        raise NoUsableCacheError(
             f"step {step_cfg.step} has no cache this configuration can use, and "
             f"`{mode.value}` does not submit work for a step it is not targeting. "
             f"Run `chemrefine resume` to bring it up to date, or "

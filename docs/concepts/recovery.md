@@ -14,8 +14,8 @@ on are [Caching & Resume](caching.md).
 | `resume` | — | every step `RESUME` | — | last step |
 | `rerun [N]` | `RESUME` (cache-hit when valid) | `RESUME`, after its cache **and manifest** are discarded — so it misses and truly re-executes | `RESUME` | last step |
 | `rerun-errors [N]` | `CACHE_ONLY` | `RESUME` | `RESUME` | last step |
-| `rebuild-cache [N]` | `CACHE_ONLY` | `REBUILD` | not covered (`stop_after`) | the target |
-| `rebuild-nms [N]` | `CACHE_ONLY` | `REBUILD` — the step setting `nms: true`, not the last | not covered | the target |
+| `rebuild-cache [N]` | `CACHE_ONLY` | `REBUILD` | best-effort `CACHE_ONLY` (`stop_after`) | the first step whose cache no longer matches |
+| `rebuild-nms [N]` | `CACHE_ONLY` | `REBUILD` — the step setting `nms: true`, not the last | best-effort `CACHE_ONLY` | the first step whose cache no longer matches |
 
 Two asymmetries are deliberate:
 
@@ -23,9 +23,15 @@ Two asymmetries are deliberate:
   that left the target's failures pending is what stopped the later steps from ever
   running, so they have no cache to hit — left `CACHE_ONLY` they would raise for a cache
   that cannot exist, after the command had already repaired what it was pointed at.
-- **The rebuilds cover nothing past their target.** They promise to submit nothing, and a
-  step the run never reached has no outputs to re-parse — so the plan simply ends there
-  (`RunPlan.stop_after`) instead of leaving steps in a mode that must fail.
+- **The rebuilds walk past their target read-only.** They promise to submit nothing, and
+  they keep that promise — but `steps.csv` is rewritten from step 1 on every run, so
+  *ending* at the target would silently drop the later steps' rows even when their caches
+  are still valid. The steps past the target therefore run best-effort (`RunPlan.stop_after`):
+  each one is served from its cache — a load, never a re-parse — and the first cache the
+  current configuration cannot serve ends the run quietly, with a log line naming the
+  cheapest repair (`rebuild-cache` for outputs that still match this configuration,
+  `resume` when upstream results changed). The report then covers exactly what the
+  current configuration can vouch for.
 
 `rerun` discards the manifest as well as the cache because the manifest is what makes an
 output tree look *interrupted rather than discarded*: kept, a later `resume` would re-parse

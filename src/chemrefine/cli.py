@@ -13,7 +13,8 @@ This is the **only** module that calls :func:`sys.exit` or reads
 * ``chemrefine rerun CONFIG [STEP]`` — redo one whole step from scratch; every
   other step resumes, so one whose fingerprint no longer holds runs again.
 * ``chemrefine rebuild-cache CONFIG [STEP]`` — rebuild one step's cache from
-  outputs already on disk (parse only, no submission); the run ends there.
+  outputs already on disk (parse only, no submission); later steps re-report
+  from their caches for as long as those still match.
 * ``chemrefine rebuild-nms CONFIG [STEP]`` — the same rebuild aimed at the NMS
   step: with no STEP it finds the one setting ``nms: true`` rather than taking
   the last. Round 1 is re-parsed and its displaced children re-read from disk,
@@ -259,7 +260,8 @@ def rebuild_cache(
 ) -> None:
     """Rebuild one step's cache from existing outputs (default: latest); no submission.
 
-    The run ends at that step.
+    The steps after it re-report from their caches for as long as those still match the
+    configuration; the run stops quietly at the first one that does not.
     """
     raise typer.Exit(
         _dispatch(
@@ -285,7 +287,8 @@ def rebuild_nms(
 
     Defaults to the step setting `nms: true` rather than the last step. Round 1 is re-parsed
     and its displaced children re-read from the `attemptK/` they ran in, so re-resolving
-    costs a read, not a re-run of the frequencies. The run ends at that step.
+    costs a read, not a re-run of the frequencies. The steps after it re-report from their
+    caches, like rebuild-cache.
     """
     raise typer.Exit(
         _dispatch(

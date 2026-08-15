@@ -68,7 +68,7 @@ pipeline plus per-step overrides. `pipeline.run` then asks `plan.for_step(n)` an
 | `rerun [N]` | step N (default: last) | default `RESUME` | step N misses its cache and re-executes end to end; the rest resume, so one whose fingerprint no longer holds re-executes too |
 | `rebuild-nms [N]` | none | default `CACHE_ONLY`, `{N: REBUILD}`, `stop_after=N` | the same rebuild as `rebuild-cache`, but N defaults to the step setting `nms: true` rather than the last |
 | `rerun-errors [N]` | none | default `CACHE_ONLY`, `{M: RESUME for M >= N}` | step N re-attempts its pending failures; earlier steps are served from cache and cannot halt the run before N is reached; later steps resume, having never run |
-| `rebuild-cache [N]` | none | default `CACHE_ONLY`, `{N: REBUILD}`, `stop_after=N` | step N is re-parsed from the outputs already on disk and its cache rewritten — no submission, and the run ends there |
+| `rebuild-cache [N]` | none | default `CACHE_ONLY`, `{N: REBUILD}`, `stop_after=N` | step N is re-parsed from the outputs already on disk and its cache rewritten — no submission; the steps after N are then re-reported from their caches, best-effort, stopping quietly at the first one the configuration can no longer serve |
 
 The four modes:
 

@@ -11,7 +11,10 @@ a new exception class):
 ============  ============================================
 Exit code     Meaning
 ============  ============================================
-``1``         :class:`ChemRefineError` — generic / catch-all
+``1``         :class:`ChemRefineError` — generic / catch-all,
+              and :class:`NoUsableCacheError` for a non-submitting
+              step with no cache the configuration can serve
+              (same code; the subclass exists to be *caught*)
 ``2``         :class:`ConfigError` — YAML config invalid
 ``3``         :class:`EngineNotFoundError` — unknown engine
 ``4``         :class:`JobSubmissionError` — sbatch refused the job
@@ -34,6 +37,18 @@ class ChemRefineError(Exception):
     """Base class for every ChemRefine-raised exception."""
 
     exit_code: int = 1
+
+
+class NoUsableCacheError(ChemRefineError):
+    """A step that may not submit has no cache the current configuration can serve.
+
+    Raised by :func:`chemrefine.step.run_step` when a ``cache-only`` step cannot be served
+    from disk. A subclass sharing the generic code rather than a code of its own — like
+    :class:`OutputTerminationError`, what it adds is not a different exit status but an
+    *identity*: past a scoped rebuild's target, :func:`chemrefine.pipeline.run` catches
+    exactly this to end the report quietly at the first step the configuration cannot
+    vouch for, while the same failure anywhere else must still fail the run.
+    """
 
 
 class ConfigError(ChemRefineError):

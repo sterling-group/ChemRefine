@@ -23,8 +23,8 @@ chemrefine run input.yaml --dry-run          # validate + describe; submit nothi
 | `resume` | `CONFIG` | Honour the on-disk cache for unchanged steps and re-attempt the pending failed jobs of any `on_failure: stop` step, then continue. |
 | `rerun-errors` | `CONFIG [TARGET]` | Re-attempt one step's pending failed jobs (latest if no target), then continue: earlier steps cache-hit and submit nothing, later ones resume. |
 | `rerun` | `CONFIG [TARGET]` | Redo one whole step from scratch (default: latest); every other step resumes, so one whose fingerprint no longer holds runs again. |
-| `rebuild-cache` | `CONFIG [TARGET]` | Rebuild one step's cache from outputs already on disk (parse only, no submission). The run ends at that step. |
-| `rebuild-nms` | `CONFIG [TARGET]` | Re-resolve the NMS step from outputs already on disk (parse only, no submission). With no TARGET it finds the step setting `nms: true` rather than the last one. Round 1 is re-parsed and its displaced children re-read from their `attemptK/`, so re-resolving costs a read rather than a re-run of the frequencies. The run ends at that step. |
+| `rebuild-cache` | `CONFIG [TARGET]` | Rebuild one step's cache from outputs already on disk (parse only, no submission). The steps after it are then re-reported from their caches, stopping quietly at the first one that no longer matches the configuration. |
+| `rebuild-nms` | `CONFIG [TARGET]` | Re-resolve the NMS step from outputs already on disk (parse only, no submission). With no TARGET it finds the step setting `nms: true` rather than the last one. Round 1 is re-parsed and its displaced children re-read from their `attemptK/`, so re-resolving costs a read rather than a re-run of the frequencies. The steps after it are re-reported from their caches, like `rebuild-cache`. |
 
 ## Config tooling (`validate`, `scaffold`, `schema`, `engines`)
 

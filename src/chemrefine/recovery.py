@@ -18,7 +18,9 @@ Only a ``stop`` step leaves failures pending — and these actions recover them:
 * ``rerun [step]`` — redo one whole step from scratch; every other step resumes, so one
   whose fingerprint no longer holds re-executes too.
 * ``rebuild-cache [step]`` — rebuild one step's cache from outputs already on
-  disk (parse only, no submission). The run ends at that step.
+  disk (parse only, no submission). The steps after it are re-reported from
+  their caches, stopping quietly at the first one the configuration can no
+  longer serve.
 * ``rebuild-nms [step]`` — the same rebuild, aimed at the NMS step (the one setting
   ``nms: true``, rather than the last step every other action defaults to). Round 1 is
   re-parsed and its displaced children re-read from the ``attemptK/`` they ran in, so
@@ -160,13 +162,15 @@ def _action_rerun_errors(config: Config, target: str | int | None) -> None:
 
 
 def _rebuild_plan(step_cfg: StepConfig) -> RunPlan:
-    """Re-parse ``step_cfg`` from the outputs on disk, submit nothing, and end there.
+    """Re-parse ``step_cfg`` from the outputs on disk, submitting nothing anywhere.
 
     What both rebuild actions mean, held in one place because they differ only in which step
     they aim at. Earlier steps cache-hit to supply the upstream state; the target is
     re-parsed (and, for NMS, re-resolved from the round-2 outputs already under its
-    ``attemptK/``); the steps after it are not this command's business — ``CACHE_ONLY``
-    raises for a cache a step that never ran cannot have, and resuming would submit.
+    ``attemptK/``); the steps after it are re-reported best-effort — served from their
+    caches when the current configuration still matches them, and ending the run quietly at
+    the first one it cannot serve (see :attr:`~chemrefine.step.RunPlan.stop_after`), so the
+    cumulative report never silently loses rows the tree can still vouch for.
     """
     return RunPlan(
         default=StepMode.CACHE_ONLY,

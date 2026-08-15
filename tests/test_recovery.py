@@ -700,14 +700,20 @@ def test_rerun_errors_archives_what_it_replaces_and_leaves_the_rest(tmp_path: Pa
         ENGINES.pop("flaky", None)
 
 
-def test_rebuild_cache_stops_at_its_target(tmp_path: Path):
-    """``rebuild-cache N`` is about steps 1..N, so it must not reach past N.
+def test_rebuild_cache_stops_the_tail_where_it_cannot_serve_and_names_the_repair(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """Past its target, ``rebuild-cache N`` re-reports from caches — submitting nothing —
+    and stops quietly at the first cache it cannot serve, naming the cheapest repair.
 
-    Neither mode available to a later step is right: ``CACHE_ONLY`` raises for a cache a step
-    that never ran cannot have, and resuming would submit — the one thing this command
-    promises not to do, and what would put the backend requirement back on a command whose
-    purpose is to run where the backend is not installed.
+    Step 2's cache document is deleted while its manifest (whose stamped fingerprint still
+    matches this configuration) survives: exactly the state ``rebuild-cache 2`` exists to
+    repair, so that is the command the stop must name. A plain ``resume`` would also work
+    here, but for an NMS or artifact step it would *recompute* — the hint exists to steer
+    away from that.
     """
+    import logging
+
     from chemrefine.engines.api import ENGINES
 
     eng = _recording_engine()
@@ -723,10 +729,15 @@ def test_rebuild_cache_stops_at_its_target(tmp_path: Path):
         eng.submitted.clear()
         (cfg.output_dir / "step2_two" / "_cache" / "step.json").unlink()
 
-        assert execute(cfg, Action.REBUILD_CACHE, target=1) == 0
-        assert eng.submitted == [], "a rebuild submits nothing"
+        with caplog.at_level(logging.INFO):
+            assert execute(cfg, Action.REBUILD_CACHE, target=1) == 0
+        assert eng.submitted == [], "a rebuild submits nothing, target and tail alike"
         assert not (cfg.output_dir / "step2_two" / "_cache" / "step.json").exists(), (
-            "step 2 is past the target, so the run never reached it"
+            "the tail walk reads caches; it must not rebuild one for a step it is not targeting"
+        )
+        assert "rebuild-cache 2" in caplog.text, (
+            "outputs on disk still match this configuration, so the stop names the "
+            "command that re-adopts them without recomputing"
         )
     finally:
         eng.submitted.clear()

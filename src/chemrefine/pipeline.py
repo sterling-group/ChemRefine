@@ -36,7 +36,7 @@ from ase import Atoms
 from chemrefine import filtering, io, slurm
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines import preflight_backends
-from chemrefine.errors import ConfigError, RunLockError
+from chemrefine.errors import ConfigError, NoUsableCacheError, RunLockError
 from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 from chemrefine.state import PipelineState, Structure
 
@@ -471,11 +471,24 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
                 step_cfg.engine,
             )
             mode = plan.for_step(step_cfg.step)
-            outcome = (
-                run_step(config, step_cfg, state, mode=mode)
-                if mode.runs_through_run_step()
-                else rebuild_cache_step(config, step_cfg, state)
-            )
+            if plan.best_effort(step_cfg.step):
+                # Past a scoped rebuild's target the walk is reporting, not computing:
+                # serve what the current configuration can vouch for — a cache *load*,
+                # never a re-parse and never a submission — and let the first cache it
+                # cannot serve end the run instead of failing it. The exception's own
+                # message names the cheapest command that repairs the tail (see
+                # `run_step`'s diagnosis), so it is logged verbatim.
+                try:
+                    outcome = run_step(config, step_cfg, state, mode=mode)
+                except NoUsableCacheError as e:
+                    logger.info("stopping the report at step %d: %s", step_cfg.step, e)
+                    break
+            else:
+                outcome = (
+                    run_step(config, step_cfg, state, mode=mode)
+                    if mode.runs_through_run_step()
+                    else rebuild_cache_step(config, step_cfg, state)
+                )
             outcomes.append(outcome)
             # Summarise before halting, so a run that stops still reports the work it
             # actually completed — otherwise the halted step's cached successes are
@@ -491,10 +504,6 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
                     "step %d produced no survivors; stopping pipeline early",
                     step_cfg.step,
                 )
-                break
-            # A scoped plan can end before the last step — see `RunPlan.stop_after`.
-            if not plan.covers(step_cfg.step):
-                logger.info("step %d is the last this action covers; stopping here", step_cfg.step)
                 break
         logger.info("pipeline finished after %d step(s)", len(outcomes))
         return outcomes

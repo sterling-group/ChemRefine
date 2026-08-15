@@ -511,6 +511,111 @@ def test_a_step_that_can_submit_is_still_preflighted(
 
 
 # ---------------------------------------------------------------------------
+# scoped rebuilds — the best-effort tail
+# ---------------------------------------------------------------------------
+
+
+def _two_step_seeded(tmp_path: Path) -> Config:
+    """A two-seed, two-step fake-engine config, ready for `pipeline.run`."""
+    seed_dir = tmp_path / "seeds"
+    io.write_xyz([_h2(), _h2()], ["a", "b"], 0, seed_dir)
+    return _config(
+        tmp_path,
+        input=seed_dir,
+        steps=[
+            StepConfig(step=1, engine="fake", operation="opt_sp"),
+            StepConfig(step=2, engine="fake", operation="opt_sp"),
+        ],
+    )
+
+
+def _rebuild_step1_plan() -> RunPlan:
+    """The plan `rebuild-cache 1` resolves to (`recovery._rebuild_plan`)."""
+    return RunPlan(default=StepMode.CACHE_ONLY, overrides={1: StepMode.REBUILD}, stop_after=1)
+
+
+def test_a_scoped_rebuild_re_reports_the_still_valid_tail(tmp_path: Path):
+    """``steps.csv`` survives a rebuild whose re-parse changed nothing.
+
+    The report is rewritten from step 1 on every run, so before the best-effort tail walk
+    a ``stop_after`` plan deleted every later step's rows even though their caches were
+    untouched and valid — after ``rebuild-cache 1`` the report claimed a one-step pipeline
+    over a two-step tree.
+    """
+    cfg = _two_step_seeded(tmp_path)
+    pipeline.run(cfg)
+    before = (cfg.output_dir / "steps.csv").read_text(encoding="utf-8")
+
+    outcomes = pipeline.run(cfg, _rebuild_step1_plan())
+
+    assert len(outcomes) == 2, "the tail step was served, not skipped"
+    assert outcomes[1].cache_hit is True, "served from its cache — nothing recomputed"
+    after = (cfg.output_dir / "steps.csv").read_text(encoding="utf-8")
+    assert after == before, "same results, same filter — the report is byte-identical"
+
+
+def test_a_scoped_rebuild_stops_reporting_where_validity_ends(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """A rebuild under an edited filter must not resurrect the old tail rows.
+
+    Narrowing step 1's ``sample`` leaves step 1's own cache valid (the filter is excluded
+    from its fingerprint) but changes the survivors that feed step 2, so step 2's cache no
+    longer matches. The report ends at step 1 and the stop names ``resume`` —
+    ``rebuild-cache 2`` would refuse, step 2's outputs having been produced for other
+    parents. The stale step-2 artifacts stay on disk for ``resume`` to overwrite; a
+    rebuild deletes nothing it did not write.
+    """
+    import logging
+
+    import pandas as pd
+
+    cfg = _two_step_seeded(tmp_path)
+    pipeline.run(cfg)
+
+    narrowed = cfg.model_copy(
+        update={
+            "steps": [
+                StepConfig(
+                    step=1,
+                    engine="fake",
+                    operation="opt_sp",
+                    sample={"method": "min", "count": 1},
+                ),
+                cfg.steps[1],
+            ]
+        }
+    )
+    with caplog.at_level(logging.INFO):
+        outcomes = pipeline.run(narrowed, _rebuild_step1_plan())
+
+    assert len(outcomes) == 1, "step 2's cache no longer matches; the report ends before it"
+    df = pd.read_csv(narrowed.output_dir / "steps.csv")
+    assert set(df["Step"]) == {1} and len(df) == 1, "one surviving row under the new filter"
+    assert "chemrefine resume" in caplog.text, "upstream changed — recomputation is the repair"
+    assert (narrowed.output_dir / "step2" / "step2_ensemble.xyz").is_file(), (
+        "stale tail artifacts are left for resume to overwrite, not deleted"
+    )
+
+
+def test_an_unscoped_plan_still_fails_on_an_unusable_earlier_cache(tmp_path: Path):
+    """``rerun-errors``' shape — ``CACHE_ONLY`` before the target, no ``stop_after``.
+
+    Best-effort is a property of the region past a rebuild's target, not of ``CACHE_ONLY``
+    itself: an earlier step this plan cannot serve is a real failure the command must
+    report, never a place for the report to quietly end.
+    """
+    from chemrefine import cache
+
+    cfg = _two_step_seeded(tmp_path)
+    pipeline.run(cfg)
+    cache.invalidate((cfg.output_dir / "step1").resolve())
+
+    with pytest.raises(ChemRefineError, match="no cache this configuration can use"):
+        pipeline.run(cfg, RunPlan(default=StepMode.CACHE_ONLY, overrides={2: StepMode.RESUME}))
+
+
+# ---------------------------------------------------------------------------
 # run lock — one driver per output tree
 # ---------------------------------------------------------------------------
 
