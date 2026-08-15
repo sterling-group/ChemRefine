@@ -7,9 +7,9 @@ the resulting input on the right.
 
 !!! tip "Try it online"
     The builder also runs on this site, no install needed: **[open the
-    playground](playground.md)**. The online copy builds and copies/downloads YAML
-    from the same live schema; running validation, saving files, and editing templates
-    need the local `chemrefine gui`.
+    playground](../playground.md)** (also in the top navigation). The online copy
+    builds and copies/downloads YAML from the same live schema; running validation,
+    saving files, and editing templates need the local `chemrefine gui`.
 
 ```bash
 pip install 'chemrefine[gui]'

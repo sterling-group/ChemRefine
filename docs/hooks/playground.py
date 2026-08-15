@@ -18,7 +18,12 @@ from typing import Any
 
 
 def on_post_build(config: Any, **kwargs: Any) -> None:
-    """Copy the GUI assets into ``site/playground/`` and bake ``schema.json`` beside them."""
+    """Copy the GUI assets into ``site/playground/`` and bake ``schema.json`` beside them.
+
+    ``docs/playground.md`` renders a stub page to the same URL first — that is what puts
+    **Playground** in the site's top navigation tabs — and this hook then replaces the
+    stub with the app, so clicking the tab opens the full-screen builder directly.
+    """
     from chemrefine.gui.app import STATIC_DIR
     from chemrefine.introspect import schema_document
 
