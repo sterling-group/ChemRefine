@@ -3,8 +3,8 @@
 Thin by design: every tool is a function from :mod:`chemrefine.agent_tools` registered
 verbatim (the SDK derives each tool's schema from the signature and its description from
 the docstring), so the MCP surface and the embedded agent's surface are one list —
-:data:`TOOLS` — and cannot drift. The only content of its own this module serves is the
-``chemrefine://guide`` resource: the packaged operating guide
+:data:`chemrefine.agent_tools.TOOLS` — and cannot drift. The only content of its own
+this module serves is the ``chemrefine://guide`` resource: the packaged operating guide
 (``data/agent_guide.md``), knowledge shipped *beside* the tools so any client model can
 load ChemRefine's recipes without them being welded into a harness.
 
@@ -17,38 +17,14 @@ message instead of a traceback.
 
 from __future__ import annotations
 
-from importlib import resources
-
 from mcp.server import MCPServer
 
-from chemrefine import __version__, agent_tools
+from chemrefine import __version__
 
-TOOLS = (
-    agent_tools.get_schema,
-    agent_tools.list_engines,
-    agent_tools.validate_config,
-    agent_tools.validate_config_path,
-    agent_tools.summarize_config,
-    agent_tools.read_template,
-    agent_tools.write_template,
-    agent_tools.scaffold_templates,
-    agent_tools.start_run,
-    agent_tools.run_status,
-    agent_tools.get_results,
-    agent_tools.get_failures,
-    agent_tools.lookup_smiles,
-    agent_tools.build_structures,
-    agent_tools.get_frequencies,
-    agent_tools.analyze_mode,
-)
-"""Every tool the server exposes — one shared list, imported by the embedded agent too."""
-
-
-def guide_text() -> str:
-    """The packaged agent guide, read from the wheel's ``data/`` directory."""
-    return (
-        resources.files("chemrefine").joinpath("data/agent_guide.md").read_text(encoding="utf-8")
-    )
+# Explicit re-export aliases: tests and docs address the surface as mcp_server.TOOLS /
+# mcp_server.guide_text, and `no_implicit_reexport` requires the spelling to say so.
+from chemrefine.agent_tools import TOOLS as TOOLS
+from chemrefine.agent_tools import guide_text as guide_text
 
 
 def build_server() -> MCPServer:

@@ -24,6 +24,7 @@ _SUBCOMMANDS = frozenset(
         "rerun-errors",
         "rebuild-cache",
         "rebuild-nms",
+        "agent",
         "backends",
         "engines",
         "gui",

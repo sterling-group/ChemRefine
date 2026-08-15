@@ -342,6 +342,53 @@ def rerun_errors(
 
 
 @app.command()
+def agent(
+    config_path: Annotated[
+        Path | None,
+        typer.Argument(exists=True, dir_okay=False, readable=True,
+                       help="Config file this session works on (optional)."),
+    ] = None,
+    provider: Annotated[
+        str,
+        typer.Option("--provider", help="Endpoint preset: openai, ollama, vllm, or custom."),
+    ] = "custom",
+    model: Annotated[
+        str | None,
+        typer.Option("--model", help="Model name, or a provider:model string."),
+    ] = None,
+    base_url: Annotated[
+        str | None,
+        typer.Option("--base-url", help="OpenAI-compatible endpoint URL override."),
+    ] = None,
+) -> None:
+    """Chat with an embedded agent that authors and triages workflows (terminal REPL).
+
+    The same tools as the MCP server, no client required: multi-provider via
+    OpenAI-compatible endpoints (local Ollama/vLLM included) or PydanticAI's native
+    provider strings. Mutating tools always ask for confirmation first. Needs the
+    ``chemrefine[agent]`` extra; configuration also via CHEMREFINE_LLM_MODEL /
+    _BASE_URL / _API_KEY.
+    """
+    try:
+        from chemrefine.agent import chat
+    except ImportError as e:
+        logger.error(
+            "the embedded agent needs PydanticAI: pip install 'chemrefine[agent]' (%s)", e
+        )
+        raise typer.Exit(code=1) from e
+    try:
+        chat.main(
+            provider=provider,
+            model=model,
+            base_url=base_url,
+            config_path=str(config_path) if config_path is not None else None,
+        )
+    except ChemRefineError as e:
+        logger.error("%s: %s", type(e).__name__, e)
+        raise typer.Exit(code=e.exit_code) from e
+
+
+@app.command()
 def gui(
     config_path: Annotated[
         Path | None,

@@ -66,7 +66,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -e ".[test,mcp,gui]"
+        run: pip install -e ".[test,mcp,gui,agent]"
 
       - name: Run tests with coverage
         run: pytest --cov=chemrefine --cov-report=term-missing --cov-report=xml --cov-fail-under=100 -q
@@ -170,7 +170,7 @@ jobs:
           print(*pins, sep="\n")
           PY
       - name: Install the floors and the test tools
-        run: pip install -e ".[test,mcp,gui]" -c floors.txt
+        run: pip install -e ".[test,mcp,gui,agent]" -c floors.txt
       - name: The suite must pass on the floors
         run: pytest -q
 

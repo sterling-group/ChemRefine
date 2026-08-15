@@ -76,6 +76,12 @@ mcp = ["mcp>=2,<3"]
 # (flask/waitress); the frontend is vendored static JS, no dependency of its own.
 # downloads: none beyond [server]
 gui = ["chemrefine[server]"]
+# The embedded chat agent (`chemrefine agent`) — PydanticAI's slim install with
+# the openai extra, which covers every OpenAI-compatible endpoint (OpenAI itself,
+# Ollama, vLLM, OpenRouter, Groq). Other native providers are their own
+# pydantic-ai-slim extras a user adds when needed.
+# downloads: pydantic-ai-slim + openai client (small)
+agent = ["pydantic-ai-slim[openai]>=2,<3"]
 # MLIP backends — one self-contained extra each (mirrors the per-backend modules in
 # engines/mlip/backends/). Every backend installs into its OWN dedicated environment:
 # their torch/e3nn trees conflict and can never share one env — MACE pins `e3nn==0.4.4`,
@@ -150,7 +156,7 @@ docs = [
 # extra of their own.
 # downloads: test + docs, ruff, mypy, pre-commit (small)
 dev = [
-    "chemrefine[test,docs,mcp]",
+    "chemrefine[test,docs,mcp,gui,agent]",
     # Matched to the pinned pre-commit hook rev — that hook is what actually gates,
     # so a floor years behind it is decorative.
     "ruff>=0.16",
@@ -318,7 +324,13 @@ pythonpath = ["tests"]
 # A warning from a dependency is how a deprecation reaches us before it becomes a
 # breakage; failing on it means we hear about it on the release that introduces it
 # rather than the one that removes the API. The suite is clean under this today.
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # PydanticAI's run_sync spins its own loop; on 3.12+ the stdlib deprecates the
+    # implicit get_event_loop it touches on the way. Their issue, not a signal in ours —
+    # matched narrowly so every other DeprecationWarning still fails the suite.
+    "ignore:There is no current event loop:DeprecationWarning",
+]
 markers = [
     "slow: tests that take longer than 1 second",
     "gpu: tests that require CUDA",

@@ -617,3 +617,51 @@ def get_failures(config_path: str, step: int | str | None = None) -> dict[str, A
         "exit_codes": _EXIT_CODES,
         "suggested_action": "rerun-errors" if failures else None,
     }
+
+
+# ---------------------------------------------------------------------------
+# The shared surface — what every harness registers
+# ---------------------------------------------------------------------------
+
+TOOLS = (
+    get_schema,
+    list_engines,
+    validate_config,
+    validate_config_path,
+    summarize_config,
+    read_template,
+    write_template,
+    scaffold_templates,
+    start_run,
+    run_status,
+    get_results,
+    get_failures,
+    lookup_smiles,
+    build_structures,
+    get_frequencies,
+    analyze_mode,
+)
+"""Every tool this module offers, in working-loop order — the one list both harnesses
+register (:mod:`chemrefine.mcp_server` and the embedded agent), living here so neither
+optional extra has to import the other's SDK to know the surface."""
+
+MUTATING_TOOLS = frozenset(
+    {"write_template", "scaffold_templates", "start_run", "build_structures", "save"}
+)
+"""Tool names that change files or launch work — what a harness gates behind approval.
+
+MCP clients gate on their side (every client confirms tool calls); the embedded chat
+agent wraps exactly these in its own confirmation prompt."""
+
+
+def guide_text() -> str:
+    """The packaged agent guide (``data/agent_guide.md``) — knowledge beside the tools.
+
+    Read from the wheel so both harnesses serve the identical text: the MCP server as
+    the ``chemrefine://guide`` resource, the embedded agent inside its instructions.
+    """
+    from importlib import resources
+
+    return (
+        resources.files("chemrefine").joinpath("data/agent_guide.md").read_text(encoding="utf-8")
+    )

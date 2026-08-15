@@ -102,6 +102,7 @@ nav:
       - CLI Reference: user-guide/cli.md
       - GUI (workflow builder): user-guide/gui.md
       - MCP Server (AI agents): user-guide/mcp.md
+      - Embedded Agent: user-guide/agent.md
       - Troubleshooting: user-guide/troubleshooting.md
   - Tutorials:
       - tutorials/index.md
@@ -147,6 +148,7 @@ nav:
       - Agent Integration:
           - Agent Tools: api/agent_tools.md
           - MCP Server: api/mcp_server.md
+          - Embedded Agent: api/agent.md
       - Infrastructure:
           - SLURM: api/slurm.md
           - Throttle: api/throttle.md
