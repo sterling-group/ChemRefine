@@ -342,6 +342,26 @@ def rerun_errors(
 
 
 @app.command()
+def mcp() -> None:
+    """Serve ChemRefine's agent tools over the Model Context Protocol (stdio).
+
+    Register it with an MCP client, e.g. ``claude mcp add chemrefine -- chemrefine mcp``
+    (or over SSH for a cluster: ``-- ssh login-node chemrefine mcp``). Needs the
+    ``chemrefine[mcp]`` extra; see :mod:`chemrefine.mcp_server`.
+    """
+    try:
+        from chemrefine import mcp_server
+    except ImportError as e:
+        logger.error(
+            "the MCP server needs the Model Context Protocol SDK: "
+            "pip install 'chemrefine[mcp]' (%s)",
+            e,
+        )
+        raise typer.Exit(code=1) from e
+    mcp_server.main()
+
+
+@app.command()
 def schema() -> None:
     """Print the machine-readable config schema document as JSON.
 

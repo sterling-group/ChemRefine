@@ -1,8 +1,8 @@
 """The tool layer agents drive ChemRefine through — framework-neutral, JSON-shaped.
 
 One module holds every operation an AI agent (or any remote caller) performs against a
-ChemRefine tree, so the MCP server and the embedded chat agent register *the same
-functions* and cannot drift apart. Nothing here imports an
+ChemRefine tree, so the MCP server (:mod:`chemrefine.mcp_server`) and the embedded chat
+agent register *the same functions* and cannot drift apart. Nothing here imports an
 agent framework; every function takes JSON-compatible arguments, returns a
 JSON-serializable dict, and raises :class:`~chemrefine.errors.ChemRefineError`
 subclasses — whose documented ``exit_code`` taxonomy doubles as the structured failure

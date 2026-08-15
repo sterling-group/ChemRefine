@@ -100,6 +100,7 @@ nav:
       - Installation: user-guide/installation.md
       - Configuration: user-guide/configuration.md
       - CLI Reference: user-guide/cli.md
+      - MCP Server (AI agents): user-guide/mcp.md
       - Troubleshooting: user-guide/troubleshooting.md
   - Tutorials:
       - tutorials/index.md
@@ -144,6 +145,7 @@ nav:
           - Q-Chem: api/engines_qchem.md
       - Agent Integration:
           - Agent Tools: api/agent_tools.md
+          - MCP Server: api/mcp_server.md
       - Infrastructure:
           - SLURM: api/slurm.md
           - Throttle: api/throttle.md
