@@ -178,9 +178,15 @@ for the full map.
     are exactly the ones the halt stopped from ever running, so holding them to
     the cache they cannot have failed the command *after* it had done its work —
     and told you to run `resume`, which is what you had just run.
-  - `rebuild-cache N` ends at the step it rebuilt. Rebuilding step N says nothing
-    about the steps after it, and neither available answer was right: serving them
-    from a cache they never wrote raises, and resuming them would submit.
+  - `rebuild-cache N` rebuilds step N, then walks the steps after it read-only:
+    each is served from its cache — a load, never a re-parse, and never a
+    submission — and the first cache the current configuration cannot serve ends
+    the run quietly, its message naming the cheapest repair (`rebuild-cache` for
+    outputs that still match this configuration, `resume` when upstream results
+    changed). The walk exists because `steps.csv` is rewritten from step 1 on
+    every run: ending at the target silently dropped the later steps' rows even
+    when their caches were untouched and valid. The report now covers exactly
+    what the current configuration can vouch for.
   - `rebuild-nms [N]` re-resolves an NMS step from the outputs already on disk and
     submits nothing — the same rebuild `rebuild-cache` performs, aimed at the step
     setting `nms: true` rather than the last one. It had become another spelling of
@@ -209,6 +215,12 @@ for the full map.
   after a tag↔version consistency check) — and now run the full CI matrix
   first. `ci.yml` triggers on pushes to `main` and on pull requests, neither of
   which a tag is, so the release path had been running metadata validation only.
+- The sdist carries the test suite **and** the shipped examples, and CI proves the
+  combination: the smoke-test job unpacks the built tarball and runs the suite
+  inside it, so "a distro packager can run the tests from the sdist" is a gated
+  promise rather than a comment. The repo-only guards (docs drift, the mutation
+  gate's self-tests) skip themselves there with named reasons; `docs/` stays out
+  of the tarball on size.
 - `pyscf` gains a `strict_scf` option (default on). Two new CI jobs cover what
   the matrix could not reach: a mutation gate that breaks each critical predicate
   and requires a red test, and a run of the suite with a managed backend
