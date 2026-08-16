@@ -28,6 +28,18 @@ The coverage gate is real: new code ships with tests that cover every
 line and branch, and every module/class/function carries a docstring
 (`interrogate --fail-under=100`). The suite is fast (< 10 s) — run it often.
 
+!!! note "The GUI's JavaScript needs a Node to be checked"
+    `tests/test_gui_assets.py` parses the builder's static assets and executes its
+    pure form logic — the one layer coverage cannot see, where a stray brace blanks
+    the whole page and an `@click` naming a deleted method fails silently. It uses
+    any `node` on `PATH` (CI runners have one) and otherwise the `nodejs-bin`
+    package; with neither it **skips**, so install one of them before touching
+    `src/chemrefine/gui/static/`:
+
+    ```bash
+    pip install nodejs-bin      # or use a system Node
+    ```
+
 ## Conventions
 
 - **Engines** are plugins. Read [Adding an Engine](adding-an-engine.md) before
