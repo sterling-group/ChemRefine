@@ -53,9 +53,11 @@ function builder() {
       let data = null;
       let served = true;
       try {
-        data = await this.api("GET", "/api/bootstrap");
+        const probe = await fetch("/api/bootstrap",
+                                  { headers: { "X-ChemRefine-Token": this.token } });
+        if (probe.ok) data = await probe.json();
       } catch (err) {
-        served = false;
+        served = false; // nothing listening: this is the static docs copy
       }
       if (!data && served) {
         this.fatal =
@@ -113,7 +115,13 @@ function builder() {
         options.headers["Content-Type"] = "application/json";
         options.body = JSON.stringify(body);
       }
-      const response = await fetch(url, options);
+      let response;
+      try {
+        response = await fetch(url, options);
+      } catch (err) {
+        this.flash = "the ChemRefine server is unreachable — is `chemrefine gui` still running?";
+        return null;
+      }
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         this.flash = data.error || (response.status + " error");
@@ -286,6 +294,11 @@ function builder() {
       const entries = this.execRows
         .filter((row) => row.name.trim())
         .map((row) => [row.name.trim(), row.path]);
+      const names = entries.map(([name]) => name);
+      const duplicate = names.find((name, i) => names.indexOf(name) !== i);
+      if (duplicate) {
+        this.flash = `two executables named "${duplicate}" — only the last path is kept`;
+      }
       if (entries.length) this.cfg.executables = Object.fromEntries(entries);
       else delete this.cfg.executables;
       this.syncYaml();
@@ -377,6 +390,11 @@ function builder() {
         window.getSelection().removeAllRanges();
         this.flash = "YAML copied to clipboard";
       }
+    },
+    async leaveRawEdit() {
+      if (this.rawEdit) return;                 // entering text mode: nothing to apply
+      this.rawEdit = true;                      // hold the mode until the text parses
+      await this.applyRaw();
     },
     async applyRaw() {
       const parsed = await this.api("POST", "/api/parse", { yaml_text: this.yamlText });

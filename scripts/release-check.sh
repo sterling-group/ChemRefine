@@ -41,9 +41,9 @@ step() { printf '\n\033[36m▸ %s\033[0m\n' "$1"; }
 orca_dir="$(cd "$(dirname "$(readlink -f "$ORCA")")" && pwd)"
 [ -x "$orca_dir/orca_2json" ] || fail "$ORCA is not the quantum-chemistry ORCA (no orca_2json beside it)"
 
-#if [ -n "$(git status --porcelain)" ]; then
-#    fail "working tree is dirty — release from a clean tree"
-#fi
+if [ -n "$(git status --porcelain)" ]; then
+    fail "working tree is dirty — release from a clean tree"
+fi
 
 printf 'repo    %s\n' "$repo_root"
 printf 'orca    %s\n' "$orca_dir"

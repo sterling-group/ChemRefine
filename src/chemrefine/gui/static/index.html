@@ -325,7 +325,7 @@
         ⬇ Download
       </button>
       <label class="muted">
-        <input type="checkbox" x-model="rawEdit"> edit as text
+        <input type="checkbox" x-model="rawEdit" @change="leaveRawEdit()"> edit as text
       </label>
       <button class="mini" x-show="rawEdit" @click="applyRaw()">Apply to form</button>
     </div>
