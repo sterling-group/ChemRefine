@@ -1,0 +1,268 @@
+"""The GUI's static assets: the one layer no other gate can see.
+
+Python endpoints are held to 100% branch coverage; the JavaScript and the Alpine
+expressions in ``index.html`` are executed only by a browser, so every defect there has
+so far been found by a human clicking. These tests close the two gaps that cost the
+most: a **syntax error** (one stray brace blanks the whole page — every button, both
+panes) and a **broken binding** (an ``@click`` naming a method that no longer exists
+fails silently at click time, which is exactly how a reset button comes to "do
+nothing").
+
+Neither needs a browser. The syntax check shells out to ``node --check`` when a Node is
+available — GitHub's runners ship one, and ``nodejs-bin`` provides one in a venv — and
+skips otherwise rather than pretending. The binding check is pure text analysis: every
+handler an Alpine attribute calls must exist in the component, and every state root it
+reads must be declared on it.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+STATIC = Path(__file__).resolve().parent.parent / "src" / "chemrefine" / "gui" / "static"
+INDEX = STATIC / "index.html"
+OURS = ("app.js", "forms.js")
+
+pytestmark = pytest.mark.skipif(
+    not INDEX.is_file(), reason="GUI assets are a repository artifact; the sdist omits docs/site"
+)
+
+# Alpine attributes whose value is a JavaScript expression.
+_ALPINE_ATTR = re.compile(
+    r"""(?:@[\w.]+|x-(?:text|show|if|for|model|init|effect)|:[\w-]+)\s*=\s*"([^"]*)\"""",
+    re.VERBOSE,
+)
+_STRING = re.compile(r"'[^']*'")
+# A *bare* call / a chain's *first* name: the negative lookbehind drops `.join(`,
+# `.holder`, and every other mid-chain member, which the component never declares.
+_CALL = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(")
+_ROOT = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*\.")
+_XFOR_VARS = re.compile(r"x-for\s*=\s*\"\s*\(?([^)]*?)\)?\s+in\s")
+
+# Names an expression may use that the component does not define: JS keywords and
+# literals, JS/DOM globals, and Alpine's magics. Loop variables are collected from the
+# page's own ``x-for`` declarations rather than listed here.
+_AMBIENT = {
+    "in",
+    "of",
+    "new",
+    "typeof",
+    "instanceof",
+    "void",
+    "delete",
+    "return",
+    "true",
+    "false",
+    "null",
+    "undefined",
+    "this",
+    "Alpine",
+    "Array",
+    "Boolean",
+    "JSON",
+    "Math",
+    "Number",
+    "Object",
+    "String",
+    "console",
+    "document",
+    "window",
+    "localStorage",
+    "jsyaml",
+    "URL",
+    "fetch",
+    "$event",
+    "$el",
+    "$refs",
+    "$dispatch",
+    "$watch",
+    "$store",
+    "$nextTick",
+    "$data",
+}
+
+
+def _component_source() -> str:
+    return "\n".join((STATIC / f).read_text(encoding="utf-8") for f in OURS)
+
+
+def _expressions() -> list[str]:
+    """Every Alpine expression on the page, with single-quoted literals blanked out.
+
+    String contents are not code: ``row['Energy (kcal/mol)']`` must not be read as a
+    reference to ``Energy``.
+    """
+    html = INDEX.read_text(encoding="utf-8")
+    return [_STRING.sub("''", expression) for expression in _ALPINE_ATTR.findall(html)]
+
+
+def _bound_names() -> set[str]:
+    """Ambient names plus the loop variables the page's own ``x-for``s introduce."""
+    html = INDEX.read_text(encoding="utf-8")
+    loop_vars = {
+        part.strip()
+        for declaration in _XFOR_VARS.findall(html)
+        for part in declaration.split(",")
+        if part.strip()
+    }
+    return _AMBIENT | loop_vars
+
+
+def _node() -> str | None:
+    """A Node executable, from PATH or the ``nodejs-bin`` package, or ``None``."""
+    found = shutil.which("node")
+    if found:
+        return found
+    try:
+        from nodejs import node as node_pkg
+    except ImportError:
+        return None
+    return str(getattr(node_pkg, "path", "") or "") or None
+
+
+@pytest.mark.parametrize("filename", [*OURS, "vendor/alpine.min.js", "vendor/js-yaml.min.js"])
+def test_the_javascript_parses(filename: str):
+    """A syntax error here blanks the entire GUI — no button, no pane, no message.
+
+    Vendored files are checked too: a truncated download is indistinguishable from a
+    working one until the page is opened.
+    """
+    node = _node()
+    if node is None:
+        pytest.skip("no node available to parse-check the GUI assets")
+    result = subprocess.run(  # argv list, no shell
+        [node, "--check", str(STATIC / filename)], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, f"{filename} does not parse:\n{result.stderr}"
+
+
+def test_every_handler_the_page_calls_exists():
+    """An ``@click`` naming a method that isn't there fails silently, at click time.
+
+    The component is one object literal, so a method exists iff ``name(`` or
+    ``name:`` appears in the sources — enough to catch a rename or a deletion, which
+    is the failure this guards.
+    """
+    source = _component_source()
+    ambient = _bound_names()
+    missing = sorted(
+        {
+            call
+            for expression in _expressions()
+            for call in _CALL.findall(expression)
+            if call not in ambient
+            and not re.search(rf"\b(?:async\s+)?{re.escape(call)}\s*\(", source)
+            and not re.search(rf"\b{re.escape(call)}\s*:", source)
+        }
+    )
+    assert not missing, f"index.html calls handlers the component does not define: {missing}"
+
+
+def test_every_state_root_the_page_reads_exists():
+    """Same guard for state: ``chat.busy`` is undefined-dot-busy if ``chat`` was renamed."""
+    source = _component_source()
+    ambient = _bound_names()
+    missing = sorted(
+        {
+            root
+            for expression in _expressions()
+            for root in _ROOT.findall(expression)
+            if root not in ambient and not re.search(rf"\b{re.escape(root)}\s*:", source)
+        }
+    )
+    assert not missing, f"index.html reads state the component does not declare: {missing}"
+
+
+def _run_in_node(script: str) -> str:
+    """Evaluate ``script`` with ``forms.js`` already loaded; return its stdout.
+
+    ``forms.js`` is plain top-level functions (no module system — the page loads it
+    with a bare script tag), so sourcing it is a concatenation.
+    """
+    node = _node()
+    if node is None:
+        pytest.skip("no node available to execute the GUI's pure form logic")
+    source = (STATIC / "forms.js").read_text(encoding="utf-8") + "\n" + script
+    result = subprocess.run(  # argv list, no shell
+        [node, "-e", source], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def test_field_specs_carry_the_schema_bounds_and_default():
+    """The spec a number input renders from: bounds for the spinner, default to step from.
+
+    An empty box steps from ``min`` (or 0), which is why ``max_cores`` showed a grey 4
+    and its arrow produced 1 — the default has to be a real value, and the bounds have
+    to reach the input.
+    """
+    out = _run_in_node("""
+      const spec = fieldSpec("max_cores", {type: "integer", minimum: 1, default: 4});
+      const optional = fieldSpec("max_gpus", {anyOf: [{type: "integer", minimum: 0},
+                                                      {type: "null"}], default: null});
+      const exclusive = fieldSpec("temperature_k", {type: "number", exclusiveMinimum: 0,
+                                                    default: 298.15});
+      console.log(JSON.stringify({
+        cores: [spec.kind, spec.min, spec.max, spec.fallbackNum],
+        gpus: [optional.kind, optional.min, optional.fallbackNum],
+        temp: [exclusive.min, exclusive.fallbackNum],
+      }));
+    """)
+    assert json.loads(out) == {
+        "cores": ["number", 1, None, 4],
+        "gpus": ["number", 0, None],  # Optional[int] unwrapped; no default to display
+        "temp": [0, 298.15],
+    }
+
+
+def test_coercion_clamps_and_splits_defaults_by_scope():
+    """The two rules a user feels: bounds are enforced, and scope decides default-keeping.
+
+    Workflow settings are written out even at their default (the file reads as a
+    complete protocol, like the shipped examples); a step's knobs are deviation-only,
+    so a step shows the two lines that matter instead of every default it inherited.
+    """
+    out = _run_in_node("""
+      const cores = fieldSpec("max_cores", {type: "integer", minimum: 1, default: 4});
+      const count = fieldSpec("count", {type: "integer", minimum: 0, default: null});
+      console.log(JSON.stringify({
+        typed_zero_clamps: coerceField(cores, "0"),
+        typed_zero_clamps_kept: coerceField(cores, "0", true),
+        default_dropped_for_steps: coerceField(cores, "4") === undefined,
+        default_kept_for_settings: coerceField(cores, "4", true),
+        real_value_survives_both: [coerceField(cores, "16"), coerceField(cores, "16", true)],
+        blank_is_unset: coerceField(count, "") === undefined,
+        no_default_means_nothing_to_drop: coerceField(count, "0"),
+      }));
+    """)
+    assert json.loads(out) == {
+        "typed_zero_clamps": 1,
+        "typed_zero_clamps_kept": 1,
+        "default_dropped_for_steps": True,
+        "default_kept_for_settings": 4,
+        "real_value_survives_both": [16, 16],
+        "blank_is_unset": True,
+        "no_default_means_nothing_to_drop": 0,
+    }
+
+
+def test_templated_option_lists_bind_selected():
+    """Every ``<select>`` whose options are ``x-for``-rendered must bind ``:selected``.
+
+    Alpine renders templated options *after* the select binds, so a plain ``:value``
+    on the select loses the race and the box displays its first option while the state
+    says otherwise — the engine dropdown showed ``mlip`` for an ``orca`` step exactly
+    this way. Checked structurally so the next select added cannot repeat it.
+    """
+    html = INDEX.read_text(encoding="utf-8")
+    for block in re.findall(r"<select\b.*?</select>", html, re.DOTALL):
+        if "x-for" not in block:
+            continue
+        assert ":selected" in block, f"templated select without :selected:\n{block[:200]}"

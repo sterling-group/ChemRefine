@@ -77,11 +77,13 @@ function fieldSpecs(objectSchema, skip) {
  *
  * Two rules beyond typing: numbers are clamped to the schema's bounds (the min/max
  * attributes stop the spinner, but nothing stops typing "0" into max_cores — the clamp
- * does), and any value equal to the schema default coerces to undefined, so the YAML
- * carries only deviations — never a duplicate restatement of a default. */
-function coerceField(field, raw) {
+ * does), and — unless keepDefault — a value equal to the schema default coerces to
+ * undefined, so step-level knobs stay deviation-only. Workflow settings pass
+ * keepDefault=true: the file spells them out explicitly, like the shipped examples. */
+function coerceField(field, raw, keepDefault = false) {
   if (raw === "" || raw === undefined || raw === null) return undefined;
   if (field.kind === "checkbox") {
+    if (keepDefault) return raw;
     return raw === (field.fallback === "true") ? undefined : raw;
   }
   if (field.kind === "number") {
@@ -90,9 +92,11 @@ function coerceField(field, raw) {
     let value = n;
     if (field.min !== null && field.min !== undefined && value < field.min) value = field.min;
     if (field.max !== null && field.max !== undefined && value > field.max) value = field.max;
-    if (field.fallbackNum !== null && value === field.fallbackNum) return undefined;
+    if (!keepDefault && field.fallbackNum !== null && value === field.fallbackNum) {
+      return undefined;
+    }
     return value;
   }
-  if (field.fallback !== "" && String(raw) === field.fallback) return undefined;
+  if (!keepDefault && field.fallback !== "" && String(raw) === field.fallback) return undefined;
   return raw;
 }

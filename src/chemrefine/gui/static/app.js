@@ -14,9 +14,12 @@ function builder() {
     staticMode: false,
     serverHost: "",
     ready: false,
+    fatal: "",
     schema: null,
     cfg: { steps: [] },
     execRows: [],
+    stepKeys: [],   // stable per-card identity; see rekeySteps()
+    _uid: 0,
     yamlText: "",
     rawEdit: false,
     report: null,
@@ -27,6 +30,7 @@ function builder() {
     runResults: null,
     resultsStep: "",
     _statusTimer: null,
+    _chatGen: 0,
     chat: { detail: "", msgs: [], pending: [], decisions: {}, draft: "", busy: false,
             provider: localStorage.getItem("cr-provider") || "ollama",
             model: localStorage.getItem("cr-model") || "",
@@ -41,11 +45,24 @@ function builder() {
       // One page, two worlds: served by the local Flask app there is an /api behind
       // us; copied onto the static docs site there is only schema.json, baked at docs
       // build time. Probe once and let every later call route accordingly.
+      // A *server* that answers is the local GUI even when it says no: only the
+      // absence of one (fetch throws) means the static docs copy. Treating a 401 as
+      // "no server" sent the local page into playground mode, where it then died
+      // fetching a schema.json that only the docs build has — a blank page with a
+      // banner telling the user to run the very thing they were running.
       let data = null;
+      let served = true;
       try {
         data = await this.api("GET", "/api/bootstrap");
       } catch (err) {
-        data = null;
+        served = false;
+      }
+      if (!data && served) {
+        this.fatal =
+          "This tab's session token is stale — the server was restarted. Open the "
+          + "URL printed by `chemrefine gui` again.";
+        this.ready = true;
+        return;
       }
       if (data) {
         this.schema = data.schema;
@@ -59,12 +76,34 @@ function builder() {
       } else {
         this.staticMode = true;
         this.flash = "";
-        this.schema = await (await fetch("schema.json")).json();
+        try {
+          this.schema = await (await fetch("schema.json")).json();
+        } catch (err) {
+          this.fatal = "Could not load the schema — reload the page.";
+          this.ready = true;
+          return;
+        }
       }
+      this.seedWorkflowDefaults();
+      this.rekeySteps();
       if (!this.cfg.steps.length) this.addStep();
       this.syncExecRows();
       this.ready = true;
       this.syncYaml();
+    },
+
+    seedWorkflowDefaults() {
+      // Workflow settings are spelled out in the file, like every shipped example — a
+      // config that states its template_dir, charge and max_cores reads as a complete
+      // protocol. (Step knobs stay deviation-only: a step listing every default would
+      // bury the two lines that matter.) Only fills what the loaded config omits.
+      for (const field of this.topFields) {
+        if (field.fallback === "" || this.cfg[field.key] !== undefined) continue;
+        this.cfg[field.key] =
+          field.kind === "number" ? field.fallbackNum
+          : field.kind === "checkbox" ? field.fallback === "true"
+          : field.fallback;
+      }
     },
 
     async api(method, url, body) {
@@ -106,7 +145,14 @@ function builder() {
       return null;
     },
 
-    withSteps(config) { return { steps: [], ...config }; },
+    withSteps(config) {
+      // `steps:` written but empty parses as null, and a half-typed raw edit can leave
+      // a scalar there; either one made every later cfg.steps.map/length throw and
+      // blanked the builder for good.
+      const merged = { steps: [], ...config };
+      if (!Array.isArray(merged.steps)) merged.steps = [];
+      return merged;
+    },
 
     // ---------------- schema-derived field lists ----------------
     get topFields() {
@@ -124,11 +170,15 @@ function builder() {
     },
     get engineNames() { return Object.keys(this.schema.engines).sort(); },
     operationsFor(step) {
-      // Each engine's own vocabulary (ORCA family today; empty = the field is a free
-      // label for this engine). A loaded config's off-list value stays selectable so
-      // the display never lies about the state.
-      const descriptor = this.schema.engines[step.engine];
-      const ops = descriptor && descriptor.operations ? [...descriptor.operations] : [];
+      // Each engine's own vocabulary (the ORCA family today, ExtOpt engines included —
+      // they are ORCA-driven and parse the same outputs). An engine that declares none
+      // treats the field as a free label.
+      const descriptor = this.schema.engines[step.engine] || {};
+      // A server predating per-engine vocabularies has no `operations` key at all;
+      // fall back to the document-level list rather than claiming "not used".
+      const ops = descriptor.operations
+        ? [...descriptor.operations]
+        : ("operations" in descriptor ? [] : [...(this.schema.operations || [])]);
       if (step.operation && !ops.includes(step.operation)) ops.unshift(step.operation);
       return ops;
     },
@@ -173,7 +223,9 @@ function builder() {
 
     // ---------------- mutations (every one funnels into syncYaml) ----------------
     setTop(field, raw) {
-      const value = coerceField(field, raw);
+      if (field.kind === "number" && raw === "") return; // mid-keystroke, not a clear
+      // keepDefault: a workflow setting stays in the file even at its default value.
+      const value = coerceField(field, raw, true);
       if (value === undefined) delete this.cfg[field.key];
       else this.cfg[field.key] = value;
       this.syncYaml();
@@ -212,14 +264,16 @@ function builder() {
     setStepCharge(index, raw) {
       // The step's baseline is the *inherited* workflow charge: stepping starts there,
       // and an override equal to it is no override at all — the YAML stays clean.
+      if (raw === "") return; // mid-keystroke ("-", "1e"): never rewrite the box
       const inherited = this.cfg.charge ?? 0;
-      const n = raw === "" ? Number.NaN : Number(raw);
+      const n = Number(raw);
       this.setStep(index, "charge", Number.isNaN(n) || n === inherited ? undefined : n);
     },
     setStepMult(index, raw) {
       // Same inherit-baseline rule, with the schema's floor of 1 enforced on typing.
+      if (raw === "") return;
       const inherited = this.cfg.multiplicity ?? 1;
-      const n = raw === "" ? Number.NaN : Math.max(1, Math.round(Number(raw)));
+      const n = Math.max(1, Math.round(Number(raw)));
       this.setStep(index, "multiplicity", Number.isNaN(n) || n === inherited ? undefined : n);
     },
 
@@ -259,20 +313,37 @@ function builder() {
 
     addStep() {
       this.cfg.steps.push({ step: this.cfg.steps.length + 1, engine: "orca" });
+      this.stepKeys.push(++this._uid);
       this.syncYaml();
     },
     removeStep(index) {
       this.cfg.steps.splice(index, 1);
+      this.stepKeys.splice(index, 1);
       this.renumber();
     },
     moveStep(index, delta) {
       const steps = this.cfg.steps;
       const [moved] = steps.splice(index, 1);
       steps.splice(index + delta, 0, moved);
+      const [key] = this.stepKeys.splice(index, 1);
+      this.stepKeys.splice(index + delta, 0, key);
       this.renumber();
+    },
+    rekeySteps() {
+      // x-for keyed by array index makes DOM state (a collapsed card, focus, the
+      // template modal) stick to the *slot*: move a step and the collapse stays behind
+      // on whatever lands there. These ids follow the step object instead.
+      this.stepKeys = this.cfg.steps.map(() => ++this._uid);
     },
     renumber() {
       this.cfg.steps.forEach((step, i) => { step.step = i + 1; });
+      // The results view names a step by number; after renumbering that number means a
+      // different step (or none), so the panel must let go rather than keep serving
+      // the old one under a selector that has silently snapped back to "—".
+      if (this.resultsStep && !this.cfg.steps.some((s) => String(s.step) === String(this.resultsStep))) {
+        this.resultsStep = "";
+        this.runResults = null;
+      }
       this.syncYaml();
     },
 
@@ -311,6 +382,8 @@ function builder() {
       const parsed = await this.api("POST", "/api/parse", { yaml_text: this.yamlText });
       if (parsed && parsed.config) {
         this.cfg = this.withSteps(parsed.config);
+        this.seedWorkflowDefaults(); // the form shows them; the file states them
+        this.rekeySteps();
         this.syncExecRows();
         this.rawEdit = false;
         this.flash = "text applied to the form";
@@ -398,18 +471,22 @@ function builder() {
       return payload;
     },
     async _chatTurn(extra) {
+      const generation = ++this._chatGen;
       this.chat.busy = true;
       try {
         const data = await this.api("POST", "/api/agent/chat", this._chatPayload(extra));
-        if (!data) return;
+        if (!data) return false;                       // server refused; flash explains
+        if (generation !== this._chatGen) return true;  // a reset won the race: drop it
         if (data.pending) {
           this.chat.pending = data.pending;
           this.chat.decisions = {};
         } else if (data.reply !== null && data.reply !== undefined) {
           this.chat.msgs.push({ who: "agent", text: data.reply });
         }
+        return true;
       } catch (err) {
         this.flash = "chat request failed: " + err;
+        return false;
       } finally {
         this.chat.busy = false; // never leave the panel stuck on a failed request
       }
@@ -425,16 +502,25 @@ function builder() {
       // Every pending call needs a verdict before the run can resume.
       this.chat.decisions[callId] = allow;
       if (Object.keys(this.chat.decisions).length < this.chat.pending.length) return;
-      const approvals = this.chat.decisions;
+      const approvals = { ...this.chat.decisions };
+      const heldPending = this.chat.pending;
       this.chat.pending = [];
       this.chat.decisions = {};
-      await this._chatTurn({ approvals });
+      const generation = this._chatGen;
+      const landed = await this._chatTurn({ approvals });
+      // A failed resume must not swallow the verdicts: without the cards the suspended
+      // run has nothing left to answer it. Restore unless a reset intervened.
+      if (!landed && this._chatGen === generation + 1) {
+        this.chat.pending = heldPending;
+        this.chat.decisions = approvals;
+      }
     },
     async resetChat() {
       // Reset everything the user can see — conversation AND the settings drawer —
       // and say so: a reset that only clears hidden server state looks broken.
       // Local state clears FIRST, so reset works even when the server call cannot
       // (a stuck busy flag, a dropped connection).
+      this._chatGen += 1; // orphan any in-flight turn
       this.chat.msgs = [];
       this.chat.pending = [];
       this.chat.decisions = {};
@@ -479,6 +565,12 @@ function builder() {
         this.browse.parent = data.parent;
         this.browse.entries = data.entries;
       }
+    },
+    pickHere() {
+      // Directory fields (template_dir, output_dir, scratch_dir) are chosen by
+      // navigating *into* the folder and taking it — clicking a file never applied.
+      if (this.browse.onPick) this.browse.onPick(this.browse.path);
+      this.browse.open = false;
     },
     pickFile(entry) {
       if (this.browse.mode === "pick" && this.browse.onPick) {

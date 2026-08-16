@@ -36,7 +36,11 @@
   </nav>
 </header>
 
-<main x-show="ready" style="display:none">
+<!-- Fatal boot failures render OUTSIDE the ready gate: a page that cannot start must
+     still be able to say why. -->
+<p id="fatal" x-show="fatal" style="display:none" x-text="fatal"></p>
+
+<main x-show="ready && !fatal" style="display:none">
 
   <!-- ============ LEFT: the click-through builder ============ -->
   <section id="left">
@@ -107,7 +111,7 @@
     </details>
 
     <h2>Steps</h2>
-    <template x-for="(step, index) in cfg.steps" :key="index">
+    <template x-for="(step, index) in cfg.steps" :key="stepKeys[index]">
       <details class="step" open>
         <summary>
           <b x-text="'Step ' + step.step"></b>
@@ -192,7 +196,10 @@
                   </select>
                 </template>
                 <template x-if="field.kind === 'checkbox'">
-                  <input type="checkbox" :checked="(step.options || {})[field.key] ?? false"
+                  <input type="checkbox"
+                         :checked="(step.options || {})[field.key] ?? (field.fallback === 'true')"
+                         :class="((step.options || {})[field.key] ?? null) === null
+                                 ? 'isdefault' : ''"
                          @change="setOption(index, field, $event.target.checked)">
                 </template>
                 <template x-if="field.kind === 'number'">
@@ -363,9 +370,10 @@
       <div class="row">
         <label class="muted">results for step
           <select @change="loadResults($event.target.value)">
-            <option value="">—</option>
+            <option value="" :selected="!resultsStep">—</option>
             <template x-for="step in cfg.steps" :key="'r' + step.step">
-              <option :value="step.step" x-text="step.step"></option>
+              <option :value="step.step" :selected="String(step.step) === String(resultsStep)"
+                      x-text="step.step"></option>
             </template>
           </select>
         </label>
@@ -486,6 +494,9 @@
         </li>
       </template>
     </ul>
+    <div class="row" x-show="browse.mode === 'pick'">
+      <button @click="pickHere()">Use this folder</button>
+    </div>
     <div class="row" x-show="browse.mode === 'save'">
       <input type="text" x-model="browse.filename" placeholder="input.yaml">
       <button @click="saveTo()">Save here</button>
