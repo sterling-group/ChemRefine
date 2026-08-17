@@ -100,3 +100,19 @@ function coerceField(field, raw, keepDefault = false) {
   if (!keepDefault && field.fallback !== "" && String(raw) === field.fallback) return undefined;
   return raw;
 }
+
+/** The directory part of a path, or "." when it names none.
+ *
+ * `lastIndexOf` returns -1 for a bare filename and slicing to -1 drops the last
+ * *character* rather than a directory — so `chemrefine gui input.yaml` sent
+ * base_dir "input.yam", every relative path in the config resolved under a directory
+ * that does not exist, and the validation report blamed templates sitting right
+ * beside it. Lives here, with the other pure helpers, because `builder()` reads
+ * `window` and `localStorage` as it is constructed: logic left in app.js cannot be
+ * reached by a test at all.
+ */
+function parentDir(path) {
+  const cut = path.lastIndexOf("/");
+  if (cut < 0) return ".";
+  return cut === 0 ? "/" : path.slice(0, cut);
+}

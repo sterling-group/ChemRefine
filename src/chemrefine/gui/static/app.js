@@ -415,8 +415,7 @@ function builder() {
         this.flash = "validation runs the real models — pip install chemrefine[gui]";
         return;
       }
-      const base = this.savedPath
-        ? this.savedPath.slice(0, this.savedPath.lastIndexOf("/")) : null;
+      const base = this.savedPath ? parentDir(this.savedPath) : null;
       this.report = await this.api("POST", "/api/validate",
                                    { yaml_text: this.yamlText, base_dir: base });
     },

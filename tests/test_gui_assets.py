@@ -266,3 +266,19 @@ def test_templated_option_lists_bind_selected():
         if "x-for" not in block:
             continue
         assert ":selected" in block, f"templated select without :selected:\n{block[:200]}"
+
+
+def test_the_validation_base_is_a_directory_even_for_a_bare_filename():
+    """`chemrefine gui input.yaml` must validate against the config's own directory.
+
+    `lastIndexOf("/")` is -1 for a bare filename, and slicing to -1 drops a character
+    instead of yielding a directory — so the base became "input.yam", every relative
+    path resolved under a directory that does not exist, and the report warned that
+    templates were missing while they sat right beside the config. The launch argument
+    is the route that carries a bare name: paths chosen through Save… are absolute.
+    """
+    out = _run_in_node("""
+      console.log(JSON.stringify(["/home/u/proj/input.yaml", "sub/input.yaml",
+                                  "input.yaml", "/input.yaml"].map(parentDir)));
+    """)
+    assert json.loads(out) == ["/home/u/proj", "sub", ".", "/"]
