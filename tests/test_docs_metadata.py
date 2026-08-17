@@ -55,9 +55,7 @@ def _supported() -> list[tuple[int, int]]:
     """Every ``3.x`` the classifiers name, ascending — the range the package claims."""
     data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
     found = [
-        m.group(1)
-        for line in data["project"]["classifiers"]
-        if (m := _CLASSIFIER_RE.match(line))
+        m.group(1) for line in data["project"]["classifiers"] if (m := _CLASSIFIER_RE.match(line))
     ]
     return sorted(tuple(int(part) for part in v.split(".")) for v in found)  # type: ignore[misc]
 
