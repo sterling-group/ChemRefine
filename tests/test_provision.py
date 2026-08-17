@@ -25,10 +25,15 @@ _REQ = BackendRequirement(extra="mlip-mace", import_name="mace")
 
 
 def _provisioned(tmp_path: Path, extra: str) -> Path:
-    """Create a fake managed env for ``extra`` under ``tmp_path`` and return its python."""
+    """Create a fake managed env for ``extra`` under ``tmp_path`` and return its python.
+
+    A symlink to this interpreter rather than an empty file, matching what CI's
+    `provisioned-backend` job creates (`ln -s $(command -v python)`) — so a test that
+    reaches the shared-env probe meets something that can actually answer.
+    """
     py = tmp_path / "backends" / extra / "bin" / "python"
     py.parent.mkdir(parents=True, exist_ok=True)
-    py.write_text("", encoding="utf-8")
+    py.symlink_to(sys.executable)
     return py
 
 
@@ -311,13 +316,24 @@ def test_build_commands_per_tool(monkeypatch, tmp_path: Path):
         assert cmds[1][-1].startswith("chemrefine[") and "==" in cmds[1][-1]
 
 
-def test_build_backend_env_is_idempotent(monkeypatch, tmp_path: Path):
+def test_build_backend_env_installs_into_an_env_that_already_exists(monkeypatch, tmp_path: Path):
+    """An existing env is extended, not skipped — creation is what is idempotent.
+
+    Returning early on `<env>/bin/python` made `backends install pyscf-gpu` a silent no-op
+    wherever a `pyscf` env already stood, because the two share a directory: the command
+    reported success having installed nothing, and the GPU step then ran on CPU. pip is
+    idempotent when the requirement is already satisfied, so letting it run is what makes
+    "install the CPU stack, then add the GPU one" work at all.
+    """
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
-    py = _provisioned(tmp_path, "mlip-mace")
+    py = _provisioned(tmp_path, "pyscf")
     calls: list[list[str]] = []
     monkeypatch.setattr(provision.subprocess, "run", lambda argv, **_k: calls.append(argv))
-    assert provision.build_backend_env("mlip-mace") == py
-    assert calls == []  # env already present → no subprocess
+
+    assert provision.build_backend_env("pyscf-gpu") == py  # the *pyscf* env, extended
+
+    assert len(calls) == 1, "the env exists, so only the install runs — no second create"
+    assert calls[0][-1].startswith("chemrefine[pyscf-gpu]")
 
 
 def test_build_backend_env_runs_the_detected_tool(monkeypatch, tmp_path: Path):
@@ -640,3 +656,62 @@ def test_backends_cli_install_surfaces_chemrefine_errors(monkeypatch, tmp_path: 
     result = CliRunner().invoke(app, ["backends", "install", "pyscf"])
     assert result.exit_code == ConfigError.exit_code
     assert "no longer exists" in result.output
+
+
+def test_a_gpu_step_is_refused_by_an_env_holding_only_the_base_stack(monkeypatch, tmp_path: Path):
+    """The shared env's name proves nothing, so the env is asked.
+
+    `backends/pyscf` exists whether it was built from `[pyscf]` or `[pyscf-gpu]`. Trusting
+    the name let a GPU step start against the CPU stack and finish on CPU, reporting
+    success. The refusal names the command that repairs it in place.
+    """
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    _provisioned(tmp_path, "pyscf")  # the base stack: a real interpreter, no gpu4pyscf
+
+    with pytest.raises(ConfigError, match="cannot import 'gpu4pyscf'"):
+        provision.require_backend(BackendRequirement(extra="pyscf-gpu", import_name="gpu4pyscf"))
+
+
+def test_an_unambiguous_env_is_trusted_without_being_run(monkeypatch, tmp_path: Path):
+    """Only a shared env is probed; everywhere else the directory name is the proof.
+
+    Probing every backend would make CI's `provisioned-backend` job — which symlinks a bare
+    interpreter precisely to show the suite does not need real backends — require MACE and
+    FAIRChem to be installed before it could pass.
+    """
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    _provisioned(tmp_path, "mlip-mace")
+    monkeypatch.setattr(
+        provision, "_importable_by", lambda *_a: pytest.fail("an unshared env was probed")
+    )
+
+    provision.require_backend(BackendRequirement(extra="mlip-mace", import_name="mace"))
+
+
+def test_the_probe_reports_what_an_interpreter_can_and_cannot_import(tmp_path: Path):
+    """`_importable_by` asks the *other* interpreter, and survives one that cannot be run."""
+    assert provision._importable_by(Path(sys.executable), "json") is True
+    assert provision._importable_by(Path(sys.executable), "no_such_module_at_all") is False
+    assert provision._importable_by(tmp_path / "not-an-interpreter", "json") is False
+
+
+def test_a_failed_extension_leaves_the_existing_env_intact(monkeypatch, tmp_path: Path):
+    """Only an env *this call* created is torn down on failure.
+
+    A half-built env is worse than none, because its `bin/python` would be served to every
+    later run — but that reasoning covers the env this call made, not one that was already
+    working. Removing `backends/pyscf` because a later `pyscf-gpu` install hit a resolver
+    wall would destroy a CPU stack the user still has every right to run.
+    """
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    py = _provisioned(tmp_path, "pyscf")
+
+    def _explode(argv, **_kwargs):
+        raise subprocess.CalledProcessError(1, argv)
+
+    monkeypatch.setattr(provision.subprocess, "run", _explode)
+
+    with pytest.raises(BackendProvisionError, match="pyscf-gpu"):
+        provision.build_backend_env("pyscf-gpu")
+
+    assert py.is_file(), "the pre-existing pyscf env was destroyed by a failed GPU install"

@@ -425,10 +425,11 @@ class ArtifactEngine(CalculationEngine, Protocol):
 class BackendRequirement:
     """The environment a step's compute backend needs, for the provisioner.
 
-    ``extra`` is the pip extra (= the managed-env name) that provides the backend —
-    ``chemrefine[<extra>]`` installs it; ``import_name`` is the backend's top-level module,
-    probed cheaply (:func:`importlib.util.find_spec`) to detect the single-env case where the
-    backend is already importable alongside the orchestrator.
+    ``extra`` is the pip extra that provides the backend — ``chemrefine[<extra>]`` installs
+    it; ``import_name`` is the backend's top-level module, probed to decide whether the
+    backend is usable at all. Which *directory* the extra installs into is
+    :func:`chemrefine.engines._provision.backend_env_path`'s to decide, not a field here:
+    the CLI provisions from a bare extra name and has no requirement object to read.
     """
 
     extra: str

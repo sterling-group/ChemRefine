@@ -8,8 +8,9 @@ engine's ``backend_requirement`` hook (capability by Protocol, like NMS), and ev
 works off that DTO — no backend names, tasks, or tables.
 
 * :func:`preflight_backends` — validate every step **before any job submits**: a backend is
-  runnable if an explicit ``backend_python`` override is set, a managed env exists, or the
-  backend is importable in the current env (the single-env case). Otherwise it raises
+  runnable if an explicit ``backend_python`` override is set, a managed env exists (and, where
+  its name does not determine its contents, can import it), or the backend is importable in
+  the current env (the single-env case). Otherwise it raises
   :class:`~chemrefine.errors.ConfigError` naming the ``chemrefine backends install`` fix.
 * :func:`resolve_launcher` / :func:`launcher_for` — the interpreter that runs a step's
   backend (server or direct script): override → managed-env python → ``sys.executable``.
@@ -91,8 +92,21 @@ def chemrefine_home() -> Path:
 
 
 def backend_env_path(extra: str) -> Path:
-    """The managed env directory for ``extra`` (``<chemrefine_home>/backends/<extra>``)."""
-    return chemrefine_home() / "backends" / extra
+    """The managed env directory for ``extra`` (``<chemrefine_home>/backends/<extra>``).
+
+    A ``-gpu`` extra shares the env of the extra it extends. ``[pyscf-gpu]`` *is* ``[pyscf]``
+    plus gpu4pyscf and cutensor — a superset, not a rival — so both belong in one directory,
+    and ``chemrefine backends install pyscf-gpu`` adds the accelerator packages to the env
+    ``… install pyscf`` already built. The one-env-per-extra rule everywhere else exists
+    because the MLIP stacks genuinely *conflict* (MACE pins ``e3nn==0.4.4``, FAIRChem needs
+    ``>=0.5``); where nothing conflicts it would only duplicate a large PySCF tree.
+
+    Keyed to the suffix rather than to a table, for the same reason
+    :func:`chemrefine.config.reject_shell_unsafe` is keyed to a property: a second
+    accelerator extra added later is covered by existing, and no name that is not an
+    accelerator variant can be caught by it.
+    """
+    return chemrefine_home() / "backends" / extra.removesuffix("-gpu")
 
 
 def backend_env_python(extra: str) -> Path:
@@ -142,16 +156,67 @@ def _backend_python(engine: object, options: dict[str, Any]) -> str | None:
     return options_cls.from_raw_lenient(options).backend_python
 
 
+def _importable_by(python: Path, import_name: str) -> bool:
+    """Whether ``import_name`` can be found by *another* interpreter.
+
+    The env's own answer, not this process's. Asking the path whether the directory exists
+    cannot tell a ``pyscf`` env from a ``pyscf-gpu`` one — they are the same directory —
+    so a GPU step would pass against a CPU-only env and PySCF would fall back to CPU
+    mid-run, which is the failure this exists to prevent: it is logged to the backend
+    server's log and nowhere the user looks, so the run *succeeds* with the wrong hardware.
+
+    ``find_spec`` rather than an import: it answers the same question without paying for
+    torch or libcint, and this runs once per provisionable step at preflight.
+    """
+    probe = "import importlib.util,sys;sys.exit(0 if importlib.util.find_spec(sys.argv[1]) else 1)"
+    try:
+        # No shell. The interpreter is a path this module composed, the program is the
+        # literal above, and `import_name` is an engine's own ClassVar — nothing here comes
+        # from the YAML. Passed as argv rather than interpolated so it cannot be code.
+        return (
+            subprocess.run(  # noqa: S603
+                [str(python), "-c", probe, import_name], check=False
+            ).returncode
+            == 0
+        )
+    except OSError:
+        return False
+
+
 def require_backend(requirement: BackendRequirement, override: str | None = None) -> None:
     """Raise :class:`ConfigError` unless this backend is runnable here.
 
-    Runnable = an explicit ``backend_python`` override, a provisioned managed env, or the
-    backend importable in the current env (a cheap :func:`importlib.util.find_spec` probe —
-    no heavy import). The error names both fixes.
+    Runnable = an explicit ``backend_python`` override, a provisioned managed env that can
+    actually import the backend, or the backend importable in the current env (a cheap
+    :func:`importlib.util.find_spec` probe — no heavy import).
+
+    A managed env is proved by its **name** wherever the name determines its contents, and
+    that is everywhere except the shared-env case: ``[pyscf]`` and ``[pyscf-gpu]`` live in
+    one directory (see :func:`backend_env_path`), so ``backends/pyscf`` existing says
+    nothing about whether gpu4pyscf is in it. Only there is the env asked, and asking costs
+    one subprocess for one kind of step.
+
+    Probing *everywhere* was the obvious alternative and is wrong: it would make a faked env
+    — CI's `provisioned-backend` job, which symlinks a bare interpreter precisely to prove
+    the suite does not depend on real backends — need MACE and FAIRChem actually installed
+    before it could pass.
+
+    The override is taken on trust: it is the documented escape hatch for an environment the
+    provisioner does not manage, it may name a bare command rather than a path, and
+    second-guessing what the user pointed at explicitly is not this function's business.
     """
     if override:
         return
-    if backend_env_python(requirement.extra).is_file():
+    env_python = backend_env_python(requirement.extra)
+    if env_python.is_file():
+        shares_env = backend_env_path(requirement.extra).name != requirement.extra
+        if shares_env and not _importable_by(env_python, requirement.import_name):
+            raise ConfigError(
+                f"the managed env for '{requirement.extra}' cannot import "
+                f"'{requirement.import_name}' — it holds the base stack, not this one. Run "
+                f"`chemrefine backends install {requirement.extra}`, which installs into "
+                f"the env that is already there rather than building a second one."
+            )
         return
     if importlib.util.find_spec(requirement.import_name) is not None:
         return
@@ -306,10 +371,17 @@ def _build_commands(tool: EnvTool, path: Path, extra: str) -> list[list[str]]:
 
 
 def build_backend_env(extra: str, *, tool: EnvTool | None = None) -> Path:
-    """Create (or reuse) the managed env for ``extra``; return its ``python``.
+    """Create the managed env for ``extra`` if it is absent, then install into it.
 
-    Idempotent — returns immediately when the env's ``python`` already exists. Builds with
-    ``tool`` (default: :func:`detect_env_tool`); every subprocess must succeed.
+    **The install always runs**, where this used to return early whenever the env's
+    ``python`` existed. That early return made ``backends install pyscf-gpu`` a silent no-op
+    on a machine that already had a ``pyscf`` env — the two share a directory (see
+    :func:`backend_env_path`), so the command reported success having installed nothing and
+    the GPU step then ran on CPU. pip is idempotent and cheap when the requirement is
+    already satisfied, and this is an explicit user command rather than a per-run path, so
+    letting pip decide costs a few seconds and removes a whole class of wrong.
+
+    Builds with ``tool`` (default: :func:`detect_env_tool`); every subprocess must succeed.
 
     A failing subprocess becomes a :class:`~chemrefine.errors.BackendProvisionError` rather
     than escaping as ``CalledProcessError`` / ``FileNotFoundError``. :mod:`chemrefine.errors`
@@ -323,21 +395,24 @@ def build_backend_env(extra: str, *, tool: EnvTool | None = None) -> Path:
     *binary*, which on many clusters is only a shell function.
 
     A half-built env is removed on the way out, because leaving it is worse than not
-    building it: the idempotence check above is ``<env>/bin/python``, so an env whose
-    *create* succeeded and whose *install* failed would be served to every later run as
-    though it were provisioned, and the step would fail on the import instead.
+    building it: an env whose *create* succeeded and whose *install* failed would be served
+    to every later run as though it were provisioned, and the step would fail on the import
+    instead. Only an env **this call created** is removed — tearing down a working ``pyscf``
+    env because a later ``pyscf-gpu`` install hit a resolver wall would lose work the user
+    already has.
     """
     python = backend_env_python(extra)
-    if python.is_file():
-        return python
     env_path = backend_env_path(extra)
+    fresh = not python.is_file()
+    *create, install = _build_commands(tool or detect_env_tool(), env_path, extra)
     env_path.parent.mkdir(parents=True, exist_ok=True)
-    for argv in _build_commands(tool or detect_env_tool(), env_path, extra):
+    for argv in [*create, install] if fresh else [install]:
         try:
             # this install's own metadata; no shell, no user-supplied string.
             subprocess.run(argv, check=True)  # noqa: S603
         except (OSError, subprocess.CalledProcessError) as e:
-            shutil.rmtree(env_path, ignore_errors=True)
+            if fresh:
+                shutil.rmtree(env_path, ignore_errors=True)
             raise BackendProvisionError(
                 f"could not build the managed env for {extra!r}: `{shlex.join(argv)}` "
                 f"failed ({e}). Re-run `chemrefine backends install {extra}` once the "

@@ -347,7 +347,7 @@ def test_pyscf_direct_is_not_nms_capable():
 
 
 def test_pyscf_engines_are_provisionable_with_the_pyscf_env():
-    """Both PySCF engines require the ``pyscf`` extra/env, whatever the options say."""
+    """A CPU step requires the plain ``pyscf`` stack."""
     from chemrefine.engines.api import BackendRequirement, ProvisionableEngine
 
     for name in ("pyscf", "pyscf-extopt"):
@@ -356,3 +356,36 @@ def test_pyscf_engines_are_provisionable_with_the_pyscf_env():
         assert engine.backend_requirement({"basis": "def2-svp"}) == BackendRequirement(
             extra="pyscf", import_name="pyscf"
         )
+
+
+@pytest.mark.parametrize("options", [{"gpu": True}, {"device": "cuda"}])
+def test_a_gpu_step_requires_the_gpu_stack_by_name(options: dict):
+    """A step that asks for a GPU must demand ``gpu4pyscf``, not merely ``pyscf``.
+
+    The requirement used to be a constant, so a GPU step passed preflight against a CPU-only
+    env, and `_build_scf` then caught the missing import and fell back to CPU — recording
+    why in the ExtOpt *server* log, which nobody reads. The run reported success on the
+    wrong hardware. Demanding the import by name is what turns that into a refusal before
+    any job is submitted.
+
+    ``device: cuda`` is included because `gpu` is *derived* from it when it is not given: a
+    reader that only looked for an explicit `gpu` key would let that spelling through.
+    """
+    from chemrefine.engines.api import BackendRequirement
+
+    requirement = get_engine("pyscf").backend_requirement({"basis": "def2-svp", **options})
+
+    assert requirement == BackendRequirement(extra="pyscf-gpu", import_name="gpu4pyscf")
+
+
+def test_both_pyscf_stacks_share_one_managed_env():
+    """`[pyscf-gpu]` is `[pyscf]` plus gpu4pyscf — a superset, so one env holds both.
+
+    Two envs would duplicate a large PySCF/libcint/libxc tree for no reason. The
+    one-env-per-extra rule elsewhere exists because the MLIP stacks genuinely conflict, and
+    that reason does not apply here.
+    """
+    from chemrefine.engines._provision import backend_env_path
+
+    assert backend_env_path("pyscf-gpu") == backend_env_path("pyscf")
+    assert backend_env_path("mlip-mace") != backend_env_path("mlip-fairchem")
