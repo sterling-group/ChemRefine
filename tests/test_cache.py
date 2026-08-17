@@ -945,3 +945,55 @@ def test_cache_documents_honour_the_umask(tmp_path: Path):
         assert mode == 0o644, (
             f"{name} is {oct(mode)}, unreadable to the group the tree is shared with"
         )
+
+
+@pytest.mark.skipif(
+    not cache._PROC_STATUS.is_file(),
+    reason="this kernel does not publish Umask; only the fallback probe exists here",
+)
+def test_the_umask_is_read_without_ever_being_written(monkeypatch: pytest.MonkeyPatch):
+    """Reading the umask by setting it is a process-global write other threads see.
+
+    ``os.umask`` reads by writing, so between the clear and the restore anything another
+    thread creates is made with no mask at all and a ``mkdir`` lands 0777 — world-writable
+    directories under an output tree that is routinely shared. The window is reachable:
+    the GUI runs on four waitress threads whose handlers both write through this module
+    and call ``Path.mkdir``. Linux publishes the value instead (``umask(2)``), so nothing
+    here may call ``os.umask`` at all.
+    """
+    import os
+
+    expected = next(
+        int(line.split()[1], 8)
+        for line in cache._PROC_STATUS.read_text(encoding="utf-8").splitlines()
+        if line.startswith("Umask:")
+    )
+    monkeypatch.setattr(os, "umask", lambda _mask: pytest.fail("read the umask by setting it"))
+
+    assert cache._umask() == expected
+
+
+@pytest.mark.parametrize("published", ["no status file at all", "a status file without the field"])
+def test_the_umask_falls_back_when_the_kernel_does_not_publish_it(
+    published: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A kernel older than 4.7 has no ``Umask`` field, and must still get the right mode.
+
+    Both ways the field can be absent take the probe, and the probe has to put back what
+    it set — otherwise the first cache write of the run would leave the process at umask
+    0 and every file after it world-writable, which is worse than the race it replaces.
+    Asking twice is what proves the restore happened.
+    """
+    import os
+
+    status = tmp_path / "status"
+    if published == "a status file without the field":
+        status.write_text("Name:\tpython\nPid:\t1\n", encoding="utf-8")
+    monkeypatch.setattr(cache, "_PROC_STATUS", status)
+
+    previous = os.umask(0o027)
+    try:
+        assert cache._umask() == 0o027
+        assert cache._umask() == 0o027
+    finally:
+        os.umask(previous)

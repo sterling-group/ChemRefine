@@ -508,6 +508,38 @@ def save_result_records(structures: Sequence[Structure], job_dir: Path, step: in
         write_json(ids.result_record_path(job_dir, step, s.id), record)
 
 
+_PROC_STATUS = Path("/proc/self/status")
+"""Where Linux publishes this process's umask — see :func:`_umask`."""
+
+
+def _umask() -> int:
+    """This process's umask, read without writing it.
+
+    ``os.umask`` is the only POSIX way to *read* the umask and it reads by setting it,
+    which is process-global: between the clear and the restore, anything another thread
+    creates is made with no mask at all, so a ``mkdir`` lands 0777. That window is
+    reachable rather than theoretical — the GUI is served by waitress on four threads
+    whose handlers both write through here (``agent_tools.save_config``) and call
+    ``Path.mkdir`` (``/api/save``, ``/api/scaffold``, ``/api/template``, ``/api/run``).
+
+    ``umask(2)`` names the remedy itself: since Linux 4.7 the value is published in
+    ``/proc/self/status``, and reading it changes nothing. CPython was asked for a
+    thread-safe wrapper and declined (bpo-35275, wontfix — the POSIX API has none
+    either), so this is the documented answer rather than a workaround. The probe stays
+    as the fallback for a kernel that does not publish the field; there the window is
+    back, which is the narrower of the two evils.
+    """
+    try:
+        for line in _PROC_STATUS.read_text(encoding="utf-8").splitlines():
+            if line.startswith("Umask:"):
+                return int(line.split()[1], 8)
+    except (OSError, ValueError, IndexError):
+        pass
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask
+
+
 def _atomic_write(path: Path, data: bytes) -> None:
     """Write ``data`` to ``path`` via a temp file + fsync + rename.
 
@@ -524,9 +556,7 @@ def _atomic_write(path: Path, data: bytes) -> None:
     # files but not the cache, the manifest or the failure ledger beside them. Re-moded to
     # what a plain ``open()`` would have given — 0666 honouring the umask. (The server
     # *token* sidecar keeps mkstemp's 0600; there the restriction is the point.)
-    mask = os.umask(0)
-    os.umask(mask)
-    os.fchmod(fd, 0o666 & ~mask)
+    os.fchmod(fd, 0o666 & ~_umask())
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
