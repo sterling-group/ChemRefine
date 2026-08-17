@@ -37,7 +37,7 @@ import yaml
 from pydantic import ValidationError
 
 from chemrefine import slurm
-from chemrefine.config import Config, StepConfig, _resolve_relative_paths
+from chemrefine.config import Config, StepConfig, resolve_relative_paths
 from chemrefine.engines._job import gpus_from_options
 from chemrefine.engines.api import (
     ENGINES,
@@ -130,7 +130,7 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
         # The legacy normalizer refuses some v1 spellings before pydantic runs.
         return _failed("legacy", str(e))
     if base_dir is not None:
-        config = _resolve_relative_paths(config, base=base_dir.resolve())
+        config = resolve_relative_paths(config, base=base_dir.resolve())
     issues_list, warnings_list = _inspect_steps(config)
     report_config = config if not issues_list else None
     return ValidationReport(
@@ -173,7 +173,7 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
         engine = get_engine(step.engine)
         declared: set[str] = set()
         if isinstance(engine, OptionsDeclaring):
-            declared |= engine.options_cls._accepted_names()
+            declared |= engine.options_cls.accepted_names()
             try:
                 engine.options_cls.from_raw_lenient(step.options)
             except ConfigError as e:

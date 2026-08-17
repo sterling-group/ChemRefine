@@ -540,13 +540,17 @@ def _umask() -> int:
     return mask
 
 
-def _atomic_write(path: Path, data: bytes) -> None:
+def atomic_write(path: Path, data: bytes) -> None:
     """Write ``data`` to ``path`` via a temp file + fsync + rename.
 
     The ``fsync`` is what makes the atomicity survive more than a process death: a
     rename is ordered against the data only once the data is on the device, so without
     it a machine crash (not a kill) could leave the renamed file truncated or empty —
     exactly the half-baked cache the temp-file dance exists to prevent.
+
+    Public, not underscored, because :func:`chemrefine.agent_tools.save_config` writes the
+    user's config through it: a write that must not be torn has to be able to reach the
+    writer that guarantees it, wherever the caller lives.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp_", suffix=".part")
@@ -593,7 +597,7 @@ def write_json(path: Path, data: Any, *, indent: int | None = 2) -> None:
     means something upstream let one through.
     """
     separators = None if indent is not None else _COMPACT_SEPARATORS
-    _atomic_write(
+    atomic_write(
         path, json.dumps(data, indent=indent, separators=separators, allow_nan=False).encode()
     )
 
@@ -608,7 +612,7 @@ def _npz_bytes(arrays: _SidecarArrays) -> bytes:
     encode; the point of this format is that writing it is a memcpy.
 
     Going through bytes rather than writing the file directly is what lets it reuse
-    :func:`_atomic_write`, so a killed run never leaves a half-written sidecar.
+    :func:`atomic_write`, so a killed run never leaves a half-written sidecar.
     """
     buf = io.BytesIO()
     np.savez(buf, **arrays)
@@ -694,7 +698,7 @@ def save(
     # `_cache/` atomic, and a step is re-saved whenever `resume` repairs one, which leaves the
     # previous document beside the new sidecar. `arrays_digest` is what makes the pair
     # provable rather than merely likely.
-    _atomic_write(_arrays_path(step_dir), _npz_bytes(arrays))
+    atomic_write(_arrays_path(step_dir), _npz_bytes(arrays))
     write_json(_cache_path(step_dir), document, indent=None)
     logger.info("saved step %d cache (fingerprint %s)", step_cfg.step, key.fingerprint)
 

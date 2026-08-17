@@ -70,8 +70,13 @@ class EngineOptions(BaseModel):
         return grouped
 
     @classmethod
-    def _accepted_names(cls) -> set[str]:
-        """Every YAML spelling this model accepts — field names plus their aliases."""
+    def accepted_names(cls) -> set[str]:
+        """Every YAML spelling this model accepts — field names plus their aliases.
+
+        Public, not underscored, because :mod:`chemrefine.validate` asks it which option
+        keys a step declares: the warning about an undeclared key is only as good as the
+        list it is checked against, and that list belongs to the model that defines it.
+        """
         return {name for names in cls._spellings_by_field().values() for name in names}
 
     @classmethod
@@ -108,7 +113,7 @@ class EngineOptions(BaseModel):
         """
         raw = raw or {}
         cls._reject_ambiguous_spellings(raw)
-        accepted = cls._accepted_names()
+        accepted = cls.accepted_names()
         return cls._validate({k: v for k, v in raw.items() if k in accepted})
 
     @classmethod

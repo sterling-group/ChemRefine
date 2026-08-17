@@ -45,7 +45,7 @@ def server_command(
     return " ".join(parts)
 
 
-def _build_extopt_run_block(
+def build_extopt_run_block(
     *,
     server_cmd: str,
     orca_command: str,
@@ -77,6 +77,10 @@ def _build_extopt_run_block(
     :meth:`chemrefine.engines.orca.engine.OrcaEngine.orca_command` — the same string the
     plain ORCA path runs — rather than being re-interpolated here from a raw executable,
     which is what keeps the two paths' quoting from diverging.
+
+    Public, not underscored, because that is the whole reason this module exists: the
+    MLIP and PySCF ExtOpt engines both call it, and the alternative is one of them
+    importing the other's helper.
     """
     cleanup = (
         'if [ -n "${SERVER_PID:-}" ]; then\n'

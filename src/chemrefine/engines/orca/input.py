@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from chemrefine.engines.orca.inspect import _PAL_PATTERNS
+from chemrefine.engines.orca.inspect import PAL_PATTERNS
 from chemrefine.errors import ConfigError
 
 _XYZFILE_DIRECTIVE_RE = re.compile(r"^\s*\*\s+xyzfile.*$", re.MULTILINE)
@@ -74,7 +74,7 @@ def clamp_pal(text: str, max_pal: int) -> str:
     def _sub(m: re.Match[str]) -> str:
         return m.group(1) + str(min(int(m.group(2)), max_pal))
 
-    for pattern in _PAL_PATTERNS:
+    for pattern in PAL_PATTERNS:
         text = pattern.sub(_sub, text)
     return text
 

@@ -596,7 +596,7 @@ def _orphan_sidecar(step_dir: Path, *structures: Structure) -> None:
     """
     records = [cache.structure_record(s) for s in structures]
     arrays = cache._split_arrays(records)
-    cache._atomic_write(cache._arrays_path(step_dir), cache._npz_bytes(arrays))
+    cache.atomic_write(cache._arrays_path(step_dir), cache._npz_bytes(arrays))
 
 
 def test_a_sidecar_from_another_save_is_refused_not_read(tmp_path: Path):

@@ -63,7 +63,7 @@ class MlipOptions(EngineOptions):
     also carry "and which library this means".
 
     Relative values are made absolute against the **config file's** directory by
-    :func:`chemrefine.config._resolve_relative_paths`, with every other path the config
+    :func:`chemrefine.config.resolve_relative_paths`, with every other path the config
     names. It has to happen there rather than here: a field validator sees only the process
     working directory, which is not where the config sits — and the value reaches a job that
     runs in a scratch directory, so an unresolved relative path is found by nobody."""

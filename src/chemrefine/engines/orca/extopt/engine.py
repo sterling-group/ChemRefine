@@ -104,7 +104,7 @@ class ExtOptOrcaEngine(OrcaEngine):
         ``trap`` inside the body replaced the script's own ``EXIT`` handler. Now the teardown
         is returned as ``cleanup`` and the infra layer places it.
         """
-        return run_block._build_extopt_run_block(
+        return run_block.build_extopt_run_block(
             server_cmd=self._server_cmd(ctx),
             orca_command=self.orca_command(ctx, inp_path.name, out_path.name),
             pal=self.pal(ctx),

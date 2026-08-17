@@ -620,7 +620,7 @@ def save_config(path: str, yaml_text: str) -> dict[str, Any]:
     (``written: false``) rather than saved, so no tool call can leave a broken
     ``input.yaml`` where a later ``start_run`` would trip over it; warnings (missing
     templates and the like) do not block, exactly as ``chemrefine validate`` treats
-    them. The write itself is atomic (:func:`chemrefine.cache._atomic_write`), and
+    them. The write itself is atomic (:func:`chemrefine.cache.atomic_write`), and
     relative paths inside the text are judged against the file's own directory, the way
     :func:`~chemrefine.config.load_config` will resolve them later.
     """
@@ -630,7 +630,7 @@ def save_config(path: str, yaml_text: str) -> dict[str, Any]:
     if not report.ok:
         return payload
     destination.parent.mkdir(parents=True, exist_ok=True)
-    cache._atomic_write(destination, yaml_text.encode("utf-8"))
+    cache.atomic_write(destination, yaml_text.encode("utf-8"))
     payload["written"] = True
     return payload
 

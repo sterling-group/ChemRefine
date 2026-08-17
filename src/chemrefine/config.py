@@ -587,7 +587,7 @@ class Config(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
+def resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
     """Resolve a config's relative paths against ``base`` (the config file's dir).
 
     ChemRefine resolves ``template_dir`` / ``output_dir`` / ``scratch_dir`` /
@@ -603,6 +603,11 @@ def _resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
     relative ``model_path`` would resolve against that scratch directory and simply not be
     found. Naming the model a previous step produced (``./outputs/step2/train/train.model``)
     is the obvious thing to write, so it has to work from anywhere.
+
+    Public, not underscored, because :func:`chemrefine.validate.validate_config_text`
+    resolves the same way: it is the non-raising twin of :func:`load_config`, and a report
+    that judged paths against a different directory than the run would is a report about a
+    different config.
     """
     updates: dict[str, Path | list[StepConfig]] = {}
     if not cfg.template_dir.is_absolute():
@@ -646,7 +651,7 @@ def load_config(path: str | Path) -> Config:
 
     Relative ``template_dir`` / ``output_dir`` / ``scratch_dir`` / ``input``
     paths are resolved against the config file's own directory (see
-    :func:`_resolve_relative_paths`), so the file is portable regardless of the
+    :func:`resolve_relative_paths`), so the file is portable regardless of the
     process working directory.
 
     Raises :class:`ConfigError` for any malformed file, unknown top-level
@@ -668,4 +673,4 @@ def load_config(path: str | Path) -> Config:
         cfg = Config(**raw)
     except ValidationError as e:
         raise ConfigError(f"invalid config {p}:\n{e}") from e
-    return _resolve_relative_paths(cfg, base=p.parent.resolve())
+    return resolve_relative_paths(cfg, base=p.parent.resolve())

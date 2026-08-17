@@ -52,7 +52,11 @@ _FREQ_TOKEN_RE = re.compile(r"(?:num|an)?freq", re.IGNORECASE)
 
 # Every spelling of an ORCA PAL declaration, as ``(prefix)(count)`` pairs so :func:`_read_pal`
 # reads the count and :func:`chemrefine.engines.orca.input.clamp_pal` rewrites it in place.
-_PAL_PATTERNS = (
+#
+# Public, not underscored, because that second reader lives in another module: the reader
+# and the rewriter have to agree on what a PAL declaration looks like, and one list is how
+# they cannot drift.
+PAL_PATTERNS = (
     re.compile(r"(nprocs\s+)(\d+)", re.IGNORECASE),
     re.compile(r"\b(PAL)(\d+)\b", re.IGNORECASE),
     re.compile(r"(^\s*PAL\s+)(\d+)\b", re.IGNORECASE | re.MULTILINE),
@@ -107,7 +111,7 @@ def _strip_orca_comments(text: str) -> str:
 
 def _read_pal(text: str) -> int:
     """Return the PAL / ``nprocs`` count declared in ORCA input text (``1`` if none)."""
-    for pattern in _PAL_PATTERNS:
+    for pattern in PAL_PATTERNS:
         m = pattern.search(text)
         if m:
             return int(m.group(2))

@@ -452,7 +452,7 @@ def test_no_module_reads_a_declared_option_key_off_the_raw_dict():
     for name in sorted(ENGINES):
         options_cls = getattr(get_engine(name), "options_cls", None)
         if options_cls is not None:
-            declared |= options_cls._accepted_names()
+            declared |= options_cls.accepted_names()
     assert declared, "no engine declares an options model — has options_cls been dropped?"
 
     src = Path(__file__).resolve().parent.parent / "src" / "chemrefine"
