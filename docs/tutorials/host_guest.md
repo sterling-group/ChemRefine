@@ -1,7 +1,7 @@
 # Host–Guest Docking Tutorial
 
 !!! note "Schema note"
-    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [examples/quickstart/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/quickstart/input.yaml).
+    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [configuration reference](../user-guide/configuration.md) and the example in [examples/quickstart/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/quickstart/input.yaml).
 
 
 This tutorial demonstrates how to use **ChemRefine** for a host–guest docking workflow, followed by machine-learning refinement, DFT validation, and explicit solvation.  
@@ -126,7 +126,8 @@ From the command line:
 chemrefine run input.yaml --maxcores 16
 ```
 
-This runs the workflow locally with up to 16 parallel jobs.  
+This runs the workflow locally within a 16-core budget — as many jobs at once as fit in
+it, each charged the cores its step declares, not 16 jobs.  
 
 On an HPC cluster with SLURM, the same command submits each calculation as its own job
 (`dispatch: auto` detects `sbatch`; no wrapper script is needed):

@@ -10,8 +10,8 @@
 
 Automated, interoperable manager for computational-chemistry workflows.
 ChemRefine drives multi-step conformer sampling and refinement through
-ORCA, MLIPs (MACE / FAIRChem / SevenNet / ORB / CHGNet), and PySCF, with
-SLURM submission, caching, and resumable runs built in.
+ORCA, Q-Chem, MLIPs (MACE / FAIRChem / SevenNet / ORB / CHGNet), and PySCF,
+with SLURM submission, caching, and resumable runs built in.
 
 📖 **Full documentation:** <https://sterling-group.github.io/ChemRefine/>
 
@@ -77,6 +77,7 @@ and redox/spin workflows.
 
 ## Citation
 
+<!-- --8<-- [start:citation] -->
 If you use ChemRefine in published work, please cite the paper:
 
 > Migliaro, I.; Weiss, M. G. S.; Sterling, A. J. ChemRefine: An Open-Source
@@ -89,7 +90,9 @@ release (the [concept DOI](https://doi.org/10.5281/zenodo.17187168) always
 resolves to the latest version; each release also has its own).
 
 GitHub's **Cite this repository** button serves both from
-[`CITATION.cff`](CITATION.cff).
+[`CITATION.cff`](https://github.com/sterling-group/ChemRefine/blob/main/CITATION.cff),
+which also carries the author ORCIDs and the machine-readable metadata.
+<!-- --8<-- [end:citation] -->
 
 ## License
 

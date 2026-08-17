@@ -1,7 +1,7 @@
 # Transition State (TS) Finding Tutorial
 
 !!! note "Schema note"
-    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [examples/quickstart/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/quickstart/input.yaml).
+    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [configuration reference](../user-guide/configuration.md) and the example in [examples/quickstart/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/quickstart/input.yaml).
 
 
 This tutorial demonstrates how to use **ChemRefine** to locate and validate **transition states (TS)** using a stepwise pipeline that combines a **PES scan, optimizations, and normal-mode sampling**.
@@ -127,7 +127,8 @@ Before running ChemRefine, ensure that:
 chemrefine run input.yaml --maxcores <N>
 ```
 
-Here `<N>` is the maximum number of simultaneous jobs.  
+Here `<N>` is the total core budget, not a job count: the scheduler runs as many jobs at
+once as fit in it, each charged the cores its step declares.  
 
 ### Option 2: Run with SLURM
 

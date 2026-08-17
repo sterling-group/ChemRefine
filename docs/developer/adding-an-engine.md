@@ -10,7 +10,7 @@ place:
 - **the reusable building blocks** (underscored — *compose*, never edit to add an engine):
   `_job.py` (`JobEngine`), `_execution.py` (the scheduler), `_script/` (`ScriptEngine`),
   `_backend_server/` (the ExtOpt server).
-- **the plugins** (bare names) — `orca/`, `mlip/`, `pyscf/`.
+- **the plugins** (bare names) — `orca/`, `qchem/`, `mlip/`, `pyscf/`.
 
 Adding an engine touches exactly **one** thing: a new bare-named `engines/<name>/` package.
 Plugins are auto-discovered — every bare-named subpackage is imported when
@@ -123,7 +123,8 @@ prepare → submit → parse
 Normal-mode sampling is **engine-independent**: the two-round algorithm lives in
 `chemrefine.nms`. NMS is a capability, not a flag — implement the
 [`NmsCapableEngine`](../api/engines_api.md) Protocol's one hook and populate two structure
-fields; capability is detected with `isinstance` (the ExtOpt engines get it for free from ORCA):
+fields; capability is detected with `isinstance` (today ORCA, Q-Chem, and — for free from ORCA —
+the two ExtOpt engines):
 
 - `nms_input_info(ctx) -> NmsInputInfo` — introspect the step's input (is it a TS search? does it
   compute frequencies?), driving the default target and the freq gate.
@@ -281,10 +282,12 @@ __all__ = ["DemoqmEngine"]
 That's a working engine: `engine: demoqm` in a step now renders `step{N}.inp` per structure, runs
 `demoqm`, and parses each result back into the pipeline.
 
-For the real, shipped versions to copy: **`orca/`** is the `JobEngine` for an own-input-format
-program; **`pyscf/`** is a `ScriptEngine` (it overrides only `_vars_from`); **`mlip/`** adds a
-backend server. A library-only backend (e.g. a future `tblite` engine) is a `ScriptEngine` or a
-`_backend_server` backend — not a binary wrapper like this one.
+For the real, shipped versions to copy: **`qchem/`** is the closest to the engine above — a
+`JobEngine` wrapping a program with its own input format, and nothing else; **`orca/`** is the
+same kind carrying the ExtOpt and NMS machinery too; **`pyscf/`** is a `ScriptEngine` (it
+overrides only `_vars_from`); **`mlip/`** adds a backend server. A library-only backend (e.g.
+a future `tblite` engine) is a `ScriptEngine` or a `_backend_server` backend — not a binary
+wrapper like this one.
 
 See the [Engine Contract & Registry API](../api/engines_api.md) for the exact signatures, and
 [Architecture & Code Flow](../concepts/architecture.md) for where the lifecycle sits in the run.

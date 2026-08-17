@@ -170,3 +170,5 @@ nav:
       - Contributing: developer/contributing.md
       - Adding an Engine: developer/adding-an-engine.md
   - Changelog: changelog.md
+  - Security Policy: security-policy.md
+  - Citation: citation.md

@@ -3,7 +3,7 @@
 Normal-mode sampling (NMS) cleans up stationary points: it removes spurious
 imaginary frequencies to reach a true minimum, or keeps exactly one to confirm a
 first-order saddle (transition state). It is opt-in per step (`nms: true`) and
-only runs on NMS-capable engines — ORCA and the ExtOpt engines (`mlip-extopt` /
+only runs on NMS-capable engines — ORCA, Q-Chem, and the ExtOpt engines (`mlip-extopt` /
 `pyscf-extopt`), where ORCA computes the Hessian numerically over the backend's
 gradients, so a `Freq` template yields a real frequency table.
 
@@ -24,7 +24,7 @@ drives any NMS-capable engine through one input hook and imports no engine packa
 
 A new engine becomes NMS-capable by implementing `nms_input_info` and populating those two
 structure fields — capability is detected via `isinstance(engine, NmsCapableEngine)`, with no flag to keep in sync;
-everything else is shared. (Today: ORCA + the ExtOpt engines.)
+everything else is shared. (Today: ORCA, Q-Chem, and the ExtOpt engines.)
 
 ## Two rounds + the unified "attempt" model
 

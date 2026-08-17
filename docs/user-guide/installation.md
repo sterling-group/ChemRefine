@@ -1,14 +1,17 @@
 # Installation
 
 ChemRefine is a **light orchestrator core** plus optional **compute backends**. The core
-(pipeline, ORCA driving, SLURM) installs anywhere in seconds; backends (MLIPs, PySCF) are
-added afterwards — either into the same environment or as isolated
+(pipeline, ORCA and Q-Chem driving, SLURM) installs anywhere in seconds; neither
+quantum-chemistry program needs a backend environment of its own. Backends (MLIPs,
+PySCF) are added afterwards — either into the same environment or as isolated
 [managed environments](#compute-backends) when you use several.
 
 ## Requirements
 
 - **Python 3.11–3.14**
 - **ORCA 6.0+** — quantum-chemistry calculations
+- **Q-Chem** — optional alternative QM program ([its own options and install
+  keys](configuration.md#engine-options))
 - **SLURM** — HPC job scheduler (optional for local runs; the same `.slurm` script can be
   executed with `bash` directly)
 
@@ -63,7 +66,7 @@ pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git"
 git clone https://github.com/sterling-group/ChemRefine.git
 cd ChemRefine
 pip install -e ".[dev]"
-pre-commit install   # optional: run ruff + interrogate on every commit
+pre-commit install   # REQUIRED — CI runs these same hooks
 ```
 
 ## Compute backends

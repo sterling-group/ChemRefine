@@ -18,7 +18,7 @@ cached so unchanged steps skip automatically.
 
 - **Step-based pipeline** driven by a single Pydantic-validated YAML
   config — every knob lives in one place.
-- **Engine plugins** behind a narrow Protocol: ORCA, MLIPs
+- **Engine plugins** behind a narrow Protocol: ORCA, Q-Chem, MLIPs
   (MACE / FAIRChem / SevenNet / ORB / CHGNet), and PySCF — each as a
   direct engine or an ORCA-driven `-extopt` gradient server. New engines
   drop in via a registry decorator (see [Adding an Engine](developer/adding-an-engine.md)).

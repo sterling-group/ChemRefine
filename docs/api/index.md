@@ -11,6 +11,11 @@ Config → bootstrap → run_step (cache | engine lifecycle) → filtering → P
 ## Core
 
 - [Configuration](config.md) — Pydantic models + YAML loader and legacy normalizer
+- [Introspection](introspect.md) — machine-readable view of the config schema and the
+  engine registry
+- [Validation](validate.md) — a structured report, the non-raising twin of `load_config`
+- [Scaffolding](scaffold.md) — starter templates for the files a config names but the
+  filesystem lacks
 - [Runtime State](state.md) — the frozen dataclasses threaded between stages
 - [Errors](errors.md) — the exception hierarchy and exit codes
 - [Quantities](quantities.md) — physical constants, conversions, Boltzmann weights
@@ -34,6 +39,15 @@ Config → bootstrap → run_step (cache | engine lifecycle) → filtering → P
 - [ORCA](engines_orca.md) — input generation, output parsing, frequencies, the NMS hooks, ExtOpt
 - [MLIP](engines_mlip.md) — direct / ExtOpt / training engines + backend dispatcher
 - [PySCF](engines_pyscf.md) — direct / ExtOpt engines + the SCF runtime
+- [Q-Chem](engines_qchem.md) — input generation, output parsing, the NMS hooks
+
+## Agent Integration
+
+- [Agent Tools](agent_tools.md) — the tool surface both the MCP server and the
+  embedded agent expose
+- [MCP Server](mcp_server.md) — those same tools served over the Model Context Protocol
+- [Embedded Agent](agent.md) — `chemrefine agent`, the terminal chat that drives them
+  without an MCP client
 
 ## Infrastructure
 

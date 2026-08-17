@@ -58,11 +58,12 @@ must be replaced by hand with `engine:` + `operation:`.
 > v2 adds a third target, `target: minimum` (remove **all** imaginary modes → a true minimum), which
 > v1.3.1 did not have. A bare `normal_mode_sampling: true` maps to `target: ts` to match main's default.
 
-> **Scheduling.** NMS runs as **two throttled phases with a barrier**. Round 1 (every structure) completes
-> under the `max_cores`/`max_gpus` budget, *then* round 2 — the imaginary-frequency removal of the flagged
-> structures — runs as a **separate** throttled batch that inherits the same budget, `device`, and SLURM
-> header. So removal starts only **after** round 1 fully drains, not the moment an individual structure
-> finishes; the two rounds never share the budget at the same time.
+> **Scheduling.** The two rounds share **one** queue and one `max_cores`/`max_gpus` budget. A structure's
+> displaced children are submitted the moment *its own* round-1 job finishes, alongside whatever is still
+> running — not after the whole of round 1 drains, and not one parent at a time. So the slots freed by
+> the early finishers go to round-2 work instead of idling, and a step with 50 unresolved structures
+> uses the whole budget rather than one parent's worth of it. See
+> [Normal-Mode Sampling](concepts/nms.md).
 
 > **MLFF was ORCA-driven in v1.3.1.** `engine: MLFF` ran ORCA using a machine-learned
 > gradient server — that is `mlip-extopt` in v2. The bare `mlip`/`mlff` engine in v2

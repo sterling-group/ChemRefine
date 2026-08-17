@@ -15,7 +15,7 @@ cli → recovery → pipeline → step → {cache, filtering}
                                   → lifecycle (run → classify → policy → persist → cache)
                                        → attempts (attemptK/ directories)
                                   → engines.api (Protocols + ENGINES registry)
-                                       → engines/* (orca, mlip, pyscf)
+                                       → engines/* (orca, qchem, mlip, pyscf)
                                             → engines/{_job, _execution, _script} (building blocks)
                                             → slurm, throttle, io, ids, quantities, state, config
 ```

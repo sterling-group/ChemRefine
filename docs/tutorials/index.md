@@ -8,4 +8,5 @@ This section contains full examples of ChemRefine workflows:
 - [Redox properties](redox.md)
 - [Host-Guest Docking and Microsolvation](host_guest.md)
 - [Spin Properties](spin.md)
+- [Agentic Workflows](agentic_workflows.md)
 

@@ -16,7 +16,7 @@ the **weights** handed to that builder.
 ==================  ===================  =========================================
 ``task_name`` (key) backend              ``model_name`` (weights)
 ==================  ===================  =========================================
-``omol`` … ``omc``  ``_build_fairchem``  FAIRChem checkpoint (``uma-s-1``/``esen-…``)
+``omol`` … ``omc``  ``_build_fairchem``  FAIRChem checkpoint (``uma-s-1p2``/``esen-…``)
 ``mace_off``        ``_build_mace``      MACE-OFF size (``small``/``medium``/``large``)
 ``mace_mp``         ``_build_mace``      MACE-MP size / named model
 ``mace_omol``       ``_build_mace``      MACE-OMOL size (``extra_large``)
