@@ -15,7 +15,19 @@ skips the hook install drifts out of format and fails its first PR.
 
 ## The gates
 
-Every PR must pass all of these — run them locally before pushing:
+One command runs every gate your pull request will face:
+
+```bash
+scripts/release-check.sh --pr
+```
+
+It needs nothing but a `[dev]` install — no ORCA, no MLIP stack — and gates
+the checkout you are standing in, refusing to run against a `chemrefine`
+installed anywhere else. If it passes, CI will too, apart from the four
+things no workstation can do (named at the end of the run, and listed under
+[Releases](#releases)).
+
+For the inner loop, the individual gates are still the fastest way round:
 
 ```bash
 pre-commit run --all-files                    # lint + format + docstring coverage
@@ -31,6 +43,17 @@ line and branch, and every module/class/function carries a docstring
 The mutation gate is the slow one (~3 min) because it runs the suite once per
 mutation; it only needs re-running when you touch one of the predicates it lists
 (`python scripts/mutation_gate.py --list`).
+
+**The GUI's JavaScript needs a Node to be checked.** `tests/test_gui_assets.py`
+parses the builder's static assets and executes its pure form logic — the one
+layer coverage cannot see, where a stray brace blanks the whole page and an
+`@click` naming a deleted method fails silently. It uses any `node` on `PATH`
+(CI runners have one) and otherwise the `nodejs-bin` package; with neither it
+**skips**, so install one of them before touching `src/chemrefine/gui/static/`:
+
+```bash
+pip install nodejs-bin      # or use a system Node
+```
 
 ### The gates above do not cover the `integration` tier
 
@@ -102,8 +125,8 @@ survivors, a new operation) is not a re-parse, and needs the live tier:
 ## Conventions
 
 - **Engines** are plugins. Read the
-  [Adding an Engine recipe](docs/developer/adding-an-engine.md) before
-  adding one — it names the base class to subclass for each shape of
+  [Adding an Engine recipe](https://sterling-group.github.io/ChemRefine/developer/adding-an-engine/)
+  before adding one — it names the base class to subclass for each shape of
   backend, and the contract fixture every engine must ship.
 - **Legacy YAML/CLI vocabulary** lives in exactly two quarantine zones:
   `config_legacy.py` (YAML keys) and `cli_legacy.py` (v1 flag-style argv).
@@ -174,22 +197,24 @@ Before tagging: bump the version, retitle the Unreleased section in
 scripts/release-check.sh
 ```
 
-It runs every CI job that can run off a runner — the pre-commit hooks, mypy,
-the suite under the coverage gate, the mutation gate, every extra's
-resolution, the provisioned-backend check, the docs build, and the wheel
-*and* sdist smoke tests including the suite from the unpacked tarball — and
-then the tier-3 suite against a real ORCA and the managed MLIP/PySCF envs.
-CI cannot do that last part: GitHub-hosted runners have no ORCA, and
+That is the `--pr` gate above plus the two halves only a workstation has:
+`pip-audit`, whose CI job is a weekly sweep rather than a per-tag one, and
+the tier-3 suite against a real ORCA and the managed MLIP/PySCF envs. CI
+cannot do that last part — GitHub-hosted runners have no ORCA, and
 automating it would mean a self-hosted runner, which is unsafe on a public
-repository — a pull request from a fork can execute arbitrary code on it.
+repository: a pull request from a fork can execute arbitrary code on it.
 
-Whatever it cannot run on your machine it **names at the end** rather than
-passing quietly: the dependency-floors job needs a Python 3.11 (set
-`FLOORS_PY` to a 3.11 interpreter and it runs, marker assertion included),
-the full 3.11–3.14 matrix needs those interpreters, and CodeQL, Scorecard
-and dependency-review are GitHub-hosted analyses with no local equivalent.
-Those are still covered on the tag — `publish.yml` calls `ci.yml`, so
-pushing `vX.Y.Z` runs the whole matrix before anything is published.
+Four CI jobs are deliberately **not** replicated locally, because doing so
+would cost more than it covers: the dependency-floors job and the 3.11–3.14
+matrix both need interpreters most machines lack, and CodeQL, Scorecard and
+dependency-review are GitHub-hosted analyses with no local equivalent. All
+four run on the tag anyway — `publish.yml` calls `ci.yml`, so nothing
+reaches PyPI without the full matrix having passed.
+
+Nothing machine-specific is baked into the script: it gates with whichever
+venv or conda env is active. Put per-machine paths (`PY`, `LIVE_PY`, `ORCA`)
+in an untracked `scripts/release-check.env` beside it — `LIVE_PY` is the one
+to set when the MLIP and PySCF stacks live in an environment of their own.
 
 That matters because the defects worth catching before a release are the
 ones every structural gate passes. A parser that misreads real output, or a
