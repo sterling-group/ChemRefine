@@ -174,11 +174,22 @@ Before tagging: bump the version, retitle the Unreleased section in
 scripts/release-check.sh
 ```
 
-It runs everything CI runs, then installs the built wheel into a throwaway
-venv and runs the tier-3 suite against a real ORCA. CI cannot do that last
-part: GitHub-hosted runners have no ORCA, and automating it would mean a
-self-hosted runner, which is unsafe on a public repository — a pull request
-from a fork can execute arbitrary code on it.
+It runs every CI job that can run off a runner — the pre-commit hooks, mypy,
+the suite under the coverage gate, the mutation gate, every extra's
+resolution, the provisioned-backend check, the docs build, and the wheel
+*and* sdist smoke tests including the suite from the unpacked tarball — and
+then the tier-3 suite against a real ORCA and the managed MLIP/PySCF envs.
+CI cannot do that last part: GitHub-hosted runners have no ORCA, and
+automating it would mean a self-hosted runner, which is unsafe on a public
+repository — a pull request from a fork can execute arbitrary code on it.
+
+Whatever it cannot run on your machine it **names at the end** rather than
+passing quietly: the dependency-floors job needs a Python 3.11 (set
+`FLOORS_PY` to a 3.11 interpreter and it runs, marker assertion included),
+the full 3.11–3.14 matrix needs those interpreters, and CodeQL, Scorecard
+and dependency-review are GitHub-hosted analyses with no local equivalent.
+Those are still covered on the tag — `publish.yml` calls `ci.yml`, so
+pushing `vX.Y.Z` runs the whole matrix before anything is published.
 
 That matters because the defects worth catching before a release are the
 ones every structural gate passes. A parser that misreads real output, or a
