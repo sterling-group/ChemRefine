@@ -7,7 +7,7 @@ added afterwards — either into the same environment or as isolated
 
 ## Requirements
 
-- **Python 3.11–3.13**
+- **Python 3.11–3.14**
 - **ORCA 6.0+** — quantum-chemistry calculations
 - **SLURM** — HPC job scheduler (optional for local runs; the same `.slurm` script can be
   executed with `bash` directly)

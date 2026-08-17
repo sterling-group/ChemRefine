@@ -27,7 +27,7 @@ pip install "chemrefine[mlip] @ git+https://github.com/sterling-group/ChemRefine
 Further MLIP backends (MACE, SevenNet, ORB, CHGNet) are separate extras;
 `chemrefine backends install <extra>` provisions each in its own managed env.
 
-Requires Python 3.11–3.13 and ORCA 6+. SLURM is optional — the generated
+Requires Python 3.11–3.14 and ORCA 6+. SLURM is optional — the generated
 `.slurm` script runs unchanged under `bash` for local execution. The
 [install guide](https://sterling-group.github.io/ChemRefine/user-guide/installation/) covers the
 per-backend MLIP extras (MACE / FAIRChem / SevenNet / ORB / CHGNet), PySCF, and GPU setup.
