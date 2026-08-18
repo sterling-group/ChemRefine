@@ -223,7 +223,18 @@ include = [
 ]
 
 [tool.mypy]
-python_version = "3.11"
+# The lowest version the *installed* dependency set can be checked at, which is no longer
+# the same as `requires-python`. numpy 2.5 requires Python >= 3.12 and its stubs use PEP
+# 695 `type` statements, so mypy targeting 3.11 fails parsing numpy's own `__init__.pyi` —
+# a configuration (3.11 + numpy 2.5) pip cannot produce, since 3.11 resolves numpy 2.4.x.
+# There is no way to scope that away: it is a parse error, so per-module `follow_imports`,
+# `ignore_errors` and `disable_error_code` all fail to suppress it (python/mypy#21178).
+#
+# 3.11 support is not weakened by this — it is held where it always mattered, by CI's
+# `test` matrix *running* the suite on 3.11 under a 100% coverage gate, so a 3.12-only
+# syntax or API in any line fails there. Raise this only when the floor of what the deps
+# allow rises again.
+python_version = "3.12"
 files = ["src/chemrefine", "tests"]
 # Step templates are `string.Template` sources, not modules: they carry bare
 # `$PLACEHOLDER` tokens and are rendered before anything executes them. Excluded for
@@ -309,6 +320,12 @@ module = [
     "flask.*",
     "waitress.*",
     "pandas.*",
+    # `nodejs-bin` is optional by design — `tests/test_gui_assets.py` takes any `node` on
+    # PATH first and skips when there is neither, so it is in no extra. mypy has no
+    # try/except ImportError, though, so without this the type check fails on every
+    # machine that happens not to have it installed — including CI, which installs
+    # `[dev]` and has a system Node but not the package.
+    "nodejs.*",
 ]
 ignore_missing_imports = true
 
