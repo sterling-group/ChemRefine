@@ -285,9 +285,12 @@ That's a working engine: `engine: demoqm` in a step now renders `step{N}.inp` pe
 For the real, shipped versions to copy: **`qchem/`** is the closest to the engine above — a
 `JobEngine` wrapping a program with its own input format, and nothing else; **`orca/`** is the
 same kind carrying the ExtOpt and NMS machinery too; **`pyscf/`** is a `ScriptEngine` (it
-overrides only `_vars_from`); **`mlip/`** adds a backend server. A library-only backend (e.g.
-a future `tblite` engine) is a `ScriptEngine` or a `_backend_server` backend — not a binary
-wrapper like this one.
+overrides only `_vars_from`); **`mlip/`** adds a backend server.
+
+Pick by how the calculation is reached, not by what it computes: a program with its own
+input format is a `JobEngine` like the one above; a Python library is a `ScriptEngine`
+(chemrefine renders a `step{N}.py` that imports it) or a `_backend_server` backend (ORCA
+drives it over the ExtOpt bridge) — never a binary wrapper.
 
 See the [Engine Contract & Registry API](../api/engines_api.md) for the exact signatures, and
 [Architecture & Code Flow](../concepts/architecture.md) for where the lifecycle sits in the run.

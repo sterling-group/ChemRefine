@@ -144,7 +144,7 @@ only the engines listed above interpret it. `NMS` is the `nms: true` capability.
     | `cores` | `1` | OpenMP threads, rendered as `-nt N` (with `OMP_NUM_THREADS` and `QC_THREADS` exported beside it) and allocated as `--ntasks=1 --cpus-per-task=N`. Q-Chem takes its parallelism **on the command line**, never in the input file — so the number lives here, where ORCA's lives in the template's `%pal` (the rule is: the number lives where the program natively reads it). |
     | `nprocs` | `None` | **Opt-in MPI**: `-mpi -np P` (plus `-nt N` when `cores` > 1), allocated as `--ntasks=P --cpus-per-task=N` and charged as `P×N` cores (over `max_cores` is refused, not clamped). Q-Chem's MPI covers only some methods — leave this unset unless you know your method and build support it. The MPI install facts (`QCRSH`/`QCMPI` exports, MPI module loads) belong in the SLURM header. |
     | `save` | `False` | Copy the key scratch files (MO coefficients — the `.gbw`-analogue) back to the structure's dir (`outputs/stepN/<id>/<stem>/`). The job always runs with a savename so Q-Chem keeps them in scratch; this decides whether they come home. |
-    | `device` | `cpu` | Reserved (`cuda` support via BrianQC is future work). |
+    | `device` | `cpu` | Inherited, and the Q-Chem engine never reads it: the job is launched the same way either way. The *pipeline* still acts on it — `cuda` charges a GPU against `max_gpus` and auto-picks `cuda.slurm.header` — so leave it at `cpu` for Q-Chem steps, or they queue for a device nothing will use. |
 
     **Install environment** (`executables`, config-level — machine facts, like the `orca`
     binary): `qchem` names the wrapper explicitly; `qc` names the install root and makes the

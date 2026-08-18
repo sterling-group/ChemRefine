@@ -1,12 +1,19 @@
 """Drift guard: the hand-written configuration reference must name every schema field.
 
 ``docs/user-guide/configuration.md`` duplicates the Pydantic models in prose tables —
-the one place in the docs that can silently rot as fields are added. Generating the page
-from the schema is deliberate future work; until then this guard makes the drift loud:
-every field of every model that :func:`chemrefine.introspect.schema_document` exposes
-must appear (as a whole word) somewhere in the page. The reverse direction — the page
-naming a field the schema lost — is already covered by ``test_docs_examples``, which
-validates the page's YAML fences against the real models.
+the one place in the docs that can silently rot as fields are added. This guard makes
+that drift loud: every field of every model that
+:func:`chemrefine.introspect.schema_document` exposes must appear (as a whole word)
+somewhere in the page. The reverse direction — the page naming a field the schema lost —
+is already covered by ``test_docs_examples``, which validates the page's YAML fences
+against the real models.
+
+The tables stay hand-written on purpose, and this guard is what that costs. ``docs/hooks/
+tables.py`` generates the rosters that are pure fact (which engines exist, what each
+drives, which backends install); the option tables are not, because the models declare no
+``description=`` on any field — generating them would trade the page's teaching for a
+list of defaults. So the page keeps the prose and the guard keeps the page honest about
+*which* knobs exist.
 """
 
 from __future__ import annotations
