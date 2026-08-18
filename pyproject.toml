@@ -143,13 +143,21 @@ pyscf-gpu = [
     "cutensor-cu12>=2.0.0",
     "chemrefine[pyscf]",
 ]
-# downloads: pytest, pytest-cov, hypothesis (tiny)
+# downloads: pytest, pytest-cov, hypothesis, + server/mcp/gui/agent (small)
 test = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
     # Property tests for the numerical core (tests/test_properties.py) — the invariants
     # that have to hold for every input, as opposed to the cases someone thought of.
     "hypothesis>=6.100",
+    # The suite is not a subset of the package: it drives the ExtOpt sidecar
+    # (test_engines_extopt), the builder (test_gui), the MCP session (test_mcp_server)
+    # and the embedded agent (test_agent_embedded) against the real SDKs. Declaring that
+    # here rather than on each install line is what stops a job installing `[test]` alone
+    # and collecting a suite it cannot run — which is exactly what ci.yml's mutation-gate
+    # and provisioned-backend jobs were doing. `server` is named rather than left to
+    # arrive via `gui`, because the extopt tests need it for their own reason.
+    "chemrefine[server,mcp,gui,agent]",
 ]
 # downloads: mkdocs, mkdocs-material, mkdocstrings, interrogate (small)
 docs = [
@@ -161,10 +169,11 @@ docs = [
 # Convenience superset for contributors: cross-references `[test]` and
 # `[docs]` so their pinned tools (pytest, interrogate, ...) only need
 # one source of truth, plus the linting tools that have no separate
-# extra of their own.
+# extra of their own. `[test]` carries the SDKs the suite imports, so
+# naming them again here would be a second roster to keep in step.
 # downloads: test + docs, ruff, mypy, pre-commit (small)
 dev = [
-    "chemrefine[test,docs,mcp,gui,agent]",
+    "chemrefine[test,docs]",
     # Matched to the pinned pre-commit hook rev — that hook is what actually gates,
     # so a floor years behind it is decorative.
     "ruff>=0.16",

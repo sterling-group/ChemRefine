@@ -173,7 +173,7 @@ step "the suite passes from the unpacked sdist (CI: install-smoke-test)"
 tar -xzf dist/*.tar.gz -C "$work"
 ( cd "$work"/chemrefine-*/ \
   && "$PY" -m venv "$work/sdist-venv" \
-  && "$work/sdist-venv/bin/pip" install --disable-pip-version-check --quiet ".[test,mcp,gui,agent]" \
+  && "$work/sdist-venv/bin/pip" install --disable-pip-version-check --quiet ".[test]" \
   && "$work/sdist-venv/bin/python" -m pytest -q -p no:cacheprovider )
 
 step "critical predicates are checked, not just covered (CI: mutation-gate)"
