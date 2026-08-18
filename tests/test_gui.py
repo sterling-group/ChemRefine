@@ -510,23 +510,24 @@ def test_cli_gui_hands_off_to_launch(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert calls == [{"config": config, "port": 8123, "open_browser": False}]
 
 
-def test_cli_gui_names_the_missing_extra(monkeypatch: pytest.MonkeyPatch):
-    import builtins
+def test_cli_gui_names_the_missing_extra(without_extra, caplog):
+    """Without Flask/waitress the command names the extra and exits 1 — not a traceback.
 
+    This passed for years while the guard was dead: it raised on ``chemrefine.gui``, our
+    own subpackage, rather than on the server the extra provides. ``chemrefine gui`` on a
+    bare install actually printed a traceback past the handler written to prevent it.
+    """
     from typer.testing import CliRunner
 
     from chemrefine.cli import app as cli_app
 
-    real_import = builtins.__import__
-
-    def refuse(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name.startswith("chemrefine.gui"):
-            raise ImportError("No module named 'flask'")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", refuse)
+    without_extra(
+        "flask", "waitress", "werkzeug", purge=("chemrefine.gui.app", "chemrefine.gui.serve")
+    )
     result = CliRunner().invoke(cli_app, ["gui"])
     assert result.exit_code == 1
+    assert "chemrefine[gui]" in caplog.text
+    assert "waitress" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -548,9 +549,11 @@ def test_launch_binds_loopback_with_a_fresh_token(monkeypatch: pytest.MonkeyPatc
         created["host"], created["port"] = host, port
         return _Server()
 
-    import waitress.server
-
-    monkeypatch.setattr(waitress.server, "create_server", fake_create_server)
+    # Patched on `serve`, not on `waitress.server`: the name is bound at import time
+    # (module scope, so the CLI's ImportError guard can fire), so patching the origin
+    # after the fact leaves `launch` holding the real one — which binds a real socket and
+    # runs a real server, and the suite then hangs on waitress's handler threads.
+    monkeypatch.setattr(serve_mod, "create_server", fake_create_server)
     fake_browser = type("W", (), {"open": staticmethod(opened.append)})
     monkeypatch.setattr(serve_mod, "webbrowser", fake_browser)
     serve_mod.launch(None, port=0, open_browser=True)
@@ -569,9 +572,7 @@ def test_launch_can_keep_the_browser_closed(monkeypatch: pytest.MonkeyPatch):
         def run(self) -> None:
             return None
 
-    import waitress.server
-
-    monkeypatch.setattr(waitress.server, "create_server", lambda *a, **k: _Server())
+    monkeypatch.setattr(serve_mod, "create_server", lambda *a, **k: _Server())
     fake_browser = type("W", (), {"open": staticmethod(opened.append)})
     monkeypatch.setattr(serve_mod, "webbrowser", fake_browser)
     serve_mod.launch(None, open_browser=False)

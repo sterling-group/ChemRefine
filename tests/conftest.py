@@ -1,6 +1,9 @@
 """Shared pytest fixtures for the ChemRefine test suite."""
 
+import builtins
 import importlib
+import sys
+from collections.abc import Callable
 
 import pytest
 
@@ -60,6 +63,51 @@ def _isolate_cuda_visible_devices(
     if request.node.get_closest_marker("integration") or request.node.get_closest_marker("gpu"):
         return
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+
+
+@pytest.fixture
+def without_extra(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
+    """Simulate an environment that never installed one of the optional extras.
+
+    Call it with the third-party module names to hide, plus the ChemRefine modules that
+    import them::
+
+        without_extra("flask", "waitress", purge=("chemrefine.gui.app", "chemrefine.gui.serve"))
+
+    Both halves are load-bearing, and every hand-rolled copy of this simulation in the
+    suite got at least one of them wrong — which is why it lives here now rather than
+    three times over.
+
+    *Hide the SDK, not our own module.* The three CLI guard tests used to raise on
+    ``chemrefine.gui`` / ``chemrefine.agent`` / ``chemrefine.mcp_server``, none of which a
+    user is ever missing. That proves only that ``except ImportError`` catches an
+    ImportError; it cannot tell a live guard from a dead one, and two of the three guards
+    were in fact dead.
+
+    *Evict from `sys.modules` **and** the parent package.* This suite imports those modules
+    at module scope, so ``from chemrefine.gui.serve import launch`` is otherwise a cache
+    hit and the SDK import never re-runs. Deleting only the ``sys.modules`` entry is not
+    enough for the ``from package import submodule`` spelling: the submodule survives as an
+    attribute of the already-imported parent, so the import resolves off that instead — and
+    a test that meant to assert a refusal quietly exercised the real command.
+    """
+    real_import = builtins.__import__
+
+    def block(*sdks: str, purge: tuple[str, ...] = ()) -> None:
+        for dotted in purge:
+            monkeypatch.delitem(sys.modules, dotted, raising=False)
+            parent, _, leaf = dotted.rpartition(".")
+            if (owner := sys.modules.get(parent)) is not None:
+                monkeypatch.delattr(owner, leaf, raising=False)
+
+        def refuse(name: str, *args: object, **kwargs: object) -> object:
+            if name.split(".")[0] in sdks:
+                raise ImportError(f"No module named {name.split('.')[0]!r}")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", refuse)
+
+    return block
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

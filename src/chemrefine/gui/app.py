@@ -13,23 +13,29 @@ only and mints a per-session token; every ``/api/*`` request must carry it in
 ``X-ChemRefine-Token`` (compared with :func:`secrets.compare_digest`). The static
 assets are public — they contain no secrets — and the token travels once in the launch
 URL's fragment-free query string, which the frontend keeps in memory.
+
+Flask is imported at module scope, the way :mod:`chemrefine.mcp_server` imports its SDK
+and for the same reason: the CLI imports *this* module inside ``except ImportError`` to
+turn a missing ``chemrefine[gui]`` into an install hint. An import deferred into
+:func:`create_app` makes that guard unreachable, so ``chemrefine gui`` without the extra
+raised a traceback past a handler written to prevent exactly that. Nothing here is
+imported by a Flask-free caller — :data:`chemrefine.gui.STATIC_DIR` is where the docs
+build gets the asset path.
 """
 
 from __future__ import annotations
 
 import secrets
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import yaml
+from flask import Flask, jsonify, request, send_from_directory
+from werkzeug.exceptions import HTTPException
 
 from chemrefine import agent_tools, introspect
 from chemrefine.errors import ChemRefineError
-
-if TYPE_CHECKING:
-    from flask import Flask
-
-STATIC_DIR = Path(__file__).parent / "static"
+from chemrefine.gui import STATIC_DIR
 
 
 def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
@@ -38,12 +44,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     ``token`` is the per-session secret every ``/api/*`` call must present
     (``None`` disables the check — a unit-test affordance; :func:`.serve.launch`
     always passes one). ``config_path`` preloads an existing config into the builder.
-    The flask import stays inside, like every optional-extra server here, so importing
-    the package without the extra keeps working.
     """
-    from flask import Flask, jsonify, request, send_from_directory
-    from werkzeug.exceptions import HTTPException
-
     app = Flask("chemrefine-gui", static_folder=str(STATIC_DIR), static_url_path="/static")
     app.config["PROPAGATE_EXCEPTIONS"] = True
 

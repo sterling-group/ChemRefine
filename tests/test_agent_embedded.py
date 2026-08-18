@@ -398,20 +398,42 @@ def test_cli_agent_hands_off_and_maps_config_errors(
     assert failed.exit_code == 2
 
 
-def test_cli_agent_names_the_missing_extra(monkeypatch: pytest.MonkeyPatch):
-    import builtins
+def test_cli_agent_names_the_missing_extra(without_extra, caplog):
+    """Without PydanticAI the command names the extra and exits 1 — not a traceback.
 
+    Like its GUI twin, this used to raise on ``chemrefine.agent`` rather than on the SDK,
+    so it passed while the guard could not fire: PydanticAI was imported inside
+    ``build_agent``, well past the ``except ImportError``.
+    """
     from typer.testing import CliRunner
 
     from chemrefine.cli import app
 
-    real_import = builtins.__import__
-
-    def refuse(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name.startswith("chemrefine.agent") and not name.startswith("chemrefine.agent_"):
-            raise ImportError("No module named 'pydantic_ai'")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", refuse)
-    result = CliRunner().invoke(app, ["agent"])
+    without_extra("pydantic_ai", purge=("chemrefine.agent.chat", "chemrefine.agent.harness"))
+    result = CliRunner().invoke(app, ["agent", "--model", "openai:gpt-5-mini"])
     assert result.exit_code == 1
+    assert "chemrefine[agent]" in caplog.text
+
+
+def test_agent_check_works_before_the_extra_is_installed(
+    without_extra, monkeypatch: pytest.MonkeyPatch
+):
+    """``--check`` is a preflight, so it must run in the environment it diagnoses.
+
+    ``providers`` states that it imports no SDK at runtime, and ``cli.py`` depends on that
+    by routing ``--check`` through ``chemrefine.agent.providers`` rather than through
+    ``chat``. Nothing held it: one import added to ``agent/__init__.py``, or an eager SDK
+    import in ``providers``, would break the preflight silently — and the preflight exists
+    for people who have not installed the extra yet. A provider-native model string
+    returns before any network call, so this stays offline.
+    """
+    from typer.testing import CliRunner
+
+    from chemrefine.cli import app
+
+    for name in ("CHEMREFINE_LLM_MODEL", "CHEMREFINE_LLM_BASE_URL", "CHEMREFINE_LLM_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    without_extra("pydantic_ai", purge=("chemrefine.agent.chat", "chemrefine.agent.harness"))
+    result = CliRunner().invoke(app, ["agent", "--check", "--model", "openai:gpt-5-mini"])
+    assert result.exit_code == 0
+    assert "not probed" in result.stdout

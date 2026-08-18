@@ -12,7 +12,6 @@ tool *error result* (not a dead session), and the packaged guide is readable at
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 import yaml
@@ -99,20 +98,17 @@ def test_cli_mcp_serves_stdio_via_the_module(monkeypatch: pytest.MonkeyPatch):
     assert called == [True]
 
 
-def test_cli_mcp_names_the_missing_extra(monkeypatch: pytest.MonkeyPatch):
-    """Without the SDK the command says exactly what to install, and exits 1."""
-    import builtins
+def test_cli_mcp_names_the_missing_extra(without_extra, caplog):
+    """Without the SDK the command says exactly what to install, and exits 1.
 
-    real_import = builtins.__import__
-
-    def refuse(name: str, *args: Any, **kwargs: Any) -> Any:
-        fromlist = args[2] if len(args) > 2 and args[2] is not None else ()
-        if name == "chemrefine.mcp_server" or (name == "chemrefine" and "mcp_server" in fromlist):
-            raise ImportError("No module named 'mcp'")
-        return real_import(name, *args, **kwargs)
-
+    This guard was the one that worked — ``mcp_server`` imports the SDK at module scope,
+    which is the rule its docstring states and the other two commands had drifted from.
+    It is tested honestly now for the same reason they are: refusing our own module, and
+    leaving it cached, let the command run for real and still report success.
+    """
     from typer.testing import CliRunner
 
-    monkeypatch.setattr(builtins, "__import__", refuse)
+    without_extra("mcp", purge=("chemrefine.mcp_server",))
     result = CliRunner().invoke(app, ["mcp"])
     assert result.exit_code == 1
+    assert "chemrefine[mcp]" in caplog.text

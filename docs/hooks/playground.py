@@ -7,6 +7,11 @@ at build time from the installed package — the playground's dropdowns and form
 exactly as current as the release the docs describe. Runs post-build so ``--strict``
 page validation is untouched; the docs workflow imports chemrefine anyway (mkdocstrings
 renders live signatures), so the import here adds no new requirement.
+
+The asset path comes from :data:`chemrefine.gui.STATIC_DIR`, not from
+:mod:`chemrefine.gui.app`, which imports Flask at module scope — the ``[docs]`` extra
+installs no server. Reading it from the package rather than deriving a fourth path from
+``__file__`` keeps one answer to "where do the assets live".
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ def on_post_build(config: Any, **kwargs: Any) -> None:
     **Playground** in the site's top navigation tabs — and this hook then replaces the
     stub with the app, so clicking the tab opens the full-screen builder directly.
     """
-    from chemrefine.gui.app import STATIC_DIR
+    from chemrefine.gui import STATIC_DIR
     from chemrefine.introspect import schema_document
 
     playground = Path(config["site_dir"]) / "playground"

@@ -13,6 +13,13 @@ Instructions = the packaged agent guide (:func:`chemrefine.agent_tools.guide_tex
 identical bytes to the MCP resource) plus the session context (which config file, if
 any). The model is a parameter, never constructed here — that is what lets the tests
 run the entire harness against ``TestModel``/``FunctionModel`` offline.
+
+PydanticAI is imported at module scope, the way :mod:`chemrefine.mcp_server` imports its
+SDK: :mod:`.chat` imports this module, and the CLI imports :mod:`.chat` inside ``except
+ImportError`` to turn a missing ``chemrefine[agent]`` into an install hint. Deferring the
+import into the builders left that guard unreachable and ``chemrefine agent`` raising a
+traceback instead. :mod:`.providers` deliberately does the opposite — it imports no SDK
+at runtime, so ``chemrefine agent --check`` still runs before the extra is installed.
 """
 
 from __future__ import annotations
@@ -20,13 +27,12 @@ from __future__ import annotations
 import functools
 import json
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai.models import Model
 
 from chemrefine import agent_tools
-
-if TYPE_CHECKING:
-    from pydantic_ai import Agent
-    from pydantic_ai.models import Model
 
 ConfirmFn = Callable[[str, str], bool]
 """``(tool_name, rendered_args) -> allow?`` — the chat asks the human, tests script it."""
@@ -75,8 +81,6 @@ def build_agent(
     config_path: str | None = None,
 ) -> Agent[None, str]:
     """The assembled agent — every shared tool registered, mutations behind ``confirm``."""
-    from pydantic_ai import Agent
-
     agent: Agent[None, str] = Agent(model, instructions=instructions(config_path))
     for tool in agent_tools.TOOLS:
         if tool.__name__ in agent_tools.MUTATING_TOOLS:
@@ -102,8 +106,6 @@ def build_web_agent(
     exactly the guarantee the terminal gate gives, enforced by the SDK rather than a
     wrapper.
     """
-    from pydantic_ai import Agent, DeferredToolRequests
-
     agent: Agent[None, Any] = Agent(
         model,
         instructions=instructions(config_path),
