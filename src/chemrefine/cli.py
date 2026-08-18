@@ -372,12 +372,12 @@ def agent(
         typer.Option("--check", help="Verify the configured provider/model and exit."),
     ] = False,
 ) -> None:
-    """Chat with an embedded agent that authors and triages workflows (terminal REPL).
+    r"""Chat with an embedded agent that authors and triages workflows (terminal REPL).
 
     The same tools as the MCP server, no client required: multi-provider via
     OpenAI-compatible endpoints (local Ollama/vLLM included) or PydanticAI's native
     provider strings. Mutating tools always ask for confirmation first. Needs the
-    ``chemrefine[agent]`` extra; configuration also via CHEMREFINE_LLM_MODEL /
+    ``chemrefine\[agent]`` extra; configuration also via CHEMREFINE_LLM_MODEL /
     _BASE_URL / _API_KEY. ``--check`` probes the endpoint and names the fix
     (start the daemon, pull the model, set the key) without starting a chat — and
     works before the extra is even installed.
@@ -428,11 +428,11 @@ def gui(
         bool, typer.Option("--no-browser", help="Print the URL instead of opening a browser.")
     ] = False,
 ) -> None:
-    """Open the click-through YAML builder in a browser (local web app).
+    r"""Open the click-through YAML builder in a browser (local web app).
 
     Left pane: steps, engines and options as forms driven by the live schema; right
     pane: the YAML being built. Binds 127.0.0.1 behind a per-session token — reach a
-    cluster with SSH port forwarding. Needs the ``chemrefine[gui]`` extra.
+    cluster with SSH port forwarding. Needs the ``chemrefine\[gui]`` extra.
     """
     try:
         from chemrefine.gui.serve import launch
@@ -444,11 +444,11 @@ def gui(
 
 @app.command()
 def mcp() -> None:
-    """Serve ChemRefine's agent tools over the Model Context Protocol (stdio).
+    r"""Serve ChemRefine's agent tools over the Model Context Protocol (stdio).
 
     Register it with an MCP client, e.g. ``claude mcp add chemrefine -- chemrefine mcp``
     (or over SSH for a cluster: ``-- ssh login-node chemrefine mcp``). Needs the
-    ``chemrefine[mcp]`` extra; see :mod:`chemrefine.mcp_server`.
+    ``chemrefine\[mcp]`` extra; see :mod:`chemrefine.mcp_server`.
     """
     try:
         from chemrefine import mcp_server

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import subprocess
 import sys
 import textwrap
@@ -66,6 +67,52 @@ def test_help_lists_every_subcommand():
         "engines",
     ):
         assert cmd in result.stdout
+
+
+@pytest.mark.parametrize("command", ["agent", "gui", "mcp"])
+def test_the_help_names_the_extra_the_command_needs(command: str):
+    """The one actionable word in the sentence has to survive rendering.
+
+    Typer renders docstrings as Rich markup, where ``[gui]`` is a style tag — so all
+    three of these printed "Needs the ``chemrefine`` extra", naming an extra that does
+    not exist, to the users least able to guess the right one.
+    """
+    result = runner.invoke(app, [command, "--help"])
+    assert result.exit_code == 0
+    assert f"chemrefine[{command}]" in result.stdout
+
+
+def test_no_command_docstring_hides_a_bracketed_name_behind_rich_markup():
+    """The rule, checked on the source, so a fourth command is covered by existing.
+
+    Asserting on three rendered outputs pins the three we know about; asserting that no
+    command docstring contains an unescaped bracket is the rule those three broke. A
+    literal ``[...]`` in help text must be written ``\\[...]`` in a raw docstring — ruff
+    flags the non-raw spelling as W605, so the two checks bracket each other.
+    """
+    import ast
+
+    from chemrefine import cli
+
+    tree = ast.parse(Path(cli.__file__).read_text(encoding="utf-8"))
+    commands = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and any(
+            isinstance(d, ast.Call) and getattr(d.func, "attr", "") == "command"
+            for d in node.decorator_list
+        )
+    }
+    assert commands, "no @app.command() functions found — the scanner is broken, not the code"
+    offenders = sorted(
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name in commands
+        and re.search(r"(?<!\\)\[[^\]]+\]", ast.get_docstring(node, clean=False) or "")
+    )
+    assert not offenders, f"escape the bracket as \\[...] in the docstring of: {offenders}"
 
 
 def test_the_legacy_translator_knows_every_subcommand():
