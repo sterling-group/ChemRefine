@@ -34,8 +34,8 @@ claude mcp add chemrefine -- chemrefine mcp
 claude mcp add chemrefine -- ssh login-node chemrefine mcp
 ```
 
-The client's own tool-approval dialogs gate every mutating call (`save_config`,
-`write_template`, `scaffold_templates`, `start_run`).
+The client's own tool-approval dialogs play the role of
+[the confirmation gate](#the-confirmation-gate): nothing mutating runs without your yes.
 
 ## Route 2 — the embedded chat, no MCP client
 
@@ -133,8 +133,8 @@ steps:
 
 ## The confirmation gate
 
-Every mutating tool — `write_template`, `scaffold_templates`, `start_run`,
-`build_structures` — stops and asks first:
+Every mutating tool — `save_config`, `write_template`, `scaffold_templates`,
+`build_structures`, `start_run` — stops and asks first:
 
 ```
 allow start_run({"config_path": ".../input.yaml", "max_cores": 16})? [y/N]

@@ -28,6 +28,7 @@ from typing import Any
 
 import pytest
 
+from chemrefine import agent_tools
 from chemrefine.engines import known_backend_extras
 from chemrefine.engines.api import ENGINES
 from chemrefine.engines.mlip.registry import registered_backends
@@ -36,6 +37,7 @@ from chemrefine.errors import EXIT_CODES
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _HOOK = _REPO_ROOT / "docs" / "hooks" / "tables.py"
 _RUN_FAILS = _REPO_ROOT / "docs" / "running" / "when-a-run-fails.md"
+_AGENTS = _REPO_ROOT / "docs" / "workflow" / "agents.md"
 
 pytestmark = pytest.mark.skipif(
     not _HOOK.is_file(), reason="docs/ is a repository artifact and does not ship in the sdist"
@@ -135,4 +137,25 @@ def test_every_exit_code_is_documented():
     assert not missing, (
         f"exit code(s) {missing} are raised by chemrefine.errors but have no row in "
         f"{_RUN_FAILS.name}"
+    )
+
+
+@pytest.mark.skipif(not _AGENTS.is_file(), reason="docs/ does not ship in the sdist")
+def test_the_confirmation_gate_names_every_mutating_tool_and_no_others():
+    """Guarded, not generated — the roster is a clause inside a sentence that teaches.
+
+    The page stated it twice, a hundred lines apart, and the two copies had drifted in
+    opposite directions: one omitted ``build_structures``, the other ``save_config``, and
+    both claimed to be exhaustive. A directive cannot fix that without breaking two
+    sentences in half for a five-item list, so one copy is gone and the survivor is pinned
+    to ``MUTATING_TOOLS`` in both directions. Backticked names are filtered by membership
+    in ``TOOLS`` so the ``allow start_run(...)`` sample and ordinary prose are ignored.
+    """
+    section = _AGENTS.read_text(encoding="utf-8").split("## The confirmation gate", 1)[1]
+    section = section.split("\n## ", 1)[0]
+    tools = {tool.__name__ for tool in agent_tools.TOOLS}
+    named = {name for name in re.findall(r"`([a-z_]+)`", section) if name in tools}
+    assert named == set(agent_tools.MUTATING_TOOLS), (
+        "the confirmation-gate section must name exactly the mutating tools; it names "
+        f"{sorted(named)}, MUTATING_TOOLS is {sorted(agent_tools.MUTATING_TOOLS)}"
     )
