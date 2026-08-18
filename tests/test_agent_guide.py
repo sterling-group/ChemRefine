@@ -17,7 +17,6 @@ import pytest
 
 from chemrefine import agent_tools
 from chemrefine.engines.orca.output.coordinator import known_operations
-from chemrefine.errors import ChemRefineError
 from chemrefine.state import FailureKind
 
 GUIDE = agent_tools.guide_text()
@@ -34,9 +33,17 @@ def test_every_operation_is_taught():
         assert f"`{operation}`" in GUIDE or f"`operation: {operation}`" in GUIDE, operation
 
 
-def test_every_recovery_action_is_taught():
+def test_every_action_start_run_accepts_is_taught():
+    """`assert "run" in GUIDE` is true of any prose in English.
+
+    ``_ACTIONS`` is the vocabulary ``start_run`` validates against, so a model that never
+    hears ``rebuild-nms`` will never ask for it. The backticks are what make this a check
+    about the word rather than about three letters that happen to occur. Named for
+    ``start_run`` rather than for "recovery" because ``run`` is in the tuple and is not a
+    recovery action — the old name made correct prose look like a bug.
+    """
     for action in agent_tools._ACTIONS:
-        assert action in GUIDE, action
+        assert f"`{action}`" in GUIDE, action
 
 
 def test_the_failure_vocabulary_matches_the_ledger():
@@ -45,9 +52,18 @@ def test_the_failure_vocabulary_matches_the_ledger():
         assert f"`{kind.value}`" in GUIDE, kind
 
 
-def test_the_exit_codes_listed_are_the_real_ones():
-    for cls in ChemRefineError.__subclasses__():
-        assert str(cls.exit_code) in GUIDE, cls.__name__
+def test_the_guide_points_at_the_exit_code_map_instead_of_copying_it():
+    """A prose copy of a shipped map is a copy that drifts, and this one had.
+
+    The guide listed codes 2-10 and never named the two classes that exit 1, while the
+    check that used to be here — ``str(cls.exit_code) in GUIDE`` — could not see it: every
+    digit it looked for already appears in the numbered working loop above. It also read
+    ``__subclasses__()``, direct-only, so it never asked about ``OutputTerminationError``
+    at all. ``get_failures`` ships the map itself, so what is left for the guide is to
+    name the key; the human-facing table with causes and remedies lives in
+    ``docs/running/when-a-run-fails.md``, guarded there.
+    """
+    assert "`exit_codes`" in GUIDE
 
 
 @pytest.mark.parametrize("mention", sorted(set(_TOOL_SHAPED.findall(GUIDE))))

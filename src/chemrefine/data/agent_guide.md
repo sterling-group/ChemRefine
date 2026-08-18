@@ -109,5 +109,5 @@ templates.
 * One driver per output tree (`start_run` refuses while the lock is held). Recovery
   actions (`resume`, `rerun`, `rerun-errors`, `rebuild-cache`, `rebuild-nms`) are the
   vocabulary for everything after a first `run`.
-* Failure payload exit codes: 2 config, 3 unknown engine, 4 submission, 5 job failure,
-  6 output parse, 7 cache, 8 throttle timeout, 9 backend provisioning, 10 run lock.
+* Every `get_failures` payload carries `exit_codes` — exception class → process exit
+  code, the whole taxonomy — so read a code's meaning from there, never from memory.
