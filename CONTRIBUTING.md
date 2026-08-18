@@ -39,9 +39,9 @@ python scripts/mutation_gate.py               # critical predicates are *checked
 
 The coverage gate is real: new code ships with tests that cover every
 line and branch, and every module/class/function carries a docstring
-(`interrogate --fail-under=100`). The suite is fast (< 10 s) — run it often.
-The mutation gate is the slow one (~3 min) because it runs the suite once per
-mutation; it only needs re-running when you touch one of the predicates it lists
+(`interrogate --fail-under=100`). The suite takes under a minute — run it often.
+The mutation gate is the slow one (~1.5 min) because it runs a suite per mutation;
+it only needs re-running when you touch one of the predicates it lists
 (`python scripts/mutation_gate.py --list`).
 
 **The GUI's JavaScript needs a Node to be checked.** `tests/test_gui_assets.py`

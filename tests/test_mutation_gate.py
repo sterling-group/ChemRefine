@@ -7,7 +7,7 @@ it went unrun, and it stayed that way for as long as nobody read past the exit c
 
 The check belongs here rather than behind a flag on the script because ``pytest`` is what
 the developer who moves the line actually runs — pre-commit runs only ruff and interrogate,
-and the gate itself is a separate three-minute CI job. This fires in the edit loop, at the
+and the gate itself is a separate CI job of its own. This fires in the edit loop, at the
 commit that moves the code.
 """
 
@@ -53,7 +53,7 @@ def _load_gate() -> ModuleType:
 
 
 def test_every_mutation_anchor_matches_the_source_exactly_once():
-    """A moved line must fail here, not three minutes into a CI job that stops early."""
+    """A moved line must fail here, not partway into a CI job that stops early."""
     gate = _load_gate()
     assert gate.stale_anchors(REPO, gate.MUTATIONS) == []
 
@@ -70,9 +70,33 @@ def test_a_moved_anchor_is_reported_by_id():
         path="src/chemrefine/throttle.py",
         old="a line that is not in throttle.py",
         new="irrelevant",
+        tests="tests/test_throttle.py",
         breaks="nothing — this mutation exists only to be missing",
     )
     report = gate.stale_anchors(REPO, [moved, *gate.MUTATIONS])
     assert len(report) == 1
     assert "[gone]" in report[0]
     assert "found 0" in report[0]
+
+
+def test_a_renamed_test_file_is_reported_by_id():
+    """The named test file is checked here too, for the reason the anchor is.
+
+    A ``tests`` entry that no longer names a file costs only time — the run falls back to
+    the whole suite and the verdict is unchanged — but silently paying 47s instead of 2s
+    per mutation is how the gate drifts back to what it was. This is where a rename is
+    cheap to notice.
+    """
+    gate = _load_gate()
+    renamed = gate.Mutation(
+        id="orphan",
+        path="src/chemrefine/throttle.py",
+        old="def has_room",
+        new="irrelevant",
+        tests="tests/test_a_file_that_was_renamed.py",
+        breaks="nothing — this mutation exists only to name a missing test",
+    )
+    report = gate.stale_anchors(REPO, [renamed, *gate.MUTATIONS])
+    assert len(report) == 1
+    assert "[orphan]" in report[0]
+    assert "tests/test_a_file_that_was_renamed.py" in report[0]

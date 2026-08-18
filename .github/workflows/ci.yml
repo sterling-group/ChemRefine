@@ -192,8 +192,8 @@ jobs:
   # Coverage proves every line ran; it does not prove an assertion looked at the result.
   # This breaks each predicate whose inversion would be a wrong scientific answer rather
   # than a crash, and requires a red test — so those predicates are checked, not merely
-  # executed. Its own job because it runs the suite once per mutation (~3 min; only a
-  # survivor costs the full time, since a caught one stops at the first failure).
+  # executed. Its own job because it runs a suite per mutation (~1.5 min: each runs the one
+  # test file it names, and only a fall-back or a survivor pays for the whole suite).
   mutation-gate:
     name: Critical predicates are checked, not just covered
     runs-on: ubuntu-latest
