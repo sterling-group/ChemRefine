@@ -46,7 +46,7 @@ agents).
 
 Conflicting MLIP stacks each live in one managed environment, provisioned once and
 resolved **by name** at run time (see
-[Installation → MLIP backends](installation.md#mlip-backends)):
+[Installation → available backends](installation.md#available-backends)):
 
 | Command | Argument(s) | What it does |
 |---------|-------------|--------------|

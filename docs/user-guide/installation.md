@@ -96,18 +96,17 @@ only host one backend family. Two ways to add one:
     step whose backend is neither importable nor provisioned fails before any job submits,
     naming the fix.
 
-### MLIP backends
+### Available backends
 
-| Extra | `task_name`(s) it enables | Pulls |
-|-------|---------------------------|-------|
-| `[mlip]` = `[mlip-fairchem]` | `omol`, `omat`, `odac`, `oc20`, `oc22`, `oc25`, `omc` | `fairchem-core`; UMA / eSEN checkpoints, default `uma-s-1p2` |
-| `[mlip-mace]` | `mace_off`, `mace_mp`, `mace_omol` | `mace-torch` |
-| `[mlip-sevenn]` | `sevenn` | `sevenn` |
-| `[mlip-orb]` | `orb` | `orb-models`; needs **Python ≥ 3.12** |
-| `[mlip-chgnet]` | `chgnet` | `chgnet` |
+These are the names `chemrefine backends install` accepts — and the only ones it accepts.
+`[mlip]` and `[mlff]` are pip extras that alias `[mlip-fairchem]`; neither is a backend
+name.
 
-`[mlff]` remains an alias of `[mlip]`. The backends don't pin a CUDA build of `torch`, so
-for GPU install the matching `torch` first (or let the extra resolve the default build).
+<!-- chemrefine:backends -->
+
+The backends don't pin a CUDA build of `torch`, so for GPU install the matching `torch`
+first (or let the extra resolve the default build). FAIRChem's default checkpoint is
+`uma-s-1p2`.
 
 `task_name` is the only key that selects a backend. To run a model you fine-tuned yourself,
 name the library that trained it and point `model_path` at the checkpoint — there is no
@@ -144,13 +143,17 @@ Step 1 runs each structure with the `mlip-mace` env's Python, step 2 with
 The `options.backend_python` knob overrides the resolution with an explicit interpreter
 (escape hatch — normally envs are resolved by name only).
 
-### Other extras
+### Every pip extra
 
-- `[pyscf]` — `pyscf` for the PySCF engine / PySCF-ExtOpt gradients (plus `[server]`);
-  `[pyscf-gpu]` adds `gpu4pyscf-cuda12x` + `cutensor-cu12` (CUDA 12; CUDA-11 hosts swap in
-  the `-cuda11x` wheels).
-- `[server]` — just `flask` + `waitress` (the ExtOpt HTTP server); pulled in automatically
-  by every MLIP extra and `[pyscf]`.
+The full `pip install "chemrefine[…]"` vocabulary, including the ones that are not
+compute backends:
+
+<!-- chemrefine:extras -->
+
+`[server]` is flask + waitress — the ExtOpt HTTP server — and every backend extra pulls
+it in. `[gui]` is the workflow builder, `[mcp]` the AI-agent tool server, `[agent]` the
+terminal chat; `[dev]`, `[docs]` and `[test]` are for working on ChemRefine itself.
+`[pyscf-gpu]` targets CUDA 12 — CUDA-11 hosts swap in the `-cuda11x` wheels.
 
 ## HPC
 

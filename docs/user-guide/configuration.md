@@ -94,6 +94,17 @@ raises a clear error if the chosen energy wasn't computed.
 | `min` | `count` **or** `window_kcalmol` | The `count` lowest-energy structures (`0` = keep all), or all within `window_kcalmol` of the minimum. |
 | `max` | `count` (≥ 1) **or** `window_kcalmol` | The `count` *highest*-energy structures, or all within `window_kcalmol` of the maximum (PES-style sampling). |
 
+## Engines
+
+Every registered engine, what template it reads, and what it can do:
+
+<!-- chemrefine:engines -->
+
+An engine with no declared `operation:` vocabulary treats the field as a free label —
+only the engines listed above interpret it. `NMS` is the `nms: true` capability. See
+[Installation → available backends](installation.md#available-backends) for the
+`Backend env` column.
+
 ## Engine options
 
 `options` is a free per-engine dict; each engine validates its own keys.
@@ -107,7 +118,7 @@ raises a clear error if the chosen energy wasn't computed.
     | `model_path` | `None` | A local checkpoint to load *instead of* `model_name`, with the library `task_name` named. Selects nothing itself: to run a model an `mlip-train` step produced, name the same `task_name` it trained with. Relative paths resolve against the config file's directory. |
     | `device` | `cpu` | `cuda` or `cpu`. CPU is the floor that always runs; asking for a GPU is one line, whereas a wrong `cuda` default schedules a CPU job whose script then asks for a device it wasn't given. |
     | `cores` | `1` | Per-structure core budget. |
-    | `backend_python` | `None` | Explicit interpreter for the backend (escape hatch). Normally unset: the step's managed env is resolved by name — see [Installation → MLIP backends](installation.md#mlip-backends). |
+    | `backend_python` | `None` | Explicit interpreter for the backend (escape hatch). Normally unset: the step's managed env is resolved by name — see [Installation → available backends](installation.md#available-backends). |
 
 === "pyscf / pyscf-extopt"
 

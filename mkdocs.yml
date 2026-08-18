@@ -42,10 +42,26 @@ validation:
   nav:
     omitted_files: warn
     not_found: warn
+  # A link to a heading that no longer exists is only INFO by default, so `--strict` —
+  # which promotes warnings — walked straight past two of them the moment a section was
+  # renamed. Raising anchors and unrecognized_links makes the build the gate for the
+  # *inside* of a link, as `not_found` already is for the file half.
+  links:
+    anchors: warn
+    unrecognized_links: warn
 
-# Post-build: copy the GUI assets to site/playground/ with a baked schema.json, so the
-# workflow builder is usable on the published docs (static mode: build + copy/download).
+# The hooks live under docs/ but are build machinery, not content: without this they are
+# copied into the site as static assets, __pycache__ and all. MkDocs loads them from the
+# path below rather than from the docs collection, so excluding them changes nothing else.
+exclude_docs: |
+  hooks/
+
+# tables.py fills the `<!-- chemrefine:… -->` directives from the registry, so no page
+# hand-maintains a list of engines, backends or extras. playground.py runs post-build to
+# copy the GUI assets to site/playground/ with a baked schema.json, so the workflow
+# builder is usable on the published docs (static mode: build + copy/download).
 hooks:
+  - docs/hooks/tables.py
   - docs/hooks/playground.py
 
 plugins:
