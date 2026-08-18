@@ -5,6 +5,16 @@ the pipeline iterates steps, each step drives an engine through a fixed lifecycl
 and the engine submits jobs through the SLURM/throttle machinery. State flows
 forward as immutable `PipelineState` values.
 
+Three ideas shape the rest, and everything below is a consequence of one of them:
+
+- **Immutable state threading.** Each step receives the previous step's survivors as a
+  frozen `PipelineState` and returns a new one — there is no mutable shared god-object.
+- **Engine plugins behind a Protocol.** The orchestrator only ever sees the
+  `CalculationEngine` contract and a name→class registry; no concrete engine is imported
+  by the core. See [Adding an engine](../developer/adding-an-engine.md).
+- **Fingerprint-cached steps.** A step re-runs only when its config or its parent
+  structures change. See [Caching & resume](../running/caching.md).
+
 ## Module layering
 
 ```

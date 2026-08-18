@@ -87,3 +87,46 @@ def test_every_absolute_docstring_reference_resolves():
         "these docstring cross-references point at nothing; rename the target in the "
         "prose or restore the object:\n" + "\n".join(dangling)
     )
+
+
+_REPO_ROOT = _PACKAGE_ROOT.parent.parent
+_DOCS = _REPO_ROOT / "docs"
+
+#: A ``docs/…md`` path named in prose. Same claim as a role reference — "go and read
+#: this" — and the same failure when it rots, but pointing at a file rather than an object.
+_DOC_PATH_RE = re.compile(r"docs/[A-Za-z0-9_./-]+\.md")
+
+#: Where such a path can appear. `docs/` itself is excluded: mkdocs resolves *its* links,
+#: and `mkdocs build --strict` already fails on a broken one.
+_PROSE_FILES = ("src/chemrefine/**/*.py", "CONTRIBUTING.md", "README.md")
+
+
+def test_every_documentation_path_named_in_prose_exists():
+    """A docs page named from the code must be a page that exists.
+
+    Nothing watched this, and the re-organisation proved why: five references in ``src/``
+    and ``CONTRIBUTING.md`` pointed at pages that had moved — one of them
+    (``config_legacy``'s "see docs/migrating-v1-to-v2.md") inside an error message a user
+    reads when their v1 config is rejected. ``--strict`` cannot see them because they are
+    not in ``docs/``, so they rot silently in exactly the way a link inside ``docs/``
+    no longer can.
+    """
+    if not _DOCS.is_dir():
+        import pytest
+
+        pytest.skip("docs/ is a repository artifact and does not ship in the sdist")
+
+    found, missing = 0, []
+    for pattern in _PROSE_FILES:
+        for path in sorted(_REPO_ROOT.glob(pattern)):
+            text = path.read_text(encoding="utf-8")
+            for m in _DOC_PATH_RE.finditer(text):
+                found += 1
+                if not (_REPO_ROOT / m.group(0)).is_file():
+                    line = text.count("\n", 0, m.start()) + 1
+                    missing.append(f"{path.relative_to(_REPO_ROOT)}:{line} -> {m.group(0)}")
+    assert found, "no docs/ paths found in prose — the scanner itself has broken"
+    assert missing == [], (
+        "these prose references name a documentation page that does not exist:\n"
+        + "\n".join(missing)
+    )

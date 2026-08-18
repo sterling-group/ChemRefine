@@ -38,15 +38,15 @@ chemrefine run input.yaml --dry-run          # validate + describe; submit nothi
 A first run usually goes: `chemrefine validate input.yaml` → `chemrefine scaffold
 input.yaml` → edit the starters → `chemrefine run input.yaml`.
 
-Two more entry points build on the same tooling: [`chemrefine gui`](gui.md) (the
-click-through workflow builder) and [`chemrefine mcp`](mcp.md) (the tool server for AI
+Two more entry points build on the same tooling: [`chemrefine gui`](../workflow/builder.md) (the
+click-through workflow builder) and [`chemrefine mcp`](../workflow/agents.md) (the tool server for AI
 agents).
 
 ## Backend environments (`chemrefine backends`)
 
 Conflicting MLIP stacks each live in one managed environment, provisioned once and
 resolved **by name** at run time (see
-[Installation → available backends](installation.md#available-backends)):
+[Installation → available backends](../engines/installing.md#available-backends)):
 
 | Command | Argument(s) | What it does |
 |---------|-------------|--------------|

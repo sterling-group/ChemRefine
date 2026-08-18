@@ -645,7 +645,7 @@ def _chemrefine_imports(module: Path) -> set[str]:
 def test_no_engine_module_imports_the_cache() -> None:
     """An engine turns a specification into a calculation. Caching is not its concern.
 
-    `docs/concepts/architecture.md` draws the layering with `engines/*` depending on
+    `docs/internals/architecture.md` draws the layering with `engines/*` depending on
     `slurm, throttle, io, ids, job_log, quantities` — and not on `cache`. That was never
     true: the subsystem imported `cache` from the day it was written, first for
     `save_manifest` and latterly so every engine could implement an `input_digest` the

@@ -63,7 +63,7 @@ must be replaced by hand with `engine:` + `operation:`.
 > running — not after the whole of round 1 drains, and not one parent at a time. So the slots freed by
 > the early finishers go to round-2 work instead of idling, and a step with 50 unresolved structures
 > uses the whole budget rather than one parent's worth of it. See
-> [Normal-Mode Sampling](concepts/nms.md).
+> [Normal-Mode Sampling](../workflow/nms.md).
 
 > **MLFF was ORCA-driven in v1.3.1.** `engine: MLFF` ran ORCA using a machine-learned
 > gradient server — that is `mlip-extopt` in v2. The bare `mlip`/`mlff` engine in v2
@@ -138,21 +138,10 @@ A few defaults differ from earlier expectations (all overridable):
 
 ## Failure handling & recovery
 
-Each step takes `on_failure: stop | skip | best` (in the YAML). For a step where, say, 2 of 5 structures
-fail:
-
-- **`stop`** (default) — run every structure to completion, cache the 3 successes, then **halt** before
-  the next step, so failures are never silently dropped.
-- **`skip`** — drop the 2 failures and continue with the 3 survivors.
-- **`best`** — keep all 5, backfilling the 2 failures with the best geometry obtained.
-
-The `_cache/failed_jobs.json` ledger records which structures failed under **every** policy (so you can
-always see them), but only a `stop` step leaves failures *pending*. To recover:
-
-- **`chemrefine resume CONFIG`** — re-attempt the pending failures (only a `stop` step has any) and
-  continue.
-- **`chemrefine rerun-errors CONFIG [N]`** — re-attempt only step N's pending failures (latest if no N).
-- **`chemrefine rerun CONFIG [N]`** — redo the whole step N from scratch.
+v1 had no per-step failure policy and no way to re-attempt part of a run. v2 has
+`on_failure: stop | skip | best` per step and six recovery commands, all described in
+[When a run fails](../running/when-a-run-fails.md) — the same page a v2 user reaches
+for, rather than a second account of it here.
 
 ## Cores, GPUs & devices
 

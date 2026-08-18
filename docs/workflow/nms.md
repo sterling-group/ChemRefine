@@ -4,7 +4,7 @@ Normal-mode sampling (NMS) cleans up stationary points: it removes spurious
 imaginary frequencies to reach a true minimum, or keeps exactly one to confirm a
 first-order saddle (transition state). It is opt-in per step (`nms: true`) and
 only runs on NMS-capable engines — the `NMS` column of the [engine
-table](../user-guide/configuration.md#engines) says which. For the ExtOpt engines it is
+table](../engines/index.md) says which. For the ExtOpt engines it is
 ORCA that computes the Hessian, numerically over the backend's gradients, so a `Freq`
 template yields a real frequency table.
 

@@ -73,9 +73,9 @@ Once a config is saved (local GUI only — the playground stays build-and-copy),
 ## The Agent chat panel
 
 With the `[agent]` extra installed, an **Agent chat** section joins the right column —
-the [embedded agent](agent.md) inside the GUI. Pick the provider/model in the panel
+the [embedded agent](agents.md) inside the GUI. Pick the provider/model in the panel
 (saved in your browser; local **Ollama** works with no key — see the
-[model-policy note](platforms.md#model-licensing-site-policy-ai-features)), then talk:
+[model-policy note](agents.md#ai-agents)), then talk:
 the agent uses the same tools as everywhere else. Mutating actions **suspend** the
 agent and appear as allow/deny cards naming the exact call and its arguments; nothing
 touches disk or starts compute until you click *allow*. The panel needs the local

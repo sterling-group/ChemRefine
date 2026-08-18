@@ -8,7 +8,7 @@ untouched, and each rewrite logs one deprecation warning naming what to change.
 **Removal horizon: 3.0.** This layer is correct and single-homed, but it is the largest
 concentration of branches in the config path and it has no reason to grow — every key it
 handles was renamed before 2.0. Deleting the module and its one call site is the whole
-removal; see ``docs/migrating-v1-to-v2.md``.
+removal; see ``docs/get-started/upgrading-from-v1.md``.
 
 Kept out of :mod:`chemrefine.config` so the schema reads as the schema. Someone learning
 what a step *is* should not have to read two hundred lines of translation for older ones.
@@ -140,7 +140,7 @@ def _normalize_step(step: Any) -> Any:
     if "calculation_type" in s:
         raise ConfigError(
             "`calculation_type` is no longer supported; use `engine:` + `operation:` "
-            "(see docs/migrating-v1-to-v2.md)"
+            "(see docs/get-started/upgrading-from-v1.md)"
         )
 
     # Engine name: a moved engine-config block decides it, else the rename map.

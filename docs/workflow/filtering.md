@@ -47,4 +47,4 @@ every child has exactly one parent, and `by_parent` groups by that immediate
 parent. This is how survivors stay traceable back to their seed across all steps.
 
 See the [Filtering API](../api/filtering.md) and the config
-[Sample reference](../user-guide/configuration.md#sample-survivor-filter).
+[Sample reference](configuration.md#sample-survivor-filter).

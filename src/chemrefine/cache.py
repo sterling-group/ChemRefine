@@ -15,7 +15,7 @@ The split is what makes the cache scale. Coordinates dominate a record,
 and as decimal text each float64 costs 18 bytes on disk, a ``strtod``
 call to parse and 32 bytes live; in a ``.npy`` member it costs 8 bytes,
 a memcpy and 8 bytes. ``tests/test_perf_cache.py`` measures the
-difference and ``docs/concepts/caching.md`` reports it. Structures in a
+difference and ``docs/running/caching.md`` reports it. Structures in a
 step need not share an atom count, so the arrays are concatenated with
 an offsets index rather than stacked — see :func:`_split_arrays`.
 

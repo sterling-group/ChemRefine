@@ -122,75 +122,76 @@ extra_javascript:
 
 nav:
   - Home: index.md
-  - Playground: playground.md
-  - User Guide:
-      - user-guide/index.md
-      - Installation: user-guide/installation.md
-      - Configuration: user-guide/configuration.md
-      - CLI Reference: user-guide/cli.md
-      - GUI (workflow builder): user-guide/gui.md
-      - MCP Server (AI agents): user-guide/mcp.md
-      - Embedded Agent: user-guide/agent.md
-      - Platforms, Shells & Model Policy: user-guide/platforms.md
-      - Troubleshooting: user-guide/troubleshooting.md
+  - Get started:
+      - Install: get-started/install.md
+      - Your first run: get-started/first-run.md
+      - Upgrading from v1: get-started/upgrading-from-v1.md
   - Tutorials:
       - tutorials/index.md
-      - Conformer Sampling: tutorials/conformer_sampling.md
-      - Transition State Finding: tutorials/ts_finding.md
-      - Host-Guest Docking & Microsolvation: tutorials/host_guest.md
-      - MLIP Training & Normal-Mode Sampling: tutorials/mlip_training.md
-      - Redox: tutorials/redox.md
-      - Spin: tutorials/spin.md
-      - Agentic Workflows: tutorials/agentic_workflows.md
-  - Concepts:
-      - concepts/index.md
-      - Architecture & Code Flow: concepts/architecture.md
-      - Caching & Resume: concepts/caching.md
-      - Recovery & Reruns: concepts/recovery.md
-      - Filtering: concepts/filtering.md
-      - Normal-Mode Sampling: concepts/nms.md
-      - Security & Trust Boundaries: concepts/security.md
-  - API Reference:
-      - api/index.md
-      - Core:
-          - Configuration: api/config.md
-          - Introspection: api/introspect.md
-          - Validation: api/validate.md
-          - Scaffolding: api/scaffold.md
-          - Runtime State: api/state.md
-          - Errors: api/errors.md
-          - Quantities: api/quantities.md
-      - Pipeline:
-          - Orchestrator: api/pipeline.md
-          - Step Lifecycle: api/step.md
-          - Step Lifecycle Body: api/lifecycle.md
-          - Attempt Directories: api/attempts.md
-          - Normal-Mode Sampling: api/nms.md
-          - Filtering: api/filtering.md
-          - Recovery Actions: api/recovery.md
-      - Engines:
-          - Contract & Registry: api/engines_api.md
-          - Job & Script Engines: api/engines_job.md
-          - ORCA: api/engines_orca.md
-          - MLIP: api/engines_mlip.md
-          - PySCF: api/engines_pyscf.md
-          - Q-Chem: api/engines_qchem.md
-      - Agent Integration:
-          - Agent Tools: api/agent_tools.md
-          - MCP Server: api/mcp_server.md
-          - Embedded Agent: api/agent.md
-      - Infrastructure:
-          - SLURM: api/slurm.md
-          - Throttle: api/throttle.md
-          - Cache: api/cache.md
-          - Filesystem I/O: api/io.md
-          - Identifiers: api/ids.md
-          - Job Log: api/job_log.md
-  - Migrating from v1 to v2: migrating-v1-to-v2.md
-  - Developer Guide:
-      - developer/index.md
+      - Conformer sampling: tutorials/conformer_sampling.md
+      - Transition states: tutorials/ts_finding.md
+      - Host-guest docking: tutorials/host_guest.md
+      - Training a potential: tutorials/mlip_training.md
+      - Redox properties: tutorials/redox.md
+      - Spin states: tutorials/spin.md
+  - Writing a workflow:
+      - Configuration reference: workflow/configuration.md
+      - Filtering survivors: workflow/filtering.md
+      - Normal-mode sampling: workflow/nms.md
+      - Workflow builder (GUI): workflow/builder.md
+      - AI agents: workflow/agents.md
+  - Engines & backends:
+      - engines/index.md
+      - Installing engines & backends: engines/installing.md
+  - Running a workflow:
+      - Command line: running/cli.md
+      - Local & cluster (SLURM): running/clusters.md
+      - Caching & resume: running/caching.md
+      - When a run fails: running/when-a-run-fails.md
+  - Internals:
+      - Architecture: internals/architecture.md
+      - Security & trust boundaries: internals/security.md
+      - Python API:
+          - api/index.md
+          - Core:
+              - Configuration: api/config.md
+              - Introspection: api/introspect.md
+              - Validation: api/validate.md
+              - Scaffolding: api/scaffold.md
+              - Runtime State: api/state.md
+              - Errors: api/errors.md
+              - Quantities: api/quantities.md
+          - Pipeline:
+              - Orchestrator: api/pipeline.md
+              - Step Lifecycle: api/step.md
+              - Step Lifecycle Body: api/lifecycle.md
+              - Attempt Directories: api/attempts.md
+              - Normal-Mode Sampling: api/nms.md
+              - Filtering: api/filtering.md
+              - Recovery Actions: api/recovery.md
+          - Engines:
+              - Contract & Registry: api/engines_api.md
+              - Job & Script Engines: api/engines_job.md
+              - ORCA: api/engines_orca.md
+              - MLIP: api/engines_mlip.md
+              - PySCF: api/engines_pyscf.md
+              - Q-Chem: api/engines_qchem.md
+          - Agent Integration:
+              - Agent Tools: api/agent_tools.md
+              - MCP Server: api/mcp_server.md
+              - Embedded Agent: api/agent.md
+          - Infrastructure:
+              - SLURM: api/slurm.md
+              - Throttle: api/throttle.md
+              - Cache: api/cache.md
+              - Filesystem I/O: api/io.md
+              - Identifiers: api/ids.md
+              - Job Log: api/job_log.md
+  - Contributing:
       - Contributing: developer/contributing.md
-      - Adding an Engine: developer/adding-an-engine.md
-  - Changelog: changelog.md
-  - Security Policy: security-policy.md
-  - Citation: citation.md
+      - Adding an engine: developer/adding-an-engine.md
+  - About:
+      - Changelog: changelog.md
+      - Security policy: security-policy.md
+      - Citation: citation.md
+  - Playground: playground.md

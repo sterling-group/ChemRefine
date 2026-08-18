@@ -11,7 +11,7 @@ place:
   `_job.py` (`JobEngine`), `_execution.py` (the scheduler), `_script/` (`ScriptEngine`),
   `_backend_server/` (the ExtOpt server).
 - **the plugins** — one bare-named package each, auto-discovered; the
-  [engine table](../user-guide/configuration.md#engines) lists what that currently is.
+  [engine table](../engines/index.md) lists what that currently is.
 
 Adding an engine touches exactly **one** thing: a new bare-named `engines/<name>/` package.
 Plugins are auto-discovered — every bare-named subpackage is imported when
@@ -294,4 +294,4 @@ input format is a `JobEngine` like the one above; a Python library is a `ScriptE
 drives it over the ExtOpt bridge) — never a binary wrapper.
 
 See the [Engine Contract & Registry API](../api/engines_api.md) for the exact signatures, and
-[Architecture & Code Flow](../concepts/architecture.md) for where the lifecycle sits in the run.
+[Architecture & Code Flow](../internals/architecture.md) for where the lifecycle sits in the run.

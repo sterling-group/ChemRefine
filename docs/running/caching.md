@@ -118,7 +118,7 @@ the same tree fails fast with exit code `10` instead. A lock whose holder died
 on the same host is detected and reclaimed automatically; one left by a run
 killed on *another* host cannot be liveness-checked from here and must be
 deleted by hand — see
-[troubleshooting](../user-guide/troubleshooting.md#another-run-holds-this-output-tree).
+[troubleshooting](when-a-run-fails.md#another-run-holds-this-output-tree).
 
 ## Result records
 

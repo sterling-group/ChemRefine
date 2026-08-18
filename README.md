@@ -40,7 +40,7 @@ pip install "chemrefine[mlip]"
   `bash` for local execution.
 <!-- --8<-- [end:requirements] -->
 
-The [install guide](https://sterling-group.github.io/ChemRefine/user-guide/installation/)
+The [install guide](https://sterling-group.github.io/ChemRefine/get-started/install/)
 lists every engine, backend and extra, and covers GPU setup.
 
 ## Run

@@ -5,7 +5,7 @@ The CLI half of the compatibility layer — :mod:`chemrefine.config_legacy` is t
 Typer ever sees it, so every other line of :mod:`chemrefine.cli` describes one grammar.
 
 **Removal horizon: 3.0**, together with its YAML counterpart. See
-``docs/migrating-v1-to-v2.md``.
+``docs/get-started/upgrading-from-v1.md``.
 """
 
 from __future__ import annotations

@@ -10,8 +10,8 @@ SLURM jobs under a global core budget, parses the outputs, filters
 survivors by energy, and feeds the next stage. Re-runs are fingerprint-
 cached so unchanged steps skip automatically.
 
-[Get started](user-guide/index.md){ .md-button .md-button--primary }
-[How it works](concepts/index.md){ .md-button }
+[Install it](get-started/install.md){ .md-button .md-button--primary }
+[Run something](get-started/first-run.md){ .md-button }
 
 ---
 
@@ -21,7 +21,7 @@ cached so unchanged steps skip automatically.
   config — every knob lives in one place.
 - **Engine plugins** behind a narrow Protocol — each a direct engine or an
   ORCA-driven `-extopt` gradient server. The
-  [engine table](user-guide/configuration.md#engines) is generated from the
+  [engine table](engines/index.md) is generated from the
   registry, so it is never out of date; new engines drop in via a registry
   decorator (see [Adding an Engine](developer/adding-an-engine.md)).
 - **Filtering** by Boltzmann cumulative weight, or the lowest / highest
@@ -38,29 +38,32 @@ cached so unchanged steps skip automatically.
 
 ## Quickstart
 
-Install (see the [install guide](user-guide/installation.md) for backends + GPU):
-
 ```bash
 pip install chemrefine
 ```
 
-Describe the pipeline in one YAML file (full
-[configuration reference](user-guide/configuration.md)), then run it (full
-[CLI reference](user-guide/cli.md)):
-
 --8<-- "README.md:quickstart"
+
+[Your first run](get-started/first-run.md) walks this from nothing to results.
 
 ## Where to go next
 
-- **[User Guide](user-guide/index.md)** — install, the YAML configuration
-  reference, and the CLI.
-- **[Tutorials](tutorials/index.md)** — worked examples: conformer sampling,
-  TS finding, docking, MLIP training, redox, spin.
-- **[Concepts](concepts/index.md)** — the architecture & code flow, the
-  fingerprint cache, filtering, and normal-mode sampling.
-- **[API Reference](api/index.md)** — the orchestration core and the engine contract.
-- **[Migrating from v1 to v2](migrating-v1-to-v2.md)** — old keys/flags map to v2.
+| I want to… | Go to |
+|---|---|
+| install it, and run something | **[Get started](get-started/install.md)** |
+| see a complete study, start to finish | **[Tutorials](tutorials/index.md)** |
+| know what can go in the YAML | **[Writing a workflow](workflow/configuration.md)** |
+| know which engines and backends there are | **[Engines & backends](engines/index.md)** |
+| run it on a cluster, or fix a run that failed | **[Running a workflow](running/cli.md)** |
+| understand how it works inside | **[Internals](internals/architecture.md)** |
+| move a v1 project to v2 | **[Upgrading from v1](get-started/upgrading-from-v1.md)** |
+| add an engine, or send a patch | **[Contributing](developer/contributing.md)** |
 
 ## Requirements
 
 --8<-- "README.md:requirements"
+
+## Getting help
+
+- [Project issues](https://github.com/sterling-group/ChemRefine/issues) — search before opening a new one
+- [Citing ChemRefine](citation.md)

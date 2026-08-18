@@ -19,7 +19,7 @@ Two things it reports beyond wall time:
   reducing it would mean giving up ASE as the interop contract.
 * **The format comparison** — the same structures serialized as one JSON document versus
   the shipped JSON-plus-``.npz`` split, so the reason for the split has a number behind it
-  and `docs/concepts/caching.md` has somewhere to get one.
+  and `docs/running/caching.md` has somewhere to get one.
 
 Run it with ``-s`` to see the table:
 

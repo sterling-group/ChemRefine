@@ -36,7 +36,7 @@ from chemrefine.errors import ChemRefineError
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _HOOK = _REPO_ROOT / "docs" / "hooks" / "tables.py"
-_TROUBLESHOOTING = _REPO_ROOT / "docs" / "user-guide" / "troubleshooting.md"
+_RUN_FAILS = _REPO_ROOT / "docs" / "running" / "when-a-run-fails.md"
 
 pytestmark = pytest.mark.skipif(
     not _HOOK.is_file(), reason="docs/ is a repository artifact and does not ship in the sdist"
@@ -122,14 +122,14 @@ def test_a_directive_inside_prose_is_left_alone():
     assert _hook().on_page_markdown(prose) == prose
 
 
-@pytest.mark.skipif(not _TROUBLESHOOTING.is_file(), reason="docs/ does not ship in the sdist")
+@pytest.mark.skipif(not _RUN_FAILS.is_file(), reason="docs/ does not ship in the sdist")
 def test_every_exit_code_is_documented():
     """The hand-written table's one machine-checkable claim: that it covers every code.
 
     Not generated — see this module's docstring. ``0`` is documented too and belongs to no
     exception, so the check runs one way: every code the package can exit with must appear.
     """
-    text = _TROUBLESHOOTING.read_text(encoding="utf-8")
+    text = _RUN_FAILS.read_text(encoding="utf-8")
     codes = {
         obj.exit_code
         for obj in vars(sys.modules["chemrefine.errors"]).values()
@@ -138,5 +138,5 @@ def test_every_exit_code_is_documented():
     missing = sorted(c for c in codes if not re.search(rf"^\| `{c}` \|", text, re.MULTILINE))
     assert not missing, (
         f"exit code(s) {missing} are raised by chemrefine.errors but have no row in "
-        f"{_TROUBLESHOOTING.name}"
+        f"{_RUN_FAILS.name}"
     )
