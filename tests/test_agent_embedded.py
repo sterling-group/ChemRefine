@@ -165,6 +165,32 @@ def test_check_passes_native_strings_through_unprobed():
     assert "not probed" in report.findings[0]
 
 
+@pytest.mark.parametrize(
+    ("label", "body"),
+    [
+        ("an HTML page", b"<html><body>Sign in</body></html>"),
+        ("a bare list", b"[]"),
+        ("a JSON scalar", b'"ok"'),
+        ("data of non-objects", b'{"data": ["a", "b"]}'),
+    ],
+)
+def test_check_reports_a_reply_that_is_not_a_model_listing(label: str, body: bytes):
+    """A 200 that is not a listing is a finding, because that is what --check is for.
+
+    Every one of these raised out of `check()` — the first as a JSONDecodeError, the rest
+    as AttributeError from `.get` on the wrong type — and `cli.py` catches only
+    ChemRefineError, so the preflight printed a traceback. They are not exotic: a base URL
+    pointing at a web app or a proxy's login page answers 200 with HTML, and `custom` is
+    the default provider.
+    """
+    from chemrefine.agent.providers import check
+
+    with _listing_server(body) as base:
+        report = check(_cfg(base))
+    assert report.ok is False
+    assert "not an OpenAI-style model listing" in report.findings[0], label
+
+
 def test_check_refuses_a_non_http_url():
     from chemrefine.agent.providers import check
 

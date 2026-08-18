@@ -154,7 +154,30 @@ def check(config: ProviderConfig, *, timeout: float = 5.0) -> CheckReport:
         return CheckReport(
             ok=False, findings=(f"{url}: unreachable ({e})", *_fixes(url, "unreachable"))
         )
-    served = [entry.get("id", "") for entry in listing.get("data", [])]
+    except ValueError:  # JSONDecodeError, UnicodeDecodeError — an HTML page, a binary body
+        listing = None
+    # A reachable endpoint answering something other than ``{"data": [{"id": ...}]}`` is a
+    # misconfiguration, and turning misconfiguration into a finding is this function's whole
+    # contract — a base URL pointing at a web app or a proxy's login page answers 200 with
+    # HTML, and some gateways answer a bare list. Every one of those used to raise out of
+    # here, so the preflight crashed on the mistake it exists to diagnose.
+    entries = listing.get("data") if isinstance(listing, dict) else None
+    served = (
+        [e["id"] for e in entries if isinstance(e, dict) and isinstance(e.get("id"), str)]
+        if isinstance(entries, list)
+        else []
+    )
+    # `{"data": []}` is a listing: an endpoint that serves nothing yet. Entries that yield
+    # no id at all are a different answer — the shape is wrong, not the inventory — and
+    # saying "model not served" there would send the reader looking for the wrong fix.
+    if not isinstance(entries, list) or (entries and not served):
+        return CheckReport(
+            ok=False,
+            findings=(
+                f"{url}: reachable, but the reply is not an OpenAI-style model listing",
+                *_fixes(url, "missing-model"),
+            ),
+        )
     if config.model in served:
         return CheckReport(
             ok=True, findings=(f"{url}: reachable; model {config.model!r} is served",)
