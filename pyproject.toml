@@ -57,7 +57,12 @@ dependencies = [
     "pandas>=2.2.3",
     "ase>=3.26.0",
     "rdkit>=2024.9.1",
-    "pydantic>=2.5",
+    # 2.12, not 2.5: the `floors` job installs the suite's extras alongside these pins,
+    # and both `[mcp]` and `[agent]` require pydantic>=2.12 — so `pydantic==2.5` was a
+    # floor no configuration could resolve (`pip install pydantic==2.5 'mcp>=2,<3'` is
+    # ResolutionImpossible, with no older 2.x mcp to back off to). A floor is the lowest
+    # version the tested configuration can actually install; this is it.
+    "pydantic>=2.12",
     "typer>=0.12",
 ]
 
