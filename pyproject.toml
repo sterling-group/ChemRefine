@@ -362,6 +362,22 @@ filterwarnings = [
     # implicit get_event_loop it touches on the way. Their issue, not a signal in ours —
     # matched narrowly so every other DeprecationWarning still fails the suite.
     "ignore:There is no current event loop:DeprecationWarning",
+    # numpy 2.5 deprecates assigning `.shape`, and ase 3.29 still does it in ~18 places —
+    # `Atoms.new_array` among them, so *any* empty `Atoms()` warns. On a fresh install
+    # (numpy 2.5.2 + ase 3.29.0) that is 68 failures, none of them ours: chemrefine
+    # assigns `.shape` nowhere, and the two versions work together at runtime. They just
+    # say so, and `error` above turns saying so into a red suite.
+    #
+    # ase fixed all of it — every ndarray `.shape =` is gone from master, which is
+    # 3.30.0b1 — so this expires with the 3.30 release: raise the ase floor and delete
+    # the line. Capping numpy instead would constrain every user's environment to spare
+    # ourselves a warning none of them would ever see.
+    #
+    # Scoped to ase rather than to one module because the deprecation is spread across
+    # eleven of them and only two fire today; scoped by module rather than by message
+    # alone so it stays narrow — verified that the identical warning raised from
+    # chemrefine's own code still fails the suite.
+    'ignore:Setting the shape on a NumPy array:DeprecationWarning:ase\.',
 ]
 markers = [
     "slow: tests that take longer than 1 second",
