@@ -81,7 +81,11 @@ resolved="$("$PY" -c 'import chemrefine, pathlib; print(pathlib.Path(chemrefine.
 [ -n "$resolved" ] || fail "chemrefine is not importable by $PY — run: pip install -e '.[dev]'"
 [ "$resolved" = "$repo_root/src" ] || fail "$PY imports chemrefine from $resolved, not $repo_root/src — run: pip install -e '.[dev]'"
 
-for tool in pre-commit mypy pytest mkdocs; do
+# `pyproject-build` is the console script the `build` distribution ships (there is no
+# `build` binary); it stands here for the `$PY -m build` further down. Without it that
+# step failed several minutes in — after pre-commit, mypy, two whole suites and every
+# extras resolve — on a tool this loop exists to catch in the first second.
+for tool in pre-commit mypy pytest mkdocs pyproject-build; do
     [ -x "$bin/$tool" ] || fail "$tool is not in $bin — run: pip install -e '.[dev]'"
 done
 

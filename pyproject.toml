@@ -174,6 +174,11 @@ docs = [
 # downloads: test + docs, ruff, mypy, pre-commit (small)
 dev = [
     "chemrefine[test,docs]",
+    # `scripts/release-check.sh` reproduces CI's build-package job with `python -m build`,
+    # and promises a `[dev]` install is all it needs — so the tool it calls is declared
+    # here. twine stays out on purpose: it publishes rather than gates, and the script
+    # puts it in a throwaway venv of its own.
+    "build>=1.2",
     # Matched to the pinned pre-commit hook rev — that hook is what actually gates,
     # so a floor years behind it is decorative.
     "ruff>=0.16",
