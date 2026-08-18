@@ -216,6 +216,21 @@ def test_start_run_passes_the_target_through(tmp_path: Path, recorded_popen):
     assert call["argv"][-2:] == ["--maxgpus", "0"]
 
 
+def test_two_runs_started_together_get_their_own_logs(tmp_path: Path, recorded_popen):
+    """Two launches in the same second must not share one log file.
+
+    The lock check in `start_run` is check-then-act — the child claims the lock, so both
+    calls can pass it — and at one-second resolution both resolved to the same path, where
+    `open("wb")` truncated the first child's log while it was still writing to it. The
+    second driver dies on the lock either way; what is lost is the *first* one's log, which
+    is exactly what `run_status` serves back when someone asks what went wrong.
+    """
+    path = _write_config(tmp_path)
+    first = agent_tools.start_run(str(path))
+    second = agent_tools.start_run(str(path))
+    assert first["log"] != second["log"]
+
+
 def test_start_run_refuses_before_launching(tmp_path: Path, recorded_popen):
     path = _write_config(tmp_path)
     with pytest.raises(ConfigError, match="unknown action"):

@@ -187,7 +187,11 @@ def start_run(
         )
     log_dir = config.output_dir / "agent_runs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{action}.log"
+    # Microseconds, not seconds: the lock check above is check-then-act — the *child*
+    # claims the lock, so two calls close together can both pass it — and at one-second
+    # resolution they resolved to one filename, where `open("wb")` truncated the first
+    # child's log out from under it while it was still writing.
+    log_path = log_dir / f"{datetime.now(UTC):%Y%m%dT%H%M%S.%fZ}-{action}.log"
     argv = [sys.executable, "-m", "chemrefine", action, str(path)]
     if target is not None:
         argv.append(target)
