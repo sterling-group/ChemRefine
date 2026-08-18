@@ -176,8 +176,7 @@ def on_page_markdown(markdown: str, **kwargs: Any) -> str:
         name = match.group(1)
         if name not in _TABLES:
             raise ValueError(
-                f"unknown directive <!-- chemrefine:{name} -->; "
-                f"known tables: {sorted(_TABLES)}"
+                f"unknown directive <!-- chemrefine:{name} -->; known tables: {sorted(_TABLES)}"
             )
         return _TABLES[name]()
 

@@ -8,35 +8,47 @@
 
 # ChemRefine
 
+<!-- --8<-- [start:hero] -->
 Automated, interoperable manager for computational-chemistry workflows.
-ChemRefine drives multi-step conformer sampling and refinement through
-ORCA, Q-Chem, MLIPs (MACE / FAIRChem / SevenNet / ORB / CHGNet), and PySCF,
-with SLURM submission, caching, and resumable runs built in.
+ChemRefine chains quantum-chemistry and machine-learned-potential steps into a
+single YAML-described pipeline — ORCA and Q-Chem among the QM engines, FAIRChem
+and MACE among the potentials — with SLURM submission, fingerprint caching, and
+resumable runs built in.
+
+Potentials whose dependency stacks cannot share a Python process still share a
+workflow: `chemrefine backends install mlip-mace` builds a managed environment
+that the step resolves by name at run time.
+<!-- --8<-- [end:hero] -->
 
 📖 **Full documentation:** <https://sterling-group.github.io/ChemRefine/>
 
 ## Install
 
 ```bash
-pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git@main"
+pip install chemrefine
 
-# With the default MLIP backend (FAIRChem / UMA):
-pip install "chemrefine[mlip] @ git+https://github.com/sterling-group/ChemRefine.git@main"
+# With the default potential backend (FAIRChem / UMA):
+pip install "chemrefine[mlip]"
 ```
 
-Further MLIP backends (MACE, SevenNet, ORB, CHGNet) are separate extras;
-`chemrefine backends install <extra>` provisions each in its own managed env.
+<!-- --8<-- [start:requirements] -->
+- **Python 3.11–3.14.**
+- **Whatever each step needs to compute.** ORCA for `orca` and the ExtOpt
+  engines, Q-Chem for `qchem`; potential and PySCF steps need only a Python
+  backend, which `chemrefine backends install` provisions for you.
+- **SLURM is optional** — the generated `.slurm` script runs unchanged under
+  `bash` for local execution.
+<!-- --8<-- [end:requirements] -->
 
-Requires Python 3.11–3.14 and ORCA 6+. SLURM is optional — the generated
-`.slurm` script runs unchanged under `bash` for local execution. The
-[install guide](https://sterling-group.github.io/ChemRefine/user-guide/installation/) covers the
-per-backend MLIP extras (MACE / FAIRChem / SevenNet / ORB / CHGNet), PySCF, and GPU setup.
+The [install guide](https://sterling-group.github.io/ChemRefine/user-guide/installation/)
+lists every engine, backend and extra, and covers GPU setup.
 
 ## Run
 
 ChemRefine is driven by a single YAML config. A minimal two-step
-workflow (MLFF screen → DFT refine):
+workflow (MLIP screen → DFT refine):
 
+<!-- --8<-- [start:quickstart] -->
 ```yaml
 template_dir: ./templates
 scratch_dir:  ./scratch
@@ -70,10 +82,11 @@ chemrefine resume input.yaml               # honor cache where valid
 chemrefine rebuild-cache input.yaml refine # re-parse one step's outputs from disk
 chemrefine --help                          # full subcommand list
 ```
+<!-- --8<-- [end:quickstart] -->
 
-See the [tutorials](https://sterling-group.github.io/ChemRefine/tutorials/)
-for conformer sampling, TS finding, host–guest docking, MLIP training,
-and redox/spin workflows.
+The [tutorials](https://sterling-group.github.io/ChemRefine/tutorials/) work
+through complete studies — conformer sampling, transition states, docking and
+more.
 
 ## Citation
 

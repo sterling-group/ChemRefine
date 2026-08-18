@@ -103,8 +103,13 @@ markdown_extensions:
   - md_in_html
   - def_list
   - pymdownx.snippets:
-      # Lets docs/changelog.md include the repo-root CHANGELOG.md (single source).
+      # Lets a docs page include a repo-root file (CHANGELOG.md, CONTRIBUTING.md,
+      # SECURITY.md) or a named section of one (README.md's hero/requirements/…).
       base_path: ["."]
+      # Without this a missing file *or* a missing `[start:name]` section renders as an
+      # empty string and the build passes — so renaming CHANGELOG.md would publish a
+      # blank page. This is the guard for every include; it needs no test.
+      check_paths: true
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
       emoji_generator: !!python/name:material.extensions.emoji.to_svg

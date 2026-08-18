@@ -34,7 +34,12 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 
 #: Every file whose prose states the supported Python range, and must therefore track it.
-_PROSE = ("README.md", "docs/index.md", "docs/user-guide/installation.md")
+#:
+#: One entry, because there is now one copy: the two docs pages that used to repeat the
+#: range pull ``README.md``'s ``requirements`` section in with ``pymdownx.snippets``, so
+#: their *source* no longer contains it. That makes the guard stronger, not weaker — it
+#: watches the only text a human can get wrong.
+_PROSE = ("README.md",)
 
 _CLASSIFIER_RE = re.compile(r"^Programming Language :: Python :: (3\.\d+)$")
 

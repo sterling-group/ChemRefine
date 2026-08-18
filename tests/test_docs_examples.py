@@ -3,9 +3,15 @@
 The README quickstart and each tutorial open with a complete YAML config, and nothing ran
 them: a schema change that renamed a field would leave every example teaching the old
 spelling, discovered by the next new user as a validation error on their first run. Any
-``yaml`` fence whose text contains ``steps:`` is a full config by this repo's convention
-(all eleven current blocks are), so each must parse and pass :class:`chemrefine.config.
-Config` — the same validation a real run applies first.
+``yaml`` fence whose text contains ``steps:`` is a full config by this repo's convention,
+so each must parse and pass :class:`chemrefine.config.Config` — the same validation a real
+run applies first.
+
+The count is deliberately not written down here: a page that pulls its config in with
+``pymdownx.snippets`` contributes no fence of its own (the file it includes is validated
+by ``test_examples`` instead), so a number in this docstring would be one more fact to
+keep in sync. ``test_the_scanner_still_finds_the_readme_quickstart`` is what stops the
+scanner silently matching nothing.
 
 Schema only, deliberately: executing the examples end-to-end needs ORCA and an MLIP
 stack, which is what the recorded e2e tier covers. ``engine:`` names are free-form at

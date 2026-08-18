@@ -2,7 +2,8 @@
 
 # ChemRefine
 
-Automated, interoperable manager for computational-chemistry workflows.
+--8<-- "README.md:hero"
+
 A YAML file describes a chain of stages (e.g. MLIP screen → DFT refine
 → frequency analysis); ChemRefine writes the engine inputs, submits
 SLURM jobs under a global core budget, parses the outputs, filters
@@ -18,10 +19,11 @@ cached so unchanged steps skip automatically.
 
 - **Step-based pipeline** driven by a single Pydantic-validated YAML
   config — every knob lives in one place.
-- **Engine plugins** behind a narrow Protocol: ORCA, Q-Chem, MLIPs
-  (MACE / FAIRChem / SevenNet / ORB / CHGNet), and PySCF — each as a
-  direct engine or an ORCA-driven `-extopt` gradient server. New engines
-  drop in via a registry decorator (see [Adding an Engine](developer/adding-an-engine.md)).
+- **Engine plugins** behind a narrow Protocol — each a direct engine or an
+  ORCA-driven `-extopt` gradient server. The
+  [engine table](user-guide/configuration.md#engines) is generated from the
+  registry, so it is never out of date; new engines drop in via a registry
+  decorator (see [Adding an Engine](developer/adding-an-engine.md)).
 - **Filtering** by Boltzmann cumulative weight, or the lowest / highest
   structures by count or energy window (`min` / `max`, the latter PES-style),
   with optional per-parent grouping.
@@ -39,42 +41,14 @@ cached so unchanged steps skip automatically.
 Install (see the [install guide](user-guide/installation.md) for backends + GPU):
 
 ```bash
-pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git"
+pip install chemrefine
 ```
 
 Describe the pipeline in one YAML file (full
-[configuration reference](user-guide/configuration.md)):
+[configuration reference](user-guide/configuration.md)), then run it (full
+[CLI reference](user-guide/cli.md)):
 
-```yaml
-template_dir: ./templates
-output_dir:   ./outputs
-input:        ./step1.xyz
-max_cores: 64
-executables: { orca: orca }
-
-steps:
-  - step: 1
-    name: screen
-    engine: mlip
-    operation: opt_sp
-    options: { model_name: medium, task_name: mace_off, device: cuda }
-    sample: { method: boltzmann, percent_cumulative: 99 }
-
-  - step: 2
-    name: refine
-    engine: orca
-    operation: opt_sp
-    sample: { method: min, window_kcalmol: 3.0 }
-```
-
-Run it (full [CLI reference](user-guide/cli.md)):
-
-```bash
-chemrefine run input.yaml                   # full pipeline from step 1
-chemrefine resume input.yaml                # skip cached steps; retry failures
-chemrefine run input.yaml --maxcores 128    # override max_cores
-chemrefine run input.yaml --dry-run         # validate + describe; no jobs
-```
+--8<-- "README.md:quickstart"
 
 ## Where to go next
 
@@ -87,5 +61,6 @@ chemrefine run input.yaml --dry-run         # validate + describe; no jobs
 - **[API Reference](api/index.md)** — the orchestration core and the engine contract.
 - **[Migrating from v1 to v2](migrating-v1-to-v2.md)** — old keys/flags map to v2.
 
-Requires **Python 3.11–3.14** and **ORCA 6+**; SLURM is optional (the generated
-`.slurm` script runs unchanged under `bash` locally).
+## Requirements
+
+--8<-- "README.md:requirements"

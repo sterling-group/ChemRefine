@@ -8,22 +8,16 @@ PySCF) are added afterwards — either into the same environment or as isolated
 
 ## Requirements
 
-- **Python 3.11–3.14**
-- **ORCA 6.0+** — quantum-chemistry calculations
-- **Q-Chem** — optional alternative QM program ([its own options and install
-  keys](configuration.md#engine-options))
-- **SLURM** — HPC job scheduler (optional for local runs; the same `.slurm` script can be
-  executed with `bash` directly)
+--8<-- "README.md:requirements"
+
+Which program each engine needs is in the [engine
+table](configuration.md#engines); its options are in the [engine
+options](configuration.md#engine-options) tabs.
 
 The base install pulls `numpy`, `pyyaml`, `pandas`, `ase`, `rdkit`, `pydantic >= 2`, and
 `typer >= 0.12`. Optional extras layer backends on top.
 
 ## Install ChemRefine
-
-!!! note "PyPI release pending"
-    The `chemrefine` package name below refers to the upcoming **v2.0.0 PyPI release**.
-    Until it is published, substitute the [Git form](#from-git-until-the-pypi-release)
-    wherever `chemrefine` appears as an install target — everything else is identical.
 
 === "pip"
 
@@ -51,9 +45,9 @@ The base install pulls `numpy`, `pyyaml`, `pandas`, `ase`, `rdkit`, `pydantic >=
     pip install chemrefine
     ```
 
-### From Git (until the PyPI release)
+### From Git (unreleased changes)
 
-The current development version installs straight from GitHub — a drop-in replacement for
+The development version installs straight from GitHub — a drop-in replacement for
 `chemrefine` in any command above:
 
 ```bash
