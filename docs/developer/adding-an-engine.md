@@ -10,7 +10,8 @@ place:
 - **the reusable building blocks** (underscored — *compose*, never edit to add an engine):
   `_job.py` (`JobEngine`), `_execution.py` (the scheduler), `_script/` (`ScriptEngine`),
   `_backend_server/` (the ExtOpt server).
-- **the plugins** (bare names) — `orca/`, `qchem/`, `mlip/`, `pyscf/`.
+- **the plugins** — one bare-named package each, auto-discovered; the
+  [engine table](../user-guide/configuration.md#engines) lists what that currently is.
 
 Adding an engine touches exactly **one** thing: a new bare-named `engines/<name>/` package.
 Plugins are auto-discovered — every bare-named subpackage is imported when

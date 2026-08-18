@@ -65,8 +65,8 @@ steps:
 |-----|------|---------|-------------|
 | `step` | int ≥ 1 | — | **Required.** 1-based step number; drives directory naming and order. |
 | `name` | str | `None` | Optional filesystem-safe label (letters/digits/`_`/`-`, not all-digits). Directory becomes `stepN_name/`; usable as a CLI target. |
-| `engine` | str | — | **Required.** One of `orca`, `qchem`, `mlip`, `mlip-extopt`, `mlip-train`, `pyscf`, `pyscf-extopt`. |
-| `operation` | str | `None` | Engine-defined: `opt_sp`, `sp`, `freq`, `pes`, `goat`, `docker`, `solvator`. (`mlip_train` is a legacy spelling: it named a step *kind*, which `engine: mlip-train` already says. Old configs are still translated.) **Optional** — when omitted, ORCA infers the run type from the template's `!` keyword lines (`GOAT`/`DOCKER`/`SOLVATOR`/a `%geom Scan` block/`Opt`/`OptTS`/`Freq`; `#` comments are ignored, matching is case-insensitive), defaulting to a single point if it finds no run-type keyword. An explicit value always wins — give it when inspection can't decide. |
+| `engine` | str | — | **Required.** Any name in the [engine table](#engines) below. |
+| `operation` | str | `None` | Engine-defined — the [engine table](#engines) lists each engine's vocabulary, and an engine with none treats this as a free label. (`mlip_train` is a legacy spelling: it named a step *kind*, which `engine: mlip-train` already says. Old configs are still translated.) **Optional** — when omitted, ORCA infers the run type from the template's `!` keyword lines (`GOAT`/`DOCKER`/`SOLVATOR`/a `%geom Scan` block/`Opt`/`OptTS`/`Freq`; `#` comments are ignored, matching is case-insensitive), defaulting to a single point if it finds no run-type keyword. An explicit value always wins — give it when inspection can't decide. |
 | `template` | str |  `stepN.{inp,in,py}` | Engine input template basename (relative to `template_dir` if not absolute). |
 | `slurm_template` | str | global | Per-step SLURM header override. |
 | `charge` / `multiplicity` | int | global | Per-step overrides of the global values. |
@@ -113,7 +113,7 @@ only the engines listed above interpret it. `NMS` is the `nms: true` capability.
 
     | Key | Default | Description |
     |-----|---------|-------------|
-    | `model_name` (aliases `model`, `size`) | `uma-s-1p2` | Model weights (a MACE size, a FAIRChem checkpoint, a SevenNet/ORB id). |
+    | `model_name` (aliases `model`, `size`) | `uma-s-1p2` | Model weights, in whatever spelling the library `task_name` selected uses — a size for MACE, a checkpoint name for FAIRChem, an id for the others. |
     | `task_name` (alias `task`) | `omol` | Method/head — **the only thing that selects the backend builder**. |
     | `model_path` | `None` | A local checkpoint to load *instead of* `model_name`, with the library `task_name` named. Selects nothing itself: to run a model an `mlip-train` step produced, name the same `task_name` it trained with. Relative paths resolve against the config file's directory. |
     | `device` | `cpu` | `cuda` or `cpu`. CPU is the floor that always runs; asking for a GPU is one line, whereas a wrong `cuda` default schedules a CPU job whose script then asks for a device it wasn't given. |
