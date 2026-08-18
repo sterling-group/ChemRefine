@@ -49,6 +49,11 @@ def test_the_page_is_open_but_the_api_is_gated(client: Any):
     assert client.get("/api/bootstrap").status_code == 401  # no token
     bad = client.get("/api/bootstrap", headers={"X-ChemRefine-Token": "wrong"})
     assert bad.status_code == 401
+    # Non-ASCII is still just a wrong token. Werkzeug decodes headers as latin-1, and
+    # `compare_digest` refuses a non-ASCII str, so this used to be a 500 with a traceback
+    # from inside the auth gate — the one place that should answer plainly.
+    exotic = client.get("/api/bootstrap", headers={"X-ChemRefine-Token": "wröng"})
+    assert exotic.status_code == 401
     assert _get(client, "/api/bootstrap").status_code == 200
 
 

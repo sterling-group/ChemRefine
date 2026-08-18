@@ -53,7 +53,12 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         if token is None:
             return True
         presented = request.headers.get("X-ChemRefine-Token", "")
-        return secrets.compare_digest(presented, token)
+        # Compared as bytes: Werkzeug decodes headers as latin-1, and `compare_digest`
+        # raises TypeError on a str holding a non-ASCII character — so a header with any
+        # byte above 0x7F turned a plain 401 into a 500 and a logged traceback. Encoding
+        # both sides answers every input in constant time instead of the one class of
+        # wrong token we happened to think of.
+        return secrets.compare_digest(presented.encode(), token.encode())
 
     @app.get("/")
     def index() -> Any:
