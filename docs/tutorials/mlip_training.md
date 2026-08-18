@@ -1,7 +1,6 @@
 # MLIP Training Tutorial
 
-!!! note "Schema note"
-    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [configuration reference](../user-guide/configuration.md) and the example in [examples/quickstart/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/quickstart/input.yaml).
+--8<-- "docs/_includes/schema-note.md"
 
 
 This tutorial demonstrates how to use **ChemRefine** to train a **Machine Learning Interatomic Potential (MLIP)** using DFT data generated during the workflow.
@@ -66,22 +65,10 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 
 ### Interactive 3D Viewer
 
-<div id="viewer" style="width: 100%; height: 400px; position: relative;"></div>
+<div id="viewer" data-xyz="examples/tutorials/mlip_training/step1.xyz"
+     style="width: 100%; height: 400px; position: relative;"></div>
 
-<script src="https://3Dmol.org/build/3Dmol-min.js"></script>
-<script>
-  let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
-
-  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/main/examples/tutorials/mlip_training/step1.xyz")
-    .then(r => r.text())
-    .then(data => {
-      viewer.addModel(data, "xyz");   // force XYZ format
-      viewer.setStyle({}, {stick:{radius:0.15}, sphere:{scale:0.25}});
-      viewer.zoomTo();
-      viewer.render();
-    })
-    .catch(err => console.error("Could not load XYZ:", err));
-</script>
+--8<-- "docs/_includes/viewer.md"
 
 
 
@@ -94,55 +81,10 @@ The full YAML input for this MLIP training workflow is included:
 
 Download the template files [here](https://github.com/sterling-group/ChemRefine/tree/main/examples/tutorials/mlip_training/templates)
 
-Example content:
+This is the shipped config, included verbatim — the same file `tests/test_examples.py` validates on every CI run:
 
 ```yaml
-template_dir: ./templates
-scratch_dir: /scratch/
-output_dir: ./outputs
-executables: { orca: /orca/orca_6_1_0_avx2/orca }
-
-charge: 0
-multiplicity: 1
-
-input: ./step1.xyz
-
-steps:
-  - step: 1
-    operation: goat
-    engine: orca
-    sample: { method: min, count: 15 }
-
-  # Augment the dataset with normal-mode-sampled geometries.
-  - step: 2
-    operation: opt_sp
-    engine: orca
-    nms: true
-    options: { target: random, displacement_value: 1.0, num_random_displacements: 1 }
-    sample: { method: min, count: 0 }
-
-  # DFT labels (energies + forces) for training.
-  - step: 3
-    operation: opt_sp
-    engine: orca
-    sample: { method: min, count: 0 }
-
-  # Fine-tune a MACE model on the labelled structures.
-  - step: 4
-    engine: mlip-train
-    options: { task_name: mace_off, model_name: medium, device: cuda }
-    sample: { method: min, count: 0 }
-
-  # Validate the trained model via the MLIP gradient server. `task_name` is step 4's word
-  # again — it names the library; `model_path` says where its weights are.
-  - step: 5
-    operation: opt_sp
-    engine: mlip-extopt
-    options:
-      task_name: mace_off
-      model_path: ./outputs/step4/train/train_stagetwo.model
-      device: cuda
-    sample: { method: min, count: 0 }
+--8<-- "examples/tutorials/mlip_training/input.yaml"
 ```
 
 ---

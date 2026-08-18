@@ -1,7 +1,6 @@
 # Conformer Sampling Tutorial
 
-!!! note "Schema note"
-    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [configuration reference](../user-guide/configuration.md) and the example in [examples/quickstart/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/quickstart/input.yaml).
+--8<-- "docs/_includes/schema-note.md"
 
 
 This tutorial demonstrates how to use **ChemRefine** for conformational sampling with an initial **global geometry optimization (GOAT)** and ensemble generation.
@@ -43,22 +42,10 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 
 ### Interactive 3D Viewer
 
-<div id="viewer" style="width: 100%; height: 400px; position: relative;"></div>
+<div id="viewer" data-xyz="examples/tutorials/conformational_sampling/step1.xyz"
+     style="width: 100%; height: 400px; position: relative;"></div>
 
-<script src="https://3Dmol.org/build/3Dmol-min.js"></script>
-<script>
-  let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
-
-  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/main/examples/tutorials/conformational_sampling/step1.xyz")
-    .then(r => r.text())
-    .then(data => {
-      viewer.addModel(data, "xyz");   // force XYZ format
-      viewer.setStyle({}, {stick:{radius:0.15}, sphere:{scale:0.25}});
-      viewer.zoomTo();
-      viewer.render();
-    })
-    .catch(err => console.error("Could not load XYZ:", err));
-</script>
+--8<-- "docs/_includes/viewer.md"
 
 
 
@@ -73,47 +60,10 @@ The YAML input for conformer sampling is also included in the tutorial folder:
 
 
 
-Example content:
+This is the shipped config, included verbatim — the same file `tests/test_examples.py` validates on every CI run:
 
 ```yaml
-template_dir: ./templates
-scratch_dir: /scratch/
-output_dir: ./outputs
-executables: { orca: /orca }
-
-charge: 0
-multiplicity: 1
-
-# Optional: override the default initial structure (default: template_dir/step1.xyz).
-input: ./step1.xyz
-
-steps:
-  - step: 1
-    operation: goat
-    engine: orca
-    sample: { method: min, count: 15 }
-
-  # Refine the ensemble with an MLIP gradient server (ORCA-driven).
-  - step: 2
-    operation: opt_sp
-    engine: mlip-extopt
-    options: { model_name: uma-s-1, task_name: omol, device: cuda }
-    sample: { method: min, count: 15 }
-
-  - step: 3
-    operation: opt_sp
-    engine: orca
-    sample: { method: min, count: 15 }
-
-  - step: 4
-    operation: opt_sp
-    engine: orca
-    sample: { method: min, count: 15 }
-
-  - step: 5
-    operation: opt_sp
-    engine: orca
-    sample: { method: min, count: 15 }
+--8<-- "examples/tutorials/conformational_sampling/input.yaml"
 ```
 ## How to Run
 

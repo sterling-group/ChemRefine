@@ -55,6 +55,7 @@ validation:
 # path below rather than from the docs collection, so excluding them changes nothing else.
 exclude_docs: |
   hooks/
+  _includes/
 
 # tables.py fills the `<!-- chemrefine:… -->` directives from the registry, so no page
 # hand-maintains a list of engines, backends or extras. playground.py runs post-build to

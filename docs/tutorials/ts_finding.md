@@ -1,7 +1,6 @@
 # Transition State (TS) Finding Tutorial
 
-!!! note "Schema note"
-    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [configuration reference](../user-guide/configuration.md) and the example in [examples/quickstart/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/quickstart/input.yaml).
+--8<-- "docs/_includes/schema-note.md"
 
 
 This tutorial demonstrates how to use **ChemRefine** to locate and validate **transition states (TS)** using a stepwise pipeline that combines a **PES scan, optimizations, and normal-mode sampling**.
@@ -42,22 +41,10 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 
 ### Interactive 3D Viewer
 
-<div id="viewer" style="width: 100%; height: 400px; position: relative;"></div>
+<div id="viewer" data-xyz="examples/tutorials/transition_state/step1.xyz"
+     style="width: 100%; height: 400px; position: relative;"></div>
 
-<script src="https://3Dmol.org/build/3Dmol-min.js"></script>
-<script>
-  let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
-
-  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/main/examples/tutorials/transition_state/step1.xyz")
-    .then(r => r.text())
-    .then(data => {
-      viewer.addModel(data, "xyz");   // force XYZ format
-      viewer.setStyle({}, {stick:{radius:0.15}, sphere:{scale:0.25}});
-      viewer.zoomTo();
-      viewer.render();
-    })
-    .catch(err => console.error("Could not load XYZ:", err));
-</script>
+--8<-- "docs/_includes/viewer.md"
 
 ---
 
@@ -68,46 +55,10 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 The scan coordinates and any geometry constraints live in the step's ORCA `.inp`
 template (e.g. a `%geom Scan ... end` block), not in the YAML.
 
-Example content (excerpt):
+This is the shipped config, included verbatim — the same file `tests/test_examples.py` validates on every CI run:
 
 ```yaml
-template_dir: ./templates
-scratch_dir: /scratch/
-output_dir: ./outputs
-executables: { orca: /orca/orca_6_1_0_avx2/orca }
-
-charge: 0
-multiplicity: 1
-
-input: ./step1.xyz
-
-steps:
-  # Step 1 — PES scan; keep the highest-energy frames as TS guesses.
-  - step: 1
-    operation: pes
-    engine: orca
-    sample: { method: max, count: 5 }
-
-  # Step 2 — optimise the guesses.
-  - step: 2
-    operation: opt_sp
-    engine: orca
-    sample: { method: min, count: 5 }
-
-  # Step 3 — normal-mode sampling: frequency analysis + imaginary-mode
-  # displacement, keeping exactly one imaginary mode (a first-order saddle).
-  - step: 3
-    operation: opt_sp
-    engine: orca
-    nms: true
-    options: { target: ts, displacement_value: 1.0 }
-    sample: { method: min, count: 3 }
-
-  # Step 4 — final single point on the corrected TS.
-  - step: 4
-    operation: opt_sp
-    engine: orca
-    sample: { method: min, count: 1 }
+--8<-- "examples/tutorials/transition_state/input.yaml"
 ```
 
 ---
