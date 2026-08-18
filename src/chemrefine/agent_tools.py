@@ -41,16 +41,11 @@ from chemrefine import cache, introspect, io, pipeline, scaffold
 from chemrefine.cache import load_failure_records
 from chemrefine.config import Config, StepConfig, load_config
 from chemrefine.engines.api import ParsedResult
-from chemrefine.errors import ChemRefineError, ConfigError, RunLockError
+from chemrefine.errors import EXIT_CODES, ConfigError, RunLockError
 from chemrefine.validate import validate_config_file, validate_config_text
 
 _ACTIONS = ("run", "resume", "rerun", "rerun-errors", "rebuild-cache", "rebuild-nms")
 """CLI actions :func:`start_run` may launch — the recovery vocabulary, nothing else."""
-
-_EXIT_CODES: dict[str, int] = {
-    cls.__name__: cls.exit_code for cls in (ChemRefineError, *ChemRefineError.__subclasses__())
-}
-"""The documented failure taxonomy, shipped with every failure payload."""
 
 
 # ---------------------------------------------------------------------------
@@ -605,7 +600,7 @@ def get_failures(config_path: str, step: int | str | None = None) -> dict[str, A
     ]
     return {
         "failures": failures,
-        "exit_codes": _EXIT_CODES,
+        "exit_codes": EXIT_CODES,
         "suggested_action": "rerun-errors" if failures else None,
     }
 

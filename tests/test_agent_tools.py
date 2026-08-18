@@ -346,6 +346,10 @@ def test_get_failures_carries_the_taxonomy_and_the_next_move(tmp_path: Path):
         "reason": "no output",
     }
     assert everything["exit_codes"]["ConfigError"] == 2
+    # An indirect subclass, and the one the payload used to omit: this map was built from
+    # `ChemRefineError.__subclasses__()`, which is direct-only, so a payload advertising
+    # the whole taxonomy quietly shipped without the class a died-mid-run parse raises.
+    assert everything["exit_codes"]["OutputTerminationError"] == 6
     assert everything["suggested_action"] == "rerun-errors"
 
     clean = agent_tools.get_failures(str(path), step=2)

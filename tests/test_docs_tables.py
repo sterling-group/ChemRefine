@@ -20,7 +20,6 @@ fails when the directory is absent — the same rule as ``test_docs_drift``.
 from __future__ import annotations
 
 import importlib.util
-import inspect
 import re
 import sys
 import tomllib
@@ -32,7 +31,7 @@ import pytest
 from chemrefine.engines import known_backend_extras
 from chemrefine.engines.api import ENGINES
 from chemrefine.engines.mlip.registry import registered_backends
-from chemrefine.errors import ChemRefineError
+from chemrefine.errors import EXIT_CODES
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _HOOK = _REPO_ROOT / "docs" / "hooks" / "tables.py"
@@ -130,12 +129,9 @@ def test_every_exit_code_is_documented():
     exception, so the check runs one way: every code the package can exit with must appear.
     """
     text = _RUN_FAILS.read_text(encoding="utf-8")
-    codes = {
-        obj.exit_code
-        for obj in vars(sys.modules["chemrefine.errors"]).values()
-        if inspect.isclass(obj) and issubclass(obj, ChemRefineError)
-    }
-    missing = sorted(c for c in codes if not re.search(rf"^\| `{c}` \|", text, re.MULTILINE))
+    missing = sorted(
+        c for c in set(EXIT_CODES.values()) if not re.search(rf"^\| `{c}` \|", text, re.MULTILINE)
+    )
     assert not missing, (
         f"exit code(s) {missing} are raised by chemrefine.errors but have no row in "
         f"{_RUN_FAILS.name}"

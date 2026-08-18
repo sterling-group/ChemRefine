@@ -130,3 +130,18 @@ class RunLockError(ChemRefineError):
     """
 
     exit_code = 10
+
+
+EXIT_CODES: dict[str, int] = {
+    name: obj.exit_code
+    for name, obj in list(globals().items())
+    if isinstance(obj, type) and issubclass(obj, ChemRefineError)
+}
+"""Every class above, mapped to the code it exits with — the taxonomy, derived once.
+
+Two callers used to derive this for themselves, and one of them derived it wrongly:
+``agent_tools`` built it from ``ChemRefineError.__subclasses__()``, which is direct
+subclasses only, so :class:`OutputTerminationError` was missing from every failure payload
+that advertised the whole taxonomy. Scanning this module's own namespace is what catches an
+indirect subclass, and living beside the classes is what stops a third copy appearing.
+"""
