@@ -8,16 +8,22 @@ panes) and a **broken binding** (an ``@click`` naming a method that no longer ex
 fails silently at click time, which is exactly how a reset button comes to "do
 nothing").
 
-Neither needs a browser. The syntax check shells out to ``node --check`` when a Node is
-available — GitHub's runners ship one, and ``nodejs-bin`` provides one in a venv — and
-skips otherwise rather than pretending. The binding check is pure text analysis: every
-handler an Alpine attribute calls must exist in the component, and every state root it
-reads must be declared on it.
+Neither needs a browser. The syntax check shells out to ``node --check``, and three cases
+execute the pure form logic through ``node -e``; the binding check is pure text analysis:
+every handler an Alpine attribute calls must exist in the component, and every state root
+it reads must be declared on it.
+
+A Node is a hard test dependency (``nodejs-wheel-binaries`` in ``[test]``) rather than an
+optional nicety, because these seven cases are the only ones that ever *execute* this
+JavaScript and they used to skip: pytest printed "7 skipped" and exited 0, so a machine
+without Node ran every gate green while checking the frontend not at all.
+:func:`_node_or_skip` is what makes that impossible to ship — see its docstring.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -28,10 +34,6 @@ import pytest
 STATIC = Path(__file__).resolve().parent.parent / "src" / "chemrefine" / "gui" / "static"
 INDEX = STATIC / "index.html"
 OURS = ("app.js", "forms.js")
-
-pytestmark = pytest.mark.skipif(
-    not INDEX.is_file(), reason="GUI assets are a repository artifact; the sdist omits docs/site"
-)
 
 # Alpine attributes whose value is a JavaScript expression.
 _ALPINE_ATTR = re.compile(
@@ -115,15 +117,53 @@ def _bound_names() -> set[str]:
 
 
 def _node() -> str | None:
-    """A Node executable, from PATH or the ``nodejs-bin`` package, or ``None``."""
+    """A Node executable: one on ``PATH``, else the one ``nodejs-wheel-binaries`` ships.
+
+    ``PATH`` first, deliberately. A distro packager building from the sdist runs this suite
+    with a system Node and no wheel — a vendored-binary wheel is not something a
+    distribution will ever depend on — and a developer's own Node is the runtime their
+    users actually have. The wheel is the floor under everyone else: it is in ``[test]``,
+    so a machine with no Node checks this JavaScript instead of skipping past it.
+    """
     found = shutil.which("node")
     if found:
         return found
     try:
-        from nodejs import node as node_pkg
-    except ImportError:
+        import nodejs_wheel
+    except ImportError:  # a suite run without `[test]` — a packager's, typically
         return None
-    return str(getattr(node_pkg, "path", "") or "") or None
+    # The layout is the wheel's, not a public API: `nodejs_wheel/bin/node` on POSIX,
+    # `nodejs_wheel/node.exe` on Windows (its `executable._program` builds exactly this
+    # path). Derived because the package exports only callables and no path at all, and
+    # guarded with `is_file()` so a future relayout degrades to "no node" rather than a
+    # FileNotFoundError out of `subprocess.run`. CHEMREFINE_REQUIRE_NODE below is what
+    # turns that quiet degradation into a red build — which is what makes deriving a path
+    # from someone else's layout safe to do in the first place.
+    if nodejs_wheel.__file__ is None:  # a namespace package: no directory to look in
+        return None
+    root = Path(nodejs_wheel.__file__).parent
+    binary = root / "node.exe" if os.name == "nt" else root / "bin" / "node"
+    return str(binary) if binary.is_file() else None
+
+
+def _node_or_skip(purpose: str) -> str:
+    """A Node, or skip — or fail, under ``CHEMREFINE_REQUIRE_NODE``.
+
+    Skipping is the right answer for someone with neither a system Node nor ``[test]``
+    installed. It is the wrong answer for any *gate*: pytest reports "N passed, 7 skipped"
+    and exits 0, so the only checks that execute the GUI's JavaScript can go quiet while
+    every gate stays green. That is not hypothetical — it is what they did here until
+    ``[test]`` grew a Node. ``ci.yml`` and ``scripts/release-check.sh`` set the variable,
+    the same technique and the same reason as ``CHEMREFINE_REQUIRE_LIVE`` in
+    ``test_e2e_live.py``.
+    """
+    node = _node()
+    if node is not None:
+        return node
+    message = f"no node available to {purpose}"
+    if os.environ.get("CHEMREFINE_REQUIRE_NODE"):
+        pytest.fail(f"{message} — CHEMREFINE_REQUIRE_NODE is set, so this may not be skipped")
+    pytest.skip(message)
 
 
 @pytest.mark.parametrize("filename", [*OURS, "vendor/alpine.min.js", "vendor/js-yaml.min.js"])
@@ -133,9 +173,7 @@ def test_the_javascript_parses(filename: str):
     Vendored files are checked too: a truncated download is indistinguishable from a
     working one until the page is opened.
     """
-    node = _node()
-    if node is None:
-        pytest.skip("no node available to parse-check the GUI assets")
+    node = _node_or_skip("parse-check the GUI assets")
     result = subprocess.run(  # argv list, no shell
         [node, "--check", str(STATIC / filename)], capture_output=True, text=True, check=False
     )
@@ -185,9 +223,7 @@ def _run_in_node(script: str) -> str:
     ``forms.js`` is plain top-level functions (no module system — the page loads it
     with a bare script tag), so sourcing it is a concatenation.
     """
-    node = _node()
-    if node is None:
-        pytest.skip("no node available to execute the GUI's pure form logic")
+    node = _node_or_skip("execute the GUI's pure form logic")
     source = (STATIC / "forms.js").read_text(encoding="utf-8") + "\n" + script
     result = subprocess.run(  # argv list, no shell
         [node, "-e", source], capture_output=True, text=True, check=False

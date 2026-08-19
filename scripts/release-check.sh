@@ -112,6 +112,14 @@ step "lint + format + docstrings (CI: pre-commit)"
 step "types (CI: type-check)"
 "$bin/mypy"
 
+# The GUI's JavaScript is executed by exactly seven tests, and without a Node they *skip* —
+# so on a machine with none this gate has been passing while checking the frontend not at
+# all, the same hole the ORCA precondition below closes for tier-3. `[test]` now installs a
+# Node, so a skip here means the lookup broke, not that the machine is bare. Exported once:
+# the coverage run, the provisioned-backend run, the sdist run and the mutation gate all
+# inherit it.
+export CHEMREFINE_REQUIRE_NODE=1
+
 step "the suite, with the coverage gate (CI: test)"
 "$bin/pytest" --cov=chemrefine --cov-fail-under=100 -q
 

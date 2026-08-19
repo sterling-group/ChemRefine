@@ -44,16 +44,17 @@ The mutation gate is the slow one (~1.5 min) because it runs a suite per mutatio
 it only needs re-running when you touch one of the predicates it lists
 (`python scripts/mutation_gate.py --list`).
 
-**The GUI's JavaScript needs a Node to be checked.** `tests/test_gui_assets.py`
-parses the builder's static assets and executes its pure form logic — the one
-layer coverage cannot see, where a stray brace blanks the whole page and an
-`@click` naming a deleted method fails silently. It uses any `node` on `PATH`
-(CI runners have one) and otherwise the `nodejs-bin` package; with neither it
-**skips**, so install one of them before touching `src/chemrefine/gui/static/`:
+**The GUI's JavaScript is checked with a Node, and `[test]` installs one.**
+`tests/test_gui_assets.py` parses the builder's static assets and executes its
+pure form logic — the one layer coverage cannot see, where a stray brace blanks
+the whole page and an `@click` naming a deleted method fails silently. It uses
+any `node` on `PATH` first and falls back to the one `nodejs-wheel-binaries`
+ships, so there is nothing to install and nothing to remember.
 
-```bash
-pip install nodejs-bin      # or use a system Node
-```
+Those seven cases used to **skip** without a Node, which meant a machine with
+none ran every gate green while checking the frontend not at all. Setting
+`CHEMREFINE_REQUIRE_NODE=1` turns that skip into a failure; `ci.yml` and
+`scripts/release-check.sh` both set it, so a skip can no longer reach a release.
 
 ### The gates above do not cover the `integration` tier
 

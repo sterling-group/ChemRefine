@@ -158,6 +158,18 @@ test = [
     # and provisioned-backend jobs were doing. `server` is named rather than left to
     # arrive via `gui`, because the extopt tests need it for their own reason.
     "chemrefine[server,mcp,gui,agent]",
+    # A Node for tests/test_gui_assets.py — `node --check` on the four scripts and `node -e`
+    # on the pure form logic, the one layer no Python gate can see. Declared rather than
+    # left to whatever is on PATH because a machine without one turned seven tests into
+    # skips while the suite still exited 0; CHEMREFINE_REQUIRE_NODE (set by ci.yml and
+    # release-check.sh) is what makes that impossible to ship.
+    #
+    # `>=24` is a *tool* floor and follows a different rule from the dependency floors
+    # above: the stable majors are 20, 22 and 24, and 24 is the only one still in active
+    # LTS — 20 went EOL in April 2025 and 22 is in maintenance. Not "the lowest that
+    # resolves", which would be 20 and would mean gating the frontend on an unsupported
+    # runtime. (The 25.x and 26.x lines are release candidates; pip skips them.)
+    "nodejs-wheel-binaries>=24",
 ]
 # downloads: mkdocs, mkdocs-material, mkdocstrings, interrogate (small)
 docs = [
@@ -320,12 +332,6 @@ module = [
     "flask.*",
     "waitress.*",
     "pandas.*",
-    # `nodejs-bin` is optional by design — `tests/test_gui_assets.py` takes any `node` on
-    # PATH first and skips when there is neither, so it is in no extra. mypy has no
-    # try/except ImportError, though, so without this the type check fails on every
-    # machine that happens not to have it installed — including CI, which installs
-    # `[dev]` and has a system Node but not the package.
-    "nodejs.*",
 ]
 ignore_missing_imports = true
 

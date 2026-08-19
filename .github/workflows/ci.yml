@@ -23,6 +23,12 @@ concurrency:
 
 env:
   FORCE_COLOR: "1"
+  # The seven tests that execute the GUI's JavaScript skip without a Node, and a skip
+  # exits 0 — so they can stop testing anything without a red build. This catches a runner
+  # image dropping Node, not a regression in our own lookup: runners ship one, so every
+  # job here takes the PATH branch. The step that exercises the *other* branch is in the
+  # `test` job below.
+  CHEMREFINE_REQUIRE_NODE: "1"
 
 # Every `uses:` is pinned to a full commit SHA with the release tag in a trailing
 # comment. Tags are mutable — a compromised maintainer account can re-point `v1`
@@ -79,6 +85,16 @@ jobs:
           name: coverage-${{ matrix.python-version }}
           path: coverage.xml
           if-no-files-found: error
+
+      # The bundled Node is the branch every machine *without* one depends on, and nothing
+      # above executes it: `shutil.which("node")` always wins on a runner. Reducing PATH to
+      # the interpreter's own bin directory hides the system Node, and the wheel installs
+      # no console script, so nothing puts one back. Without this step
+      # CHEMREFINE_REQUIRE_NODE is decorative — it could only fire if the image lost Node.
+      - name: The bundled Node stands in when PATH has none
+        run: |
+          PY="$(command -v python)"
+          PATH="$(dirname "$PY")" "$PY" -m pytest tests/test_gui_assets.py -q
 
   # Every extra is a promise the resolver has to be able to keep. The test job only
   # installs [test], so a broken extra — a bad pin, a missing marker — reached users
