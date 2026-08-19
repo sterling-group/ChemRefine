@@ -1023,6 +1023,31 @@ def test_cache_documents_honour_the_umask(tmp_path: Path):
         )
 
 
+def test_a_write_that_cannot_re_mode_leaves_nothing_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A failed re-mode must strand neither the temp file nor its descriptor.
+
+    ``fchmod`` is the one step between ``mkstemp`` and ``fdopen`` that genuinely fails —
+    shared filesystems and FUSE/CIFS mounts refuse it. Done before the ``fdopen`` it took
+    both halves with it: nothing owned the descriptor yet, and the ``finally`` had not been
+    entered, so a ``.tmp_*.part`` stayed in the directory the user was writing to. That is a
+    nuisance once and an accumulation on the GUI's waitress threads, which write the user's
+    config through this same writer.
+    """
+    import os
+
+    monkeypatch.setattr(os, "fchmod", lambda *a: (_ for _ in ()).throw(OSError("EPERM")))
+    target = tmp_path / "doc.json"
+    with pytest.raises(OSError, match="EPERM"):
+        cache.atomic_write(target, b'{"a": 1}')
+
+    assert not target.exists(), "a failed write must not leave a partial document"
+    assert list(tmp_path.iterdir()) == [], (
+        f"temp residue survived a failed re-mode: {[p.name for p in tmp_path.iterdir()]}"
+    )
+
+
 @pytest.mark.skipif(
     not cache._PROC_STATUS.is_file(),
     reason="this kernel does not publish Umask; only the fallback probe exists here",

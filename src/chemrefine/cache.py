@@ -572,15 +572,25 @@ def atomic_write(path: Path, data: bytes) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp_", suffix=".part")
-    # ``mkstemp`` creates 0600 and the rename preserves it — right for a private temp
-    # file, wrong for the cache document it becomes. Left alone, every ``_cache/`` file on
-    # a shared tree was owner-only: a colleague handed the outputs could read the ``.out``
-    # files but not the cache, the manifest or the failure ledger beside them. Re-moded to
-    # what a plain ``open()`` would have given — 0666 honouring the umask. (The server
-    # *token* sidecar keeps mkstemp's 0600; there the restriction is the point.)
-    os.fchmod(fd, 0o666 & ~_umask())
     try:
         with os.fdopen(fd, "wb") as fh:
+            # ``mkstemp`` creates 0600 and the rename preserves it — right for a private temp
+            # file, wrong for the cache document it becomes. Left alone, every ``_cache/``
+            # file on a shared tree was owner-only: a colleague handed the outputs could read
+            # the ``.out`` files but not the cache, the manifest or the failure ledger beside
+            # them. Re-moded to what a plain ``open()`` would have given — 0666 honouring the
+            # umask. (The server *token* sidecar keeps mkstemp's 0600; there the restriction
+            # is the point.)
+            #
+            # Done through the open file rather than the bare descriptor, and inside the
+            # ``with`` rather than before it, because this is the one step here that can
+            # genuinely fail — shared filesystems and FUSE/CIFS mounts do refuse ``fchmod``.
+            # Ahead of the ``fdopen`` its failure stranded both halves: nothing owned the
+            # descriptor yet, so it leaked, and the ``finally`` had not been entered, so the
+            # ``.tmp_*.part`` stayed behind in the user's directory. One failed write in a
+            # long-lived driver is a nuisance; the GUI writes the user's config through here
+            # on four waitress threads, where it would have been one of each per attempt.
+            os.fchmod(fh.fileno(), 0o666 & ~_umask())
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
