@@ -1,11 +1,9 @@
 """Shared PySCF compute helpers used by both extopt and direct engines.
 
-Exposes :func:`build_mol`, :func:`run_dft`,
-:func:`get_active_space_tensors`, :func:`save_tensors`, and
-:func:`print_tensors_file`. All PySCF imports are lazy (inside the
-helper bodies) so this module imports cleanly when ``pyscf`` isn't
-installed — the integration suite patches them out under mocked CPU
-backends.
+Exposes :func:`build_mol`, :func:`run_dft`, :func:`get_active_space_tensors`
+and :func:`save_tensors`. All PySCF imports are lazy (inside the helper
+bodies) so this module imports cleanly when ``pyscf`` isn't installed —
+the integration suite patches them out under mocked CPU backends.
 """
 
 from __future__ import annotations
@@ -206,22 +204,19 @@ def save_tensors(
     """Write ``nuc / h1 / h2`` to a single compressed ``.npz`` and return its path.
 
     Keys (``hc`` for the nuclear-repulsion scalar, ``h1e`` for the
-    one-electron tensor, ``h2e`` for the two-electron tensor) match
-    the format the downstream inspection helpers expect.
+    one-electron tensor, ``h2e`` for the two-electron tensor) name the
+    format for whatever reads the file — chemrefine only writes it.
+
+    There is deliberately no reader here. A ``print_tensors_file`` pretty-printer sat
+    beside this for a long time with no caller in the package, which cost more than the
+    lines: it was the one ``np.load`` in ChemRefine without ``allow_pickle=False`` (see
+    :func:`chemrefine.cache._read_arrays`, where that flag is the stated reason a cache
+    load cannot execute code), so a reader comparing the two learned the wrong rule from
+    code nothing ran. Anything consuming these tensors is downstream analysis, and it
+    should load them with ``allow_pickle=False`` like every other ``.npz`` this package
+    reads.
     """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(target, hc=nuc, h1e=h1, h2e=h2)
     return target
-
-
-def print_tensors_file(npz_file: str | Path) -> None:
-    """Pretty-print the tensors stored in a :func:`save_tensors` output file."""
-    data = np.load(str(npz_file))
-    print(f"File: {npz_file}")
-    print("hc (scalar):")
-    print(data["hc"])
-    print("h1e (one-electron tensor):")
-    print(data["h1e"])
-    print("h2e (two-electron tensor):")
-    print(data["h2e"])

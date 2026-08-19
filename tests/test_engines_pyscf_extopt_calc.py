@@ -441,7 +441,7 @@ def test_get_active_space_tensors_localized_invokes_boys(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _runtime.save_tensors + print_tensors_file
+# _runtime.save_tensors
 # ---------------------------------------------------------------------------
 
 
@@ -455,14 +455,6 @@ def test_save_tensors_writes_npz_with_expected_keys(tmp_path: Path):
     data = np.load(target)
     assert set(data.files) == {"hc", "h1e", "h2e"}
     np.testing.assert_array_equal(data["h1e"], h1)
-
-
-def test_print_tensors_file_runs(tmp_path: Path, capsys):
-    target = tmp_path / "t.npz"
-    _runtime.save_tensors(path=target, nuc=1.0, h1=np.eye(2), h2=np.zeros((2, 2, 2, 2)))
-    _runtime.print_tensors_file(target)
-    out = capsys.readouterr().out
-    assert "hc" in out and "h1e" in out and "h2e" in out
 
 
 # ---------------------------------------------------------------------------

@@ -268,11 +268,16 @@ def test_build_script_explicit_scratch_uses_chemrefine_subdir(tmp_path: Path):
     assert f'export WORK_DIR="{scratch}/ChemRefine_' in script.read_text()
 
 
-def test_build_script_save_scratch_keeps_dir(tmp_path: Path):
-    script = slurm.build_script(**_build_kwargs(tmp_path, save_scratch=True))
-    text = script.read_text()
-    assert "rm -rf $WORK_DIR" not in text
-    assert "scratch_kept=true" in text
+def test_build_script_always_removes_the_scratch_directory(tmp_path: Path):
+    """Scratch removal is unconditional — there is no keep-it knob to reach.
+
+    `build_script` used to take a `save_scratch` flag, a v1 concept carried into the
+    rewrite's signature that no caller ever passed. Keeping artifacts is engine-owned
+    instead (`RunBlock.cleanup`, `output_dirs`), which the array path honours too.
+    """
+    text = slurm.build_script(**_build_kwargs(tmp_path)).read_text()
+    assert 'rm -rf "$WORK_DIR"' in text
+    assert "scratch_kept=true" not in text
 
 
 def test_build_script_emits_exit_trap(tmp_path: Path):

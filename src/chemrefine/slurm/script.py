@@ -70,7 +70,19 @@ def _read_header(template_path: Path) -> tuple[list[str], list[str]]:
 
 
 _SCRATCH_CLEANUP = 'scratch_kept=false; cd "$OUTPUT_DIR" && rm -rf "$WORK_DIR"'
-"""On-exit scratch removal shared by the per-job and array scripts."""
+"""On-exit scratch removal shared by the per-job and array scripts.
+
+Unconditional on both paths. :func:`build_script` once took a ``save_scratch`` flag that
+swapped this for a keep-and-announce line, but it was a v1 concept carried into the
+rewrite's signature and never wired to anything — no config knob, no caller — so it was
+removed rather than left as a knob nobody could reach. The engine-owned equivalent is the
+one that works: an engine that needs artifacts kept returns them as
+:attr:`~chemrefine.state.RunBlock.cleanup` (the ExtOpt server teardown) or names them in
+``output_dirs`` (qchem's ``options.save``, pyscf-extopt's ``tensors/``), which the array
+path honours too — where a builder flag would have had to be added twice.
+
+``scratch_kept`` stays in the runlog: the footer is a published artifact, the field still
+reports truthfully, and changing that format is a decision of its own."""
 
 # ``--mem`` and ``--mem-per-cpu`` in either ``=`` or space form. ``--mem-per-gpu`` cannot
 # match: after ``--mem`` the optional group rejects ``-per-gpu`` and the mandatory ``[=\s]``
@@ -255,7 +267,6 @@ def build_script(
     output_globs: Sequence[str],
     output_dirs: Sequence[str] = (),
     extra_header_fields: Sequence[tuple[str, object]] = (),
-    save_scratch: bool = False,
 ) -> Path:
     """Assemble a SLURM script at ``script_path`` from a header template + a run block.
 
@@ -297,9 +308,6 @@ def build_script(
         f"#SBATCH --cpus-per-task={cpus_per_task}",
     ]
 
-    cleanup = (
-        'scratch_kept=true; echo "scratch kept at $WORK_DIR"' if save_scratch else _SCRATCH_CLEANUP
-    )
     header = job_log.bash_header(
         engine=engine,
         operation=operation,
@@ -326,7 +334,7 @@ def build_script(
             header=header,
             footer=footer,
             globs_expr=" ".join(output_globs),
-            cleanup=cleanup,
+            cleanup=_SCRATCH_CLEANUP,
             run_block=run_block,
             output_dirs=output_dirs,
         ),
