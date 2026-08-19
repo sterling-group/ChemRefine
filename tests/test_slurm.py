@@ -461,6 +461,37 @@ def test_submit_local_closes_handles_and_reraises_when_spawn_fails(tmp_path: Pat
     assert set(dispatch._LOCAL_PROCS) == before  # no half-registered job
 
 
+def test_submit_local_closes_the_first_log_when_the_second_cannot_be_opened(tmp_path: Path):
+    """The `.err` open failing must not strand the `.runlog` opened one line earlier.
+
+    Both handles were acquired before the guard that closed them, so only the *third*
+    failure point — the spawn — was covered. A full disk or a revoked directory takes the
+    second `open` instead, and there the first handle had no owner: CPython's refcount
+    closed it on the way out, but only after a `ResourceWarning`, which the suite treats as
+    an error wherever it is raised.
+    """
+    script = tmp_path / "half.slurm"
+    script.write_text("#!/bin/bash\ntrue\n", encoding="utf-8")
+    opened: list = []
+    real_open = Path.open
+
+    def open_runlog_only(self, *args, **kwargs):
+        if self.suffix == ".err":
+            raise OSError("ENOSPC: no space left on device")
+        handle = real_open(self, *args, **kwargs)
+        opened.append(handle)
+        return handle
+
+    before = set(dispatch._LOCAL_PROCS)
+    with (
+        patch.object(Path, "open", open_runlog_only),
+        pytest.raises(OSError, match="ENOSPC"),
+    ):
+        dispatch._submit_local(script)
+    assert len(opened) == 1 and opened[0].closed, "the .runlog handle outlived its function"
+    assert set(dispatch._LOCAL_PROCS) == before
+
+
 # ---------------------------------------------------------------------------
 # is_finished
 # ---------------------------------------------------------------------------

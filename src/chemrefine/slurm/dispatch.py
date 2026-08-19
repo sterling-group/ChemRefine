@@ -286,9 +286,17 @@ def _submit_local(script_path: str | Path, *, env: dict[str, str] | None = None)
     See there for what that cost.
     """
     script_path = Path(script_path)
-    out_handle = script_path.with_suffix(".runlog").open("w", encoding="utf-8")
-    err_handle = script_path.with_suffix(".err").open("w", encoding="utf-8")
-    try:
+    # Both handles enter a stack that closes them if *anything* below fails — the second
+    # open as much as the submission. Opened bare, a failure on the second one left the
+    # first with no owner at all: CPython's refcount closed it on the way out, but only
+    # after a ``ResourceWarning``, and the ordering that made it work was never stated.
+    # ``pop_all`` hands them over on success, where ``_LOCAL_PROCS`` owns them until
+    # :func:`_local_is_finished` or :func:`terminate_local_jobs` closes them.
+    runlog = script_path.with_suffix(".runlog")
+    errlog = script_path.with_suffix(".err")
+    with contextlib.ExitStack() as stack:
+        out_handle = stack.enter_context(runlog.open("w", encoding="utf-8"))
+        err_handle = stack.enter_context(errlog.open("w", encoding="utf-8"))
         # `bash` from PATH is the point — this is the no-SLURM fallback — and
         # script_path is a script this process generated moments ago.
         proc = subprocess.Popen(  # noqa: S603
@@ -298,10 +306,7 @@ def _submit_local(script_path: str | Path, *, env: dict[str, str] | None = None)
             env={**os.environ, **env} if env else None,
             start_new_session=True,
         )
-    except Exception:
-        out_handle.close()
-        err_handle.close()
-        raise
+        stack.pop_all()
     job_id = f"{_LOCAL_JOB_PREFIX}{next(_LOCAL_JOB_COUNTER)}"
     _LOCAL_PROCS[job_id] = (proc, out_handle, err_handle)
     logger.info("launched %s locally as job %s (pid %s)", script_path, job_id, proc.pid)
