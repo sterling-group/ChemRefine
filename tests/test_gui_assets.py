@@ -217,6 +217,65 @@ def test_every_state_root_the_page_reads_exists():
     assert not missing, f"index.html reads state the component does not declare: {missing}"
 
 
+def _options_after(marker: str, *, window: int = 900) -> list[str]:
+    """The ``<option value="…">`` values of the first ``<select>`` following ``marker``.
+
+    Text analysis, like the two guards above: the page is one file, the selects are
+    hand-written where they are not schema-driven, and reading them back is what lets a
+    hardcoded list be compared against the model that owns it.
+    """
+    html = INDEX.read_text(encoding="utf-8")
+    segment = html.split(marker, 1)[1][:window]
+    return re.findall(r'<option value="([^"]*)"', segment)
+
+
+def test_the_pages_hardcoded_vocabularies_match_the_models_that_own_them():
+    """Three dropdowns spell out values that live in Python; require them to agree.
+
+    Everything else the builder offers is schema-driven — engines, `operation:`, every
+    option and NMS field come from `/api/bootstrap`. These three do not, and each is a
+    place a future change can be made in Python alone and go silently missing from the UI:
+    a fourth `SampleConfig` variant is a mypy error in `filtering._dispatch` and a
+    `test_docs_drift` failure, but the page would simply never offer it, and a config that
+    named it in the YAML pane would render *no* knobs at all (`sampleFields` → `[]`).
+
+    Kept as text guards rather than deriving the lists in JavaScript, because the labels
+    are prose the models cannot supply ("min (lowest-energy)") — so the duplication is
+    deliberate and this is what makes it honest. `provider` has no schema source at all
+    (`_PRESETS` is private and stays that way); comparing against the dict directly is
+    still the guard, and `providers` imports no SDK at runtime, so it costs nothing.
+    """
+    from chemrefine.agent import providers
+    from chemrefine.introspect import schema_document
+
+    # Read the schema document, not the models: it is exactly what `/api/bootstrap` hands
+    # the page, so the comparison is against what the frontend could have derived.
+    config_schema = schema_document()["config"]
+    defs = config_schema["$defs"]
+    variants = {
+        name: schema["properties"]["method"]["const"]
+        for name, schema in defs.items()
+        if name.endswith("Sample") and "method" in schema.get("properties", {})
+    }
+
+    # `sample`: an empty option means "keep everything" (no `sample:` block), then one per
+    # variant — and app.js maps each method back to the $defs name whose fields it renders.
+    assert sorted(_options_after("<span>sample</span>")) == sorted(["", *variants.values()])
+    by_method = dict(
+        re.findall(r'(\w+):\s*"(\w+Sample)"', (STATIC / "app.js").read_text(encoding="utf-8"))
+    )
+    assert by_method == {method: name for name, method in variants.items()}
+
+    # `on_failure`: a plain Literal, so the schema already carries the enum.
+    assert (
+        _options_after("<span>on_failure</span>")
+        == defs["StepConfig"]["properties"]["on_failure"]["enum"]
+    )
+
+    # `provider`: mirrors the agent's preset table, which the schema does not publish.
+    assert sorted(_options_after('x-model="chat.provider"')) == sorted(providers._PRESETS)
+
+
 def _run_in_node(script: str) -> str:
     """Evaluate ``script`` with ``forms.js`` already loaded; return its stdout.
 
