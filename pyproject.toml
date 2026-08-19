@@ -39,16 +39,18 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Physics",
     "Typing :: Typed",
 ]
+# Each floor is the lowest version pip can actually install on the oldest supported
+# Python — held by CI's `floors` job, which installs exactly these versions on 3.11 and
+# runs the suite. The tested matrix is 3.11 through 3.14; newer Pythons resolve above some
+# floors on wheel availability alone, which is fine — the floor is a promise about the
+# range, not a pin. numpy's 1.26.0/1.26.1 and rdkit's bare 2024.9 are not on PyPI (yanked
+# / never published), so naming them would promise a minimum nobody can resolve; on Python
+# 3.13+ pip always resolves numpy to 2.x — pandas 2.2.3 (and later) supports both numpy
+# 1.26 and 2.x, so the matrix is internally consistent.
+#
+# Entries must stay exactly `name>=version`: ci.yml derives floors.txt with a regex that
+# silently drops anything else while the job stays green.
 dependencies = [
-    # Each floor is the lowest version pip can actually install on the oldest supported
-    # Python — held by CI's `floors` job, which installs exactly these versions on 3.11
-    # and runs the suite. The tested matrix is 3.11 through 3.14; newer Pythons resolve
-    # above some floors on wheel availability alone, which is fine — the floor is a
-    # promise about the range, not a pin. numpy's 1.26.0/1.26.1 and rdkit's bare 2024.9
-    # are not on PyPI (yanked / never published), so naming them would promise a minimum
-    # nobody can resolve; on Python 3.13+ pip always resolves numpy to 2.x — pandas
-    # 2.2.3 (and later) supports both numpy 1.26 and 2.x, so the matrix is internally
-    # consistent.
     "numpy>=1.26.2",
     "pyyaml>=6.0.2",
     # pandas is a hard requirement — every run writes steps.csv — but it is imported
@@ -220,6 +222,53 @@ include = [
     "/pyproject.toml",
 ]
 
+# ── the lint gate: `pre-commit run --all-files` (ci.yml, release-check.sh) ──────────────────────
+
+# Biome's half of this gate lives in biome.jsonc — Biome reads no pyproject.toml.
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# Engine step templates are rendered through `string.Template` before they are
+# executed, so they legitimately contain bare `$PLACEHOLDER` tokens (e.g.
+# `charge=$CHARGE`) and are not parseable Python on their own. The e2e case
+# templates are the same kind of file and belong here for the same reason — they
+# only escaped notice while the first of them happened to keep every placeholder
+# inside a string literal, which is not a property worth relying on.
+extend-exclude = [
+    "examples/*/templates/*.py",
+    "examples/*/*/templates/*.py",
+    "tests/data/e2e/cases/*/templates/*.py",
+]
+
+[tool.ruff.lint]
+# `S` (bandit) is on so every shell-out and subprocess call has to be either safe by
+# construction or carry a `# noqa: S...` naming why it is fine — which turns the
+# security review into something a diff can show rather than something a reader has to
+# reconstruct. `ERA` catches commented-out code left behind.
+#
+# `ARG` is deliberately NOT selected: this codebase is Protocol- and base-class-heavy by
+# design, so unused parameters are usually the *contract* (an engine hook that ignores
+# `ctx`, a `ComputeBackend` classmethod that takes args it doesn't need). Enabling it
+# would mean ~15 noqa comments on interface methods, which makes the code worse.
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PTH", "RET", "C4", "TID", "S", "ERA"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately assert on subprocess plumbing, bind throwaway sockets, and use
+# assert as their whole purpose. ERA reads their `# section name` dividers as
+# commented-out code.
+"tests/**" = ["S", "ERA"]
+
+[tool.interrogate]
+ignore-init-module = true
+ignore-init-method = true
+ignore-magic = true
+ignore-nested-functions = true
+fail-under = 100
+exclude = ["tests", "examples", "build", "dist"]
+
+# ── the type gate: `mypy` ───────────────────────────────────────────────────────────────────────
+
 [tool.mypy]
 # The lowest version the *installed* dependency set can be checked at, which is no longer
 # the same as `requires-python`. numpy 2.5 requires Python >= 3.12 and its stubs use PEP
@@ -316,38 +365,7 @@ module = [
 ]
 ignore_missing_imports = true
 
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-# Engine step templates are rendered through `string.Template` before they are
-# executed, so they legitimately contain bare `$PLACEHOLDER` tokens (e.g.
-# `charge=$CHARGE`) and are not parseable Python on their own. The e2e case
-# templates are the same kind of file and belong here for the same reason — they
-# only escaped notice while the first of them happened to keep every placeholder
-# inside a string literal, which is not a property worth relying on.
-extend-exclude = [
-    "examples/*/templates/*.py",
-    "examples/*/*/templates/*.py",
-    "tests/data/e2e/cases/*/templates/*.py",
-]
-
-[tool.ruff.lint]
-# `S` (bandit) is on so every shell-out and subprocess call has to be either safe by
-# construction or carry a `# noqa: S...` naming why it is fine — which turns the
-# security review into something a diff can show rather than something a reader has to
-# reconstruct. `ERA` catches commented-out code left behind.
-#
-# `ARG` is deliberately NOT selected: this codebase is Protocol- and base-class-heavy by
-# design, so unused parameters are usually the *contract* (an engine hook that ignores
-# `ctx`, a `ComputeBackend` classmethod that takes args it doesn't need). Enabling it
-# would mean ~15 noqa comments on interface methods, which makes the code worse.
-select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PTH", "RET", "C4", "TID", "S", "ERA"]
-
-[tool.ruff.lint.per-file-ignores]
-# Tests legitimately assert on subprocess plumbing, bind throwaway sockets, and use
-# assert as their whole purpose. ERA reads their `# section name` dividers as
-# commented-out code.
-"tests/**" = ["S", "ERA"]
+# ── the test gate: `pytest --cov --cov-fail-under=100` ──────────────────────────────────────────
 
 [tool.pytest.ini_options]
 # Tier-3 live-integration tests need real binaries (ORCA, an MLIP stack) and
@@ -400,11 +418,3 @@ branch = true
 [tool.coverage.report]
 fail_under = 100
 show_missing = true
-
-[tool.interrogate]
-ignore-init-module = true
-ignore-init-method = true
-ignore-magic = true
-ignore-nested-functions = true
-fail-under = 100
-exclude = ["tests", "examples", "build", "dist"]
