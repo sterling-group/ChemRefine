@@ -37,7 +37,12 @@ import yaml
 from pydantic import ValidationError
 
 from chemrefine import slurm
-from chemrefine.config import Config, StepConfig, resolve_relative_paths
+from chemrefine.config import (
+    Config,
+    StepConfig,
+    output_dir_space_error,
+    resolve_relative_paths,
+)
 from chemrefine.engines._job import gpus_from_options
 from chemrefine.engines.api import (
     ENGINES,
@@ -132,6 +137,14 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
     if base_dir is not None:
         config = resolve_relative_paths(config, base=base_dir.resolve())
     issues_list, warnings_list = _inspect_steps(config)
+    # Asked after resolution, because that is when the answer can change: a relative
+    # `output_dir` inherits the config file's directory, and `resolve_relative_paths` uses
+    # `model_copy`, which runs no validators. `load_config` raises here; this twin reports,
+    # so the GUI can anchor the finding to the field like every other row.
+    if problem := output_dir_space_error(config.output_dir):
+        issues_list.insert(
+            0, ValidationIssue(loc=("output_dir",), kind="value_error", message=problem)
+        )
     report_config = config if not issues_list else None
     return ValidationReport(
         issues=tuple(issues_list), warnings=tuple(warnings_list), config=report_config

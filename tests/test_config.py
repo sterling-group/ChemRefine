@@ -539,6 +539,38 @@ def test_output_dir_with_a_space_is_rejected(tmp_path: Path):
         load_config(_write_yaml(tmp_path, data))
 
 
+def test_a_relative_output_dir_under_a_spaced_config_directory_is_rejected(tmp_path: Path):
+    """The rule is re-asked after resolution, because that is when the answer changes.
+
+    Nobody writes `output_dir: ./my outputs`; plenty of projects live under `~/My Drive`
+    or `.../My Project`. A relative `output_dir` inherits the config file's own directory,
+    and `resolve_relative_paths` applies that through `model_copy`, which by design runs
+    no validators — so the field check alone would let the far likelier case straight
+    through, having passed every gate.
+    """
+    project = tmp_path / "my project"
+    project.mkdir()
+    config = project / "input.yaml"
+    config.write_text(yaml.safe_dump(_minimal_config(output_dir="./outputs")), encoding="utf-8")
+    with pytest.raises(ConfigError, match="contains a space"):
+        load_config(config)
+
+
+def test_an_absolute_output_dir_escapes_a_spaced_config_directory(tmp_path: Path):
+    """The check is on the resolved value, so an absolute output_dir is judged on its own.
+
+    A config *file* in a spaced directory is not itself a problem — only the tree ORCA
+    writes into is. Pointing `output_dir` somewhere clean is exactly the fix the error
+    message offers, so it has to work.
+    """
+    project = tmp_path / "my project"
+    project.mkdir()
+    clean = tmp_path / "outputs"
+    config = project / "input.yaml"
+    config.write_text(yaml.safe_dump(_minimal_config(output_dir=str(clean))), encoding="utf-8")
+    assert load_config(config).output_dir == clean
+
+
 @pytest.mark.parametrize("field", ["template_dir", "scratch_dir"])
 def test_the_space_rule_covers_output_dir_only(tmp_path: Path, field: str):
     """The other two directories may contain spaces, and the scope is the evidence.

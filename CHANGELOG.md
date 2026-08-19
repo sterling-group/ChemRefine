@@ -298,9 +298,13 @@ for the full map.
   exec'd through `sh`, which splits it (`sh: 1: /path/my: not found`). Both are
   `output_dir`-derived, so every `orca` / `mlip-extopt` / `pyscf-extopt` step under such
   a tree failed — one confusing ORCA error per structure, naming a path nobody wrote.
-  The config now refuses it at load time with the reason and the fix. **This is a
-  behaviour change:** a run whose `output_dir` contains a space used to start and fail
-  per job, and now exits 2 immediately. `template_dir` and `scratch_dir` are deliberately
+  The config now refuses it at load time with the reason and the fix — including the
+  likelier spelling, where `output_dir` is relative and inherits a *config file* that
+  lives under a spaced directory (`~/My Drive/...`); path resolution runs after
+  validation, so that case is checked again on the resolved value, in `load_config` and
+  in the validation report alike. **This is a behaviour change:** a run whose
+  `output_dir` resolves to a path with a space used to start and fail per job, and now
+  exits 2 immediately. `template_dir` and `scratch_dir` are deliberately
   *not* covered — the auxiliary paths a template names reach ORCA inside quotes, which it
   reads correctly, and `scratch_dir` only ever reaches quoted bash; both were checked
   against ORCA 6.1.1 rather than assumed.

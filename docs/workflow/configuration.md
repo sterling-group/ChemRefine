@@ -50,6 +50,11 @@ steps:
     `mlip-extopt` and `pyscf-extopt` step. The config refuses it at load time rather
     than letting each job fail with an ORCA error naming a path you never wrote.
 
+    A **relative** `output_dir` inherits the config file's own directory, so this can
+    come from where the YAML lives — a project under `~/My Drive` is the usual way to
+    meet it. Point `output_dir` at a path without a space (absolute is fine) or move the
+    project.
+
     `template_dir` and `scratch_dir` **may** contain spaces: the auxiliary paths a
     template names reach ORCA inside quotes (which it reads correctly), and
     `scratch_dir` only ever reaches quoted bash.

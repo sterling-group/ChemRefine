@@ -69,6 +69,32 @@ def test_model_errors_keep_pydantic_locs():
     assert report.config is None
 
 
+def test_a_resolved_output_dir_with_a_space_is_a_row_not_an_exception(tmp_path: Path):
+    """The rule `load_config` raises on becomes a report row here — this twin never raises.
+
+    It has to be re-asked after resolution: a relative `output_dir` inherits the config
+    file's own directory, applied through `model_copy`, which runs no validators. So a
+    plain `output_dir: ./outputs` in a project called `my project` is refused by the run
+    and must be reported here — anchored to the field, so the GUI can highlight it like
+    any other finding.
+    """
+    project = tmp_path / "my project"
+    project.mkdir()
+    report = _validate(project, output_dir="./outputs")
+    assert not report.ok
+    assert report.config is None
+    assert report.issues[0].loc == ("output_dir",)
+    assert "contains a space" in report.issues[0].message
+
+
+def test_a_config_file_may_sit_in_a_spaced_directory_if_output_dir_escapes_it(tmp_path: Path):
+    """Only the tree ORCA writes into is constrained, so the documented fix has to work."""
+    project = tmp_path / "my project"
+    project.mkdir()
+    report = _validate(project, output_dir=str(tmp_path / "outputs"))
+    assert report.ok
+
+
 def test_a_refused_legacy_spelling_is_one_legacy_issue():
     """The legacy normalizer raises before pydantic runs; the report catches that too."""
     report = validate_config_text(
