@@ -343,6 +343,14 @@ def digest_of(path: Path) -> str:
     Streamed rather than ``read_bytes()``: a UMA inference checkpoint is 1-2 GB, and this runs
     in the driver process — which on a cluster is a login node with a memory cap that a
     fine-tuned foundation model can genuinely exceed.
+
+    The constructor is passed rather than the name ``"sha1"`` so the hash can be marked as a
+    content fingerprint. Handed a name, :func:`hashlib.file_digest` builds the object through
+    ``hashlib.new(...)`` with ``usedforsecurity`` at its default, and a host whose crypto
+    policy forbids SHA-1 *as a digest* then refuses to make one at all — which here would
+    fail a training step for recording what it had already produced. The value is unchanged
+    either way; the flag is a policy hint, not an input.
     """
     with path.open("rb") as handle:
-        return hashlib.file_digest(handle, "sha1").hexdigest()[:16]
+        digest = hashlib.file_digest(handle, lambda: hashlib.sha1(usedforsecurity=False))
+    return digest.hexdigest()[:16]

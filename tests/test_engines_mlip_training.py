@@ -15,6 +15,7 @@ import pytest
 from ase import Atoms
 
 from chemrefine.engines.api import get_engine
+from chemrefine.engines.mlip import training
 from chemrefine.engines.mlip.registry import (
     backend_spec,
     registered_backends,
@@ -315,6 +316,24 @@ def test_digest_of_reads_the_files_contents(tmp_path: Path):
 
     assert len(before) == 16
     assert digest_of(model) != before
+
+
+def test_digest_of_is_computable_where_sha1_is_policy_restricted(tmp_path: Path, monkeypatch):
+    """Recording what a training step produced must not need a restricted code path.
+
+    `file_digest` handed the name `"sha1"` goes through `hashlib.new(...)` with
+    `usedforsecurity` at its default, which a host allowing SHA-1 only as a fingerprint
+    refuses — failing a step for describing work it had already finished. Passing the
+    constructor keeps `new` out of it, which is what this pins.
+    """
+    model = tmp_path / "model.pt"
+    model.write_bytes(b"weights")
+
+    def refuse(name: str, *args: object, **kwargs: object):
+        raise AssertionError(f"hashlib.new({name!r}) is the path a crypto policy can refuse")
+
+    monkeypatch.setattr(training.hashlib, "new", refuse)
+    assert len(digest_of(model)) == 16
 
 
 def test_an_empty_split_is_still_a_valid_dataset_split():

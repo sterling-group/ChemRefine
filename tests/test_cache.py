@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -143,6 +144,42 @@ def test_a_named_file_is_digested_by_its_contents(tmp_path: Path):
 
     assert before["model_path"] != after["model_path"]
     assert len(after["model_path"]) == 16
+
+
+def test_the_option_digest_is_computable_where_sha1_is_policy_restricted(
+    tmp_path: Path, monkeypatch
+):
+    """The digest must not need the code path a crypto policy can switch off.
+
+    `file_digest` handed the *name* `"sha1"` builds its hash through `hashlib.new(...)` with
+    `usedforsecurity` left at the default, which a host configured to allow SHA-1 only as a
+    fingerprint refuses outright. This runs on every `StepKey.of` — every step, every run —
+    and the `except OSError` beside it would not catch a `ValueError`, so the run would end
+    in a traceback outside the exit-code contract. Passing the constructor keeps `new` out of
+    it entirely, which is what this pins: `new` raising must not matter.
+    """
+    model = tmp_path / "model.pt"
+    model.write_bytes(b"weights")
+
+    def refuse(name: str, *args: object, **kwargs: object):
+        raise AssertionError(f"hashlib.new({name!r}) is the path a crypto policy can refuse")
+
+    monkeypatch.setattr(cache.hashlib, "new", refuse)
+    assert len(option_file_digests({"model_path": str(model)})["model_path"]) == 16
+
+
+def test_the_option_digest_value_is_the_plain_sha1_of_the_file(tmp_path: Path):
+    """Pin the value, because it is a cache key.
+
+    `usedforsecurity` is a policy hint to the backend, not an input to the hash — so marking
+    the fingerprint must leave every stored key exactly where it was. Were that ever untrue,
+    the symptom would be silent: every cached step in every existing output tree invalidated
+    at once, which reads as a bug rather than as the one-line change that caused it.
+    """
+    model = tmp_path / "model.pt"
+    model.write_bytes(b"chemrefine-fixed-test-vector")
+    expected = hashlib.sha1(b"chemrefine-fixed-test-vector").hexdigest()[:16]
+    assert option_file_digests({"model_path": str(model)}) == {"model_path": expected}
 
 
 def test_a_step_that_names_no_file_keys_exactly_as_it_did_before(tmp_path: Path):

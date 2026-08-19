@@ -143,6 +143,24 @@ class StepCache:
 # ---------------------------------------------------------------------------
 
 
+def _fingerprint_sha1() -> hashlib._Hash:
+    """A SHA-1 marked as a content fingerprint — the constructor form for a streamed hash.
+
+    Every other hash in this module says ``usedforsecurity=False`` inline, which is what
+    lets a host whose crypto policy forbids SHA-1 *as a digest* still compute a fingerprint
+    with it. :func:`hashlib.file_digest` cannot say that: handed the name ``"sha1"`` it
+    builds the object through ``hashlib.new(...)`` with the flag left at its default, and
+    the only way to reach the flag is to hand it a constructor instead. This is that
+    constructor.
+
+    The gap it closes was invisible to review for a mechanical reason worth recording:
+    ruff's ``S324`` matches ``hashlib.sha1(...)`` by name and does not match
+    ``file_digest(handle, "sha1")``, so the lint-visible sites acquired the flag and the two
+    streamed ones did not. Nothing chose that asymmetry.
+    """
+    return hashlib.sha1(usedforsecurity=False)
+
+
 def parents_digest(structures: Sequence[Structure]) -> str:
     """Return a 16-char SHA-1 over the parent structures' *content*.
 
@@ -224,7 +242,7 @@ def option_file_digests(options: Mapping[str, Any] | None) -> dict[str, str]:
             if not path.is_file():
                 continue
             with path.open("rb") as handle:
-                digests[name] = hashlib.file_digest(handle, "sha1").hexdigest()[:16]
+                digests[name] = hashlib.file_digest(handle, _fingerprint_sha1).hexdigest()[:16]
         except OSError:
             # A value that merely looks like a path — too long for the filesystem, a
             # permission wall, a dangling mount. Not a file we can pin to, and not a reason
