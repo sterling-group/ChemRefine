@@ -277,6 +277,38 @@ for the full map.
 ### Fixed
 
 
+- **A diverged calculation's geometry is refused instead of stored.** A non-finite
+  energy has been a parse failure for a while; the *coordinates* were not, and that
+  had two costs. Inline in a `.result.json` a `NaN` met the JSON writer's
+  `allow_nan=False` and raised a bare `ValueError` no handler caught, so one bad
+  structure ended the whole run in a traceback and the step's other successes were
+  never cached — and a resume read the same output and died the same way. Worse, on
+  the paths that write no record the coordinates go to the `arrays.npz` sidecar
+  instead, which has no such check: there a `NaN` was simply kept. It round-trips the
+  cache intact and the fingerprint over it is perfectly stable, so every later step
+  was computed from coordinates that are not numbers with nothing anywhere saying so.
+  Non-finite geometries are now refused where they enter — the ORCA, Q-Chem and script
+  parse boundaries raise the same error a `*****` overflow token already raises, and a
+  seed `.xyz` is refused by name — with the cache as a backstop that refuses to store
+  what did get through. The ensemble readers keep skipping rather than failing a whole
+  step for one bad conformer; `nan` now simply follows the rule `*****` always had.
+- **A non-ASCII bearer token is a 401 from the gradient server, not a 500.** The same
+  fix the GUI received one release earlier, on the copy that did not get it: headers
+  arrive latin-1-decoded and `compare_digest` refuses a `str` holding a non-ASCII
+  character, so any byte above 0x7F in the `Authorization` header raised out of the
+  auth gate. The server is reachable by any user on the node, so that gate is exactly
+  the place that has to answer plainly whatever it is handed.
+- **A step naming a model file works where crypto policy restricts SHA-1.** ChemRefine
+  hashes file contents to decide what to re-run, and says so — every constructor-form
+  hash is marked `usedforsecurity=False`. The two *streamed* digests could not say it,
+  because `hashlib.file_digest` handed an algorithm name builds the hash with the flag
+  defaulted; on a host that permits SHA-1 only for fingerprinting they raised, and the
+  one that runs on every step's cache key would have ended the run in a traceback.
+  Cache keys are unchanged — the flag is a policy hint, not an input to the hash.
+- **A write that cannot re-mode its temp file no longer strands it.** The atomic writer
+  set the file's mode before the guard that cleans up after it, so on a filesystem that
+  refuses `fchmod` — shared mounts do — the descriptor leaked and a `.tmp_*.part` was
+  left in the directory being written to. Both are now inside the guard.
 - **The `.err` tail a dead job's error quotes is decoded as UTF-8.** The tail was read
   with the driver's locale encoding, so under `LANG=C` — a login-node default — every
   non-ASCII byte in the one message that explains why a job died arrived as a
