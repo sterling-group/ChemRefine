@@ -200,6 +200,10 @@ def start_run(
     if max_gpus is not None:
         argv += ["--maxgpus", str(max_gpus)]
     with log_path.open("wb") as log:
+        # No shell, and nothing in `argv` is free text: the interpreter is `sys.executable`,
+        # `action` was matched against `_ACTIONS` above, `path` is a resolved config file,
+        # `target` names a step the config was asked for, and the two budgets are ints.
+        # Passed as argv rather than interpolated, so none of it can become a command.
         proc = subprocess.Popen(  # noqa: S603
             argv, stdout=log, stderr=subprocess.STDOUT, start_new_session=True
         )

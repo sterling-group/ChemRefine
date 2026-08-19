@@ -420,6 +420,9 @@ def submit(
     if dispatch_locally(dispatch, sbatch_cmd=sbatch_cmd):
         return _submit_local(script_path, env=env)
     try:
+        # No shell. `sbatch_cmd` is the scheduler binary the caller named (a config value
+        # held to `reject_shell_unsafe`, defaulting to the literal below), and the script is
+        # one this process generated moments ago — passed as argv, never interpolated.
         result = subprocess.run(  # noqa: S603
             [sbatch_cmd, "--parsable", str(script_path)],
             capture_output=True,
@@ -513,6 +516,8 @@ def poll_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> QueueS
     if not scheduled:
         return QueueState(frozenset(done), frozenset(rows))
     try:
+        # No shell. Every element is either a literal or resolved here: `squeue_cmd` is the
+        # scheduler binary the caller named, and the user comes from `getpass.getuser()`.
         result = subprocess.run(  # noqa: S603
             [squeue_cmd, "--noheader", "-u", _current_user(), "-o", "%i"],
             capture_output=True,

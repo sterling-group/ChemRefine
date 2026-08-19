@@ -25,6 +25,7 @@ build gets the asset path.
 
 from __future__ import annotations
 
+import importlib
 import secrets
 from pathlib import Path
 from typing import Any
@@ -244,7 +245,11 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     def agent_availability() -> Any:
         """Whether the chat panel can work here: extra installed, model configured."""
         try:
-            import pydantic_ai  # noqa: F401 — the probe is the import itself
+            # The probe *is* the import — whether the panel works here is exactly whether
+            # this succeeds, which `find_spec` cannot answer (a package can be findable and
+            # still fail to import). Spelled through `import_module` so the result is a
+            # value rather than an unused binding needing a lint suppression to survive.
+            importlib.import_module("pydantic_ai")
         except ImportError:
             return jsonify(
                 {
