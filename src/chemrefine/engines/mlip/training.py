@@ -337,6 +337,22 @@ def render_config(
     return dest
 
 
+def _fingerprint_sha1() -> hashlib._Hash:
+    """A SHA-1 marked as a content fingerprint — the constructor form for a streamed hash.
+
+    Named rather than written inline at the one call site, because it is the same concept
+    :func:`chemrefine.cache._fingerprint_sha1` spells for the cache keys, and one of the two
+    reading as a named idea while the other reads as an anonymous lambda is how the next
+    person comes to think they differ.
+
+    Deliberately *not* imported from there: :mod:`chemrefine.engines` must not import
+    :mod:`chemrefine.cache` — a boundary :meth:`chemrefine.cache.StepKey.of` documents and
+    ``tests/test_engines_invariants.py`` enforces. Each module names the concept; three
+    duplicated lines are the price of a separation worth more than they cost.
+    """
+    return hashlib.sha1(usedforsecurity=False)
+
+
 def digest_of(path: Path) -> str:
     """A short content digest of a produced model, for the run's sidecar record.
 
@@ -352,5 +368,5 @@ def digest_of(path: Path) -> str:
     either way; the flag is a policy hint, not an input.
     """
     with path.open("rb") as handle:
-        digest = hashlib.file_digest(handle, lambda: hashlib.sha1(usedforsecurity=False))
+        digest = hashlib.file_digest(handle, _fingerprint_sha1)
     return digest.hexdigest()[:16]
