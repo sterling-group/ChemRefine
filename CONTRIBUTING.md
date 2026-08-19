@@ -56,6 +56,14 @@ none ran every gate green while checking the frontend not at all. Setting
 `CHEMREFINE_REQUIRE_NODE=1` turns that skip into a failure; `ci.yml` and
 `scripts/release-check.sh` both set it, so a skip can no longer reach a release.
 
+**Biome is the frontend's ruff.** `pre-commit` runs `biome check --write` over
+`src/chemrefine/gui/static/`: it formats the JavaScript and CSS and lints all
+three languages, with the settings and their reasons in `biome.jsonc`. It is
+the one hook that is not `language: python`, so on a machine with no Node the
+first `pre-commit` run downloads one into `~/.cache/pre-commit`. The vendored
+bundles under `static/vendor/` are excluded — they must stay byte-identical to
+what upstream published.
+
 ### The gates above do not cover the `integration` tier
 
 `pytest` deselects `-m integration` by default and so does CI, which is deliberate — those

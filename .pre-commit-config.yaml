@@ -31,3 +31,33 @@ repos:
       - id: interrogate
         args: [src/chemrefine/, -v, --fail-under=100]
         pass_filenames: false
+
+  # Biome is ruff's opposite number for the GUI: it formats the JavaScript and CSS and
+  # lints all three languages, for a layer that had a syntax check and nothing else.
+  # `language: node` — the only non-Python hook here — so pre-commit uses the system Node
+  # where there is one (CI runners) and downloads one with nodeenv where there is not.
+  # No setup-node step in ci.yml, and nothing for a contributor to install.
+  #
+  # No `additional_dependencies`, despite the hook's README: this repo pins
+  # `@biomejs/biome` exactly in its own package.json and cuts one tag per Biome release,
+  # so the frozen SHA below *is* the version pin — and unlike additional_dependencies it
+  # is the thing pre-commit.ci's autoupdate maintains. Naming the version twice would
+  # leave one copy the bot bumps and one it never touches.
+  - repo: https://github.com/biomejs/pre-commit
+    rev: 3a0c6458e3d46fb8d931600cd3970f2053768ce3  # frozen: v2.5.9
+    hooks:
+      - id: biome-check
+        # `biome check --write` is format + lint + fix, the same shape as the ruff hook's
+        # --fix above: a violation is written and the run then fails on the modified file.
+        #
+        # `files` is replaced rather than extended. The published regex has no `html`
+        # branch, so index.html — where every Alpine binding lives — would never reach the
+        # linter; and this repository has four frontend files and no other JS or JSON
+        # Biome should touch.
+        files: ^src/chemrefine/gui/static/.*\.(js|css|html)$
+        # biome.jsonc's `!vendor/**` does not filter paths passed on the command line
+        # (biomejs/biome#7268) and pre-commit always passes paths, so the vendored bundles
+        # are excluded here or not at all. Formatting them would break the byte-for-byte
+        # match with the published CDN copy, which is the only way `test_the_javascript_
+        # parses` can tell a tampered download from a working one.
+        exclude: ^src/chemrefine/gui/static/vendor/

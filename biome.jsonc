@@ -49,6 +49,18 @@
         // mode from the whole GUI: undeclared assignment stops throwing, and top-level
         // `this` stops being undefined.
         "noRedundantUseStrict": "off"
+      },
+      "a11y": {
+        // Three a11y rules read this page wrongly, and all three for one reason: Alpine
+        // fills the element at runtime and a static parser cannot see it. `<h3
+        // x-text="browse.title">` and `<a x-text="entry.name">` look empty; a `<label>`
+        // whose input sits inside a `<template x-if>` looks unattached. Every hit was
+        // checked by hand and every one is a false positive, so these are off for the
+        // page rather than suppressed 7 times in it. The rest of the a11y set stays on —
+        // `useButtonType` found 30 real ones, and `useValidAnchor` still does.
+        "useHeadingContent": "off",
+        "useAnchorContent": "off",
+        "noLabelWithoutControl": "off"
       }
     }
   },

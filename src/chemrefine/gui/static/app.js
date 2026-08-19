@@ -8,6 +8,9 @@
  */
 "use strict";
 
+// index.html calls this from x-data. Biome reads one file at a time and cannot see
+// the page; tests/test_gui_assets.py checks that wiring, in both directions.
+// biome-ignore lint/correctness/noUnusedVariables: the page is the caller
 function builder() {
   return {
     token: new URLSearchParams(window.location.search).get("token") || "",
@@ -72,7 +75,7 @@ function builder() {
           headers: { "X-ChemRefine-Token": this.token },
         });
         if (probe.ok) data = await probe.json();
-      } catch (err) {
+      } catch {
         served = false; // nothing listening: this is the static docs copy
       }
       if (!data && served) {
@@ -90,14 +93,14 @@ function builder() {
           const parsed = await this.api("POST", "/api/parse", {
             yaml_text: data.initial.yaml_text,
           });
-          if (parsed && parsed.config) this.cfg = this.withSteps(parsed.config);
+          if (parsed?.config) this.cfg = this.withSteps(parsed.config);
         }
       } else {
         this.staticMode = true;
         this.flash = "";
         try {
           this.schema = await (await fetch("schema.json")).json();
-        } catch (err) {
+        } catch {
           this.fatal = "Could not load the schema — reload the page.";
           this.ready = true;
           return;
@@ -137,13 +140,13 @@ function builder() {
       let response;
       try {
         response = await fetch(url, options);
-      } catch (err) {
+      } catch {
         this.flash = "the ChemRefine server is unreachable — is `chemrefine gui` still running?";
         return null;
       }
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        this.flash = data.error || response.status + " error";
+        this.flash = data.error || `${response.status} error`;
         return null;
       }
       return data;
@@ -164,7 +167,7 @@ function builder() {
           }
           return { config };
         } catch (err) {
-          this.flash = "malformed YAML: " + err.message;
+          this.flash = `malformed YAML: ${err.message}`;
           return null;
         }
       }
@@ -228,7 +231,7 @@ function builder() {
     nmsFieldsFor(step) {
       // Knobs only meaningful for one target stay hidden until that target is chosen;
       // passthroughKeys still counts the full set as declared, so nothing gets flagged.
-      const target = (step.options || {}).target || "minimum";
+      const target = step.options?.target || "minimum";
       return this.nmsFields.filter((field) => {
         if (field.key === "num_random_displacements" || field.key === "seed") {
           return target === "random";
@@ -239,7 +242,7 @@ function builder() {
     },
     engineFields(engine) {
       const descriptor = this.schema.engines[engine];
-      if (!descriptor || !descriptor.options_schema) return [];
+      if (!descriptor?.options_schema) return [];
       return fieldSpecs(descriptor.options_schema, ["backend_python"]);
     },
     sampleFields(step) {
@@ -250,12 +253,12 @@ function builder() {
     },
     isTemplateDriven(engine) {
       const descriptor = this.schema.engines[engine];
-      return Boolean(descriptor && descriptor.template_driven);
+      return Boolean(descriptor?.template_driven);
     },
     templatePlaceholder(step) {
       const descriptor = this.schema.engines[step.engine];
-      const suffix = descriptor && descriptor.template_suffix;
-      return suffix ? "step" + step.step + "." + suffix + " (default)" : "(no template)";
+      const suffix = descriptor?.template_suffix;
+      return suffix ? `step${step.step}.${suffix} (default)` : "(no template)";
     },
     passthroughKeys(step) {
       const declared = new Set(
@@ -357,7 +360,7 @@ function builder() {
     },
     browseExec(index) {
       this.openBrowseWith(
-        "Pick the " + (this.execRows[index].name || "executable") + " binary",
+        `Pick the ${this.execRows[index].name || "executable"} binary`,
         (path) => {
           this.execRows[index].path = path;
           this.writeExecBack();
@@ -429,7 +432,7 @@ function builder() {
       try {
         await navigator.clipboard.writeText(this.yamlText);
         this.flash = "YAML copied to clipboard";
-      } catch (err) {
+      } catch {
         const box = document.getElementById("yaml");
         box.select();
         document.execCommand("copy");
@@ -444,7 +447,7 @@ function builder() {
     },
     async applyRaw() {
       const parsed = await this.api("POST", "/api/parse", { yaml_text: this.yamlText });
-      if (parsed && parsed.config) {
+      if (parsed?.config) {
         this.cfg = this.withSteps(parsed.config);
         this.seedWorkflowDefaults(); // the form shows them; the file states them
         this.rekeySteps();
@@ -470,7 +473,7 @@ function builder() {
     async scaffold() {
       const data = await this.api("POST", "/api/scaffold", { config_path: this.savedPath });
       if (data) {
-        this.flash = "scaffold: " + data.written.length + " written, " + data.kept.length + " kept";
+        this.flash = `scaffold: ${data.written.length} written, ${data.kept.length} kept`;
       }
     },
 
@@ -481,7 +484,7 @@ function builder() {
       if (status) this.runStatus = status;
       this.runFailures = await this.api("POST", "/api/failures", { config_path: this.savedPath });
       clearTimeout(this._statusTimer);
-      if (status && status.running) {
+      if (status?.running) {
         // Poll while a driver holds the tree; stop the moment it lets go.
         this._statusTimer = setTimeout(() => this.refreshStatus(), 5000);
       }
@@ -507,7 +510,7 @@ function builder() {
       }
       const started = await this.api("POST", "/api/run", { config_path: this.savedPath, action });
       if (started) {
-        this.flash = action + " started (pid " + started.pid + "); log: " + started.log;
+        this.flash = `${action} started (pid ${started.pid}); log: ${started.log}`;
         this.refreshStatus();
       }
     },
@@ -561,7 +564,7 @@ function builder() {
         }
         return true;
       } catch (err) {
-        this.flash = "chat request failed: " + err;
+        this.flash = `chat request failed: ${err}`;
         return false;
       } finally {
         this.chat.busy = false; // never leave the panel stuck on a failed request
@@ -611,7 +614,7 @@ function builder() {
       this.flash = "agent chat reset — conversation cleared, provider settings back to defaults";
       try {
         await this.api("POST", "/api/agent/chat", { reset: true });
-      } catch (err) {
+      } catch {
         // Local state is already fresh; the server forgets on its next reset/turn.
       }
       this.chatAvailability();
@@ -619,7 +622,7 @@ function builder() {
 
     // ---------------- browse / save ----------------
     async openBrowse(fieldKey) {
-      await this.openBrowseWith("Pick " + fieldKey, (path) => {
+      await this.openBrowseWith(`Pick ${fieldKey}`, (path) => {
         this.cfg[fieldKey] = path;
         this.syncYaml();
       });
@@ -641,7 +644,7 @@ function builder() {
     async navigate(path) {
       const data = await this.api(
         "GET",
-        "/api/browse" + (path ? "?path=" + encodeURIComponent(path) : ""),
+        `/api/browse${path ? `?path=${encodeURIComponent(path)}` : ""}`,
       );
       if (data) {
         this.browse.path = data.path;
@@ -664,12 +667,12 @@ function builder() {
       }
     },
     async saveTo() {
-      const path = this.browse.path + "/" + (this.browse.filename || "input.yaml");
+      const path = `${this.browse.path}/${this.browse.filename || "input.yaml"}`;
       const data = await this.api("POST", "/api/save", { path, yaml_text: this.yamlText });
       if (data) {
         this.savedPath = data.path;
         this.browse.open = false;
-        this.flash = "saved " + data.path;
+        this.flash = `saved ${data.path}`;
       }
     },
 
@@ -693,7 +696,7 @@ function builder() {
         text: this.tmpl.text,
       });
       if (data) {
-        this.flash = "saved " + data.path;
+        this.flash = `saved ${data.path}`;
         this.tmpl.open = false;
       }
     },

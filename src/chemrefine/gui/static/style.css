@@ -296,13 +296,20 @@ h3 {
   max-height: 44vh;
   overflow: auto;
 }
-.listing a {
+/* Rows are actions — they open a directory or pick a file — so they are buttons, not
+   anchors with href="#". The reset below is what an <a> gave for free. */
+.listing button {
   color: var(--ink);
-  text-decoration: none;
   display: block;
+  width: 100%;
   padding: 0.15rem 0.3rem;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.listing a:hover {
+.listing button:hover {
   background: var(--bg);
   border-radius: 4px;
 }

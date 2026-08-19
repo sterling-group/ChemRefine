@@ -87,11 +87,15 @@ function fieldSpec(key, prop) {
 }
 
 /** All renderable fields of an object schema, minus `skip`, in schema order. */
+// app.js calls this through the global scope — these are classic scripts, not
+// modules. tests/test_gui_assets.py executes this file in Node and is what proves
+// the call still resolves.
+// biome-ignore lint/correctness/noUnusedVariables: app.js is the caller
 function fieldSpecs(objectSchema, skip) {
   const out = [];
-  const properties = (objectSchema && objectSchema.properties) || {};
+  const properties = objectSchema?.properties || {};
   for (const [key, prop] of Object.entries(properties)) {
-    if (skip && skip.includes(key)) continue;
+    if (skip?.includes(key)) continue;
     const spec = fieldSpec(key, prop);
     if (spec) out.push(spec);
   }
@@ -105,6 +109,10 @@ function fieldSpecs(objectSchema, skip) {
  * does), and — unless keepDefault — a value equal to the schema default coerces to
  * undefined, so step-level knobs stay deviation-only. Workflow settings pass
  * keepDefault=true: the file spells them out explicitly, like the shipped examples. */
+// app.js calls this through the global scope — these are classic scripts, not
+// modules. tests/test_gui_assets.py executes this file in Node and is what proves
+// the call still resolves.
+// biome-ignore lint/correctness/noUnusedVariables: app.js is the caller
 function coerceField(field, raw, keepDefault = false) {
   if (raw === "" || raw === undefined || raw === null) return undefined;
   if (field.kind === "checkbox") {
@@ -136,6 +144,10 @@ function coerceField(field, raw, keepDefault = false) {
  * `window` and `localStorage` as it is constructed: logic left in app.js cannot be
  * reached by a test at all.
  */
+// app.js calls this through the global scope — these are classic scripts, not
+// modules. tests/test_gui_assets.py executes this file in Node and is what proves
+// the call still resolves.
+// biome-ignore lint/correctness/noUnusedVariables: app.js is the caller
 function parentDir(path) {
   const cut = path.lastIndexOf("/");
   if (cut < 0) return ".";
