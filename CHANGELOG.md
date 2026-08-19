@@ -277,6 +277,23 @@ for the full map.
 ### Fixed
 
 
+- **An `output_dir` with a space in it is refused, instead of breaking every ORCA step.**
+  Spaces are legal in this config on purpose — the generated bash quotes every path it
+  interpolates, which is why `scratch_dir: /scratch/my runs` and
+  `executables: {orca: /opt/my orca/orca}` both work. But `output_dir` also reaches an
+  ORCA *input file*, in two places quoting cannot rescue: `* xyzfile <path>` is
+  whitespace-delimited and not a quotable field, so ORCA truncates the geometry path at
+  the first space (`CANNOT OPEN FILE`, naming the prefix, with or without quotes around
+  the value), and `%method ProgExt "<wrapper>"` is read as a quoted string but then
+  exec'd through `sh`, which splits it (`sh: 1: /path/my: not found`). Both are
+  `output_dir`-derived, so every `orca` / `mlip-extopt` / `pyscf-extopt` step under such
+  a tree failed — one confusing ORCA error per structure, naming a path nobody wrote.
+  The config now refuses it at load time with the reason and the fix. **This is a
+  behaviour change:** a run whose `output_dir` contains a space used to start and fail
+  per job, and now exits 2 immediately. `template_dir` and `scratch_dir` are deliberately
+  *not* covered — the auxiliary paths a template names reach ORCA inside quotes, which it
+  reads correctly, and `scratch_dir` only ever reaches quoted bash; both were checked
+  against ORCA 6.1.1 rather than assumed.
 - **A diverged calculation's geometry is refused instead of stored.** A non-finite
   energy has been a parse failure for a while; the *coordinates* were not, and that
   had two costs. Inline in a `.result.json` a `NaN` met the JSON writer's

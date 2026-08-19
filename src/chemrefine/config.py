@@ -494,6 +494,59 @@ class Config(BaseModel):
         reject_shell_unsafe(str(v), what="path", fix="rename the directory")
         return v
 
+    @field_validator("output_dir")
+    @classmethod
+    def _reject_space_in_output_dir(cls, v: Path) -> Path:
+        """Reject an ``output_dir`` containing a space — ORCA's input format cannot carry one.
+
+        A space is legal everywhere else in this config, and deliberately so: the generated
+        bash quotes every path it interpolates, so ``scratch_dir: /scratch/my runs`` and
+        ``executables: {orca: /opt/my orca/orca}`` both work (see
+        :func:`reject_shell_unsafe` and
+        :meth:`chemrefine.engines.orca.engine.OrcaEngine.orca_command`, which quotes for
+        exactly that reason). This one path is different, because it does not reach bash —
+        it reaches an ORCA **input file**, in two places that quoting cannot rescue:
+
+        * ``* xyzfile <charge> <mult> <path>``
+          (:func:`chemrefine.engines.orca.input.build_input`) is whitespace-delimited and
+          not a quotable field. ORCA truncates the path at the first space — verified
+          against ORCA 6.1.1, which reports ``CANNOT OPEN FILE`` naming the truncated
+          prefix — and quoting the value produces the identical failure.
+        * ``%method ProgExt "<wrapper>"``
+          (:meth:`chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine._extra_blocks`)
+          *is* read as a quoted string, but ORCA then execs it through ``sh`` unquoted, so
+          the space splits the command: ``sh: 1: /path/my: not found``.
+
+        Both paths are ``output_dir``-derived (``step_dir`` for the geometry, the step's
+        wrapper for ProgExt), so every ORCA-family step under such a tree fails — one
+        confusing ORCA error per structure, naming a path the user never wrote.
+
+        **Scoped to this one field on purpose, and the scope is the evidence.**
+        ``template_dir`` reaches an ORCA input only through
+        :func:`chemrefine.engines.orca.input._absolutize_template_paths`, whose regex
+        matches *quoted* strings by construction — and ORCA reads a quoted ``%``-block
+        filename with a space correctly (verified: ``%pointcharges "…/my templates/x.pc"``
+        → ``Reading point charge file ... ok``, normal termination). ``scratch_dir`` reaches
+        only ``export WORK_DIR="…"`` in the generated script, which was executed under a
+        spaced path and behaved (scratch created, results copied back, footer written).
+        Widening this rule to either would refuse a directory that demonstrably works.
+
+        Refused here rather than at the engine because this is where a path stops being the
+        user's text and becomes the run's: the alternative is a job-shaped failure per
+        structure, hours in, for a directory name.
+        """
+        if " " in str(v):
+            raise ValueError(
+                f"output_dir {str(v)!r} contains a space. ORCA reads the geometry through "
+                f"`* xyzfile <path>`, which is whitespace-delimited and cannot be quoted, "
+                f"and runs an ExtOpt wrapper through `sh`, which splits on it — so every "
+                f"orca / mlip-extopt / pyscf-extopt step writing under this tree would "
+                f"fail. Rename the directory, or point output_dir somewhere without a "
+                f"space. (template_dir and scratch_dir may contain spaces; only this one "
+                f"reaches an ORCA input file.)"
+            )
+        return v
+
     @field_validator("executables")
     @classmethod
     def _reject_unsafe_executables(cls, v: dict[str, str]) -> dict[str, str]:

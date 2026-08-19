@@ -88,6 +88,29 @@ def test_build_input_omits_base_directive(tmp_path: Path):
     assert "%base" not in out.read_text()
 
 
+def test_the_xyzfile_path_is_emitted_bare_which_is_why_output_dir_forbids_spaces(tmp_path: Path):
+    """The geometry path is the last, unquoted, whitespace-delimited token of the directive.
+
+    This is the *reason* `Config._reject_space_in_output_dir` exists, pinned where the
+    emission happens: ORCA reads `* xyzfile` by splitting on whitespace and does not treat
+    the filename as quotable, so a path with a space in it is truncated at the space
+    (verified against ORCA 6.1.1 — `CANNOT OPEN FILE`, naming the prefix — with and
+    without quotes around the value).
+
+    So the config rule and this line are one decision. If anyone ever changes the emission
+    — quotes it, or moves to a directive that *is* quotable — this test fails and the
+    config rule should be re-examined rather than left standing for a format that no longer
+    needs it.
+    """
+    template = _template(tmp_path, "! B3LYP\n")
+    out = tmp_path / "step1_0.inp"
+    xyz = tmp_path / "step1_0_inp.xyz"
+    build_input(xyz_path=xyz, template_path=template, output_path=out, charge=0, multiplicity=1)
+    directive = next(line for line in out.read_text().splitlines() if line.startswith("* xyzfile"))
+    assert directive == f"* xyzfile 0 1 {xyz}"
+    assert '"' not in directive
+
+
 def test_build_input_missing_template_raises(tmp_path: Path):
     with pytest.raises(ConfigError):
         build_input(
