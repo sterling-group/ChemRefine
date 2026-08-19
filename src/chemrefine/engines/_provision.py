@@ -18,6 +18,11 @@ works off that DTO — no backend names, tasks, or tables.
   **same tool that created the current env** (:func:`detect_env_tool`: conda / uv / venv), and
   install ``chemrefine[<extra>]`` into it matched to the orchestrator's own install (same
   index version, or the same local/git source for direct installs).
+* :func:`resolve_base_python` — **which Python that env is created on**. A backend's stack is
+  isolated precisely so it never has to match anyone else's, and the interpreter is part of
+  that stack: where ``chemrefine[<extra>]`` declares (through markers) that it does not
+  install on the orchestrator's Python, the env is built on the newest one it does declare
+  rather than handed to pip to discover by compiling.
 
 A managed env is a plain venv/conda env; *running* it needs only ``<env>/bin/python`` — the
 provisioning tool is needed only at build time (e.g. once on a login node; offline compute
@@ -37,6 +42,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit
@@ -58,6 +64,9 @@ if TYPE_CHECKING:  # `packaging` is imported lazily, inside the functions that e
     from packaging.requirements import Requirement
 
 EnvTool = Literal["conda", "uv", "venv"]
+
+_VERSION = re.compile(r"3\.\d+")
+"""A bare ``X.Y`` — the one ``--python`` form that names a version rather than a file."""
 
 _PYTHON_CLASSIFIER = re.compile(r"Programming Language :: Python :: (3\.\d+)")
 """One ``Programming Language :: Python :: 3.12`` trove classifier.
@@ -233,9 +242,30 @@ def require_backend(requirement: BackendRequirement, override: str | None = None
         return
     raise ConfigError(
         f"backend '{requirement.extra}' is not available: '{requirement.import_name}' is not "
-        f"importable here and no managed env exists. Provision it once with "
-        f"`chemrefine backends install {requirement.extra}` (or install "
-        f"`chemrefine[{requirement.extra}]` into this environment)."
+        f"importable here and no managed env exists. {_install_advice(requirement.extra)}"
+    )
+
+
+def _install_advice(extra: str) -> str:
+    """How to get this backend — and, where it matters, why one of the two ways cannot work.
+
+    "Install ``chemrefine[<extra>]`` into this environment" is the wrong half of the advice
+    on a Python the extra does not support: pip would report success having installed
+    nothing, because every requirement the extra declares is marker-excluded there. Only the
+    managed env can help, and it can — :func:`resolve_base_python` builds it on a Python the
+    backend supports.
+    """
+    here = this_python()
+    supported = _supported_pythons(extra)
+    if supported and here not in supported:
+        return (
+            f"`chemrefine[{extra}]` does not install on Python {here} — it needs "
+            f"{' or '.join(supported)} — so install it into a managed env of its own with "
+            f"`chemrefine backends install {extra}`, which builds one on a Python it supports."
+        )
+    return (
+        f"Provision it once with `chemrefine backends install {extra}` (or install "
+        f"`chemrefine[{extra}]` into this environment)."
     )
 
 
@@ -388,6 +418,166 @@ def detect_env_tool() -> EnvTool:
     return "venv"
 
 
+@dataclass(frozen=True)
+class BasePython:
+    """How a managed env gets created: which Python, by which tool, from which interpreter.
+
+    ``interpreter`` is ``None`` when the tool supplies the Python itself — conda resolves
+    ``python=3.12`` from its channels and uv downloads a managed build — which is why the
+    version, not a path, is the field that is always set.
+
+    ``tool`` is carried here rather than passed alongside because obtaining a Python can
+    *change* it: on a plain-venv orchestrator with no ``python3.12`` on PATH, a ``uv`` binary
+    is the one thing that can still produce one, and an env uv creates must be installed into
+    by uv (it has no ``pip`` of its own).
+    """
+
+    version: str
+    tool: EnvTool
+    interpreter: str | None = None
+
+
+def this_python() -> str:
+    """The running interpreter's ``X.Y`` — the version markers are evaluated against."""
+    return f"{sys.version_info.major}.{sys.version_info.minor}"
+
+
+def resolve_base_python(
+    extra: str, tool: EnvTool | None = None, override: str | None = None
+) -> BasePython:
+    """The Python a managed env for ``extra`` is built on, and how it is obtained.
+
+    The orchestrator's own interpreter whenever ``chemrefine[<extra>]`` installs on it — the
+    common case, and what this module did unconditionally before it could choose. Otherwise
+    the newest Python the extra claims (:func:`_supported_pythons`), because a backend whose
+    stack has no wheels here is not a slow install but a source build of torch or a vendored
+    abseil, and the whole point of a *managed* env is that a backend's dependencies never had
+    to match anyone else's. The interpreter is the last part of that stack that did.
+
+    Raises
+    ------
+    BackendProvisionError
+        If a Python the extra supports cannot be obtained, or ``override`` names an
+        interpreter this machine does not have.
+    """
+    tool = tool or detect_env_tool()
+    if override is not None:
+        return _named_base(override, tool)
+    here = this_python()
+    supported = _supported_pythons(extra)
+    if not supported or here in supported:
+        return BasePython(here, tool, sys.executable)
+    return _obtain(supported, tool, extra, here)
+
+
+def _obtain(supported: Sequence[str], tool: EnvTool, extra: str, here: str) -> BasePython:
+    """Where an interpreter for the newest supported version comes from.
+
+    conda and uv are asked for a *version* and produce it themselves — conda from its
+    channels, uv by downloading a managed build. A plain venv can only be created by an
+    interpreter that already exists, so the version is looked for under its canonical name
+    (which is what deadsnakes, Homebrew, pyenv shims and a loaded HPC module all provide),
+    and a ``uv`` binary is the fallback even where uv did not create the current env: it is
+    the one tool on the machine that can still supply the missing Python.
+    """
+    version = supported[0]
+    if tool in ("conda", "uv"):
+        return BasePython(version, tool)
+    found = shutil.which(f"python{version}")
+    if found is not None:
+        return BasePython(version, tool, found)
+    if shutil.which("uv") is not None:
+        return BasePython(version, "uv")
+    raise BackendProvisionError(
+        f"`chemrefine[{extra}]` installs on Python {' or '.join(supported)}, not on this "
+        f"interpreter's {here} — everything the extra declares is excluded there, so its "
+        f"managed env has to be built on one of them. Neither `python{version}` nor `uv` is "
+        f"on PATH: install a Python {version} (`pip install uv`, `conda create`, or your "
+        f"distribution's package), or name one with `chemrefine backends install {extra} "
+        f"--python /path/to/python{version}`."
+    )
+
+
+def _named_base(override: str, tool: EnvTool) -> BasePython:
+    """A ``--python`` the user named: ``3.12``, a command name, or a path to an interpreter.
+
+    A bare version is handed to the tool that can produce it and looked up on PATH for the
+    one that cannot; anything else must resolve to an interpreter here and now, and its
+    version is read back from it — conda takes a version, never a path, so ``--python
+    /opt/py312/bin/python3`` still has to become ``python=3.12``.
+    """
+    if _VERSION.fullmatch(override):
+        found = shutil.which(f"python{override}")
+        if found is None and tool == "venv":
+            raise BackendProvisionError(
+                f"`--python {override}` names no interpreter on PATH (looked for "
+                f"`python{override}`) and this environment was made by venv, which can only "
+                f"create an env from an interpreter that exists. Give the path to one, or "
+                f"install `uv`, which downloads the Python it is asked for."
+            )
+        return BasePython(override, tool, found)
+    interpreter = shutil.which(override)
+    if interpreter is None:
+        raise BackendProvisionError(
+            f"`--python {override}` is neither an `X.Y` version nor an interpreter this "
+            f"machine has (nothing on PATH, and no such executable file)."
+        )
+    return BasePython(_version_of(interpreter), tool, interpreter)
+
+
+def _version_of(interpreter: str) -> str:
+    """Ask an interpreter for its own ``X.Y``."""
+    probe = "import sys;print('%d.%d' % sys.version_info[:2])"
+    try:
+        # No shell. The program is the literal above, and the interpreter is either a path
+        # `shutil.which` resolved from `--python` or one this module built itself.
+        done = subprocess.run(  # noqa: S603
+            [interpreter, "-c", probe], check=True, capture_output=True, text=True
+        )
+    except (OSError, subprocess.CalledProcessError) as e:
+        raise BackendProvisionError(
+            f"`{interpreter}` could not be run to ask for its version ({e})."
+        ) from e
+    return done.stdout.strip()
+
+
+def _env_python_version(env_path: Path) -> str | None:
+    """The ``X.Y`` a managed env was built on, read off its own layout.
+
+    ``<env>/lib/python3.12/`` is there in a conda prefix and a venv alike, so this costs a
+    ``glob`` rather than a subprocess — which matters on a path that runs before every
+    install. ``None`` when the layout says nothing (a half-made or faked env): unknown is
+    not evidence of *wrong*, and this must not refuse an env it simply cannot read.
+    """
+    for lib in sorted((env_path / "lib").glob("python3.*")):
+        return lib.name.removeprefix("python")
+    return None
+
+
+def _require_supported_env(extra: str, env_path: Path) -> None:
+    """Refuse to install into a managed env whose Python the extra does not install on.
+
+    pip *succeeds* against such an env, having installed nothing at all: every requirement
+    the extra declares is marker-excluded there, so what comes back is the ``[server]`` half
+    and a zero exit code. The env then passes :func:`require_backend` — a managed env is
+    proved by its name — and the step fails on the backend import inside the job, which is
+    the one place nobody is watching.
+
+    That is what an env built before the extra's claim narrowed looks like, and it cannot be
+    repaired in place: the interpreter is settled when the directory is created.
+    """
+    supported = _supported_pythons(extra)
+    version = _env_python_version(env_path)
+    if version is not None and supported and version not in supported:
+        raise BackendProvisionError(
+            f"the managed env for {extra!r} at {env_path} was built on Python {version}, "
+            f"which `chemrefine[{extra}]` does not install on — it needs "
+            f"{' or '.join(supported)}, and installing into this one would report success "
+            f"having installed nothing. Remove that directory and re-run `chemrefine "
+            f"backends install {extra}`, which builds it on a Python the backend supports."
+        )
+
+
 def _direct_url() -> dict[str, Any] | None:
     """Parsed PEP 610 ``direct_url.json`` for the installed ChemRefine dist, or ``None``.
 
@@ -439,34 +629,62 @@ def _install_target(extra: str) -> str:
     return f"chemrefine[{extra}] @ {url}"
 
 
-def _build_commands(tool: EnvTool, path: Path, extra: str) -> list[list[str]]:
-    """The argv sequence that creates the env at ``path`` and installs ``chemrefine[extra]``.
+def _build_commands(base: BasePython, path: Path, extra: str) -> tuple[list[str], list[str]]:
+    """The argv that creates the env at ``path``, and the one that installs into it.
 
     The install target is matched to the orchestrator's own install — see
     :func:`_install_target` — so a managed env always matches the ChemRefine
-    that drives it.
+    that drives it. Which *Python* it is created on comes from ``base``: conda and uv are
+    asked for a version and produce it, a venv is created by an interpreter that exists.
     """
     target = _install_target(extra)
     env_python = str(path / "bin" / "python")
-    if tool == "uv":
-        return [
-            ["uv", "venv", str(path)],
+    if base.tool == "uv":
+        return (
+            # uv takes a version or a path here, so an explicit `--python` is passed through
+            # exactly as given rather than reduced to its version.
+            ["uv", "venv", "--python", base.interpreter or base.version, str(path)],
             ["uv", "pip", "install", "--python", env_python, target],
-        ]
-    if tool == "conda":
-        pyver = f"{sys.version_info.major}.{sys.version_info.minor}"
-        return [
-            ["conda", "create", "-y", "-p", str(path), f"python={pyver}"],
+        )
+    if base.tool == "conda":
+        return (
+            ["conda", "create", "-y", "-p", str(path), f"python={base.version}"],
             [env_python, "-m", "pip", "install", target],
-        ]
-    return [
-        [sys.executable, "-m", "venv", str(path)],
+        )
+    return (
+        [base.interpreter or sys.executable, "-m", "venv", str(path)],
         [env_python, "-m", "pip", "install", target],
-    ]
+    )
 
 
-def build_backend_env(extra: str, *, tool: EnvTool | None = None) -> Path:
+def _existing_env_tool(env_path: Path, tool: EnvTool) -> EnvTool:
+    """The tool that installs into an env that is already there.
+
+    An env uv created carries uv's marker in its own ``pyvenv.cfg`` — the same marker
+    :func:`detect_env_tool` reads for the current env — and has no ``pip`` inside it. Reading
+    it back is what keeps a second ``backends install`` into that env working when the
+    orchestrator's own env was not made by uv, which is exactly the case uv gets used for
+    here: a plain-venv machine with no interpreter of the version a backend needs.
+    """
+    cfg = env_path / "pyvenv.cfg"
+    if cfg.is_file() and "uv = " in cfg.read_text(encoding="utf-8"):
+        return "uv"
+    return tool
+
+
+def build_backend_env(
+    extra: str, *, tool: EnvTool | None = None, python: str | None = None
+) -> Path:
     """Create the managed env for ``extra`` if it is absent, then install into it.
+
+    The env is created on the Python the extra supports (:func:`resolve_base_python`), which
+    is the orchestrator's own interpreter unless the extra's requirements are excluded there.
+    ``python`` overrides that choice with a version, a command name, or a path — and is
+    refused against an env that already exists, where only the install runs and the
+    interpreter is settled: silently ignoring it would report success for a rebuild that
+    never happened. An existing env whose Python the extra does *not* install on is refused
+    outright (:func:`_require_supported_env`) rather than installed into, for the same
+    reason: pip succeeds there having installed nothing.
 
     **The install always runs**, where this used to return early whenever the env's
     ``python`` existed. That early return made ``backends install pyscf-gpu`` a silent no-op
@@ -496,12 +714,24 @@ def build_backend_env(extra: str, *, tool: EnvTool | None = None) -> Path:
     env because a later ``pyscf-gpu`` install hit a resolver wall would lose work the user
     already has.
     """
-    python = backend_env_python(extra)
+    env_python = backend_env_python(extra)
     env_path = backend_env_path(extra)
-    fresh = not python.is_file()
-    *create, install = _build_commands(tool or detect_env_tool(), env_path, extra)
+    fresh = not env_python.is_file()
+    detected = tool or detect_env_tool()
+    if python is not None and not fresh:
+        raise BackendProvisionError(
+            f"the managed env for {extra!r} already exists at {env_path}, and `--python` only "
+            f"applies where one is created — this call would install into the env that is "
+            f"there, on the Python it already has. Remove that directory to rebuild it."
+        )
+    if fresh:
+        base = resolve_base_python(extra, detected, python)
+    else:
+        _require_supported_env(extra, env_path)
+        base = BasePython(this_python(), _existing_env_tool(env_path, detected))
+    create, install = _build_commands(base, env_path, extra)
     env_path.parent.mkdir(parents=True, exist_ok=True)
-    for argv in [*create, install] if fresh else [install]:
+    for argv in [create, install] if fresh else [install]:
         try:
             # this install's own metadata; no shell, no user-supplied string.
             subprocess.run(argv, check=True)  # noqa: S603
@@ -513,4 +743,4 @@ def build_backend_env(extra: str, *, tool: EnvTool | None = None) -> Path:
                 f"failed ({e}). Re-run `chemrefine backends install {extra}` once the "
                 f"cause is fixed, or install `chemrefine[{extra}]` into this environment."
             ) from e
-    return python
+    return env_python

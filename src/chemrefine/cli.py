@@ -578,27 +578,52 @@ def backends_install(
     extras: Annotated[
         list[str], typer.Argument(help="Backend extra(s), e.g. mlip-mace mlip-fairchem pyscf.")
     ],
+    python: Annotated[
+        str | None,
+        typer.Option(
+            "--python",
+            help="Build the env(s) with this Python: a version (3.12), a command name, or a "
+            "path. Default: the newest one each backend's extra supports.",
+        ),
+    ] = None,
 ) -> None:
     """Provision managed env(s) so steps can run these backends side by side.
 
     Each env is built with the same tool that created the current environment
     (conda / uv / venv) under ``$CHEMREFINE_HOME`` and reused by every later run;
     run this once (on HPC: on a login node with internet) per backend you use.
+
+    The Python each env is built on is the newest one that backend's extra installs on —
+    which is this interpreter unless the backend's stack has no wheels for it.
     """
-    from chemrefine.engines import build_backend_env, known_backend_extras
+    from chemrefine.engines import (
+        backend_env_python,
+        build_backend_env,
+        known_backend_extras,
+        resolve_base_python,
+    )
 
     known = known_backend_extras()
     unknown = [e for e in extras if e not in known]
     if unknown:
         raise typer.BadParameter(f"unknown backend(s) {unknown}; known: {sorted(known)}")
     for extra in extras:
-        typer.echo(f"provisioning {extra} …")
         try:
-            python = build_backend_env(extra)
+            # Only a fresh env chooses an interpreter; an existing one is extended on the
+            # Python it already has, and asking for a choice there could refuse a build that
+            # is going to succeed.
+            if backend_env_python(extra).is_file():
+                typer.echo(f"provisioning {extra} …")
+            else:
+                typer.echo(
+                    f"provisioning {extra} on Python "
+                    f"{resolve_base_python(extra, override=python).version} …"
+                )
+            built = build_backend_env(extra, python=python)
         except ChemRefineError as e:
             typer.echo(str(e), err=True)
             raise typer.Exit(code=e.exit_code) from e
-        typer.echo(f"{extra}: {python}")
+        typer.echo(f"{extra}: {built}")
 
 
 @backends_app.command("list")
