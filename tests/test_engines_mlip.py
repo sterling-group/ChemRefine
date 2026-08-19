@@ -727,7 +727,7 @@ def test_mlip_direct_prepare_renders_one_py_and_xyz_per_structure(tmp_path: Path
         rendered = script_path.read_text()
         assert "$XYZ_PATH" not in rendered
         assert "$CHARGE" not in rendered
-        assert f"with open('{output_json.name}', \"w\")" in rendered
+        assert f'with open(\'{output_json.name}\', "w", encoding="utf-8")' in rendered
 
 
 def test_mlip_direct_substitutes_option_placeholders(tmp_path: Path):

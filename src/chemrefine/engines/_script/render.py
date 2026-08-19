@@ -47,6 +47,14 @@ def _build_output_footer(output_basename: str) -> str:
     ``cwd = $WORK_DIR`` (scratch), so a relative write goes into
     scratch and the SLURM script's ``*.json`` glob copies it back
     to step_dir.
+
+    The write names ``utf-8`` because its reader does
+    (:func:`chemrefine.engines._script.output._load_output_json`), and the two run in
+    different places: this footer executes on the compute node, while the parse happens back
+    in the driver — so a bare ``open()`` would have left the encoding to whichever locale each
+    end happened to have. Nothing miscodes today, since ``json.dump`` defaults to
+    ``ensure_ascii=True`` and every plausible locale agrees about ASCII; naming it is what
+    keeps that a property of the format rather than of the hosts.
     """
     return (
         "\n"
@@ -68,7 +76,7 @@ def _build_output_footer(output_basename: str) -> str:
         "for _chemrefine_name in _chemrefine_optional:\n"
         "    if _chemrefine_name in dir():\n"
         "        _chemrefine_result[_chemrefine_name] = locals()[_chemrefine_name]\n"
-        f'with open({output_basename!r}, "w") as _chemrefine_fh:\n'
+        f'with open({output_basename!r}, "w", encoding="utf-8") as _chemrefine_fh:\n'
         "    _chemrefine_json.dump(\n"
         "        _chemrefine_result, _chemrefine_fh, cls=_ChemRefineEncoder\n"
         "    )\n"

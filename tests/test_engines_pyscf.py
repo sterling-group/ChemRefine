@@ -120,7 +120,7 @@ def test_prepare_renders_one_py_and_xyz_per_structure(tmp_path: Path):
         assert "$MULTIPLICITY" not in rendered
         # The appended footer writes to the BASENAME (relative to cwd =
         # scratch); SLURM's *.json glob then copies it back to step_dir.
-        assert f"with open('{output_json.name}', \"w\")" in rendered
+        assert f'with open(\'{output_json.name}\', "w", encoding="utf-8")' in rendered
 
 
 def test_prepare_missing_template_raises(tmp_path: Path):

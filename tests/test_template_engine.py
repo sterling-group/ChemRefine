@@ -81,7 +81,7 @@ def test_build_input_appends_output_footer(tmp_path: Path):
     assert "# --- ChemRefine output footer (generated; do not edit) ---" in text
     assert "_chemrefine_result" in text
     # Writes to the BASENAME so it lands in $WORK_DIR.
-    assert "with open('step1_structure_0.json', \"w\")" in text
+    assert 'with open(\'step1_structure_0.json\', "w", encoding="utf-8")' in text
     assert "$OUTPUT_JSON" not in text
 
 
@@ -103,7 +103,7 @@ def test_build_input_leaves_legacy_output_json_placeholder_alone(tmp_path: Path)
     )
     text = out.read_text(encoding="utf-8")
     assert "# legacy: $OUTPUT_JSON" in text
-    assert "with open('step1_structure_0.json', \"w\")" in text
+    assert 'with open(\'step1_structure_0.json\', "w", encoding="utf-8")' in text
 
 
 def test_build_input_missing_template_raises_generic(tmp_path: Path):
