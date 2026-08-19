@@ -45,7 +45,6 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from math import floor
 from pathlib import Path
 from string import Template
 from typing import ClassVar, Protocol, runtime_checkable
@@ -246,8 +245,10 @@ def split_structures(
     if n == 0:
         raise ConfigError("no structures to train on — the previous step produced none")
 
-    n_test = floor(test_fraction * n)
-    n_valid = floor(valid_fraction * n)
+    # ``int(np.floor(...))``, not a bare cast: these index the permutation below, so they
+    # have to be ints, and truncation would round a negative fraction the wrong way.
+    n_test = int(np.floor(test_fraction * n))
+    n_valid = int(np.floor(valid_fraction * n))
     if valid_fraction > 0:
         n_valid = max(1, n_valid)
     n_train = n - n_valid - n_test
