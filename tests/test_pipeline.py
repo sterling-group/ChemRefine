@@ -133,6 +133,24 @@ def test_bootstrap_unsupported_format_raises(tmp_path: Path):
         pipeline.bootstrap(cfg)
 
 
+@pytest.mark.parametrize("literal", ["nan", "inf", "-inf"])
+def test_bootstrap_refuses_a_non_finite_seed_coordinate(tmp_path: Path, literal: str):
+    """A seed geometry that is not numbers must be refused where the file can be named.
+
+    ASE's reader accepts these, and a seed is the one geometry no parse boundary ever
+    sees — so left alone it reaches `cache.save`, whose coordinates go to the `arrays.npz`
+    sidecar rather than through `write_json`'s `allow_nan=False`. Nothing downstream would
+    object: it round-trips the cache and `parents_digest` hashes it to a stable key, so
+    every later step would be computed from it silently. `on_failure: best` is the path
+    that carries it there, backfilling the seed itself in place of a parse.
+    """
+    seed = tmp_path / "diverged.xyz"
+    seed.write_text(f"2\nseed\nH 0.0 0.0 0.0\nH {literal} 0.0 1.5\n", encoding="utf-8")
+    cfg = _config(tmp_path, input=seed)
+    with pytest.raises(ConfigError, match="non-finite coordinate"):
+        pipeline.bootstrap(cfg)
+
+
 def test_bootstrap_from_smiles_csv(tmp_path: Path):
     csv = tmp_path / "smiles.csv"
     csv.write_text("smiles\nC\nCC\n", encoding="utf-8")

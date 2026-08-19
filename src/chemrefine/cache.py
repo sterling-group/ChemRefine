@@ -656,6 +656,42 @@ def read_json(path: Path, default: Any, *, label: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
+def _require_finite_arrays(structure: Structure, step_dir: Path) -> None:
+    """Raise :class:`CacheError` unless ``structure``'s coordinates and forces are finite.
+
+    **The half of the no-NaN promise the JSON writer cannot make.** :func:`write_json` passes
+    ``allow_nan=False``, so a non-finite value in the *document* is refused — but the
+    coordinates and forces are the one part of a record that never reaches it: they are moved
+    out by :func:`_split_arrays` and written to the ``arrays.npz`` sidecar, which is a raw
+    buffer with no such check. So the very fields the document protects most carefully were
+    the only ones that could be stored unexamined.
+
+    What that cost is not a crash but a silence. A NaN geometry round-trips ``save`` → ``load``
+    intact, and :func:`parents_digest` hashes it to a perfectly stable key, so the step
+    validates, the fingerprint matches, and every later step is computed from coordinates
+    that are not numbers — with nothing anywhere reporting a problem.
+
+    A backstop, and meant to stay one: the parse boundaries and
+    :func:`chemrefine.pipeline._state_from_frames` refuse these values where a person can act
+    on them, naming the output file or the seed row. Reaching *here* means one of those was
+    bypassed, which is why this raises rather than repairs.
+
+    Forces are held to the same rule for the reason the parse boundary gives: a non-finite
+    force is what an ``mlip-train`` step would go on to fit.
+    """
+    for field, array in (
+        ("coordinates", structure.atoms.get_positions()),
+        ("forces", structure.forces_ev_per_a),
+    ):
+        if array is not None and not np.isfinite(np.asarray(array, dtype=np.float64)).all():
+            raise CacheError(
+                f"structure {structure.id} has non-finite {field} (nan/inf) and will not be "
+                f"cached to {step_dir / '_cache'}: the sidecar would store them and every "
+                f"later step would be computed from them. This should have been refused at "
+                f"the parse boundary — please report it."
+            )
+
+
 def save(
     *,
     step_cfg: StepConfig,
@@ -671,7 +707,13 @@ def save(
     ``StepContext`` a caller happened to pass — and ``prev_state`` is rebound to a subset of
     the parents on the retry paths, which would key the step to a fingerprint nothing can
     match again.
+
+    Refuses a structure whose coordinates or forces are not finite — see
+    :func:`_require_finite_arrays` for why this is the one check the JSON half does not
+    already make.
     """
+    for structure in results.structures:
+        _require_finite_arrays(structure, step_dir)
     records = [structure_record(s) for s in results.structures]
     # Moves the coordinates out of `records`, leaving the metadata document behind.
     arrays = _split_arrays(records)

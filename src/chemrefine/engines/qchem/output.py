@@ -95,9 +95,14 @@ def _last_orientation(text: str, src: str) -> tuple[tuple[str, ...], NDArray[np.
         parts = line.split()
         if len(parts) == 5 and parts[0].isdigit():
             try:
-                rows.append([float(parts[2]), float(parts[3]), float(parts[4])])
+                row = [float(parts[2]), float(parts[3]), float(parts[4])]
+                # `float()` rejects a `*****` overflow but accepts `nan` / `inf`, and a
+                # non-finite coordinate is the same unusable geometry by a quieter route.
+                if not np.isfinite(row).all():
+                    raise ValueError(f"non-finite coordinate in {line.strip()!r}")
             except ValueError as e:
                 raise OutputParseError(f"malformed coordinate row in {src}: {e}") from e
+            rows.append(row)
             symbols.append(parts[1])
             continue
         if symbols:
@@ -178,8 +183,14 @@ def _displacement_rows(
         parts = lines[j].split()
         if len(parts) == 1 + 3 * n_modes and not parts[0].startswith("TransDip"):
             try:
-                rows.append([float(token) for token in parts[1:]])
+                row = [float(token) for token in parts[1:]]
+                # `float()` accepts ``nan`` / ``inf``. A non-finite displacement would ride
+                # the tensor into `nms.displace_along_mode` and put NaN into every child
+                # geometry it builds, so it withholds the tensor like a corrupt token does.
+                if not np.isfinite(row).all():
+                    return j, None
             except ValueError:
                 return j, None
+            rows.append(row)
         j += 1
     return j, rows if len(rows) == n_atoms else None

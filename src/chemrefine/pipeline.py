@@ -31,6 +31,7 @@ from pathlib import Path
 from types import FrameType
 from typing import NoReturn
 
+import numpy as np
 from ase import Atoms
 
 from chemrefine import filtering, io, slurm
@@ -96,10 +97,31 @@ def _state_from_frames(frames: Iterable[Atoms]) -> PipelineState:
 
     The shared tail of every seeder: continuous IDs in iteration order, so a
     directory's frames number straight on from the previous file's.
+
+    It is also where a seed geometry is checked for finiteness, and being the shared tail is
+    why: one guard covers the file, the directory and the SMILES paths alike. ASE's reader
+    accepts a ``nan`` coordinate, and a seed is the one geometry no parse boundary ever sees
+    — so left here it would reach :func:`chemrefine.cache.save`, whose coordinates go to the
+    ``arrays.npz`` sidecar rather than through ``write_json``'s ``allow_nan=False``. Nothing
+    downstream would object: it round-trips the cache and :func:`~chemrefine.cache.parents_digest`
+    hashes it to a perfectly stable key, so every later step would be computed from
+    coordinates that are not numbers, silently. The engine's own parse guard cannot catch
+    this one, because on the ``on_failure: best`` path the seed is carried forward *instead*
+    of a parse.
+
+    :class:`~chemrefine.errors.ConfigError` rather than a parse error: the offending file is
+    the user's input, and it is named so they can find the row.
     """
-    return PipelineState(
-        structures=tuple(Structure(id=str(i), atoms=atoms) for i, atoms in enumerate(frames))
-    )
+    structures = []
+    for i, atoms in enumerate(frames):
+        if not np.isfinite(atoms.get_positions()).all():
+            raise ConfigError(
+                f"seed structure {i} has a non-finite coordinate (nan/inf). A geometry that "
+                f"is not numbers cannot be computed on, and nothing downstream would reject "
+                f"it — check the input file this seed was read from."
+            )
+        structures.append(Structure(id=str(i), atoms=atoms))
+    return PipelineState(structures=tuple(structures))
 
 
 def _seed_from_xyz(path: Path) -> PipelineState:

@@ -71,6 +71,17 @@ def test_a_corrupt_coordinate_is_unparseable():
         parse_qchem_text(_ORIENTATION.replace("-1.713730", "*********") + _ENERGY)
 
 
+@pytest.mark.parametrize("literal", ["NaN", "inf", "-inf"])
+def test_a_non_finite_coordinate_is_unparseable(literal: str):
+    """A diverged geometry is the same failure as the overflow above.
+
+    ``float()`` rejects ``*****`` but accepts these, so they parsed into a ``Structure``
+    and reached the cache sidecar, which stores coordinates without inspecting them.
+    """
+    with pytest.raises(OutputParseError, match="non-finite coordinate"):
+        parse_qchem_text(_ORIENTATION.replace("-1.713730", literal) + _ENERGY)
+
+
 def test_no_frequency_section_reads_as_none():
     """``None`` = no section at all; distinct from a section with zero imaginary modes."""
     parsed = parse_qchem_text(_ORIENTATION + _ENERGY)[0]
@@ -205,6 +216,18 @@ def test_a_block_without_a_displacement_table_keeps_its_frequencies():
 def test_a_corrupt_displacement_token_drops_the_tensor_not_the_frequencies():
     """A non-float token of the right row width loses the tensor; the spectrum survives."""
     parsed = parse_qchem_text(_ORIENTATION + _ENERGY + _FREQ_BLOCK.replace("-0.279", "*.279*"))[0]
+    assert parsed.imaginary_freqs == {6: -151.64}
+    assert parsed.normal_modes is None
+
+
+def test_a_non_finite_displacement_token_drops_the_tensor_too():
+    """A diverged displacement is withheld like a corrupt one, and for a sharper reason.
+
+    This tensor is what ``nms.displace_along_mode`` adds to a parent's coordinates, so a
+    non-finite component would not merely be stored — it would put NaN into the geometry of
+    every displaced child the NMS round builds.
+    """
+    parsed = parse_qchem_text(_ORIENTATION + _ENERGY + _FREQ_BLOCK.replace("-0.279", "nan"))[0]
     assert parsed.imaginary_freqs == {6: -151.64}
     assert parsed.normal_modes is None
 

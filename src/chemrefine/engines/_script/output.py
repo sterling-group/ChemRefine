@@ -10,6 +10,7 @@ forces); this reads it back into the shared ``ParsedResult`` the assembler turns
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
 
@@ -52,10 +53,27 @@ def _load_output_json(out_path: Path, *, label: str) -> dict[str, Any]:
     if "energy_hartree" not in data:
         raise OutputParseError(f"{label} output {out_path} missing required 'energy_hartree' field")
     _require_finite(data["energy_hartree"], what="energy_hartree", label=label, path=out_path)
-    for row in data.get("gradient_hartree_per_bohr") or ():
-        for component in row:
-            _require_finite(component, what="gradient_hartree_per_bohr", label=label, path=out_path)
+    for what in ("positions_angstrom", "gradient_hartree_per_bohr"):
+        for component in _components(data.get(what) or ()):
+            _require_finite(component, what=what, label=label, path=out_path)
     return data
+
+
+def _components(block: Any) -> Iterator[Any]:
+    """Yield every scalar of a coordinate or gradient block, whatever shape it arrived in.
+
+    Shape is :func:`_atoms_from_output`'s business and is judged *after* this, so the
+    finiteness check must not presume one. A flat ``3N`` list is the natural mistake — a
+    backend handing back ``coords.ravel()`` produces one — and iterating it as though it
+    held rows raises a bare ``TypeError``, which is the very class of escape the finiteness
+    guard exists to close. Yielding scalars either way means a malformed *and* diverged
+    block still fails as the shape error it is, with the message that names it.
+    """
+    for item in block:
+        if isinstance(item, (list, tuple)):
+            yield from item
+        else:
+            yield item
 
 
 def _require_finite(value: Any, *, what: str, label: str, path: Path) -> float:
@@ -72,6 +90,14 @@ def _require_finite(value: Any, *, what: str, label: str, path: Path) -> float:
 
     The gradient is held to the same rule: it is the other half of the same diverged
     calculation, and a non-finite force is what the MLIP trainer would go on to train on.
+
+    So is the geometry, and it is the one with two ways to go wrong. A NaN coordinate
+    reaches :func:`chemrefine.cache.structure_record`, whose positions are inline in the
+    ``.result.json`` — so ``write_json``'s ``allow_nan=False`` raises a bare ``ValueError``
+    that :func:`chemrefine.lifecycle._parse_job` does not catch, ending the whole run over
+    one structure. And on the paths that never write a record, the coordinates go to the
+    ``arrays.npz`` sidecar instead, which has no such check: there the NaN is simply stored
+    and served to every later step. Refused here, both become this one ledger entry.
     """
     try:
         number = float(value)

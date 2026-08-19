@@ -216,6 +216,17 @@ MUTATIONS = (
         breaks="a diverged calculation's NaN energy ranks as a real result and, because "
         "every NaN comparison is false, displaces a genuine survivor by list position",
     ),
+    Mutation(
+        id="finite-geometry-guard",
+        path="src/chemrefine/cache.py",
+        old="if array is not None and not np.isfinite(np.asarray(array, dtype=np.float64)).all():",
+        new="if False:",
+        tests="tests/test_cache.py",
+        breaks="a NaN geometry is written to arrays.npz — the half of a record `write_json`'s "
+        "`allow_nan=False` never sees — and served to every downstream step; it round-trips "
+        "the cache and `parents_digest` hashes it to a stable key, so a run reports results "
+        "computed from coordinates that are not numbers, and nothing anywhere says so",
+    ),
 )
 
 

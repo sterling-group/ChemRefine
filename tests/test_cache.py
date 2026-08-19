@@ -620,6 +620,45 @@ def test_a_sidecar_from_another_save_is_refused_not_read(tmp_path: Path):
     )
 
 
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_a_non_finite_geometry_is_never_cached(tmp_path: Path, bad: float):
+    """The half of the no-NaN promise `write_json` cannot make.
+
+    `allow_nan=False` refuses a non-finite value in the *document*, but coordinates are the
+    one part of a record that never reaches it: `_split_arrays` moves them into the
+    `arrays.npz` sidecar, a raw buffer with no such check. What that cost is not a crash but
+    a silence — the geometry round-trips save → load intact and `parents_digest` hashes it
+    to a perfectly stable key, so every later step is computed from coordinates that are not
+    numbers with nothing anywhere reporting a problem.
+    """
+    struct = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [bad, 0, 1.5]]))
+    with pytest.raises(CacheError, match="non-finite coordinates"):
+        save(
+            step_cfg=_cfg(),
+            key=_key("0", step_cfg=_cfg()),
+            results=StepResults(structures=(struct,)),
+            step_dir=tmp_path / "step1",
+            chemrefine_version="2.0.0",
+        )
+
+
+def test_a_non_finite_force_is_never_cached(tmp_path: Path):
+    """Forces ride the same sidecar, and are what an ``mlip-train`` step would go on to fit."""
+    struct = Structure(
+        id="0",
+        atoms=Atoms("H", positions=[[0.0, 0.0, 0.0]]),
+        forces_ev_per_a=np.array([[float("nan"), 0.0, 0.0]]),
+    )
+    with pytest.raises(CacheError, match="non-finite forces"):
+        save(
+            step_cfg=_cfg(),
+            key=_key("0", step_cfg=_cfg()),
+            results=StepResults(structures=(struct,)),
+            step_dir=tmp_path / "step1",
+            chemrefine_version="2.0.0",
+        )
+
+
 def test_a_sidecar_of_the_same_length_is_still_refused(tmp_path: Path):
     """Matching the structure count is not evidence the two files belong together.
 

@@ -107,6 +107,10 @@ def _parse_xyz_frame(
         except ValueError:
             # Corrupt coordinate token (``*****`` overflow etc.) — skip the frame.
             return None, i + 2 + n_atoms
+        if not np.isfinite(row).all():
+            # `float()` accepts ``nan`` / ``inf``, so a diverged frame reaches here intact
+            # where an overflowed one does not. Same unusable geometry, same skip.
+            return None, i + 2 + n_atoms
         symbols.append(parts[0])
         positions.append(row)
     structure = ParsedResult(
@@ -229,10 +233,12 @@ def _parse_last_pes_coord_block(segment: str) -> list[tuple[str, float, float, f
 
 
 def _is_float_triplet(tokens: list[str]) -> bool:
-    """Return ``True`` if every token in a 3-element list parses as a float."""
+    """Return ``True`` if every token in a 3-element list is a **finite** float.
+
+    ``nan`` and ``inf`` parse but are not coordinates, and admitting them here would let a
+    diverged frame through the one gate an overflowed (``*****``) frame is stopped by.
+    """
     try:
-        for tok in tokens:
-            float(tok)
+        return bool(np.isfinite([float(tok) for tok in tokens]).all())
     except ValueError:
         return False
-    return True

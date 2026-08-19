@@ -305,6 +305,30 @@ def test_a_non_finite_gradient_component_is_refused(tmp_path: Path):
         _load_output_json(out, label="MLIP")
 
 
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
+def test_a_non_finite_position_is_refused(tmp_path: Path, literal: str):
+    """The third field of the same diverged calculation, and the one with two failure modes.
+
+    Inline in a `.result.json`, a NaN coordinate meets `write_json`'s `allow_nan=False` and
+    raises a bare `ValueError` that `lifecycle._parse_job` does not catch — the whole run
+    ends over one structure. On the paths that write no record it goes to the `arrays.npz`
+    sidecar instead, which has no such check, and is simply served to every later step.
+    """
+    out = _write_output(
+        tmp_path, f'{{"energy_hartree": -1.0, "positions_angstrom": [[0.0, {literal}, 0.0]]}}'
+    )
+    with pytest.raises(OutputParseError, match=r"non-finite.*positions_angstrom"):
+        _load_output_json(out, label="MLIP")
+
+
+def test_a_finite_position_still_passes(tmp_path: Path):
+    """The guard must not reject an ordinary optimised geometry."""
+    out = _write_output(
+        tmp_path, '{"energy_hartree": -1.5, "positions_angstrom": [[0.0, 0.0, 0.0]]}'
+    )
+    assert _load_output_json(out, label="MLIP")["positions_angstrom"] == [[0.0, 0.0, 0.0]]
+
+
 def test_a_non_numeric_energy_is_refused(tmp_path: Path):
     """`float()` on a string would escape as a bare ValueError, past the exit-code contract."""
     out = _write_output(tmp_path, '{"energy_hartree": "diverged"}')

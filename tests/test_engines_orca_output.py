@@ -389,6 +389,26 @@ def test_parse_dft_corrupt_coordinate_token_raises_parse_error(tmp_path: Path):
         parse_dft(path)
 
 
+@pytest.mark.parametrize("literal", ["NaN", "inf", "-inf"])
+def test_parse_dft_non_finite_coordinate_raises_parse_error(tmp_path: Path, literal: str):
+    """A diverged geometry is the same unusable coordinate row, by a quieter route.
+
+    ``float()`` rejects the ``*****`` above but *accepts* these, so they reached a
+    ``Structure`` — and from there the cache sidecar, which stores them unexamined.
+    """
+    path = tmp_path / "diverged-coords.out"
+    path.write_text(
+        "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "---------------------------------\n"
+        f"  H   0.000000   {literal}   0.000000\n"
+        "---------------------------------\n"
+        "FINAL SINGLE POINT ENERGY     -1.0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(OutputParseError, match="non-finite coordinate"):
+        parse_dft(path)
+
+
 # ---------------------------------------------------------------------------
 # parse_forces
 # ---------------------------------------------------------------------------
@@ -616,6 +636,24 @@ def test_parse_goat_ensemble_skips_frame_with_corrupt_coordinate(tmp_path: Path)
         "1\n"
         "-3.0\n"
         "H 0.0 0.0 1.0\n",
+        encoding="utf-8",
+    )
+    parsed = parse_goat_ensemble(ensemble)
+    assert [p.energy_hartree for p in parsed] == [-1.0, -3.0]
+
+
+def test_parse_goat_ensemble_skips_frame_with_non_finite_coordinate(tmp_path: Path):
+    """A diverged frame is skipped exactly like the corrupt one above.
+
+    It is a *skip* and not a raise on purpose: one bad conformer out of an ensemble has
+    never failed the others, and the guard is here to make ``nan`` follow the rule
+    ``*****`` already follows — not to change what that rule is.
+    """
+    ensemble = tmp_path / "diverged.finalensemble.xyz"
+    ensemble.write_text(
+        "1\n-1.0\nH 0.0 0.0 0.0\n"
+        "1\n-2.0\nH 0.0 nan 0.0\n"  # diverged middle frame
+        "1\n-3.0\nH 0.0 0.0 1.0\n",
         encoding="utf-8",
     )
     parsed = parse_goat_ensemble(ensemble)

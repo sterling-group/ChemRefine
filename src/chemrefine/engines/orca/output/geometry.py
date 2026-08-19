@@ -25,7 +25,8 @@ def parse_coordinates_from_text(
     """Return ``(symbols, positions)`` from the **last** coordinates block, or ``None``.
 
     ``None`` means the block is absent. Raises :class:`ValueError` on a malformed coordinate
-    row (e.g. a ``*****`` overflow token) — the coordinator turns that into an
+    row — an unparseable token (``*****`` overflow) or a non-finite one (``nan`` / ``inf``,
+    which ``float()`` accepts) — and the coordinator turns that into an
     :class:`~chemrefine.errors.OutputParseError` with file context.
     """
     blocks = _COORD_BLOCK_RE.findall(text)
@@ -35,13 +36,23 @@ def parse_coordinates_from_text(
 
 
 def _parse_coord_block(block: str) -> tuple[tuple[str, ...], NDArray[np.float64]]:
-    """Parse the body of a ``CARTESIAN COORDINATES (ANGSTROEM)`` block."""
+    """Parse the body of a ``CARTESIAN COORDINATES (ANGSTROEM)`` block.
+
+    Raises :class:`ValueError` on a row that is not three finite numbers. ``float()``
+    already does that for an overflow token (``*****``), but it *accepts* ``nan`` and
+    ``inf`` — and a non-finite coordinate is the same unusable geometry by a quieter
+    route. Raising the same exception for both means the caller's existing handler turns
+    them into the same :class:`~chemrefine.errors.OutputParseError`.
+    """
     symbols: list[str] = []
     positions: list[list[float]] = []
     for line in block.strip().splitlines():
         parts = line.split()
         if len(parts) < 4:
             continue
+        row = [float(parts[1]), float(parts[2]), float(parts[3])]
+        if not np.isfinite(row).all():
+            raise ValueError(f"non-finite coordinate in {line.strip()!r}")
         symbols.append(parts[0])
-        positions.append([float(parts[1]), float(parts[2]), float(parts[3])])
+        positions.append(row)
     return tuple(symbols), np.array(positions, dtype=np.float64)
