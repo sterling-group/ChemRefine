@@ -18,7 +18,7 @@ function builder() {
     schema: null,
     cfg: { steps: [] },
     execRows: [],
-    stepKeys: [],   // stable per-card identity; see rekeySteps()
+    stepKeys: [], // stable per-card identity; see rekeySteps()
     _uid: 0,
     yamlText: "",
     rawEdit: false,
@@ -31,12 +31,27 @@ function builder() {
     resultsStep: "",
     _statusTimer: null,
     _chatGen: 0,
-    chat: { detail: "", msgs: [], pending: [], decisions: {}, draft: "", busy: false,
-            provider: localStorage.getItem("cr-provider") || "ollama",
-            model: localStorage.getItem("cr-model") || "",
-            baseUrl: localStorage.getItem("cr-baseurl") || "" },
-    browse: { open: false, mode: "save", title: "", path: "", parent: "",
-              entries: [], filename: "input.yaml", onPick: null },
+    chat: {
+      detail: "",
+      msgs: [],
+      pending: [],
+      decisions: {},
+      draft: "",
+      busy: false,
+      provider: localStorage.getItem("cr-provider") || "ollama",
+      model: localStorage.getItem("cr-model") || "",
+      baseUrl: localStorage.getItem("cr-baseurl") || "",
+    },
+    browse: {
+      open: false,
+      mode: "save",
+      title: "",
+      path: "",
+      parent: "",
+      entries: [],
+      filename: "input.yaml",
+      onPick: null,
+    },
     tmpl: { open: false, step: null, path: "", text: "" },
     _timer: null,
 
@@ -53,16 +68,17 @@ function builder() {
       let data = null;
       let served = true;
       try {
-        const probe = await fetch("/api/bootstrap",
-                                  { headers: { "X-ChemRefine-Token": this.token } });
+        const probe = await fetch("/api/bootstrap", {
+          headers: { "X-ChemRefine-Token": this.token },
+        });
         if (probe.ok) data = await probe.json();
       } catch (err) {
         served = false; // nothing listening: this is the static docs copy
       }
       if (!data && served) {
         this.fatal =
-          "This tab's session token is stale — the server was restarted. Open the "
-          + "URL printed by `chemrefine gui` again.";
+          "This tab's session token is stale — the server was restarted. Open the " +
+          "URL printed by `chemrefine gui` again.";
         this.ready = true;
         return;
       }
@@ -71,8 +87,9 @@ function builder() {
         this.serverHost = data.host || "";
         if (data.initial) {
           this.savedPath = data.initial.path;
-          const parsed = await this.api("POST", "/api/parse",
-                                        { yaml_text: data.initial.yaml_text });
+          const parsed = await this.api("POST", "/api/parse", {
+            yaml_text: data.initial.yaml_text,
+          });
           if (parsed && parsed.config) this.cfg = this.withSteps(parsed.config);
         }
       } else {
@@ -102,9 +119,11 @@ function builder() {
       for (const field of this.topFields) {
         if (field.fallback === "" || this.cfg[field.key] !== undefined) continue;
         this.cfg[field.key] =
-          field.kind === "number" ? field.fallbackNum
-          : field.kind === "checkbox" ? field.fallback === "true"
-          : field.fallback;
+          field.kind === "number"
+            ? field.fallbackNum
+            : field.kind === "checkbox"
+              ? field.fallback === "true"
+              : field.fallback;
       }
     },
 
@@ -124,7 +143,7 @@ function builder() {
       }
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        this.flash = data.error || (response.status + " error");
+        this.flash = data.error || response.status + " error";
         return null;
       }
       return data;
@@ -167,16 +186,27 @@ function builder() {
       // Presentation order only (the emitted YAML uses the schema's canonical order):
       // where things live, what the molecule is, what resources it gets, how it runs.
       const curated = [
-        "input", "template_dir", "output_dir", "scratch_dir",
-        "charge", "multiplicity",
-        "max_cores", "max_gpus", "job_timeout_seconds",
-        "dispatch", "slurm_template", "slurm_array",
+        "input",
+        "template_dir",
+        "output_dir",
+        "scratch_dir",
+        "charge",
+        "multiplicity",
+        "max_cores",
+        "max_gpus",
+        "job_timeout_seconds",
+        "dispatch",
+        "slurm_template",
+        "slurm_array",
       ];
       const rank = Object.fromEntries(curated.map((key, i) => [key, i]));
-      return fieldSpecs(this.schema.config, ["steps", "executables"])
-        .sort((a, b) => (rank[a.key] ?? 99) - (rank[b.key] ?? 99));
+      return fieldSpecs(this.schema.config, ["steps", "executables"]).sort(
+        (a, b) => (rank[a.key] ?? 99) - (rank[b.key] ?? 99),
+      );
     },
-    get engineNames() { return Object.keys(this.schema.engines).sort(); },
+    get engineNames() {
+      return Object.keys(this.schema.engines).sort();
+    },
     operationsFor(step) {
       // Each engine's own vocabulary (the ORCA family today, ExtOpt engines included —
       // they are ORCA-driven and parse the same outputs). An engine that declares none
@@ -186,11 +216,15 @@ function builder() {
       // fall back to the document-level list rather than claiming "not used".
       const ops = descriptor.operations
         ? [...descriptor.operations]
-        : ("operations" in descriptor ? [] : [...(this.schema.operations || [])]);
+        : "operations" in descriptor
+          ? []
+          : [...(this.schema.operations || [])];
       if (step.operation && !ops.includes(step.operation)) ops.unshift(step.operation);
       return ops;
     },
-    get nmsFields() { return fieldSpecs(this.schema.nms); },
+    get nmsFields() {
+      return fieldSpecs(this.schema.nms);
+    },
     nmsFieldsFor(step) {
       // Knobs only meaningful for one target stay hidden until that target is chosen;
       // passthroughKeys still counts the full set as declared, so nothing gets flagged.
@@ -225,7 +259,8 @@ function builder() {
     },
     passthroughKeys(step) {
       const declared = new Set(
-        engineAndNmsKeys(this.engineFields(step.engine), step.nms ? this.nmsFields : []));
+        engineAndNmsKeys(this.engineFields(step.engine), step.nms ? this.nmsFields : []),
+      );
       return Object.keys(step.options || {}).filter((key) => !declared.has(key));
     },
 
@@ -287,8 +322,10 @@ function builder() {
 
     // ---------------- executables (dict → editable rows) ----------------
     syncExecRows() {
-      this.execRows = Object.entries(this.cfg.executables || {})
-        .map(([name, path]) => ({ name, path: String(path) }));
+      this.execRows = Object.entries(this.cfg.executables || {}).map(([name, path]) => ({
+        name,
+        path: String(path),
+      }));
     },
     writeExecBack() {
       const entries = this.execRows
@@ -303,7 +340,9 @@ function builder() {
       else delete this.cfg.executables;
       this.syncYaml();
     },
-    addExec() { this.execRows.push({ name: "", path: "" }); },
+    addExec() {
+      this.execRows.push({ name: "", path: "" });
+    },
     removeExec(index) {
       this.execRows.splice(index, 1);
       this.writeExecBack();
@@ -317,11 +356,13 @@ function builder() {
       this.writeExecBack();
     },
     browseExec(index) {
-      this.openBrowseWith("Pick the " + (this.execRows[index].name || "executable") +
-                          " binary", (path) => {
-        this.execRows[index].path = path;
-        this.writeExecBack();
-      });
+      this.openBrowseWith(
+        "Pick the " + (this.execRows[index].name || "executable") + " binary",
+        (path) => {
+          this.execRows[index].path = path;
+          this.writeExecBack();
+        },
+      );
     },
 
     addStep() {
@@ -349,11 +390,16 @@ function builder() {
       this.stepKeys = this.cfg.steps.map(() => ++this._uid);
     },
     renumber() {
-      this.cfg.steps.forEach((step, i) => { step.step = i + 1; });
+      this.cfg.steps.forEach((step, i) => {
+        step.step = i + 1;
+      });
       // The results view names a step by number; after renumbering that number means a
       // different step (or none), so the panel must let go rather than keep serving
       // the old one under a selector that has silently snapped back to "—".
-      if (this.resultsStep && !this.cfg.steps.some((s) => String(s.step) === String(this.resultsStep))) {
+      if (
+        this.resultsStep &&
+        !this.cfg.steps.some((s) => String(s.step) === String(this.resultsStep))
+      ) {
         this.resultsStep = "";
         this.runResults = null;
       }
@@ -392,8 +438,8 @@ function builder() {
       }
     },
     async leaveRawEdit() {
-      if (this.rawEdit) return;                 // entering text mode: nothing to apply
-      this.rawEdit = true;                      // hold the mode until the text parses
+      if (this.rawEdit) return; // entering text mode: nothing to apply
+      this.rawEdit = true; // hold the mode until the text parses
       await this.applyRaw();
     },
     async applyRaw() {
@@ -416,14 +462,15 @@ function builder() {
         return;
       }
       const base = this.savedPath ? parentDir(this.savedPath) : null;
-      this.report = await this.api("POST", "/api/validate",
-                                   { yaml_text: this.yamlText, base_dir: base });
+      this.report = await this.api("POST", "/api/validate", {
+        yaml_text: this.yamlText,
+        base_dir: base,
+      });
     },
     async scaffold() {
       const data = await this.api("POST", "/api/scaffold", { config_path: this.savedPath });
       if (data) {
-        this.flash = "scaffold: " + data.written.length + " written, "
-                   + data.kept.length + " kept";
+        this.flash = "scaffold: " + data.written.length + " written, " + data.kept.length + " kept";
       }
     },
 
@@ -432,8 +479,7 @@ function builder() {
       if (!this.savedPath) return;
       const status = await this.api("POST", "/api/status", { config_path: this.savedPath });
       if (status) this.runStatus = status;
-      this.runFailures = await this.api("POST", "/api/failures",
-                                        { config_path: this.savedPath });
+      this.runFailures = await this.api("POST", "/api/failures", { config_path: this.savedPath });
       clearTimeout(this._statusTimer);
       if (status && status.running) {
         // Poll while a driver holds the tree; stop the moment it lets go.
@@ -441,15 +487,25 @@ function builder() {
       }
     },
     async launch(action) {
-      const blurb = action === "run"
-        ? "start the full pipeline from step 1 (invalidates the cache)"
-        : action === "resume" ? "resume, honouring the cache" : "re-attempt failed jobs";
-      if (!window.confirm(action + " on " + this.savedPath + "?\nThis will " + blurb
-                          + " — real compute on this machine.")) {
+      const blurb =
+        action === "run"
+          ? "start the full pipeline from step 1 (invalidates the cache)"
+          : action === "resume"
+            ? "resume, honouring the cache"
+            : "re-attempt failed jobs";
+      if (
+        !window.confirm(
+          action +
+            " on " +
+            this.savedPath +
+            "?\nThis will " +
+            blurb +
+            " — real compute on this machine.",
+        )
+      ) {
         return;
       }
-      const started = await this.api("POST", "/api/run",
-                                     { config_path: this.savedPath, action });
+      const started = await this.api("POST", "/api/run", { config_path: this.savedPath, action });
       if (started) {
         this.flash = action + " started (pid " + started.pid + "); log: " + started.log;
         this.refreshStatus();
@@ -462,7 +518,10 @@ function builder() {
         return;
       }
       this.runResults = await this.api("POST", "/api/results", {
-        config_path: this.savedPath, step: Number(step), limit: 20, offset,
+        config_path: this.savedPath,
+        step: Number(step),
+        limit: 20,
+        offset,
       });
     },
 
@@ -492,8 +551,8 @@ function builder() {
       this.chat.busy = true;
       try {
         const data = await this.api("POST", "/api/agent/chat", this._chatPayload(extra));
-        if (!data) return false;                       // server refused; flash explains
-        if (generation !== this._chatGen) return true;  // a reset won the race: drop it
+        if (!data) return false; // server refused; flash explains
+        if (generation !== this._chatGen) return true; // a reset won the race: drop it
         if (data.pending) {
           this.chat.pending = data.pending;
           this.chat.decisions = {};
@@ -570,13 +629,20 @@ function builder() {
       await this.navigate(null);
     },
     async openSave() {
-      this.browse = { ...this.browse, open: true, mode: "save", onPick: null,
-                      title: "Save workflow as…" };
+      this.browse = {
+        ...this.browse,
+        open: true,
+        mode: "save",
+        onPick: null,
+        title: "Save workflow as…",
+      };
       await this.navigate(null);
     },
     async navigate(path) {
-      const data = await this.api("GET",
-        "/api/browse" + (path ? "?path=" + encodeURIComponent(path) : ""));
+      const data = await this.api(
+        "GET",
+        "/api/browse" + (path ? "?path=" + encodeURIComponent(path) : ""),
+      );
       if (data) {
         this.browse.path = data.path;
         this.browse.parent = data.parent;
@@ -599,8 +665,7 @@ function builder() {
     },
     async saveTo() {
       const path = this.browse.path + "/" + (this.browse.filename || "input.yaml");
-      const data = await this.api("POST", "/api/save",
-                                  { path, yaml_text: this.yamlText });
+      const data = await this.api("POST", "/api/save", { path, yaml_text: this.yamlText });
       if (data) {
         this.savedPath = data.path;
         this.browse.open = false;
@@ -611,14 +676,22 @@ function builder() {
     // ---------------- template editor ----------------
     async openTemplate(step) {
       const key = step.name || step.step;
-      const data = await this.api("GET", "/api/template?config_path="
-        + encodeURIComponent(this.savedPath) + "&step=" + encodeURIComponent(key));
+      const data = await this.api(
+        "GET",
+        "/api/template?config_path=" +
+          encodeURIComponent(this.savedPath) +
+          "&step=" +
+          encodeURIComponent(key),
+      );
       if (data) this.tmpl = { open: true, step: step.step, path: data.path, text: data.text };
       else this.flash += " — run Scaffold templates first?";
     },
     async saveTemplate() {
-      const data = await this.api("POST", "/api/template",
-        { config_path: this.savedPath, step: this.tmpl.step, text: this.tmpl.text });
+      const data = await this.api("POST", "/api/template", {
+        config_path: this.savedPath,
+        step: this.tmpl.step,
+        text: this.tmpl.text,
+      });
       if (data) {
         this.flash = "saved " + data.path;
         this.tmpl.open = false;

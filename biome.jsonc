@@ -1,0 +1,67 @@
+{
+  // Biome is ruff's opposite number for the GUI: one binary that formats and lints the
+  // JavaScript and CSS and lints the HTML. It reads no pyproject.toml, so the settings
+  // live here — and `.jsonc` rather than `.json` because Biome documents comments only
+  // for that spelling, and a config nobody can annotate is a config nobody can question.
+  //
+  // Pinned to the version .pre-commit-config.yaml installs. A $schema one minor ahead
+  // advertises keys the pinned binary rejects, so the editor calls the config valid while
+  // the hook fails on it — bump both in the same commit, always.
+  "$schema": "https://biomejs.dev/schemas/2.5.9/schema.json",
+
+  "files": {
+    // Scoped positively rather than by exclusion: `site/` is the built mkdocs output
+    // sitting untracked in the tree, and Biome does not read .gitignore unless told to
+    // (`vcs.useIgnoreFile` defaults to false), so a `["**"]` include would lint every
+    // minified bundle the docs build copied. Four files are the whole frontend; there is
+    // no other JavaScript in this repository.
+    "includes": [
+      "src/chemrefine/gui/static/**",
+      // The vendored bundles must stay byte-identical to what upstream published — that
+      // is the only thing that makes `test_the_javascript_parses` meaningful for them, a
+      // truncated download being otherwise indistinguishable from a working one. NOTE
+      // this negation does not apply to paths passed on the command line
+      // (biomejs/biome#7268), and pre-commit always passes paths, so the load-bearing
+      // guard is the `exclude:` in .pre-commit-config.yaml. This one covers `biome .`.
+      "!src/chemrefine/gui/static/vendor/**"
+    ]
+  },
+
+  "formatter": {
+    // Biome's default is "tab". The frontend is 2-space throughout — app.js alone has 299
+    // lines at 6 columns, 154 at 4 and 108 at 8, which are 2-space steps — so leaving
+    // this out would convert all four files to tabs for no reason anyone asked for.
+    // indentWidth is omitted because its default, 2, is already the right answer.
+    "indentStyle": "space",
+    // Biome's default is 80; [tool.ruff] line-length is 100. One number governs the
+    // repository, and at 80 every line already over it would rewrap for nothing.
+    "lineWidth": 100
+  },
+
+  "linter": {
+    "rules": {
+      "suspicious": {
+        // app.js and forms.js are classic scripts: index.html loads them with bare
+        // `<script src>` tags, and app.js reaches forms.js's helpers through the global
+        // scope — which no module system would allow. Biome parses .js as ESM (nothing
+        // says otherwise) and so reads their `"use strict";` as redundant. The fix is
+        // classified *safe*, so `check --write` would delete it and silently drop strict
+        // mode from the whole GUI: undeclared assignment stops throwing, and top-level
+        // `this` stops being undefined.
+        "noRedundantUseStrict": "off"
+      }
+    }
+  },
+
+  "html": {
+    // Lint yes, format no — the pair is the decision, so both are written out even though
+    // both are the current defaults, and a Biome release that flips either cannot do it
+    // quietly. The formatter is still marked experimental, and index.html is not ordinary
+    // markup: tests/test_gui_assets.py reads it with a regex that assumes one Alpine
+    // attribute per `attr="value"` on a single line. A formatter that rewraps 522 lines
+    // of that can move an attribute across a line break, and the binding guards would
+    // then pass while checking fewer expressions than they report.
+    "formatter": { "enabled": false },
+    "linter": { "enabled": true }
+  }
+}

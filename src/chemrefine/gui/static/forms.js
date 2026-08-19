@@ -37,15 +37,32 @@ function fieldSpec(key, prop) {
   }
   if (p.$ref || p.type === "object" || p.type === "array") return null;
   const doc = (p.description || "").split("\n\n")[0];
-  const fallback = prop.default === undefined || prop.default === null
-    ? "" : String(prop.default);
+  const fallback = prop.default === undefined || prop.default === null ? "" : String(prop.default);
   if (Array.isArray(p.enum)) {
-    return { key, kind: "select", options: p.enum, fallback, doc, path: false,
-             min: null, max: null, fallbackNum: null };
+    return {
+      key,
+      kind: "select",
+      options: p.enum,
+      fallback,
+      doc,
+      path: false,
+      min: null,
+      max: null,
+      fallbackNum: null,
+    };
   }
   if (p.type === "boolean") {
-    return { key, kind: "checkbox", options: [], fallback, doc, path: false,
-             min: null, max: null, fallbackNum: null };
+    return {
+      key,
+      kind: "checkbox",
+      options: [],
+      fallback,
+      doc,
+      path: false,
+      min: null,
+      max: null,
+      fallbackNum: null,
+    };
   }
   if (p.type === "integer" || p.type === "number") {
     const { min, max } = numericBounds(p);
@@ -53,12 +70,20 @@ function fieldSpec(key, prop) {
     // spinner steps from it — an empty input steps from min-or-0, which is how
     // "max_cores shows 4 but the arrow gives 1" happened. null = genuinely unset-able.
     const fallbackNum = typeof prop.default === "number" ? prop.default : null;
-    return { key, kind: "number", options: [], fallback, doc, path: false,
-             min, max, fallbackNum };
+    return { key, kind: "number", options: [], fallback, doc, path: false, min, max, fallbackNum };
   }
   const path = /(_dir|^input$)/.test(key);
-  return { key, kind: "text", options: [], fallback, doc, path,
-           min: null, max: null, fallbackNum: null };
+  return {
+    key,
+    kind: "text",
+    options: [],
+    fallback,
+    doc,
+    path,
+    min: null,
+    max: null,
+    fallbackNum: null,
+  };
 }
 
 /** All renderable fields of an object schema, minus `skip`, in schema order. */
