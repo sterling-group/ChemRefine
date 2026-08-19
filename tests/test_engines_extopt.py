@@ -503,6 +503,13 @@ def test_calculate_rejects_wrong_token():
         "/calculate", json=_CALC_PAYLOAD, headers={"Authorization": "Bearer wrong"}
     )
     assert resp.status_code == 401
+    # Non-ASCII is still just a wrong token. Werkzeug decodes headers as latin-1, and
+    # `compare_digest` refuses a non-ASCII str, so this used to be a 500 with a traceback
+    # from inside the auth gate — the one place that should answer plainly.
+    exotic = app.test_client().post(
+        "/calculate", json=_CALC_PAYLOAD, headers={"Authorization": "Bearer wröng"}
+    )
+    assert exotic.status_code == 401
 
 
 def test_calculate_accepts_bearer_token():

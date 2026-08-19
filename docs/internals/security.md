@@ -34,8 +34,10 @@ The `*-extopt` engines start a local HTTP server that ORCA drives for gradients.
   (`:0`), so concurrent jobs on one node never collide and nothing is exposed
   off-host.
 - `/calculate` requires a **per-run bearer token** (`secrets.token_hex(32)`),
-  compared with `secrets.compare_digest`. `/healthz` stays open for the run
-  block's readiness probe.
+  compared with `secrets.compare_digest` — on the **encoded bytes**, because
+  headers arrive latin-1-decoded and `compare_digest` refuses a `str` holding a
+  non-ASCII character, which would answer a malformed token with a 500 instead of
+  a 401. `/healthz` stays open for the run block's readiness probe.
 - The token sidecar is written **`0600`** via `mkstemp` + rename, so it is never
   world-readable, even transiently.
 

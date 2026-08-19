@@ -97,8 +97,13 @@ def create_app(calculator: ComputeBackend, *, token: str | None = None) -> Flask
 
     @app.post("/calculate")
     def calculate() -> Any:
+        # Compared as bytes: Werkzeug decodes headers as latin-1, and `compare_digest`
+        # raises TypeError on a str holding a non-ASCII character — so a header with any
+        # byte above 0x7F turned a plain 401 into a 500 and a logged traceback. Encoding
+        # both sides answers every input in constant time instead of the one class of
+        # wrong token we happened to think of.
         if token is not None and not secrets.compare_digest(
-            request.headers.get("Authorization", ""), f"Bearer {token}"
+            request.headers.get("Authorization", "").encode(), f"Bearer {token}".encode()
         ):
             return jsonify({"error": "unauthorized"}), 401
         try:
