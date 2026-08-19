@@ -61,6 +61,58 @@ def _absolutize_template_paths(text: str, template_dir: Path) -> str:
     return _QUOTED_PATH_RE.sub(_sub, text)
 
 
+WHITESPACE_PATH_REASON = (
+    "ORCA reads each geometry through `* xyzfile <path>`, a whitespace-delimited field it "
+    "does not treat as quotable, and execs an ExtOpt wrapper through `sh`, which splits on "
+    "whitespace too"
+)
+"""Why an ORCA-family step cannot be handed a path with whitespace in it.
+
+Quoted verbatim by :func:`require_whitespace_free` and by
+:mod:`chemrefine.validate`'s early warning, which reaches it through
+:class:`~chemrefine.engines.api.WhitespacePathIntolerant` rather than by importing this
+module — so the reason a user reads is written once, here, beside the directive that
+imposes it."""
+
+
+def require_whitespace_free(path: Path, *, what: str) -> None:
+    """Raise :class:`~chemrefine.errors.ConfigError` if ``path`` contains whitespace.
+
+    **Verified against ORCA 6.1.1 rather than assumed**, in both directions:
+
+    * ``* xyzfile 0 1 /…/my outputs/step1_0_inp.xyz`` makes ORCA report
+      ``CANNOT OPEN FILE`` naming the truncated prefix ``/…/my``. Quoting the value fails
+      identically — the field is not quotable.
+    * ``%method ProgExt "/…/my ext/wrapper.sh"`` *is* read as a quoted string, and then
+      handed to ``sh``: ``sh: 1: /…/my: not found``.
+    * By contrast a quoted ``%``-block *filename* is read correctly
+      (``%pointcharges "/…/my templates/x.pc"`` → ``Reading point charge file ... ok``),
+      which is why this refuses only the paths ChemRefine itself composes and not the
+      auxiliary files a template names.
+
+    Checked here, at the moment the path is written into an input, rather than at config
+    load. That is what makes it the *resolved* path: :func:`chemrefine.step.step_dir_for`
+    calls ``Path.resolve()``, so a directory symlinked through a spaced parent produces a
+    spaced path from a config in which no space appears anywhere — invisible to any check
+    on the configured value.
+
+    The known gap, stated because it is narrow rather than absent: a template that names
+    its *own* ExtOpt wrapper relatively (``ProgExt "extprog.sh"``) has that reference
+    absolutised against ``template_dir`` by :func:`_absolutize_template_paths`, so a spaced
+    ``template_dir`` can still manufacture a spaced ProgExt. That path is the user's to
+    name and ORCA reads every other quoted ``%``-block path with a space correctly, so it
+    is left to the ORCA error rather than guessed at here.
+    """
+    if re.search(r"\s", str(path)):
+        raise ConfigError(
+            f"{what} contains whitespace: {str(path)!r}. {WHITESPACE_PATH_REASON} — so this "
+            f"step cannot run from here. Point `output_dir` at a path without whitespace "
+            f"(a relative one inherits the config file's own directory), or move the "
+            f"project. Engines that do not write paths into an ORCA input — mlip, pyscf, "
+            f"qchem — are unaffected and need no change."
+        )
+
+
 def clamp_pal(text: str, max_pal: int) -> str:
     """Rewrite every PAL / ``nprocs`` declaration above ``max_pal`` down to ``max_pal``.
 
@@ -101,6 +153,7 @@ def build_input(
     """
     if not template_path.is_file():
         raise ConfigError(f"ORCA template not found: {template_path}")
+    require_whitespace_free(xyz_path, what="the ORCA geometry path")
 
     template = template_path.read_text(encoding="utf-8")
     cleaned = _XYZFILE_DIRECTIVE_RE.sub("", template).rstrip()

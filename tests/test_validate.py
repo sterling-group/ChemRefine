@@ -69,30 +69,43 @@ def test_model_errors_keep_pydantic_locs():
     assert report.config is None
 
 
-def test_a_resolved_output_dir_with_a_space_is_a_row_not_an_exception(tmp_path: Path):
-    """The rule `load_config` raises on becomes a report row here — this twin never raises.
+def test_an_orca_step_under_a_whitespace_path_warns_and_does_not_block(tmp_path: Path):
+    """ORCA cannot run from there, but the config is well-formed — so this warns, not fails.
 
-    It has to be re-asked after resolution: a relative `output_dir` inherits the config
-    file's own directory, applied through `model_copy`, which runs no validators. So a
-    plain `output_dir: ./outputs` in a project called `my project` is refused by the run
-    and must be reported here — anchored to the field, so the GUI can highlight it like
-    any other finding.
+    Held as a *warning* deliberately. Enforcing it as an issue made validity depend on
+    where a project sits on disk: a relative `output_dir` inherits the config file's own
+    directory, so an mlip-only workflow under `~/My Drive` was refused although it runs
+    perfectly, and this repository's own example suite went red from any checkout path
+    containing a space. The engine refuses at `prepare`; this is only the early word.
     """
     project = tmp_path / "my project"
-    project.mkdir()
-    report = _validate(project, output_dir="./outputs")
-    assert not report.ok
-    assert report.config is None
-    assert report.issues[0].loc == ("output_dir",)
-    assert "contains a space" in report.issues[0].message
+    (project / "templates").mkdir(parents=True)
+    (project / "templates" / "step1.inp").write_text("! HF\n", encoding="utf-8")
+    (project / "templates" / "cpu.slurm.header").write_text("#!/bin/bash\n", encoding="utf-8")
+    report = validate_config_text(
+        yaml.safe_dump({"steps": [{"step": 1, "engine": "orca", "operation": "sp"}]}),
+        base_dir=project,
+    )
+    assert report.ok, "a whitespace path must not make the config invalid"
+    kinds = [w.kind for w in report.warnings]
+    assert "whitespace-path" in kinds
+    warning = next(w for w in report.warnings if w.kind == "whitespace-path")
+    assert warning.loc == ("steps", 0, "engine")
+    assert "whitespace-delimited" in warning.message
 
 
-def test_a_config_file_may_sit_in_a_spaced_directory_if_output_dir_escapes_it(tmp_path: Path):
-    """Only the tree ORCA writes into is constrained, so the documented fix has to work."""
+def test_an_engine_that_writes_no_orca_input_is_not_warned_about(tmp_path: Path):
+    """The warning follows the capability, not the path — mlip under the same tree is fine.
+
+    This is the half that matters: everything except ORCA's input file is whitespace-safe,
+    so warning about all of them would be the same over-reach in a quieter form.
+    """
     project = tmp_path / "my project"
-    project.mkdir()
-    report = _validate(project, output_dir=str(tmp_path / "outputs"))
-    assert report.ok
+    project.mkdir(parents=True)
+    report = validate_config_text(
+        yaml.safe_dump({"steps": [{"step": 1, "engine": "mlip"}]}), base_dir=project
+    )
+    assert [w.kind for w in report.warnings].count("whitespace-path") == 0
 
 
 def test_a_refused_legacy_spelling_is_one_legacy_issue():

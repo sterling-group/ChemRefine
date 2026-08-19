@@ -1,13 +1,22 @@
 """Per-job operational logs (one file per structure per step).
 
 A *runlog* is one file per job, written beside the calculation it
-describes: ``<step_dir>/<structure_id>/step{N}_{structure_id}.runlog``
-for a structure at its canonical place, and
-``<step_dir>/<structure_id>/attempt{K}/<child_id>/…`` for a convergence
-retry or an NMS round-2 child, which run in an attempt directory of
-their own. (The ``step{N}_structure_{ID}`` basename this module once
-documented is the **v1.3.1** spelling; ``structure_`` was dropped from
-every artifact name in 2.0 — see the v1→v2 migration guide.)
+describes. A structure's own runs sit at its canonical path,
+``<step_dir>/<structure_id>/step{N}_{structure_id}.runlog``; the
+attempt directories hold the rest, in two shapes because two things
+put them there:
+
+* ``<structure_id>/attempt{K}/step{N}_{structure_id}.runlog`` — a
+  *superseded* run, moved there wholesale when the next attempt began
+  (:func:`chemrefine.attempts.archive_previous`). A convergence retry
+  re-runs at the canonical path, so this is where its first try went.
+* ``<structure_id>/attempt{K}/<child_id>/step{N}_{child_id}.runlog`` —
+  a job that *ran* inside the attempt: an NMS round-2 child, or that
+  child's own retry one level deeper.
+
+(The ``step{N}_structure_{ID}`` basename this module once documented is
+the **v1.3.1** spelling; ``structure_`` was dropped from every artifact
+name in 2.0 — see the v1→v2 migration guide.)
 
 The bash header/footer snippets here are embedded in every generated
 SLURM script (which also runs via the local bash fallback), so every
@@ -24,7 +33,9 @@ engine emits the same skeleton:
 The fixed fields (``_HEADER_KEYS`` / ``_FOOTER_KEYS``) drive the field
 order, so a maintainer grepping ``outputs/step*/**/step*.runlog`` sees a
 uniform corpus — every attempt included; engine-specific rows extend the
-header without disturbing that shape.
+header without disturbing that shape. (In bash that pattern needs
+``shopt -s globstar``; without it ``**`` collapses to one level and finds
+only the canonical runlogs. zsh, ``Path.glob`` and ripgrep need nothing.)
 """
 
 from __future__ import annotations

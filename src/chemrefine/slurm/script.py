@@ -75,11 +75,12 @@ _SCRATCH_CLEANUP = 'scratch_kept=false; cd "$OUTPUT_DIR" && rm -rf "$WORK_DIR"'
 Unconditional on both paths. :func:`build_script` once took a ``save_scratch`` flag that
 swapped this for a keep-and-announce line, but it was a v1 concept carried into the
 rewrite's signature and never wired to anything — no config knob, no caller — so it was
-removed rather than left as a knob nobody could reach. The engine-owned equivalent is the
-one that works: an engine that needs artifacts kept returns them as
-:attr:`~chemrefine.state.RunBlock.cleanup` (the ExtOpt server teardown) or names them in
-``output_dirs`` (qchem's ``options.save``, pyscf-extopt's ``tensors/``), which the array
-path honours too — where a builder flag would have had to be added twice.
+removed rather than left as a knob nobody could reach. The engine-owned equivalents are the
+ones that work, and there are two of them: an engine copies a directory home by naming it in
+``output_dirs`` (``pyscf-extopt``'s ``tensors/``), or runs its own teardown by returning it as
+:attr:`~chemrefine.state.RunBlock.cleanup` (``qchem``'s ``options.save``, which copies
+``$QCSCRATCH/$QCSAVE``; the ExtOpt server stop). Both are honoured on the array path as well
+— where a builder flag would have had to be added twice.
 
 ``scratch_kept`` stays in the runlog: the footer is a published artifact, the field still
 reports truthfully, and changing that format is a decision of its own."""

@@ -21,6 +21,7 @@ from chemrefine.engines import _provision
 from chemrefine.engines._backend_server.base import SERVER_URL_FILENAME, ComputeBackend
 from chemrefine.engines._job import gpus_from_options
 from chemrefine.engines._options import EngineOptions
+from chemrefine.engines.orca import input as orca_input
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.engines.orca.extopt import protocol, run_block
 from chemrefine.state import RunBlock, StepContext, StepInputs
@@ -44,8 +45,17 @@ class ExtOptOrcaEngine(OrcaEngine):
         return gpus_from_options(ctx.step_cfg.options, self.options_cls)
 
     def _extra_blocks(self, ctx: StepContext) -> str:
-        """Emit the ``%method ProgExt "<wrapper>"`` block tying ORCA to this step's wrapper."""
-        return f'%method\n  ProgExt "{self._wrapper_path(ctx)}"\nend'
+        """Emit the ``%method ProgExt "<wrapper>"`` block tying ORCA to this step's wrapper.
+
+        The wrapper path is checked as well as the geometry path, even though both are
+        ``step_dir``-derived and one check would catch today's trees: they are written by
+        two different functions, and the failure mode differs (ORCA truncates the geometry
+        field; it hands this one to ``sh``). Each emitter owning its own guard is what keeps
+        that true if either path ever stops sharing a root.
+        """
+        wrapper = self._wrapper_path(ctx)
+        orca_input.require_whitespace_free(wrapper, what="the ExtOpt wrapper path")
+        return f'%method\n  ProgExt "{wrapper}"\nend'
 
     def _server_cmd(self, ctx: StepContext) -> str:
         """Build the ``<python> -m ..._backend_server.server --backend <name> …`` command.

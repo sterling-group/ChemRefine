@@ -524,69 +524,6 @@ def test_executables_allow_spaces_and_bare_command_names(tmp_path: Path, ok: str
     assert load_config(_write_yaml(tmp_path, data)).executables["orca"] == ok
 
 
-def test_output_dir_with_a_space_is_rejected(tmp_path: Path):
-    """ORCA's input format cannot carry a spaced path, so the tree it writes to may not have one.
-
-    Verified against ORCA 6.1.1: `* xyzfile <path>` is whitespace-delimited and not a
-    quotable field, so ORCA truncates at the first space and answers `CANNOT OPEN FILE`
-    with the prefix; and `%method ProgExt "<wrapper>"` is read as a quoted string but then
-    exec'd through `sh`, which splits it. Both paths are output_dir-derived, so every
-    orca / mlip-extopt / pyscf-extopt step under such a tree fails — once per structure,
-    naming a path the user never wrote. Refused at load time instead.
-    """
-    data = _minimal_config(output_dir="./my outputs")
-    with pytest.raises(ConfigError, match="contains a space"):
-        load_config(_write_yaml(tmp_path, data))
-
-
-def test_a_relative_output_dir_under_a_spaced_config_directory_is_rejected(tmp_path: Path):
-    """The rule is re-asked after resolution, because that is when the answer changes.
-
-    Nobody writes `output_dir: ./my outputs`; plenty of projects live under `~/My Drive`
-    or `.../My Project`. A relative `output_dir` inherits the config file's own directory,
-    and `resolve_relative_paths` applies that through `model_copy`, which by design runs
-    no validators — so the field check alone would let the far likelier case straight
-    through, having passed every gate.
-    """
-    project = tmp_path / "my project"
-    project.mkdir()
-    config = project / "input.yaml"
-    config.write_text(yaml.safe_dump(_minimal_config(output_dir="./outputs")), encoding="utf-8")
-    with pytest.raises(ConfigError, match="contains a space"):
-        load_config(config)
-
-
-def test_an_absolute_output_dir_escapes_a_spaced_config_directory(tmp_path: Path):
-    """The check is on the resolved value, so an absolute output_dir is judged on its own.
-
-    A config *file* in a spaced directory is not itself a problem — only the tree ORCA
-    writes into is. Pointing `output_dir` somewhere clean is exactly the fix the error
-    message offers, so it has to work.
-    """
-    project = tmp_path / "my project"
-    project.mkdir()
-    clean = tmp_path / "outputs"
-    config = project / "input.yaml"
-    config.write_text(yaml.safe_dump(_minimal_config(output_dir=str(clean))), encoding="utf-8")
-    assert load_config(config).output_dir == clean
-
-
-@pytest.mark.parametrize("field", ["template_dir", "scratch_dir"])
-def test_the_space_rule_covers_output_dir_only(tmp_path: Path, field: str):
-    """The other two directories may contain spaces, and the scope is the evidence.
-
-    `template_dir` reaches an ORCA input only through `_absolutize_template_paths`, whose
-    regex matches *quoted* strings by construction — and ORCA reads a quoted `%`-block
-    filename with a space correctly (`%pointcharges ".../my templates/x.pc"` →
-    `Reading point charge file ... ok`, normal termination). `scratch_dir` reaches only
-    `export WORK_DIR="..."` in the generated script, which runs correctly under a spaced
-    path. Widening the rule to either would refuse a directory that demonstrably works, so
-    this pins the narrow scope rather than leaving it to the next reader's judgement.
-    """
-    data = _minimal_config(**{field: "./my dir"})
-    assert load_config(_write_yaml(tmp_path, data)) is not None
-
-
 def test_explicit_null_scratch_dir_is_accepted(tmp_path: Path):
     """An explicit ``scratch_dir: null`` still means "auto-derive under output_dir"."""
     data = _minimal_config(scratch_dir=None)

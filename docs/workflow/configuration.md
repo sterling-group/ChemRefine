@@ -42,28 +42,29 @@ steps:
     anywhere finds `proj/templates` and writes `proj/outputs`. Absolute paths are
     used as-is.
 
-!!! warning "`output_dir` must not contain a space"
-    ORCA reads each structure's geometry through `* xyzfile <path>`, which is
-    whitespace-delimited and **not** a quotable field — it truncates the path at the
-    first space — and it runs an ExtOpt wrapper through `sh`, which splits on one.
-    Both paths are derived from `output_dir`, so a space there breaks every `orca`,
-    `mlip-extopt` and `pyscf-extopt` step. The config refuses it at load time rather
-    than letting each job fail with an ORCA error naming a path you never wrote.
+!!! warning "ORCA steps cannot run from a path containing whitespace"
+    ORCA reads each geometry through `* xyzfile <path>`, which is whitespace-delimited and
+    **not** a quotable field — it truncates the path at the first space — and it runs an
+    ExtOpt wrapper through `sh`, which splits on one. Both paths are derived from
+    `output_dir`, so an `orca`, `mlip-extopt` or `pyscf-extopt` step whose `output_dir`
+    resolves under a directory with whitespace in it **refuses to prepare**, with an error
+    naming the cause. `chemrefine validate` warns about it before you run.
 
-    A **relative** `output_dir` inherits the config file's own directory, so this can
-    come from where the YAML lives — a project under `~/My Drive` is the usual way to
-    meet it. Point `output_dir` at a path without a space (absolute is fine) or move the
-    project.
+    A **relative** `output_dir` inherits the config file's own directory, so this can come
+    from where the project lives — `~/My Drive/...` is the usual way to meet it. It can also
+    come from a symlink, since the path is resolved before use. Point `output_dir` at a
+    location without whitespace, or move the project.
 
-    `template_dir` and `scratch_dir` **may** contain spaces: the auxiliary paths a
-    template names reach ORCA inside quotes (which it reads correctly), and
-    `scratch_dir` only ever reaches quoted bash.
+    Everything else is unaffected and deliberately not restricted: `mlip`, `pyscf` and
+    `qchem` steps run fine from such a tree (Q-Chem inlines the geometry, the script engines
+    quote the path, and the generated bash quotes everything it interpolates), as do
+    `template_dir` and `scratch_dir`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `template_dir` | path | `./templates` | Directory holding the per-step engine templates and SLURM headers. |
 | `scratch_dir` | path | `None` | Fast node-local working directory base. Unset ⇒ a per-calc `_work_…` dir is derived under `output_dir`; on HPC point it at node scratch (e.g. `/scratch/$USER`). Must differ from `output_dir`. |
-| `output_dir` | path | `./outputs` | Where per-step results, caches, and `steps.csv` are written. Must not contain a space — see the warning above. |
+| `output_dir` | path | `./outputs` | Where per-step results, caches, and `steps.csv` are written. ORCA-family steps additionally require it to resolve to a path without whitespace — see the warning above. |
 | `input` | path | `None` | Seed structures: an `.xyz` (one structure per frame), a directory of `.xyz`, or a `.csv` of SMILES (column `smiles`). Unset falls back to `templates/step1.xyz`. |
 | `charge` | int | `0` | Global molecular charge (per-step `charge` overrides). |
 | `multiplicity` | int ≥ 1 | `1` | Global spin multiplicity `2S+1` (per-step `multiplicity` overrides). |

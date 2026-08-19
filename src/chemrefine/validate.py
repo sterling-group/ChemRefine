@@ -30,6 +30,7 @@ be a cycle.
 from __future__ import annotations
 
 import dataclasses
+import re
 from pathlib import Path
 from typing import Any
 
@@ -37,12 +38,7 @@ import yaml
 from pydantic import ValidationError
 
 from chemrefine import slurm
-from chemrefine.config import (
-    Config,
-    StepConfig,
-    output_dir_space_error,
-    resolve_relative_paths,
-)
+from chemrefine.config import Config, StepConfig, resolve_relative_paths
 from chemrefine.engines._job import gpus_from_options
 from chemrefine.engines.api import (
     ENGINES,
@@ -51,6 +47,7 @@ from chemrefine.engines.api import (
     NmsCapableEngine,
     OptionsDeclaring,
     TemplateDriven,
+    WhitespacePathIntolerant,
     get_engine,
 )
 from chemrefine.errors import ConfigError
@@ -137,14 +134,6 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
     if base_dir is not None:
         config = resolve_relative_paths(config, base=base_dir.resolve())
     issues_list, warnings_list = _inspect_steps(config)
-    # Asked after resolution, because that is when the answer can change: a relative
-    # `output_dir` inherits the config file's directory, and `resolve_relative_paths` uses
-    # `model_copy`, which runs no validators. `load_config` raises here; this twin reports,
-    # so the GUI can anchor the finding to the field like every other row.
-    if problem := output_dir_space_error(config.output_dir):
-        issues_list.insert(
-            0, ValidationIssue(loc=("output_dir",), kind="value_error", message=problem)
-        )
     report_config = config if not issues_list else None
     return ValidationReport(
         issues=tuple(issues_list), warnings=tuple(warnings_list), config=report_config
@@ -245,6 +234,27 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                         ),
                     )
                 )
+        if isinstance(engine, WhitespacePathIntolerant) and re.search(
+            r"\s", str(config.step_dir(step).resolve())
+        ):
+            # A warning, not an issue: the config is well-formed and every other engine runs
+            # fine from here, so this must not make validity depend on where a project sits
+            # on disk. The step itself refuses at `prepare`, before it submits anything —
+            # this is only the early word, for the GUI and an agent deciding what to fix.
+            # Resolved, because that is the path the engine will write: a directory
+            # symlinked through a spaced parent has no space anywhere in the YAML.
+            warnings.append(
+                ValidationIssue(
+                    loc=("steps", index, "engine"),
+                    kind="whitespace-path",
+                    message=(
+                        f"step {step.step} runs {step.engine!r} under "
+                        f"{config.step_dir(step).resolve()}, whose path contains whitespace; "
+                        f"{engine.whitespace_path_reason}, so this step will refuse to "
+                        f"prepare. Point `output_dir` somewhere without whitespace."
+                    ),
+                )
+            )
         if isinstance(engine, JobExecutable):
             # Only scheduler-run engines resolve a header (locally too); an inline engine
             # like the test fake never reads one, and warning about it would be noise.

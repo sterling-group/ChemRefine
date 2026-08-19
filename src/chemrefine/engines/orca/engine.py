@@ -61,6 +61,15 @@ class OrcaEngine(JobEngine):
     (``<base>.001.hess``, ``.002.hess``, …), so a long TS search brings back one Hessian per
     recompute; they are large and superseded, and keeping them is a deliberate choice."""
 
+    whitespace_path_reason: ClassVar[str] = orca_input.WHITESPACE_PATH_REASON
+    """Satisfies :class:`~chemrefine.engines.api.WhitespacePathIntolerant`.
+
+    Declared here so the ExtOpt engines inherit it: they subclass this one and write the
+    same ``* xyzfile`` directive, plus a ``ProgExt`` wrapper path with the same problem.
+    The refusal itself lives at the point of use
+    (:func:`chemrefine.engines.orca.input.require_whitespace_free`); this ClassVar is what
+    lets :mod:`chemrefine.validate` warn about it without importing a concrete engine."""
+
     # -- input -------------------------------------------------------------
 
     def build_input(
@@ -125,6 +134,11 @@ class OrcaEngine(JobEngine):
         something else entirely. ``$OUTPUT_DIR`` is quoted for the same reason: the
         config validator refuses metacharacters in the directory paths but **not**
         spaces, so ``output_dir: ./my outputs`` would word-split the redirect.
+
+        Spaces are only safe *here*, in bash. The same directory reaches the ``.inp`` as the
+        geometry path, where ORCA's own parser truncates it —
+        :func:`chemrefine.engines.orca.input.require_whitespace_free` is the refusal, and
+        quoting is no help there.
 
         Shared rather than inlined per engine:
         :class:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine` overrides

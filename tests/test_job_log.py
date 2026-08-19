@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from fnmatch import fnmatch
 from pathlib import Path
 
 from chemrefine import ids, job_log, slurm
@@ -83,17 +82,21 @@ def test_format_field_indents_two_spaces():
 # ---------------------------------------------------------------------------
 
 
-def test_the_documented_runlog_glob_matches_the_path_the_builder_emits(tmp_path: Path):
-    """The docstring tells a maintainer where runlogs are and how to grep them; check it.
+def test_the_documented_runlog_path_and_glob_are_both_real(tmp_path: Path):
+    """The docstring tells a maintainer where runlogs are and how to grep them; check both.
 
-    This is a drift guard, and it exists because the claim had already drifted: the module
-    documented `<step_dir>/step{N}_structure_{ID}.runlog` and a matching glob long after
-    2.0 dropped `structure_` from every artifact name, so the published API page (this
-    docstring is rendered by mkdocstrings) sent readers to a pattern that matches nothing.
-    Prose about a layout has no schema to check it, so the check is this: derive the real
-    path the way production does — `_execution._submit_one` passes `job_name=inp.stem` and
-    `output_dir=out.parent` to `build_script`, which writes `#SBATCH --output=` — and
-    require the documented glob to match it.
+    A drift guard, and it exists because the claim had already drifted: the module
+    documented `<step_dir>/step{N}_structure_{ID}.runlog` and a matching glob long after 2.0
+    dropped `structure_` from every artifact name, so the published API page (this docstring
+    is rendered by mkdocstrings) sent readers to a pattern matching nothing.
+
+    Two assertions, because the claim has two halves and the *location* half is the one that
+    drifted. The path is derived the way production derives it —
+    `_execution._submit_one` passes `job_name=inp.stem` and `output_dir=out.parent` to
+    `build_script`, which writes `#SBATCH --output=` — and the glob is then run as a **real
+    glob against a real file**. `fnmatch` is not usable here: its `*` crosses `/`, so a
+    pattern one directory level short (`outputs/step*.runlog`) matches a nested path that no
+    shell would ever find.
     """
     step_dir = tmp_path / "outputs" / "step1_screen"
     inp = ids.structure_artifact_path(step_dir, 1, "0", "inp")
@@ -122,15 +125,19 @@ def test_the_documented_runlog_glob_matches_the_path_the_builder_emits(tmp_path:
     )
     emitted = re.search(r'#SBATCH --output="([^"]+)"', script.read_text())
     assert emitted is not None
-    runlog = emitted.group(1)
+    runlog = Path(emitted.group(1))
+    runlog.write_text("", encoding="utf-8")  # so the glob below has something to find
 
-    # The docstring's own words, not a copy of them: a glob that stops matching is the
-    # signal, and taking it from `__doc__` is what makes the two impossible to separate.
     doc = job_log.__doc__ or ""
-    assert "step{N}_{structure_id}.runlog" in doc, "the documented basename shape moved"
-    glob = re.search(r"``(outputs/\S*\.runlog)``", doc)
-    assert glob is not None, "the docstring no longer names a runlog glob"
-    tail = runlog.split("outputs/", 1)[1]
-    assert fnmatch(f"outputs/{tail}", glob.group(1).replace("**/", "*/")), (
-        f"the documented glob {glob.group(1)!r} does not match the emitted {runlog!r}"
-    )
+
+    # Half one — the *location*: the runlog sits in the structure's own directory, which is
+    # exactly what the stale docstring got wrong.
+    assert runlog.parent == step_dir / "0"
+    assert runlog.name == "step1_0.runlog"
+    assert "<step_dir>/<structure_id>/step{N}_{structure_id}.runlog" in doc
+
+    # Half two — the *glob*, run for real. A pattern of the wrong depth finds nothing.
+    pattern = re.search(r"``outputs/(\S*\.runlog)``", doc)
+    assert pattern is not None, "the docstring no longer names a runlog glob"
+    found = set((tmp_path / "outputs").glob(pattern.group(1)))
+    assert runlog in found, f"the documented glob outputs/{pattern.group(1)} does not find {runlog}"

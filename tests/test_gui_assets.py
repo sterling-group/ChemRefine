@@ -217,16 +217,24 @@ def test_every_state_root_the_page_reads_exists():
     assert not missing, f"index.html reads state the component does not declare: {missing}"
 
 
-def _options_after(marker: str, *, window: int = 900) -> list[str]:
+def _options_after(marker: str) -> list[str]:
     """The ``<option value="…">`` values of the first ``<select>`` following ``marker``.
+
+    Bounded by the element, not by a byte count. A fixed window did the same job until it
+    did not: the sample dropdown's window cleared the *next* ``<select>``'s first option by
+    six characters, so shortening a purely cosmetic label — ``(keep everything)`` → ``(all)``
+    — reported a vocabulary mismatch for a vocabulary that had not changed. Slicing to
+    ``</select>`` makes the helper mean what its name says, and makes an edit to the page's
+    prose incapable of moving the answer.
 
     Text analysis, like the two guards above: the page is one file, the selects are
     hand-written where they are not schema-driven, and reading them back is what lets a
     hardcoded list be compared against the model that owns it.
     """
     html = INDEX.read_text(encoding="utf-8")
-    segment = html.split(marker, 1)[1][:window]
-    return re.findall(r'<option value="([^"]*)"', segment)
+    after = html.split(marker, 1)[1]
+    element = after[: after.index("</select>")]
+    return re.findall(r'<option value="([^"]*)"', element)
 
 
 def test_the_pages_hardcoded_vocabularies_match_the_models_that_own_them():

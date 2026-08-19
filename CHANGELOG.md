@@ -277,37 +277,41 @@ for the full map.
 ### Fixed
 
 
+- `chemrefine.slurm.build_script` no longer takes `save_scratch`. It was a v1 concept
+  carried into the rewrite's signature and never wired — no config knob and no caller in
+  any commit of this line — and `build_array_script` never had it, so wiring it later would
+  have silently skipped every `slurm_array` step. Keeping artifacts is engine-owned and
+  already works on both paths (`output_dirs`, or `RunBlock.cleanup`). Noted because
+  `build_script` is public and rendered on the API page; the runlog's `scratch_kept` field
+  is unchanged.
 - **Two documentation claims that had stopped being true.** The security page's list of
   hardened boundaries described only the ExtOpt gradient server, so a reader auditing what
   ChemRefine exposes on a shared node never learned that `chemrefine gui` starts a second
   socket — the more consequential one, since it can write files and launch runs. It now has
   its own subsection (loopback-only bind, kernel-assigned port, the per-session token and
   how it is compared, and why `/` is deliberately ungated). Separately, `job_log`'s module
-  docstring — published as an API page — still gave the **v1.3.1** runlog path
-  (`step{N}_structure_{ID}.runlog`) and a grep pattern that matched nothing; it now names
+  docstring — published as an API page — still spelled the runlog basename the **v1.3.1**
+  way (`step{N}_structure_{ID}`, a convention 2.0 dropped from every artifact name) and gave
+  a grep pattern that matched nothing; it now names
   the real per-structure path, including where an attempt's logs land, and a test derives
   that path the way production does and requires the documented glob to match it.
-- **An `output_dir` with a space in it is refused, instead of breaking every ORCA step.**
-  Spaces are legal in this config on purpose — the generated bash quotes every path it
-  interpolates, which is why `scratch_dir: /scratch/my runs` and
-  `executables: {orca: /opt/my orca/orca}` both work. But `output_dir` also reaches an
-  ORCA *input file*, in two places quoting cannot rescue: `* xyzfile <path>` is
-  whitespace-delimited and not a quotable field, so ORCA truncates the geometry path at
-  the first space (`CANNOT OPEN FILE`, naming the prefix, with or without quotes around
-  the value), and `%method ProgExt "<wrapper>"` is read as a quoted string but then
-  exec'd through `sh`, which splits it (`sh: 1: /path/my: not found`). Both are
-  `output_dir`-derived, so every `orca` / `mlip-extopt` / `pyscf-extopt` step under such
-  a tree failed — one confusing ORCA error per structure, naming a path nobody wrote.
-  The config now refuses it at load time with the reason and the fix — including the
-  likelier spelling, where `output_dir` is relative and inherits a *config file* that
-  lives under a spaced directory (`~/My Drive/...`); path resolution runs after
-  validation, so that case is checked again on the resolved value, in `load_config` and
-  in the validation report alike. **This is a behaviour change:** a run whose
-  `output_dir` resolves to a path with a space used to start and fail per job, and now
-  exits 2 immediately. `template_dir` and `scratch_dir` are deliberately
-  *not* covered — the auxiliary paths a template names reach ORCA inside quotes, which it
-  reads correctly, and `scratch_dir` only ever reaches quoted bash; both were checked
-  against ORCA 6.1.1 rather than assumed.
+- **An ORCA step under a path containing whitespace fails with its reason, not ORCA's.**
+  ORCA reads each geometry through `* xyzfile <path>`, which is whitespace-delimited and not
+  a quotable field — it truncates at the first space (`CANNOT OPEN FILE`, naming the prefix,
+  with or without quotes around the value) — and it execs an ExtOpt wrapper through `sh`,
+  which splits on one (`sh: 1: /path/my: not found`). Both paths derive from `output_dir`, so
+  every `orca` / `mlip-extopt` / `pyscf-extopt` step under such a tree failed once per
+  structure, naming a path nobody wrote. The ORCA input writer now refuses before it emits
+  the directive, `chemrefine validate` warns about the affected steps beforehand, and the
+  check runs on the **resolved** path — so a directory reached through a symlinked parent,
+  which contains no whitespace anywhere in the YAML, is caught too.
+  Deliberately scoped to the engines that write paths into an ORCA input: `mlip`, `pyscf`
+  and `qchem` steps run fine from such a tree (Q-Chem inlines the geometry, the script
+  engines quote the path, the generated bash quotes everything it interpolates), and so do
+  `template_dir` and `scratch_dir`. Enforcing it at config load instead — the first shape of
+  this fix — made validity depend on where a project sits on disk: an mlip-only workflow
+  under `~/My Drive` was refused although it runs perfectly, and this repository's own
+  example suite went red from any checkout path containing a space.
 - **A diverged calculation's geometry is refused instead of stored.** A non-finite
   energy has been a parse failure for a while; the *coordinates* were not, and that
   had two costs. Inline in a `.result.json` a `NaN` met the JSON writer's

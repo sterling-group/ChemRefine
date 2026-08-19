@@ -205,6 +205,37 @@ class TemplateDriven(CalculationEngine, Protocol):
 
 
 @runtime_checkable
+class WhitespacePathIntolerant(Protocol):
+    """An engine whose generated input cannot express a path containing whitespace.
+
+    **Declarations only**, like :class:`TemplateDriven` — one ClassVar carrying the reason,
+    so a caller can say *why* without importing the engine that knows. It exists because the
+    constraint is real for exactly one family and invisible everywhere else: ORCA reads each
+    geometry through ``* xyzfile <path>``, a whitespace-delimited field it does not treat as
+    quotable, and execs an ExtOpt wrapper through ``sh``. Every other shipped engine is
+    unaffected — Q-Chem inlines the geometry into ``$molecule``, the script engines
+    substitute a path the template quotes, and the generated bash quotes everything it
+    interpolates.
+
+    A capability rather than a rule in :mod:`chemrefine.config`, and that placement is the
+    whole point. Held at config load it made *validity depend on where a project sits on
+    disk*: a relative ``output_dir`` inherits the config file's directory, so an mlip-only
+    workflow under ``~/My Drive`` — which runs perfectly well — was refused, and this
+    repository's own example suite went red whenever the checkout path contained a space.
+    The engine that cannot express the path is the one that should refuse it, and it refuses
+    the *resolved* path it is about to write, which is also what closes the symlinked-parent
+    case that a check on the configured value cannot see.
+
+    :mod:`chemrefine.validate` detects this with ``isinstance`` to warn early — a warning,
+    not an error, because the config is well-formed and only this engine family cannot run
+    under that path.
+    """
+
+    whitespace_path_reason: ClassVar[str]
+    """Why this engine cannot take a path with whitespace — quoted verbatim in the refusal."""
+
+
+@runtime_checkable
 class OptionsDeclaring(Protocol):
     """An engine that declares the Pydantic model validating its ``step.options``.
 
