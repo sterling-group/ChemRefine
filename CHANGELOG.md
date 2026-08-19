@@ -292,11 +292,11 @@ for the full map.
   seed `.xyz` is refused by name — with the cache as a backstop that refuses to store
   what did get through. The ensemble readers keep skipping rather than failing a whole
   step for one bad conformer; `nan` now simply follows the rule `*****` always had.
-- **A non-ASCII bearer token is a 401 from the gradient server, not a 500.** The same
-  fix the GUI received one release earlier, on the copy that did not get it: headers
-  arrive latin-1-decoded and `compare_digest` refuses a `str` holding a non-ASCII
-  character, so any byte above 0x7F in the `Authorization` header raised out of the
-  auth gate. The server is reachable by any user on the node, so that gate is exactly
+- **A non-ASCII token is a 401 from both token gates, not a 500.** The GUI's
+  `X-ChemRefine-Token` check and the gradient server's `Authorization` check had the same
+  flaw and were fixed a day apart: headers arrive latin-1-decoded and `compare_digest`
+  refuses a `str` holding a non-ASCII character, so any byte above 0x7F raised out of the
+  auth gate. Both are reachable by any user on the node, which makes those gates exactly
   the place that has to answer plainly whatever it is handed.
 - **A step naming a model file works where crypto policy restricts SHA-1.** ChemRefine
   hashes file contents to decide what to re-run, and says so — every constructor-form
@@ -305,6 +305,42 @@ for the full map.
   defaulted; on a host that permits SHA-1 only for fingerprinting they raised, and the
   one that runs on every step's cache key would have ended the run in a traceback.
   Cache keys are unchanged — the flag is a policy hint, not an input to the hash.
+- **A PySCF step that asks for a GPU no longer runs quietly on the CPU.** PySCF is one
+  library with two stacks, and the provisioner probed only for `pyscf` — so on an
+  environment carrying just the CPU stack a `device: cuda` step started anyway, fell back
+  to the CPU inside the job, and recorded the reason in the ExtOpt *server* log: a run that
+  succeeded on the wrong hardware and said so nowhere the user was looking. The requirement
+  is now derived from the step's own options and probes for `gpu4pyscf`, so such a step
+  fails at preflight, by name, pointing at the `pyscf-gpu` extra.
+- **A missing optional extra names itself instead of raising `ImportError` from inside.**
+  The GUI and the embedded agent guard their optional SDKs, but the imports sat where the
+  guard could not see them, so `chemrefine gui` without `chemrefine[gui]` — and
+  `chemrefine agent` without `chemrefine[agent]` — surfaced the raw import failure rather
+  than the line saying which extra to install.
+- **Reading the process umask no longer races other threads.** `os.umask` is the only
+  POSIX way to read it and it reads by *setting* it, which is process-global: in that
+  window anything another thread created was made with no mask at all, and the GUI serves
+  four waitress threads that both write files and `mkdir`. The value now comes from
+  `/proc/self/status`, which reading does not disturb.
+- **`chemrefine --help` stops swallowing the extra it names.** Rich reads square brackets
+  as style markup, so the `[agent]` / `[gui]` / `[mcp]` in each command's install hint was
+  consumed as a tag: the one line telling a user which extra to install rendered as a bare
+  `chemrefine`. The brackets are escaped now.
+- **`chemrefine agent --check` reports a misconfigured endpoint instead of a traceback.**
+  A base URL pointing at a web app or a proxy login page answers `200` with HTML, and some
+  gateways answer a bare list; every one of those raised out of the preflight, which is the
+  command that exists to diagnose exactly that mistake. They are findings now.
+- **Two agent-started runs in the same second no longer share a log file.** The run log was
+  named to one-second resolution, so two runs started close together opened the same path
+  and the second truncated the first while it was still being written — losing the log
+  `run_status` hands back when someone asks what went wrong.
+- **A failure payload advertising the whole taxonomy no longer leaves a class out.** It was
+  built from `ChemRefineError.__subclasses__()`, which is direct subclasses only, so the
+  indirect `OutputTerminationError` was missing from every payload that claimed to list
+  them all.
+- **The declared `pydantic` floor is one the package can actually resolve.** `[mcp]` and
+  `[agent]` both require `pydantic>=2.12`, so the old `2.5` floor was a minimum no
+  configuration could install.
 - **A write that cannot re-mode its temp file no longer strands it.** The atomic writer
   set the file's mode before the guard that cleans up after it, so on a filesystem that
   refuses `fchmod` — shared mounts do — the descriptor leaked and a `.tmp_*.part` was
