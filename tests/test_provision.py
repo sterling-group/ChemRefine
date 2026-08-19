@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tomllib
+from email.message import Message
 from pathlib import Path
 
 import pytest
 from ase import Atoms
+from packaging.requirements import Requirement
 
 from chemrefine.config import StepConfig
 from chemrefine.engines import _provision as provision
@@ -22,6 +25,21 @@ from chemrefine.errors import BackendProvisionError, ConfigError
 from chemrefine.state import PipelineState, StepContext, Structure
 
 _REQ = BackendRequirement(extra="mlip-mace", import_name="mace")
+
+
+@pytest.fixture(autouse=True)
+def _cold_python_lookups():
+    """Every test sees the derived-Python lookups uncached.
+
+    They are `lru_cache`d in the module because a run asks them once per provisionable step
+    and the answer cannot change inside a process — but a test that fakes this dist's
+    metadata is exactly the case where it can.
+    """
+    for cached in (provision._candidate_pythons, provision._supported_pythons):
+        cached.cache_clear()
+    yield
+    for cached in (provision._candidate_pythons, provision._supported_pythons):
+        cached.cache_clear()
 
 
 def _provisioned(tmp_path: Path, extra: str) -> Path:
@@ -258,6 +276,142 @@ def test_preflight_asks_nothing_of_a_direct_engine_about_the_server(monkeypatch,
         StepConfig(step=1, engine="mlip", operation="opt_sp", options={"task_name": "mace_off"})
     ]
     preflight_backends(steps)  # no raise
+
+
+# ---------------------------------------------------------------------------
+# Which Pythons an extra installs on — derived from our own metadata
+# ---------------------------------------------------------------------------
+
+
+def _metadata_with(monkeypatch, *, requires_python: str, classifiers: tuple[str, ...]) -> None:
+    """Fake this dist's core metadata — the object `importlib.metadata` really returns."""
+    message = Message()
+    message["Requires-Python"] = requires_python
+    for classifier in classifiers:
+        message["Classifier"] = classifier
+    monkeypatch.setattr(provision.importlib.metadata, "metadata", lambda _n: message)
+
+
+def test_candidates_are_the_classifiers_inside_requires_python(monkeypatch):
+    """Newest first, and a classifier the floor excludes is not a candidate.
+
+    The bare `:: 3` classifier is not a version and must not be read as one.
+    """
+    _metadata_with(
+        monkeypatch,
+        requires_python=">=3.11",
+        classifiers=(
+            "Programming Language :: Python :: 3",
+            "Programming Language :: Python :: 3.10",
+            "Programming Language :: Python :: 3.11",
+            "Programming Language :: Python :: 3.12",
+        ),
+    )
+    assert provision._candidate_pythons() == ("3.12", "3.11")
+
+
+def test_candidates_fall_back_to_this_interpreter_without_classifiers(monkeypatch):
+    _metadata_with(monkeypatch, requires_python=">=3.11", classifiers=())
+    here = f"{sys.version_info.major}.{sys.version_info.minor}"
+    assert provision._candidate_pythons() == (here,)
+
+
+def test_candidates_fall_back_to_this_interpreter_without_a_dist(monkeypatch):
+    """A tree run without an installed dist: the honest answer is "the Python I am"."""
+
+    def _raise(_name):
+        raise provision.importlib.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(provision.importlib.metadata, "metadata", _raise)
+    here = f"{sys.version_info.major}.{sys.version_info.minor}"
+    assert provision._candidate_pythons() == (here,)
+
+
+def test_an_extra_is_supported_where_it_contributes_everything(monkeypatch):
+    """The rule: full requirement set, not a non-empty one.
+
+    Every backend extra cross-references `chemrefine[server]`, which hatchling flattens into
+    flask/waitress — so "the extra installs something" is true on every Python, capped or
+    not, and only "installs everything it declares" separates them.
+    """
+    requirements = [
+        Requirement("flask>=3.0; extra == 'demo'"),
+        Requirement("wheelless; python_version < '3.13' and extra == 'demo'"),
+        Requirement("numpy>=1.26"),  # a core dependency: unmarked, never an extra's
+        Requirement("other; extra == 'unrelated'"),
+    ]
+    assert provision._supported_from(requirements, "demo", ("3.14", "3.13", "3.12")) == ("3.12",)
+    assert provision._supported_from(requirements, "unrelated", ("3.14", "3.12")) == (
+        "3.14",
+        "3.12",
+    )
+
+
+def test_supported_pythons_reads_the_installed_metadata(monkeypatch):
+    """The claim the provisioner acts on is the string pip resolves — this dist's own."""
+    monkeypatch.setattr(
+        provision.importlib.metadata,
+        "requires",
+        lambda _n: ["orb; python_version < '3.13' and extra == 'mlip-orb'"],
+    )
+    _metadata_with(
+        monkeypatch,
+        requires_python=">=3.11",
+        classifiers=(
+            "Programming Language :: Python :: 3.12",
+            "Programming Language :: Python :: 3.13",
+        ),
+    )
+    assert provision._supported_pythons("mlip-orb") == ("3.12",)
+
+
+def test_supported_pythons_survives_a_dist_that_declares_nothing(monkeypatch):
+    monkeypatch.setattr(provision.importlib.metadata, "requires", lambda _n: None)
+    assert provision._supported_pythons("mlip-orb") == provision._candidate_pythons()
+
+
+def test_every_backend_extra_claims_the_pythons_it_can_install_on():
+    """The caps in pyproject say what we mean — read from the file, not from an install.
+
+    `_supported_pythons` reads *installed* metadata, which is frozen at install time; an
+    editable checkout can therefore be a pyproject edit ahead of it. This holds the claim
+    where it is written, so the gate is on the source rather than on how recently someone
+    ran `pip install -e .`.
+
+    Capped extras are named; every other backend extra must claim the whole matrix. A new
+    backend is therefore covered the moment it registers — with no cap, or with a cap and a
+    line here saying why.
+    """
+    from chemrefine.engines import known_backend_extras
+
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    declared = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
+    candidates = tuple(
+        sorted(
+            (
+                match.group(1)
+                for classifier in declared["classifiers"]
+                if (match := provision._PYTHON_CLASSIFIER.fullmatch(classifier))
+            ),
+            key=lambda v: int(v.split(".")[1]),
+            reverse=True,
+        )
+    )
+    # `extra == …` is a marker, so it is `and`-ed onto whatever marker the entry already
+    # carries — exactly what the packaging backend does when it builds Requires-Dist.
+    requirements = [
+        Requirement(f"{raw} and extra == '{extra}'" if ";" in raw else f"{raw}; extra == '{extra}'")
+        for extra, raws in declared["optional-dependencies"].items()
+        for raw in raws
+    ]
+    capped = {
+        "mlip-orb": ("3.12",),  # orb pins dm-tree==0.1.8, whose newest wheels are cp312
+        "mlip-mace": ("3.13", "3.12", "3.11"),  # our torch<2.9 pin has no cp314 wheels
+        "mlip-chgnet": ("3.12", "3.11"),  # chgnet 0.4.2 ships cp310-cp312 only
+    }
+    for extra in sorted(known_backend_extras()):
+        expected = capped.get(extra, candidates)
+        assert provision._supported_from(requirements, extra, candidates) == expected, extra
 
 
 # ---------------------------------------------------------------------------

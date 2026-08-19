@@ -26,17 +26,19 @@ nodes just run the resolved interpreter).
 
 from __future__ import annotations
 
+import functools
 import importlib.metadata
 import importlib.util
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
@@ -52,7 +54,16 @@ from chemrefine.engines.api import (
 )
 from chemrefine.errors import BackendProvisionError, ConfigError
 
+if TYPE_CHECKING:  # `packaging` is imported lazily, inside the functions that evaluate markers
+    from packaging.requirements import Requirement
+
 EnvTool = Literal["conda", "uv", "venv"]
+
+_PYTHON_CLASSIFIER = re.compile(r"Programming Language :: Python :: (3\.\d+)")
+"""One ``Programming Language :: Python :: 3.12`` trove classifier.
+
+Anchored on ``3.`` so the bare ``:: 3`` classifier and the implementation ones
+(``:: Implementation :: CPython``) are not read as versions."""
 
 
 def known_backend_extras() -> frozenset[str]:
@@ -275,6 +286,90 @@ def preflight_backends(steps: Sequence[StepConfig]) -> None:
                 and resolve_launcher(requirement, override) == sys.executable
             ):
                 _require_server_deps(requirement)
+
+
+@functools.lru_cache(maxsize=1)
+def _candidate_pythons() -> tuple[str, ...]:
+    """Every Python this ChemRefine is declared to support, newest first.
+
+    Read off our own installed metadata — the ``Programming Language :: Python :: 3.x``
+    classifiers, filtered by ``Requires-Python`` — rather than written down here, because
+    that pair is already the declaration CI's matrix is built from. A second list would be
+    one more thing to move when the matrix moves.
+
+    Falls back to the running interpreter alone when the metadata says nothing (a tree run
+    without an installed dist): the honest answer there is "the Python I am", which is also
+    exactly the behaviour this module had before it could choose.
+    """
+    from packaging.specifiers import SpecifierSet
+
+    here = f"{sys.version_info.major}.{sys.version_info.minor}"
+    try:
+        meta = importlib.metadata.metadata("ChemRefine")
+    except importlib.metadata.PackageNotFoundError:
+        return (here,)
+    supported = SpecifierSet(meta.get("Requires-Python") or "")
+    versions = [
+        match.group(1)
+        for classifier in meta.get_all("Classifier") or []
+        if (match := _PYTHON_CLASSIFIER.fullmatch(str(classifier)))
+        and supported.contains(f"{match.group(1)}.0")
+    ]
+    if not versions:
+        return (here,)
+    return tuple(sorted(versions, key=lambda v: int(v.split(".")[1]), reverse=True))
+
+
+@functools.cache
+def _supported_pythons(extra: str) -> tuple[str, ...]:
+    """The candidate Pythons on which ``chemrefine[extra]`` installs everything it declares.
+
+    Read off this project's own ``Requires-Dist`` metadata, so the claim the provisioner
+    acts on is the same string pip resolves — see the ``[project.optional-dependencies]``
+    comment for what a ``python_version`` marker on a backend extra means.
+    """
+    from packaging.requirements import Requirement
+
+    requirements = [Requirement(raw) for raw in importlib.metadata.requires("ChemRefine") or []]
+    return _supported_from(requirements, extra, _candidate_pythons())
+
+
+def _supported_from(
+    requirements: Sequence[Requirement], extra: str, candidates: Sequence[str]
+) -> tuple[str, ...]:
+    """Which of ``candidates`` ``extra`` contributes *all* of its requirements on.
+
+    For each candidate, the set of requirement names the extra contributes with markers
+    evaluated at that version; a version is supported when that set is the full one —
+    nothing marker-excluded there. An extra that names no Python is supported everywhere,
+    which is the answer for every backend whose stack ships wheels across the matrix.
+
+    "The extra installs *something*" would be the obvious test and is the wrong one:
+    hatchling flattens the ``chemrefine[server]`` cross-reference every backend extra
+    carries into ``flask``/``waitress``, so every extra contributes something on every
+    Python, capped or not.
+
+    Takes the requirements rather than reading them, so the same rule can be applied to
+    ``pyproject.toml`` directly — which is what the drift test does, and what keeps the
+    claim checkable without a fresh install of the metadata that carries it.
+    """
+    named = {version: _names_for(requirements, extra, version) for version in candidates}
+    full: frozenset[str] = frozenset().union(*named.values())
+    return tuple(version for version in candidates if named[version] == full)
+
+
+def _names_for(requirements: Sequence[Requirement], extra: str, version: str) -> frozenset[str]:
+    """The requirement names ``extra`` contributes on Python ``version``.
+
+    Only a marked requirement can belong to an extra (``extra == "…"`` is itself a marker),
+    so an unmarked core dependency is never counted — and one carrying an unrelated marker
+    would be counted identically for every candidate, which cannot change the comparison
+    :func:`_supported_from` makes.
+    """
+    env = {"extra": extra, "python_version": version, "python_full_version": f"{version}.0"}
+    return frozenset(
+        r.name for r in requirements if r.marker is not None and r.marker.evaluate(env)
+    )
 
 
 def detect_env_tool() -> EnvTool:

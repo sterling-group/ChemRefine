@@ -66,6 +66,13 @@ dependencies = [
     # version the tested configuration can actually install; this is it.
     "pydantic>=2.12",
     "typer>=0.12",
+    # The marker evaluator. `chemrefine backends install` reads this project's own
+    # `Requires-Dist` metadata to work out which Pythons a backend extra installs on
+    # (engines/_provision._supported_pythons), and a marker is not something the stdlib
+    # can evaluate. Imported lazily, inside the provisioner, like pandas and rdkit are.
+    # It arrives with half the scientific stack anyway (matplotlib via ase, pytest,
+    # setuptools) — declared because we import it, not because it was missing.
+    "packaging>=24",
 ]
 
 [project.optional-dependencies]
@@ -95,22 +102,47 @@ agent = ["pydantic-ai-slim[openai]>=2,<3"]
 # FAIRChem/SevenNet need `e3nn>=0.5`, orb/chgnet drag their own torch. So install each
 # separately (the `chemrefine backends` helper automates the per-backend env). `[mlip]`
 # defaults to FAIRChem / UMA (`uma-s-1p2`).
+#
+# A `python_version` marker on a backend's own requirements is a **claim**: this extra
+# installs here, from wheels. It is read twice — by pip, and by the provisioner
+# (`engines/_provision._supported_pythons`), which builds the backend's managed env on the
+# newest Python the extra claims instead of on whatever the orchestrator happens to run.
+# That is why a capped extra carries the marker on *every* requirement of its own: an extra
+# that half-installs around the pin its cap exists to hold leaves an env that is broken in a
+# subtler way, and makes the claim unreadable to both readers.
+#
+# "Installs" means without a source build. An sdist here is not a slow install, it is
+# compiling torch or a vendored abseil on a login node — hours at best, impossible at worst
+# (see mlip-orb). ci.yml's `extras-resolve` proves every claim in both directions on every
+# matrix Python, so a cap upstream has made obsolete fails CI rather than quietly outliving
+# its reason.
 mlip-fairchem = [
     "fairchem-core>=2.18",
     "chemrefine[server]",
 ]
+# Capped at 3.13: our own `torch>=2.8,<2.9` pin has no cp314 wheels — cp314 first appears in
+# torch 2.9 — so 3.14 would build torch from source. Lift when the torch pin can move up.
 mlip-mace = [
-    "torch>=2.8.0,<2.9.0",
-    "e3nn==0.4.4",
-    "mace-torch>=0.3.16",
+    "torch>=2.8.0,<2.9.0; python_version < '3.14'",
+    "e3nn==0.4.4; python_version < '3.14'",
+    "mace-torch>=0.3.16; python_version < '3.14'",
     "chemrefine[server]",
 ]
 mlip-sevenn = ["sevenn>=0.11", "chemrefine[server]"]
-# The marker is load-bearing: without it, `pip install chemrefine[mlip-orb]` on 3.11
-# backtracks through every orb-models release looking for a compatible one and ends in
-# a resolver wall of text instead of "requires a different Python".
-mlip-orb = ["orb-models; python_version >= '3.12'", "chemrefine[server]"]
-mlip-chgnet = ["chgnet>=0.4", "chemrefine[server]"]
+# 3.12 and only 3.12. orb-models pins `dm-tree==0.1.8`, whose newest wheels are cp312 — the
+# `==` puts 0.1.9's cp313 and 0.1.10's cp314 wheels out of reach — and the 0.1.8 sdist
+# vendors an abseil snapshot no GCC >= 13 will compile. The floor is load-bearing for its
+# own reason: without it, `pip install chemrefine[mlip-orb]` on 3.11 backtracks through
+# every orb release looking for a compatible one and ends in a resolver wall of text
+# instead of "requires a different Python". Lift the ceiling when orb loosens that pin.
+mlip-orb = [
+    "orb-models; python_version >= '3.12' and python_version < '3.13'",
+    "chemrefine[server]",
+]
+# chgnet 0.4.2 — the newest release — ships cp310-cp312 wheels only; on 3.13+ pip falls back
+# to its sdist and compiles the Cython graph extension against a toolchain a compute node
+# may not have. Lift when chgnet ships cp313 wheels.
+mlip-chgnet = ["chgnet>=0.4; python_version < '3.13'", "chemrefine[server]"]
 mlip = ["chemrefine[mlip-fairchem]"]
 # Back-compat alias: `mlff` was renamed to `mlip`; keep the old extra working.
 mlff = ["chemrefine[mlip]"]
