@@ -44,6 +44,29 @@ The `*-extopt` engines start a local HTTP server that ORCA drives for gradients.
 The token is what matters on a shared HPC node: loopback is reachable by *any*
 user on that node, so binding locally is not by itself access control.
 
+### The workflow-builder GUI
+
+`chemrefine gui` starts the **second** server this package can run, and it is the
+more consequential one: `/api/save` writes a file at a path the request names and
+`/api/run` launches a detached pipeline. It is defended the same way, for the same
+reason — loopback on a shared node is not access control.
+
+- It binds **loopback only** (`127.0.0.1`) on a **kernel-assigned port** by
+  default (`--port 0`); the effective port is read back off the bound socket. Reach
+  it on a cluster with SSH port forwarding, not by binding wider — there is no flag
+  to bind wider.
+- Every `/api/*` request must carry a **per-session token**
+  (`secrets.token_urlsafe(16)`), rejected in a `before_request` gate before any
+  handler runs, and compared with `secrets.compare_digest` on the **encoded
+  bytes** — same latin-1 reason as above, and the two were fixed a day apart.
+- The token is handed over once in the URL `chemrefine gui` prints, so it reaches
+  the page without a login form. It is therefore in the browser's history and in
+  that terminal's scrollback; it lasts only as long as the server process.
+- `/` and the static assets are deliberately **ungated** — they are the same files
+  the docs site publishes as the Playground and carry nothing about the tree. A
+  cross-origin page cannot use that to reach the API: the token rides a custom
+  header, which forces a CORS preflight the app does not answer.
+
 ### Data at rest
 
 - The step cache is **JSON, never pickle** — loading a cache file cannot execute

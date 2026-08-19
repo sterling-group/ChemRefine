@@ -277,6 +277,16 @@ for the full map.
 ### Fixed
 
 
+- **Two documentation claims that had stopped being true.** The security page's list of
+  hardened boundaries described only the ExtOpt gradient server, so a reader auditing what
+  ChemRefine exposes on a shared node never learned that `chemrefine gui` starts a second
+  socket — the more consequential one, since it can write files and launch runs. It now has
+  its own subsection (loopback-only bind, kernel-assigned port, the per-session token and
+  how it is compared, and why `/` is deliberately ungated). Separately, `job_log`'s module
+  docstring — published as an API page — still gave the **v1.3.1** runlog path
+  (`step{N}_structure_{ID}.runlog`) and a grep pattern that matched nothing; it now names
+  the real per-structure path, including where an attempt's logs land, and a test derives
+  that path the way production does and requires the documented glob to match it.
 - **An `output_dir` with a space in it is refused, instead of breaking every ORCA step.**
   Spaces are legal in this config on purpose — the generated bash quotes every path it
   interpolates, which is why `scratch_dir: /scratch/my runs` and

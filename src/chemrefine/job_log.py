@@ -1,10 +1,17 @@
 """Per-job operational logs (one file per structure per step).
 
-A *runlog* is one file per structure per step at
-``<step_dir>/step{N}_structure_{ID}.runlog``. The bash header/footer
-snippets here are embedded in every generated SLURM script (which also
-runs via the local bash fallback), so every engine emits the same
-skeleton:
+A *runlog* is one file per job, written beside the calculation it
+describes: ``<step_dir>/<structure_id>/step{N}_{structure_id}.runlog``
+for a structure at its canonical place, and
+``<step_dir>/<structure_id>/attempt{K}/<child_id>/…`` for a convergence
+retry or an NMS round-2 child, which run in an attempt directory of
+their own. (The ``step{N}_structure_{ID}`` basename this module once
+documented is the **v1.3.1** spelling; ``structure_`` was dropped from
+every artifact name in 2.0 — see the v1→v2 migration guide.)
+
+The bash header/footer snippets here are embedded in every generated
+SLURM script (which also runs via the local bash fallback), so every
+engine emits the same skeleton:
 
 * A start header with host, job_id, mode, engine, operation, step,
   structure_id, scratch path, output path, and cores. Engines append
@@ -15,9 +22,9 @@ skeleton:
   scratch_kept.
 
 The fixed fields (``_HEADER_KEYS`` / ``_FOOTER_KEYS``) drive the field
-order, so a maintainer grepping ``outputs/step*/step*_structure_*.runlog``
-sees a uniform corpus; engine-specific rows extend the header without
-disturbing that shape.
+order, so a maintainer grepping ``outputs/step*/**/step*.runlog`` sees a
+uniform corpus — every attempt included; engine-specific rows extend the
+header without disturbing that shape.
 """
 
 from __future__ import annotations
