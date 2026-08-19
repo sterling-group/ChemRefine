@@ -295,6 +295,18 @@ for the full map.
   a grep pattern that matched nothing; it now names
   the real per-structure path, including where an attempt's logs land, and a test derives
   that path the way production does and requires the documented glob to match it.
+- **A directory name can no longer smuggle a shell metacharacter into a job script.**
+  `template_dir` / `output_dir` / `scratch_dir` are refused at load time when they contain
+  `"`, `$`, a backtick, a backslash or a newline, because the generated script exports them
+  into bash — but the check ran on the paths *as written*, and a relative path is anchored
+  to the config file's own directory afterwards, through `model_copy`, which runs no
+  validators. So a config containing nothing but `output_dir: ./outputs`, sitting in a
+  directory named `$(...)`, produced `export OUTPUT_DIR="…/$(...)/outputs"` — and bash
+  performs command substitution inside double quotes, so the directory name ran when the job
+  did. The rule is now re-asked on the resolved paths, by `load_config` (raises) and by the
+  validation report (a blocking issue, so `save_config` will not write such a config
+  either). Present since the paths became resolvable; found while fixing the whitespace
+  rule, which had the same shape.
 - **An ORCA step under a path containing whitespace fails with its reason, not ORCA's.**
   ORCA reads each geometry through `* xyzfile <path>`, which is whitespace-delimited and not
   a quotable field — it truncates at the first space (`CANNOT OPEN FILE`, naming the prefix,

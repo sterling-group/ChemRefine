@@ -108,6 +108,21 @@ def test_an_engine_that_writes_no_orca_input_is_not_warned_about(tmp_path: Path)
     assert [w.kind for w in report.warnings].count("whitespace-path") == 0
 
 
+def test_a_metacharacter_from_the_config_directory_is_an_issue_not_a_warning(tmp_path: Path):
+    """Engine-independent and dangerous, so it blocks — unlike the ORCA whitespace warning.
+
+    Every job script exports template_dir/output_dir/scratch_dir, so a `$(...)` in any of
+    them is a command substitution whatever engine runs. The report has to say so before a
+    script is written, and `save_config` has to refuse to write such a config.
+    """
+    hostile = tmp_path / "$(echo pwned)"
+    hostile.mkdir()
+    report = _validate(hostile)
+    assert not report.ok
+    assert report.issues[0].kind == "shell-unsafe"
+    assert report.config is None
+
+
 def test_a_refused_legacy_spelling_is_one_legacy_issue():
     """The legacy normalizer raises before pydantic runs; the report catches that too."""
     report = validate_config_text(

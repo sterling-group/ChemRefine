@@ -38,7 +38,12 @@ import yaml
 from pydantic import ValidationError
 
 from chemrefine import slurm
-from chemrefine.config import Config, StepConfig, resolve_relative_paths
+from chemrefine.config import (
+    Config,
+    StepConfig,
+    resolve_relative_paths,
+    shell_unsafe_after_resolution,
+)
 from chemrefine.engines._job import gpus_from_options
 from chemrefine.engines.api import (
     ENGINES,
@@ -134,6 +139,11 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
     if base_dir is not None:
         config = resolve_relative_paths(config, base=base_dir.resolve())
     issues_list, warnings_list = _inspect_steps(config)
+    # An issue, not a warning, and not scoped to any engine: every job script exports these
+    # three paths, so a metacharacter in one is a broken — or dangerous — script whatever
+    # runs. Asked after resolution because that is where a parent directory name gets in.
+    if problem := shell_unsafe_after_resolution(config):
+        issues_list.insert(0, ValidationIssue(loc=(), kind="shell-unsafe", message=problem))
     report_config = config if not issues_list else None
     return ValidationReport(
         issues=tuple(issues_list), warnings=tuple(warnings_list), config=report_config

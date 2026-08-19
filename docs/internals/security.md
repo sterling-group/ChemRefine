@@ -84,6 +84,15 @@ config-load time if it contains `"`, `$`, a backtick, a backslash, or a
 newline.** Those would terminate a quoted string or introduce a command
 substitution the job would then run.
 
+The rule is asked **twice**: once on the values as written, and again on the
+paths after they are resolved. The second pass is not belt-and-braces — a
+relative `output_dir` is anchored to the config file's own directory, so a
+*parent directory name* can carry every character the rule refuses while the YAML
+itself contains none. A config holding only `output_dir: ./outputs`, placed in a
+directory named `$(...)`, otherwise reaches the generated script as
+`export OUTPUT_DIR="…/$(...)/outputs"` — and bash substitutes inside double
+quotes. That matters most on exactly the shared filesystem this page is about.
+
 The rule is attached to that property, not to a list of fields — a value that
 reaches bash by a new route inherits it automatically:
 

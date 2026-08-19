@@ -382,6 +382,44 @@ PyscfOptions`) — reaches ``cp -r "…"``, and bash substitutes *inside* double
         )
 
 
+def shell_unsafe_after_resolution(config: Config) -> str | None:
+    """Why this config's *resolved* directories cannot be interpolated into bash, or ``None``.
+
+    :func:`reject_shell_unsafe` runs as a field validator, on the paths **as written**. That
+    is not where they end up: :func:`resolve_relative_paths` anchors a relative path to the
+    config file's own directory through ``model_copy``, which by design runs no validators —
+    so every character the rule refuses can be smuggled in through a *parent directory name*
+    instead of through the YAML.
+
+    It is a real bypass of the boundary ``docs/internals/security.md`` states, and it was
+    reproduced rather than reasoned about: a config containing nothing but
+    ``output_dir: ./outputs``, placed in a directory named ``$(touch /tmp/MARKER)``, yields
+    ``export OUTPUT_DIR="…/$(touch /tmp/MARKER)/outputs"`` in the generated script — and bash
+    performs command substitution inside double quotes, so running the job created the file.
+    The directory name is the whole payload; the user's YAML is innocent.
+
+    Asked of the resolved config, therefore, and by both loaders — :func:`load_config` raises,
+    :func:`chemrefine.validate.validate_config_text` reports — for the same reason the rule
+    exists at all: a value that reaches generated bash is refused before a script is written,
+    not after one runs.
+
+    Unlike the whitespace rule (which belongs to ORCA's input format and lives in the ORCA
+    input writer), this one is engine-independent: every engine's job script exports these
+    three paths, so there is nothing to scope it to.
+    """
+    for name in ("template_dir", "output_dir", "scratch_dir"):
+        value = getattr(config, name)
+        if value is None:
+            continue
+        try:
+            reject_shell_unsafe(
+                str(value), what=f"resolved {name}", fix="rename the directory it sits in"
+            )
+        except ValueError as e:
+            return str(e)
+    return None
+
+
 class Config(BaseModel):
     """Top-level YAML config."""
 
@@ -673,4 +711,9 @@ def load_config(path: str | Path) -> Config:
         cfg = Config(**raw)
     except ValidationError as e:
         raise ConfigError(f"invalid config {p}:\n{e}") from e
-    return resolve_relative_paths(cfg, base=p.parent.resolve())
+    resolved = resolve_relative_paths(cfg, base=p.parent.resolve())
+    # Re-asked after resolution: the field validator saw the paths as written, and a parent
+    # directory name can carry every character it refuses. See `shell_unsafe_after_resolution`.
+    if problem := shell_unsafe_after_resolution(resolved):
+        raise ConfigError(f"invalid config {p}:\n{problem}")
+    return resolved

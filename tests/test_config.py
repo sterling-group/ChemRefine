@@ -524,6 +524,36 @@ def test_executables_allow_spaces_and_bare_command_names(tmp_path: Path, ok: str
     assert load_config(_write_yaml(tmp_path, data)).executables["orca"] == ok
 
 
+def test_a_metacharacter_in_the_config_files_own_directory_is_refused(tmp_path: Path):
+    """The shell rule is re-asked after resolution, because a parent directory can carry one.
+
+    Reproduced before it was fixed: a config whose YAML contains nothing but
+    `output_dir: ./outputs`, sitting in a directory named `$(touch /tmp/MARKER)`, produced
+    `export OUTPUT_DIR="…/$(touch /tmp/MARKER)/outputs"` in the generated script — and bash
+    substitutes inside double quotes, so running the job created the file. The field
+    validator could not see it: it runs on the path as written, and `resolve_relative_paths`
+    anchors relative paths through `model_copy`, which runs no validators.
+
+    A directory name is the payload here, which is exactly the shape that matters on a
+    shared filesystem — the environment `docs/internals/security.md` is written for.
+    """
+    hostile = tmp_path / "$(echo pwned)"
+    hostile.mkdir()
+    config = hostile / "input.yaml"
+    config.write_text(yaml.safe_dump(_minimal_config()), encoding="utf-8")
+    with pytest.raises(ConfigError, match="resolved"):
+        load_config(config)
+
+
+def test_a_clean_config_directory_still_loads(tmp_path: Path):
+    """The re-check must not refuse an ordinary tree — it is a rule, not a mood."""
+    project = tmp_path / "proj-1_ok"
+    project.mkdir()
+    config = project / "input.yaml"
+    config.write_text(yaml.safe_dump(_minimal_config()), encoding="utf-8")
+    assert load_config(config).output_dir == project / "outputs"
+
+
 def test_explicit_null_scratch_dir_is_accepted(tmp_path: Path):
     """An explicit ``scratch_dir: null`` still means "auto-derive under output_dir"."""
     data = _minimal_config(scratch_dir=None)
