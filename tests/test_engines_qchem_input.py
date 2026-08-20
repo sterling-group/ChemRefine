@@ -86,3 +86,21 @@ def test_a_missing_template_is_a_config_error(tmp_path: Path):
             charge=0,
             multiplicity=1,
         )
+
+
+def test_a_comment_mentioning_the_block_name_is_not_the_block(tmp_path: Path):
+    """``$molecule`` in a ``$comment``'s prose must not become the replacement target.
+
+    The block regex once matched the literal text anywhere, so a comment that merely
+    *named* the block had the geometry spliced into it — and job 1 then ran the
+    template's own placeholder geometry. The shipped starter's comment was exactly such
+    a mention (see test_scaffold's cross-render test for that half).
+    """
+    text = _render(
+        tmp_path,
+        "$comment\nthe first $molecule block is replaced per structure\n$end\n\n"
+        "$molecule\n0 1\nHe 0.0 0.0 0.0\n$end\n\n$rem\n  jobtype sp\n$end\n",
+    )
+    assert "the first $molecule block is replaced per structure\n$end" in text
+    assert "H  0.000000 0.000000 0.740000" in text
+    assert "He" not in text

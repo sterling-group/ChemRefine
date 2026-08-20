@@ -51,3 +51,21 @@ def test_mem_total_is_the_peak_across_the_chain(tmp_path: Path):
 def test_no_mem_total_declares_no_memory(tmp_path: Path):
     """Absence is ``None``, not a default: the header's memory policy stands."""
     assert inspect_template(_write(tmp_path, "$rem\n  jobtype sp\n$end\n")).mem_total_mb is None
+
+
+def test_a_comment_block_naming_rem_facts_declares_nothing(tmp_path: Path):
+    """``$rem`` and ``jobtype ts`` in a ``$comment``'s prose are words, not directives.
+
+    Only ``!`` comments are stripped before the scan, so the ``$rem`` regex has to be
+    line-anchored or a comment mentioning it opens a phantom block that ends at the
+    comment's own ``$end`` — and its prose becomes the step's JOBTYPE facts.
+    """
+    info = inspect_template(
+        _write(
+            tmp_path,
+            "$comment\nthis template's $rem sets jobtype ts eventually\n$end\n\n"
+            "$rem\n  jobtype sp\n$end\n",
+        )
+    )
+    assert not info.is_ts
+    assert not info.has_freq

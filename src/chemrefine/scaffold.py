@@ -39,8 +39,12 @@ _STEP_STARTERS: dict[str, str] = {
         "%maxcore 2000\n"
     ),
     "qchem": (
+        # The comment deliberately never spells a section name: the input writer's block
+        # regexes are line-anchored, but a starter that does not mention them is one whose
+        # rendering can never depend on that anchoring.
         "$comment\n"
-        "Q-Chem starter — ChemRefine replaces the first $molecule block per structure.\n"
+        "Q-Chem starter — ChemRefine swaps each structure's geometry into the first\n"
+        "coordinate block below.\n"
         "$end\n"
         "\n"
         "$molecule\n"

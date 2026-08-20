@@ -26,7 +26,15 @@ from pathlib import Path
 from chemrefine.errors import ConfigError
 from chemrefine.io import read_xyz_frames
 
-_MOLECULE_BLOCK_RE = re.compile(r"\$molecule\b.*?\$end", re.IGNORECASE | re.DOTALL)
+# Both markers are anchored to their own lines, which is where Q-Chem reads them. Matched
+# anywhere, the literal text ``$molecule`` inside a ``$comment`` block starts the match and
+# the *comment's* ``$end`` closes it — so a template whose comment merely mentioned the
+# block name had the generated geometry spliced into its comment and Q-Chem ran job 1 on
+# the template's own placeholder geometry instead. The shipped starter's comment was
+# exactly such a mention.
+_MOLECULE_BLOCK_RE = re.compile(
+    r"^[ \t]*\$molecule\b.*?^[ \t]*\$end[ \t]*$", re.IGNORECASE | re.DOTALL | re.MULTILINE
+)
 
 
 def _molecule_block(xyz_path: Path, charge: int, multiplicity: int) -> str:

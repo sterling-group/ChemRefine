@@ -144,3 +144,51 @@ def test_header_starters_cover_cuda_and_everything_else():
     custom = _starter_for(_plan("special.header", None, kind="slurm-header"))
     assert custom.startswith("#!/bin/bash")
     assert "--gres" not in custom
+
+
+# ---------------------------------------------------------------------------
+# Starters must survive their own engine's input writer
+# ---------------------------------------------------------------------------
+
+
+def test_the_template_driven_starters_render_the_real_geometry(tmp_path: Path):
+    """Each ``.inp``/``.in`` starter, rendered by its engine's writer, carries the seed.
+
+    The starter and the writer live in different modules and had never met in a test —
+    which is how the Q-Chem starter's comment, merely *mentioning* its coordinate block,
+    made the writer splice the geometry into the comment and leave job 1 running the
+    starter's placeholder atom. Rendering every template-driven starter through the real
+    writer pins the pair: the seed's coordinates must land, and the placeholder must go.
+    """
+    from chemrefine.engines.orca import input as orca_input
+    from chemrefine.engines.qchem import input as qchem_input
+    from chemrefine.io import write_single_xyz
+    from chemrefine.scaffold import _STEP_STARTERS
+
+    xyz = write_single_xyz(
+        [("O", 0.0, 0.0, 0.0), ("H", 0.0, 0.0, 0.96)], tmp_path / "step1_0_inp.xyz"
+    )
+
+    qchem_tpl = tmp_path / "step1.in"
+    qchem_tpl.write_text(_STEP_STARTERS["qchem"], encoding="utf-8")
+    rendered = qchem_input.build_input(
+        xyz_path=xyz,
+        template_path=qchem_tpl,
+        output_path=tmp_path / "q" / "step1_0.in",
+        charge=0,
+        multiplicity=1,
+    ).read_text(encoding="utf-8")
+    body = rendered.split("$end", 1)[1]  # everything after the comment block
+    assert "O  0.000000 0.000000 0.000000" in body
+    assert "H 0.0 0.0 0.0" not in rendered  # the starter's placeholder atom is gone
+
+    orca_tpl = tmp_path / "step1.inp"
+    orca_tpl.write_text(_STEP_STARTERS["orca"], encoding="utf-8")
+    rendered = orca_input.build_input(
+        xyz_path=xyz,
+        template_path=orca_tpl,
+        output_path=tmp_path / "o" / "step1_0.inp",
+        charge=0,
+        multiplicity=1,
+    ).read_text(encoding="utf-8")
+    assert f"* xyzfile 0 1 {xyz}" in rendered

@@ -21,7 +21,13 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-_REM_BLOCK_RE = re.compile(r"\$rem\b(.*?)\$end", re.IGNORECASE | re.DOTALL)
+# Line-anchored like the writer's ``$molecule`` regex, and for the same reason: ``$rem``
+# named in a ``$comment`` block's prose must not open a phantom block whose "jobtype ts"
+# is the comment's own words. (``!`` comments are already stripped; ``$comment`` blocks
+# are not.)
+_REM_BLOCK_RE = re.compile(
+    r"^[ \t]*\$rem\b(.*?)^[ \t]*\$end[ \t]*$", re.IGNORECASE | re.DOTALL | re.MULTILINE
+)
 _JOBTYPE_RE = re.compile(r"\bjobtype\s*=?\s*(\S+)", re.IGNORECASE)
 # qqchem's grammar, which submits real inputs with it: optional ``=``, value in MB.
 _MEM_TOTAL_RE = re.compile(r"\bmem_total\s*=?\s*(\d+)", re.IGNORECASE)
