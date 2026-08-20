@@ -115,12 +115,16 @@ def _last_orientation(text: str, src: str) -> tuple[tuple[str, ...], NDArray[np.
 def _parse_frequencies(
     text: str, *, n_atoms: int
 ) -> tuple[dict[int, float] | None, NDArray[np.float64] | None]:
-    """Imaginary modes + padded displacement tensor, or ``(None, None)`` without the section.
+    """Imaginary modes + padded displacement tensor, or ``(None, None)`` without real data.
 
-    ``None`` for both when the output has no ``VIBRATIONAL ANALYSIS`` at all (distinct from
-    ``{}`` = a frequency section with zero imaginary modes — a verified minimum); the tensor
-    alone is ``None`` when its rows do not parse. ``rpartition`` takes the **last** analysis,
-    matching the energy and geometry readers — in an ``@@@`` chain that is the freq job's.
+    ``None`` for both when the output has no ``VIBRATIONAL ANALYSIS`` at all **or** the
+    section is there but no mode block parses — a job truncated or died mid-print. Both are
+    "no data", distinct from ``{}`` = a parsed table with zero imaginary modes — a verified
+    minimum; conflating the truncated case with ``{}`` called a killed freq job a minimum,
+    silently, through ``get_frequencies``' ``imaginary_count: 0``. The tensor alone is
+    ``None`` when only the displacement rows do not parse. ``rpartition`` takes the **last**
+    analysis, matching the energy and geometry readers — in an ``@@@`` chain that is the
+    freq job's.
     """
     _head, sep, tail = text.rpartition(_VIB_MARKER)
     if not sep:
@@ -145,8 +149,10 @@ def _parse_frequencies(
         if block_rows is not None:
             for column, index in enumerate(indices):
                 columns[index] = [row[3 * column : 3 * column + 3] for row in block_rows]
+    if not freqs:
+        return None, None  # marker present, nothing parsed: no data, not a verified minimum
     imaginary = {index + _TRIVIAL_MODES - 1: v for index, v in freqs.items() if v < 0.0}
-    if not freqs or not columns:
+    if not columns:
         return imaginary, None
     tensor = np.zeros((n_atoms, 3, _TRIVIAL_MODES + max(freqs)), dtype=np.float64)
     for index, block in columns.items():

@@ -164,12 +164,17 @@ def test_an_orientation_block_with_no_atoms_is_unparseable():
 
 
 def test_a_mode_block_without_its_frequency_row_is_skipped():
-    """A ``Mode:`` line with no ``Frequency:`` beneath it contributes nothing, quietly."""
+    """A ``Mode:`` line with no ``Frequency:`` beneath it contributes nothing, quietly.
+
+    And a section where *no* block contributed reads ``None``, not ``{}``: this test once
+    pinned ``{}`` here, which is the "verified minimum" verdict — handed out for a section
+    that parsed no data at all.
+    """
     text = (
         _ORIENTATION + _ENERGY + " **  VIBRATIONAL ANALYSIS  **\n Mode:                 1\n done\n"
     )
     parsed = parse_qchem_text(text)[0]
-    assert parsed.imaginary_freqs == {}
+    assert parsed.imaginary_freqs is None
     assert parsed.normal_modes is None
 
 
@@ -183,7 +188,20 @@ def test_a_frequency_row_of_the_wrong_width_skips_the_block():
         + " Frequency:      -151.64\n"
     )
     parsed = parse_qchem_text(text)[0]
-    assert parsed.imaginary_freqs == {}
+    assert parsed.imaginary_freqs is None  # nothing parsed = no data, not a minimum
+    assert parsed.normal_modes is None
+
+
+def test_a_truncated_section_is_no_data_not_a_minimum():
+    """Killed right after the header, the section must not read as 0 imaginary modes.
+
+    Q-Chem can exit 0 on an internal error and the status banners are parsed elsewhere,
+    so ``{}`` here would flow through ``get_frequencies`` as ``imaginary_count: 0`` — a
+    verified minimum, from a job that never printed a single mode.
+    """
+    text = _ORIENTATION + _ENERGY + " **  VIBRATIONAL ANALYSIS  **\n"
+    parsed = parse_qchem_text(text)[0]
+    assert parsed.imaginary_freqs is None
     assert parsed.normal_modes is None
 
 
