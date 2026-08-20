@@ -289,6 +289,40 @@ for the full map.
 ### Fixed
 
 
+- **A Q-Chem comment that names a section no longer becomes the section.** The input
+  writer found `$molecule … $end` anywhere in the template, so a `$comment` whose prose
+  merely mentioned `$molecule` — as the scaffolded starter's did — swallowed the
+  generated geometry into the comment and left job 1 running the starter's placeholder
+  atom. Both section regexes (`$molecule` in the writer, `$rem` in the inspector) now
+  match markers on their own lines, the starter's comment stops spelling section names,
+  and the template-driven starters are rendered through their engines' real writers in a
+  test — the cross-module pairing that had never been checked. Also in qchem: a
+  `VIBRATIONAL ANALYSIS` section whose blocks never printed (a job killed mid-write;
+  Q-Chem exits 0 on plenty of internal errors) read back as `{}` — the "verified
+  minimum, zero imaginary modes" verdict `get_frequencies` serves — where nothing
+  parsed now honestly reads as no data.
+- **A non-string config key gets the documented refusal, not a TypeError.** YAML 1.1
+  parses an unquoted `on:`/`yes:`/`no:` key as a boolean, and `Config(**raw)` imposed a
+  str-keys rule pydantic never saw — a traceback from `load_config` and a 500 from
+  `validate_config_text`, whose whole contract is "never raises". Both loaders hand the
+  mapping to pydantic whole now and answer with their documented shapes.
+- **The boundaries answer instead of exiting.** `chemrefine agent`'s REPL ran the model
+  call bare, so a dead endpoint — the likeliest failure, the one `--check` preflights —
+  took the whole conversation down as a traceback; a failed turn now prints its reason
+  and the loop (history intact) continues, the posture the web harness already had. A
+  taken `--port` on `chemrefine gui` exits 1 naming `--port 0` instead of a waitress
+  traceback. In the GUI itself, browsing into an unreadable directory and saving into an
+  unwritable one are plain 400s instead of logged-traceback 500s; `scaffold` creates
+  parent directories for a `template: sub/custom.inp` override (a shape the field always
+  documented) instead of raising a raw `FileNotFoundError`; and Save… writes atomically
+  through the same writer `save_config` uses, so a kill mid-save cannot truncate the
+  config a run is pointed at.
+- **The playground's YAML reads like the served GUI's.** The static docs playground
+  dumped the config in click order — `steps:` first, settings trailing — because the
+  canonical reordering only ever lived server-side; its schema-driven twin now runs
+  client-side. And `run_status`'s holder payload carries the three-valued `alive`
+  (`true`/`false` for a same-host holder, `null` for a foreign one no status read can
+  probe), which the lock reader computed all along and only tests consumed.
 - `chemrefine.slurm.build_script` no longer takes `save_scratch`. It was a v1 concept
   carried into the rewrite's signature and never wired — no config knob and no caller in
   any commit of this line — and `build_array_script` never had it, so wiring it later would
