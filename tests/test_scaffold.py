@@ -63,6 +63,19 @@ def test_a_step_template_override_is_planned_under_its_own_name(tmp_path: Path):
     assert step_plan.path.name == "custom.inp"
 
 
+def test_an_override_in_a_subdirectory_is_scaffolded_not_a_traceback(tmp_path: Path):
+    """``template: sub/custom.inp`` is a documented shape; the writer makes its parents.
+
+    Only ``template_dir`` itself used to be created, so a subdirectory override raised a
+    raw ``FileNotFoundError`` — past the CLI's ``ChemRefineError`` handler — while
+    ``agent_tools.write_template`` created parents for the very same plan path.
+    """
+    config = _config(tmp_path, {"step": 1, "engine": "orca", "template": "sub/custom.inp"})
+    written = scaffold_templates(config)
+    assert config.template_dir / "sub" / "custom.inp" in written
+    assert (config.template_dir / "sub" / "custom.inp").is_file()
+
+
 # ---------------------------------------------------------------------------
 # Scaffolding
 # ---------------------------------------------------------------------------

@@ -202,6 +202,9 @@ def scaffold_templates(config: Config, *, overwrite: bool = False) -> tuple[Path
     for plan in plan_templates(config):
         if plan.exists and not overwrite:
             continue
+        # A `template:` override may name a subdirectory (or an absolute path elsewhere)
+        # — the same shape `agent_tools.write_template` already creates parents for.
+        plan.path.parent.mkdir(parents=True, exist_ok=True)
         plan.path.write_text(_starter_for(plan), encoding="utf-8")
         written.append(plan.path)
     return tuple(written)
