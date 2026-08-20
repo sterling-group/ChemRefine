@@ -66,12 +66,9 @@ dependencies = [
     # version the tested configuration can actually install; this is it.
     "pydantic>=2.12",
     "typer>=0.12",
-    # The marker evaluator. `chemrefine backends install` reads this project's own
-    # `Requires-Dist` metadata to work out which Pythons a backend extra installs on
-    # (engines/_provision._supported_pythons), and a marker is not something the stdlib
-    # can evaluate. Imported lazily, inside the provisioner, like pandas and rdkit are.
-    # It arrives with half the scientific stack anyway (matplotlib via ase, pytest,
-    # setuptools) — declared because we import it, not because it was missing.
+    # The marker evaluator: `chemrefine backends install` reads this project's own
+    # Requires-Dist to work out which Pythons a backend extra installs on, and the stdlib
+    # cannot evaluate a marker. Imported lazily in the provisioner, like pandas and rdkit.
     "packaging>=24",
 ]
 
@@ -103,19 +100,13 @@ agent = ["pydantic-ai-slim[openai]>=2,<3"]
 # separately (the `chemrefine backends` helper automates the per-backend env). `[mlip]`
 # defaults to FAIRChem / UMA (`uma-s-1p2`).
 #
-# A `python_version` marker on a backend's own requirements is a **claim**: this extra
-# installs here, from wheels. It is read twice — by pip, and by the provisioner
-# (`engines/_provision._supported_pythons`), which builds the backend's managed env on the
-# newest Python the extra claims instead of on whatever the orchestrator happens to run.
-# That is why a capped extra carries the marker on *every* requirement of its own: an extra
-# that half-installs around the pin its cap exists to hold leaves an env that is broken in a
-# subtler way, and makes the claim unreadable to both readers.
-#
-# "Installs" means without a source build. An sdist here is not a slow install, it is
-# compiling torch or a vendored abseil on a login node — hours at best, impossible at worst
-# (see mlip-orb). ci.yml's `extras-resolve` proves every claim in both directions on every
-# matrix Python, so a cap upstream has made obsolete fails CI rather than quietly outliving
-# its reason.
+# A `python_version` marker on a backend's own requirements is a claim: this extra installs
+# here, from wheels. Both pip and the provisioner read it — `engines/_provision` builds a
+# backend's managed env on the newest Python its extra claims rather than on whatever the
+# orchestrator runs — so a capped extra carries the marker on *every* requirement of its
+# own; half-installing around the pin the cap exists to hold is a subtler kind of broken.
+# An sdist here is not a slow install but torch or a vendored abseil compiling on a login
+# node, and ci.yml fails a cap that has outlived the missing wheel behind it.
 mlip-fairchem = [
     "fairchem-core>=2.18",
     "chemrefine[server]",
@@ -130,15 +121,11 @@ mlip-mace = [
 ]
 mlip-sevenn = ["sevenn>=0.11", "chemrefine[server]"]
 # 3.12 and only 3.12. orb-models pins `dm-tree==0.1.8`, whose newest wheels are cp312 — the
-# `==` puts 0.1.9's cp313 and 0.1.10's cp314 wheels out of reach — and the 0.1.8 sdist
-# vendors an abseil snapshot no GCC >= 13 will compile. The floor is load-bearing for its
-# own reason: without it, `pip install chemrefine[mlip-orb]` on 3.11 backtracks through
-# every orb release looking for a compatible one and ends in a resolver wall of text
-# instead of "requires a different Python". Lift the ceiling when orb loosens that pin.
-# The floor is not decoration either: unpinned, `orb-models` resolves on 3.11 *and* 3.13 by
-# backtracking to a 2024 release whose dm-tree pin still had wheels there — the silent
-# downgrade this extra's marker exists to refuse, and the reason CI cannot otherwise tell a
-# cap that still binds from one that has expired. 0.6 is the first line that requires 3.12.
+# `==` puts 0.1.9's cp313 and 0.1.10's cp314 out of reach — and its sdist vendors an abseil
+# snapshot no GCC >= 13 compiles. Lift the ceiling when orb loosens that pin. The floor is
+# load-bearing too: unpinned, orb-models resolves on any Python by backtracking to a 2024
+# release, which is both the silent downgrade this refuses and what stopped CI telling a
+# cap that still binds from one that has expired. 0.6 is the first line requiring 3.12.
 mlip-orb = [
     "orb-models>=0.6; python_version >= '3.12' and python_version < '3.13'",
     "chemrefine[server]",
