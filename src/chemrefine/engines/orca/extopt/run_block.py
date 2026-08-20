@@ -78,9 +78,10 @@ def build_extopt_run_block(
     plain ORCA path runs — rather than being re-interpolated here from a raw executable,
     which is what keeps the two paths' quoting from diverging.
 
-    Public, not underscored, because that is the whole reason this module exists: the
-    MLIP and PySCF ExtOpt engines both call it, and the alternative is one of them
-    importing the other's helper.
+    Public, not underscored, because its one caller lives in another module:
+    :meth:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine.run_block` builds
+    every ExtOpt engine's block through it — the MLIP and PySCF engines inherit that
+    method rather than calling here themselves.
     """
     cleanup = (
         'if [ -n "${SERVER_PID:-}" ]; then\n'

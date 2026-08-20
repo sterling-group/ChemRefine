@@ -153,3 +153,35 @@ function parentDir(path) {
   if (cut < 0) return ".";
   return cut === 0 ? "/" : path.slice(0, cut);
 }
+
+/** Reorder a raw config mapping into the schema's declaration order.
+ *
+ * The static playground's twin of the server's `_canonical_order` (gui/app.py): there
+ * `/api/yaml` has the real emitter behind it, here `jsyaml.dump` writes keys in click
+ * order — and a fresh session's cfg starts `{steps: []}`, so the playground's YAML led
+ * with the steps block and trailed the settings, exactly the shape the server half was
+ * written to fix. The order authority is the same schema document (property order is
+ * the models' field order). Unknown keys sort to the end, order preserved (sort is
+ * stable) — validation is the place that complains about them, not the emitter.
+ */
+// app.js calls this through the global scope — these are classic scripts, not
+// modules. tests/test_gui_assets.py executes this file in Node and is what proves
+// the call still resolves.
+// biome-ignore lint/correctness/noUnusedVariables: app.js is the caller
+function canonicalConfigOrder(config, schemaDoc) {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return config;
+  const rankOf = (properties) =>
+    Object.fromEntries(Object.keys(properties || {}).map((key, i) => [key, i]));
+  const order = (mapping, rank) =>
+    Object.fromEntries(
+      Object.entries(mapping).sort(([a], [b]) => (rank[a] ?? 999) - (rank[b] ?? 999)),
+    );
+  const ordered = order(config, rankOf(schemaDoc?.config?.properties));
+  if (Array.isArray(ordered.steps)) {
+    const stepRank = rankOf(schemaDoc?.config?.$defs?.StepConfig?.properties);
+    ordered.steps = ordered.steps.map((step) =>
+      step && typeof step === "object" && !Array.isArray(step) ? order(step, stepRank) : step,
+    );
+  }
+  return ordered;
+}

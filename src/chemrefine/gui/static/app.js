@@ -156,7 +156,10 @@ function builder() {
       // The playground's stand-ins. YAML runs on vendored js-yaml here ONLY — the
       // local GUI keeps emission server-side, the system's single implementation.
       if (url === "/api/yaml") {
-        return { yaml_text: jsyaml.dump(body.config, { noRefs: true }) };
+        // Ordered the way the server's _canonical_order orders: jsyaml writes keys in
+        // click order, and a fresh session's cfg leads with `steps`.
+        const ordered = canonicalConfigOrder(body.config, this.schema);
+        return { yaml_text: jsyaml.dump(ordered, { noRefs: true }) };
       }
       if (url === "/api/parse") {
         try {

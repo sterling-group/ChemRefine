@@ -258,7 +258,15 @@ def run_status(config_path: str, log_tail_lines: int = 40) -> dict[str, Any]:
     return {
         "running": status.held,
         "holder": (
-            {"host": status.host, "pid": status.pid, "started": status.started}
+            # `alive` is the three-valued liveness a caller cannot re-derive: True/False
+            # for a same-host holder, null for a foreign one no status read can probe —
+            # which is what tells an agent "held by a live run" from "held, unverifiable".
+            {
+                "host": status.host,
+                "pid": status.pid,
+                "started": status.started,
+                "alive": status.alive,
+            }
             if status.host is not None
             else None
         ),

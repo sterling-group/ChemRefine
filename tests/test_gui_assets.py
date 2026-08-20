@@ -356,6 +356,35 @@ def test_coercion_clamps_and_splits_defaults_by_scope():
     }
 
 
+def test_the_playgrounds_yaml_order_matches_the_servers():
+    """``canonicalConfigOrder`` is the static half of the server's ``_canonical_order``.
+
+    The playground dumps with js-yaml, which writes keys in click order — and a fresh
+    session's cfg starts ``{steps: []}``, so its YAML led with the steps block and
+    trailed the settings, the exact shape the server emitter was written to fix. The
+    order authority is the same schema document; unknown keys keep their place, last.
+    """
+    out = _run_in_node("""
+      const schemaDoc = {config: {
+        properties: {charge: {}, max_cores: {}, steps: {}},
+        $defs: {StepConfig: {properties: {step: {}, engine: {}, template: {}}}},
+      }};
+      const clicked = {steps: [{template: "t.inp", mystery: 1, step: 1, engine: "orca"}],
+                       max_cores: 8, unknown_key: true, charge: 0};
+      const ordered = canonicalConfigOrder(clicked, schemaDoc);
+      console.log(JSON.stringify({
+        top: Object.keys(ordered),
+        step: Object.keys(ordered.steps[0]),
+        untouched_scalar: canonicalConfigOrder("raw text", schemaDoc),
+      }));
+    """)
+    assert json.loads(out) == {
+        "top": ["charge", "max_cores", "steps", "unknown_key"],
+        "step": ["step", "engine", "template", "mystery"],
+        "untouched_scalar": "raw text",
+    }
+
+
 def test_templated_option_lists_bind_selected():
     """Every ``<select>`` whose options are ``x-for``-rendered must bind ``:selected``.
 

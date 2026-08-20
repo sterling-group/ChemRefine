@@ -326,6 +326,25 @@ def test_run_status_reads_the_persisted_truth(tmp_path: Path):
     assert status["log_tail"] == ["line2", "line3"]
 
 
+def test_run_status_holder_carries_the_three_valued_liveness(tmp_path: Path):
+    """The holder payload says not just *who* but whether the pid could be proven alive.
+
+    ``alive`` is what an agent cannot re-derive over MCP: ``True``/``False`` for a
+    same-host holder, ``null`` for a foreign one nothing here can probe — the difference
+    between "held by a live run" and "held, unverifiable from this side".
+    """
+    path = _reported_tree(tmp_path)
+    lock = tmp_path / "outputs" / pipeline.RUN_LOCK_NAME
+    lock.write_text(
+        json.dumps({"host": socket.gethostname(), "pid": os.getpid(), "started": "now"}),
+        encoding="utf-8",
+    )
+    status = agent_tools.run_status(str(path))
+    assert status["running"] is True
+    assert status["holder"]["pid"] == os.getpid()
+    assert status["holder"]["alive"] is True
+
+
 def test_run_status_on_a_fresh_tree_is_all_zeros(tmp_path: Path):
     status = agent_tools.run_status(str(_write_config(tmp_path)))
     assert status["steps"][0]["reported_survivors"] == 0
