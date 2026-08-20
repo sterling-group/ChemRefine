@@ -21,6 +21,7 @@ from ase import Atoms
 
 from chemrefine import cache, ids
 from chemrefine.config import Config, StepConfig
+from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import ArtifactEngine
 from chemrefine.errors import CacheError, JobFailureError
 from chemrefine.state import (
@@ -34,6 +35,12 @@ from chemrefine.state import (
 from chemrefine.step import rebuild_cache_step, run_step
 
 ARTIFACT_NAME = "model.pt"
+
+
+class _StubTrainOptions(EngineOptions):
+    """The declared knob the staleness tests turn — a trainer's options are declared."""
+
+    epochs: int = 1
 
 
 class _StubArtifactEngine:
@@ -52,6 +59,7 @@ class _StubArtifactEngine:
     """
 
     name: ClassVar[str] = "fake"
+    options_cls: ClassVar[type[EngineOptions]] = _StubTrainOptions
 
     def __init__(self, *, produces: bool = True, weights: str = "weights") -> None:
         self.produces = produces
@@ -183,6 +191,17 @@ def test_a_missing_product_fails_the_step_and_caches_nothing(tmp_path: Path):
     assert not (_step_dir(config) / "_cache" / "step.json").exists()
 
 
+def _key_for(config: Config, seeds) -> cache.StepKey:
+    """The key run_step derives for the stub — its declared options included."""
+    step_cfg = config.steps[0]
+    return cache.StepKey.of(
+        step_cfg,
+        seeds.structures,
+        None,
+        engine_options=_StubTrainOptions.from_raw_lenient(step_cfg.options).model_dump(mode="json"),
+    )
+
+
 def test_a_rerun_that_produces_nothing_does_not_adopt_the_previous_run(tmp_path: Path):
     """A changed configuration whose job dies must fail, not inherit the old product.
 
@@ -211,9 +230,7 @@ def test_a_rerun_that_produces_nothing_does_not_adopt_the_previous_run(tmp_path:
     # stale model would have done and what would then make a `resume` serve it.
     cached = cache.load(_step_dir(changed))
     assert cached is not None
-    assert (
-        cached.fingerprint == cache.StepKey.of(config.steps[0], seeds.structures, None).fingerprint
-    )
+    assert cached.fingerprint == _key_for(config, seeds).fingerprint
 
     run_dir = _step_dir(changed) / ids.TRAINING_ID
     assert not (run_dir / ARTIFACT_NAME).exists(), "run 1's model is not left at the canonical path"

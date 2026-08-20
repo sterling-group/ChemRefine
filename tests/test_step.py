@@ -979,6 +979,41 @@ def test_rebuild_cache_step_refuses_outputs_from_another_configuration(tmp_path:
         step.rebuild_cache_step(cfg_b, cfg_b.steps[0], seeds)
 
 
+def test_rebuild_adopts_an_unprovenanced_tree(tmp_path: Path):
+    """A manifest without row provenance is unprovable, not wrong — the explicit command adopts.
+
+    That is every pre-provenance tree (and the documented v1 adoption's hand-written
+    manifests): its bare stamp was written under rules that no longer exist, so nothing
+    can prove it right — and nothing proves it wrong. `rebuild-cache` re-parses under the
+    current rules and writes the manifest back *with* provenance, so the adoption is
+    recorded and the next question is answered per row.
+    """
+    import json
+
+    from chemrefine import step
+
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1"])
+    run_step(cfg, cfg.steps[0], seeds, mode=StepMode.EXECUTE)
+    step_dir = step_dir_for(cfg, cfg.steps[0])
+    cache.invalidate(step_dir)
+
+    # Strip the manifest to the pre-provenance shape: a bare, alien stamp and no rows.
+    manifest_file = cache.manifest_path(step_dir)
+    data = json.loads(manifest_file.read_text(encoding="utf-8"))
+    data["fingerprint"] = "feedfacefeedface"
+    data.pop("resolution_key", None)
+    for row in data["files"]:
+        row.pop("row_key", None)
+        row.pop("parent_digest", None)
+    manifest_file.write_text(json.dumps(data), encoding="utf-8")
+
+    outcome = step.rebuild_cache_step(cfg, cfg.steps[0], seeds)
+    assert {s.id for s in outcome.state.structures} == {"0", "1"}
+    provenance = cache.load_manifest_provenance(step_dir)
+    assert set(provenance.rows) == {"0", "1"}, "the adoption must be recorded per row"
+
+
 def test_rebuild_cache_step_accepts_outputs_from_this_configuration(tmp_path: Path):
     """The ordinary case — re-parsing after a parser change — still works."""
     from chemrefine import step
@@ -1278,7 +1313,10 @@ def test_resume_refuses_a_manifest_from_a_different_config(tmp_path: Path):
     seeds = _seed_state(["0", "1"])
     step_dir = _interrupt_after(cfg, seeds, keep={"0", "1"})
 
-    changed = _config(tmp_path, options={"basis": "other"})
+    # The change must be one that provably reaches jobs — the effective charge. (An
+    # *undeclared* option like a stray `basis:` now moves no key by design: nothing
+    # reads it, so nothing it could invalidate exists.)
+    changed = _config(tmp_path, charge=-1)
     run_step(changed, changed.steps[0], seeds, mode=StepMode.RESUME)
 
     assert list((step_dir / "0").glob("attempt*")), "a stale manifest must not be trusted"
@@ -1295,7 +1333,7 @@ def test_a_step_derives_its_cache_key_exactly_once(tmp_path: Path, monkeypatch):
     """
     from chemrefine import cache
 
-    calls: dict[str, int] = {"parents_digest": 0, "template_digest": 0, "fingerprint": 0}
+    calls: dict[str, int] = {"structure_digest": 0, "template_digest": 0, "row_key": 0}
 
     def counting(name):
         original = getattr(cache, name)
@@ -1312,7 +1350,8 @@ def test_a_step_derives_its_cache_key_exactly_once(tmp_path: Path, monkeypatch):
     cfg = _config(tmp_path)
     state = _seed_state(["0", "1"])
     run_step(cfg, cfg.steps[0], state, mode=StepMode.RESUME)  # cold: nothing on disk
-    assert calls == {"parents_digest": 1, "template_digest": 1, "fingerprint": 1}
+    # One derivation: each parent digested once, the template once, one row key per parent.
+    assert calls == {"structure_digest": 2, "template_digest": 1, "row_key": 2}
 
 
 # ---------------------------------------------------------------------------

@@ -332,20 +332,40 @@ def _cfg(**over) -> StepConfig:
     return StepConfig(**base)
 
 
-def test_nms_reuse_fingerprint_ignores_search_params():
+def _structure(sid: str) -> Structure:
+    return Structure(id=sid, atoms=Atoms("H"))
+
+
+def _resolution_of(cfg: StepConfig) -> cache.ResolutionSpec:
+    """Split the step's NMS reading the way ``derive_step_key`` does."""
+    dump = nms.NmsOptions.from_raw(cfg.options).model_dump(mode="json")
+    return cache.ResolutionSpec(
+        criterion={k: dump[k] for k in ("target", "ts_mode_index")},
+        search={k: dump[k] for k in ("displacement_value", "num_random_displacements", "seed")},
+    )
+
+
+def _reuse_key(cfg: StepConfig, parent: Structure) -> str:
+    resolution = _resolution_of(cfg) if cfg.nms else None
+    return cache.StepKey.of(cfg, (parent,), None, resolution=resolution).reuse_fingerprint
+
+
+def test_nms_reuse_key_ignores_search_params():
+    parent = _structure("0")
     base = _cfg(options={"target": "minimum", "displacement_value": 1.0})
     tuned = _cfg(options={"target": "minimum", "displacement_value": 2.0})
-    assert cache.reuse_fingerprint(base, ("0",)) == cache.reuse_fingerprint(tuned, ("0",))
+    assert _reuse_key(base, parent) == _reuse_key(tuned, parent)
 
 
-def test_nms_reuse_fingerprint_changes_on_criterion():
+def test_nms_reuse_key_changes_on_criterion():
+    parent = _structure("0")
     mn = _cfg(options={"target": "minimum"})
     ts = _cfg(options={"target": "ts"})
-    assert cache.reuse_fingerprint(mn, ("0",)) != cache.reuse_fingerprint(ts, ("0",))
+    assert _reuse_key(mn, parent) != _reuse_key(ts, parent)
 
 
-def test_nms_reuse_fingerprint_empty_for_non_nms():
-    assert cache.reuse_fingerprint(_cfg(nms=False), ("0",)) == ""
+def test_nms_reuse_key_empty_for_non_nms():
+    assert _reuse_key(_cfg(nms=False), _structure("0")) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -792,12 +812,21 @@ def test_one_loop_resolves_both_modes():
 def test_an_edited_template_invalidates_the_reuse_before_a_reattempt(tmp_path: Path):
     """The second invariant: a stale input can never be resubmitted from the manifest.
 
-    `reuse_fingerprint` covers `template_digest`, so editing a template changes the key that
-    gates this path — the re-attempt is not reached with inputs the user has since changed.
+    The reuse key is derived from the row keys, which cover the template digest — so
+    editing a template changes the key that gates this path and the re-attempt is not
+    reached with inputs the user has since changed.
     """
     cfg = StepConfig(step=1, engine="orca", operation="opt_sp", nms=True)
-    first = cache.reuse_fingerprint(cfg, ("0",), template_digest="original")
-    edited = cache.reuse_fingerprint(cfg, ("0",), template_digest="edited")
+    parent = _structure("0")
+    tpl_a, tpl_b = tmp_path / "a.inp", tmp_path / "b.inp"
+    tpl_a.write_text("original", encoding="utf-8")
+    tpl_b.write_text("edited", encoding="utf-8")
+    first = cache.StepKey.of(
+        cfg, (parent,), tpl_a, resolution=_resolution_of(cfg)
+    ).reuse_fingerprint
+    edited = cache.StepKey.of(
+        cfg, (parent,), tpl_b, resolution=_resolution_of(cfg)
+    ).reuse_fingerprint
     assert first and first != edited
 
 

@@ -15,15 +15,14 @@ from chemrefine import cache
 from chemrefine.cache import (
     CACHE_FORMAT_VERSION,
     RESULT_FORMAT_VERSION,
+    ResolutionSpec,
     StepKey,
-    fingerprint,
     invalidate,
     load,
     load_if_valid,
     load_manifest,
     manifest_path,
     option_file_digests,
-    parents_digest,
     save,
     save_manifest,
     save_result_records,
@@ -56,9 +55,35 @@ def _parents(*ids: str) -> tuple[Structure, ...]:
     return tuple(Structure(id=i, atoms=Atoms("H")) for i in ids)
 
 
-def _key(*ids: str, step_cfg: StepConfig | None = None, template: Path | None = None) -> StepKey:
+def _key(
+    *ids: str,
+    step_cfg: StepConfig | None = None,
+    template: Path | None = None,
+    charge: int = 0,
+    multiplicity: int = 1,
+    engine_options: dict | None = None,
+    resolution: ResolutionSpec | None = None,
+) -> StepKey:
     """The key a step over these parents would be written under."""
-    return StepKey.of(step_cfg or _cfg(), _parents(*ids), template)
+    return StepKey.of(
+        step_cfg or _cfg(),
+        _parents(*ids),
+        template,
+        charge=charge,
+        multiplicity=multiplicity,
+        engine_options=engine_options,
+        resolution=resolution,
+    )
+
+
+def _resolution(
+    target: str = "minimum", displacement: float = 1.0, seed: int = 42
+) -> ResolutionSpec:
+    """A resolution spec the way ``derive_step_key`` splits the NMS reading."""
+    return ResolutionSpec(
+        criterion={"target": target, "ts_mode_index": None},
+        search={"displacement_value": displacement, "num_random_displacements": 1, "seed": seed},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -66,40 +91,122 @@ def _key(*ids: str, step_cfg: StepConfig | None = None, template: Path | None = 
 # ---------------------------------------------------------------------------
 
 
-def test_fingerprint_stable_for_same_inputs():
-    cfg = _cfg()
-    assert fingerprint(cfg, ("0", "1")) == fingerprint(cfg, ("0", "1"))
+def test_the_key_is_stable_for_identical_inputs():
+    assert _key("0", "1").fingerprint == _key("0", "1").fingerprint
+    assert len(_key("0").fingerprint) == 16
 
 
-def test_fingerprint_changes_when_config_changes():
-    a = fingerprint(_cfg(charge=0), ("0",))
-    b = fingerprint(_cfg(charge=-1), ("0",))
-    assert a != b
+def test_the_key_moves_when_parents_change():
+    assert _key("0").fingerprint != _key("0", "1").fingerprint
 
 
-def test_fingerprint_changes_when_parents_change():
-    cfg = _cfg()
-    assert fingerprint(cfg, ("0",)) != fingerprint(cfg, ("0", "1"))
+def test_the_effective_charge_is_the_identity_not_the_override():
+    """Workflow ``charge: 0`` vs ``charge: 2`` must be two different steps.
+
+    The old payload hashed the per-step *override* — ``None`` when inherited — so a
+    workflow-level charge edit changed every job's physics while every fingerprint stood
+    still (reproduced on the shipped payload before this model replaced it). The key now
+    takes the effective value the jobs render.
+    """
+    assert _key("0", charge=0).fingerprint != _key("0", charge=2).fingerprint
+    assert _key("0", multiplicity=1).fingerprint != _key("0", multiplicity=3).fingerprint
 
 
-def test_fingerprint_is_sixteen_chars():
-    assert len(fingerprint(_cfg(), ("0",))) == 16
+def test_an_undeclared_option_moves_no_key():
+    """A key nothing reads cannot change a job — validate warns about it; the key ignores it.
+
+    Engine options enter the key only *as the engine's declared model reads them*; a junk
+    or typo'd key reaches no engine (script engines substitute declared fields only) and
+    therefore no result.
+    """
+    plain = _key("0", step_cfg=_cfg(options={}))
+    junk = _key("0", step_cfg=_cfg(options={"typo_knob": 7}))
+    assert plain.fingerprint == junk.fingerprint
+    assert plain.row_keys == junk.row_keys
 
 
-def test_fingerprint_changes_with_parents_digest():
-    cfg = _cfg()
-    assert fingerprint(cfg, ("0",), parents_digest="aaa") != fingerprint(
-        cfg, ("0",), parents_digest="bbb"
+def test_a_declared_option_moves_the_row_key():
+    a = _key("0", engine_options={"cores": 4})
+    b = _key("0", engine_options={"cores": 8})
+    assert a.row_keys != b.row_keys
+    assert a.fingerprint != b.fingerprint
+
+
+def test_the_nms_family_moves_only_the_resolution_key():
+    """The flag and its options steer post-round-1 resolution — never a job.
+
+    Same rows either way is what makes flipping ``nms: true`` a served edit: every
+    round-1 output on disk remains provably this configuration's.
+    """
+    plain = _key("0")
+    resolving = _key("0", resolution=_resolution())
+    assert plain.row_keys == resolving.row_keys
+    assert plain.fingerprint != resolving.fingerprint
+    assert plain.resolution_key == "" and resolving.resolution_key != ""
+
+
+def test_search_retunes_keep_the_reuse_key_criterion_changes_move_it():
+    """The E13 split, structurally: search tunes the hunt, criterion changes the answer."""
+    base = _key("0", resolution=_resolution())
+    retuned = _key("0", resolution=_resolution(displacement=2.0, seed=7))
+    recriterioned = _key("0", resolution=_resolution(target="ts"))
+    assert base.fingerprint != retuned.fingerprint  # a different step...
+    assert base.reuse_fingerprint == retuned.reuse_fingerprint  # ...same reuse verdict
+    assert base.criterion_key == retuned.criterion_key
+    assert base.reuse_fingerprint != recriterioned.reuse_fingerprint
+    assert base.criterion_key != recriterioned.criterion_key
+
+
+def test_manifest_provenance_round_trips(tmp_path: Path):
+    """What save_manifest writes per row, load_manifest_provenance reads back — exactly."""
+    from chemrefine.cache import load_manifest_provenance
+
+    key = _key("0", "1", resolution=_resolution())
+    inputs = StepInputs(
+        files=(
+            (tmp_path / "0.inp", tmp_path / "0.out", "0"),
+            (tmp_path / "1.inp", tmp_path / "1.out", "1"),
+        )
     )
-
-
-def test_fingerprint_changes_with_template_digest():
-    # Editing a template (same basename) must re-run the step — the content
-    # digest is what carries that, since the basename alone is unchanged.
-    cfg = _cfg()
-    assert fingerprint(cfg, ("0",), template_digest="aaa") != fingerprint(
-        cfg, ("0",), template_digest="bbb"
+    save_manifest(
+        inputs,
+        tmp_path,
+        operation="opt_sp",
+        engine="fake",
+        fingerprint=key.fingerprint,
+        resolution_key=key.resolution_key,
+        rows=key.manifest_rows(),
     )
+    provenance = load_manifest_provenance(tmp_path)
+    assert provenance.fingerprint == key.fingerprint
+    assert provenance.resolution_key == key.resolution_key
+    assert provenance.rows == key.manifest_rows()
+    # And the file layout is untouched by the extra keys.
+    assert load_manifest(tmp_path) == inputs
+
+
+def test_a_bare_manifest_reads_as_unprovenanced(tmp_path: Path):
+    """A manifest without row keys — every pre-provenance tree — is empty provenance."""
+    from chemrefine.cache import load_manifest_provenance
+
+    save_manifest(
+        StepInputs(files=((tmp_path / "0.inp", tmp_path / "0.out", "0"),)),
+        tmp_path,
+        operation="opt_sp",
+        engine="fake",
+        fingerprint="feedfacefeedface",
+    )
+    provenance = load_manifest_provenance(tmp_path)
+    assert provenance.rows == {}
+    assert provenance.fingerprint == "feedfacefeedface"
+
+
+def test_manifest_rows_align_ids_keys_and_digests():
+    key = _key("0", "1")
+    rows = key.manifest_rows()
+    assert set(rows) == {"0", "1"}
+    assert rows["0"] == (key.row_keys[0], key.parent_digests[0])
+    assert rows["1"] == (key.row_keys[1], key.parent_digests[1])
 
 
 # ---------------------------------------------------------------------------
@@ -182,23 +289,6 @@ def test_the_option_digest_value_is_the_plain_sha1_of_the_file(tmp_path: Path):
     assert option_file_digests({"model_path": str(model)}) == {"model_path": expected}
 
 
-def test_a_step_that_names_no_file_keys_exactly_as_it_did_before(tmp_path: Path):
-    """The digests join the payload only when there are some — otherwise nothing moves.
-
-    An unconditional key would re-hash every payload there is, invalidating every cached step
-    at once: on a user's disk that reads as a bug rather than as the one narrow change it is,
-    and in this repo it strands every recorded e2e archive, whose caches were captured under
-    the old key. Pinned here because the failure mode is a suite that goes green again only
-    after someone re-records, which looks like flakiness.
-    """
-    cfg = _cfg(options={"task_name": "mace_off", "device": "cpu"})
-    parents = _parents("0")
-
-    assert fingerprint(cfg, ("0",), parents_digest=parents_digest(parents)) == fingerprint(
-        cfg, ("0",), parents_digest=parents_digest(parents), option_digests={}
-    )
-
-
 def test_retraining_a_model_re_runs_the_step_that_consumes_it(tmp_path: Path):
     """The point of the whole mechanism, at the level the pipeline actually uses.
 
@@ -223,23 +313,31 @@ def _h2(spacing: float = 0.74, energy: float | None = None) -> Structure:
     return Structure(id="0", atoms=atoms, energy_hartree=energy)
 
 
-def test_parents_digest_stable_for_identical_content():
-    assert parents_digest([_h2()]) == parents_digest([_h2()])
+def test_structure_digest_stable_for_identical_content():
+    from chemrefine.cache import structure_digest
+
+    assert structure_digest(_h2()) == structure_digest(_h2())
 
 
-def test_parents_digest_changes_when_geometry_changes():
-    """Same IDs, different coordinates — the digest is what catches an edited seed file."""
-    assert parents_digest([_h2(spacing=0.74)]) != parents_digest([_h2(spacing=0.75)])
+def test_structure_digest_changes_when_geometry_changes():
+    """Same ID, different coordinates — the digest is what catches an edited seed file."""
+    from chemrefine.cache import structure_digest
+
+    assert structure_digest(_h2(spacing=0.74)) != structure_digest(_h2(spacing=0.75))
 
 
-def test_parents_digest_changes_when_energy_changes():
-    assert parents_digest([_h2(energy=-1.0)]) != parents_digest([_h2(energy=-1.1)])
+def test_structure_digest_changes_when_energy_changes():
+    from chemrefine.cache import structure_digest
+
+    assert structure_digest(_h2(energy=-1.0)) != structure_digest(_h2(energy=-1.1))
 
 
-def test_parents_digest_changes_when_id_changes():
+def test_structure_digest_changes_when_id_changes():
+    from chemrefine.cache import structure_digest
+
     a = _h2()
     b = Structure(id="7", atoms=a.atoms, energy_hartree=a.energy_hartree)
-    assert parents_digest([a]) != parents_digest([b])
+    assert structure_digest(a) != structure_digest(b)
 
 
 # ---------------------------------------------------------------------------
@@ -322,14 +420,11 @@ def test_template_contents_round_trip_through_validity(tmp_path: Path):
 
 
 def test_reuse_fingerprint_round_trips(tmp_path: Path):
-    """An NMS step's coarser key is persisted, and the key derives it — no caller passes it.
-
-    A site that forgot to is what `StepKey` exists to make impossible.
-    """
+    """A resolving step's coarser key is persisted with the cache it belongs to."""
     step_dir = tmp_path / "step1"
     nms_cfg = _cfg(nms=True, options={"target": "minimum", "displacement_value": 1.0})
-    key = _key("0", step_cfg=nms_cfg)
-    assert key.reuse_fingerprint  # non-empty for an NMS step
+    key = _key("0", step_cfg=nms_cfg, resolution=_resolution())
+    assert key.reuse_fingerprint  # non-empty for a resolving step
     save(
         step_cfg=nms_cfg,
         key=key,
@@ -431,13 +526,15 @@ def test_load_tolerates_cache_without_thermochemistry(tmp_path: Path):
     assert loaded.energy_zpe_hartree is None
 
 
-def test_round_trip_keeps_parents_digest_stable(tmp_path: Path):
+def test_round_trip_keeps_the_structure_digest_stable(tmp_path: Path):
     """The load-bearing property: a JSON round-trip must not perturb the digest.
 
-    Downstream steps fingerprint against ``parents_digest`` of *loaded*
+    Downstream steps key their rows against ``structure_digest`` of *loaded*
     structures (exact float64 bytes); any drift would invalidate every
     downstream cache on resume.
     """
+    from chemrefine.cache import structure_digest
+
     struct = _h2(spacing=0.7414213562373095, energy=-1.1283791670955126)
     step_dir = tmp_path / "step1"
     save(
@@ -447,8 +544,8 @@ def test_round_trip_keeps_parents_digest_stable(tmp_path: Path):
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
-    loaded = load(step_dir).results.structures
-    assert parents_digest(loaded) == parents_digest([struct])
+    [loaded] = load(step_dir).results.structures
+    assert structure_digest(loaded) == structure_digest(struct)
 
 
 def test_load_missing_returns_none(tmp_path: Path):
@@ -537,13 +634,13 @@ def test_load_if_valid_true_when_cache_matches(tmp_path: Path):
 def test_load_if_valid_false_when_config_changes(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(
-        step_cfg=_cfg(charge=0),
-        key=_key("0", step_cfg=_cfg(charge=0)),
+        step_cfg=_cfg(),
+        key=_key("0", charge=0),
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
-    assert not load_if_valid(key=_key("0", step_cfg=_cfg(charge=-1)), step_dir=step_dir)
+    assert not load_if_valid(key=_key("0", charge=-1), step_dir=step_dir)
 
 
 def test_load_if_valid_false_when_cache_is_corrupt(tmp_path: Path):
@@ -791,13 +888,13 @@ def test_load_if_valid_returns_none_on_mismatch(tmp_path: Path):
     """A changed config returns None (re-run), never a stale cache."""
     step_dir = tmp_path / "step1"
     save(
-        step_cfg=_cfg(charge=0),
-        key=_key("0", step_cfg=_cfg(charge=0)),
+        step_cfg=_cfg(),
+        key=_key("0", charge=0),
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
-    assert load_if_valid(key=_key("0", step_cfg=_cfg(charge=-1)), step_dir=step_dir) is None
+    assert load_if_valid(key=_key("0", charge=-1), step_dir=step_dir) is None
 
 
 # ---------------------------------------------------------------------------

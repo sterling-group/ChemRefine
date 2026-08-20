@@ -327,7 +327,7 @@ class _ResultLedger:
 
     Two things it exists to get right, both of which are silent when wrong:
 
-    **Order.** :func:`chemrefine.cache.parents_digest` folds structures into a running SHA-1
+    **Order.** :meth:`chemrefine.cache.StepKey.of` keys the next step over its parents
     *in iteration order*, so results in completion order — which is nondeterministic — would
     give the next step a different fingerprint on every run and invalidate its cache for
     nothing. Manifest order is stable. It is *not* the order a non-streaming run produced

@@ -244,8 +244,8 @@ class StepConfig(BaseModel):
     def _reject_unrepresentable_options(cls, v: dict[str, Any]) -> dict[str, Any]:
         """Refuse an option value the step's cache key cannot be computed from.
 
-        Options are folded into the cache fingerprint by ``json.dumps``
-        (:func:`chemrefine.cache.fingerprint`); this probe mirrors that encoder —
+        Options are folded into the cache keys by ``json.dumps``
+        (:meth:`chemrefine.cache.StepKey.of`); this probe mirrors that encoder —
         ``sort_keys`` included, since a nested dict with mixed-type keys fails in the
         sort rather than in the encoding. Without it the first thing to meet such a
         value is the fingerprint itself, and what reaches the user is a bare

@@ -144,13 +144,13 @@ MUTATIONS = (
         "never ledgered, and ranks against converged siblings",
     ),
     Mutation(
-        id="parents-digest-ignores-geometry",
+        id="structure-digest-ignores-geometry",
         path="src/chemrefine/cache.py",
         old="h.update(np.asarray(s.atoms.get_positions(), dtype=np.float64).tobytes())",
         new="pass",
         tests="tests/test_cache.py",
-        breaks="editing the seed geometry no longer invalidates the cache, so `resume` "
-        "serves results computed from the old coordinates",
+        breaks="a structure's coordinates leave its digest, so editing the seed geometry "
+        "moves no row key and `resume` serves results computed from the old coordinates",
     ),
     Mutation(
         id="cache-pair-is-checked",
@@ -182,11 +182,12 @@ MUTATIONS = (
     Mutation(
         id="rebuild-cache-provenance",
         path="src/chemrefine/step.py",
-        old="if stamped and stamped != key.fingerprint:",
+        old="if foreign or unproven:",
         new="if False:",
         tests="tests/test_step.py",
-        breaks="`rebuild-cache` caches results under a configuration that never produced "
-        "them, and the next `resume` serves that instead of computing what was asked for",
+        breaks="`rebuild-cache` adopts rows whose provenance disagrees with the current "
+        "key, caching results this configuration never produced — and the next `resume` "
+        "serves that instead of computing what was asked for",
     ),
     Mutation(
         id="policy-change-over-cache",

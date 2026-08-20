@@ -26,12 +26,15 @@ from enum import StrEnum
 from pathlib import Path
 from typing import assert_never
 
+from pydantic import ValidationError
+
 from chemrefine import __version__, attempts, cache, filtering, ids, io, lifecycle, nms
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.api import (
     ArtifactEngine,
     CalculationEngine,
     NmsCapableEngine,
+    OptionsDeclaring,
     TemplateDriven,
     get_engine,
 )
@@ -305,6 +308,47 @@ def _step_outcome(
     return StepOutcome(state=state, cache_hit=cache_hit)
 
 
+def derive_step_key(
+    ctx: StepContext, step_cfg: StepConfig, engine: CalculationEngine
+) -> cache.StepKey:
+    """Assemble the readings :meth:`chemrefine.cache.StepKey.of` keys a step by.
+
+    The values are the run's own, not re-interpretations: charge and multiplicity are
+    the **effective** ones off the context (the values jobs render — hashing the
+    per-step override let a workflow-level edit change every job while every
+    fingerprint stood still); the engine options are the engine's declared model's
+    resolved reading (``{}`` for a non-declaring engine — an undeclared key can reach
+    no job); the resolution spec is :class:`~chemrefine.nms.NmsOptions`' validated
+    reading, split criterion/search, present exactly when this step resolves. Living
+    here rather than in :mod:`chemrefine.cache` keeps that module free of engine and
+    NMS knowledge — it keys values it does not interpret.
+    """
+    engine_options: Mapping[str, object] = {}
+    if isinstance(engine, OptionsDeclaring):
+        engine_options = engine.options_cls.from_raw_lenient(step_cfg.options).model_dump(
+            mode="json"
+        )
+    resolution = None
+    if step_cfg.nms and isinstance(engine, NmsCapableEngine):
+        try:
+            dump = nms.NmsOptions.from_raw(step_cfg.options).model_dump(mode="json")
+        except ValidationError as e:
+            raise ConfigError(f"step {step_cfg.step}: invalid NMS options:\n{e}") from e
+        resolution = cache.ResolutionSpec(
+            criterion={k: dump[k] for k in ("target", "ts_mode_index")},
+            search={k: dump[k] for k in ("displacement_value", "num_random_displacements", "seed")},
+        )
+    return cache.StepKey.of(
+        step_cfg,
+        ctx.prev_state.structures,
+        ctx.template,
+        charge=ctx.charge,
+        multiplicity=ctx.multiplicity,
+        engine_options=engine_options,
+        resolution=resolution,
+    )
+
+
 def run_step(
     config: Config,
     step_cfg: StepConfig,
@@ -337,7 +381,7 @@ def run_step(
     # Derived once, here, and passed down as a value. Every route below needs the same
     # answer to "would this configuration have written the cache on disk", and each used
     # to re-derive it from whatever context it held. See `cache.StepKey`.
-    key = cache.StepKey.of(step_cfg, prev_state.structures, ctx.template)
+    key = derive_step_key(ctx, step_cfg, engine)
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     # Narrow once, here, instead of asserting the capability again with a cast at
     # each of the four places that need it. `nms_engine is not None` then carries
@@ -613,8 +657,11 @@ def _run_full_step(
         operation=step_cfg.operation,
         engine=step_cfg.engine,
         # Stamped before submission, so an interrupted run leaves proof of *what* these
-        # outputs were computed for — see :func:`_partial_step_outcome`.
+        # outputs were computed for — see :func:`_partial_step_outcome`. The per-row
+        # provenance is the same proof at structure grain, for the incremental resume.
         fingerprint=key.fingerprint,
+        resolution_key=key.resolution_key,
+        rows=key.manifest_rows(),
     )
 
     # Built before submission, so a `target` that cannot be resolved says so before the step
@@ -674,6 +721,8 @@ def _run_artifact_step(
         operation=step_cfg.operation,
         engine=step_cfg.engine,
         fingerprint=key.fingerprint,
+        resolution_key=key.resolution_key,
+        rows=key.manifest_rows(),
     )
     engine.submit(inputs, ctx)
     return _finish_artifact_step(ctx, step_cfg, key, engine)
@@ -759,21 +808,26 @@ def rebuild_cache_step(
     Backs ``chemrefine rebuild-cache`` and ``chemrefine rebuild-nms``, which differ only in
     which step they aim at.
 
-    Refuses when the manifest's stamped fingerprint *disagrees* with the current one.
-    Re-parsing outputs produced for a different template, options or upstream survivors
-    would write a cache that is internally valid and describes a run that never happened,
-    and the next ``resume`` would serve it rather than compute what was asked for.
+    Refuses when the manifest's **row provenance** disagrees with the current key —
+    a row keyed to a different template, engine options, effective charge or parent
+    content, or a parent set the rows do not cover exactly. Re-parsing such outputs
+    would write a cache that is internally valid and describes a run that never
+    happened, and the next ``resume`` would serve it rather than compute what was
+    asked for.
 
-    A manifest carrying **no** fingerprint is not evidence of a mismatch, and this
-    proceeds: an output tree predating that stamp is precisely what the command exists to
-    re-parse, and the caller has named the step. The distinction is between *proving* the
-    outputs are wrong and merely being unable to prove they are right. It is drawn
-    differently in :func:`_partial_step_outcome`, which treats an unproven match as a
-    reason to re-run — it can afford to, being an optimisation over doing the work anyway.
+    A manifest carrying **no** row provenance is not evidence of a mismatch, and this
+    proceeds: it is a tree from before the current rules (or a hand-written v1
+    adoption manifest), *unprovable* rather than wrong, and the caller has named the
+    step. The distinction is between proving the outputs wrong and merely being unable
+    to prove them right. It is drawn differently in :func:`_partial_step_outcome`,
+    which treats an unproven match as a reason to re-run — it can afford to, being an
+    optimisation over doing the work anyway. A successful rebuild then writes the
+    manifest back **with** row provenance, so the adoption is recorded and every later
+    question is answered per row.
     """
     engine = get_engine(step_cfg.engine)
     ctx = build_context(config, step_cfg, prev_state, engine)
-    key = cache.StepKey.of(step_cfg, prev_state.structures, ctx.template)
+    key = derive_step_key(ctx, step_cfg, engine)
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
         # Named for what is missing rather than for the command that asked: `rebuild-cache`
@@ -782,18 +836,35 @@ def rebuild_cache_step(
             f"step {step_cfg.step}: nothing to rebuild from — no manifest on disk, so there "
             f"is no record of which output belongs to which structure"
         )
-    stamped = cache.load_manifest_fingerprint(ctx.step_dir)
-    if stamped and stamped != key.fingerprint:
-        raise CacheError(
-            f"step {step_cfg.step}: the outputs on disk were produced for a different "
-            f"configuration — its template, options or upstream results have changed "
-            f"since — so re-parsing them would cache results this configuration never "
-            f"produced. Run `chemrefine rerun {step_cfg.step}` to recompute it."
+    provenance = cache.load_manifest_provenance(ctx.step_dir)
+    if provenance.rows:
+        current = key.manifest_rows()
+        foreign = sorted(
+            sid
+            for sid, (stored_row, _digest) in provenance.rows.items()
+            if sid not in current or current[sid][0] != stored_row
         )
+        unproven = sorted(sid for sid in current if sid not in provenance.rows)
+        if foreign or unproven:
+            raise CacheError(
+                f"step {step_cfg.step}: the outputs on disk were produced for a different "
+                f"configuration — {len(foreign)} row(s) disagree with the current key and "
+                f"{len(unproven)} current parent(s) have no row — so re-parsing them would "
+                f"cache results this configuration never produced. "
+                f"Run `chemrefine rerun {step_cfg.step}` to recompute it."
+            )
     if isinstance(engine, ArtifactEngine):
-        # Past the same fingerprint guard as any other rebuild — the product on disk has to
-        # belong to *this* configuration — but there are no per-structure outputs to re-parse
-        # beyond it. This is the most valuable recovery the command offers for such a step: a
+        # An artifact step has one whole-set product and no per-structure rows, so the
+        # step stamp is the right grain for its provenance — the row doctrine above can
+        # never see it. A stamp that disagrees is proven wrong exactly as a foreign row
+        # is; an absent one is unprovable and proceeds under the explicit command.
+        if provenance.fingerprint and provenance.fingerprint != key.fingerprint:
+            raise CacheError(
+                f"step {step_cfg.step}: the product on disk was produced for a different "
+                f"configuration, so re-caching it would describe a training that never "
+                f"happened. Run `chemrefine rerun {step_cfg.step}` to recompute it."
+            )
+        # This is the most valuable recovery the command offers for such a step: a
         # training whose job finished before the driver died is re-cached rather than re-run.
         logger.info("step %d: rebuilding cache from the product on disk", step_cfg.step)
         return _finish_artifact_step(ctx, step_cfg, key, engine)
@@ -808,6 +879,19 @@ def rebuild_cache_step(
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
     results = lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
+    # Cache first (finalize), then the manifest's provenance: a crash between the two
+    # leaves a current cache beside an unprovenanced manifest, which reads as "rebuild
+    # again" — cheap; the other order would leave provenance vouching for a cache that
+    # was never written.
+    cache.save_manifest(
+        manifest,
+        ctx.step_dir,
+        operation=step_cfg.operation,
+        engine=step_cfg.engine,
+        fingerprint=key.fingerprint,
+        resolution_key=key.resolution_key,
+        rows=key.manifest_rows(),
+    )
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
 

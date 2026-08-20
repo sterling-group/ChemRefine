@@ -61,7 +61,7 @@ class Structure:
     writes through it. The protection is therefore a rule rather than a flag: any code
     that moves atoms or attaches labels works on ``struct.atoms.copy()``, never in place
     (see :func:`chemrefine.nms._displaced` and the trainer dataset writers).
-    :func:`chemrefine.cache.parents_digest` hashes these positions into every downstream
+    :func:`chemrefine.cache.structure_digest` hashes these positions into every downstream
     step's cache key, so an in-place write would not crash anything — it would silently
     re-fingerprint work that was already done. Each copy site carries a test asserting
     the source structure comes through untouched."""

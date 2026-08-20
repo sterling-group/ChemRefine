@@ -9,7 +9,7 @@ Neither can execute code on load, which is why this is not pickle: JSON
 cannot by construction, and ``.npz`` cannot because :func:`_read_arrays`
 passes ``allow_pickle=False`` and numpy *raises* rather than running an
 object array's reduce. Coordinates round-trip byte-identically either
-way, so :func:`parents_digest` is stable across save → load.
+way, so :func:`structure_digest` is stable across save → load.
 
 The split is what makes the cache scale. Coordinates dominate a record,
 and as decimal text each float64 costs 18 bytes on disk, a ``strtod``
@@ -27,7 +27,7 @@ few KB each.
 The cache is keyed by a SHA-1 *fingerprint* covering the step's config
 (engine, operation, options, charge, multiplicity, template, NMS flag)
 plus the parent structures that fed into the step — their IDs **and**
-their content (:func:`parents_digest`: symbols, coordinates, energy).
+their content (:func:`structure_digest`: symbols, coordinates, energy).
 If the YAML changes, or the seed file / any upstream result changes,
 the fingerprint changes and the next run re-executes the step. The
 ``sample:`` filter is deliberately **excluded**: the cache stores the
@@ -161,23 +161,20 @@ def _fingerprint_sha1() -> hashlib._Hash:
     return hashlib.sha1(usedforsecurity=False)
 
 
-def parents_digest(structures: Sequence[Structure]) -> str:
-    """Return a 16-char SHA-1 over the parent structures' *content*.
+def structure_digest(s: Structure) -> str:
+    """Return a 16-char SHA-1 over one structure's *content* — its identity as an input.
 
-    Covers each parent's ID, chemical symbols, Cartesian coordinates (exact
-    float64 bytes — identical inputs parse to identical floats), and energy.
-    Folding this into :func:`fingerprint` is what makes the cache sensitive to
-    the structures themselves, not just their positional IDs: editing the seed
-    ``input.xyz`` (same path, same count → same IDs) or any upstream change to
-    a parent's geometry/energy must invalidate the step, or ``resume`` would
-    silently reuse results computed from the old geometry.
+    Covers the ID, chemical symbols, Cartesian coordinates (exact float64 bytes —
+    identical inputs parse to identical floats), and energy. This is the geometry half
+    of a :func:`row_key`: a job is keyed to the structure it computes on, so editing a
+    seed or any upstream change to one parent's geometry/energy re-keys exactly the
+    rows that consumed it — and no others.
     """
     h = hashlib.sha1(usedforsecurity=False)  # a content fingerprint, not a digest
-    for s in structures:
-        h.update(s.id.encode())
-        h.update("".join(s.atoms.get_chemical_symbols()).encode())
-        h.update(np.asarray(s.atoms.get_positions(), dtype=np.float64).tobytes())
-        h.update(repr(s.energy_hartree).encode())
+    h.update(s.id.encode())
+    h.update("".join(s.atoms.get_chemical_symbols()).encode())
+    h.update(np.asarray(s.atoms.get_positions(), dtype=np.float64).tobytes())
+    h.update(repr(s.energy_hartree).encode())
     return h.hexdigest()[:16]
 
 
@@ -251,53 +248,88 @@ def option_file_digests(options: Mapping[str, Any] | None) -> dict[str, str]:
     return digests
 
 
-def fingerprint(
-    step_cfg: StepConfig,
-    parent_ids: tuple[str, ...],
-    *,
-    parents_digest: str = "",
-    template_digest: str = "",
-    option_digests: Mapping[str, str] | None = None,
-) -> str:
-    """Return a 16-char SHA-1 over the inputs that determine a step's output.
+def _hash_payload(payload: dict[str, Any]) -> str:
+    """A 16-char SHA-1 over a compact, key-sorted JSON encoding of ``payload``.
 
-    Two runs whose YAML produces identical fingerprints are eligible for
-    cache reuse. ``parents_digest`` (see :func:`parents_digest`) ties the
-    fingerprint to the parent structures' content so a changed seed file or
-    changed upstream result invalidates the step even when the IDs match.
-    ``template_digest`` (of :attr:`~chemrefine.state.StepContext.template`)
-    ties it to the *contents* of the resolved template — editing the template
-    in place (it also drives ORCA's run-type detection when ``operation``
-    is omitted) re-runs the step, where the template basename alone could not.
-    ``option_digests`` (see :func:`option_file_digests`) does for a file an option
-    *names* what ``template_digest`` does for the template — a step consuming a trained
-    model re-runs when that model is retrained, which the path string alone could not say.
-    ``sample:`` is excluded on purpose — the cached results are pre-filter
-    and filtering re-runs on every load, so a filter-only edit is a cache
-    hit, not a re-run.
+    The one encoder behind every key in this module, so two keys can never disagree
+    about how a value is spelled into bytes.
+    """
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha1(encoded, usedforsecurity=False).hexdigest()[:16]
+
+
+def row_key(
+    *,
+    engine: str,
+    operation: str | None,
+    template_digest: str,
+    charge: int,
+    multiplicity: int,
+    engine_options: Mapping[str, Any],
+    option_digests: Mapping[str, str],
+    parent_digest: str,
+) -> str:
+    """One structure's job identity — everything that determines *this row's* result.
+
+    The fields are exactly the config surface that can reach a job plus its geometry:
+    the engine and operation select the code, the template digest is the input text,
+    ``charge``/``multiplicity`` are the **effective** (inheritance-resolved) physics
+    inputs, ``engine_options`` is the options mapping *as the engine's own declared
+    model reads it* (``{}`` for an engine that declares none — an undeclared key can
+    reach no job), ``option_digests`` pins the bytes of any file an option names, and
+    ``parent_digest`` (:func:`structure_digest`) is the geometry the job computes on.
+
+    Deliberately absent: the NMS family (post-round-1 resolution — the resolution key's
+    business), the parent *set* (aggregation — the step fingerprint's business),
+    ``sample``/``on_failure`` (filter and policy re-run on every load), and every
+    location/scheduler knob. A row key that matches is proof the job on disk is the job
+    this configuration would submit for this parent.
     """
     payload: dict[str, Any] = {
         "format": CACHE_FORMAT_VERSION,
-        "step": step_cfg.step,
-        "engine": step_cfg.engine,
-        "operation": step_cfg.operation,
-        "options": step_cfg.options,
-        "charge": step_cfg.charge,
-        "multiplicity": step_cfg.multiplicity,
-        "template": step_cfg.template,
+        "engine": engine,
+        "operation": operation,
         "template_digest": template_digest,
-        "nms": step_cfg.nms,
-        "parent_ids": list(parent_ids),
-        "parents_digest": parents_digest,
+        "charge": charge,
+        "multiplicity": multiplicity,
+        "engine_options": dict(engine_options),
+        "parent_digest": parent_digest,
     }
-    # Added only when the step actually names a file, so a step that names none keys exactly
-    # as it did before this existed. An unconditional key would re-hash every payload in the
-    # world — every cached step invalidated at once, which reads as a bug rather than as the
-    # one narrow change it is, and would strand every recorded e2e archive.
     if option_digests:
         payload["option_digests"] = dict(option_digests)
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha1(encoded, usedforsecurity=False).hexdigest()[:16]
+    return _hash_payload(payload)
+
+
+@dataclass(frozen=True)
+class ResolutionSpec:
+    """What an NMS step's resolution reads, split the way the machinery splits it.
+
+    ``criterion`` (``target`` / ``ts_mode_index``) decides what counts as resolved;
+    ``search`` (``displacement_value`` / ``num_random_displacements`` / ``seed``) tunes
+    how children are generated. Both mappings are the *validated* ``NmsOptions``
+    reading, passed in by the caller that owns that model — this module keys it without
+    knowing what it means. The split is load-bearing: an ``attemptK/`` resolution stays
+    honourable across a search retune (same criterion) but never across a criterion
+    change.
+    """
+
+    criterion: Mapping[str, Any]
+    search: Mapping[str, Any]
+
+
+def resolution_keys(resolution: ResolutionSpec | None) -> tuple[str, str]:
+    """``(resolution_key, criterion_key)`` for a step — ``("", "")`` when nothing resolves.
+
+    The ``nms`` flag is expressed as this key's presence; it appears in no row key,
+    because it is read only by the resolution machinery and can never change a job.
+    """
+    if resolution is None:
+        return "", ""
+    criterion = _hash_payload({"criterion": dict(resolution.criterion)})
+    full = _hash_payload(
+        {"criterion": dict(resolution.criterion), "search": dict(resolution.search)}
+    )
+    return full, criterion
 
 
 # ---------------------------------------------------------------------------
@@ -401,7 +433,7 @@ def _require_paired(arrays: Any, document: dict[str, Any], path: Path) -> None:
     upstream of this one can see it: the records parse, and the fingerprint still matches the
     configuration, because it covers the step's *inputs* rather than what is on disk. What
     reaches the caller is a structure keeping its old energy and adopting another structure's
-    geometry — the value then feeds :func:`parents_digest`, so the wrong coordinates propagate
+    geometry — the value then feeds :func:`structure_digest`, so the wrong coordinates propagate
     into every step computed from them.
 
     Checked before :func:`_join_arrays` rather than after, because the same mismatch that
@@ -459,7 +491,7 @@ def structure_record(s: Structure) -> dict[str, Any]:
     :data:`RESULT_FORMAT_VERSION` bump.
 
     Only symbols + positions of the ``Atoms`` are stored — that is all the
-    pipeline ever reads back (and all that :func:`parents_digest` hashes).
+    pipeline ever reads back (and all that :func:`structure_digest` hashes).
     ``normal_modes`` is deliberately excluded: a transient displacement
     tensor used only during an active NMS run, which always re-parses the
     native output.
@@ -635,7 +667,7 @@ def _npz_bytes(arrays: _SidecarArrays) -> bytes:
 
     Uncompressed on purpose. A ``.npz`` is an ordinary ZIP of ``.npy`` members, and a ``.npy``
     is a short ASCII header plus the array's raw buffer — byte-identical to ``tobytes()``,
-    which is what keeps coordinates exact through save → load and :func:`parents_digest`
+    which is what keeps coordinates exact through save → load and :func:`structure_digest`
     stable. Deflating float64 coordinates buys about 5% and costs roughly twenty times the
     encode; the point of this format is that writing it is a memcpy.
 
@@ -695,7 +727,7 @@ def _require_finite_arrays(structure: Structure, step_dir: Path) -> None:
     the only ones that could be stored unexamined.
 
     What that cost is not a crash but a silence. A NaN geometry round-trips ``save`` → ``load``
-    intact, and :func:`parents_digest` hashes it to a perfectly stable key, so the step
+    intact, and :func:`structure_digest` hashes it to a perfectly stable key, so the step
     validates, the fingerprint matches, and every later step is computed from coordinates
     that are not numbers — with nothing anywhere reporting a problem.
 
@@ -773,81 +805,50 @@ def save(
     logger.info("saved step %d cache (fingerprint %s)", step_cfg.step, key.fingerprint)
 
 
-#: ``step.options`` keys that tune an NMS *search* without changing what counts as
-#: resolved. Stripped from :func:`reuse_fingerprint` so raising ``displacement_value``
-#: reuses round-1 instead of re-running it; the resolution criterion (``target`` /
-#: ``ts_mode_index``) stays in, because changing that changes the answer.
-_NMS_SEARCH_KEYS = frozenset({"displacement_value", "num_random_displacements", "seed"})
-
-
-def reuse_fingerprint(
-    step_cfg: StepConfig,
-    parent_ids: tuple[str, ...],
-    *,
-    parents_digest: str = "",
-    template_digest: str = "",
-    option_digests: Mapping[str, str] | None = None,
-) -> str:
-    """A coarser :func:`fingerprint` that survives NMS search-param tuning.
-
-    Identical to :func:`fingerprint` — same content keys — but with the NMS search
-    parameters stripped from ``options``, so bumping one leaves it unchanged and
-    ``resume`` can reuse the round-1 frequencies plus the already-resolved children and
-    re-attempt only the unresolved parents. Returns ``""`` for non-NMS steps, which
-    never take that path.
-
-    Lives here rather than in :mod:`chemrefine.nms` because it is a cache-validity key,
-    and this module owns those.
-    """
-    if not step_cfg.nms:
-        return ""
-    trimmed = {k: v for k, v in (step_cfg.options or {}).items() if k not in _NMS_SEARCH_KEYS}
-    return fingerprint(
-        step_cfg.model_copy(update={"options": trimmed}),
-        parent_ids,
-        parents_digest=parents_digest,
-        template_digest=template_digest,
-        option_digests=option_digests,
-    )
-
-
-class _KeyDigests(TypedDict):
-    """The content digests both fingerprints are derived from.
-
-    A type rather than a bare dict so the two calls in :meth:`StepKey.of` can keep sharing
-    one ``**`` expansion — which is what stops them disagreeing — while each keyword still
-    type-checks against the signature it lands in.
-    """
-
-    parents_digest: str
-    template_digest: str
-    option_digests: dict[str, str]
-
-
 @dataclass(frozen=True)
 class StepKey:
     """A step's cache identity — computed once per step, then passed around as a value.
 
-    Every route through :mod:`chemrefine.step` needs the same answer to "is the cache on
-    disk the one this configuration would write". Computed once and passed as a value, that
-    answer cannot vary between the routes; re-derived per route — hash the parents, digest
-    the template, fold both into :func:`fingerprint`, and for an NMS step
-    :func:`reuse_fingerprint` too — it is four chances to disagree. A cache written under an
-    inconsistent key does not crash: it silently re-runs work that was done, or reuses work
-    it should not have, much later.
+    Every route through :mod:`chemrefine.step` needs the same answer to "is the work on
+    disk the work this configuration would produce". Computed once and passed as a value,
+    that answer cannot vary between the routes; re-derived per route it is that many
+    chances to disagree. A cache written under an inconsistent key does not crash: it
+    silently re-runs work that was done, or reuses work it should not have, much later.
 
-    :meth:`of` takes what it needs and nothing more — no :class:`~chemrefine.state.StepContext`
-    and no engine — so ``parent_ids`` and the parents' digest come from the same argument and
-    cannot disagree, and a test can build one in a line. The component digests are
-    deliberately *not* fields: nothing downstream consumes them (:func:`save` persists the
-    fingerprints and the ids, :func:`load_if_valid` compares the fingerprint), so exposing
-    them would hand callers values they must not use and could pass on inconsistently.
+    The identity is layered the way the domain is layered. ``row_keys`` (one per parent,
+    aligned with ``parent_ids``/``parent_digests``) are the per-structure job identities
+    (:func:`row_key`); ``resolution_key``/``criterion_key`` are the NMS resolution's
+    identity (:func:`resolution_keys`, both ``""`` for a step that resolves nothing); and
+    ``fingerprint`` composes them with the step number — an exact hit means "the whole
+    step, bit for bit", while every finer question is asked of the rows.
+
+    :meth:`of` is the one place the derivation happens. The effective charge and
+    multiplicity, the engine's own reading of the options, and the resolution spec are
+    *passed in* by the caller that holds the context and the engine
+    (:func:`chemrefine.step.derive_step_key`) — this module keys values it does not
+    interpret, which is what keeps it importable by everything.
     """
 
-    parent_ids: tuple[str, ...]
-    fingerprint: str
-    reuse_fingerprint: str
-    """The NMS reuse key, or ``""`` for a step that is not NMS — see :func:`reuse_fingerprint`."""
+    parent_ids: tuple[str, ...] = ()
+    parent_digests: tuple[str, ...] = ()
+    row_keys: tuple[str, ...] = ()
+    resolution_key: str = ""
+    criterion_key: str = ""
+    fingerprint: str = ""
+    reuse_fingerprint: str = ""
+    """H(rows, criterion) for a resolving step, else ``""`` — stable across a search
+    retune, moved by anything else (the split :class:`ResolutionSpec` documents). The
+    transitional consumer is :func:`chemrefine.step._nms_reuse_outcome`; the incremental
+    route derives the same verdict from the rows and retires this field."""
+
+    def manifest_rows(self) -> dict[str, tuple[str, str]]:
+        """``id -> (row_key, parent_digest)`` — the per-row provenance a manifest stores."""
+        return {
+            sid: (key, digest)
+            for sid, key, digest in zip(
+                self.parent_ids, self.row_keys, self.parent_digests, strict=True
+            )
+        }
 
     @classmethod
     def of(
@@ -855,30 +856,62 @@ class StepKey:
         step_cfg: StepConfig,
         parents: Sequence[Structure],
         template: Path | None,
+        *,
+        charge: int = 0,
+        multiplicity: int = 1,
+        engine_options: Mapping[str, Any] | None = None,
+        resolution: ResolutionSpec | None = None,
     ) -> StepKey:
         """Derive the key for ``step_cfg`` run over ``parents`` with ``template``.
 
-        The one place the derivation happens. ``template`` is
-        :attr:`~chemrefine.state.StepContext.template`; ``None`` and a missing file both
-        digest to ``""`` (see :func:`template_digest`).
-
-        The files an *option* names are digested here too (:func:`option_file_digests`) and
-        for the same reason the template is: a step's identity includes the contents of every
-        file it was pointed at, not just their names. It is derived here rather than by the
-        engine that understands the knob because :mod:`chemrefine.engines` may not import this
-        module at all — a rule the subsystem is held to by test, and one this generic reader
-        is what makes keepable.
+        ``charge``/``multiplicity`` are the **effective** values (the ones jobs render),
+        not the per-step overrides — hashing the override let a workflow-level edit
+        change every job's physics while every fingerprint stood still. Their defaults
+        are the workflow defaults, so a bare call keys a default config exactly as a run
+        would. ``engine_options`` is the engine's declared model's resolved dump
+        (``None``/``{}`` for a non-declaring engine — an undeclared key can reach no
+        job); ``resolution`` is the validated NMS reading for a step that resolves,
+        else ``None``.
         """
+        template_dig = template_digest(template)
+        option_digs = option_file_digests(step_cfg.options)
         parent_ids = tuple(s.id for s in parents)
-        digests: _KeyDigests = {
-            "parents_digest": parents_digest(parents),
-            "template_digest": template_digest(template),
-            "option_digests": option_file_digests(step_cfg.options),
-        }
+        parent_digs = tuple(structure_digest(s) for s in parents)
+        rows = tuple(
+            row_key(
+                engine=step_cfg.engine,
+                operation=step_cfg.operation,
+                template_digest=template_dig,
+                charge=charge,
+                multiplicity=multiplicity,
+                engine_options=dict(engine_options or {}),
+                option_digests=option_digs,
+                parent_digest=digest,
+            )
+            for digest in parent_digs
+        )
+        res_key, crit_key = resolution_keys(resolution)
+        step_fingerprint = _hash_payload(
+            {
+                "format": CACHE_FORMAT_VERSION,
+                "step": step_cfg.step,
+                "rows": list(rows),
+                "resolution": res_key,
+            }
+        )
+        reuse = (
+            _hash_payload({"rows": list(rows), "criterion": crit_key})
+            if resolution is not None
+            else ""
+        )
         return cls(
             parent_ids=parent_ids,
-            fingerprint=fingerprint(step_cfg, parent_ids, **digests),
-            reuse_fingerprint=reuse_fingerprint(step_cfg, parent_ids, **digests),
+            parent_digests=parent_digs,
+            row_keys=rows,
+            resolution_key=res_key,
+            criterion_key=crit_key,
+            fingerprint=step_fingerprint,
+            reuse_fingerprint=reuse,
         )
 
 
@@ -992,6 +1025,8 @@ def save_manifest(
     operation: str | None,
     engine: str,
     fingerprint: str = "",
+    resolution_key: str = "",
+    rows: Mapping[str, tuple[str, str]] | None = None,
 ) -> Path:
     """Persist ``inputs`` plus step metadata to ``manifest.json``; return the path.
 
@@ -999,23 +1034,73 @@ def save_manifest(
     is what ``rerun`` / recovery rehydrates via :func:`load_manifest` after a
     restart. Written atomically, like the cache document.
 
-    ``fingerprint`` is the same key :func:`save` would store, written **before** the
-    jobs go out. It is what lets a ``resume`` after an interrupted step prove that the
-    outputs sitting on disk were produced for *this* step config and *these* parents —
-    without it there is no way to tell them from a stale leftover, so the whole step had
-    to be re-run. See :func:`chemrefine.step._partial_step_outcome`.
+    ``fingerprint`` is the step key :func:`save` would store, written **before** the
+    jobs go out; ``rows`` (``id -> (row_key, parent_digest)``, normally
+    :meth:`StepKey.manifest_rows`) and ``resolution_key`` are the per-row half of the
+    same provenance. Together they are what lets a later ``resume`` prove, structure by
+    structure, that an output on disk is the one this configuration would compute —
+    the manifest with row provenance *is* the current-format marker
+    (:func:`load_manifest_provenance`); one without is adoptable only by the explicit
+    ``rebuild-cache``, never silently.
     """
     path = manifest_path(step_dir)
+    provenance = rows or {}
     data = {
         "operation": operation,
         "engine": engine,
         "fingerprint": fingerprint,
+        "resolution_key": resolution_key,
         "files": [
-            {"input": str(inp), "output": str(out), "id": sid} for inp, out, sid in inputs.files
+            {
+                "input": str(inp),
+                "output": str(out),
+                "id": sid,
+                **(
+                    {"row_key": provenance[sid][0], "parent_digest": provenance[sid][1]}
+                    if sid in provenance
+                    else {}
+                ),
+            }
+            for inp, out, sid in inputs.files
         ],
     }
     write_json(path, data)
     return path
+
+
+@dataclass(frozen=True)
+class ManifestProvenance:
+    """The provable half of a manifest: the step stamp and each row's job identity.
+
+    ``rows`` is ``id -> (row_key, parent_digest)`` for exactly the rows that carry
+    provenance; empty means the manifest predates the current rules (a pre-release tree,
+    or a hand-written v1 adoption manifest) and is *unprovable* — never proven wrong,
+    never proven right. Absence of proof routes to the explicit ``rebuild-cache``.
+    """
+
+    fingerprint: str
+    resolution_key: str
+    rows: dict[str, tuple[str, str]]
+
+
+def load_manifest_provenance(step_dir: Path) -> ManifestProvenance:
+    """The provenance recorded alongside a step's manifest; all-empty when there is none.
+
+    Read separately from :func:`load_manifest` so callers that want only the file layout
+    are untouched, exactly as :func:`load_manifest_fingerprint` is.
+    """
+    data = read_json(manifest_path(step_dir), None, label="manifest")
+    if not isinstance(data, dict):
+        return ManifestProvenance(fingerprint="", resolution_key="", rows={})
+    rows: dict[str, tuple[str, str]] = {}
+    for rec in data.get("files") or []:
+        if isinstance(rec, dict) and "row_key" in rec:
+            rows[str(rec["id"])] = (str(rec["row_key"]), str(rec.get("parent_digest", "")))
+    return ManifestProvenance(
+        fingerprint=str(data.get("fingerprint", "")),
+        resolution_key=str(data.get("resolution_key", "")),
+        rows=rows,
+    )
 
 
 def load_manifest_fingerprint(step_dir: Path) -> str:

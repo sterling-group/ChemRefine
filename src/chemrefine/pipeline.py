@@ -103,7 +103,7 @@ def _state_from_frames(frames: Iterable[Atoms]) -> PipelineState:
     accepts a ``nan`` coordinate, and a seed is the one geometry no parse boundary ever sees
     — so left here it would reach :func:`chemrefine.cache.save`, whose coordinates go to the
     ``arrays.npz`` sidecar rather than through ``write_json``'s ``allow_nan=False``. Nothing
-    downstream would object: it round-trips the cache and :func:`~chemrefine.cache.parents_digest`
+    downstream would object: it round-trips the cache and :func:`~chemrefine.cache.structure_digest`
     hashes it to a perfectly stable key, so every later step would be computed from
     coordinates that are not numbers, silently. The engine's own parse guard cannot catch
     this one, because on the ``on_failure: best`` path the seed is carried forward *instead*

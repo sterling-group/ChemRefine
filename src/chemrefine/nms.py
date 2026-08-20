@@ -784,9 +784,9 @@ def reattempt_nms(
     * Only ``MISSING_OUTPUT`` ids are resubmitted. Archiving exists to stop a re-executed job
       re-reading the previous run's output as if it were its own, and a structure with no
       output has nothing to re-read.
-    * :func:`chemrefine.cache.reuse_fingerprint` covers ``template_digest``, so an edited
-      template changes the key gating this path — a stale input can never be resubmitted from
-      the manifest.
+    * The reuse key (:attr:`chemrefine.cache.StepKey.reuse_fingerprint`) is derived from
+      the row keys, which cover the template digest — so an edited template changes the key
+      gating this path and a stale input can never be resubmitted from the manifest.
 
     Round 1 *is* archived later, for a resolved parent, by
     :func:`_install_winner` sealing it into the attempt its children ran in. That is the
