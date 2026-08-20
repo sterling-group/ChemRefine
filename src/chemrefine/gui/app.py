@@ -35,6 +35,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 
 from chemrefine import agent_tools, introspect
+from chemrefine.cache import atomic_write
 from chemrefine.errors import ChemRefineError
 from chemrefine.gui import STATIC_DIR
 
@@ -154,23 +155,37 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         path = Path(requested).expanduser().resolve()
         if not path.is_dir():
             return jsonify({"error": f"not a directory: {path}"}), 400
-        entries = sorted(
-            (
-                {"name": child.name, "path": str(child), "dir": child.is_dir()}
-                for child in path.iterdir()
-                if not child.name.startswith(".")
-            ),
-            key=lambda e: (not e["dir"], str(e["name"]).lower()),
-        )
+        try:
+            entries = sorted(
+                (
+                    {"name": child.name, "path": str(child), "dir": child.is_dir()}
+                    for child in path.iterdir()
+                    if not child.name.startswith(".")
+                ),
+                key=lambda e: (not e["dir"], str(e["name"]).lower()),
+            )
+        except OSError as e:
+            # A picker walks wherever the filesystem leads — another user's mode-700
+            # directory, /lost+found — and an unreadable stop is an ordinary answer for
+            # it, not the logged-traceback 500 the re-raising error handler would make.
+            return jsonify({"error": f"cannot list {path}: {e}"}), 400
         return jsonify({"path": str(path), "parent": str(path.parent), "entries": entries})
 
     @app.post("/api/save")
     def save() -> Any:
-        """Write the editor's YAML to disk — the artifact the whole GUI exists to make."""
+        """Write the editor's YAML to disk — the artifact the whole GUI exists to make.
+
+        Deliberately unvalidated — Save is for drafts too, and the Validate button is
+        its own action — but atomic like :func:`chemrefine.agent_tools.save_config`'s
+        write: a kill mid-save must not truncate the config a run is pointed at. An
+        unwritable destination is a plain 400, like every other bad input here.
+        """
         payload = request.get_json(force=True)
         destination = Path(payload["path"]).expanduser()
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(payload["yaml_text"], encoding="utf-8")
+        try:
+            atomic_write(destination, payload["yaml_text"].encode("utf-8"))
+        except OSError as e:
+            return jsonify({"error": f"cannot write {destination}: {e}"}), 400
         return jsonify({"path": str(destination)})
 
     @app.post("/api/scaffold")

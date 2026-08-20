@@ -169,6 +169,23 @@ def test_browse_defaults_to_home(client: Any, monkeypatch: pytest.MonkeyPatch, t
     assert _get(client, "/api/browse").get_json()["path"] == str(tmp_path)
 
 
+def test_browse_answers_an_unreadable_directory_with_a_400(client: Any, tmp_path: Path):
+    """A picker walks wherever the filesystem leads — an unreadable stop is a 400, not a 500."""
+    import os
+
+    if os.geteuid() == 0:
+        pytest.skip("root reads everything; the permission wall cannot be built")
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0)
+    try:
+        response = _get(client, f"/api/browse?path={locked}")
+    finally:
+        locked.chmod(0o755)
+    assert response.status_code == 400
+    assert "cannot list" in response.get_json()["error"]
+
+
 def test_save_writes_the_artifact(client: Any, tmp_path: Path):
     destination = tmp_path / "proj" / "input.yaml"
     saved = _post(
@@ -176,6 +193,25 @@ def test_save_writes_the_artifact(client: Any, tmp_path: Path):
     ).get_json()
     assert saved["path"] == str(destination)
     assert destination.read_text(encoding="utf-8") == "steps: []\n"
+
+
+def test_save_answers_an_unwritable_destination_with_a_400(client: Any, tmp_path: Path):
+    """Save-as into a directory the user cannot write is a plain 400, like any bad input."""
+    import os
+
+    if os.geteuid() == 0:
+        pytest.skip("root writes everywhere; the permission wall cannot be built")
+    fortress = tmp_path / "fortress"
+    fortress.mkdir()
+    fortress.chmod(0o555)
+    try:
+        response = _post(
+            client, "/api/save", {"path": str(fortress / "input.yaml"), "yaml_text": "steps: []\n"}
+        )
+    finally:
+        fortress.chmod(0o755)
+    assert response.status_code == 400
+    assert "cannot write" in response.get_json()["error"]
 
 
 # ---------------------------------------------------------------------------
