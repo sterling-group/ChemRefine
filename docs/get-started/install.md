@@ -63,8 +63,10 @@ pip install "chemrefine @ git+https://github.com/sterling-group/ChemRefine.git"
 ```bash
 git clone https://github.com/sterling-group/ChemRefine.git
 cd ChemRefine
-pip install -e ".[dev]"
-pre-commit install   # REQUIRED — CI runs these same hooks
+pip install -e ".[dev]"   # every tool the gates call — pytest, mypy, mkdocs,
+                          # ruff, pre-commit, build, pip-audit
+pre-commit install        # REQUIRED — installs the hook itself, which the line
+                          # above does not; CI runs these same hooks
 ```
 
 ## Check it works

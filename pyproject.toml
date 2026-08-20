@@ -202,6 +202,11 @@ dev = [
     # here. twine stays out on purpose: it publishes rather than gates, and the script
     # puts it in a throwaway venv of its own.
     "build>=1.2",
+    # The same promise, for the gate it left out: the full check runs `pip-audit
+    # --skip-editable`. A tool floor rather than a resolution one, like the Node pin —
+    # 2.7 is where the flags this repo passes settled. (security.yml installs its own
+    # beside `[server]`: that job audits the runtime tree, not this one.)
+    "pip-audit>=2.7",
     # Matched to the pinned pre-commit hook rev — that hook is what actually gates,
     # so a floor years behind it is decorative.
     "ruff>=0.16",

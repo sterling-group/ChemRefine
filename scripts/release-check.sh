@@ -222,7 +222,8 @@ step "known vulnerabilities (CI: security.yml)"
 if [ -x "$bin/pip-audit" ]; then
     "$bin/pip-audit" --skip-editable
 else
-    fail "pip-audit is not in $bin — run: pip install pip-audit (or use --pr)"
+    fail "pip-audit is not in $bin — it ships with the dev extras, so this checkout is
+  installed without them or predates them: pip install -e '.[dev]' (or use --pr)"
 fi
 
 # CHEMREFINE_REQUIRE_LIVE turns a missing backend into a failure instead of a skip. The

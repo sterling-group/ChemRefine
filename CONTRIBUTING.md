@@ -5,13 +5,16 @@
 ```bash
 git clone https://github.com/sterling-group/ChemRefine.git
 cd ChemRefine
-pip install -e ".[dev]"     # test + docs tooling, ruff, pre-commit
+pip install -e ".[dev]"     # every tool the gates call: test + docs tooling,
+                            # ruff, pre-commit, build, pip-audit
 pre-commit install          # REQUIRED — CI runs these same hooks
 ```
 
-`pre-commit install` is not optional: CI runs `ruff check`, `ruff format`,
-and `interrogate` through the pinned pre-commit hooks, so a clone that
-skips the hook install drifts out of format and fails its first PR.
+`pre-commit install` is not optional, and the line above does not cover it:
+that one installs the pre-commit *tool*, this one writes the hook into this
+clone's `.git/hooks`, which is what makes it run on a commit. CI runs
+`ruff check`, `ruff format` and `interrogate` through the pinned hooks, so a
+clone that skips it drifts out of format and fails its first PR.
 
 ## The gates
 
@@ -207,8 +210,9 @@ scripts/release-check.sh
 ```
 
 That is the `--pr` gate above plus the two halves only a workstation has:
-`pip-audit`, whose CI job is a weekly sweep rather than a per-tag one, and
-the tier-3 suite against a real ORCA and the managed MLIP/PySCF envs. CI
+`pip-audit` (installed by `[dev]`), whose CI job is a weekly sweep rather
+than a per-tag one, and the tier-3 suite against a real ORCA and the
+managed MLIP/PySCF envs — the one thing here you install yourself. CI
 cannot do that last part — GitHub-hosted runners have no ORCA, and
 automating it would mean a self-hosted runner, which is unsafe on a public
 repository: a pull request from a fork can execute arbitrary code on it.
