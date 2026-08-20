@@ -52,19 +52,19 @@ chemrefine resume input.yaml
 ```
 
 The calculations that had already finished are **re-parsed from disk, not
-resubmitted**. Only the structures whose output is missing go back to the
-scheduler. ChemRefine can tell the difference because the step's manifest —
-written before any job is submitted — records the same fingerprint the cache
-would have, so outputs on disk are provably the ones this configuration asked
-for. If the config changed in between, the fingerprint no longer matches and the
-step is re-run in full rather than mixing results from two configurations.
+resubmitted**. ChemRefine can tell the difference because the step's manifest —
+written before any job is submitted — records each **row's own key**, so an
+output on disk is provably the one this configuration would compute for that
+structure. Adoption is per row: if the config changed in a way that reaches some
+jobs (an edited template, a different effective charge, a changed upstream
+parent), exactly those rows re-run and the rest are read back. That is not
+mixing two configurations — a row is adopted only under proof its job *is* this
+configuration's job. An NMS step continues the same way: adopted round-1 rows
+feed the resolution, clean parents pass through, and parents not at the target
+fan out fresh displacement children.
 
-Two things deliberately do *not* reuse that work:
-
-- `chemrefine run` means start over, and always does.
-- An `nms:` step falls back to a full re-run. Its round-2 children need
-  re-resolving, not just re-parsing, and half-recovering that is worse than
-  redoing it.
+One thing deliberately does *not* reuse that work: `chemrefine run` means start
+over, and always does.
 
 If you would rather drive it by hand — to inspect what survived before
 continuing — `chemrefine rebuild-cache N` re-parses step N's outputs without
@@ -237,18 +237,18 @@ applies wins, and `EXECUTE` skips straight to the full run:
    a pending `on_failure: stop` ledger and a mode that may submit, only the still-failed
    structures are re-attempted (an NMS step goes through `reattempt_nms`, which reuses
    round 1); otherwise it is a plain hit and only the `sample:` filter re-runs.
-2. **NMS reuse fingerprint** — only the *search* parameters changed (`displacement_value`,
-   `num_random_displacements`, `seed`). Round 1 and the already-resolved children are
-   reused; the ledgered-unresolved parents are re-attempted. Nothing pending at all means
-   the cache is re-stamped under the new key without recomputing anything.
-3. **Manifest fingerprint** — no cache, but a manifest stamped *before submission* proves
-   the outputs on disk were produced for this exact configuration: the step was
-   interrupted. Everything with a usable result is read back; only the rest is
-   resubmitted. (NMS and artifact steps skip this route — an interrupted NMS step needs
-   its children re-resolved, not just its outputs re-parsed.)
-4. **Full run** — prepare, stamp the manifest, submit, retry unconverged once, resolve
-   NMS, apply `on_failure`, cache. A mode that may not submit raises here instead, naming
-   `resume` and `rerun` as the fixes.
+2. **Row provenance** — no cache this key can serve, but the manifest carries each
+   row's own key. Rows whose stored key matches are **adopted** (re-parsed from disk);
+   the rest — changed or new parents, jobs a config edit actually reaches, jobs with no
+   usable output — are computed. NMS resolution then runs on the assembled round 1:
+   clean parents pass through, `attemptK/` resolutions are honoured only under the
+   criterion they were written for, and unresolved parents fan out fresh children.
+   A manifest *without* row provenance stops the resume by name: run
+   `chemrefine rebuild-cache N` to adopt the tree under the current rules first.
+   (Artifact steps skip this route — there is nothing per-structure to continue.)
+3. **Full run** — prepare, stamp the manifest with its row provenance, submit, retry
+   unconverged once, resolve NMS, apply `on_failure`, cache. A mode that may not submit
+   raises here instead, naming `resume` and `rerun` as the fixes.
 
 Each route is strictly cheaper than the next, which is why the order is the safety
 argument: a route only runs when a stronger proof than the next one's is in hand.

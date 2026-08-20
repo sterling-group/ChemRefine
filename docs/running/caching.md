@@ -48,24 +48,36 @@ format, and it would be silent. The step rebuilds instead.
 
 ## The fingerprint
 
-The cache is keyed by a SHA-1 **fingerprint** covering:
+The cache identity is layered the way a step's work is layered:
 
-- the step config — engine, operation, options, charge, multiplicity, template,
-  the NMS flag; and
-- the **parent structures** that fed the step — their IDs *and* their content
-  (symbols, coordinates, energy), via `parents_digest`; and
-- the **template contents** — a digest of the step's resolved template
-  (`StepContext.template`, resolved once per step), so editing a template *in place*
-  re-runs the step even though its basename is unchanged. This also matters because, when
-  `operation` is omitted, the template's keywords decide what ORCA does.
+- a **row key** per structure — everything that determines *that structure's job*:
+  the engine and operation, the template's **contents** (a digest of the resolved
+  `StepContext.template`, so editing a template in place re-runs its rows even though
+  the basename is unchanged), the **effective** charge and multiplicity (the values
+  jobs render, whether set on the step or inherited from the workflow), the options
+  **as the engine's declared model reads them** (a key nothing declares reaches no job
+  and moves no key — `validate` warns about it instead), a digest of any file an
+  option names (retraining a model re-runs its consumers), and the parent structure's
+  own content (ID, symbols, coordinates, energy);
+- a **resolution key** for an NMS step — the flag plus the `nms` options, split into
+  the *criterion* (`target`, `ts_mode_index`) and the *search*
+  (`displacement_value`, `num_random_displacements`, `seed`). It touches no row key:
+  round-1 jobs are byte-identical with NMS on or off, which is what makes turning
+  `nms: true` on over a finished run cost only the displacement children;
+- the step **fingerprint** — a SHA-1 composing the ordered row keys with the
+  resolution key. An exact match serves the whole step from `step.json`; every finer
+  question is asked of the rows.
 
-If the YAML changes, or the seed file / a template's contents / any upstream
-result changes, the fingerprint changes and the next run re-executes the step
-(and every downstream step, because its survivor set changed).
+If the seed file, a template's contents, an option a job can read, or any upstream
+result changes, the affected **rows** change — and `resume` recomputes exactly those
+rows, at that step and at every step downstream, adopting the rest from disk
+(see below).
 
-The `sample:` filter is deliberately **excluded** from the fingerprint: the cache
-stores the *pre-filter* results and filtering re-runs on every load, so tuning a
-filter is a cache hit (re-filter), not a re-computation.
+The `sample:` filter is deliberately **excluded** from every key: the cache stores
+the *pre-filter* results and filtering re-runs on every load, so tuning a filter is
+a cache hit (re-filter), not a re-computation. `on_failure` is likewise excluded —
+it has its own repair path. The `executables` map is a machine-local fact and is not
+part of a step's identity.
 
 ## Auto-retry on non-convergence
 
@@ -87,11 +99,15 @@ support recovery:
 
 - **`manifest.json`** — the input → output → structure-ID file layout, so
   `rerun` / recovery can rehydrate which input produced which output after a restart.
-  It also carries the step's **fingerprint**, and it is written *before* any job is
-  submitted — which is what lets a `resume` after an interrupted run prove that the
-  outputs sitting on disk were computed for this configuration and re-parse them
-  instead of resubmitting. Without that proof there is no way to tell a finished
-  output from a stale leftover, so the whole step has to be redone.
+  It also carries the step's **provenance** — the fingerprint, the resolution's
+  criterion, and each row's own key — written *before* any job is submitted. That is
+  what lets a later `resume` prove, structure by structure, that an output on disk is
+  the one this configuration would compute: matching rows are **adopted** (re-parsed,
+  never resubmitted) and only the rest run. A manifest *without* row provenance — an
+  output tree from before these rules, or one hand-written for a v1 adoption — is
+  never silently trusted or silently discarded: `resume` stops and names the fix,
+  `chemrefine rebuild-cache N`, which re-parses the outputs under the current rules,
+  submits nothing, and records the provenance.
 - **`failed_jobs.json`** — the ledger of failed structures (`structure_id`,
   `reason`); always written for visibility, but only `stop` failures are *pending*.
 

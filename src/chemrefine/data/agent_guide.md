@@ -98,6 +98,16 @@ templates.
 | `NMS: target stationary point not reached` | displacing + rerunning never hit the target imaginary count | inspect with `get_frequencies`/`analyze_mode`; adjust `displacement_value` or the template, then `rebuild-nms` or `rerun-errors` |
 | `failed` | a generic engine-reported failure | read the step's output via `run_status`'s log tail, then `rerun-errors` |
 
+Two situations that look like they need a recompute and do not:
+
+- **Turning `nms: true` on over a finished step** (some "minima" carry imaginary
+  frequencies): edit the config, `start_run(action="resume")` — round 1 is adopted from
+  disk and only the imaginary parents' displacement children are submitted; follow-up
+  steps recompute only the rows whose parent the resolution changed.
+- **`resume` refuses naming `rebuild-cache`**: the tree predates per-row provenance.
+  Run `start_run(action="rebuild-cache")` once (re-parses, submits nothing), then
+  resume as usual.
+
 ## Hard rules
 
 * Steps must be numbered contiguously from 1; step/config knobs are validated

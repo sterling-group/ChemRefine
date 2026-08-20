@@ -98,19 +98,38 @@ The `target` defaults to whatever the template implies — an `OptTS` run target
 
 ## Reuse on resume
 
-NMS distinguishes *search* parameters (`displacement_value`,
-`num_random_displacements`, `seed`) from the resolution *criterion* (`target`,
-`ts_mode_index`). Tuning only the search parameters lets `resume` reuse the
-round-1 frequencies and the already-resolved structures, re-attempting just the
-unresolved ones — instead of re-running the whole step. Changing the criterion
-(or the parents/template) forces a full re-run.
+The `nms:` flag and every NMS option live in the cache's **resolution key**, never in
+a row key — round-1 jobs are byte-identical with NMS on or off — so `resume` always
+reuses the round-1 outputs on disk and recomputes only what the edit actually changed:
+
+- **Tuning a search parameter** (`displacement_value`, `num_random_displacements`,
+  `seed`) re-reads round 1 and re-attempts just the parents that stayed unresolved;
+  resolved structures keep their winners.
+- **Changing the criterion** (`target`, `ts_mode_index`) re-runs the *resolution* —
+  existing `attemptK/` results are trusted only under the criterion they were written
+  for — still without resubmitting a single round-1 job.
+- **Changing the parents or the template** recomputes exactly the affected rows, like
+  any other step.
+
+## Turning NMS on over an existing tree
+
+Because the flag lives outside the row keys, enabling `nms: true` (with its
+`options:`) on a finished step is an ordinary edit: run `chemrefine resume`, and the
+step adopts every round-1 output from disk, passes the structures already at the
+target straight through — byte-identical, at their canonical paths — and submits
+displacement children **only** for the parents that need resolving. A campaign of
+1200 finished frequency jobs with 400 imaginary-mode structures costs 400 fan-outs,
+not 1200 recomputations. (`random` is the exception by design: it is exploration, so
+every parent fans out — round 1 is still reused.) The reverse edit works the same
+way: the resolved ensemble simply passes through unresolved semantics no longer ask
+about.
 
 `rebuild-nms` re-resolves the NMS step from the outputs already on disk and submits
 nothing — the same rebuild `rebuild-cache` performs, but aimed at the step setting
-`nms: true` instead of the last one. Reach for it when the round-2 children are already
-computed and only the *reading* of them should change; reach for `resume` when tuning a
-search parameter should re-attempt what stayed unresolved, and for `rerun` when round 1
-itself must be recomputed.
+`nms: true` instead of the last one. Reach for it when nothing should be *submitted*
+at all (inspection, or adopting a pre-provenance tree); reach for `resume` when the
+displacement children should actually run, and for `rerun` when round 1 itself must
+be recomputed.
 
 See the [Normal-Mode Sampling API](../api/nms.md) for the coordinator and the two
 engine hooks documented in the [ORCA engine API](../api/engines_orca.md).

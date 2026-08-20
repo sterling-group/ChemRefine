@@ -161,6 +161,25 @@ for the full map.
 ### Changed
 
 
+- **The cache identity is per-structure, and `resume` is incremental.** A step's key is
+  now layered the way its work is: a **row key** per structure (engine, template bytes,
+  effective charge/multiplicity, the options as the engine's declared model reads them,
+  option-file digests, the parent's content), a **resolution key** for what NMS reads
+  (criterion and search, split as reuse always split them), and a step fingerprint
+  composed from the ordered rows. The manifest records that identity per row, and
+  `resume` adopts every row whose stored key matches — re-parsed from disk, never
+  resubmitted — computing only the rest. What that changes in practice: turning
+  `nms: true` on over a finished frequency step submits only the imaginary parents'
+  displacement children (round 1 and the clean minima are adopted, byte-identical);
+  follow-up steps recompute only rows whose parent actually changed; a search retune
+  re-reads round 1; a criterion change re-resolves and nothing more; an interrupted NMS
+  step adopts round 1 instead of the old full re-run; a typo'd option key nothing
+  declares no longer invalidates anything (`validate` already warns about it). A tree
+  from before these rules is adopted once, explicitly, by `rebuild-cache` — which
+  re-parses under the current rules, submits nothing, and writes the provenance —
+  and `resume` names exactly that command instead of silently archiving finished
+  work. The `reuse_fingerprint` shortcut and its stored field are gone; the verdict it
+  encoded is read off the rows and the criterion directly.
 - **FAIRChem is trainable.** `task_name: omol` (and every other head) now selects a trainer as
   well as a calculator, so the family `[mlip]` installs by default is no longer
   inference-only. Its dataset is an ASE database per split — labels on a
@@ -289,6 +308,12 @@ for the full map.
 ### Fixed
 
 
+- **A workflow-level `charge:`/`multiplicity:` edit now invalidates the steps that
+  inherit it.** The old fingerprint hashed the per-step *override* — `None` when
+  inherited — so editing the workflow value changed every job's physics while every
+  fingerprint stood still, and `resume` served the old answers (reproduced:
+  `charge: 0` and `charge: 2` keyed identically). Row keys hash the **effective**
+  values the jobs render.
 - **A Q-Chem comment that names a section no longer becomes the section.** The input
   writer found `$molecule … $end` anywhere in the template, so a `$comment` whose prose
   merely mentioned `$molecule` — as the scaffolded starter's did — swallowed the
