@@ -515,6 +515,22 @@ def test_cli_gui_hands_off_to_launch(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert calls == [{"config": config, "port": 8123, "open_browser": False}]
 
 
+def test_cli_gui_reports_a_taken_port(monkeypatch: pytest.MonkeyPatch, caplog):
+    """A busy --port exits 1 with the fix named — not a waitress traceback."""
+    from typer.testing import CliRunner
+
+    from chemrefine.cli import app as cli_app
+    from chemrefine.gui import serve
+
+    def taken(config: Any, *, port: int, open_browser: bool) -> None:
+        raise OSError(98, "Address already in use")
+
+    monkeypatch.setattr(serve, "launch", taken)
+    result = CliRunner().invoke(cli_app, ["gui", "--port", "8123"])
+    assert result.exit_code == 1
+    assert "--port 0" in caplog.text
+
+
 def test_cli_gui_names_the_missing_extra(without_extra, caplog):
     """Without Flask/waitress the command names the extra and exits 1 — not a traceback.
 

@@ -12,6 +12,7 @@ import typer
 
 from chemrefine.agent.harness import build_agent
 from chemrefine.agent.providers import ProviderConfig
+from chemrefine.errors import ChemRefineError
 
 
 def _confirm(tool_name: str, rendered_args: str) -> bool:
@@ -37,6 +38,18 @@ def main(
             break
         if prompt.strip().lower() in {"exit", "quit"}:
             break
-        result = agent.run_sync(prompt, message_history=history)
+        # A failed turn must not end the session: the likeliest failure here is the model
+        # endpoint dying mid-chat (the very case `--check` preflights), and before this
+        # guard it took the whole conversation down as a traceback — where the web harness
+        # answers the same failures per turn (:func:`chemrefine.gui.app.create_app`).
+        try:
+            result = agent.run_sync(prompt, message_history=history)
+        except ChemRefineError as e:
+            # A tool's own failure keeps its documented name-and-message shape.
+            typer.echo(f"{type(e).__name__}: {e}", err=True)
+            continue
+        except Exception as e:  # the model endpoint is the outside world
+            typer.echo(f"model endpoint failed: {e}", err=True)
+            continue
         typer.echo(result.output)
         history = result.all_messages()

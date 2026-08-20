@@ -392,6 +392,58 @@ def test_chat_repl_ends_on_eof(monkeypatch: pytest.MonkeyPatch):
     chat.main(provider="custom")  # returns instead of crashing
 
 
+def test_chat_repl_survives_a_dead_endpoint(monkeypatch: pytest.MonkeyPatch):
+    """A failed model turn is an answer, not an exit — the next turn still runs.
+
+    Endpoint-down is the likeliest failure this feature meets (it is why ``--check``
+    exists), and it used to take the whole conversation down as a traceback. The web
+    harness answers the same failure per turn (``test_gui``'s 502 test); the REPL now
+    mirrors that posture.
+    """
+    import typer
+
+    from chemrefine.agent import chat
+
+    turns = iter([ConnectionError("connection refused"), "recovered"])
+
+    def flaky(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        turn = next(turns)
+        if isinstance(turn, Exception):
+            raise turn
+        return ModelResponse(parts=[TextPart(turn)])
+
+    monkeypatch.setenv("CHEMREFINE_LLM_MODEL", "test-model")
+    monkeypatch.setattr(ProviderConfig, "build_model", lambda self: FunctionModel(flaky))
+    prompts = iter(["hello", "again", "exit"])
+    monkeypatch.setattr(typer, "prompt", lambda *a, **k: next(prompts))
+    echoed: list[str] = []
+    monkeypatch.setattr(typer, "echo", lambda m, **k: echoed.append(str(m)))
+
+    chat.main(provider="custom")
+    failed = next(i for i, line in enumerate(echoed) if "model endpoint failed" in line)
+    assert any("recovered" in line for line in echoed[failed + 1 :])
+
+
+def test_chat_repl_keeps_a_tool_errors_documented_shape(monkeypatch: pytest.MonkeyPatch):
+    """A ``ChemRefineError`` out of a turn prints its name and message, and the loop lives."""
+    import typer
+
+    from chemrefine.agent import chat
+
+    def broken(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ConfigError("no step matches 'x'")
+
+    monkeypatch.setenv("CHEMREFINE_LLM_MODEL", "test-model")
+    monkeypatch.setattr(ProviderConfig, "build_model", lambda self: FunctionModel(broken))
+    prompts = iter(["hello", "exit"])
+    monkeypatch.setattr(typer, "prompt", lambda *a, **k: next(prompts))
+    echoed: list[str] = []
+    monkeypatch.setattr(typer, "echo", lambda m, **k: echoed.append(str(m)))
+
+    chat.main(provider="custom")
+    assert any("ConfigError: no step matches" in line for line in echoed)
+
+
 def test_cli_agent_hands_off_and_maps_config_errors(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):

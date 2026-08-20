@@ -439,7 +439,12 @@ def gui(
     except ImportError as e:
         logger.error("the GUI needs flask/waitress: pip install 'chemrefine[gui]' (%s)", e)
         raise typer.Exit(code=1) from e
-    launch(config_path, port=port, open_browser=not no_browser)
+    try:
+        launch(config_path, port=port, open_browser=not no_browser)
+    except OSError as e:
+        # The one OSError a local bind realistically raises: --port names a taken port.
+        logger.error("could not serve on 127.0.0.1:%d (%s) — try --port 0 for a free one", port, e)
+        raise typer.Exit(code=1) from e
 
 
 @app.command()
