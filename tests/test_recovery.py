@@ -346,8 +346,10 @@ def _register_fake_nms():
     class _FakeNms2:
         name = "fake-nms2"
         resolved: ClassVar[set[str]] = set()
+        clean: ClassVar[set[str]] = set()
         fail_round1: ClassVar[set[str]] = set()
         submitted: ClassVar[list[str]] = []
+        children_submitted: ClassVar[list[str]] = []
         nms_seen: ClassVar[list[str]] = []
 
         def prepare(self, ctx):
@@ -363,12 +365,20 @@ def _register_fake_nms():
             return StepInputs(files=tuple(files))
 
         def submit(self, inputs, ctx):
+            # Outputs are content-faithful: markers say what a parse will find, so
+            # promotion (which copies a child's file to the parent's canonical path)
+            # is visible to `parse` exactly as a real engine's outputs make it.
             for _inp, out, sid in inputs.files:
                 if "_m" not in sid:  # a round-1 (parent) submission, not a displaced child
                     _FakeNms2.submitted.append(sid)
+                    marker = "CLEAN\n" if sid in _FakeNms2.clean else ""
+                else:
+                    _FakeNms2.children_submitted.append(sid)
+                    parent = sid.split("_m")[0]
+                    marker = "RESOLVED\n" if parent in _FakeNms2.resolved else ""
                 if sid not in _FakeNms2.fail_round1:
                     out.parent.mkdir(parents=True, exist_ok=True)
-                    out.write_text("E -1.0\n", encoding="utf-8")
+                    out.write_text(f"E -1.0\n{marker}", encoding="utf-8")
             return JobBatch(jobs={})
 
         def parse(self, inputs, ctx):
@@ -376,16 +386,23 @@ def _register_fake_nms():
             out = []
             for _inp, _o, sid in inputs.files:
                 seed = seeds.get(sid)
-                # Frequency values ride on the parsed structure (one pass); NMS reads them.
-                if "_m" in sid:  # a displaced child: resolved iff its parent is
-                    parent = sid.split("_m")[0]
-                    imaginary = {} if parent in _FakeNms2.resolved else {3: -9.0}
+                text = _o.read_text(encoding="utf-8") if _o.is_file() else ""
+                # Frequency values ride on the parsed structure (one pass); NMS reads
+                # them — off the file's *content*, so a promoted winner at the canonical
+                # path reads as the resolved structure it is.
+                if "_m" in sid:  # a displaced child
+                    imaginary = {} if "RESOLVED" in text else {3: -9.0}
                     modes = None
                 else:  # a round-1 parent reaching NMS
                     _FakeNms2.nms_seen.append(sid)
-                    modes = np.zeros((1, 3, 6))
+                    # A real parse always carries the full tensor — trivial modes, the
+                    # (possibly) imaginary one, and real vibrations `random` can draw —
+                    # and only the imaginary set depends on what the output says.
+                    modes = np.zeros((1, 3, 8))
                     modes[0, 0, 5] = 0.1
-                    imaginary = {5: -42.0}
+                    modes[0, 0, 6] = 0.2
+                    modes[0, 0, 7] = 0.3
+                    imaginary = {} if ("CLEAN" in text or "RESOLVED" in text) else {5: -42.0}
                 out.append(
                     Structure(
                         id=sid,
@@ -410,6 +427,182 @@ def _register_fake_nms():
             )
 
     return _FakeNms2
+
+
+def _plain_freq_step() -> StepConfig:
+    """The same step as :func:`_nms_step` before anyone turns ``nms: true`` on."""
+    return StepConfig(step=1, name="s", engine="fake-nms2", operation="freq")
+
+
+def test_turning_nms_on_computes_only_the_displacement_children(tmp_path: Path):
+    """The flip story: a finished non-NMS run + `nms: true` + resume = children, nothing else.
+
+    The nms flag and its options live in the resolution key, so every round-1 row still
+    matches — the outputs on disk are provably this configuration's round 1 — and
+    resolution runs on top: the clean parent passes through byte-identical, the
+    imaginary parent fans out displacement children, and a stale `attemptK/` planted
+    from some other history is ignored in favour of a fresh attempt.
+    """
+    import json
+
+    from chemrefine import cache
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        eng.resolved = {"1"}
+        step_dir = (tmp_path / "outputs" / "step1_s").resolve()
+        execute(_seeded_config(tmp_path, [_plain_freq_step()]), Action.RESUME)
+        clean_out = step_dir / "0" / "step1_0.out"
+        before = clean_out.read_bytes()
+
+        # Mixed history: a stale resolution label that must not be worn.
+        planted = step_dir / "1" / "attempt1"
+        planted.mkdir(parents=True)
+        (planted / "resolution.json").write_text(
+            json.dumps({"resolved_from": "bogus"}), encoding="utf-8"
+        )
+
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        execute(_seeded_config(tmp_path, [_nms_step(1.0)]), Action.RESUME)
+
+        assert eng.submitted == [], "round 1 must not be resubmitted"
+        assert {c.split("_m")[0] for c in eng.children_submitted} == {"1"}
+        assert clean_out.read_bytes() == before, "the clean parent's output is untouched"
+        cached = cache.load(step_dir)
+        by_id = {s.id: s for s in cached.results.structures}
+        assert set(by_id) == {"0", "1"}
+        assert by_id["0"].resolved_from is None, "no borrowed provenance on a passthrough"
+        assert by_id["1"].resolved_from is not None and by_id["1"].resolved_from != "bogus"
+        assert cache.load_failure_records(step_dir) == []
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_the_flip_serves_downstream_rows_whose_parent_did_not_change(tmp_path: Path):
+    """After the flip, a follow-up step recomputes only the resolved parent's row.
+
+    The clean parent comes out of resolution bit-identical, so its downstream row key
+    still matches and its finished output is adopted; the resolved parent carries the
+    promoted child's geometry, so exactly its row recomputes.
+    """
+    from chemrefine import cache
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        eng.resolved = {"1"}
+        follow = StepConfig(step=2, name="refine", engine="fake", operation="opt_sp")
+        steps = [_plain_freq_step(), follow]
+        execute(_seeded_config(tmp_path, steps), Action.RESUME)
+        step2_dir = (tmp_path / "outputs" / "step2_refine").resolve()
+
+        execute(_seeded_config(tmp_path, [_nms_step(1.0), follow]), Action.RESUME)
+
+        assert (step2_dir / "1" / "attempt1").is_dir(), "the changed row was archived and re-run"
+        assert not (step2_dir / "0" / "attempt1").exists(), "the unchanged row was adopted"
+        assert {s.id for s in cache.load(step2_dir).results.structures} == {"0", "1"}
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_an_interrupted_nms_step_resumes_by_adopting_round_1(tmp_path: Path):
+    """A driver killed after resolution but before the cache write costs a re-read, not a re-run.
+
+    This deliberately replaces the old doctrine ("an interrupted NMS step falls back to
+    the full re-run"): the rows prove round 1, the criterion matches, so the promoted
+    winners pass through with their provenance intact and nothing submits at all.
+    """
+    from chemrefine import cache
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        eng.resolved = {"1"}
+        step_dir = (tmp_path / "outputs" / "step1_s").resolve()
+        execute(_seeded_config(tmp_path, [_nms_step(1.0)]), Action.RESUME)
+        resolved_from = {s.id: s.resolved_from for s in cache.load(step_dir).results.structures}
+        cache.invalidate(step_dir)  # step.json is written last — this is the interruption
+
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        execute(_seeded_config(tmp_path, [_nms_step(1.0)]), Action.RESUME)
+
+        assert eng.submitted == [] and eng.children_submitted == []
+        survivors = {s.id: s for s in cache.load(step_dir).results.structures}
+        assert set(survivors) == {"0", "1"}
+        assert survivors["1"].resolved_from == resolved_from["1"], "trusted provenance survives"
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_a_criterion_change_re_resolves_without_resubmitting_round_1(tmp_path: Path):
+    """target: minimum → ts re-runs the *resolution*, and only that.
+
+    The rows are untouched by the criterion, so round 1 adopts; the stale resolutions
+    are not trusted (their labels were written for the old criterion); and what cannot
+    reach the new target honestly ledgers as unresolved — here both parents, whose
+    adopted outputs carry no imaginary mode to displace along.
+    """
+    from chemrefine import cache
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        eng.resolved = {"1"}
+        step_dir = (tmp_path / "outputs" / "step1_s").resolve()
+        execute(_seeded_config(tmp_path, [_nms_step(1.0)]), Action.RESUME)
+
+        eng.resolved = set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ts_step = _nms_step(1.0)
+        ts_step = ts_step.model_copy(
+            update={"options": {"target": "ts", "displacement_value": 1.0}}
+        )
+        execute(_seeded_config(tmp_path, [ts_step]), Action.RESUME)
+
+        assert eng.submitted == [], "round 1 must not be resubmitted"
+        records = cache.load_failure_records(step_dir)
+        assert {(r.structure_id, r.kind) for r in records} == {
+            ("0", FailureKind.UNRESOLVED_NMS),
+            ("1", FailureKind.UNRESOLVED_NMS),
+        }
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_a_random_target_flip_fans_out_every_parent(tmp_path: Path):
+    """`random` is exploration, not cleanup — the flip fans children for clean parents too."""
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        execute(_seeded_config(tmp_path, [_plain_freq_step()]), Action.RESUME)
+
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        random_step = _nms_step(1.0).model_copy(
+            update={"options": {"target": "random", "displacement_value": 1.0}}
+        )
+        execute(_seeded_config(tmp_path, [random_step]), Action.RESUME)
+
+        assert eng.submitted == []
+        assert {c.split("_m")[0] for c in eng.children_submitted} == {"0", "1"}
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
 
 
 def _nms_step(displacement: float, on_failure: str = "skip") -> StepConfig:
@@ -443,14 +636,19 @@ def test_resume_after_tuning_reattempts_only_unresolved(tmp_path: Path):
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0"}
 
         eng.resolved = {"0", "1"}  # new distance resolves "1"
-        eng.submitted, eng.nms_seen = [], []
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
         execute(_seeded_config(tmp_path, [_nms_step(2.0)]), Action.RESUME)
         assert eng.submitted == []  # round-1 freq reused, not resubmitted
-        assert eng.nms_seen == ["1"]  # only the unresolved parent re-attempted
+        # The incremental route re-parses every adopted row (a read, not a job) — the
+        # promoted winner at "0"'s canonical path passes straight through — and fans
+        # out children for exactly the parent the previous run left unresolved.
+        assert eng.nms_seen == ["0", "1"]
+        assert {c.split("_m")[0] for c in eng.children_submitted} == {"1"}
         assert cache.load_failure_records(step_dir) == []
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
     finally:
-        eng.resolved, eng.fail_round1, eng.submitted, eng.nms_seen = set(), set(), [], []
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
         ENGINES.pop("fake-nms2", None)
 
 
@@ -480,7 +678,8 @@ def test_reattempt_resubmits_missing_round1(tmp_path: Path):
         assert cache.load_failure_records(step_dir) == []
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
     finally:
-        eng.resolved, eng.fail_round1, eng.submitted, eng.nms_seen = set(), set(), [], []
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
         ENGINES.pop("fake-nms2", None)
 
 

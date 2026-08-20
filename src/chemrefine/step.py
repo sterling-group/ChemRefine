@@ -28,7 +28,7 @@ from typing import assert_never
 
 from pydantic import ValidationError
 
-from chemrefine import __version__, attempts, cache, filtering, ids, io, lifecycle, nms
+from chemrefine import attempts, cache, filtering, ids, io, lifecycle, nms
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.api import (
     ArtifactEngine,
@@ -271,7 +271,7 @@ def _step_outcome(
     """Filter ``results``, write the step's two ensemble XYZ files, return the outcome.
 
     **The one way a step's results become a :class:`StepOutcome`.** Every route out of
-    :func:`run_step` — the fresh run, the cache hit, the policy re-attempt, the NMS reuse,
+    :func:`run_step` — the fresh run, the cache hit, the policy re-attempt, the incremental
     the partial-step resume, the artifact step and ``rebuild-cache`` — ends here, which is
     what guarantees the ensemble files exist on a resumed, relocated or rebuilt tree and
     not only on the run that computed the results. Their content is a pure function of the
@@ -407,16 +407,9 @@ def run_step(
         )
         if cached is not None:
             return cached
-        # Full fingerprint invalid. For an NMS step whose *search* params changed
-        # but whose round-1 + criterion are unchanged (reuse fingerprint matches),
-        # reuse the round-1 freq + already-resolved children and re-attempt only
-        # the ledgered-unresolved parents — instead of re-running the whole step.
-        if nms_engine is not None:
-            reused = _nms_reuse_outcome(ctx, step_cfg, key, nms_engine, may_submit=may_submit)
-            if reused is not None:
-                return reused
         # No cache this key can serve — but possibly a tree whose rows can vouch for
-        # themselves: an interrupted run, or parents that only partially changed.
+        # themselves: an interrupted run, parents that only partially changed, an NMS
+        # search retune, or the nms flag flipped over a finished non-NMS run.
         incremental = _incremental_step_outcome(
             ctx,
             step_cfg,
@@ -523,55 +516,6 @@ def _cached_outcome(
     return _step_outcome(ctx, step_cfg, cached.results, cache_hit=True)
 
 
-def _nms_reuse_outcome(
-    ctx: StepContext,
-    step_cfg: StepConfig,
-    key: cache.StepKey,
-    engine: NmsCapableEngine,
-    *,
-    may_submit: bool,
-) -> StepOutcome | None:
-    """Reuse a cached NMS round-1 when only the *search* params changed.
-
-    Returns ``None`` (re-run the whole step) unless a cache exists whose reuse
-    fingerprint matches; then it re-attempts the ledgered-unresolved parents, or
-    re-stamps the cache when everything was already resolved.
-
-    Re-attempting runs round-2 jobs, so it needs ``may_submit``. This branch is reached
-    whenever the *reuse* fingerprint matches — the ordinary state after tuning a search
-    parameter, not an error condition — so it is the likeliest way for a step nobody
-    targeted to start computing.
-    """
-    try:
-        cached = cache.load(ctx.step_dir)
-    except CacheError:
-        cached = None
-    if cached is None or cached.reuse_fingerprint != key.reuse_fingerprint:
-        return None
-    if cache.load_failure_records(ctx.step_dir):
-        if not may_submit:
-            return None
-        results = nms.reattempt_nms(engine, ctx, step_cfg, cached, key)
-    else:
-        logger.info(
-            "step %d: NMS search params changed, all resolved — reusing cache", step_cfg.step
-        )
-        # The one place a step is persisted *without* `lifecycle.finalize`, and
-        # deliberately so: there is nothing to resolve. Every structure was already resolved
-        # under the previous search params, so re-applying `on_failure` to an empty failure
-        # list would only re-stamp a ledger that is already correct. This re-stamps the
-        # cache under the new fingerprint and nothing else.
-        cache.save(
-            step_cfg=step_cfg,
-            key=key,
-            results=cached.results,
-            step_dir=ctx.step_dir,
-            chemrefine_version=__version__,
-        )
-        results = cached.results
-    return _step_outcome(ctx, step_cfg, results, cache_hit=False)
-
-
 def _incremental_step_outcome(
     ctx: StepContext,
     step_cfg: StepConfig,
@@ -609,19 +553,22 @@ def _incremental_step_outcome(
     Returns ``None`` — meaning "run the whole step" — when the route does not apply:
 
     * The step may not submit: continuing means resubmitting whatever is missing.
-    * The step is NMS. Its round-2 children need re-resolving, not just re-parsing —
-      the resolution-aware route arrives with the NMS half of this design.
     * The step is an artifact step. There is nothing per-structure to continue —
       :func:`_run_artifact_step` re-runs the one job, and adopting a *finished* product
       is ``rebuild-cache``'s job, not a resume's.
     * No manifest, or one naming no jobs — a step that never prepared anything has
       nothing to continue (an empty manifest is a legitimate value, not a missing one).
     """
-    if not may_submit or nms_engine is not None or artifact_engine is not None:
+    if not may_submit or artifact_engine is not None:
         return None
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None or not manifest.files:
         return None
+    if nms_engine is not None:
+        # Before any adoption: a template that computes no frequencies must fail with
+        # the actionable error, not an all-unresolved ledger read off perfectly good
+        # outputs.
+        _check_nms_freq_gate(nms_engine, ctx, step_cfg)
     provenance = cache.load_manifest_provenance(ctx.step_dir)
     if not provenance.rows:
         raise CacheError(
@@ -653,10 +600,26 @@ def _incremental_step_outcome(
         engine=step_cfg.engine,
         fingerprint=key.fingerprint,
         resolution_key=key.resolution_key,
+        criterion_key=key.criterion_key,
         rows=current,
     )
     successes, failures = lifecycle.resubmit_unusable(engine, ctx, inputs, stale=changed)
     successes, failures = lifecycle.retry_unconverged(engine, ctx, successes, failures)
+    if nms_engine is not None:
+        # Round 1 is assembled; resolution runs exactly as a full step's would, with one
+        # verdict from the provenance: `resolved_from` labels on disk are trusted only
+        # under the criterion they were written for. Parents not at the target fan out
+        # fresh children either way — which is what makes flipping `nms: true` over a
+        # finished run cost exactly the displacement children and nothing else.
+        trust = bool(key.criterion_key) and provenance.criterion_key == key.criterion_key
+        resolution = nms.resume_nms(
+            nms_engine,
+            StepResults(structures=tuple(successes)),
+            failures,
+            ctx,
+            trust_resolutions=trust,
+        )
+        successes, failures = list(resolution.survivors), list(resolution.failures)
     results = lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
@@ -690,6 +653,7 @@ def _run_full_step(
         # provenance is the same proof at structure grain, for the incremental resume.
         fingerprint=key.fingerprint,
         resolution_key=key.resolution_key,
+        criterion_key=key.criterion_key,
         rows=key.manifest_rows(),
     )
 
@@ -751,6 +715,7 @@ def _run_artifact_step(
         engine=step_cfg.engine,
         fingerprint=key.fingerprint,
         resolution_key=key.resolution_key,
+        criterion_key=key.criterion_key,
         rows=key.manifest_rows(),
     )
     engine.submit(inputs, ctx)
@@ -919,6 +884,7 @@ def rebuild_cache_step(
         engine=step_cfg.engine,
         fingerprint=key.fingerprint,
         resolution_key=key.resolution_key,
+        criterion_key=key.criterion_key,
         rows=key.manifest_rows(),
     )
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)

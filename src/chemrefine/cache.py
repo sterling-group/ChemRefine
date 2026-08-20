@@ -118,12 +118,6 @@ class StepCache:
     operation: str | None
     parent_ids: tuple[str, ...]
     results: StepResults
-    reuse_fingerprint: str = ""
-    """Coarser fingerprint (NMS steps only) that's stable across search-param
-    tuning but not across the resolution criterion — lets ``resume`` re-attempt
-    only the unresolved parents and reuse the round-1 freq. ``""`` for steps
-    that don't use it. See :func:`reuse_fingerprint`."""
-
     on_failure: str = ""
     """The ``on_failure`` policy the stored results were finalized under.
 
@@ -781,7 +775,6 @@ def save(
         "cache_format": CACHE_FORMAT_VERSION,
         "chemrefine_version": chemrefine_version,
         "fingerprint": key.fingerprint,
-        "reuse_fingerprint": key.reuse_fingerprint,
         "step": step_cfg.step,
         "name": step_cfg.name,
         "engine": step_cfg.engine,
@@ -835,11 +828,6 @@ class StepKey:
     resolution_key: str = ""
     criterion_key: str = ""
     fingerprint: str = ""
-    reuse_fingerprint: str = ""
-    """H(rows, criterion) for a resolving step, else ``""`` — stable across a search
-    retune, moved by anything else (the split :class:`ResolutionSpec` documents). The
-    transitional consumer is :func:`chemrefine.step._nms_reuse_outcome`; the incremental
-    route derives the same verdict from the rows and retires this field."""
 
     def manifest_rows(self) -> dict[str, tuple[str, str]]:
         """``id -> (row_key, parent_digest)`` — the per-row provenance a manifest stores."""
@@ -899,11 +887,6 @@ class StepKey:
                 "resolution": res_key,
             }
         )
-        reuse = (
-            _hash_payload({"rows": list(rows), "criterion": crit_key})
-            if resolution is not None
-            else ""
-        )
         return cls(
             parent_ids=parent_ids,
             parent_digests=parent_digs,
@@ -911,7 +894,6 @@ class StepKey:
             resolution_key=res_key,
             criterion_key=crit_key,
             fingerprint=step_fingerprint,
-            reuse_fingerprint=reuse,
         )
 
 
@@ -950,7 +932,6 @@ def load(step_dir: Path) -> StepCache | None:
             operation=data["operation"],
             parent_ids=tuple(data["parent_ids"]),
             results=StepResults(structures=tuple(structure_from_record(d) for d in records)),
-            reuse_fingerprint=data.get("reuse_fingerprint", ""),
             on_failure=data.get("on_failure", ""),
         )
     except (KeyError, TypeError, ValueError) as e:
@@ -1026,6 +1007,7 @@ def save_manifest(
     engine: str,
     fingerprint: str = "",
     resolution_key: str = "",
+    criterion_key: str = "",
     rows: Mapping[str, tuple[str, str]] | None = None,
 ) -> Path:
     """Persist ``inputs`` plus step metadata to ``manifest.json``; return the path.
@@ -1050,6 +1032,7 @@ def save_manifest(
         "engine": engine,
         "fingerprint": fingerprint,
         "resolution_key": resolution_key,
+        "criterion_key": criterion_key,
         "files": [
             {
                 "input": str(inp),
@@ -1080,6 +1063,10 @@ class ManifestProvenance:
 
     fingerprint: str
     resolution_key: str
+    criterion_key: str
+    """The criterion half of the resolution the rows were resolved under — what decides
+    whether an ``attemptK/`` resolution (and its ``resolved_from`` label) may be trusted
+    across a search retune, and never across a criterion change."""
     rows: dict[str, tuple[str, str]]
 
 
@@ -1091,7 +1078,7 @@ def load_manifest_provenance(step_dir: Path) -> ManifestProvenance:
     """
     data = read_json(manifest_path(step_dir), None, label="manifest")
     if not isinstance(data, dict):
-        return ManifestProvenance(fingerprint="", resolution_key="", rows={})
+        return ManifestProvenance(fingerprint="", resolution_key="", criterion_key="", rows={})
     rows: dict[str, tuple[str, str]] = {}
     for rec in data.get("files") or []:
         if isinstance(rec, dict) and "row_key" in rec:
@@ -1099,6 +1086,7 @@ def load_manifest_provenance(step_dir: Path) -> ManifestProvenance:
     return ManifestProvenance(
         fingerprint=str(data.get("fingerprint", "")),
         resolution_key=str(data.get("resolution_key", "")),
+        criterion_key=str(data.get("criterion_key", "")),
         rows=rows,
     )
 

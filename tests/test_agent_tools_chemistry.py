@@ -149,7 +149,7 @@ def _cache_step(tmp_path: Path, structures: tuple[Structure, ...]) -> Path:
     step_cfg = config.steps[0]
     cache.save(
         step_cfg=step_cfg,
-        key=cache.StepKey(parent_ids=(), fingerprint="f", reuse_fingerprint=""),
+        key=cache.StepKey(parent_ids=(), fingerprint="f"),
         results=StepResults(structures=structures),
         step_dir=config.step_dir(step_cfg),
         chemrefine_version="test",

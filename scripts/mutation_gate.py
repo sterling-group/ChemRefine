@@ -180,6 +180,15 @@ MUTATIONS = (
         "pointed at, archiving the very outputs they were asked to read",
     ),
     Mutation(
+        id="resume-row-adoption",
+        path="src/chemrefine/step.py",
+        old="if sid not in provenance.rows or provenance.rows[sid][0] != current[sid][0]",
+        new="if False",
+        tests="tests/test_step.py",
+        breaks="resume adopts every row on disk whatever its provenance says, so a changed "
+        "parent's stale output is served as current and the changed row never computes",
+    ),
+    Mutation(
         id="rebuild-cache-provenance",
         path="src/chemrefine/step.py",
         old="if foreign or unproven:",

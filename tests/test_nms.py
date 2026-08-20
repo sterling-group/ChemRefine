@@ -345,27 +345,32 @@ def _resolution_of(cfg: StepConfig) -> cache.ResolutionSpec:
     )
 
 
-def _reuse_key(cfg: StepConfig, parent: Structure) -> str:
+def _key_of(cfg: StepConfig, parent: Structure) -> cache.StepKey:
     resolution = _resolution_of(cfg) if cfg.nms else None
-    return cache.StepKey.of(cfg, (parent,), None, resolution=resolution).reuse_fingerprint
+    return cache.StepKey.of(cfg, (parent,), None, resolution=resolution)
 
 
-def test_nms_reuse_key_ignores_search_params():
+def test_search_params_move_no_row_and_no_criterion():
+    """Tuning the hunt re-runs neither round 1 nor the trust in existing resolutions."""
     parent = _structure("0")
-    base = _cfg(options={"target": "minimum", "displacement_value": 1.0})
-    tuned = _cfg(options={"target": "minimum", "displacement_value": 2.0})
-    assert _reuse_key(base, parent) == _reuse_key(tuned, parent)
+    base = _key_of(_cfg(options={"target": "minimum", "displacement_value": 1.0}), parent)
+    tuned = _key_of(_cfg(options={"target": "minimum", "displacement_value": 2.0}), parent)
+    assert base.row_keys == tuned.row_keys
+    assert base.criterion_key == tuned.criterion_key
+    assert base.fingerprint != tuned.fingerprint  # still a different step
 
 
-def test_nms_reuse_key_changes_on_criterion():
+def test_the_criterion_moves_its_key_and_nothing_of_round_1():
     parent = _structure("0")
-    mn = _cfg(options={"target": "minimum"})
-    ts = _cfg(options={"target": "ts"})
-    assert _reuse_key(mn, parent) != _reuse_key(ts, parent)
+    mn = _key_of(_cfg(options={"target": "minimum"}), parent)
+    ts = _key_of(_cfg(options={"target": "ts"}), parent)
+    assert mn.row_keys == ts.row_keys
+    assert mn.criterion_key != ts.criterion_key
 
 
-def test_nms_reuse_key_empty_for_non_nms():
-    assert _reuse_key(_cfg(nms=False), _structure("0")) == ""
+def test_a_non_resolving_step_has_no_resolution_identity():
+    key = _key_of(_cfg(nms=False), _structure("0"))
+    assert key.resolution_key == "" and key.criterion_key == ""
 
 
 # ---------------------------------------------------------------------------
@@ -812,22 +817,17 @@ def test_one_loop_resolves_both_modes():
 def test_an_edited_template_invalidates_the_reuse_before_a_reattempt(tmp_path: Path):
     """The second invariant: a stale input can never be resubmitted from the manifest.
 
-    The reuse key is derived from the row keys, which cover the template digest — so
-    editing a template changes the key that gates this path and the re-attempt is not
-    reached with inputs the user has since changed.
+    The row keys cover the template digest — so editing a template moves every row and
+    no re-attempt (which adopts rows) is reached with inputs the user has since changed.
     """
     cfg = StepConfig(step=1, engine="orca", operation="opt_sp", nms=True)
     parent = _structure("0")
     tpl_a, tpl_b = tmp_path / "a.inp", tmp_path / "b.inp"
     tpl_a.write_text("original", encoding="utf-8")
     tpl_b.write_text("edited", encoding="utf-8")
-    first = cache.StepKey.of(
-        cfg, (parent,), tpl_a, resolution=_resolution_of(cfg)
-    ).reuse_fingerprint
-    edited = cache.StepKey.of(
-        cfg, (parent,), tpl_b, resolution=_resolution_of(cfg)
-    ).reuse_fingerprint
-    assert first and first != edited
+    first = cache.StepKey.of(cfg, (parent,), tpl_a, resolution=_resolution_of(cfg))
+    edited = cache.StepKey.of(cfg, (parent,), tpl_b, resolution=_resolution_of(cfg))
+    assert first.row_keys != edited.row_keys
 
 
 def test_every_parents_children_share_one_queue(tmp_path: Path):

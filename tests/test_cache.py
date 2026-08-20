@@ -145,15 +145,19 @@ def test_the_nms_family_moves_only_the_resolution_key():
     assert plain.resolution_key == "" and resolving.resolution_key != ""
 
 
-def test_search_retunes_keep_the_reuse_key_criterion_changes_move_it():
-    """The E13 split, structurally: search tunes the hunt, criterion changes the answer."""
+def test_search_retunes_keep_the_criterion_key_criterion_changes_move_it():
+    """The search/criterion split, structurally: search tunes the hunt, criterion the answer.
+
+    The criterion key is what decides whether an ``attemptK/`` resolution on disk may be
+    trusted; the rows are untouched by both, which is why neither edit ever re-runs
+    round 1.
+    """
     base = _key("0", resolution=_resolution())
     retuned = _key("0", resolution=_resolution(displacement=2.0, seed=7))
     recriterioned = _key("0", resolution=_resolution(target="ts"))
+    assert base.row_keys == retuned.row_keys == recriterioned.row_keys
     assert base.fingerprint != retuned.fingerprint  # a different step...
-    assert base.reuse_fingerprint == retuned.reuse_fingerprint  # ...same reuse verdict
-    assert base.criterion_key == retuned.criterion_key
-    assert base.reuse_fingerprint != recriterioned.reuse_fingerprint
+    assert base.criterion_key == retuned.criterion_key  # ...same resolution verdict
     assert base.criterion_key != recriterioned.criterion_key
 
 
@@ -175,11 +179,13 @@ def test_manifest_provenance_round_trips(tmp_path: Path):
         engine="fake",
         fingerprint=key.fingerprint,
         resolution_key=key.resolution_key,
+        criterion_key=key.criterion_key,
         rows=key.manifest_rows(),
     )
     provenance = load_manifest_provenance(tmp_path)
     assert provenance.fingerprint == key.fingerprint
     assert provenance.resolution_key == key.resolution_key
+    assert provenance.criterion_key == key.criterion_key
     assert provenance.rows == key.manifest_rows()
     # And the file layout is untouched by the extra keys.
     assert load_manifest(tmp_path) == inputs
@@ -417,34 +423,6 @@ def test_template_contents_round_trip_through_validity(tmp_path: Path):
     assert load_if_valid(key=_key("0", template=template), step_dir=step_dir)
     template.write_text("! Opt Freq\n", encoding="utf-8")
     assert not load_if_valid(key=_key("0", template=template), step_dir=step_dir)
-
-
-def test_reuse_fingerprint_round_trips(tmp_path: Path):
-    """A resolving step's coarser key is persisted with the cache it belongs to."""
-    step_dir = tmp_path / "step1"
-    nms_cfg = _cfg(nms=True, options={"target": "minimum", "displacement_value": 1.0})
-    key = _key("0", step_cfg=nms_cfg, resolution=_resolution())
-    assert key.reuse_fingerprint  # non-empty for a resolving step
-    save(
-        step_cfg=nms_cfg,
-        key=key,
-        results=_results(),
-        step_dir=step_dir,
-        chemrefine_version="2.0.0",
-    )
-    assert load(step_dir).reuse_fingerprint == key.reuse_fingerprint
-
-
-def test_reuse_fingerprint_defaults_empty(tmp_path: Path):
-    step_dir = tmp_path / "step1"
-    save(
-        step_cfg=_cfg(),
-        key=_key("0", step_cfg=_cfg()),
-        results=_results(),
-        step_dir=step_dir,
-        chemrefine_version="2.0.0",
-    )
-    assert load(step_dir).reuse_fingerprint == ""
 
 
 def test_round_trip_preserves_positions_forces_and_flags(tmp_path: Path):

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
@@ -222,7 +221,7 @@ def _register_fail_engine():
 
     from chemrefine.engines.api import register
     from chemrefine.ids import structure_artifact_path
-    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+    from chemrefine.state import JobBatch, StepInputs, Structure
 
     @register("fake-fail")
     class _FailEngine:
@@ -477,7 +476,7 @@ def _register_conv_engine():
 
     from chemrefine.engines.api import register
     from chemrefine.ids import structure_artifact_path
-    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+    from chemrefine.state import JobBatch, StepInputs, Structure
 
     @register("conv-retry")
     class _ConvEngine:
@@ -671,7 +670,7 @@ def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypa
     from chemrefine import nms as nms_mod
     from chemrefine.engines.api import ENGINES, NmsInputInfo, register
     from chemrefine.nms import NmsResolution
-    from chemrefine.state import JobBatch, StepInputs, StepResults
+    from chemrefine.state import JobBatch, StepInputs
 
     calls: list[int] = []
 
@@ -1089,145 +1088,6 @@ def test_rebuild_cache_step_nms_branch(tmp_path: Path):
     assert {s.id for s in outcome.state.structures} == {"0"}  # resolved, id kept
 
 
-# --- _nms_reuse_outcome (NMS reuse-fingerprint path) ------------------------
-
-
-def _reuse_key(ctx, fp: str = "FP"):
-    """This step's key, with the NMS reuse fingerprint pinned to ``fp``.
-
-    The orchestrator is handed the key rather than deriving it, so these tests build the one
-    the caller would pass instead of monkeypatching a derivation.
-    """
-    from chemrefine import cache
-
-    return replace(cache.StepKey.of(ctx.step_cfg, (), ctx.template), reuse_fingerprint=fp)
-
-
-def _pin_nms(monkeypatch) -> None:
-    """Pin the NMS re-attempt result for these tests.
-
-    ``step.py`` calls through the :mod:`chemrefine.nms` module object, so patching the
-    module attribute redirects the orchestrator without touching its code.
-    """
-    from chemrefine import nms
-
-    monkeypatch.setattr(
-        nms,
-        "reattempt_nms",
-        lambda engine, ctx, step_cfg, cached, key: StepResults(
-            structures=(
-                Structure(id="re", atoms=Atoms("H", positions=[[0, 0, 0]]), energy_hartree=-1.0),
-            )
-        ),
-    )
-
-
-def _save_reuse_cache(ctx, reuse_fp: str):
-    """Write a cache carrying a chosen reuse fingerprint.
-
-    The reuse key is derived, not passed, so this replaces it on the derived key rather
-    than handing `save` a loose string — which is the drift `StepKey` closes.
-    """
-    from chemrefine import cache
-
-    ctx.step_dir.mkdir(parents=True, exist_ok=True)
-    key = replace(cache.StepKey.of(ctx.step_cfg, (), ctx.template), reuse_fingerprint=reuse_fp)
-    cache.save(
-        step_cfg=ctx.step_cfg,
-        key=key,
-        results=StepResults(
-            structures=(Structure(id="c", atoms=Atoms("H", positions=[[0, 0, 0]])),)
-        ),
-        step_dir=ctx.step_dir,
-        chemrefine_version="v",
-    )
-
-
-def test_nms_reuse_outcome_none_without_cache(tmp_path: Path, monkeypatch):
-    from chemrefine import step
-    from chemrefine.engines.api import get_engine
-
-    _pin_nms(monkeypatch)
-    ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
-    ctx.step_dir.mkdir(parents=True, exist_ok=True)
-    assert (
-        step._nms_reuse_outcome(
-            ctx, ctx.step_cfg, _reuse_key(ctx), get_engine("orca"), may_submit=True
-        )
-        is None
-    )
-
-
-def test_nms_reuse_outcome_none_on_corrupt_cache(tmp_path: Path, monkeypatch):
-    from chemrefine import cache, step
-    from chemrefine.engines.api import get_engine
-
-    _pin_nms(monkeypatch)
-    ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
-    cache_path = cache._cache_path(ctx.step_dir)
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_bytes(b"not json")
-    assert (
-        step._nms_reuse_outcome(
-            ctx, ctx.step_cfg, _reuse_key(ctx), get_engine("orca"), may_submit=True
-        )
-        is None
-    )
-
-
-def test_nms_reuse_outcome_restamps_when_all_resolved(tmp_path: Path, monkeypatch):
-    from chemrefine import step
-    from chemrefine.engines.api import get_engine
-
-    _pin_nms(monkeypatch)
-    ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
-    _save_reuse_cache(ctx, "FP")  # matching reuse fingerprint, no failed ledger
-    out = step._nms_reuse_outcome(
-        ctx, ctx.step_cfg, _reuse_key(ctx), get_engine("orca"), may_submit=True
-    )
-    assert out is not None and out.cache_hit is False
-
-
-def test_nms_reuse_outcome_reattempts_when_ledger_present(tmp_path: Path, monkeypatch):
-    from chemrefine import cache, step
-    from chemrefine.engines.api import get_engine
-
-    _pin_nms(monkeypatch)
-    ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
-    _save_reuse_cache(ctx, "FP")
-    cache.save_failure_records(
-        ctx.step_dir, [FailureRecord(structure_id="0", kind=FailureKind.FAILED, reason="x")]
-    )
-    out = step._nms_reuse_outcome(
-        ctx, ctx.step_cfg, _reuse_key(ctx), get_engine("orca"), may_submit=True
-    )
-    assert out is not None and any(s.id == "re" for s in out.state.structures)
-
-
-def test_nms_reuse_outcome_declines_to_reattempt_when_the_step_may_not_submit(
-    tmp_path: Path, monkeypatch
-):
-    """Re-attempting the unresolved parents runs round-2 jobs, so it needs permission.
-
-    This branch fires whenever the *reuse* fingerprint matches — the ordinary state after
-    tuning a search parameter — so it is the likeliest way for a step nobody targeted to
-    start computing under `rebuild-cache` or `rerun-errors`.
-    """
-    from chemrefine import cache, step
-    from chemrefine.engines.api import get_engine
-
-    _pin_nms(monkeypatch)
-    ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
-    _save_reuse_cache(ctx, "FP")
-    cache.save_failure_records(
-        ctx.step_dir, [FailureRecord(structure_id="0", kind=FailureKind.FAILED, reason="x")]
-    )
-    out = step._nms_reuse_outcome(
-        ctx, ctx.step_cfg, _reuse_key(ctx), get_engine("orca"), may_submit=False
-    )
-    assert out is None
-
-
 # ---------------------------------------------------------------------------
 # Resuming a step the driver died in the middle of
 # ---------------------------------------------------------------------------
@@ -1416,11 +1276,11 @@ def test_resume_refuses_an_unprovenanced_manifest_by_name(tmp_path: Path):
 def test_a_step_derives_its_cache_key_exactly_once(tmp_path: Path, monkeypatch):
     """The key is a value computed once, not a recipe each route re-follows.
 
-    Derived per route instead, a cold step hashes its parents and its template once for each
-    of `_cached_outcome`, `_nms_reuse_outcome`, the manifest stamp and the write. That is
-    wasted work on a 10^4-structure step, but the reason it matters is drift: a route that
-    omits the reuse fingerprint writes a cache the NMS reuse path can never match, and one
-    that reads `ctx.prev_state` gets a *subset* of the parents on the retry paths.
+    Derived per route instead, a cold step hashes its parents and its template once for
+    each of `_cached_outcome`, the incremental route, the manifest stamp and the write.
+    That is wasted work on a 10^4-structure step, but the reason it matters is drift: a
+    route deriving its own key can disagree with the one the cache was written under, and
+    one that reads `ctx.prev_state` gets a *subset* of the parents on the retry paths.
     """
     from chemrefine import cache
 
@@ -1464,7 +1324,7 @@ def _register_streaming_conv_engine():
 
     from chemrefine.engines.api import register
     from chemrefine.ids import structure_artifact_path
-    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+    from chemrefine.state import JobBatch, StepInputs, Structure
 
     @register("conv-stream")
     class _StreamEngine:
@@ -1584,7 +1444,7 @@ def _register_interruptible_engine():
 
     from chemrefine.engines.api import register
     from chemrefine.ids import structure_artifact_path
-    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+    from chemrefine.state import JobBatch, StepInputs, Structure
 
     @register("interrupt-stream")
     class _InterruptEngine:

@@ -670,6 +670,8 @@ def _resolve_all(
     round1_failures: list[Failure] | tuple[Failure, ...],
     ctx: StepContext,
     mode: _AttemptMode,
+    *,
+    read_resolutions: bool = True,
 ) -> NmsResolution:
     """Resolve every round-1 survivor through ``mode``. The one NMS loop.
 
@@ -692,7 +694,15 @@ def _resolve_all(
     failures: list[Failure] = list(round1_failures)
     for s in round1.structures:
         if _already_at_target(s, target):
-            survivors.append(_passthrough(s, ctx.step_dir))
+            # `read_resolutions=False` is the resume-over-adopted-rows case: any
+            # `resolution.json` on disk was written under some earlier submission's
+            # criterion, so its label must not be re-worn — the structure passes through
+            # with its provenance cleared rather than borrowed.
+            survivors.append(
+                _passthrough(s, ctx.step_dir)
+                if read_resolutions
+                else replace(s, converged=True, resolved_from=None)
+            )
             continue
         children = _children_for(s, opts)
         attempt = mode.attempt_dir(s, ctx)
@@ -748,6 +758,35 @@ def run_nms(
     return _resolve_all(engine, round1, round1_failures, ctx, round2)
 
 
+def resume_nms(
+    engine: NmsCapableEngine,
+    round1: StepResults,
+    round1_failures: list[Failure] | tuple[Failure, ...],
+    ctx: StepContext,
+    *,
+    trust_resolutions: bool,
+) -> NmsResolution:
+    """Resolve a round-1 set the incremental resume assembled from adopted rows.
+
+    The same loop as :func:`run_nms` with the fan-out started here (no round 1 ran in
+    this process), plus one verdict the caller supplies: ``trust_resolutions`` says
+    whether the ``attemptK/resolution.json`` labels on disk were written under this
+    configuration's *criterion* (the manifest's stored ``criterion_key`` against the
+    current one). Trusted, a passthrough keeps its ``resolved_from`` exactly as a
+    rebuild would; untrusted — the nms flip, a criterion change, a pre-provenance
+    tree — the label is cleared, because wearing another criterion's provenance is the
+    one lie a passthrough could tell. Either way a parent *not* at the target fans out
+    **fresh** children: an attempt on disk predates the submission this configuration
+    would have made, and a child found there was displaced from a round this run never
+    produced.
+    """
+    round2 = child_round(engine, ctx)
+    lifecycle.run_child_rounds(engine, ctx, round1.structures, round2)
+    return _resolve_all(
+        engine, round1, round1_failures, ctx, round2, read_resolutions=trust_resolutions
+    )
+
+
 def rebuild_nms(
     engine: NmsCapableEngine,
     round1: StepResults,
@@ -784,9 +823,10 @@ def reattempt_nms(
     * Only ``MISSING_OUTPUT`` ids are resubmitted. Archiving exists to stop a re-executed job
       re-reading the previous run's output as if it were its own, and a structure with no
       output has nothing to re-read.
-    * The reuse key (:attr:`chemrefine.cache.StepKey.reuse_fingerprint`) is derived from
-      the row keys, which cover the template digest — so an edited template changes the key
-      gating this path and a stale input can never be resubmitted from the manifest.
+    * This path is gated on an exact step-fingerprint match (:func:`chemrefine.step.run_step`'s
+      cached route), and the fingerprint is composed from row keys that cover the template
+      digest — so an edited template changes the key and a stale input can never be
+      resubmitted from the manifest.
 
     Round 1 *is* archived later, for a resolved parent, by
     :func:`_install_winner` sealing it into the attempt its children ran in. That is the
