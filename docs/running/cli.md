@@ -50,7 +50,7 @@ resolved **by name** at run time (see
 
 | Command | Argument(s) | What it does |
 |---------|-------------|--------------|
-| `backends install` | `EXTRA…` | Provision managed env(s) (e.g. `mlip-mace mlip-fairchem pyscf`), built with the same tool that created the current env (conda / uv / venv). |
+| `backends install` | `EXTRA…`, `--python` | Provision managed env(s) (e.g. `mlip-mace mlip-fairchem pyscf`), built with the same tool that created the current env (conda / uv / venv) and on the newest Python each backend supports. `--python` (a version, a command name, or a path) overrides that choice when the env is created. |
 | `backends list` | — | Every known backend extra and whether its env is provisioned. |
 | `backends path` | `EXTRA` | Print the managed env's `python` (exit 1 if not provisioned). |
 

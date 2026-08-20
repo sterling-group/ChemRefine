@@ -131,6 +131,18 @@ for the full map.
   current env — conda / uv / venv) and steps resolve them **by name**, so
   conflicting MLIP stacks (e.g. MACE + UMA) run side by side in one pipeline.
   Every run validates its steps' backends before any job submits.
+- Each managed env is built on **the Python its backend supports**, not on the
+  orchestrator's. Every backend extra now states which Pythons it installs on
+  (`mlip-orb` 3.12 only — orb-models pins `dm-tree==0.1.8`, whose newest wheels
+  are cp312; `mlip-chgnet` up to 3.12; `mlip-mace` up to 3.13), and
+  `backends install` builds the env on the newest one it claims: conda and uv
+  produce that interpreter themselves, a plain venv takes `python3.12` from
+  `PATH` or a `uv` binary if there is one, and where there is neither it stops
+  with the ways out rather than starting a build that cannot finish. Provisioning
+  orb on a 3.13 machine used to end in a thousand lines of C++ from a vendored
+  abseil. `--python` (a version, a command name, or a path) overrides the choice;
+  an env built on a Python its backend excludes is refused rather than installed
+  into, because pip succeeds there having installed nothing.
 - SLURM-optional execution: the generated scripts run unchanged under
   `bash` with the same core/GPU throttling, runlogs, and artifacts.
 - Opt-in job-array submission (`slurm_array: true`): each step goes out as

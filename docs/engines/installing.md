@@ -29,7 +29,8 @@ Two ways to add one:
     run, and resolved **by name** at run time — no interpreter paths in your YAML.
     They are built **from the same source as the orchestrator**: a PyPI install pins the
     version, a Git or `pip install -e .` install reinstalls from that same repo or
-    checkout.
+    checkout — and on the **Python that backend supports**, which is not always yours (see
+    below).
 
 `chemrefine backends list` shows what is provisioned. Every run validates its steps'
 backends **up front**: a step whose backend is neither importable nor provisioned fails
@@ -53,6 +54,48 @@ a large libcint/libxc tree for nothing.
 yourself, name the library that trained it and point `model_path` at the checkpoint —
 there is no `custom_<library>` task for any of them. (`custom_mace` still resolves, as a
 MACE alias kept for v1 configs.)
+
+## Each backend gets the Python it supports
+
+A backend's dependency stack is isolated so it never has to match anyone else's, and the
+**interpreter is part of that stack**. Some backends have no wheels for the newest Pythons —
+today `mlip-orb` installs only on 3.12 (orb-models pins `dm-tree==0.1.8`, whose newest wheels
+are cp312) and `mlip-chgnet` only up to 3.12 (chgnet ships no cp313 wheel), while `mlip-mace`
+stops at 3.13 (its pinned torch line has no cp314 wheel). Without wheels, pip falls back to
+building from source, which for those packages means compiling C++ or torch itself.
+
+So `chemrefine backends install` builds each environment on the newest Python that backend's
+extra installs on, and says which one it picked:
+
+```console
+$ chemrefine backends install mlip-orb        # on a 3.13 orchestrator
+provisioning mlip-orb on Python 3.12 …
+mlip-orb: ~/.chemrefine/backends/mlip-orb/bin/python
+```
+
+Nothing about your run changes: the environment is still resolved by name, and a step still
+launches `<env>/bin/python`. Where the interpreter comes from depends on the tool:
+
+- **conda** resolves `python=3.12` from its channels, and **uv** downloads a managed build —
+  neither needs anything on the machine.
+- a plain **venv** needs a `python3.12` on `PATH` (a distribution package, pyenv, Homebrew, a
+  loaded HPC module). If there is none but a `uv` binary is on `PATH`, that is used instead;
+  if there is neither, the command says so and stops, rather than starting a doomed build.
+
+`--python` overrides the choice with a version, a command name, or a path:
+
+```bash
+chemrefine backends install mlip-orb --python /opt/python3.12/bin/python3
+```
+
+It applies only when an environment is **created**. An existing one is extended on the Python
+it already has — and if that Python is one the backend cannot install on (an environment
+built before a cap was known), the command refuses and tells you to remove the directory,
+because installing into it would report success having installed nothing.
+
+The same reason makes the single-environment route unavailable for those backends on a Python
+they exclude: `pip install "chemrefine[mlip-orb]"` on 3.13 succeeds and installs no orb, since
+every requirement the extra declares is excluded there. Use the managed environment.
 
 ## Several backends in one run
 
@@ -111,4 +154,7 @@ authentication steps — they are defined upstream and may change.
 |---------|--------------|
 | `backend '…' is not available` at run start | The step's backend is neither importable nor provisioned — run `chemrefine backends install <extra>` (on a cluster: on a login node), or install `chemrefine[<extra>]` into the main environment. |
 | `No matching distribution found for chemrefine==…` during `backends install` | Upgrade ChemRefine — older versions could only provision backends from a published PyPI release; current ones reinstall from the same Git/source install as the orchestrator. |
+| A C++ wall (`dm-tree`, abseil, `enum class … : uint8_t`) or a torch source build during an install | An older ChemRefine, or a hand-made environment, on a Python that backend has no wheels for. `chemrefine backends install <extra>` now builds on a Python the backend supports — see [above](#each-backend-gets-the-python-it-supports). |
+| `installs on Python 3.12 … neither python3.12 nor uv is on PATH` | The env tool in use (a plain venv) cannot produce the interpreter that backend needs. Install one — `pip install uv` is enough, it downloads the rest — or pass `--python /path/to/python3.12`. |
+| `was built on Python 3.13, which chemrefine[…] does not install on` | The environment predates the backend's Python constraint and holds nothing. Remove the directory it names and re-run `chemrefine backends install <extra>`. |
 | `Server crashed during startup` (MLIP) | Check the per-job `server_${SLURM_JOB_ID}.log`; common causes are out-of-memory at model load or a missing Hugging Face token for FAIRChem. |
