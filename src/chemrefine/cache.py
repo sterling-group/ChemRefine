@@ -998,7 +998,7 @@ def discard_step(step_dir: Path) -> None:
     The difference from :func:`invalidate` is the manifest, and it is load-bearing. Together
     the two files say "this step already ran with this configuration"; the manifest alone
     says "these outputs on disk belong to this configuration", which is what
-    :func:`chemrefine.step._partial_step_outcome` reads to continue an interrupted step.
+    :func:`chemrefine.step._incremental_step_outcome` reads to continue an interrupted step.
 
     So leaving the manifest behind would make a step the user deliberately invalidated
     indistinguishable from one the driver was killed in the middle of — and ``rerun`` would

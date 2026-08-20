@@ -320,7 +320,7 @@ def run_lock(output_dir: Path) -> Generator[None]:
     """Hold ``output_dir`` for one driver; raise :class:`RunLockError` if another has it.
 
     **Why a lock at all.** The resume machinery cannot tell a live concurrent driver from
-    a dead one: :func:`chemrefine.step._partial_step_outcome` treats a manifest whose
+    a dead one: :func:`chemrefine.step._incremental_step_outcome` treats a manifest whose
     fingerprint matches as proof it is safe to continue, and a *running* driver leaves
     exactly that state on disk. A second driver would then parse outputs the first one's
     jobs are still writing, archive their directories out from under those jobs, and

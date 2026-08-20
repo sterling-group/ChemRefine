@@ -415,9 +415,9 @@ def run_step(
             reused = _nms_reuse_outcome(ctx, step_cfg, key, nms_engine, may_submit=may_submit)
             if reused is not None:
                 return reused
-        # No cache at all, but possibly a step this configuration already half-ran and
-        # was interrupted before it could write one.
-        partial = _partial_step_outcome(
+        # No cache this key can serve — but possibly a tree whose rows can vouch for
+        # themselves: an interrupted run, or parents that only partially changed.
+        incremental = _incremental_step_outcome(
             ctx,
             step_cfg,
             key,
@@ -426,13 +426,13 @@ def run_step(
             artifact_engine=artifact_engine,
             may_submit=may_submit,
         )
-        if partial is not None:
-            return partial
+        if incremental is not None:
+            return incremental
 
     if not may_submit:
         # The two ways out cost very different things, and which one applies is decidable
         # here: the manifest's stamped fingerprint against the key in hand — the same
-        # provenance test `rebuild_cache_step` and `_partial_step_outcome` use. A match
+        # provenance test `rebuild_cache_step` and `_incremental_step_outcome` use. A match
         # means the outputs on disk were produced for exactly this configuration and only
         # the cache document cannot serve it, so `rebuild-cache` re-adopts them without
         # recomputing — which for an NMS or artifact step is what `resume` cannot promise.
@@ -572,7 +572,7 @@ def _nms_reuse_outcome(
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
 
-def _partial_step_outcome(
+def _incremental_step_outcome(
     ctx: StepContext,
     step_cfg: StepConfig,
     key: cache.StepKey,
@@ -582,53 +582,82 @@ def _partial_step_outcome(
     artifact_engine: ArtifactEngine | None,
     may_submit: bool,
 ) -> StepOutcome | None:
-    """Continue a step the driver died in the middle of, instead of redoing it.
+    """Continue a step from its provenanced manifest, computing only the rows that need it.
 
-    ``step.json`` is written **once**, at the end of a step, so a driver killed partway
-    through — the batch job hits its walltime, a node fails, Ctrl-C — leaves no cache at all.
-    The alternative is :func:`_run_full_step`, whose first act is to archive every finished
-    ``.out`` into ``attemptK/`` and resubmit the lot: on HPC, days of completed compute left
-    on disk and never read back, because a structure is only ever parsed from the canonical
-    path, which archiving has just emptied.
+    The one rule: a row is **adopted** — its output re-parsed from disk — iff its stored
+    row key equals the key this configuration derives for the same parent; every other
+    current parent's row is computed. That serves the interrupted step (all rows match,
+    only the unusable resubmit), the partially changed parent set (exactly the changed
+    rows run), and any config edit that provably reaches no job (nothing runs at all) —
+    where the alternative, :func:`_run_full_step`, archives every finished ``.out`` and
+    resubmits the lot.
 
-    The manifest is what makes continuing *safe* rather than merely cheap. Written before
-    submission and carrying the step's fingerprint, a match proves these outputs were
-    produced for this step config and these parents — the distinction ``out.is_file()``
-    cannot make alone, and the reason archiving is otherwise unconditional. The tree is then
-    handed to :func:`_resubmit_failed`, the same archive-and-resubmit path ``rerun-errors``
-    uses: it re-runs whatever has no usable result and reads the rest back from disk.
+    The row provenance is what makes continuing *safe* rather than merely cheap: a
+    stored key that matches proves the output on disk is the one this configuration
+    would compute for this parent — the distinction ``out.is_file()`` cannot make, and
+    the reason archiving is otherwise unconditional. Stale rows (changed or new
+    parents) are handed to :func:`~chemrefine.lifecycle.resubmit_unusable` as condemned
+    sight-unseen: their outputs may parse perfectly and still answer a different
+    geometry.
 
-    Returns ``None`` — meaning "run the whole step" — unless every condition holds:
+    A manifest **without** row provenance is a tree from before the current rules —
+    unprovable, never wrong — and resume refuses it loudly, naming the adoption command,
+    rather than silently archiving finished work (or, worse, trusting it):
+    ``chemrefine rebuild-cache`` re-parses under the current rules, submits nothing, and
+    records the provenance this route needs.
 
-    * The step may submit. Continuing means resubmitting whatever is still missing, so a
-      mode that promises to run nothing has no use for this route.
-    * A manifest exists and its fingerprint matches the current one.
-    * The step is not NMS. An interrupted NMS step needs its round-2 children re-resolved,
-      not just its round-1 outputs re-parsed, so it falls back to the full re-run rather
-      than being silently half-recovered.
-    * The step is not an artifact step. There is nothing per-structure to continue —
-      :func:`_run_artifact_step` re-runs the one job, and adopting a *finished* product is
-      ``rebuild-cache``'s job, not a resume's.
-    * **The manifest names at least one job.** An empty manifest is a legitimate value, not a
-      missing one: a step that prepares no per-structure inputs writes ``"files": []`` and
-      ``load_manifest`` returns ``StepInputs(files=())``, which is not ``None``. Testing only
-      for ``None`` sent such a step down the resubmit path, where a zero-job re-parse produced
-      zero successes and zero failures — so an interrupted training cached an empty result and
-      was never re-run. Nothing can be continued from a manifest with no jobs in it.
+    Returns ``None`` — meaning "run the whole step" — when the route does not apply:
+
+    * The step may not submit: continuing means resubmitting whatever is missing.
+    * The step is NMS. Its round-2 children need re-resolving, not just re-parsing —
+      the resolution-aware route arrives with the NMS half of this design.
+    * The step is an artifact step. There is nothing per-structure to continue —
+      :func:`_run_artifact_step` re-runs the one job, and adopting a *finished* product
+      is ``rebuild-cache``'s job, not a resume's.
+    * No manifest, or one naming no jobs — a step that never prepared anything has
+      nothing to continue (an empty manifest is a legitimate value, not a missing one).
     """
     if not may_submit or nms_engine is not None or artifact_engine is not None:
         return None
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None or not manifest.files:
         return None
-    if cache.load_manifest_fingerprint(ctx.step_dir) != key.fingerprint:
-        return None
-    logger.info(
-        "step %d: resuming an interrupted step — %d structure(s) on disk",
-        step_cfg.step,
-        len(manifest.files),
+    provenance = cache.load_manifest_provenance(ctx.step_dir)
+    if not provenance.rows:
+        raise CacheError(
+            f"step {step_cfg.step}: outputs are on disk but carry no per-row provenance — "
+            f"a tree from before the current cache rules, which resume can neither prove "
+            f"right nor wrong. Run `chemrefine rebuild-cache {step_cfg.step}` to adopt it "
+            f"under the current rules (it re-parses and submits nothing), then resume."
+        )
+    current = key.manifest_rows()
+    changed = sorted(
+        sid
+        for sid in current
+        if sid not in provenance.rows or provenance.rows[sid][0] != current[sid][0]
     )
-    results = _resubmit_failed(engine, ctx, step_cfg, key)
+    logger.info(
+        "step %d: continuing from disk — %d row(s) adopted, %d to compute (changed or new)",
+        step_cfg.step,
+        len(current) - len(changed),
+        len(changed),
+    )
+    # Fresh inputs for the whole current set: an adopted row re-renders byte-identically,
+    # a changed row's stale artifacts are archived by the resubmission it is condemned
+    # to. Prepared before the manifest write so the manifest describes files that exist.
+    inputs = engine.prepare(ctx)
+    cache.save_manifest(
+        inputs,
+        ctx.step_dir,
+        operation=step_cfg.operation,
+        engine=step_cfg.engine,
+        fingerprint=key.fingerprint,
+        resolution_key=key.resolution_key,
+        rows=current,
+    )
+    successes, failures = lifecycle.resubmit_unusable(engine, ctx, inputs, stale=changed)
+    successes, failures = lifecycle.retry_unconverged(engine, ctx, successes, failures)
+    results = lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
 
@@ -657,7 +686,7 @@ def _run_full_step(
         operation=step_cfg.operation,
         engine=step_cfg.engine,
         # Stamped before submission, so an interrupted run leaves proof of *what* these
-        # outputs were computed for — see :func:`_partial_step_outcome`. The per-row
+        # outputs were computed for — see :func:`_incremental_step_outcome`. The per-row
         # provenance is the same proof at structure grain, for the incremental resume.
         fingerprint=key.fingerprint,
         resolution_key=key.resolution_key,
@@ -819,7 +848,7 @@ def rebuild_cache_step(
     proceeds: it is a tree from before the current rules (or a hand-written v1
     adoption manifest), *unprovable* rather than wrong, and the caller has named the
     step. The distinction is between proving the outputs wrong and merely being unable
-    to prove them right. It is drawn differently in :func:`_partial_step_outcome`,
+    to prove them right. It is drawn differently in :func:`_incremental_step_outcome`,
     which treats an unproven match as a reason to re-run — it can afford to, being an
     optimisation over doing the work anyway. A successful rebuild then writes the
     manifest back **with** row provenance, so the adoption is recorded and every later

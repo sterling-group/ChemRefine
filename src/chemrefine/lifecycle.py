@@ -158,7 +158,11 @@ def submit_and_parse(
 
 
 def resubmit_unusable(
-    engine: CalculationEngine, ctx: StepContext, inputs: StepInputs
+    engine: CalculationEngine,
+    ctx: StepContext,
+    inputs: StepInputs,
+    *,
+    stale: Iterable[str] = (),
 ) -> tuple[list[Structure], list[Failure]]:
     """Parse ``inputs``, re-run every job that produced no usable result, report the merged lot.
 
@@ -184,12 +188,20 @@ def resubmit_unusable(
     the old result, and regenerating means a ``rerun-errors`` after a template edit actually
     runs the edited template — the on-disk input would otherwise contradict the fingerprint
     the cache is keyed on.
+
+    ``stale`` names rows condemned by the caller's provenance verdict — an output on disk
+    that was computed for a *different parent* (the incremental resume's row-key diff). A
+    stale output can be perfectly usable and still be the wrong answer, which no parse can
+    see — so whatever its first parse produced is discarded unread by the same
+    :meth:`~_ResultLedger.restart` a resubmission always gets, and the row re-runs
+    unconditionally.
     """
+    condemned = frozenset(stale)
     ledger = _ResultLedger(inputs)
     ledger.absorb_all(engine, ctx, inputs)
     _successes, failures = ledger.emit()
 
-    unusable = {f.sid for f in failures if f.kind is not FailureKind.NOT_CONVERGED}
+    unusable = {f.sid for f in failures if f.kind is not FailureKind.NOT_CONVERGED} | condemned
     seeds = tuple(s for s in ctx.prev_state.structures if s.id in unusable)
     if not seeds:
         return ledger.emit()

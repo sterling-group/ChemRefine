@@ -1303,11 +1303,12 @@ def test_run_still_redoes_everything_even_when_outputs_are_present(tmp_path: Pat
     assert list((step_dir / "0").glob("attempt*")), "EXECUTE must archive and re-run"
 
 
-def test_resume_refuses_a_manifest_from_a_different_config(tmp_path: Path):
-    """A manifest whose fingerprint does not match must fall back to the full re-run.
+def test_resume_recomputes_rows_whose_key_the_config_change_moved(tmp_path: Path):
+    """A config edit that reaches jobs re-runs their rows — stale outputs archived, never read.
 
-    This is what keeps the optimisation honest: outputs on disk are only reusable if they
-    were produced for *this* step config and *these* parents.
+    This is what keeps the optimisation honest: a row is adopted only under proof its
+    output is the one this configuration would compute, and a changed effective charge
+    breaks that proof for every row.
     """
     cfg = _config(tmp_path)
     seeds = _seed_state(["0", "1"])
@@ -1320,6 +1321,96 @@ def test_resume_refuses_a_manifest_from_a_different_config(tmp_path: Path):
     run_step(changed, changed.steps[0], seeds, mode=StepMode.RESUME)
 
     assert list((step_dir / "0").glob("attempt*")), "a stale manifest must not be trusted"
+
+
+class _CountingEngine(FakeEngine):
+    """The fake engine, with a record of which structures each submit carried."""
+
+    def __init__(self) -> None:
+        self.submitted: list[list[str]] = []
+
+    def submit(self, inputs, ctx):
+        """Record the batch's structure ids, then run the fake calculation."""
+        self.submitted.append([sid for _inp, _out, sid in inputs.files])
+        return super().submit(inputs, ctx)
+
+
+def test_a_partially_changed_parent_set_computes_exactly_the_changed_rows(tmp_path: Path):
+    """{A, B, C} → {A, B, C'} runs C' alone; A and B are adopted from disk.
+
+    The row keys are the proof: A's and B's stored keys match the ones this
+    configuration derives, so their outputs are re-parsed; C's parent content changed,
+    so its row is condemned sight-unseen and recomputed — and nothing else is.
+    """
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1", "2"])
+    run_step(cfg, cfg.steps[0], seeds, mode=StepMode.EXECUTE)
+    cache.invalidate(step_dir_for(cfg, cfg.steps[0]))
+
+    moved = Atoms("H")
+    moved.positions[0] = (0.0, 0.0, 0.5)
+    changed = PipelineState(
+        structures=(
+            seeds.structures[0],
+            seeds.structures[1],
+            Structure(id="2", atoms=moved),
+        )
+    )
+    engine = _CountingEngine()
+    outcome = run_step(cfg, cfg.steps[0], changed, mode=StepMode.RESUME, engine=engine)
+
+    assert engine.submitted == [["2"]], "exactly the changed row computes"
+    assert [s.id for s in outcome.state.structures] == ["0", "1", "2"]
+
+
+def test_a_key_nothing_reads_resumes_without_computing_anything(tmp_path: Path):
+    """An undeclared option cannot reach a job, so every row is adopted — zero submissions.
+
+    The row key holds options only as the engine's declared model reads them; a stray
+    YAML key reaches no engine and no template, and re-running 1000 finished jobs over
+    it would be pure waste. validate already warns about the key itself.
+    """
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1"])
+    run_step(cfg, cfg.steps[0], seeds, mode=StepMode.EXECUTE)
+    cache.invalidate(step_dir_for(cfg, cfg.steps[0]))
+
+    edited = _config(tmp_path, options={"stray_knob": 7})
+    engine = _CountingEngine()
+    outcome = run_step(edited, edited.steps[0], seeds, mode=StepMode.RESUME, engine=engine)
+
+    assert engine.submitted == [], "nothing may run — no job could read the edit"
+    assert [s.id for s in outcome.state.structures] == ["0", "1"]
+
+
+def test_resume_refuses_an_unprovenanced_manifest_by_name(tmp_path: Path):
+    """A pre-provenance tree gets the fix spelled out, not a silent archive-and-recompute.
+
+    The bare stamp was written under rules that no longer exist: resume can neither
+    prove the outputs right (adopt) nor wrong (recompute honestly says so) — and the
+    one command that may adopt the unprovable, because the user explicitly asks, is
+    `rebuild-cache`. Refusing loudly is what turns the old footgun — days of finished
+    compute silently swept into attemptK/ — into a one-command recovery.
+    """
+    import json
+
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1"])
+    run_step(cfg, cfg.steps[0], seeds, mode=StepMode.EXECUTE)
+    step_dir = step_dir_for(cfg, cfg.steps[0])
+    cache.invalidate(step_dir)
+
+    manifest_file = cache.manifest_path(step_dir)
+    data = json.loads(manifest_file.read_text(encoding="utf-8"))
+    data["fingerprint"] = "feedfacefeedface"
+    data.pop("resolution_key", None)
+    for row in data["files"]:
+        row.pop("row_key", None)
+        row.pop("parent_digest", None)
+    manifest_file.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(CacheError, match="rebuild-cache"):
+        run_step(cfg, cfg.steps[0], seeds, mode=StepMode.RESUME)
 
 
 def test_a_step_derives_its_cache_key_exactly_once(tmp_path: Path, monkeypatch):
