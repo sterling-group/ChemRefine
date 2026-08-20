@@ -135,8 +135,12 @@ mlip-sevenn = ["sevenn>=0.11", "chemrefine[server]"]
 # own reason: without it, `pip install chemrefine[mlip-orb]` on 3.11 backtracks through
 # every orb release looking for a compatible one and ends in a resolver wall of text
 # instead of "requires a different Python". Lift the ceiling when orb loosens that pin.
+# The floor is not decoration either: unpinned, `orb-models` resolves on 3.11 *and* 3.13 by
+# backtracking to a 2024 release whose dm-tree pin still had wheels there — the silent
+# downgrade this extra's marker exists to refuse, and the reason CI cannot otherwise tell a
+# cap that still binds from one that has expired. 0.6 is the first line that requires 3.12.
 mlip-orb = [
-    "orb-models; python_version >= '3.12' and python_version < '3.13'",
+    "orb-models>=0.6; python_version >= '3.12' and python_version < '3.13'",
     "chemrefine[server]",
 ]
 # chgnet 0.4.2 — the newest release — ships cp310-cp312 wheels only; on 3.13+ pip falls back

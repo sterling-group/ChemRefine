@@ -152,6 +152,92 @@ jobs:
           print("marker holds: orb-models excluded on 3.11")
           PY
 
+      # A `python_version` ceiling on a backend extra is a claim about wheels, and the way it
+      # rots is by being *fixed upstream*: the wheel that was missing is published, and the
+      # cap goes on excluding a Python that works, silently, forever. Nobody re-checks a pin
+      # that is not failing. So the cap is asked, on every matrix Python above it, whether it
+      # is still buying anything.
+      #
+      # Which extras are capped, and what each cap holds back, come out of pyproject —
+      # nothing is named here. A backend added or re-capped later is covered on the commit
+      # that changes the marker, with no matching edit to this file.
+      #
+      # `--only-binary=:all:` over what the marker excludes, not over the whole extra: mace's
+      # `python-hostlist` and chgnet's `nvidia-ml-py3` are sdist-only pure-Python packages
+      # that build in a second on any machine, so a wheels-only resolution of a whole backend
+      # stack fails everywhere and says nothing. It is the *native* build this catches —
+      # dm-tree compiling a vendored abseil for an hour, or torch from source — and the
+      # step above cannot: `--dry-run` prepares metadata, and an sdist yields metadata
+      # without compiling anything, which is how `[mlip-orb]` stayed green here for a Python
+      # `backends install` could never finish on.
+      #
+      # Ceilings only. A floor is policy rather than a wheel fact — orb-models resolves fine
+      # below its floor, to a release from two years ago, which is what the floor refuses —
+      # and the step above holds that one.
+      - name: No capped extra has outlived its cap
+        run: |
+          pip install --quiet packaging
+          python - <<'PY'
+          import subprocess, sys, tomllib
+          from packaging.requirements import Requirement
+
+          here = f"{sys.version_info.major}.{sys.version_info.minor}"
+
+          def minor(version):
+              return int(version.split(".")[1])
+
+          project = tomllib.load(open("pyproject.toml", "rb"))["project"]
+          candidates = sorted(
+              {c.rsplit(" ", 1)[1] for c in project["classifiers"]
+               if c.startswith("Programming Language :: Python :: 3.")},
+              key=minor,
+          )
+          extras = project["optional-dependencies"]
+
+          def applicable(extra, version):
+              """This extra's own requirements on that Python — self-references dropped."""
+              env = {"extra": extra, "python_version": version,
+                     "python_full_version": f"{version}.0"}
+              return [
+                  r for raw in extras[extra]
+                  if (r := Requirement(raw)).name != "chemrefine"
+                  and (r.marker is None or r.marker.evaluate(env))
+              ]
+
+          problems = []
+          for extra in sorted(extras):
+              named = {v: {r.name for r in applicable(extra, v)} for v in candidates}
+              full = set().union(*named.values())
+              claimed = [v for v in candidates if named[v] == full]
+              if not claimed:
+                  problems.append(f"[{extra}] installs on no supported Python at all")
+                  continue
+              if len(claimed) == len(candidates) or minor(here) <= minor(claimed[-1]):
+                  continue          # uncapped, or this Python is inside what it claims
+              held_back = [
+                  str(r).split(";")[0].strip()
+                  for r in applicable(extra, claimed[-1])
+                  if r.name not in named[here]
+              ]
+              print(f"::group::[{extra}] claims {claimed}; on {here} it holds back {held_back}")
+              done = subprocess.run(
+                  [sys.executable, "-m", "pip", "install", "--dry-run",
+                   "--only-binary=:all:", *held_back],
+                  capture_output=True, text=True,
+              )
+              print(done.stdout or done.stderr)
+              print("::endgroup::")
+              if done.returncode == 0:
+                  problems.append(
+                      f"[{extra}] excludes Python {here}, but {' '.join(held_back)} now "
+                      f"installs there from wheels — the cap has outlived its reason. Lift "
+                      f"it in pyproject.toml (and check the comment that explains it)."
+                  )
+          if problems:
+              sys.exit("\n".join(problems))
+          print(f"every cap still binds on {here}")
+          PY
+
   # extras-resolve proves the declared versions *resolve*; nothing proved the floors
   # *run*. Every other job tests whatever pip picks today — always the newest allowed —
   # so a floor could sit years behind the first version the code actually needs and the
