@@ -89,6 +89,14 @@ def test_non_mapping_yaml_rejected(tmp_path: Path):
         load_config(p)
 
 
+def test_non_string_keys_are_a_config_error(tmp_path: Path):
+    """An unquoted ``on:`` key (a YAML 1.1 boolean) gets the documented error, not a TypeError."""
+    p = tmp_path / "input.yaml"
+    p.write_text("on: true\nsteps: []\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="invalid config"):
+        load_config(p)
+
+
 def test_malformed_yaml_rejected(tmp_path: Path):
     p = tmp_path / "input.yaml"
     p.write_text("steps: [\n", encoding="utf-8")

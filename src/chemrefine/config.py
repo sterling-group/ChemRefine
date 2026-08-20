@@ -708,7 +708,10 @@ def load_config(path: str | Path) -> Config:
     if not isinstance(raw, dict):
         raise ConfigError(f"config at {p} is not a YAML mapping")
     try:
-        cfg = Config(**raw)
+        # `model_validate`, not `Config(**raw)`: a non-string key (YAML 1.1's unquoted
+        # `on:` parses to a boolean) made the splat raise a bare TypeError past this
+        # handler; pydantic itself turns it into the ValidationError caught here.
+        cfg = Config.model_validate(raw)
     except ValidationError as e:
         raise ConfigError(f"invalid config {p}:\n{e}") from e
     resolved = resolve_relative_paths(cfg, base=p.parent.resolve())

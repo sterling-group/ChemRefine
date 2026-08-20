@@ -61,6 +61,18 @@ def test_a_non_mapping_document_is_one_yaml_issue():
     assert _kinds(report) == ["yaml"]
 
 
+def test_a_non_string_key_is_a_report_row_not_a_typeerror():
+    """YAML 1.1 reads an unquoted ``on:`` key as a boolean — still a report, never a raise.
+
+    ``Config(**raw)`` imposed a str-keys rule pydantic never saw, so this exact text
+    escaped as ``TypeError: keywords must be strings`` — a 500 in the GUI and an
+    unstructured error over MCP, from the one function whose contract is "never raises".
+    """
+    report = validate_config_text("on: true\nsteps: []\n")
+    assert not report.ok
+    assert any("string" in issue.message.lower() for issue in report.issues)
+
+
 def test_model_errors_keep_pydantic_locs():
     """A GUI highlights the offending field by walking ``loc`` — it must survive."""
     report = validate_config_text(yaml.safe_dump(_config_dict(charge="not-an-int")))

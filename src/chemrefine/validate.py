@@ -126,7 +126,11 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
     if not isinstance(raw, dict):
         return _failed("yaml", "config is not a YAML mapping")
     try:
-        config = Config(**raw)
+        # `model_validate`, not `Config(**raw)`: splatting imposes a str-keys rule pydantic
+        # never sees, so a non-string key — YAML 1.1 reads an unquoted `on:` as a boolean —
+        # raised a bare TypeError past both handlers below. pydantic's own answer is a
+        # ValidationError row ("Keys should be strings") like any other finding.
+        config = Config.model_validate(raw)
     except ValidationError as e:
         issues = tuple(
             ValidationIssue(loc=tuple(err["loc"]), kind=str(err["type"]), message=str(err["msg"]))
