@@ -75,6 +75,15 @@ class MlipOptions(EngineOptions):
     runs in a scratch directory, so an unresolved relative path is found by nobody."""
 
 
+CALCULATOR_KNOBS: tuple[str, ...] = ("model_name", "task_name", "device", "model_path")
+"""The four fields that select and place a calculator — the one list consumers iterate.
+
+Spelled once, beside the model that declares the fields, so the direct engine's template
+placeholders and the ExtOpt server's CLI table enumerate the same knobs; the model stays
+the source of names, defaults and YAML aliases. The sweep that motivated this counted the
+tuple hand-enumerated at ten sites."""
+
+
 class MlipTrainOptions(MlipOptions):
     """Validated knobs for the ``mlip-train`` step.
 

@@ -25,7 +25,7 @@ import numpy as np
 from ase import Atoms
 from ase.io import write as ase_write
 
-from chemrefine.engines.mlip.registry import LEGACY_MACE_TASK, CalculatorSpec, MlipLibrary
+from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
 from chemrefine.engines.mlip.train.base import DatasetFiles, TrainerBase, TrainingPlan
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
@@ -45,6 +45,16 @@ FAMILIES = ("mace_off", "mace_mp", "mace_omol")
 
 One list, used by both capabilities below, so a family cannot be runnable and not trainable by
 an oversight in one decorator."""
+
+LEGACY_MACE_TASK = "custom_mace"
+"""A back-compat alias for MACE, kept only so configs written against v1 still resolve.
+
+It is **not** a mechanism, and there is deliberately no ``custom_fairchem`` beside it. A local
+checkpoint is ``model_path``, which every library's builder honours itself — see the registry
+module's docstring. Configs naming this should say which MACE family they mean
+(:data:`FAMILIES`) instead; it is registered here on the MACE library so that saying nothing
+still works. MACE policy, so it lives in MACE's module — the shared registry houses no
+library's aliases."""
 
 
 @MACE.calculator(*FAMILIES, LEGACY_MACE_TASK)

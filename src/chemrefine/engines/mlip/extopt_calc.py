@@ -20,19 +20,28 @@ from chemrefine.engines._backend_server.base import (
     tokens_from_options,
 )
 from chemrefine.engines.mlip.calculator import MlipCalculator
-from chemrefine.engines.mlip.options import MlipOptions
+from chemrefine.engines.mlip.options import CALCULATOR_KNOBS, MlipOptions
 from chemrefine.quantities import convert
 
-# YAML key → CLI flag mapping. YAML uses ``model_name`` / ``task_name`` /
-# ``model_path`` (Pydantic-friendly underscores); the CLI uses kebab-case
-# ``--model`` / ``--task-name`` / ``--model-path`` to match what argparse's
-# ``dest`` rewrite expects.
-_KEY_VALUE_FLAGS: tuple[tuple[str, str], ...] = (
-    ("model_name", "--model"),
-    ("task_name", "--task-name"),
-    ("device", "--device"),
-    ("model_path", "--model-path"),
+_FLAG_OVERRIDES = {"model_name": "--model"}
+"""The one knob whose CLI spelling is not its kebab-cased field name.
+
+``--model`` predates the rewrite and is pinned by the engine-rendered server command in
+recorded runs; the rest follow the rule below, so a knob added to
+:data:`~chemrefine.engines.mlip.options.CALCULATOR_KNOBS` grows a flag with no edit here."""
+
+_KEY_VALUE_FLAGS: tuple[tuple[str, str], ...] = tuple(
+    (name, _FLAG_OVERRIDES.get(name, "--" + name.replace("_", "-"))) for name in CALCULATOR_KNOBS
 )
+"""YAML key → CLI flag, derived from the knob list — kebab-case plus the one override."""
+
+_FLAG_HELP = {
+    "model_name": "MLIP model weights (a MACE size or a FAIRChem/SevenNet/ORB id)",
+    "task_name": "MLIP method / head — selects the backend (omol, mace_off, …)",
+    "device": "Compute device for the MLIP model",
+    "model_path": "Local checkpoint to load instead of --model, with the --task-name library",
+}
+"""CLI presentation only; names and defaults come from the options model."""
 
 
 class MlipExtOptCalculator(ComputeBackend):
@@ -57,33 +66,21 @@ class MlipExtOptCalculator(ComputeBackend):
 
     @classmethod
     def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:
-        """Register MLIP flags on a shared server / client parser.
+        """Register MLIP flags on a shared server / client parser — one loop, no table.
 
-        Defaults mirror :class:`MlipOptions`; the Pydantic model stays
-        the canonical name + default source.
+        The flags come from the knob list, the defaults from the model's own fields, so
+        this parser cannot come to disagree with :class:`MlipOptions` about either — the
+        old hand-written quadruple restated both, including a ``--model-path`` default
+        the model already declared.
         """
-        defaults = MlipOptions()
-        parser.add_argument(
-            "--model",
-            default=defaults.model_name,
-            help="MLIP model weights (a MACE size or a FAIRChem/SevenNet/ORB id)",
-        )
-        parser.add_argument(
-            "--task-name",
-            default=defaults.task_name,
-            help="MLIP method / head — selects the backend (omol, mace_off, …)",
-        )
-        parser.add_argument(
-            "--device",
-            default=defaults.device,
-            choices=["cuda", "cpu"],
-            help="Compute device for the MLIP model",
-        )
-        parser.add_argument(
-            "--model-path",
-            default=None,
-            help="Local checkpoint to load instead of --model, with the --task-name library",
-        )
+        for name, flag in _KEY_VALUE_FLAGS:
+            kwargs: dict[str, Any] = {
+                "default": MlipOptions.model_fields[name].default,
+                "help": _FLAG_HELP[name],
+            }
+            if name == "device":
+                kwargs["choices"] = ["cuda", "cpu"]
+            parser.add_argument(flag, **kwargs)
 
     @classmethod
     def server_cli_from_options(cls, options: dict[str, Any]) -> list[str]:
@@ -92,13 +89,16 @@ class MlipExtOptCalculator(ComputeBackend):
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> MlipExtOptCalculator:
-        """Read the MLIP-relevant fields off the shared server CLI namespace."""
-        return cls(
-            model_name=args.model,
-            task_name=args.task_name,
-            device=args.device,
-            model_path=args.model_path,
-        )
+        """Read the MLIP-relevant fields off the shared server CLI namespace.
+
+        The same loop that added the flags reads them back — argparse's ``dest`` is the
+        flag with dashes as underscores, so the pairs carry both directions.
+        """
+        values = {
+            name: getattr(args, flag.lstrip("-").replace("-", "_"))
+            for name, flag in _KEY_VALUE_FLAGS
+        }
+        return cls(**values)
 
     def calc(self, data: CalculationData) -> tuple[float, list[list[float]]]:
         """Score one geometry, return ``(energy_hartree, gradient_hartree_per_bohr)``."""

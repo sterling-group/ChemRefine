@@ -22,7 +22,7 @@ from typing import ClassVar
 from chemrefine.engines._script import ScriptEngine
 from chemrefine.engines.api import register
 from chemrefine.engines.mlip.backend import MlipBackend
-from chemrefine.engines.mlip.options import MlipOptions
+from chemrefine.engines.mlip.options import CALCULATOR_KNOBS, MlipOptions
 
 
 @register("mlip")
@@ -47,9 +47,4 @@ class MlipEngine(MlipBackend, ScriptEngine[MlipOptions]):
         Empty when unset, so a template that never uses it renders unchanged — which is why
         adding it cannot disturb an existing one.
         """
-        return {
-            "MODEL_NAME": opts.model_name,
-            "TASK_NAME": opts.task_name,
-            "DEVICE": opts.device,
-            "MODEL_PATH": opts.model_path or "",
-        }
+        return {name.upper(): getattr(opts, name) or "" for name in CALCULATOR_KNOBS}

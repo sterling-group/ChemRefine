@@ -126,14 +126,6 @@ mypy checks each builder at its own decorator site — and :meth:`MlipLibrary.ca
 verifies the callable's arity at registration, so a malformed drop-in fails at import of
 its own module with a message naming the rule."""
 
-LEGACY_MACE_TASK = "custom_mace"
-"""A back-compat alias for MACE, kept only so configs written against v1 still resolve.
-
-It is **not** a mechanism, and there is deliberately no ``custom_fairchem`` beside it. A local
-checkpoint is ``model_path``, which every library's builder honours itself — see the module
-docstring. Configs naming this should say which MACE family they mean (``mace_off`` and
-friends) instead; it is registered on the MACE library so that saying nothing still works."""
-
 
 @dataclass(frozen=True)
 class MlipLibrary:
