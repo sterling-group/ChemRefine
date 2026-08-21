@@ -374,11 +374,20 @@ def build_structures(
     parity per structure (:func:`_parity_warning`) and, for SMILES, that RDKit's formal
     charge agrees with ``charge`` — warnings, not errors, because open-shell intent is
     the caller's call.
+
+    **A call owns the whole seed set.** ``input:`` directory-seeding reads every ``.xyz``
+    in ``out_dir``, so a ``structure_*.xyz`` an earlier call left behind — a longer list, a
+    failed attempt — would seed the run with a molecule this call never reported. The
+    stale set is cleared before writing, and a SMILES list that fails partway is cleaned
+    up exactly as the XYZ branch always was: the directory afterwards holds this call's
+    structures, or none.
     """
     if (smiles is None) == (xyz_text is None):
         raise ConfigError("provide exactly one of smiles or xyz_text")
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
+    for stale in out.glob("structure_*.xyz"):
+        stale.unlink()
     written: list[str] = []
     build_warnings: list[str] = []
     if smiles is not None:
@@ -388,6 +397,8 @@ def build_structures(
             try:
                 rows = io.embed_smiles(one)
             except ValueError as e:
+                for done in written:
+                    Path(done).unlink(missing_ok=True)
                 raise ConfigError(str(e)) from e
             path = io.write_single_xyz(rows, out / f"structure_{i}.xyz", comment=f"SMILES: {one}")
             written.append(str(path))

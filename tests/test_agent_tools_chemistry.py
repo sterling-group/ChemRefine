@@ -106,6 +106,34 @@ def test_build_structures_raises_on_the_named_bad_smiles(tmp_path: Path):
         agent_tools.build_structures(str(tmp_path / "seeds"), smiles=["!!!"])
 
 
+def test_a_bad_smiles_late_in_the_list_leaves_no_partial_seed_set(tmp_path: Path):
+    """A list that fails partway is cleaned up like the XYZ branch always was.
+
+    The loop writes as it goes, so a bad SMILES at index 2 raised with structures 0 and 1
+    already on disk — and a corrected retry with a shorter list then reported one file
+    while ``input:`` directory-seeding read two, seeding a molecule the successful call
+    never produced.
+    """
+    seeds = tmp_path / "seeds"
+    with pytest.raises(ConfigError, match="invalid SMILES"):
+        agent_tools.build_structures(str(seeds), smiles=["O", "CCO", "!!!"])
+    assert list(seeds.glob("structure_*.xyz")) == []
+
+
+def test_a_new_build_clears_the_previous_calls_seed_set(tmp_path: Path):
+    """A call owns the whole seed set — a longer earlier call's extras must not survive.
+
+    ``structure_{i}.xyz`` names are positional, so a shorter second call rewrites the
+    front of the set and, without the clear, leaves the tail: two files on disk, one in
+    ``written``, and a directory-seeded run computing on both.
+    """
+    seeds = tmp_path / "seeds"
+    agent_tools.build_structures(str(seeds), smiles=["O", "CCO"])
+    result = agent_tools.build_structures(str(seeds), smiles=["O"])
+    assert [Path(p).name for p in result["written"]] == ["structure_0.xyz"]
+    assert [p.name for p in seeds.glob("structure_*.xyz")] == ["structure_0.xyz"]
+
+
 def test_build_structures_requires_exactly_one_source(tmp_path: Path):
     with pytest.raises(ConfigError, match="exactly one"):
         agent_tools.build_structures(str(tmp_path))
