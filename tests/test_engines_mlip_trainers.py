@@ -524,3 +524,124 @@ def test_fairchem_loads_the_dataset_we_write(tmp_path: Path):
     assert loaded["energy0"] == pytest.approx(-1.5 * HARTREE_TO_EV, rel=1e-5)
     assert loaded["forces_shape"] == [3, 3]
     assert loaded["natoms"] == [3, 3]
+
+
+# ---------------------------------------------------------------------------
+# SevenNet — extxyz via the reconstructed calculator, the sevenn CLI, checkpoint_best
+# ---------------------------------------------------------------------------
+
+
+def _sevenn_split() -> DatasetSplit:
+    return DatasetSplit(
+        train=(_labelled("0"), _labelled("1", energy=-1.6)),
+        valid=(_labelled("2"),),
+        test=(),
+    )
+
+
+def test_sevenn_labels_ride_on_the_reconstructed_calculator(tmp_path: Path):
+    """SevenNet's loader takes energy and forces off ``atoms.calc`` — ase's round trip.
+
+    Its reader tries ``get_potential_energy(force_consistent=True)`` first, so
+    ``free_energy`` is written alongside ``energy``; both come back on the
+    ``SinglePointCalculator`` ase reconstructs from an extxyz frame.
+    """
+    from chemrefine.engines.mlip.backends.sevenn import SevennTrainer
+
+    files = SevennTrainer().write_dataset(_plan(tmp_path), _sevenn_split())
+    frames = ase_read(str(files.train), index=":")
+    assert len(frames) == 2
+    first = frames[0]
+    assert first.get_potential_energy() == pytest.approx(-1.5 * HARTREE_TO_EV, rel=1e-12)
+    np.testing.assert_allclose(
+        first.get_forces(), [[0.1, 0.0, 0.0], [0.0, 0.2, 0.0], [0.0, 0.0, 0.3]]
+    )
+    assert files.valid is not None and files.valid.is_file()
+    assert files.test is None  # an empty split gets no file at all
+
+
+def test_sevenn_training_without_a_validation_set_is_refused(tmp_path: Path):
+    """``checkpoint_best.pth`` is written when the *validation* metric improves.
+
+    A run without validation trains to completion and leaves no best checkpoint — the
+    artifact this step adopts — so the refusal happens before anything is spent, exactly
+    as FAIRChem's trainer refuses for its runner's sake.
+    """
+    from chemrefine.engines.mlip.backends.sevenn import SevennTrainer
+
+    split = DatasetSplit(train=(_labelled("0"),), valid=(), test=())
+    with pytest.raises(ConfigError, match="validation set"):
+        SevennTrainer().write_dataset(_plan(tmp_path), split)
+
+
+def test_sevenn_warns_when_charge_or_spin_would_be_dropped(tmp_path: Path, caplog):
+    """No charge/spin channel: a charged or open-shell ensemble is warned, never silent.
+
+    MACE stamps ``total_charge``/``total_spin`` into its dataset; SevenNet has nowhere to
+    put either, so the honest floor is a warning naming what the labels will not carry.
+    """
+    import logging
+
+    from chemrefine.engines.mlip.backends.sevenn import SevennTrainer
+
+    with caplog.at_level(logging.WARNING):
+        SevennTrainer().write_dataset(_plan(tmp_path, charge=-1), _sevenn_split())
+    assert "no charge/spin channel" in caplog.text
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        SevennTrainer().write_dataset(_plan(tmp_path / "b"), _sevenn_split())
+    assert "no charge/spin channel" not in caplog.text
+
+
+def test_sevenn_writer_copies_rather_than_mutating_the_pipeline_structure(tmp_path: Path):
+    """The calculator lands on a copy; the pipeline's own structure stays bare."""
+    from chemrefine.engines.mlip.backends.sevenn import SevennTrainer
+
+    struct = _labelled("0")
+    SevennTrainer().write_dataset(
+        _plan(tmp_path), DatasetSplit(train=(struct,), valid=(_labelled("1"),), test=())
+    )
+    assert struct.atoms.calc is None
+
+
+def test_sevenn_placeholders_name_every_dataset(tmp_path: Path):
+    from chemrefine.engines.mlip.backends.sevenn import SevennTrainer
+
+    trainer = SevennTrainer()
+    plan = _plan(tmp_path)
+    files = trainer.write_dataset(plan, _sevenn_split())
+    placeholders = trainer.placeholders(plan, files)
+    assert placeholders["TRAIN_SET"] == str(files.train)
+    assert placeholders["VALID_SET"] == str(files.valid)
+    assert placeholders["TEST_SET"] == ""  # absent split: an empty string, not a path
+
+
+def test_sevenn_runs_its_console_script_with_the_config_basename(tmp_path: Path):
+    """``sevenn train <basename> -s`` from the backend env's own bin, quoted."""
+    import shlex
+
+    from chemrefine.engines.mlip.backends.sevenn import SevennTrainer
+
+    plan = _plan(tmp_path, launcher=Path("/envs/my mlip/bin/python"))
+    cmd = SevennTrainer().command(plan, tmp_path / "step3_train.yaml")
+    assert cmd == f"{shlex.quote('/envs/my mlip/bin/sevenn')} train step3_train.yaml -s"
+
+
+def test_a_multi_gpu_sevenn_step_runs_under_torchrun(tmp_path: Path):
+    """SevenNet's own DDP shape: ``torchrun … --no_python sevenn``, ``-d`` replacing ``-s``."""
+    from chemrefine.engines.mlip.backends.sevenn import SevennTrainer
+
+    cmd = SevennTrainer().command(_plan(tmp_path, gpus=2), Path("step3_train.yaml"))
+    assert "-m torch.distributed.run --standalone --nnodes 1 --nproc_per_node 2" in cmd
+    assert "--no_python" in cmd
+    assert cmd.endswith("train step3_train.yaml -d")
+    assert " -s" not in cmd
+
+
+def test_the_sevenn_product_is_the_fixed_best_checkpoint(tmp_path: Path):
+    """``checkpoint_best.pth`` — fixed by the library, predictable before the run."""
+    from chemrefine.engines.mlip.backends.sevenn import SevennTrainer
+
+    artifact = SevennTrainer().artifact(tmp_path / "train", "train")
+    assert artifact == tmp_path / "train" / "checkpoint_best.pth"

@@ -119,7 +119,11 @@ mlip-mace = [
     "mace-torch>=0.3.16; python_version < '3.14'",
     "chemrefine[server]",
 ]
-mlip-sevenn = ["sevenn>=0.11", "chemrefine[server]"]
+# 0.11.1 is the first release with the unified `sevenn` CLI ("CLI interface changed
+# in backward-compatible manner. Now `sevenn` has subcommands for inference, train,
+# etc" — its release notes); the trainer drives `sevenn train`, so the floor is the
+# first version that has it.
+mlip-sevenn = ["sevenn>=0.11.1", "chemrefine[server]"]
 # 3.12 and only 3.12. orb-models pins `dm-tree==0.1.8`, whose newest wheels are cp312 — the
 # `==` puts 0.1.9's cp313 and 0.1.10's cp314 out of reach — and its sdist vendors an abseil
 # snapshot no GCC >= 13 compiles. Lift the ceiling when orb loosens that pin. The floor is

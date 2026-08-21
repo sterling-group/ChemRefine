@@ -275,7 +275,15 @@ class MlipTrainEngine(MlipBackend):
 
     # -- what the scheduler asks of a job ----------------------------------
 
-    output_globs: ClassVar[tuple[str, ...]] = ("*.log", "*.model", "*.pt", "*.yaml")
+    output_globs: ClassVar[tuple[str, ...]] = (
+        "*.csv",
+        "*.log",
+        "*.model",
+        "*.pt",
+        "*.yaml",
+        "checkpoint_*.pth",
+        "log.sevenn",
+    )
     """Loose files to copy back from scratch — the union of every trainer's own.
 
     A superset rather than this step's trainer, because

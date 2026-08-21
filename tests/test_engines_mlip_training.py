@@ -264,6 +264,23 @@ def test_the_trainer_is_selected_by_task_name_alone():
     assert inspect.signature(trainer_for).parameters.keys() == {"task_name"}
 
 
+def _untrainable_task():
+    """A synthetic runnable-but-untrainable registry entry, patched in for one test.
+
+    Synthetic rather than a shipped task: every shipped backend is on its way to a
+    trainer, and a fixture reading "X happens to lack one today" breaks the day that
+    stops being true — a fact about the roster, not about the rule under test.
+    """
+    from unittest.mock import patch
+
+    from chemrefine.engines.mlip import registry as mlip_registry
+    from chemrefine.engines.mlip.registry import BackendSpec, MlipLibrary
+
+    lib = MlipLibrary(extra="mlip-untrainable", package="untrainable-lib", import_name="untl")
+    spec = BackendSpec(lib, builder=lambda **_: None, trainer=None)
+    return patch.dict(mlip_registry._BACKENDS, {"untrainable": spec}, clear=False)
+
+
 def test_a_runnable_but_untrainable_task_says_which_it_is():
     """ "Unknown task" and "known task, no trainer" are different mistakes.
 
@@ -271,8 +288,8 @@ def test_a_runnable_but_untrainable_task_says_which_it_is():
     is a fact about the backend rather than about the config. One registry is what lets the
     message tell them apart at all.
     """
-    with pytest.raises(ConfigError, match="can be run but not trained"):
-        trainer_for("sevenn")
+    with _untrainable_task(), pytest.raises(ConfigError, match="can be run but not trained"):
+        trainer_for("untrainable")
     with pytest.raises(ConfigError, match="unsupported MLIP backend"):
         trainer_for("not_a_task_at_all")
 
@@ -292,10 +309,11 @@ def test_the_backend_requirement_follows_the_selection():
 
 def test_a_training_step_naming_an_untrainable_task_is_refused_by_the_preflight():
     """Before any step submits, rather than after the upstream steps computed a dataset."""
-    with pytest.raises(ConfigError, match="can be run but not trained"):
-        requirement_from_options({"task_name": "sevenn"}, require_trainer=True)
-    # ...while the same selection is a perfectly good *inference* backend.
-    assert requirement_from_options({"task_name": "sevenn"}).extra == "mlip-sevenn"
+    with _untrainable_task():
+        with pytest.raises(ConfigError, match="can be run but not trained"):
+            requirement_from_options({"task_name": "untrainable"}, require_trainer=True)
+        # ...while the same selection is a perfectly good *inference* backend.
+        assert requirement_from_options({"task_name": "untrainable"}).extra == "mlip-untrainable"
 
 
 def test_the_requirement_reads_the_selection_through_the_model():
@@ -368,19 +386,11 @@ def test_a_task_that_cannot_train_is_refused_by_the_preflight():
     """`require_trainer` is what turns a typo into a message before any step submits.
 
     On a pipeline that spends days computing labels before it trains, this is the difference
-    between a mistake caught in seconds and one caught on Thursday. Asserted on a *synthetic*
-    runnable-but-untrainable task rather than a shipped one: every shipped backend is on its
-    way to a trainer, and a test whose fixture is "sevenn happens to lack one today" breaks
-    the day that stops being true — which is a fact about the roster, not about this flag.
+    between a mistake caught in seconds and one caught on Thursday. Asserted on the
+    synthetic runnable-but-untrainable task (:func:`_untrainable_task`), so the fixture
+    stays true however the shipped roster evolves.
     """
-    from unittest.mock import patch
-
-    from chemrefine.engines.mlip import registry as mlip_registry
-    from chemrefine.engines.mlip.registry import BackendSpec, MlipLibrary
-
-    lib = MlipLibrary(extra="mlip-untrainable", package="untrainable-lib", import_name="untl")
-    spec = BackendSpec(lib, builder=lambda **_: None, trainer=None)
-    with patch.dict(mlip_registry._BACKENDS, {"untrainable": spec}, clear=False):
+    with _untrainable_task():
         assert requirement_from_options({"task_name": "untrainable"}).extra == "mlip-untrainable"
         with pytest.raises(ConfigError, match="can be run but not trained"):
             requirement_from_options({"task_name": "untrainable"}, require_trainer=True)
