@@ -31,7 +31,7 @@ def parse_output(output_path: Path, *, label: str, fallback: Atoms | None) -> li
     """
     data = _load_output_json(output_path, label=label)
     atoms = _atoms_from_output(data, fallback=fallback)
-    forces = _forces_from_gradient(data.get("gradient_hartree_per_bohr"))
+    forces = _forces_from_gradient(data.get("gradient_hartree_per_bohr"), n_atoms=len(atoms))
     return [
         ParsedResult(
             symbols=tuple(atoms.get_chemical_symbols()),
@@ -145,11 +145,20 @@ def _atoms_from_output(data: dict[str, Any], *, fallback: Atoms | None) -> Atoms
     return updated
 
 
-def _forces_from_gradient(gradient: list[list[float]] | None) -> NDArray[np.float64] | None:
+def _forces_from_gradient(
+    gradient: list[list[float]] | None, *, n_atoms: int
+) -> NDArray[np.float64] | None:
     """Convert a template gradient (Hartree/Bohr) to ASE forces (eV/Å).
 
-    Held to the same rule as the coordinates above: a ragged gradient makes ``np.asarray``
-    raise a bare :class:`ValueError`, which would leave the exit-code contract the same way.
+    Held to the same rule as the coordinates above, and by the same two checks: a ragged
+    gradient makes ``np.asarray`` raise a bare :class:`ValueError`, which would leave the
+    exit-code contract the same way — and a well-formed array of the wrong *shape* would
+    leave it silently. The positions path has ``set_positions`` as its shape oracle; a
+    gradient has none, so the flat ``3N`` list the positions guard names as "the natural
+    mistake" (``grad.ravel()``) parsed here as a perfectly valid ``(3N,)`` array, became
+    :attr:`~chemrefine.state.Structure.forces_ev_per_a` — which declares no shape — and
+    round-tripped the cache into any downstream ``mlip-train`` dataset. Nothing between
+    this line and the trainer re-checks, so this is the one place the contract can be held.
     """
     if not gradient:
         return None
@@ -157,4 +166,10 @@ def _forces_from_gradient(gradient: list[list[float]] | None) -> NDArray[np.floa
         rows = np.asarray(gradient, dtype=float)
     except ValueError as e:
         raise OutputParseError(f"malformed 'gradient_hartree_per_bohr': {e}") from e
+    if rows.shape != (n_atoms, 3):
+        raise OutputParseError(
+            f"malformed 'gradient_hartree_per_bohr' for a {n_atoms}-atom structure: "
+            f"expected shape ({n_atoms}, 3), got {rows.shape} — a flat 3N list is the "
+            f"usual cause (return rows, not gradient.ravel())"
+        )
     return rows * (-HARTREE_PER_BOHR_TO_EV_PER_A)

@@ -191,17 +191,17 @@ def test_atoms_from_output_raises_without_fallback_and_no_positions():
 def test_forces_from_gradient_converts_units():
     from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
 
-    forces = _forces_from_gradient([[1.0, 0.0, 0.0]])
+    forces = _forces_from_gradient([[1.0, 0.0, 0.0]], n_atoms=1)
     assert forces is not None
     np.testing.assert_allclose(forces[0], [-HARTREE_PER_BOHR_TO_EV_PER_A, 0.0, 0.0])
 
 
 def test_forces_from_gradient_handles_none():
-    assert _forces_from_gradient(None) is None
+    assert _forces_from_gradient(None, n_atoms=1) is None
 
 
 def test_forces_from_gradient_handles_empty():
-    assert _forces_from_gradient([]) is None
+    assert _forces_from_gradient([], n_atoms=2) is None
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +257,28 @@ def test_atoms_from_output_copies_rather_than_mutating_the_seed():
 def test_a_ragged_gradient_is_refused():
     """The other half of the same shape contract — `np.asarray` would raise bare, too."""
     with pytest.raises(OutputParseError, match="gradient_hartree_per_bohr"):
-        _forces_from_gradient([[0.1, 0.2, 0.3], [0.1, 0.2]])
+        _forces_from_gradient([[0.1, 0.2, 0.3], [0.1, 0.2]], n_atoms=2)
+
+
+@pytest.mark.parametrize(
+    "gradient",
+    [
+        pytest.param([0.1, 0.2, 0.3, 0.1, 0.2, 0.3], id="flat-3N-list"),
+        pytest.param([[0.1, 0.2, 0.3]], id="wrong-atom-count"),
+        pytest.param([[0.1, 0.2], [0.3, 0.1]], id="wrong-column-count"),
+    ],
+)
+def test_a_gradient_of_the_wrong_shape_is_refused(gradient: list):
+    """The gradient is held to the positions guard's rule, by an explicit check.
+
+    The positions path has ``set_positions`` as its shape oracle; a gradient has none, so
+    the flat ``3N`` list that guard names as "the natural mistake" parsed as a valid
+    ``(3N,)`` array and rode ``forces_ev_per_a`` — which declares no shape — through the
+    cache and into any downstream ``mlip-train`` dataset, where the positions equivalent
+    was an ordinary ledger entry naming the atom count.
+    """
+    with pytest.raises(OutputParseError, match="gradient_hartree_per_bohr"):
+        _forces_from_gradient(gradient, n_atoms=2)
 
 
 @pytest.mark.parametrize(
@@ -265,6 +286,7 @@ def test_a_ragged_gradient_is_refused():
     [
         '{"energy_hartree": -1.0, "positions_angstrom": [0.0, 0.0, 0.0, 0.74, 0.0, 0.0]}',
         '{"energy_hartree": -1.0, "gradient_hartree_per_bohr": [[0.1, 0.2, 0.3], [0.1, 0.2]]}',
+        '{"energy_hartree": -1.0, "gradient_hartree_per_bohr": [0.1, 0.2, 0.3, 0.1, 0.2, 0.3]}',
     ],
 )
 def test_a_malformed_shape_stays_inside_the_exit_code_contract(tmp_path: Path, body: str):
