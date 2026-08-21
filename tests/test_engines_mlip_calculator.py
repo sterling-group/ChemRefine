@@ -244,7 +244,7 @@ def test_build_chgnet_uses_default_when_no_model_path(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# SevenNet — task_name selects it, model_name is the checkpoint
+# SevenNet — task_name selects it, the weights come from name or path
 # ---------------------------------------------------------------------------
 
 
@@ -261,6 +261,28 @@ def test_build_sevenn_constructs_calculator(monkeypatch):
     calc = MlipCalculator(task_name="sevenn", model_name="7net-0", device="cpu")
     factory.assert_called_once_with(model="7net-0", device="cpu")
     assert calc.calculator == "SEVENN_CALC"
+
+
+def test_a_sevenn_checkpoint_reaches_sevenns_own_loader(monkeypatch, tmp_path: Path):
+    """``model_path`` is honoured with SevenNet's library, like every builder's.
+
+    ``SevenNetCalculator``'s ``model`` is typed ``str | Path`` — "or path to the checkpoint"
+    — and its resolution checks the filesystem before trying release names. Dropping the
+    option instead ran the *named release* against a config that pinned a file, silently:
+    the fingerprint had digested the checkpoint, so the run even looked pinned to it.
+    """
+    factory = _install_fake_sevenn(monkeypatch)
+    model_file = tmp_path / "finetuned.pth"
+    model_file.touch()
+    MlipCalculator(task_name="sevenn", model_name="7net-0", model_path=str(model_file))
+    factory.assert_called_once_with(model=model_file, device="cuda")
+
+
+def test_a_sevenn_checkpoint_that_is_not_there_names_the_path(tmp_path: Path):
+    """Checked before SevenNet is imported — its own failure names neither step nor option."""
+    missing = tmp_path / "does_not_exist.pth"
+    with pytest.raises(FileNotFoundError, match=f"SevenNet checkpoint not found: {missing}"):
+        MlipCalculator(task_name="sevenn", model_name="7net-0", model_path=str(missing))
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +325,56 @@ def test_build_orb_unknown_loader_raises(monkeypatch):
     _install_fake_orb(monkeypatch)
     with pytest.raises(ValueError, match="unknown ORB model"):
         MlipCalculator(task_name="orb", model_name="orb_not_a_loader", device="cpu")
+
+
+def test_an_orb_checkpoint_reaches_the_named_loaders_weights_path(monkeypatch, tmp_path: Path):
+    """``model_path`` is honoured with ORB's library, like every builder's.
+
+    The pretrained loaders take ``weights_path`` (defaulting to the release URL) and accept
+    a local file. ``model_name`` still names the loader: a checkpoint carries weights, not
+    an architecture, so the loader that built it is named alongside it — the same doctrine
+    as naming the library that trained it.
+    """
+    loader, calc_class, orbff = _install_fake_orb(monkeypatch)
+    model_file = tmp_path / "finetuned.ckpt"
+    model_file.touch()
+    MlipCalculator(
+        task_name="orb",
+        model_name="orb_v3_conservative_inf_omat",
+        device="cpu",
+        model_path=str(model_file),
+    )
+    loader.assert_called_once_with(weights_path=str(model_file), device="cpu")
+    calc_class.assert_called_once_with(orbff, device="cpu")
+
+
+def test_an_orb_checkpoint_that_is_not_there_names_the_path(tmp_path: Path):
+    """Checked before orb-models is imported — its own failure names neither step nor option."""
+    missing = tmp_path / "does_not_exist.ckpt"
+    with pytest.raises(FileNotFoundError, match=f"ORB checkpoint not found: {missing}"):
+        MlipCalculator(
+            task_name="orb", model_name="orb_v3_conservative_inf_omat", model_path=str(missing)
+        )
+
+
+def test_an_orb_loader_without_weights_path_is_a_version_message(monkeypatch, tmp_path: Path):
+    """An older loader signature becomes a ConfigError naming the limitation.
+
+    orb-models grew ``weights_path`` over time; against an older install the keyword raises
+    ``TypeError`` from deep inside the loader, naming neither the step nor the option. The
+    builder turns that into the version limitation it is, with the two ways out.
+    """
+    loader, _calc_class, _orbff = _install_fake_orb(monkeypatch)
+    loader.side_effect = TypeError("unexpected keyword argument 'weights_path'")
+    model_file = tmp_path / "finetuned.ckpt"
+    model_file.touch()
+    with pytest.raises(ConfigError, match="takes no local"):
+        MlipCalculator(
+            task_name="orb",
+            model_name="orb_v3_conservative_inf_omat",
+            device="cpu",
+            model_path=str(model_file),
+        )
 
 
 # ---------------------------------------------------------------------------
