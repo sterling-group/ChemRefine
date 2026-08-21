@@ -120,7 +120,9 @@ patched: ChemRefine substitutes `$TRAIN_SET`, `$VALID_SET`, `$TEST_SET`, `$RUN_D
 interpolations — untouched. A template that never references the dataset placeholder its
 backend needs is rejected before anything is submitted.
 
-The trained model lands at `<step dir>/train/train[_stagetwo].model`, beside a
+The trained model lands under `<step dir>/train/` at a name fixed per library — MACE's
+`train[_stagetwo].model`, FAIRChem's `train/checkpoints/final/inference_ckpt.pt`,
+SevenNet's `checkpoint_best.pth`, CHGNet's `train.pth.tar`, ORB's `train.ckpt` — beside a
 `trained_model.json` recording which run produced it. That path is predictable *before*
 the training runs, so a later step can name it in `model_path`; retraining changes that
 step's cache key, so it re-runs rather than serving a result computed with the old weights.
@@ -141,6 +143,35 @@ step's cache key, so it re-runs rather than serving a result computed with the o
     Fine-tuning a UMA checkpoint is a **GPU-scale job**: on CPU the optimizer states and
     conservative-force graph need roughly 8 GB for `uma-s`. Size `cores`/`device`
     accordingly.
+
+### MLIP training templates, per backend
+
+The template is always the *trainer's* config; what that means differs per library, and
+each trainer refuses a template missing its own required placeholders before anything
+submits:
+
+- **MACE** — MACE's own training YAML with `$TRAIN_SET`, `$RUN_NAME` and `$RUN_DIR` where
+  those values go; the dataset is written with MACE's own `REF_*` label keys, so no
+  `energy_key`/`forces_key` line is needed. The
+  [MLIP training tutorial](../tutorials/mlip_training.md) walks a complete one.
+- **FAIRChem** — fairchem's hydra config per the note above; requires `$TRAIN_SET`,
+  `$VAL_SET`, `$RUN_DIR` and `$RUN_NAME`.
+- **SevenNet** — SevenNet's own `input.yaml` (start from `sevenn preset fine_tune >
+  step{N}.yaml`), with `$TRAIN_SET` in `data.load_trainset_path` (and `$VALID_SET` /
+  `$FOUNDATION_MODEL` → `train.continue.checkpoint` as wanted). A validation split is
+  required: `checkpoint_best.pth`, the model the step adopts, is written when the
+  validation metric improves.
+- **CHGNet** — chemrefine's own small schema (CHGNet has no config format): `train_set:
+  $TRAIN_SET`, `valid_set: $VALID_SET`, `run_name: $RUN_NAME`, plus the `Trainer` knobs
+  (`epochs`, `learning_rate`, `batch_size`, `targets`). The step runs chemrefine's shared
+  train driver inside the backend env.
+- **ORB** — the same driver route: `train_set: $TRAIN_SET`, `run_name: $RUN_NAME`, and a
+  `base_model:` naming the pretrained loader (the architecture); `start_from:
+  $FOUNDATION_MODEL` may point at a local checkpoint. No validation file — orb's
+  fine-tune loop is train-only.
+
+Whatever trained, running the result is the same one line: `model_path:` pointing at the
+artifact, with the same `task_name`.
 
 ## PySCF (`pyscf`, `pyscf-extopt`)
 

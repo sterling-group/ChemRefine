@@ -98,9 +98,12 @@ _STEP_STARTERS: dict[str, str] = {
     ),
     "mlip-train": (
         "# mlip-train starter — NOT runnable as written. A trainer template is the\n"
-        "# backend's own config (fairchem/mace), and every part of a working one is\n"
-        "# load-bearing; start from the worked example instead:\n"
+        "# backend's own config where one exists (mace/fairchem: every part of a working\n"
+        "# one is load-bearing; sevenn: `sevenn preset fine_tune` writes one), and\n"
+        "# chemrefine's own small schema where none does (chgnet/orb). Start from the\n"
+        "# worked examples instead:\n"
         "#   examples/fairchem_finetune/templates/  (UMA fine-tune, commented line by line)\n"
+        "#   docs -> Engines -> MLIP training templates  (one per trainable backend)\n"
     ),
 }
 _STEP_STARTERS["mlip-extopt"] = _STEP_STARTERS["orca"]

@@ -305,6 +305,27 @@ for the full map.
   directory copy-back. The DFT-heavy cases moved to XTB2 where the parsing contract is
   method-agnostic; `nms_minimum` stays PBE/def2-SVP as the one real-DFT parse.
 
+### Added (post-audit round)
+
+- **Every shipped MLIP backend now fine-tunes** — `task_name: sevenn | chgnet | orb` join
+  MACE and the FAIRChem heads as `mlip-train` selections, each through its library's own
+  door: SevenNet via its unified CLI (`sevenn train`, the `mlip-sevenn` floor moves to
+  0.11.1 — the release that has it), CHGNet and ORB — whose training is a pure Python API
+  with no packaged CLI — via one shared backend-side driver
+  (`python -m chemrefine.engines.mlip.train.driver <task> <config>`) that resolves the
+  same registry over there and calls a `run_training` hook on the trainer class, so an
+  API-only library is still one dropped-in module. Libraries without a charge/spin
+  channel warn instead of silently fitting an ion as neutral data; datasets, split,
+  render and artifact rules are unchanged — and running what you trained is the same
+  `model_path:` line for all five.
+- **Training got one home**: `engines/mlip/train/` — `base` (the `Trainer` contract and
+  the backend-agnostic machinery), `engine` (`mlip-train`), `driver` (the backend-side
+  shell) — the `_backend_server/` shape, replacing three same-prefix modules at the
+  package top level. And the trainer contract is now a parametrised test layer every
+  registered trainer inherits: dataset written with the orchestrator's own deps,
+  placeholders covering the declared requirements, a plan-free artifact, the
+  basename/no-trap command rules, and copy-back eligibility.
+
 ### Fixed
 
 
@@ -316,6 +337,12 @@ for the full map.
   `str | Path`, filesystem checked before release names) and ORB through the loaders'
   `weights_path=`, each behind the existence check MACE and FAIRChem already had; an
   orb-models too old for the keyword is a named version limitation, not a `TypeError`.
+  CHGNet's builder turned out to be a third sibling by another route: `CHGNet.load(path)`
+  is keyword-only and resolves *release names*, so its checkpoint support was a
+  `TypeError` on every use — hidden by a mock that accepted any call. Local checkpoints
+  now load through `CHGNet.from_file`, whose `{"model": as_dict()}` shape is exactly what
+  the new trainer saves, and the fake's `load`/`from_file` carry the real signatures so a
+  stray positional fails in the test the way it fails in production.
 - **The thread exports say the granted cores, not the asked-for pal.** The SLURM
   directives and the throttler charge both derive from `slurm_layout`'s
   `min(cores, max_cores)` clamp, but three run-block builders exported the raw `pal()`
