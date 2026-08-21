@@ -14,7 +14,6 @@ import numpy as np
 import pytest
 from ase import Atoms
 
-from chemrefine.engines.api import get_engine
 from chemrefine.engines.mlip.registry import (
     backend_spec,
     registered_backends,
@@ -22,7 +21,6 @@ from chemrefine.engines.mlip.registry import (
     registered_trainers,
     requirement_from_options,
     trainer_for,
-    trainer_output_globs,
 )
 from chemrefine.engines.mlip.train import base as training
 from chemrefine.engines.mlip.train.base import (
@@ -397,22 +395,6 @@ def test_a_task_that_cannot_train_is_refused_by_the_preflight():
         assert requirement_from_options({"task_name": "untrainable"}).extra == "mlip-untrainable"
         with pytest.raises(ConfigError, match="can be run but not trained"):
             requirement_from_options({"task_name": "untrainable"}, require_trainer=True)
-
-
-def test_the_engines_copy_back_globs_are_the_union_of_its_trainers():
-    """`mlip-train` declares one glob list for every trainer, and it must stay the union.
-
-    The scheduler reads `output_globs` as a `ClassVar`, with no context to resolve *this*
-    step's trainer from, so the engine answers for all of them. That list had already drifted:
-    it was missing FAIRChem's `*.yaml` and carried a `*.txt` no backend produces. A glob that
-    is missing is a model left behind in the scratch directory when it is cleaned.
-    """
-    engine = get_engine("mlip-train")
-
-    assert set(engine.output_globs) >= set(trainer_output_globs()), (
-        "a trainer declares an output_globs entry the engine does not: add it to "
-        "MlipTrainEngine.output_globs"
-    )
 
 
 def test_every_registered_extra_is_declared_in_pyproject():

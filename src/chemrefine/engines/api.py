@@ -330,7 +330,19 @@ class JobExecutable(Protocol):
     engine. ``JobEngine`` satisfies it structurally.
     """
 
-    output_globs: ClassVar[tuple[str, ...]]
+    @property
+    def output_globs(self) -> tuple[str, ...]:
+        """Loose files to copy back out of the job's scratch directory.
+
+        A read-only property declaration rather than a ``ClassVar``, so an engine may
+        *compute* the answer at read time — ``mlip-train`` derives it from its trainer
+        registry, which is only populated after the engine's class body has run. A plain
+        class attribute satisfies it just the same, and that is what every other engine
+        declares. Read on instances only, without a :class:`~chemrefine.state.
+        StepContext` — which is why it cannot be exact per step the way
+        :meth:`output_dirs` can.
+        """
+        ...
 
     def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> RunBlock:
         """The bash that runs one job inside ``$WORK_DIR``, plus any teardown it needs."""

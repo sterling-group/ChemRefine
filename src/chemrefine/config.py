@@ -359,7 +359,8 @@ PyscfOptions`) — reaches ``cp -r "…"``, and bash substitutes *inside* double
     ``step.name``               safe by construction — matched against :data:`_NAME_RE`
     ``step`` / ``cores``        safe by construction — integers
     ``structure_id``            safe by construction — minted by :mod:`chemrefine.ids`
-    ``output_globs``            safe by construction — an engine ``ClassVar``
+    ``output_globs``            safe by construction — engine-declared constants (a \
+``ClassVar``, or a property over trainer declarations); never config
     ``job_name`` (trainer)      safe by construction — its own field ``pattern``
     ==========================  ===============================================================
 

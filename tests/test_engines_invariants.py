@@ -514,7 +514,7 @@ _BASH_PARAM_SAFETY: dict[str, str] = {
     "step_label": "StepConfig.dir_name(): 'step{int}' plus a name matched against _NAME_RE",
     "step_dir": "output_dir (validated) joined with step_label",
     "input_path": "minted by chemrefine.ids under output_dir",
-    "globs_expr": "a join of output_globs, an engine ClassVar",
+    "globs_expr": "a join of output_globs — engine-declared constants, never config",
     "extra_fields": "engine-supplied runlog rows, not interpolated as code",
     # --- bash this project wrote ---------------------------------------------------------
     "header": "the output of job_log.bash_header, itself covered by this table",

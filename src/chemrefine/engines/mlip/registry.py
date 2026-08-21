@@ -378,8 +378,9 @@ def trainer_output_globs() -> tuple[str, ...]:
     :class:`~chemrefine.state.StepContext` in hand, so ``mlip-train`` cannot answer for *this*
     step's trainer and has to answer for all of them. Derived here, from the trainers'
     declarations, because a hand-maintained superset is a list that silently stops being one
-    the day a library is added — nothing else would connect a new trainer's globs to the
-    engine's ClassVar. A test holds the two equal.
+    the day a library is added. :class:`~chemrefine.engines.mlip.train.engine.MlipTrainEngine`
+    reads this directly — its ``output_globs`` property — so the roster is correct by
+    construction, not by a test holding two spellings equal.
 
     A superset is the safe direction — copying back a pattern nothing wrote costs nothing,
     where *missing* one loses a model to the scratch cleanup.

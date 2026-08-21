@@ -42,6 +42,7 @@ from chemrefine.engines.mlip.registry import (
     registered_trainers,
     requirement_from_options,
     trainer_for,
+    trainer_output_globs,
 )
 from chemrefine.engines.mlip.train.base import (
     TrainerBase,
@@ -275,33 +276,25 @@ class MlipTrainEngine(MlipBackend):
 
     # -- what the scheduler asks of a job ----------------------------------
 
-    output_globs: ClassVar[tuple[str, ...]] = (
-        "*.ckpt",
-        "*.csv",
-        "*.log",
-        "*.model",
-        "*.pt",
-        "*.pth.tar",
-        "*.yaml",
-        "checkpoint_*.pth",
-        "log.sevenn",
-    )
-    """Loose files to copy back from scratch — the union of every trainer's own.
+    @property
+    def output_globs(self) -> tuple[str, ...]:
+        """Loose files to copy back from scratch — every trainer's own, unioned live.
 
-    A superset rather than this step's trainer, because
-    :class:`~chemrefine.engines.api.JobExecutable` declares this a ``ClassVar`` and the
-    scheduler reads it with no :class:`~chemrefine.state.StepContext` to resolve one from.
-    (``output_dirs`` below *is* asked with a context, which is why that half can be exact.)
+        A superset rather than this step's trainer's, because the scheduler asks with no
+        :class:`~chemrefine.state.StepContext` to resolve one from (``output_dirs`` below
+        *is* asked with a context, which is why that half can be exact). A superset is
+        the safe direction — copying back a pattern nothing wrote costs nothing, where
+        *missing* one loses a model to the scratch cleanup for anyone whose template
+        writes ``run_dir`` outside the run directory.
 
-    Spelled out rather than computed because the value has to exist when this class body runs
-    and the backends are auto-discovered after it — but held to
-    :func:`~chemrefine.engines.mlip.registry.trainer_output_globs` **by test**, so a library
-    added later cannot leave it stale. Left to hand maintenance the list drifts silently, and
-    a missing glob is a model lost to the scratch cleanup for anyone whose template writes
-    ``run_dir`` outside the run directory.
-
-    A superset is the safe direction — copying back a pattern nothing wrote costs nothing.
-    """
+        A property rather than a ``ClassVar`` because the registry is only populated
+        after this class body runs (backends auto-discover later in the import chain),
+        while every read is on an instance, after discovery. Computed, the roster cannot
+        go stale — the hand-union this replaces carried the backend-private
+        ``"log.sevenn"`` in the shared engine and was held equal to the registry only by
+        a test.
+        """
+        return trainer_output_globs()
 
     def output_dirs(self, ctx: StepContext) -> tuple[str, ...]:
         """Whole directories to copy back — the selected trainer's own.
