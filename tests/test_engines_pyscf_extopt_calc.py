@@ -404,6 +404,21 @@ def test_run_dft_uses_gpu_classes_when_available(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+def test_get_active_space_tensors_refuses_an_open_shell_system(monkeypatch):
+    """The restricted-only rule is stated at the API boundary, not left to numpy.
+
+    UHF/UKS carry spin-paired ``[mo_a, mo_b]`` orbitals; the transform below reads one
+    ``(nao, nmo)`` matrix, so an open-shell system fails as a shape mismatch naming
+    neither the spin state nor the knob. The engine refuses a ``save_tensors`` step at
+    prepare; this is the same rule for a caller driving the server without the engine.
+    """
+    _install_fake_pyscf(monkeypatch)
+    mol = MagicMock()
+    mol.spin = 2
+    with pytest.raises(ConfigError, match=r"closed-shell.*multiplicity 3"):
+        _runtime.get_active_space_tensors(mol, MagicMock())
+
+
 def test_get_active_space_tensors_returns_correct_shapes(monkeypatch):
     _install_fake_pyscf(monkeypatch)
     mol = MagicMock()

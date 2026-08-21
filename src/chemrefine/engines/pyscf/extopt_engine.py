@@ -19,7 +19,8 @@ from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
 from chemrefine.engines.pyscf.backend import PyscfBackend
 from chemrefine.engines.pyscf.extopt_calc import PyscfExtOptCalculator
 from chemrefine.engines.pyscf.options import PyscfOptions
-from chemrefine.state import StepContext
+from chemrefine.errors import ConfigError
+from chemrefine.state import StepContext, StepInputs
 
 
 @register("pyscf-extopt")
@@ -31,6 +32,26 @@ class PyscfExtOptEngine(PyscfBackend, ExtOptOrcaEngine):
     wrapper_filename: ClassVar[str] = "pyscf_extopt.sh"
     options_cls: ClassVar[type[EngineOptions]] = PyscfOptions
     calculator_cls: ClassVar[type[ComputeBackend]] = PyscfExtOptCalculator
+
+    def prepare(self, ctx: StepContext) -> StepInputs:
+        """Refuse ``save_tensors`` on an open-shell step before anything submits.
+
+        The tensor transform is restricted-only (:func:`chemrefine.engines.pyscf._runtime.
+        get_active_space_tensors` states why), and left to run it fails *after* the SCF and
+        the gradient succeeded — inside the server, as a 500 whose actionable half lands in
+        the server log rather than in the user's ledger. Here the step's effective
+        multiplicity is in hand and nothing has been spent, so the refusal names the knob
+        and the spin with the documented exit code.
+        """
+        opts = PyscfOptions.from_raw(ctx.step_cfg.options)
+        if opts.save_tensors and ctx.multiplicity != 1:
+            raise ConfigError(
+                f"step {ctx.step_cfg.step}: save_tensors supports closed-shell systems "
+                f"only (RHF/RKS), and this step's effective multiplicity is "
+                f"{ctx.multiplicity}. Drop `save_tensors: true`, or run the step as a "
+                f"closed-shell system."
+            )
+        return super().prepare(ctx)
 
     def output_dirs(self, ctx: StepContext) -> tuple[str, ...]:
         """Copy the ``save_tensors`` output directory back into the structure dir.

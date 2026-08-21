@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from chemrefine.errors import ConfigError
 from chemrefine.quantities import BOHR_TO_ANGSTROM
 
 logger = logging.getLogger(__name__)
@@ -167,9 +168,24 @@ def get_active_space_tensors(
     When ``localized`` is true, Boys-localize the occupied and virtual
     blocks separately before transforming. The two-electron tensor uses
     :func:`pyscf.ao2mo.incore.full`.
+
+    **Closed-shell only**, and refused up front rather than left to numpy. The maths below
+    reads ``mf.mo_coeff`` as one ``(nao, nmo)`` matrix; UHF/UKS carry a spin-paired
+    ``[mo_a, mo_b]``, so an open-shell system fails as a shape mismatch three frames down —
+    or, with ``localized``, hands :mod:`pyscf.lo` a block sliced along the wrong axis and
+    fails deeper still. Neither message names the spin state or the knob. The engine
+    refuses a ``save_tensors`` step at ``prepare`` (before anything submits); this is the
+    same rule at the API boundary, for a caller driving the server without the engine.
     """
     from pyscf import ao2mo
 
+    if mol.spin != 0:
+        raise ConfigError(
+            f"save_tensors supports closed-shell systems only (RHF/RKS): this molecule has "
+            f"spin {mol.spin} (multiplicity {mol.spin + 1}), whose UHF/UKS orbitals are "
+            f"spin-paired and do not fit the restricted MO transform. Drop save_tensors "
+            f"for this step, or run it as a closed-shell system."
+        )
     nuc = float(mol.energy_nuc())
     ao_kin = mol.intor("int1e_kin")
     ao_nuc = mol.intor("int1e_nuc")

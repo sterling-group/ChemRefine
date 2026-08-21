@@ -170,6 +170,29 @@ def test_pyscf_extopt_output_dirs_copies_relative_tensor_folder(tmp_path: Path):
     assert engine.output_dirs(_pyscf_ctx(tmp_path, save_tensors=False)) == ()
 
 
+def test_save_tensors_on_an_open_shell_step_is_refused_before_submission(tmp_path: Path):
+    """``save_tensors`` + multiplicity > 1 fails at prepare, naming the knob and the spin.
+
+    The tensor transform is restricted-only. Left to run, the SCF and the gradient both
+    *succeed* and the dump then dies inside the server — a 500 whose actionable half lands
+    in the server log, while the ledger says only "backend calculation failed". At prepare
+    the effective multiplicity is in hand and nothing has been spent.
+    """
+    import dataclasses
+
+    engine = get_engine("pyscf-extopt")
+    ctx = dataclasses.replace(_pyscf_ctx(tmp_path, save_tensors=True), multiplicity=3)
+    with pytest.raises(ConfigError, match=r"closed-shell.*multiplicity is 3"):
+        engine.prepare(ctx)
+
+
+def test_save_tensors_on_a_closed_shell_step_prepares_normally(tmp_path: Path):
+    """The guard refuses only the open-shell combination — the supported case is untouched."""
+    engine = get_engine("pyscf-extopt")
+    inputs = engine.prepare(_pyscf_ctx(tmp_path, save_tensors=True))
+    assert len(inputs.files) == 1
+
+
 def test_pyscf_run_block_omits_bool_flags_when_unset(tmp_path: Path):
     """Bool flags stay gated on their option; key-value knobs carry validated values."""
     engine = get_engine("pyscf-extopt")
