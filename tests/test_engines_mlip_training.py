@@ -15,7 +15,6 @@ import pytest
 from ase import Atoms
 
 from chemrefine.engines.api import get_engine
-from chemrefine.engines.mlip import training
 from chemrefine.engines.mlip.registry import (
     backend_spec,
     registered_backends,
@@ -25,7 +24,8 @@ from chemrefine.engines.mlip.registry import (
     trainer_for,
     trainer_output_globs,
 )
-from chemrefine.engines.mlip.training import (
+from chemrefine.engines.mlip.train import base as training
+from chemrefine.engines.mlip.train.base import (
     DatasetFiles,
     DatasetSplit,
     TrainingPlan,
@@ -552,3 +552,17 @@ def test_every_trainers_artifact_basename_is_copy_back_eligible(task: str):
     assert any(fnmatch(artifact.name, glob) for glob in trainer.output_globs), (
         f"{task}: no output_globs entry matches {artifact.name!r}"
     )
+
+
+def test_the_shared_writer_refuses_an_unlabelled_structure(tmp_path: Path):
+    """The backstop behind ``split_structures``' refusal, named for the caller that skipped it.
+
+    ``labelled_atoms`` is public machinery: a trainer (or a future caller) could hand it
+    structures that never went through the split's label check, and an unlabelled frame
+    written silently would surface as a library-side KeyError an hour into the job.
+    """
+    from chemrefine.engines.mlip.train.base import write_labelled_extxyz
+
+    bare = Structure(id="9", atoms=Atoms("H"))
+    with pytest.raises(ConfigError, match="structure 9 is missing"):
+        write_labelled_extxyz(tmp_path / "train.xyz", [bare])

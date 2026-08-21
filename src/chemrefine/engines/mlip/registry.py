@@ -2,9 +2,9 @@
 
 One registry, keyed by ``task_name``, shared by inference and training. Each entry names a
 :class:`MlipLibrary` — the environment that provides the library — plus whichever capabilities
-that library offers: an ASE calculator builder, a :class:`~chemrefine.engines.mlip.training.
+that library offers: an ASE calculator builder, a :class:`~chemrefine.engines.mlip.train.base.
 Trainer`, or both. :mod:`chemrefine.engines.mlip.calculator` reads the first;
-:mod:`chemrefine.engines.mlip.train_engine` reads the second; the provisioner reads the
+:mod:`chemrefine.engines.mlip.train.engine` reads the second; the provisioner reads the
 library.
 
 Why one registry and not two
@@ -81,7 +81,7 @@ from chemrefine.engines.mlip.options import MlipOptions
 from chemrefine.errors import ConfigError
 
 if TYPE_CHECKING:
-    from chemrefine.engines.mlip.training import Trainer
+    from chemrefine.engines.mlip.train.base import Trainer
 
 LEGACY_MACE_TASK = "custom_mace"
 """A back-compat alias for MACE, kept only so configs written against v1 still resolve.
@@ -128,7 +128,7 @@ class MlipLibrary:
         return _wrap
 
     def trainer(self, *task_names: str) -> Callable[[type[Trainer]], type[Trainer]]:
-        """Register a :class:`~chemrefine.engines.mlip.training.Trainer` for ``task_names``.
+        """Register a :class:`~chemrefine.engines.mlip.train.base.Trainer` for ``task_names``.
 
         Optional: a library that ships no training entry point simply never calls this, and
         :func:`trainer_for` then reports it as runnable but not trainable — which is a

@@ -98,17 +98,33 @@ def test_the_extras_table_names_every_extra_pyproject_declares():
     assert not missing, f"pyproject declares extras {missing} that the generated table omits"
 
 
-def test_a_training_engine_is_not_advertised_against_an_untrainable_backend():
-    """``trainer_for`` raises for chgnet / orb / sevenn — the table must not contradict it.
+def test_the_training_engine_is_advertised_exactly_where_a_trainer_exists():
+    """``mlip-train`` appears on a backend's row iff one of its tasks has a trainer.
 
-    Guarding the one derived judgement in the hook. Everything else it prints is copied
-    from the registry; this row is filtered, so it is the row that can be wrong.
+    Guarding the one derived judgement in the hook — everything else it prints is copied
+    from the registry; this row is filtered, so it is the row that can be wrong, in either
+    direction: advertising a step that would fail with ``ConfigError``, or hiding one that
+    runs. Derived from the registry rather than naming a backend, because *which* backends
+    train is the roster's business and has already changed once under a test that froze it.
     """
-    row = next(line for line in _rows(_render("backends")) if "`mlip-chgnet`" in line)
-    assert "`mlip-train`" not in row, (
-        "the backend table lists `mlip-train` against a backend with no trainer; "
-        "a step naming it fails with ConfigError"
+    from chemrefine.engines.mlip.registry import (
+        backend_spec,
+        registered_backends,
+        registered_trainers,
     )
+
+    trainable_extras = {backend_spec(t).extra for t in registered_trainers()}
+    mlip_extras = {backend_spec(t).extra for t in registered_backends()}
+    checked = 0
+    for line in _rows(_render("backends")):
+        extra = next((e for e in mlip_extras if f"`{e}`" in line), None)
+        if extra is None:
+            continue
+        checked += 1
+        assert ("`mlip-train`" in line) == (extra in trainable_extras), (
+            f"{extra}: the table and trainer_for disagree about mlip-train"
+        )
+    assert checked == len(mlip_extras), "some registered backend never appeared in the table"
 
 
 def test_an_unknown_directive_is_a_build_failure_not_a_silent_comment():

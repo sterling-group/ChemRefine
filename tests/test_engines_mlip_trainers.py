@@ -22,6 +22,7 @@ import functools
 import json
 import subprocess
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 import pytest
@@ -39,7 +40,7 @@ from chemrefine.engines.mlip.backends.mace import (
     _to_atoms,
 )
 from chemrefine.engines.mlip.registry import requirement_from_options
-from chemrefine.engines.mlip.training import DatasetSplit, TrainingPlan, split_structures
+from chemrefine.engines.mlip.train.base import DatasetSplit, TrainingPlan, split_structures
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
@@ -645,3 +646,296 @@ def test_the_sevenn_product_is_the_fixed_best_checkpoint(tmp_path: Path):
 
     artifact = SevennTrainer().artifact(tmp_path / "train", "train")
     assert artifact == tmp_path / "train" / "checkpoint_best.pth"
+
+
+# ---------------------------------------------------------------------------
+# CHGNet — the driver route: rendered YAML in, fixed-name checkpoint out
+# ---------------------------------------------------------------------------
+
+
+def _chgnet_split() -> DatasetSplit:
+    return DatasetSplit(
+        train=(_labelled("0"), _labelled("1", energy=-1.6)),
+        valid=(_labelled("2"),),
+        test=(),
+    )
+
+
+def test_chgnet_training_without_a_validation_set_is_refused(tmp_path: Path):
+    """``Trainer.train`` takes a validation loader positionally — no train-only mode."""
+    from chemrefine.engines.mlip.backends.chgnet import ChgnetTrainer
+
+    split = DatasetSplit(train=(_labelled("0"),), valid=(), test=())
+    with pytest.raises(ConfigError, match="validation set"):
+        ChgnetTrainer().write_dataset(_plan(tmp_path), split)
+
+
+def test_chgnet_warns_when_charge_or_spin_would_be_dropped(tmp_path: Path, caplog):
+    import logging
+
+    from chemrefine.engines.mlip.backends.chgnet import ChgnetTrainer
+
+    with caplog.at_level(logging.WARNING):
+        ChgnetTrainer().write_dataset(_plan(tmp_path, multiplicity=3), _chgnet_split())
+    assert "no charge/spin channel" in caplog.text
+
+
+def test_chgnet_placeholders_name_every_dataset(tmp_path: Path):
+    from chemrefine.engines.mlip.backends.chgnet import ChgnetTrainer
+
+    trainer = ChgnetTrainer()
+    plan = _plan(tmp_path)
+    files = trainer.write_dataset(plan, _chgnet_split())
+    placeholders = trainer.placeholders(plan, files)
+    assert placeholders["TRAIN_SET"] == str(files.train)
+    assert placeholders["VALID_SET"] == str(files.valid)
+    assert placeholders["TEST_SET"] == ""
+
+
+def test_chgnet_runs_the_shipped_driver_under_the_backends_interpreter(tmp_path: Path):
+    """``-m …train_driver chgnet`` — the shared driver, dispatching back to this class.
+
+    A managed env is a ``chemrefine[mlip-chgnet]`` install, the same fact that lets the
+    ExtOpt server run as ``python -m chemrefine.…server`` from one; the driver resolves
+    the trainer through the registry over there, so the library stays one dropped-in
+    module. The config rides by basename, for the array-sentinel reason MACE's command
+    spells out.
+    """
+    import shlex
+
+    from chemrefine.engines.mlip.backends.chgnet import ChgnetTrainer
+
+    plan = _plan(tmp_path, launcher=Path("/envs/my chgnet/bin/python"))
+    cmd = ChgnetTrainer().command(plan, tmp_path / "step3_train.yaml")
+    quoted = shlex.quote("/envs/my chgnet/bin/python")
+    assert cmd == f"{quoted} -m chemrefine.engines.mlip.train.driver chgnet step3_train.yaml"
+
+
+def test_the_chgnet_product_is_the_fixed_named_save(tmp_path: Path):
+    """``{run_name}.pth.tar`` — CHGNet's own best checkpoints embed epoch and error."""
+    from chemrefine.engines.mlip.backends.chgnet import ChgnetTrainer
+
+    artifact = ChgnetTrainer().artifact(tmp_path / "train", "train")
+    assert artifact == tmp_path / "train" / "train.pth.tar"
+
+
+# ---------------------------------------------------------------------------
+# The backend-side hook — chemistry conventions pinned against fakes
+# ---------------------------------------------------------------------------
+
+
+class _FakeStructureData:
+    """Records what CHGNet's dataset would be built from."""
+
+    instances: ClassVar[list[_FakeStructureData]] = []
+
+    def __init__(self, *, structures, energies, forces):
+        self.structures = structures
+        self.energies = energies
+        self.forces = forces
+        type(self).instances.append(self)
+
+
+def _install_fake_chgnet_stack(monkeypatch) -> dict:
+    """Fake pymatgen / chgnet / torch for ``run_training``; ase and yaml stay real."""
+    import sys
+    import types
+    from unittest.mock import MagicMock
+
+    _FakeStructureData.instances = []
+    recorded: dict = {}
+
+    ase_mod = types.ModuleType("pymatgen.io.ase")
+    ase_mod.AseAtomsAdaptor = types.SimpleNamespace(
+        get_structure=lambda atoms: ("PMG", atoms.get_chemical_formula())
+    )
+    io_mod = types.ModuleType("pymatgen.io")
+    io_mod.ase = ase_mod
+    pmg_mod = types.ModuleType("pymatgen")
+    pmg_mod.io = io_mod
+
+    dataset_mod = types.ModuleType("chgnet.data.dataset")
+    dataset_mod.StructureData = _FakeStructureData
+    dataset_mod.get_loader = MagicMock(side_effect=lambda ds, *, batch_size: ("LOADER", ds))
+    data_mod = types.ModuleType("chgnet.data")
+    data_mod.dataset = dataset_mod
+
+    best = MagicMock()
+    best.as_dict.return_value = {"state_dict": "BEST"}
+    trainer_instance = MagicMock()
+    trainer_instance.best_model = best
+    trainer_cls = MagicMock(return_value=trainer_instance)
+    trainer_mod = types.ModuleType("chgnet.trainer")
+    trainer_mod.Trainer = trainer_cls
+
+    chgnet_cls = MagicMock()
+    chgnet_cls.load.return_value = "RELEASED_MODEL"
+    chgnet_cls.from_file.return_value = "LOCAL_MODEL"
+    model_mod = types.ModuleType("chgnet.model")
+    model_mod.CHGNet = chgnet_cls
+    chgnet_mod = types.ModuleType("chgnet")
+    chgnet_mod.model = model_mod
+    chgnet_mod.trainer = trainer_mod
+    chgnet_mod.data = data_mod
+
+    torch_mod = types.ModuleType("torch")
+    torch_mod.save = MagicMock(
+        side_effect=lambda payload, path: recorded.update(saved=(payload, str(path)))
+    )
+
+    for name, mod in {
+        "pymatgen": pmg_mod,
+        "pymatgen.io": io_mod,
+        "pymatgen.io.ase": ase_mod,
+        "chgnet": chgnet_mod,
+        "chgnet.model": model_mod,
+        "chgnet.trainer": trainer_mod,
+        "chgnet.data": data_mod,
+        "chgnet.data.dataset": dataset_mod,
+        "torch": torch_mod,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, mod)
+    recorded.update(
+        trainer_cls=trainer_cls,
+        trainer=trainer_instance,
+        chgnet_cls=chgnet_cls,
+        get_loader=dataset_mod.get_loader,
+        best=best,
+    )
+    return recorded
+
+
+def _driver_config(tmp_path: Path, **overrides) -> Path:
+    """A rendered driver config over a really-written dataset, as YAML on disk."""
+    import yaml
+
+    from chemrefine.engines.mlip.backends.chgnet import ChgnetTrainer
+
+    files = ChgnetTrainer().write_dataset(_plan(tmp_path), _chgnet_split())
+    config = {
+        "train_set": str(files.train),
+        "valid_set": str(files.valid),
+        "test_set": "",
+        "run_name": "train",
+        "device": "cpu",
+        "seed": 7,
+        "start_from": "",
+        "epochs": 3,
+        "learning_rate": 1e-3,
+        "batch_size": 2,
+        "targets": "ef",
+    }
+    config.update(overrides)
+    path = tmp_path / "rendered.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    return path
+
+
+def test_the_hook_feeds_chgnet_per_atom_energies_without_resplitting(tmp_path: Path, monkeypatch):
+    """The two CHGNet facts the hook owns, pinned: eV/atom labels, no second split.
+
+    ``StructureData`` takes **per-atom** energies (CHGNet's own fine-tuning example's
+    convention) — a total-energy mistake here mislabels every fine-tune by a factor of
+    the atom count. And each split becomes its own ``get_loader`` dataset: CHGNet's
+    splitting loader would re-partition what ``split_structures`` already decided.
+    Driven through the shared ``train.driver`` entry, exactly as the generated command
+    invokes it.
+    """
+    from chemrefine.engines.mlip.train import driver as train_driver
+
+    recorded = _install_fake_chgnet_stack(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    assert train_driver.main(["chgnet", str(_driver_config(tmp_path))]) == 0
+
+    train_ds, valid_ds = _FakeStructureData.instances
+    assert len(train_ds.structures) == 2 and len(valid_ds.structures) == 1
+    # H2O has 3 atoms; the file's energy= field is total eV.
+    assert train_ds.energies[0] == pytest.approx(-1.5 * HARTREE_TO_EV / 3, rel=1e-12)
+    assert np.asarray(train_ds.forces[0]).shape == (3, 3)
+    # Two loaders (no test set), each over one already-split dataset.
+    assert recorded["get_loader"].call_count == 2
+    train_call = recorded["trainer"].train.call_args
+    assert train_call.args[2] is None  # no test loader
+    assert train_call.kwargs["save_dir"] == "chgnet_epochs"
+
+
+def test_the_hook_saves_the_best_model_under_the_promised_name(tmp_path: Path, monkeypatch):
+    """``{run_name}.pth.tar`` holding ``{"model": as_dict()}`` — what from_file reads."""
+    from chemrefine.engines.mlip.train import driver as train_driver
+
+    recorded = _install_fake_chgnet_stack(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    train_driver.main(["chgnet", str(_driver_config(tmp_path))])
+    payload, path = recorded["saved"]
+    assert path == "train.pth.tar"
+    assert payload == {"model": {"state_dict": "BEST"}}
+    recorded["chgnet_cls"].load.assert_called_once_with()
+    trainer_kwargs = recorded["trainer_cls"].call_args.kwargs
+    assert trainer_kwargs["use_device"] == "cpu"
+    assert trainer_kwargs["epochs"] == 3
+    assert (trainer_kwargs["torch_seed"], trainer_kwargs["data_seed"]) == (7, 7)
+
+
+def test_the_hook_fine_tunes_from_a_named_checkpoint(tmp_path: Path, monkeypatch):
+    """``start_from`` routes through ``from_file`` — the released weights otherwise."""
+    from chemrefine.engines.mlip.train import driver as train_driver
+
+    recorded = _install_fake_chgnet_stack(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    train_driver.main(["chgnet", str(_driver_config(tmp_path, start_from="/m/prev.pth.tar"))])
+    recorded["chgnet_cls"].from_file.assert_called_once_with("/m/prev.pth.tar")
+    recorded["chgnet_cls"].load.assert_not_called()
+
+
+def test_the_hook_falls_back_to_the_final_model_without_a_best(tmp_path: Path, monkeypatch):
+    """A run whose metric never improved still saves — ``trainer.model`` stands in."""
+    from unittest.mock import MagicMock
+
+    from chemrefine.engines.mlip.backends.chgnet import ChgnetTrainer
+
+    recorded = _install_fake_chgnet_stack(monkeypatch)
+    recorded["trainer"].best_model = None
+    final = MagicMock()
+    final.as_dict.return_value = {"state_dict": "FINAL"}
+    recorded["trainer"].model = final
+    monkeypatch.chdir(tmp_path)
+    import yaml
+
+    config = yaml.safe_load(_driver_config(tmp_path).read_text(encoding="utf-8"))
+    assert ChgnetTrainer().run_training(config) == 0
+    payload, _path = recorded["saved"]
+    assert payload == {"model": {"state_dict": "FINAL"}}
+
+
+def test_the_hook_refuses_a_config_missing_its_required_keys():
+    """The render fills $TRAIN_SET/$VALID_SET/$RUN_NAME; a template naming none fails
+    with the placeholders to add, not inside chgnet an hour later."""
+    from chemrefine.engines.mlip.backends.chgnet import ChgnetTrainer
+
+    with pytest.raises(SystemExit, match="valid_set"):
+        ChgnetTrainer().run_training({"train_set": "/d/t.xyz"})
+
+
+def test_the_driver_dispatches_by_registry_and_refuses_the_wrong_kind(tmp_path: Path):
+    """The shared entry's own refusals: usage, a non-mapping config, a CLI-library task.
+
+    A task whose trainer has no ``run_training`` — MACE and SevenNet drive their own
+    CLIs — is told so by name rather than dying on an attribute three frames down; an
+    unknown task gets ``trainer_for``'s ordinary vocabulary error.
+    """
+    import yaml
+
+    from chemrefine.engines.mlip.train import driver as train_driver
+
+    with pytest.raises(SystemExit, match="usage"):
+        train_driver.main(["chgnet"])
+
+    listing = tmp_path / "rendered.yaml"
+    listing.write_text("- not\n- a\n- mapping\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="not a YAML mapping"):
+        train_driver.main(["chgnet", str(listing)])
+
+    mapping = tmp_path / "ok.yaml"
+    mapping.write_text(yaml.safe_dump({"train_set": "x"}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="its library's own CLI"):
+        train_driver.main(["mace_off", str(mapping)])

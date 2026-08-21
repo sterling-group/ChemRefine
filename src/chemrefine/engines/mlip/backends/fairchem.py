@@ -19,7 +19,7 @@ from typing import Any, ClassVar
 import numpy as np
 
 from chemrefine.engines.mlip.registry import MlipLibrary
-from chemrefine.engines.mlip.training import DatasetFiles, DatasetSplit, TrainingPlan
+from chemrefine.engines.mlip.train.base import DatasetFiles, DatasetSplit, TrainingPlan
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
@@ -245,7 +245,7 @@ class FairchemTrainer:
         ``scheduler.mode`` are omegaconf-validated enums that reject their own lowercase
         *values* — ``'cpu'`` raises ``Invalid value 'cpu', expected one of [CPU, CUDA]`` — and
         accept only the member names. A trainer specialising a shared placeholder is what
-        :func:`~chemrefine.engines.mlip.training.placeholders_for` allows, and this is the
+        :func:`~chemrefine.engines.mlip.train.base.placeholders_for` allows, and this is the
         case it is for: the same word, the spelling this library insists on.
 
         ``$RANKS_PER_NODE`` exists because ``$NGPUS`` cannot serve FAIRChem's

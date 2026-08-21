@@ -72,6 +72,7 @@ def test_python_dash_m_translates_legacy_argv():
     [
         "chemrefine.engines.orca.extopt.bridge",
         "chemrefine.engines._backend_server.server",
+        "chemrefine.engines.mlip.train.driver",
     ],
 )
 def test_module_entrypoint_runs_main(module, monkeypatch):

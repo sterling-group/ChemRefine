@@ -7,18 +7,28 @@ library's calculator, sharing its one environment declaration. Which library a s
 :mod:`chemrefine.engines.mlip.registry`.
 
 Generic and never written twice: the train/valid/test split (:func:`split_structures`), the
-placeholders every config may use (:func:`base_placeholders`), and the rendering with its
-validation (:func:`render_config`). Library-specific, and so a :class:`Trainer` method:
+placeholders every config may use (:func:`base_placeholders`), the rendering with its
+validation (:func:`render_config`), and the calculator-labelled extxyz writer
+(:func:`write_labelled_extxyz`) for the libraries that read labels off ``atoms.calc``.
+Library-specific, and so a :class:`Trainer` method:
 
 ===================  ==========================================================
 ``write_dataset``    MACE wants extxyz with ``REF_*`` keys; FAIRChem wants an
                      ASE db whose labels ride on a ``SinglePointCalculator``;
-                     AIMNet2 wants HDF5. There is no common file.
+                     SevenNet and the CHGNet driver read the shared
+                     calculator-labelled extxyz. There is no common file.
 ``placeholders``     what its config calls those files.
-``command``          ``mace_run_train`` vs ``fairchem -c`` vs ``aimnet train``,
+``command``          ``mace_run_train`` vs ``fairchem -c`` vs ``sevenn train``,
                      and each library's own multi-GPU idiom.
 ``artifact``         where the trained model lands.
 ===================  ==========================================================
+
+A library whose training is a pure Python API — CHGNet has no CLI and no config format —
+adds one more method on the same class: ``run_training(config)``, which the shared
+:mod:`~chemrefine.engines.mlip.train.driver` resolves through the registry and calls in
+the *backend* environment. Optional and duck-typed rather than part of the Protocol,
+because a CLI-driven library has nothing to put there and a Protocol cannot make a member
+optional; the driver names the mismatch either way.
 
 Rendering, not patching
 -----------------------
@@ -47,13 +57,17 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
-from typing import ClassVar, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, ClassVar, Protocol, runtime_checkable
 
 import numpy as np
 
 from chemrefine import ids
 from chemrefine.errors import ConfigError
+from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
+
+if TYPE_CHECKING:
+    from ase import Atoms
 
 # ---------------------------------------------------------------------------
 # What a training run is
@@ -335,6 +349,48 @@ def render_config(
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(Template(text).safe_substitute(placeholders), encoding="utf-8")
     return dest
+
+
+def labelled_atoms(struct: Structure) -> Atoms:
+    """One :class:`~ase.Atoms` whose labels ride on a ``SinglePointCalculator``.
+
+    The *plain* labelled-extxyz form — ase's writer emits the standard ``energy=`` /
+    ``free_energy=`` comment fields plus a ``forces`` column, and its reader reconstructs
+    the calculator — shared by the trainers whose libraries read labels off ``atoms.calc``
+    (SevenNet's loader, and the CHGNet driver's own conversion). MACE deliberately does
+    not use it: its dataset speaks ``REF_*`` info keys, written in its own module.
+    ``free_energy`` is set alongside ``energy`` because SevenNet asks
+    ``get_potential_energy(force_consistent=True)`` first.
+
+    Energies are converted Hartree → eV; forces are already eV/Å. The copy keeps the
+    pipeline's own structure untouched — its force arrays are deliberately read-only, and
+    an attached calculator would otherwise ride the shared reference.
+    """
+    from ase.calculators.singlepoint import SinglePointCalculator
+
+    atoms: Atoms = struct.atoms.copy()
+    if struct.energy_hartree is None or struct.forces_ev_per_a is None:
+        raise ConfigError(
+            f"structure {struct.id} is missing an energy or forces — "
+            f"split_structures should have refused it before any writer ran"
+        )
+    energy_ev = struct.energy_hartree * HARTREE_TO_EV
+    atoms.calc = SinglePointCalculator(
+        atoms,
+        energy=energy_ev,
+        free_energy=energy_ev,
+        forces=np.asarray(struct.forces_ev_per_a, dtype=float),
+    )
+    return atoms
+
+
+def write_labelled_extxyz(path: Path, structures: Sequence[Structure]) -> Path:
+    """Write ``structures`` as calculator-labelled extxyz frames at ``path``."""
+    from ase.io import write as ase_write
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ase_write(str(path), [labelled_atoms(s) for s in structures], format="extxyz")
+    return path
 
 
 def _fingerprint_sha1() -> hashlib._Hash:

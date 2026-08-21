@@ -84,7 +84,7 @@ class MlipTrainOptions(MlipOptions):
     both could have got it by re-declaring the field with a wider type. That would be a lie
     to anything holding these options as the base type, and the type checker says so. Pydantic
     already records which fields the YAML actually set, so
-    :class:`~chemrefine.engines.mlip.train_engine.MlipTrainEngine` asks that instead and the
+    :class:`~chemrefine.engines.mlip.train.engine.MlipTrainEngine` asks that instead and the
     inherited types stay honest.
     """
 
@@ -106,7 +106,7 @@ class MlipTrainOptions(MlipOptions):
     whatever the structure count, which is a fact about the number and belongs on the field.
     ``0`` is allowed and means "no validation set" — a legitimate choice on a tiny dataset,
     and distinct from the count-dependent case (a fraction that rounds to zero structures)
-    which only :func:`~chemrefine.engines.mlip.training.split_structures` can decide."""
+    which only :func:`~chemrefine.engines.mlip.train.base.split_structures` can decide."""
 
     test_fraction: float = Field(0.0, ge=0, lt=1)
     """Share held out for a final evaluation the training never sees. Defaults to none.

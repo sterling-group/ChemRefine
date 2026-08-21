@@ -13,11 +13,11 @@ backend-agnostic calculator dispatcher and the YAML option model.
 
 ## Training engine
 
-::: chemrefine.engines.mlip.train_engine
+::: chemrefine.engines.mlip.train.engine
 
 ## Training: the backend-agnostic half
 
-::: chemrefine.engines.mlip.training
+::: chemrefine.engines.mlip.train.base
 
 ## Library registry
 

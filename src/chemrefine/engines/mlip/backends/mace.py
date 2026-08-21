@@ -27,7 +27,7 @@ from ase import Atoms
 from ase.io import write as ase_write
 
 from chemrefine.engines.mlip.registry import LEGACY_MACE_TASK, MlipLibrary
-from chemrefine.engines.mlip.training import DatasetFiles, DatasetSplit, TrainingPlan
+from chemrefine.engines.mlip.train.base import DatasetFiles, DatasetSplit, TrainingPlan
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure

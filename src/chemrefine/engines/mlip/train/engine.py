@@ -10,7 +10,7 @@ Which library trains is ``task_name``, resolved through
 the calculator, so a pipeline that fine-tunes ``task_name: mace_off`` and then runs the result
 names one library and resolves one environment. Everything library-specific (the dataset
 format, the argv, where the model lands) belongs to that library's
-:class:`~chemrefine.engines.mlip.training.Trainer` and nothing of it is spelled here.
+:class:`~chemrefine.engines.mlip.train.base.Trainer` and nothing of it is spelled here.
 
 The job runs through the ordinary scheduler
 (:func:`chemrefine.engines._execution.run_batch`), so training is throttled against the same
@@ -43,7 +43,7 @@ from chemrefine.engines.mlip.registry import (
     requirement_from_options,
     trainer_for,
 )
-from chemrefine.engines.mlip.training import (
+from chemrefine.engines.mlip.train.base import (
     Trainer,
     TrainingPlan,
     digest_of,
@@ -280,6 +280,7 @@ class MlipTrainEngine(MlipBackend):
         "*.log",
         "*.model",
         "*.pt",
+        "*.pth.tar",
         "*.yaml",
         "checkpoint_*.pth",
         "log.sevenn",

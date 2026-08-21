@@ -24,7 +24,7 @@ from chemrefine.engines.api import (
     ProvisionableEngine,
     get_engine,
 )
-from chemrefine.engines.mlip.train_engine import SIDECAR_NAME, MlipTrainEngine
+from chemrefine.engines.mlip.train.engine import SIDECAR_NAME, MlipTrainEngine
 from chemrefine.errors import ConfigError
 from chemrefine.state import JobBatch, PipelineState, StepContext, StepInputs, Structure
 

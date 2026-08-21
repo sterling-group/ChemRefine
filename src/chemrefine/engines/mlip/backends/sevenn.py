@@ -22,16 +22,14 @@ import shlex
 from pathlib import Path
 from typing import Any, ClassVar
 
-import numpy as np
-from ase import Atoms
-from ase.calculators.singlepoint import SinglePointCalculator
-from ase.io import write as ase_write
-
 from chemrefine.engines.mlip.registry import MlipLibrary
-from chemrefine.engines.mlip.training import DatasetFiles, DatasetSplit, TrainingPlan
+from chemrefine.engines.mlip.train.base import (
+    DatasetFiles,
+    DatasetSplit,
+    TrainingPlan,
+    write_labelled_extxyz,
+)
 from chemrefine.errors import ConfigError
-from chemrefine.quantities import HARTREE_TO_EV
-from chemrefine.state import Structure
 
 logger = logging.getLogger(__name__)
 
@@ -71,30 +69,6 @@ def _build_sevenn(
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
-
-
-def _to_atoms(struct: Structure) -> Atoms:
-    """One labelled :class:`~ase.Atoms` in the form SevenNet reads.
-
-    Labels ride on a :class:`~ase.calculators.singlepoint.SinglePointCalculator`: ase's
-    extxyz writer emits them as the standard ``energy=`` / ``free_energy=`` comment fields
-    plus a ``forces`` column, its reader reconstructs the calculator, and SevenNet's
-    loader takes both off it — ``get_potential_energy(force_consistent=True)`` first,
-    which is why ``free_energy`` is set alongside ``energy``. Energies are converted
-    Hartree → eV; forces are already eV/Å. The copy keeps the pipeline's own structure
-    untouched, exactly as the MACE writer's does.
-    """
-    atoms: Atoms = struct.atoms.copy()
-    assert struct.energy_hartree is not None  # noqa: S101 - split_structures rejected these
-    assert struct.forces_ev_per_a is not None  # noqa: S101
-    energy_ev = struct.energy_hartree * HARTREE_TO_EV
-    atoms.calc = SinglePointCalculator(
-        atoms,
-        energy=energy_ev,
-        free_energy=energy_ev,
-        forces=np.asarray(struct.forces_ev_per_a, dtype=float),
-    )
-    return atoms
 
 
 @SEVENN.trainer("sevenn")
@@ -152,9 +126,7 @@ class SevennTrainer:
             if not structures:
                 # An empty split gets no file at all — ase refuses a zero-byte extxyz.
                 continue
-            path = plan.run_dir / f"{name}.xyz"
-            ase_write(str(path), [_to_atoms(s) for s in structures], format="extxyz")
-            written[name] = path
+            written[name] = write_labelled_extxyz(plan.run_dir / f"{name}.xyz", structures)
         assert written["train"] is not None  # noqa: S101 - split_structures guarantees one
         return DatasetFiles(train=written["train"], valid=written["valid"], test=written["test"])
 

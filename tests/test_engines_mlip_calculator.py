@@ -224,23 +224,61 @@ def test_build_fairchem_defaults_model_name(monkeypatch):
 
 
 def _install_fake_chgnet(monkeypatch) -> tuple[MagicMock, MagicMock]:
-    """Install a fake ``chgnet.model`` (canonical import); return ``(loader, calc)``."""
-    loader = MagicMock(return_value="CHGNET_MODEL")
+    """Install a fake ``chgnet.model`` (canonical import); return ``(CHGNet cls, calc)``.
+
+    ``load`` and ``from_file`` accept only what the real classmethods accept — ``load``
+    is keyword-only with a ``model_name`` — so a builder calling either with a stray
+    positional fails here the way it fails in production. The old bare ``MagicMock``
+    accepted anything, which is how ``CHGNet.load(path)`` — a ``TypeError`` against the
+    real keyword-only signature — sat pinned as the checkpoint path for two releases.
+    """
+
+    def _load(*, model_name: str = "0.3.0", **_kwargs: object) -> str:
+        return "CHGNET_MODEL"
+
+    def _from_file(path: str, **_kwargs: object) -> str:
+        return f"CHGNET_FROM_FILE:{path}"
+
     chgnet_cls = MagicMock()
-    chgnet_cls.load = loader
+    chgnet_cls.load = MagicMock(side_effect=_load)
+    chgnet_cls.from_file = MagicMock(side_effect=_from_file)
     calc_class = MagicMock(return_value="CHGNET_CALC")
     model_mod = _fake_module("chgnet.model", CHGNet=chgnet_cls, CHGNetCalculator=calc_class)
     monkeypatch.setitem(sys.modules, "chgnet", _fake_module("chgnet", model=model_mod))
     monkeypatch.setitem(sys.modules, "chgnet.model", model_mod)
-    return loader, calc_class
+    return chgnet_cls, calc_class
 
 
 def test_build_chgnet_uses_default_when_no_model_path(monkeypatch):
-    loader, calc_class = _install_fake_chgnet(monkeypatch)
+    chgnet_cls, calc_class = _install_fake_chgnet(monkeypatch)
     calc = MlipCalculator(task_name="chgnet", model_name="ignored", device="cpu")
-    loader.assert_called_once_with()
+    chgnet_cls.load.assert_called_once_with()
+    chgnet_cls.from_file.assert_not_called()
     calc_class.assert_called_once_with(model="CHGNET_MODEL", use_device="cpu")
     assert calc.calculator == "CHGNET_CALC"
+
+
+def test_a_chgnet_checkpoint_goes_through_from_file(monkeypatch, tmp_path: Path):
+    """A local checkpoint is ``CHGNet.from_file``'s job — ``load`` takes release names.
+
+    ``CHGNet.load`` is keyword-only (``*, model_name="0.3.0"``) and resolves names, never
+    paths; ``from_file`` reads the ``{"model": as_dict()}`` file the training driver
+    saves. This is what closes the train→run round trip for a fine-tuned CHGNet.
+    """
+    chgnet_cls, calc_class = _install_fake_chgnet(monkeypatch)
+    model_file = tmp_path / "finetuned.pth.tar"
+    model_file.touch()
+    MlipCalculator(task_name="chgnet", device="cpu", model_path=str(model_file))
+    chgnet_cls.from_file.assert_called_once_with(str(model_file))
+    chgnet_cls.load.assert_not_called()
+    calc_class.assert_called_once_with(model=f"CHGNET_FROM_FILE:{model_file}", use_device="cpu")
+
+
+def test_a_chgnet_checkpoint_that_is_not_there_names_the_path(tmp_path: Path):
+    """Checked before chgnet is imported — its own failure names neither step nor option."""
+    missing = tmp_path / "does_not_exist.pth.tar"
+    with pytest.raises(FileNotFoundError, match=f"CHGNet checkpoint not found: {missing}"):
+        MlipCalculator(task_name="chgnet", model_path=str(missing))
 
 
 # ---------------------------------------------------------------------------
