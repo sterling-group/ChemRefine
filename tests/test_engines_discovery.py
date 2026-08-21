@@ -63,6 +63,24 @@ def test_dropped_in_plugin_package_is_discovered(monkeypatch, tmp_path: Path):
         sys.modules.pop("chemrefine.engines.goodplug", None)
 
 
+def _dummy_plan(tmp_path: Path):
+    """A minimal TrainingPlan for exercising a dropped-in trainer's hooks."""
+    from chemrefine.engines.mlip.train.base import TrainingPlan
+
+    return TrainingPlan(
+        run_dir=tmp_path / "run",
+        run_name="r",
+        device="cpu",
+        gpus=0,
+        cores=1,
+        seed=1,
+        charge=0,
+        multiplicity=1,
+        start_from=None,
+        launcher=Path("/envs/mlip-dummy/bin/python"),
+    )
+
+
 def test_a_dropped_in_library_module_registers_both_its_capabilities(monkeypatch, tmp_path: Path):
     """One file per library is the extension point, and it declares its env exactly once.
 
@@ -76,6 +94,7 @@ def test_a_dropped_in_library_module_registers_both_its_capabilities(monkeypatch
     """
     (tmp_path / "dummylib.py").write_text(
         "from chemrefine.engines.mlip.registry import MlipLibrary\n"
+        "from chemrefine.engines.mlip.train.base import ApiTrainerBase\n"
         "\n"
         "DUMMY = MlipLibrary(\n"
         '    extra="mlip-dummy", package="dummy-pkg", import_name="dummy_mod"\n'
@@ -87,12 +106,20 @@ def test_a_dropped_in_library_module_registers_both_its_capabilities(monkeypatch
         '    return "DUMMY"\n'
         "\n"
         '@DUMMY.trainer("dummy_head")\n'
-        "class DummyTrainer:\n"
-        '    """Test-only trainer."""\n'
+        "class DummyTrainer(ApiTrainerBase):\n"
+        '    """Test-only trainer: the declarations, and the two hooks a drop-in writes."""\n'
         "\n"
-        '    required_placeholders = frozenset({"TRAIN_SET"})\n'
-        "    output_globs = ()\n"
-        "    output_dirs = ()\n",
+        '    label = "Dummy"\n'
+        '    driver_task = "dummy_head"\n'
+        '    missing_config_hint = "reference $TRAIN_SET and $RUN_NAME"\n'
+        '    artifact_filename = "{run_name}.bin"\n'
+        '    output_globs = ("*.bin",)\n'
+        "\n"
+        "    def write_split(self, plan, name, structures):\n"
+        '        return plan.run_dir / f"{name}.xyz"\n'
+        "\n"
+        "    def train_with_library(self, config):\n"
+        "        return 0\n",
         encoding="utf-8",
     )
     (tmp_path / "_helper.py").write_text(
@@ -109,6 +136,14 @@ def test_a_dropped_in_library_module_registers_both_its_capabilities(monkeypatch
         )
         assert spec.builder is not None and spec.builder(calc_spec) == "DUMMY"
         assert spec.trainer is not None and spec.trainer.__name__ == "DummyTrainer"
+        trainer = spec.trainer()
+        assert trainer.command(_dummy_plan(tmp_path), Path("cfg.yaml")).endswith(
+            "train.driver dummy_head cfg.yaml"
+        ), "an ApiTrainerBase drop-in derives its driver line from its declarations"
+        assert trainer.write_split(_dummy_plan(tmp_path), "train", ()) == (
+            tmp_path / "run" / "train.xyz"
+        )
+        assert trainer.run_training({"train_set": "t.xyz", "run_name": "r"}) == 0
         assert "chemrefine.engines.mlip.backends._helper" not in sys.modules
     finally:
         _BACKENDS.pop("dummy_head", None)
@@ -138,6 +173,88 @@ def test_a_builder_that_is_not_a_single_spec_callable_is_refused_at_its_own_line
     assert "bad_head" not in _BACKENDS
 
 
+def _conforming_trainer() -> type:
+    """A minimal concrete TrainerBase — what the gate lets through."""
+    from chemrefine.engines.mlip.train.base import TrainerBase
+
+    class _Trainer(TrainerBase):
+        label = "Conforming"
+        output_globs = ()
+
+        def write_split(self, plan, name, structures):
+            return plan.run_dir / f"{name}.xyz"
+
+        def command(self, plan, config):
+            return "true"
+
+        def artifact(self, run_dir, run_name):
+            return run_dir / "model.bin"
+
+    return _Trainer
+
+
+def test_a_trainer_that_breaks_the_contract_is_refused_at_its_own_line():
+    """The trainer decorator is the same gate the builder one is — refusal, named.
+
+    Four ways a drop-in can be malformed, each refused at its own decorator line during
+    discovery rather than at the first training step hours later: not a ``TrainerBase``
+    at all; abstract hooks left unimplemented; a declaration the machinery reads never
+    set; a validation requirement declared with no reason to put in the refusal.
+    """
+    from chemrefine.engines.mlip.registry import MlipLibrary
+    from chemrefine.engines.mlip.train.base import ApiTrainerBase, TrainerBase
+
+    lib = MlipLibrary(extra="mlip-bad", package="bad", import_name="bad")
+    base: type = _conforming_trainer()
+
+    with pytest.raises(TypeError, match="must decorate a TrainerBase subclass"):
+        lib.trainer("bad_head")(cast("type[TrainerBase]", type("T", (), {})))
+
+    class _NoHooks(TrainerBase):
+        label = "Bad"
+        output_globs = ()
+
+    with pytest.raises(TypeError, match=r"leaves .* abstract"):
+        lib.trainer("bad_head")(cast("type[TrainerBase]", _NoHooks))
+
+    class _NoLabel(TrainerBase):
+        output_globs = ()
+
+        def write_split(self, plan, name, structures):
+            return plan.run_dir / f"{name}.xyz"
+
+        def command(self, plan, config):
+            return "true"
+
+        def artifact(self, run_dir, run_name):
+            return run_dir / "model.bin"
+
+    with pytest.raises(TypeError, match=r"missing declaration\(s\) \['label'\]"):
+        lib.trainer("bad_head")(_NoLabel)
+
+    class _NoReason(base):  # type: ignore[misc]
+        needs_validation = True
+
+    with pytest.raises(TypeError, match=r"missing declaration\(s\) \['validation_reason'\]"):
+        lib.trainer("bad_head")(_NoReason)
+
+    class _BareApi(ApiTrainerBase):
+        label = "BadApi"
+        output_globs = ()
+
+        def write_split(self, plan, name, structures):
+            return plan.run_dir / f"{name}.xyz"
+
+        def train_with_library(self, config):
+            return 0
+
+    missing_api = r"\['driver_task', 'missing_config_hint', 'artifact_filename'\]"
+    with pytest.raises(TypeError, match=missing_api):
+        lib.trainer("bad_head")(_BareApi)
+
+    assert "bad_head" not in _BACKENDS
+
+
 def test_one_task_cannot_name_two_libraries(monkeypatch, tmp_path: Path):
     """The drift the single registry exists to make impossible, refused at registration.
 
@@ -152,6 +269,6 @@ def test_one_task_cannot_name_two_libraries(monkeypatch, tmp_path: Path):
     first.calculator("contested")(lambda _spec: None)
     try:
         with pytest.raises(ValueError, match="one task names one library"):
-            second.trainer("contested")(type("T", (), {}))
+            second.trainer("contested")(_conforming_trainer())
     finally:
         _BACKENDS.pop("contested", None)

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
-from chemrefine.engines.mlip.train.base import TrainerBase, TrainingPlan
+from chemrefine.engines.mlip.train.base import ApiTrainerBase, TrainingPlan
 from chemrefine.errors import ConfigError
 from chemrefine.state import Structure
 
@@ -71,7 +71,7 @@ def _build_orb(spec: CalculatorSpec) -> Any:
 
 
 @ORB.trainer("orb")
-class OrbTrainer(TrainerBase):
+class OrbTrainer(ApiTrainerBase):
     """Fine-tune an ORB model on a step's labelled structures.
 
     orb-models publishes its fine-tuning entry point as a repo-root script that is **not
@@ -98,6 +98,17 @@ class OrbTrainer(TrainerBase):
     """
 
     label = "ORB"
+    driver_task = "orb"
+    required_config_keys = ("train_set", "run_name", "base_model")
+    missing_config_hint = (
+        "the template must reference $TRAIN_SET and $RUN_NAME, and name a base_model "
+        "(the pretrained loader)"
+    )
+    artifact_filename = "{run_name}.ckpt"
+    """orb's own per-epoch names embed the epoch (``checkpoint_epoch{n}.ckpt``), which
+    no later step could name before the run; the hook re-saves the final state under
+    this fixed name, loadable through the pretrained loaders' ``weights_path`` — the
+    same door the calculator builder opens for ``model_path``."""
 
     required_placeholders: ClassVar[frozenset[str]] = frozenset({"TRAIN_SET", "RUN_NAME"})
     """No ``VALID_SET``: orb's fine-tune loop is train-only — it has no evaluation pass, so
@@ -130,32 +141,10 @@ class OrbTrainer(TrainerBase):
                 db.write(labelled_atoms(struct))
         return path
 
-    def command(self, plan: TrainingPlan, config: Path) -> str:
-        """The shared train driver, under the backend env's interpreter.
-
-        Single-device: orb's own script binds one ``device_id``, and DDP is not a mode it
-        documents. The config rides by basename for the array-sentinel reason MACE's
-        command spells out.
-        """
-        python = self.quoted_launcher(plan)
-        return f"{python} -m chemrefine.engines.mlip.train.driver orb {config.name}"
-
-    def artifact(self, run_dir: Path, run_name: str) -> Path:
-        """:meth:`run_training`'s fixed-name final save: ``{run_name}.ckpt``.
-
-        orb's own per-epoch names embed the epoch (``checkpoint_epoch{n}.ckpt``), which no
-        later step could name before the run; the hook re-saves the final state under this
-        name, loadable through the pretrained loaders' ``weights_path`` — the same door
-        the calculator builder opens for ``model_path``.
-        """
-        return run_dir / f"{run_name}.ckpt"
-
     # -- the backend-side half (runs under the mlip-orb env's interpreter) -------------
 
-    _REQUIRED_KEYS = ("train_set", "run_name", "base_model")
-
-    def run_training(self, config: dict[str, Any]) -> int:
-        """orb's fine-tune loop, rebuilt from the packaged utilities — the driver's hook.
+    def train_with_library(self, config: dict[str, Any]) -> int:
+        """orb's fine-tune loop, rebuilt from the packaged utilities.
 
         The published loop lives in an unpackaged script, so this is a re-implementation,
         deliberately slim and pinned line-for-line to that script's shape: the pretrained
@@ -167,13 +156,6 @@ class OrbTrainer(TrainerBase):
         the script's fixed ``num_steps``: an epoch that sees every structure is the
         behaviour a training step's re-run can reproduce.
         """
-        missing = [key for key in self._REQUIRED_KEYS if not config.get(key)]
-        if missing:
-            raise SystemExit(
-                f"orb training config is missing {missing} — the template must reference "
-                f"$TRAIN_SET and $RUN_NAME, and name a base_model (the pretrained loader)"
-            )
-
         import torch
         from orb_models.common.dataset import property_definitions
         from orb_models.common.dataset.ase_sqlite_dataset import AseSqliteDataset
@@ -235,7 +217,7 @@ class OrbTrainer(TrainerBase):
                     lr_scheduler.step()
             torch.save(model.state_dict(), f"checkpoint_epoch{epoch}.ckpt")
 
-        target = Path(f"{config['run_name']}.ckpt")
+        target = Path(self.artifact_filename.format(run_name=config["run_name"]))
         torch.save(model.state_dict(), target)
         print(f"orb training: saved {target}")
         return 0

@@ -47,19 +47,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     task_name, config_path = args
 
     from chemrefine.engines.mlip.registry import trainer_for
+    from chemrefine.engines.mlip.train.base import ApiTrainerBase
 
     trainer = trainer_for(task_name)()
-    run = getattr(trainer, "run_training", None)
-    if run is None:
-        # Reachable only by hand: a trainer whose `command` names this driver but
-        # implements no hook would be caught by its own unit tests long before a job —
-        # but a person running the module against the wrong task deserves the real answer.
+    if not isinstance(trainer, ApiTrainerBase):
+        # Reachable only by hand: a CLI-driven trainer's `command` never names this
+        # driver — but a person running the module against the wrong task deserves the
+        # real answer. Nominal, not structural: being drivable is a fact of inheritance.
         raise SystemExit(
             f"train_driver: {task_name!r} trains through its library's own CLI, "
             f"not through this driver"
         )
-    result: int = run(_load_config(Path(config_path)))
-    return result
+    return trainer.run_training(_load_config(Path(config_path)))
 
 
 if __name__ == "__main__":

@@ -6,9 +6,8 @@ shell reads as one directory, not as three siblings competing for a prefix at th
 package's top level.
 
 * :mod:`~chemrefine.engines.mlip.train.base` — the contract and the backend-agnostic
-  machinery: :class:`TrainerBase` (and the :class:`Trainer` Protocol it is replacing),
-  :class:`TrainingPlan`, the deterministic split, the template render, the shared
-  dataset writers.
+  machinery: :class:`TrainerBase` and :class:`ApiTrainerBase`, :class:`TrainingPlan`,
+  the deterministic split, the template render, the shared dataset writers.
 * :mod:`~chemrefine.engines.mlip.train.engine` — :class:`MlipTrainEngine`, the
   scheduler-facing half (``engine: mlip-train``).
 * :mod:`~chemrefine.engines.mlip.train.driver` — the ``python -m`` shell an API-only
@@ -22,9 +21,9 @@ registry per library is the doctrine this package must not fork.
 from __future__ import annotations
 
 from chemrefine.engines.mlip.train.base import (
+    ApiTrainerBase,
     DatasetFiles,
     DatasetSplit,
-    Trainer,
     TrainerBase,
     TrainingPlan,
     base_placeholders,
@@ -38,10 +37,10 @@ from chemrefine.engines.mlip.train.base import (
 from chemrefine.engines.mlip.train.engine import MlipTrainEngine
 
 __all__ = [
+    "ApiTrainerBase",
     "DatasetFiles",
     "DatasetSplit",
     "MlipTrainEngine",
-    "Trainer",
     "TrainerBase",
     "TrainingPlan",
     "base_placeholders",

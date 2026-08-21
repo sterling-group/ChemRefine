@@ -1,34 +1,33 @@
 """Backend-agnostic MLIP *training*: the split, the plan, and the config renderer.
 
 Everything about a training run that does **not** depend on which library trains. What a
-:class:`Trainer` supplies is only what genuinely differs between libraries, and each one lives
-in its library's own module under :mod:`chemrefine.engines.mlip.backends` — beside that
-library's calculator, sharing its one environment declaration. Which library a step selects is
-:mod:`chemrefine.engines.mlip.registry`.
+:class:`TrainerBase` subclass supplies is only what genuinely differs between libraries, and
+each one lives in its library's own module under :mod:`chemrefine.engines.mlip.backends` —
+beside that library's calculator, sharing its one environment declaration. Which library a
+step selects is :mod:`chemrefine.engines.mlip.registry`.
 
 Generic and never written twice: the train/valid/test split (:func:`split_structures`), the
 placeholders every config may use (:func:`base_placeholders`), the rendering with its
 validation (:func:`render_config`), and the calculator-labelled extxyz writer
 (:func:`write_labelled_extxyz`) for the libraries that read labels off ``atoms.calc``.
-Library-specific, and so a :class:`Trainer` method:
+Library-specific, and so a :class:`TrainerBase` hook:
 
 ===================  ==========================================================
-``write_dataset``    MACE wants extxyz with ``REF_*`` keys; FAIRChem wants an
+``write_split``      MACE wants extxyz with ``REF_*`` keys; FAIRChem wants an
                      ASE db whose labels ride on a ``SinglePointCalculator``;
                      SevenNet and the CHGNet driver read the shared
                      calculator-labelled extxyz. There is no common file.
-``placeholders``     what its config calls those files.
 ``command``          ``mace_run_train`` vs ``fairchem -c`` vs ``sevenn train``,
                      and each library's own multi-GPU idiom.
 ``artifact``         where the trained model lands.
 ===================  ==========================================================
 
 A library whose training is a pure Python API — CHGNet has no CLI and no config format —
-adds one more method on the same class: ``run_training(config)``, which the shared
-:mod:`~chemrefine.engines.mlip.train.driver` resolves through the registry and calls in
-the *backend* environment. Optional and duck-typed rather than part of the Protocol,
-because a CLI-driven library has nothing to put there and a Protocol cannot make a member
-optional; the driver names the mismatch either way.
+subclasses :class:`ApiTrainerBase` instead: ``command`` and ``artifact`` derive from its
+declarations, and the one hook it adds, ``train_with_library(config)``, is what the shared
+:mod:`~chemrefine.engines.mlip.train.driver` reaches through the registry in the *backend*
+environment. The driver dispatches nominally — ``isinstance(trainer, ApiTrainerBase)`` — so
+being drivable is a fact of inheritance, not of resemblance.
 
 Rendering, not patching
 -----------------------
@@ -60,7 +59,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
-from typing import TYPE_CHECKING, ClassVar, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
@@ -138,12 +137,12 @@ class DatasetFiles:
 class TrainingPlan:
     """*Where and how* one training run executes — resolved once, before anything is written.
 
-    A single value threaded through the :class:`Trainer` methods, so ``command`` and
+    A single value threaded through the :class:`TrainerBase` hooks, so ``command`` and
     ``placeholders`` cannot end up describing different runs: a config naming one directory
     and an argv naming another produces a step that trains correctly and is then reported as
     having produced nothing.
 
-    Deliberately **not** the data. The split is passed to :meth:`Trainer.write_dataset`
+    Deliberately **not** the data. The split is passed to :meth:`TrainerBase.write_dataset`
     separately because it is the only thing here that depends on the step's structures, and
     folding it in would mean a trainer could not say what command it runs without first being
     handed an ensemble — which is exactly what the scheduler asks it, before there is one.
@@ -189,67 +188,6 @@ class TrainingPlan:
         return self.charge == 0 and self.multiplicity == 1
 
 
-@runtime_checkable
-class Trainer(Protocol):
-    """What one MLIP library needs in order to be trained by chemrefine.
-
-    Four methods and three declarations, and that is the whole of it. A class rather than the
-    bare function a *calculator* backend registers, because these decisions are not
-    independent: the dataset format implies what the placeholders mean, which implies the
-    argv, which implies where the product lands. Grouped in one class, a combination that does
-    not agree with itself cannot be written by accident.
-    """
-
-    required_placeholders: ClassVar[frozenset[str]]
-    """Placeholders this backend's config must reference, or the step is misconfigured.
-
-    Checked before submission (:func:`render_config`). A config that never names the dataset
-    chemrefine just wrote is not a config that trains on it — most libraries would either read
-    some previous run's data or fail an hour later with a message about a path the user never
-    typed."""
-
-    output_globs: ClassVar[tuple[str, ...]]
-    """Loose files to copy back out of the job's scratch directory."""
-
-    output_dirs: ClassVar[tuple[str, ...]]
-    """Whole directories to copy back (``checkpoints``, ``logs``, …)."""
-
-    def write_dataset(self, plan: TrainingPlan, split: DatasetSplit) -> DatasetFiles:
-        """Write the split to disk in this backend's format; return the paths.
-
-        Runs in the **orchestrator's** process, not the backend's, so it may use only
-        chemrefine's own dependencies — ``ase`` and ``numpy``. That is a real constraint and a
-        deliberate one: it keeps every trainer module importable with no MLIP library
-        installed, which is what lets the registry be built at import time. A format that
-        genuinely needs the backend (SevenNet's graph pre-build, AIMNet2's HDF5 packer) is
-        expressed as an extra line in :meth:`command`, where the library is importable.
-        """
-        ...
-
-    def placeholders(self, plan: TrainingPlan, data: DatasetFiles) -> dict[str, str]:
-        """This backend's ``$VAR`` substitutions, merged over :func:`base_placeholders`."""
-        ...
-
-    def command(self, plan: TrainingPlan, config: Path) -> str:
-        """The bash that runs the training inside ``$WORK_DIR``.
-
-        One command, no ``trap`` and no teardown: the job script owns the single exit handler
-        that copies results back, and an engine that emits its own would replace it.
-        """
-        ...
-
-    def artifact(self, run_dir: Path, run_name: str) -> Path:
-        """The trained model — the file whose existence is this step's success test.
-
-        Takes the run's directory and name rather than a whole :class:`TrainingPlan`, because
-        it must be answerable *without* one: ``rebuild-cache`` adopts a product having
-        submitted nothing, and ``chemrefine.step`` asks after a failure, when there is no
-        dataset to split and no launcher to resolve. Both of those are the moments the answer
-        matters most.
-        """
-        ...
-
-
 class TrainerBase(ABC):
     """The trainer contract: declarations up top, hooks abstract, machinery concrete.
 
@@ -262,12 +200,18 @@ class TrainerBase(ABC):
     validation refusal, the charge/spin warning, the split loop, the placeholder triple,
     the launcher quoting — is concrete here, written once.
 
-    ``ABC`` rather than a second ``Protocol`` beside the :class:`Trainer` one, because a
-    registry — an explicit declaration channel — already exists: a missing abstract hook
-    fails at instantiation naming the member, which is earlier and more specific than any
-    structural check at the point of use. Protocols stay the tool across package
-    boundaries, where no shared base can exist (the :mod:`chemrefine.engines.api`
-    doctrine, unchanged).
+    An ``ABC``, not a ``Protocol``: a registry — an explicit declaration channel —
+    already exists here, so a missing abstract hook fails at instantiation naming the
+    member and :meth:`MlipLibrary.trainer` verifies the declarations at import, which is
+    earlier and more specific than any structural check at the point of use. Protocols
+    stay the tool across package boundaries, where no shared base can exist (the
+    :mod:`chemrefine.engines.api` doctrine, unchanged).
+
+    A class rather than the bare function a *calculator* backend registers, because
+    these decisions are not independent: the dataset format implies what the
+    placeholders mean, which implies the argv, which implies where the product lands.
+    Grouped in one class, a combination that does not agree with itself cannot be
+    written by accident.
     """
 
     label: ClassVar[str]
@@ -283,7 +227,12 @@ class TrainerBase(ABC):
     """True when the dataset carries charge and spin; False warns on non-neutral data."""
 
     required_placeholders: ClassVar[frozenset[str]] = frozenset({"TRAIN_SET"})
-    """Placeholders this backend's template must reference — see :class:`Trainer`."""
+    """Placeholders this backend's template must reference, or the step is misconfigured.
+
+    Checked before submission (:func:`render_config`). A config that never names the
+    dataset chemrefine just wrote is not a config that trains on it — most libraries
+    would either read some previous run's data or fail an hour later with a message
+    about a path the user never typed."""
 
     output_globs: ClassVar[tuple[str, ...]]
     """Loose files to copy back out of the job's scratch directory."""
@@ -298,18 +247,34 @@ class TrainerBase(ABC):
         """Write one non-empty split (``"train"``/``"valid"``/``"test"``) in this
         library's format; return the file its template will name.
 
-        Runs in the **orchestrator's** process, so only chemrefine's own dependencies —
-        ``ase`` and ``numpy`` — are importable; see :meth:`Trainer.write_dataset` for why
-        that constraint is deliberate.
+        Runs in the **orchestrator's** process, not the backend's, so only chemrefine's
+        own dependencies — ``ase`` and ``numpy`` — are importable. That is a real
+        constraint and a deliberate one: it keeps every trainer module importable with no
+        MLIP library installed, which is what lets the registry be built at import time.
+        A format that genuinely needs the backend (SevenNet's graph pre-build, AIMNet2's
+        HDF5 packer) is expressed as an extra line in :meth:`command`, where the library
+        is importable.
         """
 
     @abstractmethod
     def command(self, plan: TrainingPlan, config: Path) -> str:
-        """The bash that runs the training inside ``$WORK_DIR`` — see :class:`Trainer`."""
+        """The bash that runs the training inside ``$WORK_DIR``.
+
+        One command, no ``trap`` and no teardown: the job script owns the single exit
+        handler that copies results back, and an engine that emits its own would replace
+        it.
+        """
 
     @abstractmethod
     def artifact(self, run_dir: Path, run_name: str) -> Path:
-        """The trained model — the file whose existence is this step's success test."""
+        """The trained model — the file whose existence is this step's success test.
+
+        Takes the run's directory and name rather than a whole :class:`TrainingPlan`,
+        because it must be answerable *without* one: ``rebuild-cache`` adopts a product
+        having submitted nothing, and ``chemrefine.step`` asks after a failure, when
+        there is no dataset to split and no launcher to resolve. Both of those are the
+        moments the answer matters most.
+        """
 
     # -- the machinery: written once, driven by the declarations -----------------------
 
@@ -371,6 +336,77 @@ class TrainerBase(ABC):
             f"{self.quoted_launcher(plan)} -m torch.distributed.run --standalone "
             f"--nnodes 1 --nproc_per_node {plan.gpus} " + " ".join(argv)
         )
+
+
+class ApiTrainerBase(TrainerBase):
+    """A trainer driven through the shared train driver — for libraries with no CLI.
+
+    CHGNet and ORB train through a pure Python API: no console script, no native config
+    format. Their route is the shared :mod:`~chemrefine.engines.mlip.train.driver`,
+    running under the backend environment's interpreter (a managed env is a
+    ``pip install "chemrefine[<extra>]"``, so chemrefine is importable there), which
+    re-resolves the same class through the registry and calls :meth:`run_training`.
+
+    Being *this kind* of trainer is a fact of inheritance, not of resemblance: the driver
+    dispatches on ``isinstance(trainer, ApiTrainerBase)``. What such a trainer writes is
+    only :meth:`write_split` and :meth:`train_with_library` — the driver line, the
+    config-key check and the artifact path all derive from the declarations, so the
+    artifact's filename cannot drift from the name the backend-side save uses: both read
+    :attr:`artifact_filename`.
+    """
+
+    driver_task: ClassVar[str]
+    """The word the driver re-resolves in the backend env — the library's task key."""
+
+    required_config_keys: ClassVar[tuple[str, ...]] = ("train_set", "run_name")
+    """Rendered-config keys :meth:`run_training` refuses to proceed without."""
+
+    missing_config_hint: ClassVar[str]
+    """One sentence naming the fix when a required key is missing — which placeholders
+    the template must reference. No trailing period."""
+
+    artifact_filename: ClassVar[str]
+    """The fixed-name final save, as a ``{run_name}`` format — ``"{run_name}.pth.tar"``.
+
+    The **one** source both :meth:`artifact` and the backend-side hook's save read.
+    Fixed deliberately: the libraries' own per-epoch checkpoints embed the epoch (and
+    CHGNet's the error) in their names, which no later step could name before the run.
+    """
+
+    def command(self, plan: TrainingPlan, config: Path) -> str:
+        """The shared train driver, under the backend env's interpreter.
+
+        ``-m chemrefine.engines.mlip.train.driver <task> <config>`` — the driver is
+        chemrefine's, present in the managed env because the env is a
+        ``chemrefine[<extra>]`` install. The config rides by basename for the
+        array-sentinel reason MACE's command spells out. Single-process on any device:
+        DDP is not a mode these libraries' APIs document.
+        """
+        python = self.quoted_launcher(plan)
+        return f"{python} -m chemrefine.engines.mlip.train.driver {self.driver_task} {config.name}"
+
+    def artifact(self, run_dir: Path, run_name: str) -> Path:
+        """:attr:`artifact_filename` under the run directory — derived, never restated."""
+        return run_dir / self.artifact_filename.format(run_name=run_name)
+
+    def run_training(self, config: dict[str, Any]) -> int:
+        """Check the declared keys, then hand the config to the library. The driver's hook."""
+        missing = [key for key in self.required_config_keys if not config.get(key)]
+        if missing:
+            raise SystemExit(
+                f"{self.driver_task} training config is missing {missing} — "
+                f"{self.missing_config_hint}"
+            )
+        return self.train_with_library(config)
+
+    @abstractmethod
+    def train_with_library(self, config: dict[str, Any]) -> int:
+        """Train with the library's own API — runs in the *backend* environment.
+
+        The heavy imports live here and nowhere the orchestrator reaches; the final
+        model must be saved under :meth:`artifact`'s name (format
+        :attr:`artifact_filename` with the config's ``run_name``).
+        """
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +487,7 @@ def base_placeholders(plan: TrainingPlan) -> dict[str, str]:
     Provided centrally so a template reads the same across backends: ``$RUN_DIR`` means the
     run's directory whether the trainer is MACE or FAIRChem, and a user moving between them
     re-learns only what genuinely differs. A trainer's own
-    :meth:`Trainer.placeholders` is merged **over** these, so it can specialise one.
+    :meth:`TrainerBase.placeholders` is merged **over** these, so it can specialise one.
     """
     return {
         "RUN_DIR": str(plan.run_dir),
@@ -466,7 +502,9 @@ def base_placeholders(plan: TrainingPlan) -> dict[str, str]:
     }
 
 
-def placeholders_for(trainer: Trainer, plan: TrainingPlan, data: DatasetFiles) -> dict[str, str]:
+def placeholders_for(
+    trainer: TrainerBase, plan: TrainingPlan, data: DatasetFiles
+) -> dict[str, str]:
     """:func:`base_placeholders` with the trainer's own merged over them.
 
     One function so the precedence is decided once. A trainer overriding a shared name is

@@ -19,7 +19,7 @@ from typing import Any, ClassVar
 
 from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
 from chemrefine.engines.mlip.train.base import (
-    TrainerBase,
+    ApiTrainerBase,
     TrainingPlan,
     write_labelled_extxyz,
 )
@@ -57,7 +57,7 @@ def _build_chgnet(spec: CalculatorSpec) -> Any:
 
 
 @CHGNET.trainer("chgnet")
-class ChgnetTrainer(TrainerBase):
+class ChgnetTrainer(ApiTrainerBase):
     """Fine-tune a CHGNet model on a step's labelled structures.
 
     The template is chemrefine's own schema (CHGNet has none): a YAML the shipped driver
@@ -73,6 +73,16 @@ class ChgnetTrainer(TrainerBase):
     label = "CHGNet"
     needs_validation = True
     validation_reason = "its Trainer.train takes a validation loader, with no train-only mode"
+    driver_task = "chgnet"
+    required_config_keys = ("train_set", "valid_set", "run_name")
+    missing_config_hint = (
+        "the template must reference $TRAIN_SET, $VALID_SET and $RUN_NAME so the render fills them"
+    )
+    artifact_filename = "{run_name}.pth.tar"
+    """CHGNet's own best checkpoints embed the epoch and the error in their names
+    (``bestE_epoch{n}_{err}.pth.tar``), which no later step could name before the run;
+    the hook re-saves the best model under this fixed name, in the
+    ``{"model": as_dict()}`` shape ``CHGNet.from_file`` reads."""
 
     required_placeholders: ClassVar[frozenset[str]] = frozenset(
         {"TRAIN_SET", "VALID_SET", "RUN_NAME"}
@@ -96,36 +106,10 @@ class ChgnetTrainer(TrainerBase):
         """
         return write_labelled_extxyz(plan.run_dir / f"{name}.xyz", structures)
 
-    def command(self, plan: TrainingPlan, config: Path) -> str:
-        """The shared train driver, under the backend env's interpreter.
-
-        ``-m chemrefine.engines.mlip.train.driver chgnet`` — the driver is chemrefine's,
-        present in the managed env because the env is a ``chemrefine[mlip-chgnet]``
-        install, and it resolves this same class over there and calls
-        :meth:`run_training`. The config rides by basename for the array-sentinel reason
-        MACE's command spells out. Single-process on any device: CHGNet's ``Trainer``
-        places itself with ``use_device``, and multi-GPU DDP is not a mode its API
-        documents.
-        """
-        python = self.quoted_launcher(plan)
-        return f"{python} -m chemrefine.engines.mlip.train.driver chgnet {config.name}"
-
-    def artifact(self, run_dir: Path, run_name: str) -> Path:
-        """:meth:`run_training`'s fixed-name final save: ``{run_name}.pth.tar``.
-
-        Fixed deliberately: CHGNet's own best checkpoints embed the epoch and the error
-        in their names (``bestE_epoch{n}_{err}.pth.tar``), which no later step could name
-        before the run. The hook re-saves the best model under this name, in the
-        ``{"model": as_dict()}`` shape ``CHGNet.from_file`` reads.
-        """
-        return run_dir / f"{run_name}.pth.tar"
-
     # -- the backend-side half (runs under the mlip-chgnet env's interpreter) ----------
 
-    _REQUIRED_KEYS = ("train_set", "valid_set", "run_name")
-
-    def run_training(self, config: dict[str, Any]) -> int:
-        """Train with CHGNet's Python API — the hook the shared train driver calls.
+    def train_with_library(self, config: dict[str, Any]) -> int:
+        """Train with CHGNet's Python API — reached through the shared train driver.
 
         Runs in the *backend* environment, inside ``$WORK_DIR``, so the heavy imports
         live here and nowhere the orchestrator reaches. Three CHGNet facts this hook
@@ -136,13 +120,6 @@ class ChgnetTrainer(TrainerBase):
         already decided; and the best model is re-saved under :meth:`artifact`'s fixed
         name — ``trainer.model`` standing in when no epoch ever improved the metric.
         """
-        missing = [key for key in self._REQUIRED_KEYS if not config.get(key)]
-        if missing:
-            raise SystemExit(
-                f"chgnet training config is missing {missing} — the template must "
-                f"reference $TRAIN_SET, $VALID_SET and $RUN_NAME so the render fills them"
-            )
-
         import torch
         from chgnet.model import CHGNet
         from chgnet.trainer import Trainer
@@ -172,7 +149,7 @@ class ChgnetTrainer(TrainerBase):
         )
 
         best = getattr(trainer, "best_model", None) or trainer.model
-        target = Path(f"{config['run_name']}.pth.tar")
+        target = Path(self.artifact_filename.format(run_name=config["run_name"]))
         torch.save({"model": best.as_dict()}, target)
         print(f"chgnet training: saved {target}")
         return 0

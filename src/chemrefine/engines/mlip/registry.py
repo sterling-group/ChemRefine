@@ -3,7 +3,7 @@
 One registry, keyed by ``task_name``, shared by inference and training. Each entry names a
 :class:`MlipLibrary` — the environment that provides the library — plus whichever capabilities
 that library offers: an ASE calculator builder, a :class:`~chemrefine.engines.mlip.train.base.
-Trainer`, or both. :mod:`chemrefine.engines.mlip.calculator` reads the first;
+TrainerBase` subclass, or both. :mod:`chemrefine.engines.mlip.calculator` reads the first;
 :mod:`chemrefine.engines.mlip.train.engine` reads the second; the provisioner reads the
 library.
 
@@ -63,7 +63,7 @@ provisioned). It declares its environment once and hangs its capabilities off it
         return MyCalculator(model=spec.weights or spec.model_name, device=spec.device)
 
     @MY_MLIP.trainer("my_task")                        # optional — omit if it cannot train
-    class MyTrainer: ...
+    class MyTrainer(TrainerBase): ...                  # or ApiTrainerBase, for API-only libs
 
 Both decorators are variadic, which is what lets one library register a family of heads from a
 single list rather than a stack of decorators per capability — FAIRChem's seven heads are
@@ -83,7 +83,7 @@ from chemrefine.engines.mlip.options import MlipOptions
 from chemrefine.errors import ConfigError
 
 if TYPE_CHECKING:
-    from chemrefine.engines.mlip.train.base import Trainer
+    from chemrefine.engines.mlip.train.base import TrainerBase
 
 
 @dataclass(frozen=True)
@@ -194,15 +194,50 @@ class MlipLibrary:
 
         return _wrap
 
-    def trainer(self, *task_names: str) -> Callable[[type[Trainer]], type[Trainer]]:
-        """Register a :class:`~chemrefine.engines.mlip.train.base.Trainer` for ``task_names``.
+    def trainer(self, *task_names: str) -> Callable[[type[TrainerBase]], type[TrainerBase]]:
+        """Register a :class:`~chemrefine.engines.mlip.train.base.TrainerBase` subclass.
 
         Optional: a library that ships no training entry point simply never calls this, and
         :func:`trainer_for` then reports it as runnable but not trainable — which is a
         different thing from an unknown task, and worth saying differently.
+
+        The decorator is the gate, mirroring :meth:`calculator`: a class that is not a
+        concrete ``TrainerBase`` — or that leaves a declaration the machinery reads
+        unset — is refused **here**, at import of the module that declares it, naming
+        the missing item. The class statement already enforces the abstract hooks at
+        instantiation; this check moves the failure to discovery time and covers the
+        bare ``ClassVar`` declarations no ``ABCMeta`` machinery watches.
         """
 
-        def _wrap(cls: type[Trainer]) -> type[Trainer]:
+        def _wrap(cls: type[TrainerBase]) -> type[TrainerBase]:
+            # Function-level import: the registry cannot import ``train.base`` at module
+            # top — ``train/__init__`` pulls in ``train.engine``, which imports this
+            # module back while it is still initialising.
+            from chemrefine.engines.mlip.train.base import ApiTrainerBase, TrainerBase
+
+            names = ", ".join(map(repr, task_names))
+            if not (isinstance(cls, type) and issubclass(cls, TrainerBase)):
+                raise TypeError(
+                    f"{self.extra}: @trainer({names}) must decorate a TrainerBase "
+                    f"subclass (ApiTrainerBase for a library without a CLI), got {cls!r}"
+                )
+            abstract = sorted(getattr(cls, "__abstractmethods__", ()))
+            if abstract:
+                raise TypeError(
+                    f"{self.extra}: trainer {cls.__name__} leaves {abstract} abstract — "
+                    f"every hook must be implemented before registration"
+                )
+            required = ["label", "output_globs"]
+            if issubclass(cls, ApiTrainerBase):
+                required += ["driver_task", "missing_config_hint", "artifact_filename"]
+            missing = [name for name in required if not hasattr(cls, name)]
+            if cls.needs_validation and not cls.validation_reason:
+                missing.append("validation_reason")
+            if missing:
+                raise TypeError(
+                    f"{self.extra}: trainer {cls.__name__} is missing declaration(s) "
+                    f"{missing} — the machinery reads them; see TrainerBase"
+                )
             for name in task_names:
                 _put(name, self, trainer=cls)
             return cls
@@ -222,7 +257,7 @@ class BackendSpec:
 
     library: MlipLibrary
     builder: CalculatorBuilder | None = None
-    trainer: type[Trainer] | None = None
+    trainer: type[TrainerBase] | None = None
 
     @property
     def extra(self) -> str:
@@ -248,7 +283,7 @@ def _put(
     library: MlipLibrary,
     *,
     builder: CalculatorBuilder | None = None,
-    trainer: type[Trainer] | None = None,
+    trainer: type[TrainerBase] | None = None,
 ) -> None:
     """Add or extend the entry for ``name`` with one capability.
 
@@ -305,7 +340,7 @@ def calculator_for(task_name: str) -> CalculatorBuilder:
     return spec.builder
 
 
-def trainer_for(task_name: str) -> type[Trainer]:
+def trainer_for(task_name: str) -> type[TrainerBase]:
     """The trainer a ``task_name`` dispatches to; raises if that library cannot be trained.
 
     "Unknown task" and "known task, no trainer" are different mistakes and get different
