@@ -100,3 +100,27 @@ def test_a_renamed_test_file_is_reported_by_id():
     assert len(report) == 1
     assert "[orphan]" in report[0]
     assert "tests/test_a_file_that_was_renamed.py" in report[0]
+
+
+def test_a_renamed_source_file_is_reported_by_id():
+    """A missing ``path`` is a report line like the other two, never a traceback.
+
+    A ``git mv`` of a mutated source file made ``stale_anchors`` raise
+    ``FileNotFoundError`` out of ``main()`` — one moved file hiding the state of the whole
+    gate, the exact failure the aggregate report was built to prevent, arriving by the one
+    read the function never guarded.
+    """
+    gate = _load_gate()
+    moved = gate.Mutation(
+        id="vanished",
+        path="src/chemrefine/a_file_that_was_renamed.py",
+        old="def has_room",
+        new="irrelevant",
+        tests="tests/test_throttle.py",
+        breaks="nothing — this mutation exists only to name a missing source file",
+    )
+    report = gate.stale_anchors(REPO, [moved, *gate.MUTATIONS])
+    assert len(report) == 1
+    assert "[vanished]" in report[0]
+    assert "src/chemrefine/a_file_that_was_renamed.py" in report[0]
+    assert "the code moved" in report[0]

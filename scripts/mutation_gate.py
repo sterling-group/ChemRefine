@@ -331,12 +331,23 @@ def stale_anchors(root: Path, mutations: Sequence[Mutation]) -> list[str]:
     """
     problems: list[str] = []
     for mutation in mutations:
-        found = (root / mutation.path).read_text(encoding="utf-8").count(mutation.old)
-        if found != 1:
+        source = root / mutation.path
+        if not source.is_file():
+            # The same report line the tests half gets: a `git mv` of a mutated source
+            # file otherwise raised FileNotFoundError out of main() — the one moved file
+            # hiding the state of the whole gate, which is the failure this function's
+            # aggregate report exists to prevent.
             problems.append(
-                f"[{mutation.id}] expected exactly one occurrence of\n    {mutation.old}\n"
-                f"in {mutation.path}, found {found}."
+                f"[{mutation.id}] names {mutation.path}, which is not a file; "
+                f"the code moved or was renamed."
             )
+        else:
+            found = source.read_text(encoding="utf-8").count(mutation.old)
+            if found != 1:
+                problems.append(
+                    f"[{mutation.id}] expected exactly one occurrence of\n    {mutation.old}\n"
+                    f"in {mutation.path}, found {found}."
+                )
         if not (root / mutation.tests).is_file():
             problems.append(
                 f"[{mutation.id}] names {mutation.tests}, which is not a file; "

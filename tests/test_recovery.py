@@ -245,8 +245,16 @@ def test_rerun_redoes_whole_step(tmp_path: Path):
         ENGINES.pop("flaky", None)
 
 
-def test_rerun_errors_reattempts_only_the_target_step_failures(tmp_path: Path):
-    """`rerun-errors N` re-attempts only step N's pending (stop) failures."""
+def test_rerun_errors_reattempts_only_the_target_step_failures(tmp_path: Path, caplog):
+    """`rerun-errors N` re-attempts only step N's pending (stop) failures — and says so.
+
+    The announcement is asserted alongside the behaviour: of the three log arms this
+    command routes through, this one's text was checked nowhere (its sibling below pins
+    the skip arm), so an inverted branch could announce "re-attempting 0 failed job(s)"
+    with everything else green.
+    """
+    import logging
+
     from chemrefine import cache
     from chemrefine.engines.api import ENGINES
     from chemrefine.errors import ChemRefineError
@@ -262,9 +270,11 @@ def test_rerun_errors_reattempts_only_the_target_step_failures(tmp_path: Path):
         with pytest.raises(ChemRefineError):
             execute(cfg, Action.RESUME)  # stop halts, "1" pending
         eng.fail_ids, eng.submitted = set(), []
-        assert execute(cfg, Action.RERUN_ERRORS, target=1) == 0
+        with caplog.at_level(logging.INFO, logger="chemrefine.recovery"):
+            assert execute(cfg, Action.RERUN_ERRORS, target=1) == 0
         assert eng.submitted == ["1"]  # only the failed structure
         assert cache.load_failure_records(step_dir) == []
+        assert "re-attempting 1 failed job(s) in step1_s" in caplog.text
     finally:
         eng.fail_ids, eng.submitted = set(), []
         ENGINES.pop("flaky", None)
@@ -1124,9 +1134,19 @@ def _coverage_cfg(tmp_path: Path, **step_over) -> Config:
 # --- recovery: rerun-errors with nothing pending ----------------------------
 
 
-def test_rerun_errors_logs_when_no_failures(tmp_path: Path, monkeypatch):
+def test_rerun_errors_logs_when_no_failures(tmp_path: Path, monkeypatch, caplog):
+    """A clean target says "no recorded failures" — the third of the command's three arms.
+
+    Asserted, not merely reached: without the ``caplog`` this was the suite's clearest
+    coverage-only test, green under a deleted message or an inverted branch alike.
+    """
+    import logging
+
     from chemrefine import recovery
 
     cfg = _coverage_cfg(tmp_path)
     monkeypatch.setattr(recovery.pipeline, "run", lambda *a, **k: [])
-    recovery._action_rerun_errors(cfg, None)  # last step, no ledger → "no failures" branch
+    with caplog.at_level(logging.INFO, logger="chemrefine.recovery"):
+        recovery._action_rerun_errors(cfg, None)  # last step, no ledger → "no failures" branch
+    assert "has no recorded failures to rerun" in caplog.text
+    assert "re-attempting" not in caplog.text

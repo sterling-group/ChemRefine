@@ -63,17 +63,24 @@ def test_register_decorator_adds_entry_and_returns_class():
 
 
 def test_register_rejects_duplicate_with_different_class():
-    @register("dup-test-engine")
-    class _A:
-        pass
-
-    with pytest.raises(ValueError):
+    # try/finally like the temp-test-engine above: if the duplicate guard under test ever
+    # regressed, a bare pop after the raises-block would leave _A — a class with no
+    # prepare/submit/parse — in the global registry, and every wholesale ENGINES read
+    # across the suite would fail alongside the one real regression.
+    try:
 
         @register("dup-test-engine")
-        class _B:
+        class _A:
             pass
 
-    ENGINES.pop("dup-test-engine", None)
+        with pytest.raises(ValueError):
+
+            @register("dup-test-engine")
+            class _B:
+                pass
+
+    finally:
+        ENGINES.pop("dup-test-engine", None)
 
 
 def test_registry_holds_only_canonical_engine_names():
