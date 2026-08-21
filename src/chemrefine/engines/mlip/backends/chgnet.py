@@ -14,21 +14,16 @@ adding a library is one dropped-in file — holds for API-only libraries too.
 
 from __future__ import annotations
 
-import logging
-import shlex
 from pathlib import Path
 from typing import Any, ClassVar
 
 from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
 from chemrefine.engines.mlip.train.base import (
-    DatasetFiles,
-    DatasetSplit,
+    TrainerBase,
     TrainingPlan,
     write_labelled_extxyz,
 )
-from chemrefine.errors import ConfigError
-
-logger = logging.getLogger(__name__)
+from chemrefine.state import Structure
 
 CHGNET = MlipLibrary(extra="mlip-chgnet", package="chgnet", import_name="chgnet")
 """The one declaration of what provides this library."""
@@ -62,14 +57,22 @@ def _build_chgnet(spec: CalculatorSpec) -> Any:
 
 
 @CHGNET.trainer("chgnet")
-class ChgnetTrainer:
+class ChgnetTrainer(TrainerBase):
     """Fine-tune a CHGNet model on a step's labelled structures.
 
     The template is chemrefine's own schema (CHGNet has none): a YAML the shipped driver
     reads — dataset paths through the standard placeholders, plus the ``Trainer`` knobs
     (``epochs``, ``learning_rate``, ``batch_size``, ``targets``). ``chemrefine scaffold``'s
     pointer and the docs carry a worked example.
+
+    The declarations carry the library facts: a validation set is required because
+    ``Trainer.train(train_loader, val_loader, …)`` has no train-only mode, and CHGNet has
+    no charge or spin channel, so the base warns on non-neutral data.
     """
+
+    label = "CHGNet"
+    needs_validation = True
+    validation_reason = "its Trainer.train takes a validation loader, with no train-only mode"
 
     required_placeholders: ClassVar[frozenset[str]] = frozenset(
         {"TRAIN_SET", "VALID_SET", "RUN_NAME"}
@@ -85,53 +88,13 @@ class ChgnetTrainer:
     what carries it home. CHGNet's own per-epoch ``bestE_…``/``bestF_…`` checkpoints match
     too — small, and the run's history is worth keeping beside the product."""
 
-    output_dirs: ClassVar[tuple[str, ...]] = ()
-    """The driver writes flat files; nothing to copy back wholesale."""
+    def write_split(self, plan: TrainingPlan, name: str, structures: tuple[Structure, ...]) -> Path:
+        """The shared calculator-labelled extxyz — the same file SevenNet's trainer writes.
 
-    def write_dataset(self, plan: TrainingPlan, split: DatasetSplit) -> DatasetFiles:
-        """Write train / valid / test extxyz files under the run directory.
-
-        The same calculator-labelled extxyz SevenNet's trainer writes
-        (:func:`~chemrefine.engines.mlip.train.base.write_labelled_extxyz`) — the driver
-        converts to pymatgen ``Structure`` + per-atom energies on the other side, where
-        chgnet and pymatgen are importable. A validation set is required because
-        ``Trainer.train(train_loader, val_loader, …)`` has no train-only mode.
-
-        CHGNet has no charge or spin channel, so a charged or open-shell ensemble is
-        warned about rather than silently fitted as neutral data.
+        The driver converts to pymatgen ``Structure`` + per-atom energies on the other
+        side, where chgnet and pymatgen are importable.
         """
-        if not split.valid:
-            raise ConfigError(
-                "CHGNet training needs a validation set — its Trainer.train takes a "
-                "validation loader, with no train-only mode. Raise `valid_fraction` "
-                "above 0."
-            )
-        if plan.charge != 0 or plan.multiplicity != 1:
-            logger.warning(
-                "CHGNet has no charge/spin channel: charge %d, multiplicity %d will be "
-                "fitted as if neutral — the labels carry no trace of either",
-                plan.charge,
-                plan.multiplicity,
-            )
-        written: dict[str, Path | None] = {"train": None, "valid": None, "test": None}
-        for name, structures in (
-            ("train", split.train),
-            ("valid", split.valid),
-            ("test", split.test),
-        ):
-            if not structures:
-                continue
-            written[name] = write_labelled_extxyz(plan.run_dir / f"{name}.xyz", structures)
-        assert written["train"] is not None  # noqa: S101 - split_structures guarantees one
-        return DatasetFiles(train=written["train"], valid=written["valid"], test=written["test"])
-
-    def placeholders(self, plan: TrainingPlan, data: DatasetFiles) -> dict[str, str]:
-        """The driver-schema knobs a template names — datasets, like every trainer's."""
-        return {
-            "TRAIN_SET": str(data.train),
-            "VALID_SET": str(data.valid) if data.valid else "",
-            "TEST_SET": str(data.test) if data.test else "",
-        }
+        return write_labelled_extxyz(plan.run_dir / f"{name}.xyz", structures)
 
     def command(self, plan: TrainingPlan, config: Path) -> str:
         """The shared train driver, under the backend env's interpreter.
@@ -144,7 +107,7 @@ class ChgnetTrainer:
         places itself with ``use_device``, and multi-GPU DDP is not a mode its API
         documents.
         """
-        python = shlex.quote(str(plan.launcher))
+        python = self.quoted_launcher(plan)
         return f"{python} -m chemrefine.engines.mlip.train.driver chgnet {config.name}"
 
     def artifact(self, run_dir: Path, run_name: str) -> Path:

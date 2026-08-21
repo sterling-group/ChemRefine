@@ -557,6 +557,101 @@ def test_every_trainers_artifact_basename_is_copy_back_eligible(task: str):
     )
 
 
+@pytest.mark.parametrize("task", sorted(registered_trainers()))
+def test_a_missing_validation_set_is_refused_exactly_when_the_library_needs_one(
+    tmp_path: Path, task: str
+):
+    """The refusal fires iff ``needs_validation`` — and says why in the library's words.
+
+    Three trainers each wrote this refusal by hand; now it is one base branch driven by
+    two declarations, so the invariant to hold is the *iff*: a library that cannot train
+    without validation refuses with its own reason, and one that can trains on.
+    """
+    trainer = trainer_for(task)()
+    split = split_structures(
+        [_labelled(str(i)) for i in range(4)], valid_fraction=0, test_fraction=0, seed=1
+    )
+    if trainer.needs_validation:
+        assert trainer.validation_reason, f"{task}: a refusal with no why-clause"
+        with pytest.raises(ConfigError, match=f"{trainer.label} training needs a validation set"):
+            trainer.write_dataset(_plan(tmp_path), split)
+    else:
+        files = trainer.write_dataset(_plan(tmp_path), split)
+        assert files.train.is_file() and files.valid is None
+
+
+@pytest.mark.parametrize("task", sorted(registered_trainers()))
+def test_non_neutral_data_warns_exactly_when_the_format_cannot_carry_it(
+    tmp_path: Path, task: str, caplog
+):
+    """The charge/spin warning fires iff the dataset has no channel for either.
+
+    A format that carries charge and spin (MACE's ``total_*`` keys, FAIRChem's row data)
+    fits an ion as itself and must not cry wolf; one that cannot must never be silent —
+    and neutral-singlet data warns nowhere.
+    """
+    import logging
+
+    trainer = trainer_for(task)()
+    with caplog.at_level(logging.WARNING):
+        trainer.write_dataset(_plan(tmp_path, charge=-1, multiplicity=2), _full_split())
+    warned = "no charge/spin channel" in caplog.text
+    assert warned == (not trainer.charge_spin_aware), f"{task}: warning iff unaware"
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        trainer.write_dataset(_plan(tmp_path / "neutral"), _full_split())
+    assert "no charge/spin channel" not in caplog.text
+
+
+@pytest.mark.parametrize("task", sorted(registered_trainers()))
+def test_an_empty_split_gets_no_file_from_any_trainer(tmp_path: Path, task: str):
+    """An empty split yields ``None``, never a zero-byte file.
+
+    ase raises ``Empty file`` on a zero-byte extxyz, so naming one turns "no test set"
+    into a crash inside the library — the base's loop skips it for every trainer.
+    """
+    trainer = trainer_for(task)()
+    split = split_structures(
+        [_labelled(str(i)) for i in range(8)], valid_fraction=0.25, test_fraction=0, seed=1
+    )
+    plan = _plan(tmp_path)
+    files = trainer.write_dataset(plan, split)
+    assert files.test is None
+    assert not list(plan.run_dir.glob("test.*")), f"{task}: an empty split left a file"
+
+
+@pytest.mark.parametrize("task", sorted(registered_trainers()))
+def test_every_trainer_supplies_the_dataset_placeholder(tmp_path: Path, task: str):
+    """``$TRAIN_SET`` always renders as the file the trainer just wrote.
+
+    The one placeholder every template must reference (the contract's floor), so the one
+    value every trainer must supply — whether it inherits the base triple or overrides
+    wholesale, as FAIRChem does.
+    """
+    trainer = trainer_for(task)()
+    plan = _plan(tmp_path)
+    files = trainer.write_dataset(plan, _full_split())
+    assert placeholders_for(trainer, plan, files)["TRAIN_SET"] == str(files.train)
+
+
+@pytest.mark.parametrize("task", sorted(registered_trainers()))
+def test_no_trainer_mutates_the_pipelines_structures(tmp_path: Path, task: str):
+    """The dataset lands on copies — the structures go on through the pipeline.
+
+    A calculator or label key attached in place would ride the shared reference into
+    every later step, and the positions buffer is the one ``parents_digest`` hashes into
+    downstream cache keys.
+    """
+    structures = [_labelled(str(i)) for i in range(8)]
+    split = split_structures(structures, valid_fraction=0.25, test_fraction=0.125, seed=1)
+    trainer_for(task)().write_dataset(_plan(tmp_path), split)
+    for struct in structures:
+        assert struct.atoms.calc is None
+        assert not struct.atoms.info, f"{task}: the seed's info dict gained training keys"
+        assert struct.forces_ev_per_a is not None and not struct.forces_ev_per_a.flags.writeable
+
+
 def test_the_shared_writer_refuses_an_unlabelled_structure(tmp_path: Path):
     """The backstop behind ``split_structures``' refusal, named for the caller that skipped it.
 

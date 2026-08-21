@@ -18,7 +18,6 @@ ion against the wrong species with nothing said in any log.
 
 from __future__ import annotations
 
-import shlex
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -27,7 +26,7 @@ from ase import Atoms
 from ase.io import write as ase_write
 
 from chemrefine.engines.mlip.registry import LEGACY_MACE_TASK, CalculatorSpec, MlipLibrary
-from chemrefine.engines.mlip.train.base import DatasetFiles, DatasetSplit, TrainingPlan
+from chemrefine.engines.mlip.train.base import DatasetFiles, TrainerBase, TrainingPlan
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
@@ -120,8 +119,13 @@ def _to_atoms(struct: Structure, plan: TrainingPlan) -> Atoms:
 
 
 @MACE.trainer(*FAMILIES, LEGACY_MACE_TASK)
-class MaceTrainer:
+class MaceTrainer(TrainerBase):
     """Train or fine-tune a MACE model on a step's labelled structures."""
+
+    label = "MACE"
+    charge_spin_aware = True
+    """The dataset speaks ``total_charge`` / ``total_spin`` (:func:`_to_atoms`), so an ion
+    or an open-shell species is fitted as itself — no warning to raise."""
 
     required_placeholders: ClassVar[frozenset[str]] = frozenset(
         {"TRAIN_SET", "RUN_NAME", "RUN_DIR"}
@@ -139,31 +143,16 @@ class MaceTrainer:
     that leaves ``work_dir`` at MACE's default writes into the job's scratch instead, and
     these are what stop the model disappearing with it."""
 
-    def write_dataset(self, plan: TrainingPlan, split: DatasetSplit) -> DatasetFiles:
-        """Write train / valid / test extxyz files under the run directory."""
-        plan.run_dir.mkdir(parents=True, exist_ok=True)
-        written: dict[str, Path | None] = {"train": None, "valid": None, "test": None}
-        for name, structures in (
-            ("train", split.train),
-            ("valid", split.valid),
-            ("test", split.test),
-        ):
-            if not structures:
-                # An empty split gets no file at all. ase refuses to read a zero-byte extxyz
-                # ("Empty file"), so naming one would turn "no test set" into a crash.
-                continue
-            path = plan.run_dir / f"{name}.xyz"
-            ase_write(str(path), [_to_atoms(s, plan) for s in structures], format="extxyz")
-            written[name] = path
-        assert written["train"] is not None  # noqa: S101 - split_structures guarantees one
-        return DatasetFiles(train=written["train"], valid=written["valid"], test=written["test"])
+    def write_split(self, plan: TrainingPlan, name: str, structures: tuple[Structure, ...]) -> Path:
+        """One split as extxyz with MACE's own ``REF_*`` label keys."""
+        path = plan.run_dir / f"{name}.xyz"
+        ase_write(str(path), [_to_atoms(s, plan) for s in structures], format="extxyz")
+        return path
 
     def placeholders(self, plan: TrainingPlan, data: DatasetFiles) -> dict[str, str]:
-        """MACE's dataset knobs, plus the label keys for a template that wants them explicit."""
+        """The dataset triple, plus the label keys for a template that wants them explicit."""
         return {
-            "TRAIN_SET": str(data.train),
-            "VALID_SET": str(data.valid) if data.valid else "",
-            "TEST_SET": str(data.test) if data.test else "",
+            **super().placeholders(plan, data),
             "ENERGY_KEY": ENERGY_KEY,
             "FORCES_KEY": FORCES_KEY,
         }
@@ -189,14 +178,11 @@ class MaceTrainer:
         :data:`~chemrefine.ids.TRAINING_ID`, both minted in :mod:`chemrefine.ids`. The launcher
         is a real filesystem path and stays quoted.
         """
-        python = shlex.quote(str(plan.launcher))
         if plan.gpus > 1:
-            return (
-                f"{python} -m torch.distributed.run --standalone --nnodes=1 "
-                f"--nproc_per_node={plan.gpus} -m mace.cli.run_train "
-                f"--config {config.name} --distributed"
+            return self.torchrun(
+                plan, "-m", "mace.cli.run_train", "--config", config.name, "--distributed"
             )
-        return f"{python} -m mace.cli.run_train --config {config.name}"
+        return f"{self.quoted_launcher(plan)} -m mace.cli.run_train --config {config.name}"
 
     def artifact(self, run_dir: Path, run_name: str) -> Path:
         """The trained model MACE leaves in ``model_dir`` — which defaults to ``work_dir``.

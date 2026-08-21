@@ -17,21 +17,16 @@ validation metric improves — so the job runs them up in ``$WORK_DIR`` and the 
 
 from __future__ import annotations
 
-import logging
-import shlex
 from pathlib import Path
 from typing import Any, ClassVar
 
 from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
 from chemrefine.engines.mlip.train.base import (
-    DatasetFiles,
-    DatasetSplit,
+    TrainerBase,
     TrainingPlan,
     write_labelled_extxyz,
 )
-from chemrefine.errors import ConfigError
-
-logger = logging.getLogger(__name__)
+from chemrefine.state import Structure
 
 SEVENN = MlipLibrary(extra="mlip-sevenn", package="sevenn", import_name="sevenn")
 """The one declaration of what provides this library."""
@@ -61,8 +56,23 @@ def _build_sevenn(spec: CalculatorSpec) -> Any:
 
 
 @SEVENN.trainer("sevenn")
-class SevennTrainer:
-    """Fine-tune a SevenNet model on a step's labelled structures."""
+class SevennTrainer(TrainerBase):
+    """Fine-tune a SevenNet model on a step's labelled structures.
+
+    The declarations carry the library facts: a validation set is required because
+    ``checkpoint_best.pth`` — the artifact this step adopts — is written when the tracked
+    *validation* metric improves, so a run without validation trains to completion and
+    leaves no best checkpoint to adopt; and SevenNet has no charge or spin channel, so
+    the base warns on a charged or open-shell ensemble rather than silently fitting it
+    as neutral-singlet data.
+    """
+
+    label = "SevenNet"
+    needs_validation = True
+    validation_reason = (
+        "checkpoint_best.pth, the model this step adopts, is written when the tracked "
+        "validation metric improves"
+    )
 
     required_placeholders: ClassVar[frozenset[str]] = frozenset({"TRAIN_SET"})
     """Only the dataset: SevenNet writes into the working directory by its own rule, so
@@ -77,55 +87,9 @@ class SevennTrainer:
     product home. ``checkpoint_best.pth`` matches ``checkpoint_*.pth``; the log and the
     learning-curve CSV ride along (a glob that matches nothing costs nothing)."""
 
-    output_dirs: ClassVar[tuple[str, ...]] = ()
-    """SevenNet writes flat files; there is no directory to copy back wholesale."""
-
-    def write_dataset(self, plan: TrainingPlan, split: DatasetSplit) -> DatasetFiles:
-        """Write train / valid / test extxyz files under the run directory.
-
-        A validation set is required for the same reason FAIRChem's trainer requires one,
-        one step later: ``checkpoint_best.pth`` — the artifact this step adopts — is
-        written when the tracked *validation* metric improves, so a run without
-        validation trains to completion and leaves no best checkpoint to adopt.
-
-        SevenNet has no charge or spin channel, so a charged or open-shell ensemble is
-        warned about rather than silently fitted as neutral-singlet data — the
-        ``_parity_warning`` philosophy: silence is the only wrong answer.
-        """
-        if not split.valid:
-            raise ConfigError(
-                "SevenNet training needs a validation set — checkpoint_best.pth, the "
-                "model this step adopts, is written when the tracked validation metric "
-                "improves. Raise `valid_fraction` above 0."
-            )
-        if plan.charge != 0 or plan.multiplicity != 1:
-            logger.warning(
-                "SevenNet has no charge/spin channel: charge %d, multiplicity %d will be "
-                "fitted as if neutral singlet — the labels carry no trace of either",
-                plan.charge,
-                plan.multiplicity,
-            )
-        plan.run_dir.mkdir(parents=True, exist_ok=True)
-        written: dict[str, Path | None] = {"train": None, "valid": None, "test": None}
-        for name, structures in (
-            ("train", split.train),
-            ("valid", split.valid),
-            ("test", split.test),
-        ):
-            if not structures:
-                # An empty split gets no file at all — ase refuses a zero-byte extxyz.
-                continue
-            written[name] = write_labelled_extxyz(plan.run_dir / f"{name}.xyz", structures)
-        assert written["train"] is not None  # noqa: S101 - split_structures guarantees one
-        return DatasetFiles(train=written["train"], valid=written["valid"], test=written["test"])
-
-    def placeholders(self, plan: TrainingPlan, data: DatasetFiles) -> dict[str, str]:
-        """SevenNet's dataset knobs — ``data.load_trainset_path`` and friends."""
-        return {
-            "TRAIN_SET": str(data.train),
-            "VALID_SET": str(data.valid) if data.valid else "",
-            "TEST_SET": str(data.test) if data.test else "",
-        }
+    def write_split(self, plan: TrainingPlan, name: str, structures: tuple[Structure, ...]) -> Path:
+        """The shared calculator-labelled extxyz — exactly what SevenNet's loader reads."""
+        return write_labelled_extxyz(plan.run_dir / f"{name}.xyz", structures)
 
     def command(self, plan: TrainingPlan, config: Path) -> str:
         """``sevenn train`` against the rendered config, from the backend env's own bin.
@@ -136,14 +100,9 @@ class SevennTrainer:
         SevenNet's own documented DDP shape: ``torchrun … --no_python sevenn`` with
         ``-d`` in place of ``-s`` (``batch_size`` in the config is then per GPU).
         """
-        sevenn_bin = shlex.quote(str(plan.bindir / "sevenn"))
+        sevenn_bin = self.console_script(plan, "sevenn")
         if plan.gpus > 1:
-            python = shlex.quote(str(plan.launcher))
-            return (
-                f"{python} -m torch.distributed.run --standalone --nnodes 1 "
-                f"--nproc_per_node {plan.gpus} --no_python {sevenn_bin} "
-                f"train {config.name} -d"
-            )
+            return self.torchrun(plan, "--no_python", sevenn_bin, "train", config.name, "-d")
         return f"{sevenn_bin} train {config.name} -s"
 
     def artifact(self, run_dir: Path, run_name: str) -> Path:

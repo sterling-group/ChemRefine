@@ -40,7 +40,7 @@ from chemrefine.engines.mlip.backends.mace import (
     _to_atoms,
 )
 from chemrefine.engines.mlip.registry import requirement_from_options
-from chemrefine.engines.mlip.train.base import DatasetSplit, TrainingPlan, split_structures
+from chemrefine.engines.mlip.train.base import DatasetSplit, TrainingPlan
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
@@ -123,6 +123,15 @@ def _plan(tmp_path: Path, **overrides: object) -> TrainingPlan:
     }
     base.update(overrides)
     return TrainingPlan(**base)
+
+
+def _small_split() -> DatasetSplit:
+    """Two train / one valid / no test — the shape the per-library writer tests share."""
+    return DatasetSplit(
+        train=(_labelled("0"), _labelled("1", energy=-1.6)),
+        valid=(_labelled("2"),),
+        test=(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -231,28 +240,6 @@ def test_forces_survive_the_round_trip_unchanged(tmp_path: Path):
     assert np.allclose(frame.arrays[FORCES_KEY], struct.forces_ev_per_a)
 
 
-def test_an_empty_split_gets_no_file_at_all(tmp_path: Path):
-    """ase raises `Empty file` on a zero-byte extxyz, so naming one is worse than omitting it."""
-    plan = _plan(tmp_path)
-    split = split_structures(
-        [_labelled(str(i)) for i in range(10)], valid_fraction=0.1, test_fraction=0.0, seed=42
-    )
-
-    data = MaceTrainer().write_dataset(plan, split)
-
-    assert data.train.is_file() and data.valid is not None and data.valid.is_file()
-    assert data.test is None
-    assert not (plan.run_dir / "test.xyz").exists()
-
-
-def test_the_pipelines_own_structures_are_left_alone(tmp_path: Path):
-    """Force arrays are shared by reference across steps and deliberately read-only."""
-    struct = _labelled("0")
-    MaceTrainer().write_dataset(_plan(tmp_path), DatasetSplit(train=(struct,), valid=(), test=()))
-    assert not struct.forces_ev_per_a.flags.writeable
-    assert not struct.atoms.info, "the seed's own info dict must not gain training keys"
-
-
 @pytest.mark.integration
 def test_mace_loads_the_dataset_we_write(tmp_path: Path):
     """End to end against the real loader: the labels arrive, and they carry full weight.
@@ -300,10 +287,10 @@ def test_the_command_runs_under_the_backends_own_interpreter(tmp_path: Path):
 
 
 def test_a_multi_gpu_step_runs_under_torchrun(tmp_path: Path):
+    """The base's one torchrun spelling, with MACE's own trainer argv after it."""
     body = MaceTrainer().command(_plan(tmp_path, gpus=4), tmp_path / "cfg.yaml")
 
-    assert "torch.distributed.run" in body
-    assert "--nproc_per_node=4" in body
+    assert "-m torch.distributed.run --standalone --nnodes 1 --nproc_per_node 4" in body
     assert body.endswith("--distributed")
 
 
@@ -451,13 +438,6 @@ def test_a_rerun_does_not_stack_duplicate_rows(tmp_path: Path):
         assert db.count() == 4
 
 
-def test_fairchem_training_without_a_validation_set_is_refused(tmp_path: Path):
-    """Its runner takes a train *and* an eval dataloader; there is no train-only mode."""
-    split = DatasetSplit(train=(_labelled("0"),), valid=(), test=())
-    with pytest.raises(ConfigError, match="needs a validation set"):
-        FairchemTrainer().write_dataset(_fc_plan(tmp_path), split)
-
-
 def test_the_device_placeholder_is_uppercased_for_fairchem(tmp_path: Path):
     """Its enums reject their own lowercase values — `'cpu'` is not a valid `DeviceType`.
 
@@ -532,14 +512,6 @@ def test_fairchem_loads_the_dataset_we_write(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def _sevenn_split() -> DatasetSplit:
-    return DatasetSplit(
-        train=(_labelled("0"), _labelled("1", energy=-1.6)),
-        valid=(_labelled("2"),),
-        test=(),
-    )
-
-
 def test_sevenn_labels_ride_on_the_reconstructed_calculator(tmp_path: Path):
     """SevenNet's loader takes energy and forces off ``atoms.calc`` — ase's round trip.
 
@@ -549,7 +521,7 @@ def test_sevenn_labels_ride_on_the_reconstructed_calculator(tmp_path: Path):
     """
     from chemrefine.engines.mlip.backends.sevenn import SevennTrainer
 
-    files = SevennTrainer().write_dataset(_plan(tmp_path), _sevenn_split())
+    files = SevennTrainer().write_dataset(_plan(tmp_path), _small_split())
     frames = ase_read(str(files.train), index=":")
     assert len(frames) == 2
     first = frames[0]
@@ -559,63 +531,6 @@ def test_sevenn_labels_ride_on_the_reconstructed_calculator(tmp_path: Path):
     )
     assert files.valid is not None and files.valid.is_file()
     assert files.test is None  # an empty split gets no file at all
-
-
-def test_sevenn_training_without_a_validation_set_is_refused(tmp_path: Path):
-    """``checkpoint_best.pth`` is written when the *validation* metric improves.
-
-    A run without validation trains to completion and leaves no best checkpoint — the
-    artifact this step adopts — so the refusal happens before anything is spent, exactly
-    as FAIRChem's trainer refuses for its runner's sake.
-    """
-    from chemrefine.engines.mlip.backends.sevenn import SevennTrainer
-
-    split = DatasetSplit(train=(_labelled("0"),), valid=(), test=())
-    with pytest.raises(ConfigError, match="validation set"):
-        SevennTrainer().write_dataset(_plan(tmp_path), split)
-
-
-def test_sevenn_warns_when_charge_or_spin_would_be_dropped(tmp_path: Path, caplog):
-    """No charge/spin channel: a charged or open-shell ensemble is warned, never silent.
-
-    MACE stamps ``total_charge``/``total_spin`` into its dataset; SevenNet has nowhere to
-    put either, so the honest floor is a warning naming what the labels will not carry.
-    """
-    import logging
-
-    from chemrefine.engines.mlip.backends.sevenn import SevennTrainer
-
-    with caplog.at_level(logging.WARNING):
-        SevennTrainer().write_dataset(_plan(tmp_path, charge=-1), _sevenn_split())
-    assert "no charge/spin channel" in caplog.text
-
-    caplog.clear()
-    with caplog.at_level(logging.WARNING):
-        SevennTrainer().write_dataset(_plan(tmp_path / "b"), _sevenn_split())
-    assert "no charge/spin channel" not in caplog.text
-
-
-def test_sevenn_writer_copies_rather_than_mutating_the_pipeline_structure(tmp_path: Path):
-    """The calculator lands on a copy; the pipeline's own structure stays bare."""
-    from chemrefine.engines.mlip.backends.sevenn import SevennTrainer
-
-    struct = _labelled("0")
-    SevennTrainer().write_dataset(
-        _plan(tmp_path), DatasetSplit(train=(struct,), valid=(_labelled("1"),), test=())
-    )
-    assert struct.atoms.calc is None
-
-
-def test_sevenn_placeholders_name_every_dataset(tmp_path: Path):
-    from chemrefine.engines.mlip.backends.sevenn import SevennTrainer
-
-    trainer = SevennTrainer()
-    plan = _plan(tmp_path)
-    files = trainer.write_dataset(plan, _sevenn_split())
-    placeholders = trainer.placeholders(plan, files)
-    assert placeholders["TRAIN_SET"] == str(files.train)
-    assert placeholders["VALID_SET"] == str(files.valid)
-    assert placeholders["TEST_SET"] == ""  # absent split: an empty string, not a path
 
 
 def test_sevenn_runs_its_console_script_with_the_config_basename(tmp_path: Path):
@@ -651,45 +566,6 @@ def test_the_sevenn_product_is_the_fixed_best_checkpoint(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # CHGNet — the driver route: rendered YAML in, fixed-name checkpoint out
 # ---------------------------------------------------------------------------
-
-
-def _chgnet_split() -> DatasetSplit:
-    return DatasetSplit(
-        train=(_labelled("0"), _labelled("1", energy=-1.6)),
-        valid=(_labelled("2"),),
-        test=(),
-    )
-
-
-def test_chgnet_training_without_a_validation_set_is_refused(tmp_path: Path):
-    """``Trainer.train`` takes a validation loader positionally — no train-only mode."""
-    from chemrefine.engines.mlip.backends.chgnet import ChgnetTrainer
-
-    split = DatasetSplit(train=(_labelled("0"),), valid=(), test=())
-    with pytest.raises(ConfigError, match="validation set"):
-        ChgnetTrainer().write_dataset(_plan(tmp_path), split)
-
-
-def test_chgnet_warns_when_charge_or_spin_would_be_dropped(tmp_path: Path, caplog):
-    import logging
-
-    from chemrefine.engines.mlip.backends.chgnet import ChgnetTrainer
-
-    with caplog.at_level(logging.WARNING):
-        ChgnetTrainer().write_dataset(_plan(tmp_path, multiplicity=3), _chgnet_split())
-    assert "no charge/spin channel" in caplog.text
-
-
-def test_chgnet_placeholders_name_every_dataset(tmp_path: Path):
-    from chemrefine.engines.mlip.backends.chgnet import ChgnetTrainer
-
-    trainer = ChgnetTrainer()
-    plan = _plan(tmp_path)
-    files = trainer.write_dataset(plan, _chgnet_split())
-    placeholders = trainer.placeholders(plan, files)
-    assert placeholders["TRAIN_SET"] == str(files.train)
-    assert placeholders["VALID_SET"] == str(files.valid)
-    assert placeholders["TEST_SET"] == ""
 
 
 def test_chgnet_runs_the_shipped_driver_under_the_backends_interpreter(tmp_path: Path):
@@ -811,7 +687,7 @@ def _driver_config(tmp_path: Path, **overrides) -> Path:
 
     from chemrefine.engines.mlip.backends.chgnet import ChgnetTrainer
 
-    files = ChgnetTrainer().write_dataset(_plan(tmp_path), _chgnet_split())
+    files = ChgnetTrainer().write_dataset(_plan(tmp_path), _small_split())
     config = {
         "train_set": str(files.train),
         "valid_set": str(files.valid),
@@ -946,14 +822,6 @@ def test_the_driver_dispatches_by_registry_and_refuses_the_wrong_kind(tmp_path: 
 # ---------------------------------------------------------------------------
 
 
-def _orb_split() -> DatasetSplit:
-    return DatasetSplit(
-        train=(_labelled("0"), _labelled("1", energy=-1.6)),
-        valid=(_labelled("2"),),
-        test=(),
-    )
-
-
 def test_orb_datasets_are_ase_sqlite_with_calculator_labels(tmp_path: Path):
     """``AseSqliteDataset`` reads a db path; the labels ride each row's calculator.
 
@@ -967,8 +835,8 @@ def test_orb_datasets_are_ase_sqlite_with_calculator_labels(tmp_path: Path):
     from chemrefine.engines.mlip.backends.orb import OrbTrainer
 
     trainer = OrbTrainer()
-    files = trainer.write_dataset(_plan(tmp_path), _orb_split())
-    files = trainer.write_dataset(_plan(tmp_path), _orb_split())  # the rerun
+    files = trainer.write_dataset(_plan(tmp_path), _small_split())
+    files = trainer.write_dataset(_plan(tmp_path), _small_split())  # the rerun
     assert files.train is not None and files.train.suffix == ".db"
     with connect(str(files.train)) as db:
         rows = list(db.select())
@@ -976,28 +844,6 @@ def test_orb_datasets_are_ase_sqlite_with_calculator_labels(tmp_path: Path):
     atoms = rows[0].toatoms()
     assert atoms.get_potential_energy() == pytest.approx(-1.5 * HARTREE_TO_EV, rel=1e-12)
     assert files.valid is not None and files.valid.is_file()
-
-
-def test_orb_warns_when_charge_or_spin_would_be_dropped(tmp_path: Path, caplog):
-    import logging
-
-    from chemrefine.engines.mlip.backends.orb import OrbTrainer
-
-    with caplog.at_level(logging.WARNING):
-        OrbTrainer().write_dataset(_plan(tmp_path, charge=1), _orb_split())
-    assert "no charge/spin channel" in caplog.text
-
-
-def test_orb_placeholders_name_every_dataset(tmp_path: Path):
-    from chemrefine.engines.mlip.backends.orb import OrbTrainer
-
-    trainer = OrbTrainer()
-    plan = _plan(tmp_path)
-    files = trainer.write_dataset(plan, _orb_split())
-    placeholders = trainer.placeholders(plan, files)
-    assert placeholders["TRAIN_SET"] == str(files.train)
-    assert placeholders["VALID_SET"] == str(files.valid)
-    assert placeholders["TEST_SET"] == ""
 
 
 def test_orb_runs_the_shared_driver_under_the_backends_interpreter(tmp_path: Path):

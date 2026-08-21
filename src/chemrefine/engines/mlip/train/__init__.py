@@ -6,8 +6,9 @@ shell reads as one directory, not as three siblings competing for a prefix at th
 package's top level.
 
 * :mod:`~chemrefine.engines.mlip.train.base` — the contract and the backend-agnostic
-  machinery: :class:`Trainer`, :class:`TrainingPlan`, the deterministic split, the
-  template render, the shared dataset writers.
+  machinery: :class:`TrainerBase` (and the :class:`Trainer` Protocol it is replacing),
+  :class:`TrainingPlan`, the deterministic split, the template render, the shared
+  dataset writers.
 * :mod:`~chemrefine.engines.mlip.train.engine` — :class:`MlipTrainEngine`, the
   scheduler-facing half (``engine: mlip-train``).
 * :mod:`~chemrefine.engines.mlip.train.driver` — the ``python -m`` shell an API-only
@@ -24,6 +25,7 @@ from chemrefine.engines.mlip.train.base import (
     DatasetFiles,
     DatasetSplit,
     Trainer,
+    TrainerBase,
     TrainingPlan,
     base_placeholders,
     digest_of,
@@ -40,6 +42,7 @@ __all__ = [
     "DatasetSplit",
     "MlipTrainEngine",
     "Trainer",
+    "TrainerBase",
     "TrainingPlan",
     "base_placeholders",
     "digest_of",

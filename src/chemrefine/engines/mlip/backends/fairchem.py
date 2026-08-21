@@ -11,7 +11,6 @@ hardcoded ``omol``.
 
 from __future__ import annotations
 
-import shlex
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, ClassVar
@@ -19,8 +18,7 @@ from typing import Any, ClassVar
 import numpy as np
 
 from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
-from chemrefine.engines.mlip.train.base import DatasetFiles, DatasetSplit, TrainingPlan
-from chemrefine.errors import ConfigError
+from chemrefine.engines.mlip.train.base import DatasetFiles, TrainerBase, TrainingPlan
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
 
@@ -138,7 +136,7 @@ def _build_fairchem(spec: CalculatorSpec) -> Any:
 
 
 @FAIRCHEM.trainer(*HEADS)
-class FairchemTrainer:
+class FairchemTrainer(TrainerBase):
     """Fine-tune a FAIRChem model on a step's labelled structures.
 
     Registered over the same ``HEADS`` the calculator uses, so the head list is written once
@@ -167,6 +165,13 @@ class FairchemTrainer:
     * ``a2g_args: {r_data_keys: [charge, spin]}`` — see :func:`_write_ase_db`.
     """
 
+    label = "FAIRChem"
+    needs_validation = True
+    validation_reason = "its runner takes a train *and* an eval dataloader, with no train-only mode"
+    charge_spin_aware = True
+    """Charge and spin ride each row's ``data=`` mapping (:func:`_write_ase_db`), so an
+    ion is fitted as itself — no warning to raise."""
+
     required_placeholders: ClassVar[frozenset[str]] = frozenset(
         {"TRAIN_SET", "VAL_SET", "RUN_DIR", "RUN_NAME"}
     )
@@ -191,8 +196,8 @@ class FairchemTrainer:
     model, and the honest thing is to say so rather than to declare a net that does not catch
     it."""
 
-    def write_dataset(self, plan: TrainingPlan, split: DatasetSplit) -> DatasetFiles:
-        """Write one ASE database per split, each with the metadata its sampler demands.
+    def write_split(self, plan: TrainingPlan, name: str, structures: tuple[Structure, ...]) -> Path:
+        """One split as an ASE database in a directory of its own, with its metadata.
 
         **A directory per split, not a file per split.** Without an explicit
         ``metadata_path`` FAIRChem looks for ``metadata.npz`` in the database file's *parent*,
@@ -207,28 +212,13 @@ class FairchemTrainer:
         has core ``ase`` but not ``ase_db_backends``. `AseDBDataset` connects with a plain
         ``ase.db.connect``, so any format ase can write is one it can read.
         """
-        if not split.valid:
-            raise ConfigError(
-                "FAIRChem training needs a validation set — its runner takes a train *and* an "
-                "eval dataloader, with no train-only mode. Raise `valid_fraction` above 0."
-            )
-        written: dict[str, Path | None] = {"train": None, "valid": None, "test": None}
-        for name, structures in (
-            ("train", split.train),
-            ("valid", split.valid),
-            ("test", split.test),
-        ):
-            if not structures:
-                continue
-            written[name] = _write_ase_db(
-                plan.run_dir / _DATA_DIR / name,
-                name,
-                structures,
-                charge=plan.charge,
-                spin=plan.multiplicity,
-            )
-        assert written["train"] is not None  # noqa: S101 - split_structures guarantees one
-        return DatasetFiles(train=written["train"], valid=written["valid"], test=written["test"])
+        return _write_ase_db(
+            plan.run_dir / _DATA_DIR / name,
+            name,
+            structures,
+            charge=plan.charge,
+            spin=plan.multiplicity,
+        )
 
     def placeholders(self, plan: TrainingPlan, data: DatasetFiles) -> dict[str, str]:
         """FAIRChem's dataset paths, their metadata, and its own spellings of the shared knobs.
@@ -271,7 +261,7 @@ class FairchemTrainer:
         ``slurm_array: true`` it is a ``$INP_NAME`` sentinel the array script expands, and
         single quotes would stop it expanding.
         """
-        return f"{shlex.quote(str(plan.bindir / 'fairchem'))} -c {config.name}"
+        return f"{self.console_script(plan, 'fairchem')} -c {config.name}"
 
     def artifact(self, run_dir: Path, run_name: str) -> Path:
         """The inference checkpoint FAIRChem writes when training ends.

@@ -14,16 +14,13 @@ utilities, driven by the shared :mod:`chemrefine.engines.mlip.train.driver`.
 
 from __future__ import annotations
 
-import logging
-import shlex
 from pathlib import Path
 from typing import Any, ClassVar
 
 from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
-from chemrefine.engines.mlip.train.base import DatasetFiles, DatasetSplit, TrainingPlan
+from chemrefine.engines.mlip.train.base import TrainerBase, TrainingPlan
 from chemrefine.errors import ConfigError
-
-logger = logging.getLogger(__name__)
+from chemrefine.state import Structure
 
 ORB = MlipLibrary(extra="mlip-orb", package="orb-models", import_name="orb_models")
 """The one declaration of what provides this library."""
@@ -74,7 +71,7 @@ def _build_orb(spec: CalculatorSpec) -> Any:
 
 
 @ORB.trainer("orb")
-class OrbTrainer:
+class OrbTrainer(TrainerBase):
     """Fine-tune an ORB model on a step's labelled structures.
 
     orb-models publishes its fine-tuning entry point as a repo-root script that is **not
@@ -100,20 +97,20 @@ class OrbTrainer:
         gradient_clip: 0.5
     """
 
+    label = "ORB"
+
     required_placeholders: ClassVar[frozenset[str]] = frozenset({"TRAIN_SET", "RUN_NAME"})
     """No ``VALID_SET``: orb's fine-tune loop is train-only — it has no evaluation pass, so
-    requiring a validation file would demand data nothing reads. ``RUN_NAME`` is required
-    because :meth:`artifact` derives from it, the MACE/CHGNet reasoning."""
+    requiring a validation file would demand data nothing reads (and ``needs_validation``
+    stays False for the same reason). ``RUN_NAME`` is required because :meth:`artifact`
+    derives from it, the MACE/CHGNet reasoning."""
 
     output_globs: ClassVar[tuple[str, ...]] = ("*.ckpt",)
     """The fixed final save and orb's own per-epoch ``checkpoint_epoch{n}.ckpt`` files —
     all written into the working directory, carried home from ``$WORK_DIR`` by this."""
 
-    output_dirs: ClassVar[tuple[str, ...]] = ()
-    """Flat files only; nothing to copy back wholesale."""
-
-    def write_dataset(self, plan: TrainingPlan, split: DatasetSplit) -> DatasetFiles:
-        """Write each split as an ASE sqlite database — the one format orb's dataset reads.
+    def write_split(self, plan: TrainingPlan, name: str, structures: tuple[Structure, ...]) -> Path:
+        """One split as an ASE sqlite database — the one format orb's dataset reads.
 
         ``AseSqliteDataset`` is constructed on a database path ("you must convert your
         data into this format" — the script's own words), and the labels ride on each
@@ -121,46 +118,17 @@ class OrbTrainer:
         labelled_atoms` attaches them — the FAIRChem trainer's sqlite precedent, one
         library over. The valid/test splits are written when present so the data a user
         held out stays visible on disk, but orb's loop reads only the training set.
-
-        ORB has no charge or spin channel, so a charged or open-shell ensemble is warned
-        about rather than silently fitted as neutral data.
         """
         from ase.db import connect
 
         from chemrefine.engines.mlip.train.base import labelled_atoms
 
-        if plan.charge != 0 or plan.multiplicity != 1:
-            logger.warning(
-                "ORB has no charge/spin channel: charge %d, multiplicity %d will be "
-                "fitted as if neutral — the labels carry no trace of either",
-                plan.charge,
-                plan.multiplicity,
-            )
-        plan.run_dir.mkdir(parents=True, exist_ok=True)
-        written: dict[str, Path | None] = {"train": None, "valid": None, "test": None}
-        for name, structures in (
-            ("train", split.train),
-            ("valid", split.valid),
-            ("test", split.test),
-        ):
-            if not structures:
-                continue
-            path = plan.run_dir / f"{name}.db"
-            path.unlink(missing_ok=True)  # ase.db appends; a rerun must not stack rows
-            with connect(str(path)) as db:
-                for struct in structures:
-                    db.write(labelled_atoms(struct))
-            written[name] = path
-        assert written["train"] is not None  # noqa: S101 - split_structures guarantees one
-        return DatasetFiles(train=written["train"], valid=written["valid"], test=written["test"])
-
-    def placeholders(self, plan: TrainingPlan, data: DatasetFiles) -> dict[str, str]:
-        """The database paths, under the names every trainer's template uses."""
-        return {
-            "TRAIN_SET": str(data.train),
-            "VALID_SET": str(data.valid) if data.valid else "",
-            "TEST_SET": str(data.test) if data.test else "",
-        }
+        path = plan.run_dir / f"{name}.db"
+        path.unlink(missing_ok=True)  # ase.db appends; a rerun must not stack rows
+        with connect(str(path)) as db:
+            for struct in structures:
+                db.write(labelled_atoms(struct))
+        return path
 
     def command(self, plan: TrainingPlan, config: Path) -> str:
         """The shared train driver, under the backend env's interpreter.
@@ -169,7 +137,7 @@ class OrbTrainer:
         documents. The config rides by basename for the array-sentinel reason MACE's
         command spells out.
         """
-        python = shlex.quote(str(plan.launcher))
+        python = self.quoted_launcher(plan)
         return f"{python} -m chemrefine.engines.mlip.train.driver orb {config.name}"
 
     def artifact(self, run_dir: Path, run_name: str) -> Path:

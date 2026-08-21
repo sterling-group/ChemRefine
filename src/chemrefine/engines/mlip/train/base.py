@@ -53,6 +53,9 @@ of them fails in ``prepare``, before a job is submitted, naming the placeholder 
 from __future__ import annotations
 
 import hashlib
+import logging
+import shlex
+from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,6 +71,8 @@ from chemrefine.state import Structure
 
 if TYPE_CHECKING:
     from ase import Atoms
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # What a training run is
@@ -94,6 +99,14 @@ class DatasetSplit:
         """``"45 train / 5 valid / 0 test"`` — for log lines and error messages."""
         return f"{len(self.train)} train / {len(self.valid)} valid / {len(self.test)} test"
 
+    def items(self) -> tuple[tuple[str, tuple[Structure, ...]], ...]:
+        """The three splits in writing order, under the names their files take.
+
+        The triple every dataset writer iterates — owned here so five trainers cannot
+        each spell the ``("train", …), ("valid", …), ("test", …)`` sequence and drift.
+        """
+        return (("train", self.train), ("valid", self.valid), ("test", self.test))
+
 
 @dataclass(frozen=True)
 class DatasetFiles:
@@ -107,6 +120,18 @@ class DatasetFiles:
     train: Path
     valid: Path | None = None
     test: Path | None = None
+
+    def as_placeholders(self) -> dict[str, str]:
+        """The ``TRAIN_SET`` / ``VALID_SET`` / ``TEST_SET`` triple, ``""`` for absent.
+
+        The empty string rather than a missing key, so a template referencing a split
+        that was not written renders an empty value its library can refuse by name —
+        instead of a ``$VALID_SET`` surviving substitution as a literal."""
+        return {
+            "TRAIN_SET": str(self.train),
+            "VALID_SET": str(self.valid) if self.valid else "",
+            "TEST_SET": str(self.test) if self.test else "",
+        }
 
 
 @dataclass(frozen=True)
@@ -152,6 +177,16 @@ class TrainingPlan:
         this interpreter when the backend is importable alongside the orchestrator.
         """
         return self.launcher.parent
+
+    @property
+    def is_neutral_singlet(self) -> bool:
+        """Whether this run's species is the neutral singlet every chargeless library assumes.
+
+        The predicate behind the charge/spin warning, owned once: three trainers each
+        wrote ``charge != 0 or multiplicity != 1`` and had already drifted in how they
+        described the consequence.
+        """
+        return self.charge == 0 and self.multiplicity == 1
 
 
 @runtime_checkable
@@ -213,6 +248,129 @@ class Trainer(Protocol):
         matters most.
         """
         ...
+
+
+class TrainerBase(ABC):
+    """The trainer contract: declarations up top, hooks abstract, machinery concrete.
+
+    A backend declares what the parent needs — a label for messages, whether its library
+    demands a validation set (and why), whether its dataset carries charge and spin, the
+    placeholders its template must reference, what to copy home — and writes only the
+    three hooks that are genuinely a library fact: how one split is written
+    (:meth:`write_split`), what command trains (:meth:`command`), and where the product
+    lands (:meth:`artifact`). Everything five trainers used to each write — the
+    validation refusal, the charge/spin warning, the split loop, the placeholder triple,
+    the launcher quoting — is concrete here, written once.
+
+    ``ABC`` rather than a second ``Protocol`` beside the :class:`Trainer` one, because a
+    registry — an explicit declaration channel — already exists: a missing abstract hook
+    fails at instantiation naming the member, which is earlier and more specific than any
+    structural check at the point of use. Protocols stay the tool across package
+    boundaries, where no shared base can exist (the :mod:`chemrefine.engines.api`
+    doctrine, unchanged).
+    """
+
+    label: ClassVar[str]
+    """The library's name as messages spell it — ``"SevenNet"``, ``"CHGNet"``."""
+
+    needs_validation: ClassVar[bool] = False
+    """Whether this library refuses to train without a validation set."""
+
+    validation_reason: ClassVar[str] = ""
+    """The why-clause of that refusal — the one library fact in it. No trailing period."""
+
+    charge_spin_aware: ClassVar[bool] = False
+    """True when the dataset carries charge and spin; False warns on non-neutral data."""
+
+    required_placeholders: ClassVar[frozenset[str]] = frozenset({"TRAIN_SET"})
+    """Placeholders this backend's template must reference — see :class:`Trainer`."""
+
+    output_globs: ClassVar[tuple[str, ...]]
+    """Loose files to copy back out of the job's scratch directory."""
+
+    output_dirs: ClassVar[tuple[str, ...]] = ()
+    """Whole directories to copy back; most libraries write flat files."""
+
+    # -- the hooks: what genuinely differs per library ---------------------------------
+
+    @abstractmethod
+    def write_split(self, plan: TrainingPlan, name: str, structures: tuple[Structure, ...]) -> Path:
+        """Write one non-empty split (``"train"``/``"valid"``/``"test"``) in this
+        library's format; return the file its template will name.
+
+        Runs in the **orchestrator's** process, so only chemrefine's own dependencies —
+        ``ase`` and ``numpy`` — are importable; see :meth:`Trainer.write_dataset` for why
+        that constraint is deliberate.
+        """
+
+    @abstractmethod
+    def command(self, plan: TrainingPlan, config: Path) -> str:
+        """The bash that runs the training inside ``$WORK_DIR`` — see :class:`Trainer`."""
+
+    @abstractmethod
+    def artifact(self, run_dir: Path, run_name: str) -> Path:
+        """The trained model — the file whose existence is this step's success test."""
+
+    # -- the machinery: written once, driven by the declarations -----------------------
+
+    def write_dataset(self, plan: TrainingPlan, split: DatasetSplit) -> DatasetFiles:
+        """Refuse, warn, and write each non-empty split through :meth:`write_split`.
+
+        The refusal fires only when :attr:`needs_validation` says the library cannot
+        train without one, and says why in that library's own words
+        (:attr:`validation_reason`). The warning fires for non-neutral data only when
+        the dataset format carries no charge/spin channel — silence is the only wrong
+        answer, and it is not per-library prose any more. An empty split gets no file at
+        all: ase refuses a zero-byte extxyz, so naming one would turn "no test set" into
+        a crash.
+        """
+        if self.needs_validation and not split.valid:
+            raise ConfigError(
+                f"{self.label} training needs a validation set — "
+                f"{self.validation_reason}. Raise `valid_fraction` above 0."
+            )
+        if not self.charge_spin_aware and not plan.is_neutral_singlet:
+            logger.warning(
+                "%s has no charge/spin channel: charge %d, multiplicity %d will be "
+                "fitted as if neutral singlet — the labels carry no trace of either",
+                self.label,
+                plan.charge,
+                plan.multiplicity,
+            )
+        plan.run_dir.mkdir(parents=True, exist_ok=True)
+        written: dict[str, Path | None] = {"train": None, "valid": None, "test": None}
+        for name, structures in split.items():
+            if not structures:
+                continue
+            written[name] = self.write_split(plan, name, structures)
+        assert written["train"] is not None  # noqa: S101 - split_structures guarantees one
+        return DatasetFiles(train=written["train"], valid=written["valid"], test=written["test"])
+
+    def placeholders(self, plan: TrainingPlan, data: DatasetFiles) -> dict[str, str]:
+        """The dataset triple, by default — a backend extends or overrides it."""
+        return data.as_placeholders()
+
+    # -- command helpers: the one spelling of each ------------------------------------
+
+    def quoted_launcher(self, plan: TrainingPlan) -> str:
+        """The backend interpreter, quoted for bash — a real path, unlike the basename."""
+        return shlex.quote(str(plan.launcher))
+
+    def console_script(self, plan: TrainingPlan, name: str) -> str:
+        """A console script from the backend env's own ``bin/``, quoted for bash."""
+        return shlex.quote(str(plan.bindir / name))
+
+    def torchrun(self, plan: TrainingPlan, *argv: str) -> str:
+        """The DDP launcher line, spelled once: ``python -m torch.distributed.run …``.
+
+        Module form under the backend's interpreter rather than a ``torchrun`` script,
+        for the reason every command here uses the launcher: the script is on nobody's
+        ``PATH`` once the library lives somewhere the orchestrator does not.
+        """
+        return (
+            f"{self.quoted_launcher(plan)} -m torch.distributed.run --standalone "
+            f"--nnodes 1 --nproc_per_node {plan.gpus} " + " ".join(argv)
+        )
 
 
 # ---------------------------------------------------------------------------
