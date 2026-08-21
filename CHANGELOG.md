@@ -318,13 +318,39 @@ for the full map.
   channel warn instead of silently fitting an ion as neutral data; datasets, split,
   render and artifact rules are unchanged — and running what you trained is the same
   `model_path:` line for all five.
-- **Training got one home**: `engines/mlip/train/` — `base` (the `Trainer` contract and
+- **Training got one home**: `engines/mlip/train/` — `base` (the trainer contract and
   the backend-agnostic machinery), `engine` (`mlip-train`), `driver` (the backend-side
   shell) — the `_backend_server/` shape, replacing three same-prefix modules at the
   package top level. And the trainer contract is now a parametrised test layer every
   registered trainer inherits: dataset written with the orchestrator's own deps,
   placeholders covering the declared requirements, a plan-free artifact, the
   basename/no-trap command rules, and copy-back eligibility.
+- **The MLIP engine is contract-first** — a clean rewrite of the machinery, since v2 is
+  the moment it costs nothing. Inference: every builder is one function taking a frozen
+  `CalculatorSpec` the dispatch fills and vets once (checkpoint existence named by
+  `task_name`; optional `charge`/`multiplicity` as the door for charge-aware libraries
+  like AIMNet2) — no `**kwargs` catch-all for a knob to vanish into, and registration
+  proves the arity so a malformed drop-in fails at import, named. Training: the
+  `Trainer` Protocol is replaced by `TrainerBase`, an ABC that *is* the contract —
+  declarations up top (`label`, `needs_validation` + reason, `charge_spin_aware`,
+  placeholders, copy-back globs), three abstract hooks (`write_split`, `command`,
+  `artifact`), machinery concrete and written once (the validation refusal, the
+  charge/spin warning, the split loop, the one torchrun spelling) — and API-only
+  libraries subclass `ApiTrainerBase`, whose driver line, config-key check and artifact
+  path derive from declarations (`artifact_filename` is read by both `artifact()` and
+  the backend-side save, so they cannot drift). The `@trainer` decorator verifies the
+  declarations at discovery; the shared driver dispatches by `isinstance`, not
+  `getattr`. Derived, not hand-kept: `mlip-train`'s copy-back globs are now a property
+  over the registry, and the ExtOpt CLI table reads `MlipOptions`' own fields. Dropping
+  in a new backend — AIMNet2, ANI — is one module declaring its items; nothing
+  structural changes.
+- **`model_name` no longer defaults to `uma-s-1p2` for every backend.** The shared
+  default reached every non-FAIRChem step too — a FAIRChem checkpoint name handed to
+  MACE, SevenNet, CHGNet and ORB, surviving only where a builder ignored it. Unset now
+  means *the chosen library's own default* (FAIRChem's builder keeps `uma-s-1p2`;
+  SevenNet loads its own default release), and on an `mlip-train` step it means training
+  from scratch (`started_from: scratch` in the runlog) instead of silently naming a
+  FAIRChem checkpoint as everyone's foundation model.
 
 ### Fixed
 
@@ -343,6 +369,11 @@ for the full map.
   now load through `CHGNet.from_file`, whose `{"model": as_dict()}` shape is exactly what
   the new trainer saves, and the fake's `load`/`from_file` carry the real signatures so a
   stray positional fails in the test the way it fails in production.
+- **`model_name` now reaches CHGNet — its builder dropped that one too.** A YAML
+  `model_name: "0.3.0"` landed in the builder's `**_` catch-all and `CHGNet.load()` ran
+  bare, silently serving the latest release instead of the pinned one. A release name now
+  routes through `CHGNet.load(model_name=...)` — the bug class the `CalculatorSpec`
+  contract exists to end, and the last of the three builders caught swallowing a knob.
 - **The thread exports say the granted cores, not the asked-for pal.** The SLURM
   directives and the throttler charge both derive from `slurm_layout`'s
   `min(cores, max_cores)` clamp, but three run-block builders exported the raw `pal()`

@@ -97,8 +97,10 @@ def _backends_table() -> str:
     for extra in sorted(known_backend_extras()):
         tasks = tasks_by_extra.get(extra, [])
         # A training engine needs a backend with a trainer: `trainer_for` raises
-        # ConfigError ("can be run but not trained") for chgnet, orb and sevenn, so
-        # listing `mlip-train` against those would advertise a step that cannot run.
+        # ConfigError ("can be run but not trained") for any task registered without
+        # one, so `mlip-train` is listed only against extras whose tasks train. Every
+        # bundled backend currently does; the guard is what keeps this table honest
+        # for a future backend that registers a calculator alone.
         users = [
             d.name
             for d in engines
