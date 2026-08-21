@@ -276,6 +276,7 @@ class MlipTrainEngine(MlipBackend):
     # -- what the scheduler asks of a job ----------------------------------
 
     output_globs: ClassVar[tuple[str, ...]] = (
+        "*.ckpt",
         "*.csv",
         "*.log",
         "*.model",

@@ -296,7 +296,10 @@ def test_a_runnable_but_untrainable_task_says_which_it_is():
 
 def test_the_registry_reports_its_own_membership():
     assert "mace_off" in registered_trainers()
-    assert registered_trainers() < registered_backends(), "trainable is a subset of runnable"
+    # ``<=``, not ``<``: every shipped backend now trains, so the two sets are equal —
+    # the doctrine is that trainable can never *exceed* runnable, not that some backend
+    # must be left behind.
+    assert registered_trainers() <= registered_backends(), "trainable implies runnable"
     assert registered_extras() >= {"mlip-mace"}
 
 

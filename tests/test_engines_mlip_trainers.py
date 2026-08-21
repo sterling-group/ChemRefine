@@ -939,3 +939,283 @@ def test_the_driver_dispatches_by_registry_and_refuses_the_wrong_kind(tmp_path: 
     mapping.write_text(yaml.safe_dump({"train_set": "x"}), encoding="utf-8")
     with pytest.raises(SystemExit, match="its library's own CLI"):
         train_driver.main(["mace_off", str(mapping)])
+
+
+# ---------------------------------------------------------------------------
+# ORB — sqlite datasets, the rebuilt loop, a fixed-name state_dict
+# ---------------------------------------------------------------------------
+
+
+def _orb_split() -> DatasetSplit:
+    return DatasetSplit(
+        train=(_labelled("0"), _labelled("1", energy=-1.6)),
+        valid=(_labelled("2"),),
+        test=(),
+    )
+
+
+def test_orb_datasets_are_ase_sqlite_with_calculator_labels(tmp_path: Path):
+    """``AseSqliteDataset`` reads a db path; the labels ride each row's calculator.
+
+    Round-tripped through ase.db itself: the energy comes back off the reconstructed
+    calculator in eV, exactly as the adapter will read it. A rerun replaces the file
+    rather than appending — ase.db appends by default, and a stacked db would train on
+    every previous rerun's rows besides this one's.
+    """
+    from ase.db import connect
+
+    from chemrefine.engines.mlip.backends.orb import OrbTrainer
+
+    trainer = OrbTrainer()
+    files = trainer.write_dataset(_plan(tmp_path), _orb_split())
+    files = trainer.write_dataset(_plan(tmp_path), _orb_split())  # the rerun
+    assert files.train is not None and files.train.suffix == ".db"
+    with connect(str(files.train)) as db:
+        rows = list(db.select())
+    assert len(rows) == 2  # replaced, not stacked
+    atoms = rows[0].toatoms()
+    assert atoms.get_potential_energy() == pytest.approx(-1.5 * HARTREE_TO_EV, rel=1e-12)
+    assert files.valid is not None and files.valid.is_file()
+
+
+def test_orb_warns_when_charge_or_spin_would_be_dropped(tmp_path: Path, caplog):
+    import logging
+
+    from chemrefine.engines.mlip.backends.orb import OrbTrainer
+
+    with caplog.at_level(logging.WARNING):
+        OrbTrainer().write_dataset(_plan(tmp_path, charge=1), _orb_split())
+    assert "no charge/spin channel" in caplog.text
+
+
+def test_orb_placeholders_name_every_dataset(tmp_path: Path):
+    from chemrefine.engines.mlip.backends.orb import OrbTrainer
+
+    trainer = OrbTrainer()
+    plan = _plan(tmp_path)
+    files = trainer.write_dataset(plan, _orb_split())
+    placeholders = trainer.placeholders(plan, files)
+    assert placeholders["TRAIN_SET"] == str(files.train)
+    assert placeholders["VALID_SET"] == str(files.valid)
+    assert placeholders["TEST_SET"] == ""
+
+
+def test_orb_runs_the_shared_driver_under_the_backends_interpreter(tmp_path: Path):
+    import shlex
+
+    from chemrefine.engines.mlip.backends.orb import OrbTrainer
+
+    plan = _plan(tmp_path, launcher=Path("/envs/my orb/bin/python"))
+    cmd = OrbTrainer().command(plan, tmp_path / "step3_train.yaml")
+    quoted = shlex.quote("/envs/my orb/bin/python")
+    assert cmd == f"{quoted} -m chemrefine.engines.mlip.train.driver orb step3_train.yaml"
+
+
+def test_the_orb_product_is_the_fixed_named_checkpoint(tmp_path: Path):
+    from chemrefine.engines.mlip.backends.orb import OrbTrainer
+
+    assert OrbTrainer().artifact(tmp_path / "train", "train") == tmp_path / "train" / "train.ckpt"
+
+
+# ---------------------------------------------------------------------------
+# The ORB backend-side hook — the rebuilt loop's wiring, pinned against fakes
+# ---------------------------------------------------------------------------
+
+
+class _FakeOrbLoader:
+    """Iterable of fake batches; ``len`` is the steps-per-epoch the hook derives."""
+
+    def __init__(self, dataset, *, num_workers, worker_init_fn, collate_fn, batch_sampler):
+        from unittest.mock import MagicMock
+
+        self.collate_fn = collate_fn
+        batch = MagicMock()
+        batch.to.return_value = batch
+        self._batches = [batch, batch]
+
+    def __len__(self):
+        return len(self._batches)
+
+    def __iter__(self):
+        return iter(self._batches)
+
+
+def _install_fake_orb_stack(monkeypatch) -> dict:
+    """Fake orb_models + torch for ``run_training``; ase and yaml stay real."""
+    import sys
+    import types
+    from unittest.mock import MagicMock
+
+    recorded: dict = {}
+
+    model = MagicMock()
+    loss_out = types.SimpleNamespace(loss=MagicMock())
+    model.loss.return_value = loss_out
+    model.state_dict.return_value = {"w": 1}
+    adapter = MagicMock()
+    loader_fn = MagicMock(return_value=(model, adapter))
+
+    pretrained = types.ModuleType("orb_models.forcefield.pretrained")
+    pretrained.orb_v3_conservative_inf_omat = loader_fn
+    forcefield = types.ModuleType("orb_models.forcefield")
+    forcefield.pretrained = pretrained
+
+    prop_defs = types.ModuleType("orb_models.common.dataset.property_definitions")
+    prop_defs.instantiate_property_config = MagicMock(return_value="TARGETS")
+    ase_ds_mod = types.ModuleType("orb_models.common.dataset.ase_sqlite_dataset")
+    dataset = MagicMock()
+    dataset.__len__ = lambda self: 3
+    ase_ds_mod.AseSqliteDataset = MagicMock(return_value=dataset)
+    loaders_mod = types.ModuleType("orb_models.common.dataset.loaders")
+    loaders_mod.worker_init_fn = MagicMock()
+    dataset_pkg = types.ModuleType("orb_models.common.dataset")
+    dataset_pkg.property_definitions = prop_defs
+    dataset_pkg.ase_sqlite_dataset = ase_ds_mod
+    dataset_pkg.loaders = loaders_mod
+
+    optimizer, scheduler = MagicMock(), MagicMock()
+    util_mod = types.ModuleType("orb_models.common.training.util")
+    util_mod.get_optim = MagicMock(return_value=(optimizer, scheduler))
+    util_mod.init_device = MagicMock(return_value="cpu")
+    training_pkg = types.ModuleType("orb_models.common.training")
+    training_pkg.util = util_mod
+    utils_mod = types.ModuleType("orb_models.common.utils")
+    utils_mod.seed_everything = MagicMock()
+    common_pkg = types.ModuleType("orb_models.common")
+    common_pkg.dataset = dataset_pkg
+    common_pkg.training = training_pkg
+    common_pkg.utils = utils_mod
+    orb_pkg = types.ModuleType("orb_models")
+    orb_pkg.common = common_pkg
+    orb_pkg.forcefield = forcefield
+
+    tud = types.ModuleType("torch.utils.data")
+    tud.DataLoader = _FakeOrbLoader
+    tud.BatchSampler = MagicMock(side_effect=lambda s, *, batch_size, drop_last: ("BS", batch_size))
+    tud.RandomSampler = MagicMock(side_effect=lambda ds: ("RS", ds))
+    torch_utils = types.ModuleType("torch.utils")
+    torch_utils.data = tud
+    nn_utils = types.ModuleType("torch.nn.utils")
+    nn_utils.clip_grad_norm_ = MagicMock()
+    torch_nn = types.ModuleType("torch.nn")
+    torch_nn.utils = nn_utils
+    torch_mod = types.ModuleType("torch")
+    torch_mod.utils = torch_utils
+    torch_mod.nn = torch_nn
+    torch_mod.save = MagicMock(
+        side_effect=lambda payload, path: recorded.setdefault("saves", []).append(str(path))
+    )
+
+    for name, mod in {
+        "orb_models": orb_pkg,
+        "orb_models.common": common_pkg,
+        "orb_models.common.dataset": dataset_pkg,
+        "orb_models.common.dataset.property_definitions": prop_defs,
+        "orb_models.common.dataset.ase_sqlite_dataset": ase_ds_mod,
+        "orb_models.common.dataset.loaders": loaders_mod,
+        "orb_models.common.training": training_pkg,
+        "orb_models.common.training.util": util_mod,
+        "orb_models.common.utils": utils_mod,
+        "orb_models.forcefield": forcefield,
+        "orb_models.forcefield.pretrained": pretrained,
+        "torch": torch_mod,
+        "torch.utils": torch_utils,
+        "torch.utils.data": tud,
+        "torch.nn": torch_nn,
+        "torch.nn.utils": nn_utils,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, mod)
+    recorded.update(
+        loader_fn=loader_fn,
+        model=model,
+        loss=loss_out.loss,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        get_optim=util_mod.get_optim,
+        seed=utils_mod.seed_everything,
+        clip=nn_utils.clip_grad_norm_,
+        dataset_cls=ase_ds_mod.AseSqliteDataset,
+    )
+    return recorded
+
+
+def _orb_config(**overrides) -> dict:
+    config = {
+        "train_set": "/data/train.db",
+        "run_name": "train",
+        "base_model": "orb_v3_conservative_inf_omat",
+        "device": "cpu",
+        "seed": 11,
+        "start_from": "",
+        "epochs": 2,
+        "learning_rate": 1e-4,
+        "batch_size": 4,
+        "gradient_clip": 0.5,
+    }
+    config.update(overrides)
+    return config
+
+
+def test_the_orb_hook_rebuilds_the_scripts_loop(monkeypatch, tmp_path: Path):
+    """The wiring the unpackaged script established, held by this hook.
+
+    Loader with ``train=True``; the sqlite dataset with the adapter's own collate;
+    ``get_optim(lr, epochs*steps, model)``; per-batch backward → clip → step →
+    scheduler; a per-epoch ``checkpoint_epoch{n}.ckpt`` and the fixed final save the
+    script never had.
+    """
+    from chemrefine.engines.mlip.backends.orb import OrbTrainer
+
+    recorded = _install_fake_orb_stack(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    assert OrbTrainer().run_training(_orb_config()) == 0
+
+    recorded["loader_fn"].assert_called_once_with(device="cpu", train=True)
+    recorded["seed"].assert_called_once_with(11)
+    recorded["get_optim"].assert_called_once()
+    lr, total_steps, _model = recorded["get_optim"].call_args.args
+    assert (lr, total_steps) == (1e-4, 2 * 2)  # epochs x steps_per_epoch
+    assert recorded["loss"].backward.call_count == 4
+    assert recorded["optimizer"].step.call_count == 4
+    assert recorded["scheduler"].step.call_count == 4
+    assert recorded["clip"].call_count == 4
+    assert recorded["saves"] == [
+        "checkpoint_epoch0.ckpt",
+        "checkpoint_epoch1.ckpt",
+        "train.ckpt",
+    ]
+
+
+def test_the_orb_hook_fine_tunes_from_a_local_checkpoint(monkeypatch, tmp_path: Path):
+    """A ``start_from`` file rides the loaders' own ``weights_path`` door."""
+    from chemrefine.engines.mlip.backends.orb import OrbTrainer
+
+    recorded = _install_fake_orb_stack(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    OrbTrainer().run_training(_orb_config(start_from="/models/prev.ckpt"))
+    recorded["loader_fn"].assert_called_once_with(
+        device="cpu", train=True, weights_path="/models/prev.ckpt"
+    )
+
+
+def test_the_orb_hook_refuses_what_it_cannot_invent(monkeypatch, tmp_path: Path):
+    from chemrefine.engines.mlip.backends.orb import OrbTrainer
+
+    _install_fake_orb_stack(monkeypatch)
+    with pytest.raises(SystemExit, match="base_model"):
+        OrbTrainer().run_training({"train_set": "/d/t.db", "run_name": "train"})
+    with pytest.raises(SystemExit, match="unknown base_model"):
+        OrbTrainer().run_training(_orb_config(base_model="orb_not_a_loader"))
+
+
+def test_the_orb_hook_tolerates_an_optimizer_without_a_scheduler(monkeypatch, tmp_path: Path):
+    """``get_optim`` may return no scheduler; the loop must step without one."""
+    from chemrefine.engines.mlip.backends.orb import OrbTrainer
+
+    recorded = _install_fake_orb_stack(monkeypatch)
+    recorded["get_optim"].return_value = (recorded["optimizer"], None)
+    recorded["get_optim"].side_effect = None
+    monkeypatch.chdir(tmp_path)
+    assert OrbTrainer().run_training(_orb_config(epochs=1)) == 0
+    assert recorded["optimizer"].step.call_count == 2
+    assert recorded["scheduler"].step.call_count == 0
