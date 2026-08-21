@@ -135,10 +135,18 @@ def read_template(config_path: str, step: int | str) -> dict[str, Any]:
 
 
 def write_template(config_path: str, step: int | str, text: str) -> dict[str, Any]:
-    """Replace one step's template with ``text`` (creating template_dir if needed)."""
+    """Replace one step's template with ``text`` (creating template_dir if needed).
+
+    An unwritable destination is a :class:`~chemrefine.errors.ConfigError` naming the
+    path — the module's stated contract — not a raw :class:`OSError` the GUI's error
+    handler re-raises as a 500 whose traceback names neither.
+    """
     plan = _step_template_plan(load_config(Path(config_path)), step)
-    plan.path.parent.mkdir(parents=True, exist_ok=True)
-    plan.path.write_text(text, encoding="utf-8")
+    try:
+        plan.path.parent.mkdir(parents=True, exist_ok=True)
+        plan.path.write_text(text, encoding="utf-8")
+    except OSError as e:
+        raise ConfigError(f"cannot write template {plan.path}: {e}") from e
     return {"path": str(plan.path), "bytes": len(text.encode("utf-8"))}
 
 
@@ -175,6 +183,15 @@ def start_run(
     """
     if action not in _ACTIONS:
         raise ConfigError(f"unknown action {action!r}; one of {list(_ACTIONS)}")
+    if target is not None and action in ("run", "resume"):
+        # The CLI's `run`/`resume` take no positional target, so the child would exit 2 on
+        # "unexpected extra argument" — *after* this returned a pid and a log path, leaving
+        # an agent polling a run that never started. The schema shows `action` and `target`
+        # side by side; this is the validation the docstring promises for that pairing.
+        raise ConfigError(
+            f"action {action!r} drives the whole pipeline and takes no target; "
+            f"aim at a step with rerun, rerun-errors, rebuild-cache or rebuild-nms"
+        )
     path = Path(config_path).resolve()
     config = load_config(path)
     if target is not None and config.find_step(target) is None:
@@ -231,6 +248,11 @@ def run_status(config_path: str, log_tail_lines: int = 40) -> dict[str, Any]:
 
     Everything is read from what the pipeline persists — nothing here talks to the
     driver, so the answer is the same whether the run is live, finished, or died.
+
+    ``log_tail_lines`` of ``0`` (or below) means *no tail*: an empty list, with the log's
+    path still reported. It cannot mean anything larger — Python's ``-0 == 0``, so the
+    bare slice read ``[-0:]`` as "the whole file", inverting a zero into the one value the
+    module's pagination rule exists to forbid (a multi-MB driver log in a tool result).
     """
     config = load_config(Path(config_path))
     status = pipeline.lock_status(config.output_dir)
@@ -254,7 +276,9 @@ def run_status(config_path: str, log_tail_lines: int = 40) -> dict[str, Any]:
     log_path = _latest_log(config.output_dir)
     tail: list[str] | None = None
     if log_path is not None:
-        tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-log_tail_lines:]
+        wanted = max(0, log_tail_lines)
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        tail = lines[-wanted:] if wanted else []
     return {
         "running": status.held,
         "holder": (
@@ -651,8 +675,13 @@ def save_config(path: str, yaml_text: str) -> dict[str, Any]:
     payload: dict[str, Any] = {"path": str(destination), "written": False, **report.to_json()}
     if not report.ok:
         return payload
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    cache.atomic_write(destination, yaml_text.encode("utf-8"))
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        cache.atomic_write(destination, yaml_text.encode("utf-8"))
+    except OSError as e:
+        # The module contract: a failure carries the documented exit code, so the GUI's
+        # handler answers 400 and an MCP client gets a typed refusal — not a 500 traceback.
+        raise ConfigError(f"cannot write {destination}: {e}") from e
     payload["written"] = True
     return payload
 

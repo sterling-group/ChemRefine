@@ -128,6 +128,49 @@ def test_save_config_passes_warnings_through_without_blocking(tmp_path: Path):
     assert destination.exists()
 
 
+def _fortress(tmp_path: Path) -> Path:
+    """An unwritable directory, or a skip where the wall cannot be built (root)."""
+    if os.geteuid() == 0:
+        pytest.skip("root writes everywhere; the permission wall cannot be built")
+    fortress = tmp_path / "fortress"
+    fortress.mkdir()
+    fortress.chmod(0o555)
+    return fortress
+
+
+def test_save_config_answers_an_unwritable_destination_with_the_contract(tmp_path: Path):
+    """A disk refusal is the module's ConfigError, not a raw OSError.
+
+    The module promises every failure carries the documented exit code; a raw ``OSError``
+    reached the GUI's handler, which re-raises anything outside the taxonomy — a 500 with
+    a logged traceback for what is an ordinary bad destination (a read-only tree, ENOSPC
+    on scratch). ``/api/save`` already answers this with a 400 "like every other bad input
+    here"; these are its siblings, held to the same rule.
+    """
+    fortress = _fortress(tmp_path)
+    text = yaml.safe_dump({"steps": [{"step": 1, "engine": "fake"}]})
+    try:
+        with pytest.raises(ConfigError, match="cannot write"):
+            agent_tools.save_config(str(fortress / "input.yaml"), text)
+    finally:
+        fortress.chmod(0o755)
+
+
+def test_write_template_answers_an_unwritable_destination_with_the_contract(tmp_path: Path):
+    """The same rule for the inline template editor's write."""
+    fortress = _fortress(tmp_path)
+    path = tmp_path / "input.yaml"
+    path.write_text(
+        yaml.safe_dump({"template_dir": str(fortress), "steps": [{"step": 1, "engine": "orca"}]}),
+        encoding="utf-8",
+    )
+    try:
+        with pytest.raises(ConfigError, match="cannot write template"):
+            agent_tools.write_template(str(path), 1, "! MyKeywords\n")
+    finally:
+        fortress.chmod(0o755)
+
+
 # ---------------------------------------------------------------------------
 # Templates
 # ---------------------------------------------------------------------------
@@ -237,6 +280,24 @@ def test_start_run_refuses_before_launching(tmp_path: Path, recorded_popen):
         agent_tools.start_run(str(path), action="format-disk")
     with pytest.raises(ConfigError, match="no step matches target"):
         agent_tools.start_run(str(path), action="rerun", target="nope")
+    assert recorded_popen.calls == []
+
+
+@pytest.mark.parametrize("action", ["run", "resume"])
+def test_a_target_with_a_targetless_action_is_refused_here(
+    tmp_path: Path, recorded_popen, action: str
+):
+    """`run`/`resume` take no target — refused where the docstring promises, not exit 2.
+
+    The CLI's `run` and `resume` declare no positional target, so the detached child died
+    on "unexpected extra argument" *after* this had returned a pid and a log path — an
+    agent then polls a run that never started, with the reason only in the child log. The
+    tool schema shows `action` and `target` side by side and nothing else says which pairs
+    are legal.
+    """
+    path = _write_config(tmp_path, {"step": 1, "name": "screen", "engine": "fake"})
+    with pytest.raises(ConfigError, match="takes no target"):
+        agent_tools.start_run(str(path), action=action, target="screen")
     assert recorded_popen.calls == []
 
 
@@ -350,6 +411,21 @@ def test_run_status_on_a_fresh_tree_is_all_zeros(tmp_path: Path):
     assert status["steps"][0]["reported_survivors"] == 0
     assert status["log"] is None
     assert status["log_tail"] is None
+
+
+@pytest.mark.parametrize("wanted", [0, -5])
+def test_a_zero_or_negative_tail_means_no_tail(tmp_path: Path, wanted: int):
+    """``log_tail_lines: 0`` is an empty tail — never the whole file.
+
+    Python's ``-0 == 0``, so the bare slice ``[-0:]`` read a zero as "everything": the one
+    value the module's pagination rule exists to forbid became the multi-MB driver log in
+    a tool result. Negative values inverted the same way (``[-(-5):]`` drops five lines
+    and keeps the rest). The log's *path* still reports, so a caller who asked for no
+    lines can still name the file.
+    """
+    status = agent_tools.run_status(str(_reported_tree(tmp_path)), log_tail_lines=wanted)
+    assert status["log_tail"] == []
+    assert status["log"] is not None
 
 
 def test_get_results_paginates_and_filters(tmp_path: Path):

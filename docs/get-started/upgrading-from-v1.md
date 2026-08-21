@@ -17,7 +17,7 @@ must be replaced by hand with `engine:` + `operation:`.
     | module | translates |
     |--------|-----------|
     | `chemrefine/config_legacy.py` | the YAML keys on this page |
-    | `chemrefine/cli_legacy.py` | the v1 flag-style command line (`--input x.yaml --skip`) |
+    | `chemrefine/cli_legacy.py` | the v1 flag-style command line (`x.yaml --skip`) |
 
     Nothing else in the package knows the old names, so a 3.0 config file is a 2.x
     config file that emitted no deprecation warnings. **Run once on 2.x, fix what it

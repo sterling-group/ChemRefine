@@ -28,6 +28,7 @@ from typing import Literal
 
 from chemrefine.config import Config
 from chemrefine.engines.api import JobExecutable, TemplateDriven, get_engine
+from chemrefine.errors import ConfigError
 from chemrefine.ids import step_template_path
 from chemrefine.validate import effective_header
 
@@ -196,15 +197,24 @@ def scaffold_templates(config: Config, *, overwrite: bool = False) -> tuple[Path
     Existing files are left alone unless ``overwrite`` — scaffolding is for the blank
     page, and a template the user has edited is exactly the file this must never touch
     by default. ``template_dir`` is created if missing.
+
+    An unwritable destination — a read-only tree, an exhausted quota (ENOSPC on HPC
+    scratch is the everyday case) — is a :class:`~chemrefine.errors.ConfigError` naming
+    the path, not a raw :class:`OSError`: this seam serves the CLI, the GUI and the MCP
+    tools, and all three promise failures that carry the documented exit code — the GUI's
+    error handler re-raises anything else as a 500 with a logged traceback.
     """
     written: list[Path] = []
-    config.template_dir.mkdir(parents=True, exist_ok=True)
-    for plan in plan_templates(config):
-        if plan.exists and not overwrite:
-            continue
-        # A `template:` override may name a subdirectory (or an absolute path elsewhere)
-        # — the same shape `agent_tools.write_template` already creates parents for.
-        plan.path.parent.mkdir(parents=True, exist_ok=True)
-        plan.path.write_text(_starter_for(plan), encoding="utf-8")
-        written.append(plan.path)
+    try:
+        config.template_dir.mkdir(parents=True, exist_ok=True)
+        for plan in plan_templates(config):
+            if plan.exists and not overwrite:
+                continue
+            # A `template:` override may name a subdirectory (or an absolute path elsewhere)
+            # — the same shape `agent_tools.write_template` already creates parents for.
+            plan.path.parent.mkdir(parents=True, exist_ok=True)
+            plan.path.write_text(_starter_for(plan), encoding="utf-8")
+            written.append(plan.path)
+    except OSError as e:
+        raise ConfigError(f"cannot scaffold templates under {config.template_dir}: {e}") from e
     return tuple(written)

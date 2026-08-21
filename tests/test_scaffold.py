@@ -205,3 +205,36 @@ def test_the_template_driven_starters_render_the_real_geometry(tmp_path: Path):
         multiplicity=1,
     ).read_text(encoding="utf-8")
     assert f"* xyzfile 0 1 {xyz}" in rendered
+
+
+def test_an_unwritable_template_dir_is_a_config_error_not_a_traceback(tmp_path: Path):
+    """A disk refusal carries the documented exit code, wherever the caller sits.
+
+    This seam serves the CLI, the GUI and the MCP tools, and all three promise failures
+    the taxonomy names: the CLI catches only ``ChemRefineError``, and the GUI's handler
+    re-raises anything else as a 500 with a logged traceback — for what is an ordinary
+    read-only tree or an exhausted quota (ENOSPC on HPC scratch is the everyday case).
+    """
+    import os
+
+    import pytest
+
+    from chemrefine.errors import ConfigError
+
+    if os.geteuid() == 0:
+        pytest.skip("root writes everywhere; the permission wall cannot be built")
+    fortress = tmp_path / "fortress"
+    fortress.mkdir()
+    fortress.chmod(0o555)
+    path = tmp_path / "input.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {"template_dir": str(fortress / "templates"), "steps": [{"step": 1, "engine": "orca"}]}
+        ),
+        encoding="utf-8",
+    )
+    try:
+        with pytest.raises(ConfigError, match="cannot scaffold"):
+            scaffold_templates(load_config(path))
+    finally:
+        fortress.chmod(0o755)

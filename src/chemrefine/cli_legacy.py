@@ -1,8 +1,11 @@
 """Translate a v1.3.1 flag-style command line into the current subcommand argv.
 
 The CLI half of the compatibility layer — :mod:`chemrefine.config_legacy` is the YAML half.
-``chemrefine --input x.yaml --resume`` becomes ``chemrefine resume x.yaml`` here, before
-Typer ever sees it, so every other line of :mod:`chemrefine.cli` describes one grammar.
+``chemrefine x.yaml --skip`` becomes ``chemrefine resume x.yaml`` here, before Typer ever
+sees it, so every other line of :mod:`chemrefine.cli` describes one grammar. (That is the
+real v1.3.1 spelling — positional CONFIG plus ``--skip``; a ``--resume`` flag never
+existed, and an unknown flag falls through to the cache-invalidating ``run``, so a worked
+example here must never invent one.)
 
 **Removal horizon: 3.0**, together with its YAML counterpart. See
 ``docs/get-started/upgrading-from-v1.md``.
