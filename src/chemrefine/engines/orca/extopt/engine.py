@@ -114,10 +114,15 @@ class ExtOptOrcaEngine(OrcaEngine):
         ``trap`` inside the body replaced the script's own ``EXIT`` handler. Now the teardown
         is returned as ``cleanup`` and the infra layer places it.
         """
+        # The granted cores, not the template's ask: the `.inp` rewrite and the SLURM
+        # directives both clamp to max_cores, and the server's thread export must say the
+        # same number — the raw pal() let a `%pal` above the budget thread past what the
+        # throttler charges (see the invariant stated in run_block.py beside the export).
+        ntasks, cpus_per_task = self.slurm_layout(ctx)
         return run_block.build_extopt_run_block(
             server_cmd=self._server_cmd(ctx),
             orca_command=self.orca_command(ctx, inp_path.name, out_path.name),
-            pal=self.pal(ctx),
+            pal=ntasks * cpus_per_task,
         )
 
     def _wrapper_path(self, ctx: StepContext) -> Path:

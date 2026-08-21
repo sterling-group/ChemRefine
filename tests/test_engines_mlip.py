@@ -443,7 +443,11 @@ def test_the_server_gets_the_steps_threads_and_orca_gets_one(tmp_path: Path):
     """
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path)
-    # A pal that cannot be confused with ORCA's own `OMP_NUM_THREADS=1` re-export.
+    # A pal that cannot be confused with ORCA's own `OMP_NUM_THREADS=1` re-export — and one
+    # *above* the fixture's max_cores=2, so this also pins that the export says the granted
+    # 2, not the template's 3: the `.inp` rewrite and the SLURM directives clamp, and a
+    # server threading past what the throttler charges is the oversubscription the export
+    # order exists to prevent.
     assert ctx.template is not None
     ctx.template.write_text("! B3LYP def2-SVP\n%pal nprocs 3 end\n", encoding="utf-8")
     body = engine.run_block(
@@ -452,11 +456,12 @@ def test_the_server_gets_the_steps_threads_and_orca_gets_one(tmp_path: Path):
         out_path=ctx.step_dir / "step1_structure_0.out",
     ).body
 
-    pal_export = body.index("export OMP_NUM_THREADS=3\n")
+    pal_export = body.index("export OMP_NUM_THREADS=2\n")
     server_start = body.index("SERVER_PID=$!")
     orca_export = body.index("export OMP_NUM_THREADS=1\n")
     assert pal_export < server_start < orca_export
-    assert "export MKL_NUM_THREADS=3\n" in body
+    assert "export MKL_NUM_THREADS=2\n" in body
+    assert "NUM_THREADS=3" not in body
 
 
 def test_mlip_extopt_prepare_writes_inp_with_method_block(tmp_path: Path):

@@ -322,6 +322,20 @@ def test_the_run_block_runs_the_trainers_command_with_thread_limits(tmp_path: Pa
     assert block.cleanup == "", "the job script owns the one exit handler"
 
 
+def test_the_plans_cores_are_the_grant_not_the_ask(tmp_path: Path):
+    """A ``cores:`` above ``max_cores`` reaches the plan — and the exports — clamped.
+
+    The plan's ``cores`` feeds the thread exports and the ``$CORES`` placeholder, and
+    :meth:`slurm_layout` clamps what the scheduler grants — so the two must say one number.
+    The raw ``pal()`` let a training step charged 16 cores export 32 threads.
+    """
+    ctx = _ctx(tmp_path, cores=32)  # fixture max_cores=16
+    block = MlipTrainEngine().run_block(ctx, Path("step1_train.yaml"), Path("train.model"))
+    assert "export OMP_NUM_THREADS=16" in block.body
+    assert "export MKL_NUM_THREADS=16" in block.body
+    assert "=32" not in block.body
+
+
 def test_the_copy_back_directories_come_from_the_selected_trainer(tmp_path: Path):
     assert MlipTrainEngine().output_dirs(_ctx(tmp_path)) == ("logs", "checkpoints", "results")
 

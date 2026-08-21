@@ -202,7 +202,7 @@ def test_submit_template_failure_is_deferred_to_parsing(tmp_path: Path):
 
 def test_template_run_block_caps_threads_to_cores(tmp_path: Path):
     """pyscf/mlip direct runs are OpenMP/MKL-threaded → the run block pins them to cores."""
-    ctx = _ctx(tmp_path, structures=(_seed(),), options={"cores": 4})
+    ctx = _ctx(tmp_path, structures=(_seed(),), options={"cores": 4}, max_cores=4)
     engine = get_engine("pyscf")
     run_block = engine.run_block(
         ctx,
@@ -215,6 +215,32 @@ def test_template_run_block_caps_threads_to_cores(tmp_path: Path):
     # Python was invoked (``bin/python`` directly vs ``bin/python3.13`` via a
     # console-script shebang) — assert the real path, not a "python" substring.
     assert f"{shlex.quote(sys.executable)} step1_structure_0.py" in run_block
+
+
+def test_thread_exports_say_the_grant_not_the_ask(tmp_path: Path):
+    """A ``cores:`` above ``max_cores`` exports the clamped budget, not the request.
+
+    The SLURM directives and the throttler charge come from the ``slurm_layout`` product —
+    ``min(cores, max_cores)`` — and the thread exports must say the same number. The raw
+    ``pal()`` here let a job charged 4 cores thread 8: invisible under SLURM's cgroups, an
+    oversubscription on every local run, and the exact inversion of the invariant this
+    export exists for. Q-Chem's run block always read the layout; this pins the script
+    engines to the same rule.
+    """
+    ctx = _ctx(tmp_path, structures=(_seed(),), options={"cores": 8}, max_cores=4)
+    run_block = (
+        get_engine("pyscf")
+        .run_block(
+            ctx,
+            inp_path=ctx.step_dir / "step1_structure_0.py",
+            out_path=ctx.step_dir / "step1_structure_0.out",
+        )
+        .body
+    )
+    assert "export OMP_NUM_THREADS=4" in run_block
+    assert "export MKL_NUM_THREADS=4" in run_block
+    assert "export OPENBLAS_NUM_THREADS=4" in run_block
+    assert "=8" not in run_block
 
 
 def test_submit_missing_slurm_header_raises(tmp_path: Path):

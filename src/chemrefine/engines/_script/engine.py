@@ -111,13 +111,18 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
         """Run the rendered Python script inside ``$WORK_DIR``, capped to its core budget.
 
         Script engines (pyscf / mlip direct) are OpenMP/MKL/torch-threaded with no MPI, so the
-        thread count is pinned to the step's ``options.cores`` (= :meth:`pal`) — the real
-        oversubscription guard on a laptop where jobs run concurrently, and harmless under
-        SLURM. (ORCA is the opposite — MPI ranks, ``OMP=1``.) The script's interpreter comes
-        from the provisioner (a managed backend env when one exists), so conflicting backends
-        can run side by side in one pipeline.
+        thread count is pinned to what the job is actually *granted* — the
+        :meth:`slurm_layout` product, which is ``options.cores`` clamped to ``max_cores``,
+        the same number the SLURM directives request and the throttler charges. The raw
+        :meth:`pal` here let a step asking for more than the budget export the ask rather
+        than the grant: charged ``max_cores``, threading ``cores`` — the exact
+        oversubscription this export exists to prevent, on every local run. (ORCA is the
+        opposite — MPI ranks, ``OMP=1``.) The script's interpreter comes from the
+        provisioner (a managed backend env when one exists), so conflicting backends can run
+        side by side in one pipeline.
         """
-        cores = self.pal(ctx)
+        ntasks, cpus_per_task = self.slurm_layout(ctx)
+        cores = ntasks * cpus_per_task
         interpreter = _provision.launcher_for(self, ctx.step_cfg.options)
         return RunBlock(
             body=f"export OMP_NUM_THREADS={cores}\n"

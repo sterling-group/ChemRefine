@@ -158,12 +158,16 @@ class MlipTrainEngine(MlipBackend):
         answer. The data half is :func:`split_structures`, computed in :meth:`prepare`.
         """
         opts = self._opts(ctx)
+        # The granted cores, not the ask: the layout below clamps to max_cores, and the
+        # plan's `cores` feeds the thread exports and `$CORES` — a raw pal() here let a
+        # `cores:` above the budget thread past what the scheduler grants and charges.
+        ntasks, cpus_per_task = self.slurm_layout(ctx)
         return TrainingPlan(
             run_dir=self._run_dir(ctx),
             run_name=ids.TRAINING_ID,
             device=opts.device,
             gpus=self.gpus(ctx),
-            cores=self.pal(ctx),
+            cores=ntasks * cpus_per_task,
             seed=opts.seed,
             charge=ctx.charge,
             multiplicity=ctx.multiplicity,
