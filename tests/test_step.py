@@ -664,6 +664,23 @@ def test_check_nms_freq_gate_not_bypassed_by_explicit_operation(tmp_path: Path):
         _check_nms_freq_gate(_NoFreqEngine(), ctx, cfg.steps[0])
 
 
+def test_invalid_nms_options_are_refused_when_the_key_is_derived(tmp_path: Path):
+    """A bad NMS knob fails as a ConfigError naming the step, not a bare ValidationError.
+
+    ``derive_step_key`` is the first reader of the validated NMS options on every route —
+    before any cache is consulted and before anything submits — so this is where a
+    ``displacement_value`` that is not a number must become the documented exit code
+    rather than a pydantic traceback three layers from the YAML that caused it.
+    """
+    from chemrefine.errors import ConfigError
+    from chemrefine.step import derive_step_key
+
+    cfg = _config(tmp_path, engine="orca", nms=True, options={"displacement_value": "banana"})
+    ctx = build_context(cfg, cfg.steps[0], _seed_state([]), get_engine(cfg.steps[0].engine))
+    with pytest.raises(ConfigError, match="invalid NMS options"):
+        derive_step_key(ctx, cfg.steps[0], get_engine(cfg.steps[0].engine))
+
+
 def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypatch):
     """run_step routes an `nms: true` step through the generic coordinator (nms.run_nms),
     then applies the on_failure policy to its survivors/failures."""

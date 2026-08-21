@@ -683,6 +683,41 @@ def test_reattempt_resubmits_missing_round1(tmp_path: Path):
         ENGINES.pop("fake-nms2", None)
 
 
+def test_reattempt_with_nothing_missing_submits_no_round1(tmp_path: Path):
+    """An unresolved-only ledger re-attempts NMS without resubmitting any round-1 job.
+
+    The mirror of the test above: ``reattempt_nms`` resubmits exactly the
+    ``MISSING_OUTPUT`` ids, and a ledger holding only ``UNRESOLVED_NMS`` parents has none —
+    their round-1 frequency outputs are the expensive artifact the reuse exists to keep.
+    """
+    from chemrefine import cache
+    from chemrefine.engines.api import ENGINES
+    from chemrefine.errors import ChemRefineError
+
+    eng = _register_fake_nms()
+    try:
+        eng.resolved = {"0"}  # "1" stays unresolved on the first run
+        cfg = _seeded_config(tmp_path, [_nms_step(1.0, on_failure="stop")])
+        step_dir = (cfg.output_dir / "step1_s").resolve()
+        with pytest.raises(ChemRefineError):  # stop halts on the unresolved parent
+            execute(cfg, Action.RESUME)
+        assert [(r.structure_id, r.kind) for r in cache.load_failure_records(step_dir)] == [
+            ("1", FailureKind.UNRESOLVED_NMS)
+        ]
+
+        eng.resolved = {"0", "1"}  # a second exploration would now resolve "1"
+        eng.submitted, eng.children_submitted = [], []
+        execute(cfg, Action.RESUME)  # same config → full-valid + ledger → reattempt_nms
+        assert eng.submitted == []  # nothing was missing, so no round-1 goes out
+        assert {c.split("_m")[0] for c in eng.children_submitted} == {"1"}
+        assert cache.load_failure_records(step_dir) == []
+        assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
 def test_rebuild_cache_reparses_without_submitting(tmp_path: Path):
     """`rebuild-cache` rebuilds a step's cache from existing outputs — no submit."""
     from chemrefine import cache

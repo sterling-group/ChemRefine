@@ -207,6 +207,25 @@ def test_a_bare_manifest_reads_as_unprovenanced(tmp_path: Path):
     assert provenance.fingerprint == "feedfacefeedface"
 
 
+def test_a_manifest_that_is_not_a_mapping_reads_as_unprovenanced(tmp_path: Path):
+    """Valid JSON of the wrong shape — a bare list — is unprovable, not a crash.
+
+    ``read_json`` guarantees only that the file parsed; a hand-edited or foreign manifest
+    can hold any JSON value, and provenance built on ``.get`` calls against a list would be
+    a ``AttributeError`` three frames from the file that caused it. All-empty provenance
+    routes the caller to the explicit ``rebuild-cache``, same as a pre-provenance tree.
+    """
+    from chemrefine.cache import load_manifest_provenance, manifest_path
+
+    manifest_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    manifest_path(tmp_path).write_text('["not", "a", "mapping"]', encoding="utf-8")
+    provenance = load_manifest_provenance(tmp_path)
+    assert provenance.fingerprint == ""
+    assert provenance.resolution_key == ""
+    assert provenance.criterion_key == ""
+    assert provenance.rows == {}
+
+
 def test_manifest_rows_align_ids_keys_and_digests():
     key = _key("0", "1")
     rows = key.manifest_rows()
