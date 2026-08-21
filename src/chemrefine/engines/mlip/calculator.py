@@ -9,26 +9,19 @@ through here, so the direct engine and the gradient server share one selection p
 :mod:`chemrefine.engines.mlip.registry` — one registry shared with training, so ``task_name``
 names one library whether a step runs a model or trains one. This module only builds.
 
-Two axes map the same way across libraries (the mace↔fairchem equivalence):
-``task_name`` is the **method/head** that keys the registry; ``model_name`` is
-the **weights** handed to that builder.
+The knob rules, not a roster (the live roster is the registry's, rendered on the docs'
+generated backends table): ``task_name`` is the **only** knob that selects a library;
+``model_name`` names a released set of its weights, in whatever spelling that library
+uses; ``model_path`` says to take the weights from a local file instead — it selects
+nothing, so a model fine-tuned by an ``mlip-train`` step is run by naming the library
+that trained it, the same word in the same place as for a released one.
 
-==================  ===================  =========================================
-``task_name`` (key) backend              ``model_name`` (weights)
-==================  ===================  =========================================
-``omol`` … ``omc``  ``_build_fairchem``  FAIRChem checkpoint (``uma-s-1p2``/``esen-…``)
-``mace_off``        ``_build_mace``      MACE-OFF size (``small``/``medium``/``large``)
-``mace_mp``         ``_build_mace``      MACE-MP size / named model
-``mace_omol``       ``_build_mace``      MACE-OMOL size (``extra_large``)
-``sevenn``          ``sevenn``           SevenNet id (``7net-0``)
-``orb``             ``orb``              ORB loader (``orb_v3_…``)
-``chgnet``          ``chgnet``           — (single model)
-==================  ===================  =========================================
-
-``model_path`` is the third knob and appears in no row, because it selects nothing: it is
-handed to whichever builder ``task_name`` chose, and that library loads the file itself. A
-model fine-tuned by an ``mlip-train`` step is therefore run by naming the library that trained
-it — the same word, in the same place, as for a released one.
+The dispatch below is where a selection becomes a vetted :class:`~chemrefine.engines.
+mlip.registry.CalculatorSpec`: the checkpoint's existence is checked **here, once** —
+a missing file names the ``task_name`` the user wrote, before any library imports —
+and the defaults come off :class:`~chemrefine.engines.mlip.options.MlipOptions`'s own
+fields, so a template call and a YAML step cannot disagree about what "unspecified"
+means (the ``device`` default is the model's ``cpu``: the floor that always runs).
 
 Backend imports happen inside each builder so this module imports cleanly even when the
 optional MLIP deps aren't installed; :func:`build_calculator` converts a missing library into
@@ -50,7 +43,7 @@ from typing import Any
 from ase import Atoms
 
 from chemrefine.engines.mlip.options import MlipOptions
-from chemrefine.engines.mlip.registry import backend_spec, calculator_for
+from chemrefine.engines.mlip.registry import CalculatorSpec, backend_spec, calculator_for
 
 logger = logging.getLogger(__name__)
 
@@ -59,47 +52,64 @@ DEFAULT_TASK: str = MlipOptions.model_fields["task_name"].default
 
 This function is public API a user's ``step{N}.py`` may call without going through the YAML at
 all, so it needs a default of its own; taking it from the field means the template and the
-config cannot come to disagree about what "unspecified" runs."""
+config cannot come to disagree about what "unspecified" runs. The other defaults below are
+read the same way, for the same reason — the ``device`` fallback in particular was once a
+``"cuda"`` literal here while the model said ``"cpu"``, the exact two-readers drift the
+model-fields technique exists to prevent."""
+
+_DEFAULT_MODEL_NAME: str = MlipOptions.model_fields["model_name"].default
+_DEFAULT_DEVICE: str = MlipOptions.model_fields["device"].default
 
 
 def build_calculator(
     *,
     task_name: str = DEFAULT_TASK,
-    model_name: str = "",
-    device: str = "cuda",
+    model_name: str = _DEFAULT_MODEL_NAME,
+    device: str = _DEFAULT_DEVICE,
     model_path: str | Path | None = None,
-    **extra: Any,
+    charge: int | None = None,
+    multiplicity: int | None = None,
 ) -> Any:
-    """Dispatch to the builder registered for ``task_name``; return the calculator.
+    """Vet the selection into a :class:`CalculatorSpec` and hand it to the one builder.
 
-    ``task_name`` names the library (a FAIRChem head, ``mace_off``…, ``chgnet``, ``sevenn``,
-    ``orb``) and is the **only** thing that selects one. ``model_name`` is the weights handed
-    to it, and ``model_path`` says to take those weights from a local file instead — both are
-    passed to the builder, which loads whichever it was given with *its own* library.
+    ``task_name`` is the **only** thing that selects a library. ``model_name`` is the
+    weights handed to it, and ``model_path`` says to take those weights from a local file
+    instead — checked for existence *here*, once, so a mistyped checkpoint is refused
+    naming the ``task_name`` the user wrote, before any library imports. Inferring the
+    library from the checkpoint is deliberately impossible: a ``.pt`` file does not say
+    which loader it belongs to, and handing it to the wrong one fails as a tensor-shape
+    error deep inside that library rather than as anything naming the actual mistake.
 
-    So running a fine-tuned model means naming the library that produced it — explicitly.
-    Inferring the library from the checkpoint is not possible: a ``.pt`` file does not say
-    which loader it belongs to, and handing it to the wrong one fails as a tensor-shape error
-    deep inside that library rather than as anything naming the actual mistake.
+    ``charge`` / ``multiplicity`` are optional and reach the spec untouched — the door for
+    charge-aware libraries; a charge-blind builder never reads them. There is deliberately
+    no ``**extra``: a knob no field names has nowhere to hide, which is the property the
+    spec exists for (a backend-specific knob starts life as a declared option instead).
 
     Raises :class:`~chemrefine.errors.ConfigError` listing known keys if nothing is
-    registered; a missing backend *library* surfaces as an ``ImportError`` naming the extra
-    to install.
+    registered; a missing backend *library* surfaces as an ``ImportError`` naming the
+    extra to install.
     """
-    spec = backend_spec(task_name)
+    registered = backend_spec(task_name)
     builder = calculator_for(task_name)
+    weights: Path | None = None
+    if model_path:
+        weights = Path(model_path)
+        if not weights.is_file():
+            raise FileNotFoundError(f"{task_name} checkpoint not found: {weights}")
+    spec = CalculatorSpec(
+        task_name=task_name,
+        model_name=model_name,
+        device=device,
+        weights=weights,
+        charge=charge,
+        multiplicity=multiplicity,
+    )
     try:
-        return builder(
-            task_name=task_name,
-            model_name=model_name,
-            device=device,
-            model_path=model_path,
-            **extra,
-        )
+        return builder(spec)
     except ImportError as exc:
         raise ImportError(
-            f"this MLIP backend needs '{spec.package}' — install it with "
-            f"`pip install chemrefine[{spec.extra}]` (in its own environment)."
+            f"this MLIP backend needs '{registered.package}' — install it with "
+            f"`pip install chemrefine[{registered.extra}]` (in its own environment)."
         ) from exc
 
 
@@ -121,12 +131,19 @@ class MlipCalculator:
     def __init__(
         self,
         *,
-        model_name: str = "",
+        model_name: str = _DEFAULT_MODEL_NAME,
         task_name: str = DEFAULT_TASK,
-        device: str = "cuda",
+        device: str = _DEFAULT_DEVICE,
         model_path: str | Path | None = None,
+        charge: int | None = None,
+        multiplicity: int | None = None,
     ):
-        """``task_name`` selects the library; ``model_path`` only says where its weights are."""
+        """``task_name`` selects the library; ``model_path`` only says where its weights are.
+
+        ``charge`` / ``multiplicity`` are optional and additive — the charge-aware door,
+        ignored by libraries without a charge channel. Everything else is the shape the
+        shipped templates have always called.
+        """
         self.model_name = model_name
         self.task_name = task_name
         self.device = device
@@ -136,6 +153,8 @@ class MlipCalculator:
             model_name=model_name,
             device=device,
             model_path=self.model_path,
+            charge=charge,
+            multiplicity=multiplicity,
         )
 
     # -- inference ---------------------------------------------------------

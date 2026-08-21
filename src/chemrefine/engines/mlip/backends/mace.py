@@ -26,7 +26,7 @@ import numpy as np
 from ase import Atoms
 from ase.io import write as ase_write
 
-from chemrefine.engines.mlip.registry import LEGACY_MACE_TASK, MlipLibrary
+from chemrefine.engines.mlip.registry import LEGACY_MACE_TASK, CalculatorSpec, MlipLibrary
 from chemrefine.engines.mlip.train.base import DatasetFiles, DatasetSplit, TrainingPlan
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
@@ -49,14 +49,7 @@ an oversight in one decorator."""
 
 
 @MACE.calculator(*FAMILIES, LEGACY_MACE_TASK)
-def _build_mace(
-    *,
-    task_name: str,
-    model_name: str = "",
-    device: str = "cuda",
-    model_path: str | Path | None = None,
-    **_: Any,
-) -> Any:
+def _build_mace(spec: CalculatorSpec) -> Any:
     """A MACE calculator: ``task_name`` is the family, the weights come from name or path.
 
     One builder for all of them, because MACE's own loaders already are one:
@@ -64,19 +57,11 @@ def _build_mace(
     its ``model in mace_off_urls or str(model).startswith("https:")`` test falls through to
     loading a local file for anything else. So a fine-tuned checkpoint needs no separate task
     key — which is why there is no ``custom_fairchem`` either, and why
-    :data:`~chemrefine.engines.mlip.registry.LEGACY_MACE_TASK` is an alias rather than a rule.
-
-    The selection is resolved **before** the library is imported, so a missing checkpoint or an
-    unusable alias is reported as the configuration mistake it is rather than as whichever
-    ``ImportError`` or ``torch.load`` traceback the backend would have raised first — neither
-    of which names the step or the option the value came from.
+    :data:`LEGACY_MACE_TASK` is an alias rather than a rule. An unusable alias — the legacy
+    task with nothing to load — is reported before the library is imported, naming the
+    families to write instead.
     """
-    weights: str | Path | None = model_name or None
-    if model_path is not None:
-        weights = Path(model_path)
-        if not weights.is_file():
-            raise FileNotFoundError(f"MACE checkpoint not found: {weights}")
-    elif task_name == LEGACY_MACE_TASK:
+    if spec.weights is None and spec.task_name == LEGACY_MACE_TASK:
         raise ConfigError(
             f"task_name={LEGACY_MACE_TASK!r} names no MACE family and no `model_path` was "
             f"given, so there is nothing to load. Name the family you mean "
@@ -86,9 +71,12 @@ def _build_mace(
     from mace.calculators import mace_mp, mace_off, mace_omol
 
     builders = {"mace_off": mace_off, "mace_mp": mace_mp, "mace_omol": mace_omol}
+    weights: str | Path | None = (
+        spec.weights if spec.weights is not None else (spec.model_name or None)
+    )
     # The alias names no family, and none is needed to load a checkpoint: the file carries
     # its own architecture, so MACE-OFF's loader reads a MACE-MP model perfectly well.
-    return builders.get(task_name, mace_off)(model=weights, device=device)
+    return builders.get(spec.task_name, mace_off)(model=weights, device=spec.device)
 
 
 # ---------------------------------------------------------------------------

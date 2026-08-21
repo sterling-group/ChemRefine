@@ -49,10 +49,10 @@ def _spec(fn) -> BackendSpec:
 
 
 def _recording_builder(seen, result):
-    """A backend builder that records the kwargs it was called with."""
+    """A backend builder that records the spec it was handed."""
 
-    def build(**kwargs):
-        seen.append(kwargs)
+    def build(spec):
+        seen.append(spec)
         return result
 
     return build
@@ -166,8 +166,8 @@ def test_build_calculator_dispatches_by_task_name():
     ):
         result = build_calculator(task_name="mace_off", model_name="medium")
     assert result == "MACE_OFF_CALC"
-    assert seen[0]["task_name"] == "mace_off"
-    assert seen[0]["model_name"] == "medium"
+    assert seen[0].task_name == "mace_off"
+    assert seen[0].model_name == "medium"
 
 
 @pytest.mark.parametrize("task", ["mace_off", "omol"])
@@ -188,8 +188,8 @@ def test_the_checkpoint_reaches_the_builder_the_task_name_chose(tmp_path: Path, 
     ):
         result = build_calculator(task_name=task, model_name="", model_path=str(model_file))
     assert result == "CALC"
-    assert seen[0]["task_name"] == task
-    assert seen[0]["model_path"] == str(model_file)
+    assert seen[0].task_name == task
+    assert seen[0].weights == model_file  # vetted into a Path by the dispatch
 
 
 def test_a_selection_that_names_no_library_uses_the_options_default(tmp_path: Path):
@@ -224,7 +224,7 @@ def test_a_trainer_only_task_cannot_be_run():
 
 def test_register_backend_appends_to_registry():
     """A newly registered calculator is reachable by its ``task_name`` with its metadata."""
-    _TEST_LIB.calculator("test_new_backend")(lambda **_kw: "NEW")
+    _TEST_LIB.calculator("test_new_backend")(lambda _spec_arg: "NEW")
     try:
         spec = mlip_registry.backend_spec("test_new_backend")
         assert (spec.extra, spec.package, spec.import_name) == (
@@ -241,7 +241,7 @@ def test_mlip_calculator_wrapper_routes_through_build_calculator():
     """``MlipCalculator`` is a thin alias — exercises the registry indirectly."""
     with patch.dict(
         mlip_registry._BACKENDS,
-        {"mace_off": _spec(lambda **_kw: "WRAP_CALC")},
+        {"mace_off": _spec(lambda _spec_arg: "WRAP_CALC")},
         clear=False,
     ):
         calc = MlipCalculator(task_name="mace_off", model_name="small")
@@ -503,7 +503,7 @@ def test_mlip_extopt_calculator_from_args_builds_instance():
     args = parse_args(["--backend", "mlip", "--model", "small", "--task-name", "mace_off"])
     with patch.dict(
         mlip_registry._BACKENDS,
-        {"mace_off": _spec(lambda **_kw: "MACE_CALC")},
+        {"mace_off": _spec(lambda _spec_arg: "MACE_CALC")},
         clear=False,
     ):
         calc = MlipExtOptCalculator.from_args(args)
@@ -623,7 +623,7 @@ def test_mlip_extopt_calculator_calc_converts_units():
     with (
         patch.dict(
             mlip_registry._BACKENDS,
-            {"mace_off": _spec(lambda **_kw: object())},  # sentinel calculator
+            {"mace_off": _spec(lambda _spec_arg: object())},  # sentinel calculator
             clear=False,
         ),
         # 1 eV/Å on x (the gradient already in eV/Å)
@@ -653,7 +653,7 @@ def test_mlip_extopt_calculator_calc_stamps_charge_and_spin():
     with (
         patch.dict(
             mlip_registry._BACKENDS,
-            {"omol": _spec(lambda **_kw: object())},
+            {"omol": _spec(lambda _spec_arg: object())},
             clear=False,
         ),
         patch.object(MlipCalculator, "single_point", _capture),
@@ -931,8 +931,10 @@ def test_build_orb_success_path(monkeypatch):
         monkeypatch.setitem(sys.modules, name, mod)
 
     from chemrefine.engines.mlip.backends.orb import _build_orb
+    from chemrefine.engines.mlip.registry import CalculatorSpec
 
-    assert _build_orb(model_name="orb_v2", device="cpu") == "ORB_CALC"
+    spec = CalculatorSpec(task_name="orb", model_name="orb_v2", device="cpu", weights=None)
+    assert _build_orb(spec) == "ORB_CALC"
 
 
 # --- orb older-layout fallback ----------------------------------------------
@@ -974,5 +976,7 @@ def test_build_orb_older_layout(monkeypatch):
         monkeypatch.setitem(sys.modules, name, mod)
 
     from chemrefine.engines.mlip.backends.orb import _build_orb
+    from chemrefine.engines.mlip.registry import CalculatorSpec
 
-    assert _build_orb(model_name="orb_v2", device="cpu") == "OLD_CALC"
+    spec = CalculatorSpec(task_name="orb", model_name="orb_v2", device="cpu", weights=None)
+    assert _build_orb(spec) == "OLD_CALC"

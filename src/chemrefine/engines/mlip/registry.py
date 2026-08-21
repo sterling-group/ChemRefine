@@ -50,17 +50,17 @@ one ``[project.optional-dependencies]`` entry for the extra it names (asserted b
 ``test_engines_mlip_training.py``, since an extra nothing installs is an env that cannot be
 provisioned). It declares its environment once and hangs its capabilities off it::
 
-    from chemrefine.engines.mlip.registry import MlipLibrary
+    from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
 
     MY_MLIP = MlipLibrary(
         extra="mlip-my_mlip", package="my-mlip-lib", import_name="my_mlip_library"
     )
 
     @MY_MLIP.calculator("my_task")
-    def _build_my_mlip(*, model_name="", device="cuda", model_path=None, **_):
+    def _build_my_mlip(spec: CalculatorSpec):
         from my_mlip_library import MyCalculator      # imported lazily, inside the builder
 
-        return MyCalculator(model=model_path or model_name, device=device)
+        return MyCalculator(model=spec.weights or spec.model_name, device=spec.device)
 
     @MY_MLIP.trainer("my_task")                        # optional — omit if it cannot train
     class MyTrainer: ...
@@ -72,8 +72,10 @@ declared once and used by both.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from chemrefine.engines.api import BackendRequirement
@@ -82,6 +84,47 @@ from chemrefine.errors import ConfigError
 
 if TYPE_CHECKING:
     from chemrefine.engines.mlip.train.base import Trainer
+
+
+@dataclass(frozen=True)
+class CalculatorSpec:
+    """Everything a builder may read — filled and vetted by the dispatch, never by hand.
+
+    **This frozen value is the whole calculator-builder contract.** The previous contract
+    was four keyword arguments plus ``**_``, stated in docstrings and enforced by nothing
+    — which is how three shipped builders came to silently swallow a knob the dispatch
+    was passing (``model_path`` on sevenn and orb, ``model_name`` on chgnet): a keyword
+    that lands in a catch-all vanishes without a trace. A single positional spec has no
+    catch-all to vanish into; a builder that ignores a field ignores it *visibly*, in
+    code a reviewer can read.
+
+    ``weights`` arrives already existence-checked (the dispatch's job, done once —
+    previously five pasted copies of the same ``is_file()`` idiom, one per builder).
+    ``charge`` and ``multiplicity`` are ``None`` when the caller did not say — the door
+    for charge-aware libraries (AIMNet2's calculator takes a total charge; ``mace_omol``
+    reads one), which the old four-knob shape could not express. A builder for a
+    charge-blind library simply never reads them.
+
+    The builder's *return* stays ``Any`` deliberately: ASE calculators are an untyped
+    third-party surface, and a home-grown protocol over them would be aspirational
+    typing with no enforcement value.
+    """
+
+    task_name: str
+    model_name: str
+    device: str
+    weights: Path | None
+    charge: int | None = None
+    multiplicity: int | None = None
+
+
+CalculatorBuilder = Callable[[CalculatorSpec], Any]
+"""The typed shape every registered builder has: one spec in, an ASE calculator out.
+
+The alias is what makes the contract *static* — ``@LIB.calculator`` is typed over it, so
+mypy checks each builder at its own decorator site — and :meth:`MlipLibrary.calculator`
+verifies the callable's arity at registration, so a malformed drop-in fails at import of
+its own module with a message naming the rule."""
 
 LEGACY_MACE_TASK = "custom_mace"
 """A back-compat alias for MACE, kept only so configs written against v1 still resolve.
@@ -111,16 +154,40 @@ class MlipLibrary:
     package: str
     import_name: str
 
-    def calculator(self, *task_names: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def calculator(self, *task_names: str) -> Callable[[CalculatorBuilder], CalculatorBuilder]:
         """Register a builder for each of ``task_names``; return it unchanged.
 
-        The builder takes keyword arguments (``task_name``, ``model_name``, ``device``,
-        ``model_path``, plus a catch-all ``**_``) and returns an ASE calculator. Its backend
-        import needs no guard — :func:`~chemrefine.engines.mlip.calculator.build_calculator`
-        turns an ``ImportError`` into the install hint built from this library's metadata.
+        The builder is a :data:`CalculatorBuilder` — one :class:`CalculatorSpec` in, an
+        ASE calculator out; the spec's docstring is the contract. Its backend import
+        needs no guard — :func:`~chemrefine.engines.mlip.calculator.build_calculator`
+        turns an ``ImportError`` into the install hint built from this library's
+        metadata.
+
+        The decorator is the gate: a builder that is not a single-parameter callable is
+        refused **here**, at import of the module that declares it. The old shape —
+        keyword arguments plus a catch-all — was checked by nothing, and three shipped
+        builders silently swallowed a knob the dispatch was passing before anyone
+        noticed; arity is the property a signature can actually prove, so it is proven.
         """
 
-        def _wrap(fn: Callable[..., Any]) -> Callable[..., Any]:
+        def _wrap(fn: CalculatorBuilder) -> CalculatorBuilder:
+            if not callable(fn):
+                raise TypeError(
+                    f"{self.extra}: @calculator({', '.join(map(repr, task_names))}) "
+                    f"must decorate a callable, got {fn!r}"
+                )
+            parameters = [
+                p
+                for p in inspect.signature(fn).parameters.values()
+                if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+            ]
+            if len(parameters) != 1 or len(inspect.signature(fn).parameters) != 1:
+                raise TypeError(
+                    f"{self.extra}: builder {getattr(fn, '__name__', fn)!r} must take "
+                    f"exactly one positional parameter — the CalculatorSpec. The spec "
+                    f"replaces the old keyword shape so no knob can vanish into a "
+                    f"catch-all."
+                )
             for name in task_names:
                 _put(name, self, builder=fn)
             return fn
@@ -154,7 +221,7 @@ class BackendSpec:
     """
 
     library: MlipLibrary
-    builder: Callable[..., Any] | None = None
+    builder: CalculatorBuilder | None = None
     trainer: type[Trainer] | None = None
 
     @property
@@ -180,7 +247,7 @@ def _put(
     name: str,
     library: MlipLibrary,
     *,
-    builder: Callable[..., Any] | None = None,
+    builder: CalculatorBuilder | None = None,
     trainer: type[Trainer] | None = None,
 ) -> None:
     """Add or extend the entry for ``name`` with one capability.
@@ -230,7 +297,7 @@ def backend_spec(task_name: str) -> BackendSpec:
     return spec
 
 
-def calculator_for(task_name: str) -> Callable[..., Any]:
+def calculator_for(task_name: str) -> CalculatorBuilder:
     """The builder a ``task_name`` dispatches to; raises if the library cannot be run."""
     spec = backend_spec(task_name)
     if spec.builder is None:

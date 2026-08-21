@@ -30,15 +30,21 @@ class MlipOptions(EngineOptions):
     model_config = ConfigDict(populate_by_name=True)
 
     model_name: str = Field(
-        "uma-s-1p2",
+        "",
         validation_alias=AliasChoices("model_name", "model", "size"),
     )
-    """The model *weights* for the chosen backend.
+    """The model *weights* for the chosen backend, in that library's own spelling.
 
     A MACE size (``small``/``medium``/``large``), a FAIRChem checkpoint
     (``uma-s-1p2``/``uma-s-1p1``/``esen-…``), a SevenNet id (``7net-0``), an ORB
-    loader (``orb_v3_…``), or a local path. YAML aliases: ``model``, ``size``.
-    Defaults to ``uma-s-1p2`` (UMA-1.2, ships with ``fairchem-core>=2.18``).
+    loader (``orb_v3_…``). YAML aliases: ``model``, ``size``.
+
+    Unset means **the chosen library's own default** — FAIRChem's builder fills in
+    ``uma-s-1p2``, MACE's and SevenNet's loaders theirs — because a default spelled
+    *here* would have to be right for every library at once, and the old ``uma-s-1p2``
+    was not: it reached every non-FAIRChem step's template too, surviving only because a
+    buggy builder happened to drop it. For a training step, unset means training from
+    scratch (``started_from: scratch`` in the runlog).
     """
 
     task_name: str = Field(

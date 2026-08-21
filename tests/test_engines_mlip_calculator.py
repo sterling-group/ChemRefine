@@ -104,15 +104,25 @@ def test_a_local_checkpoint_goes_through_the_named_familys_own_loader(
     factories[task].assert_called_once_with(model=model_file, device="cuda")
 
 
-def test_a_checkpoint_that_is_not_there_names_the_path(tmp_path: Path):
-    """Checked before MACE sees it: its own failure is a `torch.load` traceback.
+def _registered_tasks() -> list[str]:
+    from chemrefine.engines.mlip.registry import registered_backends
 
-    That traceback names neither the step nor the option the path came from, which on a
-    pipeline whose training step ran overnight is the difference between a typo and a hunt.
+    return sorted(registered_backends())
+
+
+@pytest.mark.parametrize("task", _registered_tasks())
+def test_a_checkpoint_that_is_not_there_names_the_task(tmp_path: Path, task: str):
+    """The dispatch vets the checkpoint once, for every backend, before any library imports.
+
+    The refusal names the ``task_name`` the user wrote — the YAML value they can act on.
+    A library's own failure is a ``torch.load`` traceback naming neither the step nor the
+    option, which on a pipeline whose training step ran overnight is the difference
+    between a typo and a hunt. One parametrised test replaced five pasted per-backend
+    copies, because the check itself moved from five builders into the one dispatch.
     """
     missing = tmp_path / "does_not_exist.model"
-    with pytest.raises(FileNotFoundError, match=f"MACE checkpoint not found: {missing}"):
-        MlipCalculator(task_name="mace_off", model_name="x", model_path=str(missing))
+    with pytest.raises(FileNotFoundError, match=f"{task} checkpoint not found: {missing}"):
+        MlipCalculator(task_name=task, model_name="x", model_path=str(missing))
 
 
 def test_the_legacy_alias_without_a_checkpoint_says_what_to_write_instead(monkeypatch):
@@ -186,14 +196,6 @@ def test_build_fairchem_loads_a_local_checkpoint_through_the_path_api(monkeypatc
     assert calc.calculator == "FAIRCHEM_CALC"
 
 
-def test_build_fairchem_missing_checkpoint_raises(monkeypatch, tmp_path):
-    """Named a checkpoint that is not there — say so, rather than fail inside torch.load."""
-    _install_fake_fairchem(monkeypatch)
-    _install_fake_load_predict_unit(monkeypatch)
-    with pytest.raises(FileNotFoundError, match="FAIRChem checkpoint not found"):
-        MlipCalculator(task_name="omol", model_path=str(tmp_path / "absent.pt"))
-
-
 def test_build_fairchem_routes_through_predictor(monkeypatch):
     """The builder loads the checkpoint then constructs a ``FAIRChemCalculator``."""
     get_predict_unit, fairchem_calc = _install_fake_fairchem(monkeypatch)
@@ -249,13 +251,22 @@ def _install_fake_chgnet(monkeypatch) -> tuple[MagicMock, MagicMock]:
     return chgnet_cls, calc_class
 
 
-def test_build_chgnet_uses_default_when_no_model_path(monkeypatch):
+def test_build_chgnet_uses_the_released_default_when_nothing_is_named(monkeypatch):
     chgnet_cls, calc_class = _install_fake_chgnet(monkeypatch)
-    calc = MlipCalculator(task_name="chgnet", model_name="ignored", device="cpu")
+    calc = MlipCalculator(task_name="chgnet", device="cpu")
     chgnet_cls.load.assert_called_once_with()
     chgnet_cls.from_file.assert_not_called()
     calc_class.assert_called_once_with(model="CHGNET_MODEL", use_device="cpu")
     assert calc.calculator == "CHGNET_CALC"
+
+
+def test_build_chgnet_passes_a_release_name_through(monkeypatch):
+    """`model_name` is a CHGNet release for keyword-only `load` — the knob the old
+    kwargs builder silently dropped into its catch-all, which the spec makes impossible."""
+    chgnet_cls, _calc_class = _install_fake_chgnet(monkeypatch)
+    MlipCalculator(task_name="chgnet", model_name="0.3.0", device="cpu")
+    chgnet_cls.load.assert_called_once_with(model_name="0.3.0")
+    chgnet_cls.from_file.assert_not_called()
 
 
 def test_a_chgnet_checkpoint_goes_through_from_file(monkeypatch, tmp_path: Path):
@@ -272,13 +283,6 @@ def test_a_chgnet_checkpoint_goes_through_from_file(monkeypatch, tmp_path: Path)
     chgnet_cls.from_file.assert_called_once_with(str(model_file))
     chgnet_cls.load.assert_not_called()
     calc_class.assert_called_once_with(model=f"CHGNET_FROM_FILE:{model_file}", use_device="cpu")
-
-
-def test_a_chgnet_checkpoint_that_is_not_there_names_the_path(tmp_path: Path):
-    """Checked before chgnet is imported — its own failure names neither step nor option."""
-    missing = tmp_path / "does_not_exist.pth.tar"
-    with pytest.raises(FileNotFoundError, match=f"CHGNet checkpoint not found: {missing}"):
-        MlipCalculator(task_name="chgnet", model_path=str(missing))
 
 
 # ---------------------------------------------------------------------------
@@ -312,15 +316,18 @@ def test_a_sevenn_checkpoint_reaches_sevenns_own_loader(monkeypatch, tmp_path: P
     factory = _install_fake_sevenn(monkeypatch)
     model_file = tmp_path / "finetuned.pth"
     model_file.touch()
-    MlipCalculator(task_name="sevenn", model_name="7net-0", model_path=str(model_file))
+    MlipCalculator(
+        task_name="sevenn", model_name="7net-0", device="cuda", model_path=str(model_file)
+    )
     factory.assert_called_once_with(model=model_file, device="cuda")
 
 
-def test_a_sevenn_checkpoint_that_is_not_there_names_the_path(tmp_path: Path):
-    """Checked before SevenNet is imported — its own failure names neither step nor option."""
-    missing = tmp_path / "does_not_exist.pth"
-    with pytest.raises(FileNotFoundError, match=f"SevenNet checkpoint not found: {missing}"):
-        MlipCalculator(task_name="sevenn", model_name="7net-0", model_path=str(missing))
+def test_build_sevenn_falls_back_to_the_librarys_own_default(monkeypatch):
+    """Neither name nor path: SevenNet's own default release loads — the library owns its
+    default, exactly as FAIRChem's builder owns `uma-s-1p2`."""
+    factory = _install_fake_sevenn(monkeypatch)
+    MlipCalculator(task_name="sevenn", device="cpu")
+    factory.assert_called_once_with(device="cpu")
 
 
 # ---------------------------------------------------------------------------
@@ -384,15 +391,6 @@ def test_an_orb_checkpoint_reaches_the_named_loaders_weights_path(monkeypatch, t
     )
     loader.assert_called_once_with(weights_path=str(model_file), device="cpu")
     calc_class.assert_called_once_with(orbff, device="cpu")
-
-
-def test_an_orb_checkpoint_that_is_not_there_names_the_path(tmp_path: Path):
-    """Checked before orb-models is imported — its own failure names neither step nor option."""
-    missing = tmp_path / "does_not_exist.ckpt"
-    with pytest.raises(FileNotFoundError, match=f"ORB checkpoint not found: {missing}"):
-        MlipCalculator(
-            task_name="orb", model_name="orb_v3_conservative_inf_omat", model_path=str(missing)
-        )
 
 
 def test_an_orb_loader_without_weights_path_is_a_version_message(monkeypatch, tmp_path: Path):

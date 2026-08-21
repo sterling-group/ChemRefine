@@ -18,7 +18,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from chemrefine.engines.mlip.registry import MlipLibrary
+from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
 from chemrefine.engines.mlip.train.base import DatasetFiles, DatasetSplit, TrainingPlan
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
@@ -103,14 +103,7 @@ def _write_ase_db(
 
 
 @FAIRCHEM.calculator(*HEADS)
-def _build_fairchem(
-    *,
-    task_name: str,
-    model_name: str = "",
-    device: str = "cuda",
-    model_path: str | Path | None = None,
-    **_: Any,
-) -> Any:
+def _build_fairchem(spec: CalculatorSpec) -> Any:
     """FAIRChem (UMA/eSEN): ``task_name`` is the head; the weights come from name or path.
 
     Two different loaders, because FAIRChem has two. ``pretrained_mlip.get_predict_unit``
@@ -119,25 +112,24 @@ def _build_fairchem(
     ``load_predict_unit`` is the same thing one level down and takes a path.
 
     Without this branch a fine-tuned FAIRChem model could be trained and never run, which is
-    most of the point of being able to train one.
+    most of the point of being able to train one. The unset-``model_name`` default —
+    ``uma-s-1p2`` — lives here, with the library that owns the name, not on the shared
+    options model where every other library's steps would inherit it too.
     """
     from fairchem.core import FAIRChemCalculator, pretrained_mlip
 
-    if model_path is not None:
+    if spec.weights is not None:
         # Imported in the branch that uses it, not beside the others: the two loaders live in
         # different submodules, and a caller running a *named* release should not need the
         # one it will not call to be importable.
         from fairchem.core.units.mlip_unit import load_predict_unit
 
-        path = Path(model_path)
-        if not path.is_file():
-            raise FileNotFoundError(f"FAIRChem checkpoint not found: {path}")
-        predictor = load_predict_unit(str(path), device=device)
+        predictor = load_predict_unit(str(spec.weights), device=spec.device)
     else:
         predictor = pretrained_mlip.get_predict_unit(
-            model_name=model_name or _DEFAULT_MODEL, device=device
+            model_name=spec.model_name or _DEFAULT_MODEL, device=spec.device
         )
-    return FAIRChemCalculator(predictor, task_name=task_name)
+    return FAIRChemCalculator(predictor, task_name=spec.task_name)
 
 
 # ---------------------------------------------------------------------------

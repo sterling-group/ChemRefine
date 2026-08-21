@@ -91,7 +91,7 @@ steps:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `model_name` (aliases `model`, `size`) | `uma-s-1p2` | Model weights, in whatever spelling the library `task_name` selected uses — a size for MACE, a checkpoint name for FAIRChem, an id for the others. |
+| `model_name` (aliases `model`, `size`) | `""` (the library's own default) | Model weights, in whatever spelling the library `task_name` selected uses — a size for MACE, a checkpoint name for FAIRChem (its default is `uma-s-1p2`), an id for the others. Unset means the chosen library picks its own default — one spelling could not be right for every library at once. |
 | `task_name` (alias `task`) | `omol` | Method/head — **the only thing that selects the backend builder**. |
 | `model_path` | `None` | A local checkpoint to load *instead of* `model_name`, with the library `task_name` named. Selects nothing itself: to run a model an `mlip-train` step produced, name the same `task_name` it trained with. Relative paths resolve against the config file's directory. |
 | `device` | `cpu` | `cuda` or `cpu`. CPU is the floor that always runs; asking for a GPU is one line, whereas a wrong `cuda` default schedules a CPU job whose script then asks for a device it wasn't given. |
@@ -103,7 +103,7 @@ steps:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `task_name` (alias `task`) | — (**required**) | Which library trains — the same word that selects a backend for inference. No default: the inference default names a foundation model to *run*, which is a different choice. Which libraries can train is the `Engines` column of the [backend table](installing.md#available-backends) — a backend without a trainer is refused by name. See also the FAIRChem note below. |
-| `model_name` (aliases `model`, `size`) | `uma-s-1p2` | The foundation model a run **starts from** — MACE's `foundation_model`. Set it to `""` to train from scratch, which on a few-dozen-structure dataset is rarely what you want. |
+| `model_name` (aliases `model`, `size`) | `""` (train from scratch) | The foundation model a run **starts from** — MACE's `foundation_model`. Unset trains from scratch (`started_from: scratch` in the runlog), which on a few-dozen-structure dataset is rarely what you want — name the foundation model to fine-tune. |
 | `model_path` | `None` | A local checkpoint to continue from, loaded by the library `task_name` names. Relative paths resolve against the config file's directory. |
 | `device` | — (**required**) | `cuda` or `cpu`. No default either way: `cpu` would silently hand you a job that grinds for days, `cuda` would silently charge the GPU budget and swap the SLURM header for a step that never asked. |
 | `gpus` | `1` | Data-parallel width (MACE's `--nproc_per_node`). ChemRefine never writes `--gres` — this is what it charges to the GPU budget and passes to the trainer; the *allocation* is the `--gres` line in your own `cuda.slurm.header`, so raise both together. |

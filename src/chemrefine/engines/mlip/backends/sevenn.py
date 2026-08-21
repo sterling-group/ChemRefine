@@ -22,7 +22,7 @@ import shlex
 from pathlib import Path
 from typing import Any, ClassVar
 
-from chemrefine.engines.mlip.registry import MlipLibrary
+from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
 from chemrefine.engines.mlip.train.base import (
     DatasetFiles,
     DatasetSplit,
@@ -38,32 +38,21 @@ SEVENN = MlipLibrary(extra="mlip-sevenn", package="sevenn", import_name="sevenn"
 
 
 @SEVENN.calculator("sevenn")
-def _build_sevenn(
-    *,
-    model_name: str = "",
-    device: str = "cuda",
-    model_path: str | Path | None = None,
-    **_: Any,
-) -> Any:
-    """SevenNet potential (``task_name: sevenn``); the weights come from name or path.
+def _build_sevenn(spec: CalculatorSpec) -> Any:
+    """SevenNet potential (``task_name: sevenn``); the weights come from name or checked path.
 
-    ``model_path`` is honoured with SevenNet's own loader, like every builder's
-    (:mod:`chemrefine.engines.mlip.registry`'s "three knobs" rule): ``SevenNetCalculator``'s
-    ``model`` argument is typed ``str | Path`` — "Name of pretrained models … or path to the
-    checkpoint" — and its resolution checks the filesystem before trying release names. The
-    existence check runs before the library is imported, so a mistyped checkpoint is reported
-    as the configuration mistake it is rather than as a loader traceback that names neither
-    the step nor the option.
+    ``SevenNetCalculator``'s ``model`` argument is typed ``str | Path`` — "Name of
+    pretrained models … or path to the checkpoint" — and its resolution checks the
+    filesystem before trying release names, so the vetted ``spec.weights`` rides it
+    directly.
     """
-    weights: str | Path = model_name
-    if model_path is not None:
-        weights = Path(model_path)
-        if not weights.is_file():
-            raise FileNotFoundError(f"SevenNet checkpoint not found: {weights}")
-
     from sevenn.calculator import SevenNetCalculator
 
-    return SevenNetCalculator(model=weights, device=device)
+    if spec.weights is None and not spec.model_name:
+        # Neither given: let SevenNet's own default release load — the library owns its
+        # default, exactly as FAIRChem's builder owns `uma-s-1p2`.
+        return SevenNetCalculator(device=spec.device)
+    return SevenNetCalculator(model=spec.weights or spec.model_name, device=spec.device)
 
 
 # ---------------------------------------------------------------------------

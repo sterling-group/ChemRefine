@@ -19,7 +19,7 @@ import shlex
 from pathlib import Path
 from typing import Any, ClassVar
 
-from chemrefine.engines.mlip.registry import MlipLibrary
+from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
 from chemrefine.engines.mlip.train.base import (
     DatasetFiles,
     DatasetSplit,
@@ -35,32 +35,25 @@ CHGNET = MlipLibrary(extra="mlip-chgnet", package="chgnet", import_name="chgnet"
 
 
 @CHGNET.calculator("chgnet")
-def _build_chgnet(*, model_path: str | Path | None = None, device: str = "cuda", **_: Any) -> Any:
-    """CHGNet universal potential (a local checkpoint via ``model_path``).
-
-    ``model_path`` reaches here whenever a step names ``task_name: chgnet`` with one, which is
-    the same rule every library follows: the task names the library, and the path only says
-    where its weights come from. The canonical import is
-    ``from chgnet.model import CHGNet, CHGNetCalculator``.
+def _build_chgnet(spec: CalculatorSpec) -> Any:
+    """CHGNet universal potential; all three weight sources, each through its own door.
 
     A local checkpoint loads through ``CHGNet.from_file`` — ``CHGNet.load`` is
-    keyword-only and accepts *release names* (``"0.3.0"``…), never a path, so the old
-    ``CHGNet.load(str(model_path))`` was a ``TypeError`` on every use; the mocked test
-    that pinned it accepted any call. ``from_file`` reads the ``{"model": as_dict()}``
-    shape the trainer's driver saves, which is what makes train-then-run one round trip.
-    The existence check runs before the import, like every sibling's, so a mistyped
-    checkpoint names the option rather than a ``torch.load`` traceback.
+    keyword-only and accepts *release names* (``"0.3.0"``…), never a path; ``from_file``
+    reads the ``{"model": as_dict()}`` shape the trainer saves, which is what makes
+    train-then-run one round trip. A ``model_name`` is a release name for ``load`` —
+    the old keyword builder silently dropped it into its catch-all, which is the bug
+    class the spec exists to end. Neither given, the released default loads.
     """
-    weights: Path | None = None
-    if model_path is not None:
-        weights = Path(model_path)
-        if not weights.is_file():
-            raise FileNotFoundError(f"CHGNet checkpoint not found: {weights}")
-
     from chgnet.model import CHGNet, CHGNetCalculator
 
-    model = CHGNet.from_file(str(weights)) if weights is not None else CHGNet.load()
-    return CHGNetCalculator(model=model, use_device=device)
+    if spec.weights is not None:
+        model = CHGNet.from_file(str(spec.weights))
+    elif spec.model_name:
+        model = CHGNet.load(model_name=spec.model_name)
+    else:
+        model = CHGNet.load()
+    return CHGNetCalculator(model=model, use_device=spec.device)
 
 
 # ---------------------------------------------------------------------------
