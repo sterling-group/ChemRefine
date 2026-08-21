@@ -368,12 +368,22 @@ def test_a_task_that_cannot_train_is_refused_by_the_preflight():
     """`require_trainer` is what turns a typo into a message before any step submits.
 
     On a pipeline that spends days computing labels before it trains, this is the difference
-    between a mistake caught in seconds and one caught on Thursday — so it is asserted on a
-    task that really has no trainer, which is the only way the flag's raise can fire at all.
+    between a mistake caught in seconds and one caught on Thursday. Asserted on a *synthetic*
+    runnable-but-untrainable task rather than a shipped one: every shipped backend is on its
+    way to a trainer, and a test whose fixture is "sevenn happens to lack one today" breaks
+    the day that stops being true — which is a fact about the roster, not about this flag.
     """
-    assert requirement_from_options({"task_name": "sevenn"}).extra == "mlip-sevenn"
-    with pytest.raises(ConfigError, match="can be run but not trained"):
-        requirement_from_options({"task_name": "sevenn"}, require_trainer=True)
+    from unittest.mock import patch
+
+    from chemrefine.engines.mlip import registry as mlip_registry
+    from chemrefine.engines.mlip.registry import BackendSpec, MlipLibrary
+
+    lib = MlipLibrary(extra="mlip-untrainable", package="untrainable-lib", import_name="untl")
+    spec = BackendSpec(lib, builder=lambda **_: None, trainer=None)
+    with patch.dict(mlip_registry._BACKENDS, {"untrainable": spec}, clear=False):
+        assert requirement_from_options({"task_name": "untrainable"}).extra == "mlip-untrainable"
+        with pytest.raises(ConfigError, match="can be run but not trained"):
+            requirement_from_options({"task_name": "untrainable"}, require_trainer=True)
 
 
 def test_the_engines_copy_back_globs_are_the_union_of_its_trainers():
@@ -431,3 +441,104 @@ def test_every_backend_module_imports_with_no_mlip_library_installed():
             elif isinstance(node, ast.ImportFrom) and node.module:
                 names = [node.module.split(".")[0]]
             assert not (set(names) & heavy), f"{module.name} imports {names} at module scope"
+
+
+# ---------------------------------------------------------------------------
+# The trainer contract — invariants every registered trainer inherits by existing
+# ---------------------------------------------------------------------------
+#
+# Parametrised over ``registered_trainers()`` at collection time, so a backend that gains
+# a trainer gains this floor with no edit here — the same property the calculator
+# invariants already have. Each invariant is one of the contract's stated rules
+# (``training.Trainer``'s docstrings); a trainer that cannot pass them cannot be driven
+# by the engine, whatever its own unit tests say.
+
+
+def _full_split() -> DatasetSplit:
+    """Every split populated — the baseline shape a trainer must accept."""
+    structures = [_labelled(str(i), energy=-1.0 - 0.1 * i) for i in range(8)]
+    return split_structures(structures, valid_fraction=0.25, test_fraction=0.125, seed=1)
+
+
+@pytest.mark.parametrize("task", sorted(registered_trainers()))
+def test_every_trainer_writes_its_dataset_in_the_orchestrators_process(tmp_path: Path, task: str):
+    """``write_dataset`` may use only ase + numpy — proven by execution, not by review.
+
+    No MLIP backend is installed in this suite's environment, so a writer that imported
+    its library would fail right here. That constraint is what keeps every trainer module
+    importable at registry-build time (``training.Trainer.write_dataset``'s stated rule);
+    a format that genuinely needs the backend belongs in ``command``, where the backend
+    environment is live.
+    """
+    trainer = trainer_for(task)()
+    files = trainer.write_dataset(_plan(tmp_path), _full_split())
+    assert files.train.is_file()
+    assert files.valid is not None and files.valid.is_file()
+
+
+@pytest.mark.parametrize("task", sorted(registered_trainers()))
+def test_every_trainer_covers_its_required_placeholders(tmp_path: Path, task: str):
+    """What a trainer *requires* of a template, it must also *supply* to the render.
+
+    ``render_config`` refuses a template that references none of ``required_placeholders``;
+    a required name the merged mapping never provides would make every template for that
+    trainer unrenderable — a combination no caller can fix from the YAML.
+    """
+    trainer = trainer_for(task)()
+    plan = _plan(tmp_path)
+    files = trainer.write_dataset(plan, _full_split())
+    provided = set(placeholders_for(trainer, plan, files))
+    missing = trainer.required_placeholders - provided
+    assert not missing, f"{task} requires placeholders it never supplies: {sorted(missing)}"
+
+
+@pytest.mark.parametrize("task", sorted(registered_trainers()))
+def test_every_trainer_names_its_artifact_without_a_plan(task: str):
+    """``artifact(run_dir, run_name)`` must answer from those two values alone.
+
+    ``rebuild-cache`` adopts a finished product having submitted nothing, and the step
+    asks after a failure — both moments with no dataset to split and no launcher to
+    resolve (the contract's own words). The product also has to live under the run
+    directory, or the scheduler's copy-back and the manifest describe different trees.
+    """
+    trainer = trainer_for(task)()
+    run_dir = Path("/proj/outputs/step3/train")
+    artifact = trainer.artifact(run_dir, "train")
+    assert run_dir in artifact.parents
+
+
+@pytest.mark.parametrize("task", sorted(registered_trainers()))
+def test_every_trainer_command_names_the_config_by_basename(tmp_path: Path, task: str):
+    """The rendered command carries the config's basename, never its absolute path.
+
+    The job script copies the config into ``$WORK_DIR`` and runs there, and under
+    ``slurm_array: true`` the "config" is a ``$INP_NAME`` sentinel the array script
+    expands per task — an absolute path in the command breaks both. And no trainer may
+    emit a ``trap``: bash keeps one handler per signal, so it would displace the job
+    script's single EXIT handler and take the copy-back with it.
+    """
+    trainer = trainer_for(task)()
+    plan = _plan(tmp_path)
+    cmd = trainer.command(plan, tmp_path / "step3_train.yaml")
+    assert "step3_train.yaml" in cmd
+    assert str(tmp_path / "step3_train.yaml") not in cmd
+    assert "trap " not in cmd
+
+
+@pytest.mark.parametrize("task", sorted(registered_trainers()))
+def test_every_trainers_artifact_basename_is_copy_back_eligible(task: str):
+    """Some declared ``output_globs`` pattern matches the artifact's own basename.
+
+    The globs are the net that keeps a model out of the scratch cleanup when a template
+    leaves the library writing into ``$WORK_DIR``. A trainer whose artifact no glob
+    matches has declared a net with a hole exactly where its product lands. (FAIRChem's
+    nested product is the documented exception the net cannot reach — its basename still
+    matches, which is what this pins.)
+    """
+    from fnmatch import fnmatch
+
+    trainer = trainer_for(task)()
+    artifact = trainer.artifact(Path("/r"), "train")
+    assert any(fnmatch(artifact.name, glob) for glob in trainer.output_globs), (
+        f"{task}: no output_globs entry matches {artifact.name!r}"
+    )
