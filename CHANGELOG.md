@@ -308,6 +308,57 @@ for the full map.
 ### Fixed
 
 
+- **`model_path` now reaches every MLIP builder — sevenn and orb silently dropped it.**
+  Both signatures swallowed the checkpoint into `**_` and loaded the *named release*
+  instead, with the fingerprint digesting the file so the run even looked pinned to the
+  weights it ignored; the other three builders honoured it all along, and the docs stated
+  the rule three times. SevenNet now takes the path through its own `model=` (typed
+  `str | Path`, filesystem checked before release names) and ORB through the loaders'
+  `weights_path=`, each behind the existence check MACE and FAIRChem already had; an
+  orb-models too old for the keyword is a named version limitation, not a `TypeError`.
+- **The thread exports say the granted cores, not the asked-for pal.** The SLURM
+  directives and the throttler charge both derive from `slurm_layout`'s
+  `min(cores, max_cores)` clamp, but three run-block builders exported the raw `pal()`
+  into `OMP_NUM_THREADS`/`MKL_NUM_THREADS` — a step asking above the budget was charged
+  the clamp and threaded the ask, the exact oversubscription the export exists to prevent
+  (Q-Chem's block read the layout all along). The two tests that pinned the unclamped
+  numbers now pin the clamp.
+- **A flat 3N gradient is refused where a flat 3N position always was.** The script
+  engines' positions guard names `coords.ravel()` as "the natural mistake"; the gradient
+  half had no shape oracle, so the same mistake parsed as a valid `(3N,)` array and rode
+  `forces_ev_per_a` — which declares no shape — through the cache and into any downstream
+  `mlip-train` dataset. Now an ordinary `UNPARSEABLE` ledger entry naming the atom count.
+- **`save_tensors` on an open-shell step is refused where the user can act.** The tensor
+  transform is restricted-only; on a UHF/UKS run the SCF and gradient both succeeded and
+  the dump then died inside the server — a 500 whose actionable half landed in the server
+  log. `pyscf-extopt` now refuses at `prepare` (before anything submits) naming the knob
+  and the multiplicity, and the runtime states the same rule at its API boundary.
+- **A seed build owns its whole directory.** `build_structures` wrote SMILES files as it
+  went, so a bad entry partway left the earlier files behind — and a corrected, shorter
+  retry reported one file while `input:` directory-seeding read two, quietly computing on
+  a molecule the successful call never produced. The failure path now cleans up exactly
+  as the XYZ branch always did, and a new build clears the previous call's set.
+- **Four agent-tool contracts each got their missing site.** `start_run` refuses a
+  `target` with `run`/`resume` (the child exited 2 on "unexpected extra argument" *after*
+  a pid and log path were returned); `run_status(log_tail_lines=0)` is an empty tail, not
+  the whole multi-MB log (`[-0:]` slices everything); a disk refusal from
+  `save_config`/`write_template`/`scaffold_templates` is the documented `ConfigError`
+  (a GUI 400) rather than a raw `OSError` the error handler re-raised as a 500; and
+  `cli_legacy`'s worked example stops naming a `--resume` flag v1.3.1 never had — which
+  the translator mapped to the cache-invalidating `run`.
+- **The numeric seam of the PySCF runtime is checked, not merely executed.** The test
+  named for the Å→Bohr conversion asserted nothing about units (PySCF's default is
+  Ångström, so a dropped `mol.unit = "Bohr"` reads every geometry 1.889× too large,
+  silently); the shipped-default density-fitting path's only test made no assertions
+  (and the fake could not distinguish DF-applied from DF-skipped); `HARTREE_TO_EV` — the
+  factor labelling every MLIP training energy — was the one constant with no
+  independently-typed anchor. All three are pinned, and the first two joined
+  `scripts/mutation_gate.py` (19 mutations now).
+- **A `git mv` of a mutated source file makes the mutation gate report, not traceback** —
+  the same aggregate report line its anchor and test-path checks always produced — and
+  two suite-hygiene holes closed alongside: a registry cleanup outside `try/finally`
+  that would have amplified one guard regression across every wholesale `ENGINES` read,
+  and the `rerun-errors` log arms whose wording nothing asserted.
 - **A workflow-level `charge:`/`multiplicity:` edit now invalidates the steps that
   inherit it.** The old fingerprint hashed the per-step *override* — `None` when
   inherited — so editing the workflow value changed every job's physics while every
