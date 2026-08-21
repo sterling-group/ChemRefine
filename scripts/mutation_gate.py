@@ -237,6 +237,26 @@ MUTATIONS = (
         "the cache and `parents_digest` hashes it to a stable key, so a run reports results "
         "computed from coordinates that are not numbers, and nothing anywhere says so",
     ),
+    Mutation(
+        id="pyscf-mol-unit",
+        path="src/chemrefine/engines/pyscf/_runtime.py",
+        old='mol.atom = atom\n    mol.unit = "Bohr"',
+        new="mol.atom = atom",
+        tests="tests/test_engines_pyscf_extopt_calc.py",
+        breaks="PySCF's default unit is Angstrom, so the coordinates — already converted "
+        "to Bohr — are read 1.889x too large: silently wrong energies and gradients on "
+        "every PySCF job",
+    ),
+    Mutation(
+        id="pyscf-df-applied",
+        path="src/chemrefine/engines/pyscf/_runtime.py",
+        old="mf = mf.density_fit()",
+        new="pass",
+        tests="tests/test_engines_pyscf_extopt_calc.py",
+        breaks="density fitting silently never applied on the shipped-default path — the "
+        "RI approximation the user configured, priced, and did not get, with a different "
+        "energy and a much longer runtime",
+    ),
 )
 
 

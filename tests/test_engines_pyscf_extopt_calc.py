@@ -73,7 +73,18 @@ def _install_fake_pyscf(monkeypatch, *, mol_spin: int = 0) -> dict[str, MagicMoc
     rks.nuc_grad_method.return_value.kernel.return_value = np.zeros((2, 3))
     rks.mo_coeff = np.eye(2)
     rks.mo_occ = np.array([2.0, 0.0])
+    # ``density_fit()`` returns a *distinct* SCF object with its own sentinel energy, the
+    # way PySCF's returns a DF-decorated copy. The distinct value is load-bearing: it is
+    # what lets a test tell "DF applied" (-1.75) from "DF silently skipped" (-1.5) by the
+    # energy alone — a fake that returned ``rks`` itself would make the two
+    # indistinguishable, which is how the applied path went unasserted.
+    df_mf = MagicMock()
+    df_mf.kernel.return_value = -1.75
+    df_mf.converged = True
+    df_mf.nuc_grad_method.return_value.kernel.return_value = np.zeros((2, 3))
+    rks.density_fit.return_value = df_mf
     mocks["rks"] = rks
+    mocks["df_mf"] = df_mf
 
     dft_mod = types.ModuleType("pyscf.dft")
     dft_mod.RKS = MagicMock(return_value=rks)
@@ -223,7 +234,15 @@ def test_pyscf_options_save_tensors_accepts_absolute_folder():
 
 
 def test_build_mol_converts_angstrom_to_bohr(monkeypatch):
-    mocks = _install_fake_pyscf(monkeypatch)
+    """The unit line and the conversion factor, asserted against independent literals.
+
+    PySCF's default coordinate unit is **Angstrom**, so dropping ``mol.unit = "Bohr"``
+    reinterprets every Bohr coordinate as an Ångström one — geometries 1.889x too large,
+    silently, on every PySCF job. The factor is retyped here rather than imported: the
+    import would mirror the constant under test, and a wrong digit would agree with
+    itself. (These were the mutations the old spot-check — ``build`` was called — missed.)
+    """
+    _install_fake_pyscf(monkeypatch)
     mol = _runtime.build_mol(
         symbols=("H", "H"),
         positions_angstrom=np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
@@ -231,11 +250,35 @@ def test_build_mol_converts_angstrom_to_bohr(monkeypatch):
         multiplicity=1,
         basis="def2-svp",
     )
-    # Spot-check: the Mole instance should have been built. The factory in
-    # `gto_mod.Mole` mints fresh mocks per call, so we just verify ``build``
-    # was called on the returned object.
     mol.build.assert_called_once()
-    assert "gto" in mocks
+    assert mol.unit == "Bohr"
+    assert mol.charge == 0
+    assert mol.basis == "def2-svp"
+    symbols = [sym for sym, _coord in mol.atom]
+    assert symbols == ["H", "H"]
+    (_h1, first), (_h2, second) = mol.atom
+    assert first == (0.0, 0.0, 0.0)
+    assert second[0] == pytest.approx(1.0 / 0.529177210903, rel=1e-12)
+    assert second[1:] == (0.0, 0.0)
+
+
+def test_build_mol_maps_multiplicity_to_spin(monkeypatch):
+    """``mult = 2S + 1`` → ``mol.spin = 2S`` — pyscf's spin is unpaired electrons, not S.
+
+    Every other ``build_mol`` test overwrites ``mol.spin`` on the next line for its own
+    dispatch purposes, so this mapping was checked nowhere and an off-by-one here would
+    run every open-shell system at the wrong spin state.
+    """
+    _install_fake_pyscf(monkeypatch)
+    for multiplicity, spin in ((1, 0), (2, 1), (3, 2)):
+        mol = _runtime.build_mol(
+            symbols=("H",),
+            positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
+            charge=0,
+            multiplicity=multiplicity,
+            basis="sto-3g",
+        )
+        assert mol.spin == spin
 
 
 # ---------------------------------------------------------------------------
@@ -338,8 +381,31 @@ def test_run_dft_falls_back_to_cpu_when_gpu_import_fails(monkeypatch):
     assert "fell back to CPU" in meta["gpu_msg"]
 
 
-def test_run_dft_density_fitting_continues_on_failure(monkeypatch):
-    """A ``density_fit()`` exception logs a warning but doesn't abort."""
+def test_run_dft_applies_density_fitting_on_the_default_path(monkeypatch):
+    """``use_df=True`` — the shipped default — solves the *DF-decorated* SCF, not the bare one.
+
+    The fake's ``density_fit()`` returns a distinct object with its own sentinel energy,
+    so the assertion tells "applied" (-1.75) from "silently skipped" (-1.5) by the value
+    alone. Skipped is the failure mode worth the sentinel: the user is charged for an RI
+    approximation they configured and do not get, with nothing anywhere saying so.
+    """
+    mocks = _install_fake_pyscf(monkeypatch)
+    mol = _runtime.build_mol(
+        symbols=("H",),
+        positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
+        charge=0,
+        multiplicity=1,
+        basis="sto-3g",
+    )
+    mol.spin = 0
+    energy, _, meta, mf = _runtime.run_dft(mol, use_df=True)
+    assert energy == -1.75
+    assert meta["converged"] is True
+    assert mf is mocks["df_mf"]
+
+
+def test_run_dft_density_fitting_continues_on_failure(monkeypatch, caplog):
+    """A ``density_fit()`` exception logs the promised warning and solves the bare SCF."""
     mocks = _install_fake_pyscf(monkeypatch)
     mocks["rks"].density_fit.side_effect = RuntimeError("no DF for you")
     mol = _runtime.build_mol(
@@ -350,8 +416,11 @@ def test_run_dft_density_fitting_continues_on_failure(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    # use_df=True should attempt and silently fall back
-    _runtime.run_dft(mol, use_df=True)
+    with caplog.at_level("WARNING"):
+        energy, _, _meta, _ = _runtime.run_dft(mol, use_df=True)
+    assert energy == -1.5  # the un-decorated SCF's sentinel: the run went on without DF
+    assert "density_fit() failed" in caplog.text
+    assert "no DF for you" in caplog.text
 
 
 def test_run_dft_no_gradient_when_dograd_false(monkeypatch):

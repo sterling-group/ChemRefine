@@ -7,6 +7,7 @@ import pytest
 
 from chemrefine.quantities import (
     DEFAULT_TEMPERATURE_K,
+    HARTREE_TO_EV,
     HARTREE_TO_KCALMOL,
     R_KCALMOL_K,
     boltzmann_weights,
@@ -19,6 +20,11 @@ def test_constants_use_codata_values():
     assert abs(HARTREE_TO_KCALMOL - 627.5094740631) < 1e-3
     # R ~= 1.9872041e-3 kcal/(mol*K)
     assert abs(R_KCALMOL_K - 1.98720425e-3) < 1e-7
+    # 1 Ha in eV, against an independently typed CODATA literal. This was the one
+    # constant every assertion computed *from itself* (through the derived gradient
+    # factor), and it labels every MLIP training energy — a wrong digit would mislabel
+    # every fine-tuning dataset with the suite green.
+    assert abs(HARTREE_TO_EV - 27.211386245988) < 1e-9
 
 
 def test_convert_scalar_hartree_to_kcalmol():
