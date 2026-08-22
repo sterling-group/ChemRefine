@@ -45,6 +45,15 @@
   <!-- ============ LEFT: the click-through builder ============ -->
   <section id="left">
 
+    <div class="tabstrip">
+      <button type="button" class="tab" @click="showTab('left', 'builder')"
+              :class="tabs.left === 'builder' ? 'on' : ''">Builder</button>
+      <button type="button" class="tab" @click="showTab('left', 'agent')"
+              :class="tabs.left === 'agent' ? 'on' : ''">Agent</button>
+    </div>
+
+    <div x-show="tabs.left === 'builder'">
+
     <details open>
       <summary>Workflow settings</summary>
       <div class="fields">
@@ -311,10 +320,102 @@
       </details>
     </template>
     <button type="button" id="addstep" @click="addStep()">＋ Add step</button>
+    </div>
+    <!-- ============ Agent chat (local GUI; needs chemrefine[agent]) ============ -->
+    <!-- A div, not a details: the panel is a tab now, and #chat in style.css already
+         restates the whole card look, so it renders identically. The @toggle probe it
+         used to carry moved into showTab(). -->
+    <div id="chat" x-show="tabs.left === 'agent'" style="display:none">
+      <p class="muted" x-text="chat.detail"></p>
+      <p class="muted" x-show="staticMode">
+        The chat runs with the local <code>chemrefine gui</code> — this online playground
+        builds configs only.
+      </p>
+      <div x-show="!staticMode">
+        <!-- Settings first, then the verdict, then the log: the panel reads top-down in
+             the order you have to do things. Every field re-arms the check on @input, not
+             @change — @change fires on blur, so a retyped model could be sent against a
+             verdict earned by the previous one. -->
+        <div class="row">
+          <select x-model="chat.provider" @change="saveChatSettings(); armCheck()">
+            <option value="custom">custom</option>
+            <option value="ollama">ollama</option>
+            <option value="vllm">vllm</option>
+            <option value="openai">openai</option>
+          </select>
+          <input type="text" x-model="chat.model" placeholder="model (e.g. qwen3:4b)"
+                 @input="armCheck()" @change="saveChatSettings()">
+          <button type="button" class="mini" @click="resetChat()"
+                  title="Clear the conversation and reset provider settings to defaults">
+            reset</button>
+        </div>
+        <!-- Only the fields the selected provider can actually use. `custom` is the one
+             with nowhere to go, so it is the one that must be told where; the rest carry a
+             default the server reports, shown as a placeholder and never sent back — an
+             echoed URL would outrank CHEMREFINE_LLM_BASE_URL. -->
+        <div class="row" x-show="needsBaseUrl() || providerShape().default_url">
+          <input type="text" x-model="chat.baseUrl" @input="armCheck()"
+                 @change="saveChatSettings()"
+                 :placeholder="needsBaseUrl() ? 'base URL (required, e.g. https://host/v1)'
+                               : 'base URL — defaults to ' + providerShape().default_url">
+        </div>
+        <div class="row" x-show="needsApiKey()">
+          <input type="password" autocomplete="off" x-model="chat.apiKey" @input="armCheck()"
+                 placeholder="API key — kept in this tab only, never saved">
+        </div>
+        <div class="row">
+          <button type="button" @click="runCheck()" :disabled="chat.check.busy">
+            Check connection</button>
+          <span class="muted" x-show="chat.check.busy">checking…</span>
+          <span class="muted" x-show="chat.check.ok === null && !chat.check.busy">
+            check the connection before chatting</span>
+        </div>
+        <template x-for="(finding, i) in chat.check.findings" :key="'chk' + i">
+          <p :class="chat.check.ok ? 'ok' : 'warn'" x-text="finding"></p>
+        </template>
+        <div id="chatlog">
+          <template x-for="(entry, i) in chat.msgs" :key="'m' + i">
+            <p :class="entry.who"><b x-text="entry.who === 'you' ? 'you' : 'agent'"></b>
+              <span x-text="entry.text"></span></p>
+          </template>
+          <div class="approval" x-show="chat.pending.length">
+            <p class="warn"><b>The agent asks to run:</b></p>
+            <template x-for="req in chat.pending" :key="req.id">
+              <p class="mono">
+                <span x-text="req.tool + '(' + JSON.stringify(req.args) + ')'"></span>
+                <button type="button" class="mini" @click="decide(req.id, true)">allow</button>
+                <button type="button" class="mini" @click="decide(req.id, false)">deny</button>
+              </p>
+            </template>
+          </div>
+          <p class="muted" x-show="chat.busy">thinking…</p>
+        </div>
+        <div class="row">
+          <input type="text" x-model="chat.draft" placeholder="ask the agent…"
+                 :disabled="chat.busy || chat.pending.length > 0 || !chatReady()"
+                 @keydown.enter="sendChat()">
+          <button type="button" @click="sendChat()"
+                  :disabled="chat.busy || chat.pending.length > 0 || !chatReady()">
+            Send</button>
+        </div>
+      </div>
+    </div>
   </section>
 
   <!-- ============ RIGHT: the YAML ============ -->
   <section id="right">
+
+    <div class="tabstrip">
+      <button type="button" class="tab" @click="showTab('right', 'yaml')"
+              :class="tabs.right === 'yaml' ? 'on' : ''">input.yaml</button>
+      <button type="button" class="tab" @click="showTab('right', 'molecule')"
+              :class="tabs.right === 'molecule' ? 'on' : ''">Molecule</button>
+    </div>
+
+    <!-- The YAML pane keeps its own controls rather than hoisting them into the strip:
+         copyYaml()'s clipboard fallback selects #yaml, and x-show leaves the textarea in
+         the DOM but display:none, where select-and-copy does not copy. -->
+    <div x-show="tabs.right === 'yaml'">
     <div class="paneheader">
       <h2>input.yaml</h2>
       <button type="button" class="mini" @click="copyYaml()" title="Copy the YAML to the clipboard">
@@ -330,7 +431,17 @@
       <button type="button" class="mini" x-show="rawEdit" @click="applyRaw()">Apply to form</button>
     </div>
     <textarea id="yaml" x-model="yamlText" :readonly="!rawEdit" spellcheck="false"></textarea>
+    </div>
 
+    <!-- Placeholder until the structure viewer lands; a deliberate note rather than a
+         dead button, because no endpoint serves geometry yet. -->
+    <div x-show="tabs.right === 'molecule'" style="display:none">
+      <p class="muted">A 3D view of the seeds and of each step's structures is coming here.</p>
+    </div>
+
+    <!-- Run dashboard and validation report sit BELOW both panels, not inside either:
+         they are about the run, not about which view is open, and #flash is written from
+         every corner of app.js and has to stay visible on any tab. -->
     <!-- ============ Run dashboard (local GUI, saved config only) ============ -->
     <details id="run" x-show="savedPath && !staticMode" style="display:none"
              @toggle="$event.target.open && refreshStatus()">
@@ -422,84 +533,6 @@
         </div>
       </template>
     </div>
-    <!-- ============ Agent chat (local GUI; needs chemrefine[agent]) ============ -->
-    <details id="chat" @toggle="$event.target.open && chatAvailability()">
-      <summary><b>Agent chat</b>
-        <span class="muted" x-text="chat.detail"></span>
-      </summary>
-      <p class="muted" x-show="staticMode">
-        The chat runs with the local <code>chemrefine gui</code> — this online playground
-        builds configs only.
-      </p>
-      <div x-show="!staticMode">
-        <!-- Settings first, then the verdict, then the log: the panel reads top-down in
-             the order you have to do things. Every field re-arms the check on @input, not
-             @change — @change fires on blur, so a retyped model could be sent against a
-             verdict earned by the previous one. -->
-        <div class="row">
-          <select x-model="chat.provider" @change="saveChatSettings(); armCheck()">
-            <option value="custom">custom</option>
-            <option value="ollama">ollama</option>
-            <option value="vllm">vllm</option>
-            <option value="openai">openai</option>
-          </select>
-          <input type="text" x-model="chat.model" placeholder="model (e.g. qwen3:4b)"
-                 @input="armCheck()" @change="saveChatSettings()">
-          <button type="button" class="mini" @click="resetChat()"
-                  title="Clear the conversation and reset provider settings to defaults">
-            reset</button>
-        </div>
-        <!-- Only the fields the selected provider can actually use. `custom` is the one
-             with nowhere to go, so it is the one that must be told where; the rest carry a
-             default the server reports, shown as a placeholder and never sent back — an
-             echoed URL would outrank CHEMREFINE_LLM_BASE_URL. -->
-        <div class="row" x-show="needsBaseUrl() || providerShape().default_url">
-          <input type="text" x-model="chat.baseUrl" @input="armCheck()"
-                 @change="saveChatSettings()"
-                 :placeholder="needsBaseUrl() ? 'base URL (required, e.g. https://host/v1)'
-                               : 'base URL — defaults to ' + providerShape().default_url">
-        </div>
-        <div class="row" x-show="needsApiKey()">
-          <input type="password" autocomplete="off" x-model="chat.apiKey" @input="armCheck()"
-                 placeholder="API key — kept in this tab only, never saved">
-        </div>
-        <div class="row">
-          <button type="button" @click="runCheck()" :disabled="chat.check.busy">
-            Check connection</button>
-          <span class="muted" x-show="chat.check.busy">checking…</span>
-          <span class="muted" x-show="chat.check.ok === null && !chat.check.busy">
-            check the connection before chatting</span>
-        </div>
-        <template x-for="(finding, i) in chat.check.findings" :key="'chk' + i">
-          <p :class="chat.check.ok ? 'ok' : 'warn'" x-text="finding"></p>
-        </template>
-        <div id="chatlog">
-          <template x-for="(entry, i) in chat.msgs" :key="'m' + i">
-            <p :class="entry.who"><b x-text="entry.who === 'you' ? 'you' : 'agent'"></b>
-              <span x-text="entry.text"></span></p>
-          </template>
-          <div class="approval" x-show="chat.pending.length">
-            <p class="warn"><b>The agent asks to run:</b></p>
-            <template x-for="req in chat.pending" :key="req.id">
-              <p class="mono">
-                <span x-text="req.tool + '(' + JSON.stringify(req.args) + ')'"></span>
-                <button type="button" class="mini" @click="decide(req.id, true)">allow</button>
-                <button type="button" class="mini" @click="decide(req.id, false)">deny</button>
-              </p>
-            </template>
-          </div>
-          <p class="muted" x-show="chat.busy">thinking…</p>
-        </div>
-        <div class="row">
-          <input type="text" x-model="chat.draft" placeholder="ask the agent…"
-                 :disabled="chat.busy || chat.pending.length > 0 || !chatReady()"
-                 @keydown.enter="sendChat()">
-          <button type="button" @click="sendChat()"
-                  :disabled="chat.busy || chat.pending.length > 0 || !chatReady()">
-            Send</button>
-        </div>
-      </div>
-    </details>
 
     <p id="flash" class="muted" x-text="flash"></p>
   </section>

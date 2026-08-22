@@ -1,9 +1,14 @@
 # GUI (workflow builder)
 
-`chemrefine gui` opens a click-through builder for the workflow YAML in your browser —
-left pane: workflow settings and steps as forms; right pane: the `input.yaml` being
-built, live. The layout follows the IQmol submission window: select on the left, read
-the resulting input on the right.
+`chemrefine gui` opens a click-through builder for the workflow YAML in your browser.
+Two columns, each with its own tabs: on the left **Builder** (workflow settings and steps
+as forms) or **Agent** (the chat); on the right **input.yaml** (the file being built,
+live) or **Molecule** (a 3D view). The layout follows the IQmol submission window —
+select on the left, read the resulting input on the right — and the tabs mean the editor
+stays visible while the agent works in the other column.
+
+The Run panel and the validation report sit below both columns, so they stay visible
+whichever tab is open.
 
 !!! tip "Try it online"
     The builder also runs on this site, no install needed: **[open the
@@ -91,7 +96,7 @@ validates with — so every knob, enum and default is current by construction:
   the YAML until you change them — the file carries only your deviations. Setting a
   field back to its default removes it from the YAML again.
 
-## The right pane is the file
+## The right column is the file
 
 YAML is emitted and parsed **server-side only** — the browser never serializes YAML, so
 the form pane and the text pane cannot disagree. Tick *edit as text* to type YAML
@@ -107,7 +112,7 @@ template-driven step gains an *Edit template…* editor.
 ## The Run panel
 
 Once a config is saved (local GUI only — the playground stays build-and-copy), a
-**Run** section appears under the YAML pane:
+**Run** section appears below the columns:
 
 - **Run / Resume / Rerun errors** launch the same detached driver the CLI would —
   each behind a confirmation naming the config, because this is real compute. A tree
@@ -120,8 +125,9 @@ Once a config is saved (local GUI only — the playground stays build-and-copy),
 
 ## The Agent chat panel
 
-With the `[agent]` extra installed, an **Agent chat** section joins the right column —
-the [embedded agent](agents.md) inside the GUI. Pick the provider and the panel shows
+With the `[agent]` extra installed, the left column's **Agent** tab holds the
+[embedded agent](agents.md) inside the GUI — switch to it and the `input.yaml` pane on
+the right stays where it is, so you watch what the agent builds. Pick the provider and the panel shows
 only the fields that provider can use: local **Ollama** and **vLLM** need nothing but a
 model name, `custom` needs the endpoint's base URL, and `openai` needs a key (see the
 [model-policy note](agents.md#ai-agents)).

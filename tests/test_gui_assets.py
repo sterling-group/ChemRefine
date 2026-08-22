@@ -430,6 +430,68 @@ def test_send_is_armed_by_a_passing_check_and_disarmed_by_any_edit():
     assert json.loads(out) == [False, True, False, True]
 
 
+def test_switching_to_the_agent_tab_reprobes_without_disarming_send():
+    """The bug that only exists once tabs and the check gate are both in.
+
+    Under a ``<details>`` the availability probe fired on open and close. As a tab it
+    fires on every switch — so if arming lived inside it, or if the verdict shared
+    ``chat.detail`` (which the probe overwrites unconditionally), every click on Agent
+    would silently disarm Send mid-conversation. The probe must still run, and the
+    verdict must survive it.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      let probes = 0;
+      b.chatAvailability = () => { probes += 1; };
+      b.chat.check = { ok: true, findings: ["served"], busy: false };
+      b.showTab("left", "agent");
+      b.showTab("left", "builder");
+      b.showTab("left", "agent");
+      console.log(JSON.stringify({ probes, stillReady: b.chatReady(), tab: b.tabs.left }));
+    """)
+    result = json.loads(out)
+    assert result["probes"] == 2  # every switch *to* the agent re-probes
+    assert result["stillReady"] is True  # and none of them took the verdict away
+    assert result["tab"] == "agent"
+
+
+def test_each_column_switches_independently():
+    """Two strips, one state object — a switch on one column must not move the other."""
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chatAvailability = () => {};
+      const seen = [JSON.stringify(b.tabs)];
+      b.showTab("right", "molecule");
+      seen.push(JSON.stringify(b.tabs));
+      b.showTab("left", "agent");
+      seen.push(JSON.stringify(b.tabs));
+      console.log(JSON.stringify(seen));
+    """)
+    assert [json.loads(s) for s in json.loads(out)] == [
+        {"left": "builder", "right": "yaml"},  # the defaults a fresh page opens on
+        {"left": "builder", "right": "molecule"},
+        {"left": "agent", "right": "molecule"},
+    ]
+
+
+def test_every_tab_button_targets_a_panel_that_exists():
+    """A tab whose panel nothing renders is a button that blanks half the page.
+
+    The strip and the panels are two independent lists in the markup, so a typo in either
+    shows an empty column at click time and nowhere else — the same silent-at-click-time
+    failure the handler guard exists for, one level up.
+    """
+    html = INDEX.read_text(encoding="utf-8")
+    targets = set(re.findall(r"showTab\('(\w+)',\s*'(\w+)'\)", html))
+    panels = set(re.findall(r"tabs\.(\w+) === '(\w+)'", html))
+    assert targets, "no tab buttons found — has the strip been renamed?"
+    assert targets <= panels, f"tabs with no panel: {sorted(targets - panels)}"
+    # Both columns are tabbed, and each offers at least two panels — a one-tab strip is a
+    # decoration, and would mean a panel lost its button.
+    for side in ("left", "right"):
+        assert len({t for s, t in targets if s == side}) >= 2, f"{side} column has one tab"
+
+
 def test_field_specs_carry_the_schema_bounds_and_default():
     """The spec a number input renders from: bounds for the spinner, default to step from.
 

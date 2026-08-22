@@ -207,6 +207,35 @@ h3 {
   font-style: italic;
 }
 
+/* Tab strips. There was no selected-state affordance anywhere in this sheet before —
+   no .active, no [aria-selected] — so this is the whole vocabulary for one. Built on
+   button.mini's borderless base rather than on a new element: a tab IS a button here,
+   and everything else in the page's control rows already looks like this. */
+.tabstrip {
+  display: flex;
+  gap: 0.2rem;
+  margin-bottom: 0.6rem;
+  border-bottom: 1px solid var(--line);
+}
+button.tab {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  padding: 0.3rem 0.9rem;
+  margin-bottom: -1px; /* the selected tab's edge sits on the strip's rule, not under it */
+}
+button.tab:hover {
+  color: var(--accent);
+}
+button.tab.on {
+  color: var(--accent);
+  background: var(--panel);
+  border-color: var(--line);
+  border-bottom: 1px solid var(--panel);
+}
+
 .paneheader {
   display: flex;
   align-items: center;

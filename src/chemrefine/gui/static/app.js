@@ -25,6 +25,11 @@ function builder() {
     _uid: 0,
     yamlText: "",
     rawEdit: false,
+    // Which panel each column shows. Dotted (`tabs.left`), not two flat scalars, and read
+    // through showTab() rather than assigned inline: the asset guards resolve a bare name
+    // in an expression only when it is dotted or called, so `x-show="leftTab === 'agent'"`
+    // and `@click="leftTab = 'agent'"` would both be checked by nothing at all.
+    tabs: { left: "builder", right: "yaml" },
     report: null,
     flash: "",
     savedPath: null,
@@ -553,6 +558,17 @@ function builder() {
         limit: 20,
         offset,
       });
+    },
+
+    // ---------------- panels ----------------
+    showTab(side, id) {
+      this.tabs[side] = id;
+      // Opening the agent re-probes availability, the job the panel's `<details>` toggle
+      // used to do. Note what this must NOT do: touch the check verdict. Under a
+      // `<details>` the probe fired on open and close; as a tab it fires on every switch,
+      // so anything destructive in here becomes a per-click side effect — which is why
+      // arming lives in armCheck(), driven by settings changes rather than by visibility.
+      if (side === "left" && id === "agent") this.chatAvailability();
     },
 
     // ---------------- agent chat ----------------
