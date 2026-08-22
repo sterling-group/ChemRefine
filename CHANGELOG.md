@@ -48,7 +48,9 @@ for the full map.
   guide ships as the `chemrefine://guide` resource, with its vocabulary pinned to the
   code by tests.
 - **Workflow-builder GUI** (`chemrefine gui`, extra `chemrefine[gui]`): a local
-  two-pane web app (127.0.0.1 behind a per-session token) — click-through forms
+  two-pane web app (127.0.0.1 behind a per-session token, on a stable per-user
+  port by default so an SSH forwarding setup written once keeps working;
+  kernel-assigned when that port is taken) — click-through forms
   rendered from the live schema on the left, the `input.yaml` on the right, emitted
   and parsed server-side only. Validate anchors findings to fields; Save…/scaffold/
   inline template editing; a run dashboard (start/resume/rerun-errors behind

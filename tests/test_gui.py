@@ -5,12 +5,15 @@ the browser, minus the socket. What must hold: every ``/api/*`` endpoint refuses
 missing/wrong token (the static page stays open — it holds no secrets), the YAML
 emit/parse pair round-trips a real config (server-side PyYAML is the *single* YAML
 implementation, so the form pane and text pane cannot drift), library errors surface as
-the documented ``{error, exit_code}`` shape, and ``serve.launch`` binds loopback with a
-fresh token and the effective port in the URL it opens.
+the documented ``{error, exit_code}`` shape, and ``serve.launch`` binds loopback on the
+stable per-user port (kernel-assigned when that one is taken) with a fresh token and the
+effective port in the URL it opens.
 """
 
 from __future__ import annotations
 
+import logging
+import types
 from pathlib import Path
 from typing import Any
 
@@ -551,6 +554,26 @@ def test_cli_gui_hands_off_to_launch(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert calls == [{"config": config, "port": 8123, "open_browser": False}]
 
 
+def test_cli_gui_omitting_port_asks_for_the_personal_default(monkeypatch: pytest.MonkeyPatch):
+    """No --port hands ``None`` to launch — the port policy lives in serve, not here."""
+    from typer.testing import CliRunner
+
+    from chemrefine.cli import app as cli_app
+    from chemrefine.gui import serve
+
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        serve,
+        "launch",
+        lambda config, *, port, open_browser: calls.append(
+            {"config": config, "port": port, "open_browser": open_browser}
+        ),
+    )
+    result = CliRunner().invoke(cli_app, ["gui", "--no-browser"])
+    assert result.exit_code == 0
+    assert calls == [{"config": None, "port": None, "open_browser": False}]
+
+
 def test_cli_gui_reports_a_taken_port(monkeypatch: pytest.MonkeyPatch, caplog):
     """A busy --port exits 1 with the fix named — not a waitress traceback."""
     from typer.testing import CliRunner
@@ -558,13 +581,31 @@ def test_cli_gui_reports_a_taken_port(monkeypatch: pytest.MonkeyPatch, caplog):
     from chemrefine.cli import app as cli_app
     from chemrefine.gui import serve
 
-    def taken(config: Any, *, port: int, open_browser: bool) -> None:
+    def taken(config: Any, *, port: int | None, open_browser: bool) -> None:
         raise OSError(98, "Address already in use")
 
     monkeypatch.setattr(serve, "launch", taken)
     result = CliRunner().invoke(cli_app, ["gui", "--port", "8123"])
     assert result.exit_code == 1
     assert "--port 0" in caplog.text
+
+
+def test_cli_gui_reports_a_bind_failure_on_the_default_port(
+    monkeypatch: pytest.MonkeyPatch, caplog
+):
+    """An OSError with no --port set must not reach the ``%d`` formatter with ``None``."""
+    from typer.testing import CliRunner
+
+    from chemrefine.cli import app as cli_app
+    from chemrefine.gui import serve
+
+    def refused(config: Any, *, port: int | None, open_browser: bool) -> None:
+        raise OSError(24, "Too many open files")
+
+    monkeypatch.setattr(serve, "launch", refused)
+    result = CliRunner().invoke(cli_app, ["gui"])
+    assert result.exit_code == 1
+    assert "could not serve the GUI" in caplog.text
 
 
 def test_cli_gui_names_the_missing_extra(without_extra, caplog):
@@ -592,45 +633,122 @@ def test_cli_gui_names_the_missing_extra(without_extra, caplog):
 # ---------------------------------------------------------------------------
 
 
+class _FakeServer:
+    """Stands in for waitress: records that it ran instead of blocking."""
+
+    def __init__(self, record: dict[str, Any]) -> None:
+        self._record = record
+
+    def run(self) -> None:
+        self._record["ran"] = True
+
+
+def _fake_socket_module(
+    binds: list[tuple[str, int]],
+    *,
+    refuse: frozenset[int] = frozenset(),
+    effective: int = 43210,
+) -> Any:
+    """A stand-in ``socket`` module: records binds, refuses named ports, opens no fd."""
+
+    class _Sock:
+        def bind(self, addr: tuple[str, int]) -> None:
+            binds.append(addr)
+            if addr[1] in refuse:
+                raise OSError(98, "Address already in use")
+
+        def getsockname(self) -> tuple[str, int]:
+            return ("127.0.0.1", effective)
+
+    return types.SimpleNamespace(AF_INET=0, SOCK_STREAM=0, socket=lambda *a: _Sock())
+
+
+def test_personal_port_is_stable_and_in_range(monkeypatch: pytest.MonkeyPatch):
+    """Same user, same port, every session — what makes a one-time forwarding stanza work."""
+    monkeypatch.setattr(serve_mod.getpass, "getuser", lambda: "ada")
+    first = serve_mod._personal_port()
+    assert first == serve_mod._personal_port()
+    assert serve_mod._PORT_BASE <= first < serve_mod._PORT_BASE + serve_mod._PORT_SPAN
+    monkeypatch.setattr(serve_mod.getpass, "getuser", lambda: "grace")
+    assert serve_mod._personal_port() != first
+
+
+def test_personal_port_survives_a_passwdless_environment(monkeypatch: pytest.MonkeyPatch):
+    """``getpass.getuser`` raises under an arbitrary UID; the numeric UID stands in."""
+
+    def no_passwd_entry() -> str:
+        raise OSError("no passwd entry")
+
+    monkeypatch.setattr(serve_mod.getpass, "getuser", no_passwd_entry)
+    monkeypatch.setattr(serve_mod.os, "getuid", lambda: 4242)
+    port = serve_mod._personal_port()
+    assert serve_mod._PORT_BASE <= port < serve_mod._PORT_BASE + serve_mod._PORT_SPAN
+
+
 def test_launch_binds_loopback_with_a_fresh_token(monkeypatch: pytest.MonkeyPatch):
     created: dict[str, Any] = {}
     opened: list[str] = []
+    binds: list[tuple[str, int]] = []
 
-    class _Server:
-        effective_port = 43210
-
-        def run(self) -> None:
-            created["ran"] = True
-
-    def fake_create_server(app: Any, host: str, port: int) -> _Server:
-        created["host"], created["port"] = host, port
-        return _Server()
+    def fake_create_server(app: Any, *, sockets: list[Any]) -> _FakeServer:
+        created["sockets"] = sockets
+        return _FakeServer(created)
 
     # Patched on `serve`, not on `waitress.server`: the name is bound at import time
     # (module scope, so the CLI's ImportError guard can fire), so patching the origin
     # after the fact leaves `launch` holding the real one — which binds a real socket and
     # runs a real server, and the suite then hangs on waitress's handler threads.
     monkeypatch.setattr(serve_mod, "create_server", fake_create_server)
+    monkeypatch.setattr(serve_mod.getpass, "getuser", lambda: "ada")
+    personal = serve_mod._personal_port()
+    monkeypatch.setattr(serve_mod, "socket", _fake_socket_module(binds, effective=personal))
     fake_browser = type("W", (), {"open": staticmethod(opened.append)})
     monkeypatch.setattr(serve_mod, "webbrowser", fake_browser)
-    serve_mod.launch(None, port=0, open_browser=True)
+    serve_mod.launch(None, open_browser=True)
 
-    assert (created["host"], created["port"], created["ran"]) == ("127.0.0.1", 0, True)
+    assert binds == [("127.0.0.1", personal)]  # the default is the personal port
+    assert created["ran"] is True
+    assert len(created["sockets"]) == 1  # waitress serves the pre-bound socket
     [url] = opened
-    assert url.startswith("http://127.0.0.1:43210/?token=")
+    assert url.startswith(f"http://127.0.0.1:{personal}/?token=")
+
+
+def test_a_taken_personal_port_falls_back_to_a_kernel_one(monkeypatch: pytest.MonkeyPatch, caplog):
+    """A squatted personal port degrades to a free one, and the URL names the real port."""
+    created: dict[str, Any] = {}
+    binds: list[tuple[str, int]] = []
+    monkeypatch.setattr(serve_mod, "create_server", lambda app, *, sockets: _FakeServer(created))
+    monkeypatch.setattr(serve_mod.getpass, "getuser", lambda: "ada")
+    personal = serve_mod._personal_port()
+    monkeypatch.setattr(
+        serve_mod,
+        "socket",
+        _fake_socket_module(binds, refuse=frozenset({personal}), effective=51423),
+    )
+    with caplog.at_level(logging.INFO, logger="chemrefine.gui.serve"):
+        serve_mod.launch(None, open_browser=False)
+    assert binds == [("127.0.0.1", personal), ("127.0.0.1", 0)]
+    assert "http://127.0.0.1:51423/?token=" in caplog.text
+
+
+def test_an_explicit_taken_port_is_not_second_guessed(monkeypatch: pytest.MonkeyPatch):
+    """A port the user named raises OSError to the CLI — no silent fallback."""
+    binds: list[tuple[str, int]] = []
+    monkeypatch.setattr(serve_mod, "socket", _fake_socket_module(binds, refuse=frozenset({8123})))
+    with pytest.raises(OSError):
+        serve_mod.launch(None, port=8123, open_browser=False)
+    assert binds == [("127.0.0.1", 8123)]
 
 
 def test_launch_can_keep_the_browser_closed(monkeypatch: pytest.MonkeyPatch):
     opened: list[str] = []
+    binds: list[tuple[str, int]] = []
+    created: dict[str, Any] = {}
 
-    class _Server:
-        effective_port = 1
-
-        def run(self) -> None:
-            return None
-
-    monkeypatch.setattr(serve_mod, "create_server", lambda *a, **k: _Server())
+    monkeypatch.setattr(serve_mod, "create_server", lambda app, *, sockets: _FakeServer(created))
+    monkeypatch.setattr(serve_mod, "socket", _fake_socket_module(binds, effective=1))
     fake_browser = type("W", (), {"open": staticmethod(opened.append)})
     monkeypatch.setattr(serve_mod, "webbrowser", fake_browser)
-    serve_mod.launch(None, open_browser=False)
+    serve_mod.launch(None, port=0, open_browser=False)
     assert opened == []
+    assert binds == [("127.0.0.1", 0)]  # an explicit 0 still means "the kernel picks"

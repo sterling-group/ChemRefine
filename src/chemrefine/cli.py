@@ -422,8 +422,13 @@ def gui(
         ),
     ] = None,
     port: Annotated[
-        int, typer.Option("--port", min=0, help="Port to bind on 127.0.0.1 (0 = pick free).")
-    ] = 0,
+        int | None,
+        typer.Option(
+            "--port",
+            min=0,
+            help="Port to bind on 127.0.0.1 (default: a stable per-user port; 0 = pick free).",
+        ),
+    ] = None,
     no_browser: Annotated[
         bool, typer.Option("--no-browser", help="Print the URL instead of opening a browser.")
     ] = False,
@@ -431,8 +436,9 @@ def gui(
     r"""Open the click-through YAML builder in a browser (local web app).
 
     Left pane: steps, engines and options as forms driven by the live schema; right
-    pane: the YAML being built. Binds 127.0.0.1 behind a per-session token — reach a
-    cluster with SSH port forwarding. Needs the ``chemrefine\[gui]`` extra.
+    pane: the YAML being built. Binds 127.0.0.1 behind a per-session token, on a stable
+    per-user port by default — so an SSH forwarding setup for a cluster, written once,
+    keeps working. Needs the ``chemrefine\[gui]`` extra.
     """
     try:
         from chemrefine.gui.serve import launch
@@ -443,7 +449,14 @@ def gui(
         launch(config_path, port=port, open_browser=not no_browser)
     except OSError as e:
         # The one OSError a local bind realistically raises: --port names a taken port.
-        logger.error("could not serve on 127.0.0.1:%d (%s) — try --port 0 for a free one", port, e)
+        # (The default path falls back to a kernel-assigned port on its own, so an
+        # OSError with no --port is something rarer — surface it without a number.)
+        if port is not None:
+            logger.error(
+                "could not serve on 127.0.0.1:%d (%s) — try --port 0 for a free one", port, e
+            )
+        else:
+            logger.error("could not serve the GUI on 127.0.0.1 (%s)", e)
         raise typer.Exit(code=1) from e
 
 
