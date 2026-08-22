@@ -224,6 +224,11 @@ Homepage = "https://github.com/sterling-group/ChemRefine"
 Documentation = "https://sterling-group.github.io/ChemRefine/"
 Repository = "https://github.com/sterling-group/ChemRefine.git"
 Issues = "https://github.com/sterling-group/ChemRefine/issues"
+# The blob form, not the docs site: GitHub's redirects survive a rename or an org
+# transfer, a github.io address has none — and a URL in a published wheel can never
+# be corrected. GitHub surfaces CONTRIBUTING.md by itself, so this is for PyPI's
+# sidebar, which is the one place a reader there looks for project links.
+Contributing = "https://github.com/sterling-group/ChemRefine/blob/main/CONTRIBUTING.md"
 
 [project.scripts]
 chemrefine = "chemrefine.cli:main"

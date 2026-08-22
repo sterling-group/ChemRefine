@@ -1,0 +1,74 @@
+name: PR title
+
+# PRs are squash-merged, so GitHub discards the branch's commit messages and the title
+# becomes the one commit on `main`. Checking the convention per commit would therefore
+# check exactly the text that never lands and leave unchecked the text that does — which
+# is how "Core cleanup", "Hot fix" and "Dev" reached the log.
+#
+# Its own file rather than a job in ci.yml: publish.yml calls that workflow at a tag,
+# where there is no pull request to have a title.
+on:
+  pull_request:
+    # `edited` and `synchronize` are both load-bearing. Without `edited` a corrected title
+    # never re-runs and the PR stays red on a problem already fixed. Without `synchronize`
+    # a push leaves the new head commit with no result for this check, and a *required*
+    # check with no result blocks the merge as "waiting for status" — the title having
+    # been fine all along.
+    types: [opened, edited, reopened, synchronize]
+
+# Nothing is checked out and no API call is made: the title arrives in the event payload.
+permissions: {}
+
+jobs:
+  lint:
+    name: The title is a conventional-commits subject
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the type, the scope and the length
+        env:
+          # Via the environment, never interpolated into the script body. A PR title is
+          # text an outside contributor chooses, and `${{ }}` inside `run:` is substituted
+          # before bash ever sees it — a title containing a shell metacharacter would
+          # execute on the runner. No third-party action for the same reason: this needs
+          # nothing to be pinned because it depends on nothing.
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import sys
+
+          # Kept in step with CONTRIBUTING.md's Commits bullet by
+          # tests/test_docs_commit_types.py — a type added here and nowhere else fails
+          # the suite, and the reverse fails it too.
+          TYPES = ("build", "chore", "ci", "docs", "feat", "fix", "harden", "perf",
+                   "refactor", "revert", "style", "test")
+          LIMIT = 72
+
+          # `feat(gui)!: …` — an optional parenthesised scope, an optional `!` for a
+          # breaking change, then `: ` and a subject that is not empty.
+          PATTERN = re.compile(r"^(?:" + "|".join(TYPES) + r")(?:\([^()]+\))?!?: \S.*$")
+
+          title = os.environ["TITLE"]
+          problems = []
+          if not PATTERN.match(title):
+              problems.append(
+                  "does not start with a type: one of " + ", ".join(TYPES) + ",\n"
+                  "    optionally a scope in parentheses, then ': ' and a subject —\n"
+                  "    e.g. 'feat(gui): render the schema', not 'gui: render the schema'"
+              )
+          if len(title) > LIMIT:
+              problems.append(f"is {len(title)} characters; the limit is {LIMIT}")
+
+          if problems:
+              print(f"::error::PR title {problems[0].splitlines()[0]}")
+              print("\nThe title becomes the commit subject on `main` when this PR is")
+              print("squash-merged, so it follows the same rule the commits do.\n")
+              print(f"  {title!r}\n")
+              for problem in problems:
+                  print(f"  - {problem}")
+              print("\nEdit the PR title and this check re-runs by itself.")
+              sys.exit(1)
+
+          print(f"{title!r} is fine.")
+          PY

@@ -159,17 +159,26 @@ survivors, a new operation) is not a re-parse, and needs the live tier:
   run the drift-detector test
   (`tests/test_e2e_relocate.py::test_rebuilt_records_match_the_archived_ones_field_for_field`)
   with `--update-recordings`.
-- **Commits** are short, present-tense, and prefixed
-  (`feat:`/`fix:`/`refactor:`/`docs:`/`ci:`/`test:`/`harden:`), matching `git log`.
-  No `Co-Authored-By:` trailers and no generated-by/AI attribution footers —
-  `git log` is clean of them today, keep it that way.
+- **Commits** are short, present-tense, and prefixed with a type from the fixed
+  set (`build`, `chore`, `ci`, `docs`, `feat`, `fix`, `harden`, `perf`,
+  `refactor`, `revert`, `style`, `test`) — the conventional-commits vocabulary
+  plus `harden`, this repo's name for a change that closes a hole without
+  altering behaviour. An area goes in parentheses, never in place of the type:
+  `feat(gui):`, not `gui:`. Keep the subject under 72 characters.
 
 ## Landing a change
 
-`main` is protected: branch off it, open a PR, and let CI go green — the
-`required-checks-pass` job aggregates the required checks. PRs are
-squash-merged, so one PR is one commit on `main`, and each merge redeploys
-the docs.
+`main` is protected. Branch off it and name the branch for what it does —
+`type/short-description`, with the same type vocabulary the commits use:
+`fix/nms-imaginary-mode-count`, `docs/cluster-forwarding`. Open a PR and let
+CI go green — the `required-checks-pass` job aggregates the required checks.
+
+PRs are squash-merged, which has a consequence worth stating outright: **the
+PR title becomes the one commit on `main`, and the messages on your branch
+are discarded.** So the title carries the same `type(scope): subject` format
+the commits do, and `.github/workflows/pr-title.yml` checks it there — on the
+text that lands, rather than on the text that never does. Each merge
+redeploys the docs and deletes the branch.
 
 ## GitHub Actions
 

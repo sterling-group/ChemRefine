@@ -12,9 +12,8 @@ ci:
   autoupdate_schedule: monthly
   autoupdate_commit_msg: "ci: autoupdate pre-commit hooks"
   # No fix commits pushed onto PR branches: hook failures are the author's to
-  # fix, and `git log` stays free of bot-authored commits — the same rule
-  # CONTRIBUTING states for trailers. The app still reports the hooks as a PR
-  # status and still opens the autoupdate PRs.
+  # fix, and `git log` stays free of bot-authored commits. The app still
+  # reports the hooks as a PR status and still opens the autoupdate PRs.
   autofix_prs: false
 
 repos:
