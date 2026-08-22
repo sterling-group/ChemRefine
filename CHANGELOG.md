@@ -460,6 +460,12 @@ for the full map.
   request all funnel through — refuses any other scheme before the resolved config
   pairs the URL with `CHEMREFINE_LLM_API_KEY`; the `--check` preflight was the only
   place that asked.
+- **The published playground no longer plays dead.** The page decided it was the
+  static docs copy only when its probe of `/api/bootstrap` *threw*, but the docs host
+  answers that probe — with a 404 — so the playground rendered the stale-token banner
+  and hid the builder. The boot dispatch now reads the status: 401 is a stale token
+  (or, said separately now, a URL that lost its `?token=…`), no answer at all is a
+  dead port with the fix named, and any other answer is the static copy.
 - **The playground's YAML reads like the served GUI's.** The static docs playground
   dumped the config in click order — `steps:` first, settings trailing — because the
   canonical reordering only ever lived server-side; its schema-driven twin now runs

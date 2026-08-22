@@ -60,28 +60,39 @@ function builder() {
 
     // ---------------- boot ----------------
     async init() {
-      // One page, two worlds: served by the local Flask app there is an /api behind
-      // us; copied onto the static docs site there is only schema.json, baked at docs
-      // build time. Probe once and let every later call route accordingly.
-      // A *server* that answers is the local GUI even when it says no: only the
-      // absence of one (fetch throws) means the static docs copy. Treating a 401 as
-      // "no server" sent the local page into playground mode, where it then died
-      // fetching a schema.json that only the docs build has — a blank page with a
-      // banner telling the user to run the very thing they were running.
+      // One page, three worlds, told apart by how the probe ends. Served by the local
+      // Flask app, /api/bootstrap answers 200 (or 401 when the token is stale or the
+      // URL lost its query — same server, wrong key). Copied onto the static docs
+      // site, the probe still *answers* — the docs host says 404, it never refuses
+      // the connection — and only schema.json exists, baked at docs build time. And a
+      // bookmark on a dead port gets no answer at all: the fetch throws. Each world
+      // used to be inferred from the wrong signal (a 401 read as "no server" sent the
+      // local page into playground mode; a 404 read as "server said no" hid the
+      // published playground behind a stale-token banner), so the dispatch reads the
+      // actual status.
       let data = null;
-      let served = true;
+      let status = null; // stays null when nothing answered on this origin at all
       try {
         const probe = await fetch("/api/bootstrap", {
           headers: { "X-ChemRefine-Token": this.token },
         });
+        status = probe.status;
         if (probe.ok) data = await probe.json();
       } catch {
-        served = false; // nothing listening: this is the static docs copy
+        // Connection refused — a dead port, not the docs copy; handled below.
       }
-      if (!data && served) {
+      if (status === 401) {
+        this.fatal = this.token
+          ? "This tab's session token is stale — the server was restarted. Open the " +
+            "URL printed by `chemrefine gui` again."
+          : "This URL is missing its ?token=… — open the exact URL `chemrefine gui` " + "printed.";
+        this.ready = true;
+        return;
+      }
+      if (status === null) {
         this.fatal =
-          "This tab's session token is stale — the server was restarted. Open the " +
-          "URL printed by `chemrefine gui` again.";
+          "No server is answering on this port — the bookmark outlived its session. " +
+          "Run `chemrefine gui` and open the URL it prints.";
         this.ready = true;
         return;
       }
@@ -96,6 +107,7 @@ function builder() {
           if (parsed?.config) this.cfg = this.withSteps(parsed.config);
         }
       } else {
+        // Any other *answered* status is the static docs copy (its host says 404).
         this.staticMode = true;
         this.flash = "";
         try {
