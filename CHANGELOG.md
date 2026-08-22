@@ -11,7 +11,7 @@ version is tagged.
 A ground-up rewrite of the v1.3.1 pipeline. Legacy YAML configs and
 flag-style CLI invocations keep working through a translation layer that
 warns once per deprecated spelling — see
-[migrating from v1 to v2](https://sterling-group.github.io/ChemRefine/migrating-v1-to-v2/)
+[migrating from v1 to v2](https://sterling-group.github.io/ChemRefine/get-started/upgrading-from-v1/)
 for the full map.
 
 ### Deprecated
@@ -20,7 +20,7 @@ for the full map.
   which already raises), the `mlff*`/`dft` engine spellings, the `sample_type`
   block, and the flag-style CLI (`chemrefine CONFIG --rebuild_cache N`) — is
   scheduled for removal in **3.0.0**. It warns once per rewritten feature today.
-  See [migrating from v1 to v2](https://sterling-group.github.io/ChemRefine/migrating-v1-to-v2/).
+  See [migrating from v1 to v2](https://sterling-group.github.io/ChemRefine/get-started/upgrading-from-v1/).
 
 ### Added
 

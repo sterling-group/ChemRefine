@@ -146,5 +146,4 @@ requirements and point the step at it with `options.backend_python`.
 
 Report vulnerabilities privately via
 [GitHub Security Advisories](https://github.com/sterling-group/ChemRefine/security/advisories/new).
-See [`SECURITY.md`](https://github.com/sterling-group/ChemRefine/blob/main/SECURITY.md)
-for the supported-version policy.
+See the [security policy](../security-policy.md) for supported versions.
