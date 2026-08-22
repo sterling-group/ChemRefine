@@ -1214,6 +1214,95 @@ def test_a_step_that_has_not_run_is_not_announced_on_every_switch():
     assert "no cached results" in result["loud"]
 
 
+_RUN_HARNESS = """
+  const b = builder();
+  b.chatAvailability = () => {};
+  b.savedPath = "/p/input.yaml";
+  b.cfg = { steps: [{ step: 1 }, { step: 2 }] };
+  b.refreshStatus = async () => {};
+  const posted = [];
+  const asked = [];
+  b.api = async (m, u, body) => { posted.push(body); return { pid: 1, log: "/l" }; };
+  global.window = { ...global.window, confirm: (text) => { asked.push(text); return true; } };
+"""
+
+
+def test_every_recovery_action_is_reachable_and_described_as_itself():
+    """Three of six were offered, so half the recovery vocabulary needed a terminal.
+
+    The blurb used to be a ternary with no default arm, so anything past its two named
+    actions was confirmed as "re-attempt failed jobs" — which rebuild-cache, that submits
+    nothing at all, is not. A confirmation that misdescribes what it confirms is worse than
+    none, so each action's own sentence is asserted here.
+    """
+    out = _run_component_in_node(
+        _RUN_HARNESS
+        + """
+      for (const a of ["run", "resume", "rerun", "rerun-errors",
+                       "rebuild-cache", "rebuild-nms"]) {
+        await b.launch(a);
+      }
+      console.log(JSON.stringify({ posted, asked }));
+    """
+    )
+    result = json.loads(out)
+    assert [p["action"] for p in result["posted"]] == [
+        "run",
+        "resume",
+        "rerun",
+        "rerun-errors",
+        "rebuild-cache",
+        "rebuild-nms",
+    ]
+    # Every dialog describes its own action, and no two share a sentence.
+    blurbs = [text.split("This will ")[1] for text in result["asked"]]
+    assert len(set(blurbs)) == 6
+    assert "submits nothing" in blurbs[4]  # rebuild-cache, which attempts no jobs
+    assert "normal-mode resolution" in blurbs[5]
+    assert not any("undefined" in text for text in result["asked"])
+
+
+def test_the_two_whole_pipeline_actions_never_carry_a_step():
+    """``start_run`` refuses a target for run/resume, so sending one is a 400 after a click.
+
+    The page says so before the click instead: the buttons are disabled while a step is
+    chosen, and the payload carries null even if one is reached another way.
+    """
+    out = _run_component_in_node(
+        _RUN_HARNESS
+        + """
+      b.runTarget = "2";
+      await b.launch("rerun");        // takes one
+      await b.launch("run");          // does not, even with the selection standing
+      console.log(JSON.stringify({
+        posted, asked,
+        takes: ["run", "resume", "rerun", "rerun-errors", "rebuild-cache", "rebuild-nms"]
+                 .map((a) => b.takesTarget(a)),
+      }));
+    """
+    )
+    result = json.loads(out)
+    assert result["posted"][0]["target"] == "2"
+    assert result["posted"][1]["target"] is None
+    assert result["takes"] == [False, False, True, True, True, True]
+    # And the dialog names the step, so a targeted action cannot be confirmed blind.
+    assert "step 2 of /p/input.yaml" in result["asked"][0]
+    assert "on /p/input.yaml" in result["asked"][1]
+
+
+def test_declining_the_dialog_launches_nothing():
+    """The gate is the whole point: real compute on the user's machine."""
+    out = _run_component_in_node(
+        _RUN_HARNESS
+        + """
+      global.window.confirm = () => false;
+      await b.launch("run");
+      console.log(JSON.stringify({ posted: posted.length, flash: b.flash }));
+    """
+    )
+    assert json.loads(out) == {"posted": 0, "flash": ""}
+
+
 def test_field_specs_carry_the_schema_bounds_and_default():
     """The spec a number input renders from: bounds for the spinner, default to step from.
 

@@ -8,6 +8,21 @@
  */
 "use strict";
 
+// What each run action does, in the words the confirmation dialog uses. A lookup, not a
+// chain of ternaries: the chain had no default arm, so its last branch described every
+// action it did not name — a rebuild-cache, which submits nothing, would have been
+// confirmed as "re-attempt failed jobs". A dialog that misdescribes what it is confirming
+// is worse than no dialog. The keys are `agent_tools._ACTIONS`, the whole recovery
+// vocabulary; a missing one shows up immediately as "undefined" in the prompt.
+const RUN_BLURBS = {
+  run: "start the full pipeline from step 1, ignoring the cache",
+  resume: "carry on where the tree left off, honouring the cache",
+  rerun: "recompute, discarding what is cached for it",
+  "rerun-errors": "re-attempt the ledgered failures, then carry on",
+  "rebuild-cache": "re-parse the outputs already on disk — submits nothing",
+  "rebuild-nms": "redo the normal-mode resolution from the outputs on disk",
+};
+
 // index.html calls this from x-data. Biome reads one file at a time and cannot see
 // the page; tests/test_gui_assets.py checks that wiring, in both directions.
 // biome-ignore lint/correctness/noUnusedVariables: the page is the caller
@@ -44,6 +59,10 @@ function builder() {
     runFailures: null,
     runResults: null,
     resultsStep: "",
+    // Which step the four targeted actions act on; "" means all of them. Held on the
+    // component rather than read off the <select> at click time so the Run/Resume buttons
+    // can say, before they are pressed, that they do not take one.
+    runTarget: "",
     _statusTimer: null,
     _chatGen: 0,
     _checkGen: 0,
@@ -579,26 +598,29 @@ function builder() {
         this._statusTimer = setTimeout(() => this.refreshStatus(), 5000);
       }
     },
+    // Whether this action drives the whole pipeline, and so takes no step. start_run
+    // refuses a target for these two, so offering one would be a 400 after the click
+    // rather than a control that says what it accepts.
+    takesTarget(action) {
+      return action !== "run" && action !== "resume";
+    },
     async launch(action) {
-      const blurb =
-        action === "run"
-          ? "start the full pipeline from step 1 (invalidates the cache)"
-          : action === "resume"
-            ? "resume, honouring the cache"
-            : "re-attempt failed jobs";
+      // Only the four that accept one, and only when a step is actually chosen.
+      const target = this.takesTarget(action) && this.runTarget ? this.runTarget : null;
+      const where = target ? ` step ${target} of ` : " on ";
       if (
         !window.confirm(
-          action +
-            " on " +
-            this.savedPath +
-            "?\nThis will " +
-            blurb +
-            " — real compute on this machine.",
+          `${action}${where}${this.savedPath}?\nThis will ${RUN_BLURBS[action]} — ` +
+            "real compute on this machine.",
         )
       ) {
         return;
       }
-      const started = await this.api("POST", "/api/run", { config_path: this.savedPath, action });
+      const started = await this.api("POST", "/api/run", {
+        config_path: this.savedPath,
+        action,
+        target,
+      });
       if (started) {
         this.flash = `${action} started (pid ${started.pid}); log: ${started.log}`;
         this.refreshStatus();
