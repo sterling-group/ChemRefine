@@ -451,7 +451,9 @@
           <!-- "input" is the default and the first entry: it is the only view that works
                on a tree nothing has run in yet, and "did I point this at the structure I
                meant?" is the cheapest question to get wrong. -->
-          <select x-model="viewer.step">
+          <!-- @change, not x-model: choosing a step must also drop the structure id and
+               mode number that belonged to the previous one. -->
+          <select @change="chooseViewerStep($event.target.value)">
             <option value="input" :selected="viewer.step === 'input'">input (seeds)</option>
             <template x-for="step in cfg.steps" :key="'view' + step.step">
               <option :value="step.step" :selected="String(step.step) === String(viewer.step)"

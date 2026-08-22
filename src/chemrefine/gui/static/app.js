@@ -81,14 +81,7 @@ function builder() {
       onPick: null,
     },
     tmpl: { open: false, step: null, path: "", text: "" },
-    viewer: {
-      step: "input",
-      structureId: "",
-      modeIndex: "",
-      busy: false,
-      note: "",
-      animating: false,
-    },
+    viewer: { step: "input", structureId: "", modeIndex: "", busy: false, note: "" },
     _gl: null, // the 3Dmol viewer instance, once the bundle is in
     _glLib: null, // the in-flight or settled load of the vendored bundle
     _timer: null,
@@ -624,6 +617,17 @@ function builder() {
       if (side === "right" && id === "structure") this.mountViewer();
     },
 
+    // A structure id and a mode number belong to the step that was showing when they were
+    // typed. Carrying them to the next step is how one bad request became permanent: the
+    // mode box is hidden on the seeds view, so its value was invisible as well as wrong.
+    chooseViewerStep(step) {
+      if (String(step) === String(this.viewer.step)) return;
+      this.viewer.step = step;
+      this.viewer.structureId = "";
+      this.viewer.modeIndex = "";
+      this.viewer.note = "";
+    },
+
     // ---------------- structure viewer ----------------
     // Loaded on first use, never at boot: the bundle is six times the rest of the
     // frontend put together, and someone who never opens this tab never pays for it. The
@@ -681,24 +685,34 @@ function builder() {
         if (this.viewer.modeIndex !== "" && this.viewer.step !== "input") {
           query.set("mode_index", this.viewer.modeIndex);
         }
+        // Stop the old animation before anything can return early, or a failed Show
+        // leaves the previous structure oscillating as though it were the answer.
+        if (this._gl) this._gl.stopAnimate();
         const data = await this.api("GET", `/api/structure?${query}`);
-        if (!data) return; // flash carries the reason
+        if (!data) {
+          // Into the pane's own line as well as `flash`, which lives below the Run panel
+          // and the report — a screen away from where the user is looking. Blanking this
+          // and saying nothing is what made a failure look like nothing happening.
+          this.viewer.note = "could not show that — see the message below";
+          // A mode that cannot be drawn must not follow the user to the next structure.
+          // It is the stickiness of this one field that turned one bad request into
+          // "now I cannot show anything at all".
+          this.viewer.modeIndex = "";
+          return;
+        }
         await this.mountViewer();
         if (!this._gl) return;
-        // Before the model goes: animate() pushes a timer per call, so a second Show
-        // would leave two driving the same model at different phases, and clearing the
-        // mode box would not stop either.
-        this._gl.stopAnimate();
         this._gl.removeAllModels();
         const model = this._gl.addModel(data.text, "xyz");
         this._gl.setStyle({}, { stick: { radius: 0.12 }, sphere: { scale: 0.25 } });
         // Extended XYZ carries the cell as Lattice="…" when the structure has one, and
         // 3Dmol turns that into crystal data — so this draws a box for a periodic
-        // periodic structure and nothing for a molecular one, with no branch of our own.
+        // structure and nothing for a molecular one, with no branch of our own.
         this._gl.addUnitCell(model);
         this._gl.zoomTo();
-        this.viewer.animating = this.viewer.modeIndex !== "" && this.viewer.step !== "input";
-        if (this.viewer.animating) {
+        // From the answer, not from the form: the server decides whether a mode came back,
+        // and reading the boxes again here is how the two could disagree.
+        if (data.mode_index !== null && data.mode_index !== undefined) {
           // The same extended-XYZ file carries three displacement columns per atom, which
           // is what 3Dmol reads as dx/dy/dz; vibrate() only builds the frames, animate()
           // plays them.

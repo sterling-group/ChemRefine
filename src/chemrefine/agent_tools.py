@@ -697,6 +697,32 @@ def _mode_displacements(frame: ParsedResult, mode_index: int) -> NDArray[np.floa
     return modes[:, :, mode_index]
 
 
+def _locate_output(step_dir: Path, structure_id: str, recorded: Path) -> Path | None:
+    """Where a structure's output actually is now, or ``None`` if it is really gone.
+
+    The manifest records the path the file was *written* to, resolved absolute
+    (:func:`chemrefine.cache.save_manifest`). Everything else about a tree is addressed
+    relatively — ``Config.step_dir`` derives from ``output_dir``, which resolves against
+    the config file's own directory — so a tree that is copied or moved keeps working
+    everywhere except here, where the recorded path still names the machine it ran on.
+    That produced "rerun the step to regenerate it" about a file sitting in the copy.
+
+    Three probes, cheapest first: the recorded path; the same basename directly under this
+    tree's ``step_dir/structure_id``; and finally a search below that, which is what finds
+    an output written into an ``attemptN/`` sub-directory by a retry or by NMS.
+    """
+    if recorded.is_file():
+        return recorded
+    home = step_dir / structure_id
+    direct = home / recorded.name
+    if direct.is_file():
+        return direct
+    # Newest wins: a retried structure has the same basename in several attempt dirs, and
+    # the latest attempt is the one the manifest would have been rewritten to name.
+    candidates = sorted(home.rglob(recorded.name), key=lambda p: p.stat().st_mtime)
+    return candidates[-1] if candidates else None
+
+
 def _mode_frame(config: Config, step_cfg: StepConfig, structure_id: str) -> ParsedResult:
     """The parsed frame carrying a normal-mode tensor, or the reason there is none.
 
@@ -707,11 +733,17 @@ def _mode_frame(config: Config, step_cfg: StepConfig, structure_id: str) -> Pars
     manifest = cache.load_manifest(step_dir)
     if manifest is None:
         raise ConfigError(f"step {step_cfg.step} has no manifest — it has not run here")
-    output = next((out for _inp, out, sid in manifest.files if sid == structure_id), None)
-    if output is None:
+    recorded = next((out for _inp, out, sid in manifest.files if sid == structure_id), None)
+    if recorded is None:
         raise ConfigError(f"no structure {structure_id!r} in step {step_cfg.step}'s manifest")
-    if not output.is_file():
-        raise ConfigError(f"output {output} no longer exists; rerun the step to regenerate it")
+    output = _locate_output(step_dir, structure_id, recorded)
+    if output is None:
+        raise ConfigError(
+            f"cannot find {recorded.name} for structure {structure_id!r} under "
+            f"{step_dir / structure_id} — the manifest records {recorded}, which is where "
+            "it was written. If this tree was copied or moved, the outputs did not come "
+            "with it; otherwise rerun the step to regenerate them."
+        )
     frame = next(
         (f for f in _parse_output_frames(step_cfg.engine, output) if f.normal_modes is not None),
         None,

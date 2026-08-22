@@ -811,16 +811,74 @@ def test_the_viewer_asks_for_seeds_by_omitting_the_step():
       const asked = [];
       b.api = async (m, u) => { asked.push(u); return null; };   // stop after the request
       b.mountViewer = async () => {};
+      // A mode number is set FIRST, so the seeds request has one to suppress. Left at its
+      // default "" the `modeIndex !== ""` half excluded it on its own and the clause this
+      // case is named for — `step !== "input"` — was never exercised at all.
+      b.viewer.modeIndex = "6";
       await b.showStructure();                      // viewer.step defaults to "input"
-      b.viewer.step = "2"; b.viewer.modeIndex = "6";
+      b.chooseViewerStep("2"); b.viewer.modeIndex = "6";
       await b.showStructure();
       console.log(JSON.stringify(asked));
     """)
     seeds, step = json.loads(out)
     assert "step=" not in seeds  # no step at all, not step=input
-    assert "mode_index" not in seeds  # and seeds have no mode to ask for
+    assert "mode_index" not in seeds  # and the seeds have no mode, whatever the box holds
     assert "step=2" in step
     assert "mode_index=6" in step
+
+
+def test_a_mode_that_could_not_be_drawn_does_not_follow_you_to_the_next_one():
+    """The sequence that turned one bad request into "now I cannot show anything".
+
+    ``modeIndex`` was cleared nowhere, so a mode that failed once rode along on every later
+    Show, for every step and every structure. And because the box is hidden on the seeds
+    view, the value was invisible as well as wrong — there was no way to see why, and no
+    obvious way back.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.savedPath = "/p/input.yaml";
+      const asked = [];
+      let refuse = true;
+      b.api = async (m, u) => {
+        asked.push(u);
+        return refuse ? null : { step: 2, structure_id: "0", mode_index: null, text: "" };
+      };
+      b.mountViewer = async () => {};
+      b._gl = { stopAnimate(){}, removeAllModels(){}, addModel: () => ({ vibrate(){} }),
+                setStyle(){}, addUnitCell(){}, zoomTo(){}, animate(){}, render(){} };
+
+      b.chooseViewerStep("1");
+      b.viewer.modeIndex = "6";
+      await b.showStructure();                     // the .out is gone: refused
+      const afterFailure = { mode: b.viewer.modeIndex, note: b.viewer.note };
+
+      refuse = false;                              // the very next Show must work
+      await b.showStructure();
+      console.log(JSON.stringify({ afterFailure, asked, note: b.viewer.note }));
+    """)
+    result = json.loads(out)
+    assert result["afterFailure"]["mode"] == ""  # cleared, so it cannot poison the next one
+    assert result["afterFailure"]["note"]  # and the pane says something, not nothing
+    assert "mode_index" in result["asked"][0]
+    assert "mode_index" not in result["asked"][1]  # the retry is a plain structure request
+    assert "step 2 · 0" in result["note"]
+
+
+def test_choosing_a_step_drops_what_belonged_to_the_previous_one():
+    """A structure id and a mode number are meaningless against a different step."""
+    out = _run_component_in_node("""
+      const b = builder();
+      b.viewer.step = "1"; b.viewer.structureId = "7"; b.viewer.modeIndex = "6";
+      b.chooseViewerStep("1");                     // the same step: nothing to drop
+      const same = { ...b.viewer };
+      b.chooseViewerStep("2");
+      console.log(JSON.stringify({ same, moved: { ...b.viewer } }));
+    """)
+    result = json.loads(out)
+    assert (result["same"]["structureId"], result["same"]["modeIndex"]) == ("7", "6")
+    assert result["moved"]["step"] == "2"
+    assert (result["moved"]["structureId"], result["moved"]["modeIndex"]) == ("", "")
 
 
 def test_the_seed_view_survives_renumbering():

@@ -12,6 +12,7 @@ asserted here are the numbers an agent would reason over.
 from __future__ import annotations
 
 import shutil
+import time
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -495,8 +496,60 @@ def test_analyze_mode_refuses_the_missing_pieces(tmp_path: Path):
 
     config = load_config(tree)
     (config.step_dir(config.steps[0]) / "0" / "step1_0.out").unlink()
-    with pytest.raises(ConfigError, match="no longer exists"):
+    with pytest.raises(ConfigError, match=r"cannot find step1_0\.out"):
         agent_tools.analyze_mode(str(tree), 1, "0", mode_index=0)
+
+
+def test_a_relocated_tree_still_finds_its_outputs(tmp_path: Path):
+    """A tree copied off the cluster keeps working, and this is the only place it did not.
+
+    Everything about a tree is addressed relatively — ``step_dir`` derives from
+    ``output_dir``, which resolves against the config file's own directory — except the
+    manifest, which records the absolute path each output was *written* to. So a copied
+    tree read its cache from the new root and looked for its outputs on the machine that
+    is no longer there, and said "rerun the step to regenerate it" about a file sitting in
+    the copy.
+    """
+    cluster = tmp_path / "cluster"
+    cluster.mkdir()
+    original = _freq_tree(cluster)
+    moved = tmp_path / "laptop"
+    shutil.copytree(cluster, moved)
+    shutil.rmtree(cluster)  # the machine it ran on is gone
+    relocated = moved / original.name
+
+    stale = cache.load_manifest(load_config(relocated).step_dir(load_config(relocated).steps[0]))
+    assert not stale.files[0][1].is_file()  # the manifest names the old machine
+
+    assert agent_tools.analyze_mode(str(relocated), 1, "0", mode_index=6)["frequency_cm1"] == (
+        pytest.approx(-820.38)
+    )
+    drawn = agent_tools.get_structure(str(relocated), 1, structure_id="0", mode_index=6)
+    assert len(drawn["text"].splitlines()[2].split()) == 7  # displacement columns and all
+
+
+def test_an_output_a_retry_moved_into_an_attempt_dir_is_found(tmp_path: Path):
+    """Retries and NMS write into ``attemptN/``, so the search has to go below the id dir.
+
+    The newest wins: a retried structure has the same basename in several attempt
+    directories, and the latest is the one the manifest would have been rewritten to name.
+    """
+    tree = _freq_tree(tmp_path)
+    config = load_config(tree)
+    home = config.step_dir(config.steps[0]) / "0"
+    recorded = home / "step1_0.out"
+    for attempt in ("attempt1", "attempt2"):
+        (home / attempt).mkdir()
+        shutil.copy(recorded, home / attempt / "step1_0.out")
+        time.sleep(0.01)  # attempt2 is the newer one
+    recorded.unlink()  # the retry left nothing at the recorded path
+
+    found = agent_tools._locate_output(config.step_dir(config.steps[0]), "0", recorded)
+    assert found is not None
+    assert found.parent.name == "attempt2"
+    assert agent_tools.analyze_mode(str(tree), 1, "0", mode_index=6)["frequency_cm1"] == (
+        pytest.approx(-820.38)
+    )
 
 
 def test_analyze_mode_refuses_a_non_frequency_output(tmp_path: Path):
