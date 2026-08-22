@@ -24,6 +24,7 @@ import pytest
 import yaml
 
 import chemrefine.gui.serve as serve_mod
+from chemrefine.agent import providers
 from chemrefine.gui.app import create_app
 
 TOKEN = "test-token"
@@ -429,7 +430,7 @@ def test_agent_availability_reports_the_three_states(client: Any, monkeypatch: p
 
     monkeypatch.setenv("CHEMREFINE_LLM_MODEL", "some-model")
     ready = _get(client, "/api/agent/availability").get_json()
-    assert ready == {"installed": True, "configured": True, "detail": "some-model"}
+    assert (ready["installed"], ready["configured"], ready["detail"]) == (True, True, "some-model")
 
     monkeypatch.delenv("CHEMREFINE_LLM_MODEL")
     unconfigured = _get(client, "/api/agent/availability").get_json()
@@ -440,6 +441,139 @@ def test_agent_availability_reports_the_three_states(client: Any, monkeypatch: p
     missing = _get(client, "/api/agent/availability").get_json()
     assert missing["installed"] is False
     assert "chemrefine[agent]" in missing["detail"]
+    # The field shapes ride along in all three states: the panel renders its inputs from
+    # them before any check has run, and they are true whether or not the extra is there.
+    for state in (ready, unconfigured, missing):
+        assert set(state["presets"]) == set(providers._PRESETS)
+
+
+def test_the_served_preset_shapes_drive_the_panels_fields(client: Any):
+    """One preset table, on the server. A JS copy would outrank the environment.
+
+    ``resolve`` lets an explicit base URL beat ``CHEMREFINE_LLM_BASE_URL``, so a frontend
+    that prefilled a hardcoded ``localhost:11434`` would silently redirect a user whose
+    environment points at their own box. The page gets these as *placeholders* and never
+    sends them back.
+
+    ``default_url`` is the effective default, not the raw preset row — which is what lets
+    the panel decide field visibility with no special case: ``custom`` is the only entry
+    with nowhere to go, so it is the only one that must be told where.
+    """
+    shapes = _get(client, "/api/agent/availability").get_json()["presets"]
+    assert shapes["custom"]["default_url"] is None  # the only one that needs a URL typed
+    assert shapes["openai"]["default_url"] == "https://api.openai.com/v1"
+    assert shapes["ollama"]["default_url"] == providers._PRESETS["ollama"][0]
+    # A preset that ships its own dummy key is one the user must not be asked for a key.
+    assert shapes["ollama"]["needs_key"] is False
+    assert shapes["vllm"]["needs_key"] is False
+    assert shapes["custom"]["needs_key"] is True
+    assert shapes["openai"]["needs_key"] is True
+
+
+def test_check_answers_a_verdict_never_an_error(client: Any, monkeypatch: pytest.MonkeyPatch):
+    """An unreachable endpoint is this endpoint's *answer*, not its failure.
+
+    Like ``/api/agent/availability`` beside it, the preflight always answers 200 — a
+    ``ChemRefineError`` from resolution is caught here rather than becoming ``surface``'s
+    400, because "you have not named a model yet" is a finding to render in the panel,
+    not a failed request.
+    """
+    monkeypatch.delenv("CHEMREFINE_LLM_MODEL", raising=False)
+
+    unconfigured = _post(client, "/api/agent/check", {})
+    assert unconfigured.status_code == 200
+    assert unconfigured.get_json()["ok"] is False
+    assert "no model configured" in unconfigured.get_json()["findings"][0]
+
+    # Nothing is listening on the ollama port in a test environment, which is exactly the
+    # case the panel needs rendered: a verdict plus the one-command fix.
+    unreachable = _post(client, "/api/agent/check", {"provider": "ollama", "model": "qwen3"})
+    assert unreachable.status_code == 200
+    body = unreachable.get_json()
+    assert body["ok"] is False
+    assert "unreachable" in body["findings"][0]
+    assert any("ollama serve" in f for f in body["findings"])
+
+    # A provider-native string has nothing to aim at and says so, still usable.
+    native = _post(client, "/api/agent/check", {"provider": "openai", "model": "openai:gpt-5-mini"})
+    assert native.get_json()["ok"] is True
+    assert "not probed" in native.get_json()["findings"][0]
+
+
+@pytest.mark.parametrize(
+    "key", ["sk-good\r\nX-Injected: 1", "sk-good\nX: 1", "sk\x00", "", "k" * 1025, 17]
+)
+def test_a_key_that_cannot_be_a_header_is_refused_before_it_becomes_one(client: Any, key: Any):
+    """The key leaves as ``Authorization: Bearer …``; a newline in it is header injection.
+
+    Refused up front rather than left to fail inside the probe: ``urllib`` raises
+    ``ValueError`` on a CR/LF header, and ``providers.check`` catches ``ValueError`` to
+    mean "the reply was not a model listing" — so a fault in the box the user just typed
+    into would have been reported as a fault of the endpoint being probed.
+    """
+    response = _post(
+        client,
+        "/api/agent/check",
+        {
+            "provider": "custom",
+            "model": "m",
+            "base_url": "https://example.invalid/v1",
+            "api_key": key,
+        },
+    )
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "ok": False,
+        "findings": ["the API key contains invalid characters"],
+    }
+
+
+def test_the_panels_key_reaches_resolution_and_never_comes_back(
+    client: Any, chat_env: pytest.MonkeyPatch
+):
+    """The key is an input to the request and appears in no response body.
+
+    Asserted at ``resolve``, not at the model: ``_inject_model`` replaces ``build_model``,
+    so the model never sees it — what matters is that the panel's key outranks the
+    server's environment, and that nothing echoes it back to the page.
+    """
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.models.function import FunctionModel
+
+    from chemrefine.agent.providers import ProviderConfig
+
+    chat_env.setenv("CHEMREFINE_LLM_API_KEY", "from-the-environment")
+    seen: list[str | None] = []
+    real = ProviderConfig.resolve
+
+    def spy(provider: str = "custom", **kwargs: Any) -> ProviderConfig:
+        resolved = real(provider, **kwargs)
+        seen.append(resolved.api_key)
+        return resolved
+
+    chat_env.setattr(ProviderConfig, "resolve", spy)
+    _inject_model(chat_env, FunctionModel(lambda m, i: ModelResponse(parts=[TextPart("ok")])))
+
+    typed = _post(client, "/api/agent/chat", {"message": "hi", "api_key": "typed-in-the-panel"})
+    assert seen == ["typed-in-the-panel"]  # the panel outranks the environment
+    assert "typed-in-the-panel" not in typed.get_data(as_text=True)
+
+    _post(client, "/api/agent/chat", {"message": "hi", "reset": True})
+    _post(client, "/api/agent/chat", {"message": "hi"})
+    assert seen[-1] == "from-the-environment"  # a blank box falls through, as documented
+
+
+def test_an_unplaceable_model_is_a_502_not_a_traceback(client: Any, chat_env: pytest.MonkeyPatch):
+    """Building the agent is an outside-world failure like running it.
+
+    ``Agent("not-a-real-model")`` raises ``UserError`` at *construction*, and that is
+    neither an ``HTTPException`` nor a ``ChemRefineError`` — so while the call sat above
+    the try, a typo in the model box produced a 500 and a logged traceback instead of the
+    panel's flash.
+    """
+    failed = _post(client, "/api/agent/chat", {"model": "not-a-real-model", "message": "hi"})
+    assert failed.status_code == 502
+    assert "Unknown model" in failed.get_json()["error"]
 
 
 def test_chat_turns_thread_history(client: Any, chat_env: pytest.MonkeyPatch):

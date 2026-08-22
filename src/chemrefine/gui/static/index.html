@@ -432,21 +432,47 @@
         builds configs only.
       </p>
       <div x-show="!staticMode">
+        <!-- Settings first, then the verdict, then the log: the panel reads top-down in
+             the order you have to do things. Every field re-arms the check on @input, not
+             @change — @change fires on blur, so a retyped model could be sent against a
+             verdict earned by the previous one. -->
         <div class="row">
-          <input type="text" x-model="chat.model" placeholder="model (e.g. qwen3:4b)"
-                 @change="saveChatSettings()">
-          <select x-model="chat.provider" @change="saveChatSettings()">
+          <select x-model="chat.provider" @change="saveChatSettings(); armCheck()">
             <option value="custom">custom</option>
             <option value="ollama">ollama</option>
             <option value="vllm">vllm</option>
             <option value="openai">openai</option>
           </select>
-          <input type="text" x-model="chat.baseUrl" placeholder="base URL (optional)"
-                 @change="saveChatSettings()">
+          <input type="text" x-model="chat.model" placeholder="model (e.g. qwen3:4b)"
+                 @input="armCheck()" @change="saveChatSettings()">
           <button type="button" class="mini" @click="resetChat()"
                   title="Clear the conversation and reset provider settings to defaults">
             reset</button>
         </div>
+        <!-- Only the fields the selected provider can actually use. `custom` is the one
+             with nowhere to go, so it is the one that must be told where; the rest carry a
+             default the server reports, shown as a placeholder and never sent back — an
+             echoed URL would outrank CHEMREFINE_LLM_BASE_URL. -->
+        <div class="row" x-show="needsBaseUrl() || providerShape().default_url">
+          <input type="text" x-model="chat.baseUrl" @input="armCheck()"
+                 @change="saveChatSettings()"
+                 :placeholder="needsBaseUrl() ? 'base URL (required, e.g. https://host/v1)'
+                               : 'base URL — defaults to ' + providerShape().default_url">
+        </div>
+        <div class="row" x-show="needsApiKey()">
+          <input type="password" autocomplete="off" x-model="chat.apiKey" @input="armCheck()"
+                 placeholder="API key — kept in this tab only, never saved">
+        </div>
+        <div class="row">
+          <button type="button" @click="runCheck()" :disabled="chat.check.busy">
+            Check connection</button>
+          <span class="muted" x-show="chat.check.busy">checking…</span>
+          <span class="muted" x-show="chat.check.ok === null && !chat.check.busy">
+            check the connection before chatting</span>
+        </div>
+        <template x-for="(finding, i) in chat.check.findings" :key="'chk' + i">
+          <p :class="chat.check.ok ? 'ok' : 'warn'" x-text="finding"></p>
+        </template>
         <div id="chatlog">
           <template x-for="(entry, i) in chat.msgs" :key="'m' + i">
             <p :class="entry.who"><b x-text="entry.who === 'you' ? 'you' : 'agent'"></b>
@@ -466,9 +492,10 @@
         </div>
         <div class="row">
           <input type="text" x-model="chat.draft" placeholder="ask the agent…"
-                 :disabled="chat.busy || chat.pending.length > 0"
+                 :disabled="chat.busy || chat.pending.length > 0 || !chatReady()"
                  @keydown.enter="sendChat()">
-          <button type="button" :disabled="chat.busy || chat.pending.length > 0" @click="sendChat()">
+          <button type="button" @click="sendChat()"
+                  :disabled="chat.busy || chat.pending.length > 0 || !chatReady()">
             Send</button>
         </div>
       </div>

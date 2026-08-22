@@ -44,6 +44,18 @@ function builder() {
       provider: localStorage.getItem("cr-provider") || "ollama",
       model: localStorage.getItem("cr-model") || "",
       baseUrl: localStorage.getItem("cr-baseurl") || "",
+      // Deliberately NOT from localStorage, and deliberately not written there either:
+      // this is a live credential, and the browser profile outlives the session it was
+      // typed for. It lives here for as long as the tab does, and goes out per request.
+      apiKey: "",
+      // The preflight verdict, in its own state rather than sharing `detail`, which
+      // chatAvailability() overwrites unconditionally. Sharing them meant every probe
+      // wiped the check result — invisible until the panel became a tab that re-probes
+      // on each switch. `ok: null` is "not checked yet", distinct from a failed check.
+      check: { ok: null, findings: [], busy: false },
+      // Field shapes per provider, served by /api/agent/availability. Never copied into
+      // this file: a second copy of the URLs would beat CHEMREFINE_LLM_BASE_URL.
+      presets: {},
     },
     browse: {
       open: false,
@@ -545,6 +557,8 @@ function builder() {
 
     // ---------------- agent chat ----------------
     saveChatSettings() {
+      // Three keys, not four: `chat.apiKey` is a live credential and is never persisted.
+      // Adding it here would be the natural-looking edit and the wrong one.
       localStorage.setItem("cr-provider", this.chat.provider);
       localStorage.setItem("cr-model", this.chat.model);
       localStorage.setItem("cr-baseurl", this.chat.baseUrl);
@@ -553,15 +567,61 @@ function builder() {
       if (this.staticMode) return;
       const state = await this.api("GET", "/api/agent/availability");
       if (!state) return;
+      this.chat.presets = state.presets || {};
       if (!state.installed) this.chat.detail = state.detail;
       else if (!state.configured && !this.chat.model) {
         this.chat.detail = "pick a model in the settings below (or set CHEMREFINE_LLM_MODEL)";
       } else this.chat.detail = "";
     },
+
+    // Methods, not getters, and called with () from the markup on purpose: the asset
+    // guards resolve a bare `name` in an expression only when it is dotted or called, so
+    // `get needsApiKey()` read as `needsApiKey` would be checked by nothing at all and a
+    // rename would ship green. The existing getters predate that guard.
+
+    // The shape of the selected provider: which fields mean anything, and where it points
+    // when nobody says otherwise. Server-supplied, so there is one preset table.
+    providerShape() {
+      return this.chat.presets[this.chat.provider] || { default_url: null, needs_key: true };
+    },
+    needsBaseUrl() {
+      return this.providerShape().default_url === null; // only `custom` has nowhere to go
+    },
+    needsApiKey() {
+      return this.providerShape().needs_key === true;
+    },
+    // Green light for Send. A check must have passed for the settings as they stand;
+    // armCheck() takes it away the moment any of them changes.
+    chatReady() {
+      return this.chat.check.ok === true;
+    },
+
+    armCheck() {
+      // Disarm on *settings change*, never from chatAvailability() — that runs on every
+      // panel open, and once the panel is a tab it runs on every switch, which would drop
+      // a passing verdict mid-conversation.
+      this.chat.check = { ok: null, findings: [], busy: false };
+    },
+    async runCheck() {
+      if (this.staticMode) {
+        this.flash = "the agent runs with the local chemrefine gui";
+        return;
+      }
+      this.chat.check.busy = true;
+      try {
+        const data = await this.api("POST", "/api/agent/check", this._chatPayload({}));
+        // A refused request leaves ok null — unchecked, not failed — and `flash` explains.
+        if (data) this.chat.check = { ok: data.ok, findings: data.findings, busy: false };
+      } finally {
+        this.chat.check.busy = false;
+      }
+    },
+
     _chatPayload(extra) {
       const payload = { provider: this.chat.provider, ...extra };
       if (this.chat.model) payload.model = this.chat.model;
       if (this.chat.baseUrl) payload.base_url = this.chat.baseUrl;
+      if (this.chat.apiKey) payload.api_key = this.chat.apiKey;
       return payload;
     },
     async _chatTurn(extra) {
@@ -587,7 +647,9 @@ function builder() {
     },
     async sendChat() {
       const message = this.chat.draft.trim();
-      if (!message || this.chat.busy) return;
+      // Gated here as well as on the button: the input's @keydown.enter reaches this
+      // directly, so a :disabled attribute alone would leave the Enter path live.
+      if (!message || this.chat.busy || !this.chatReady()) return;
       this.chat.msgs.push({ who: "you", text: message });
       this.chat.draft = "";
       await this._chatTurn({ message });
@@ -623,9 +685,14 @@ function builder() {
       this.chat.provider = "ollama";
       this.chat.model = "";
       this.chat.baseUrl = "";
+      this.chat.apiKey = "";
+      this.armCheck(); // the verdict belonged to settings that no longer exist
       localStorage.removeItem("cr-provider");
       localStorage.removeItem("cr-model");
       localStorage.removeItem("cr-baseurl");
+      // Never written by this build, removed anyway: an earlier one might have, and a
+      // credential left in a browser profile is not something to leave to good intentions.
+      localStorage.removeItem("cr-apikey");
       this.flash = "agent chat reset — conversation cleared, provider settings back to defaults";
       try {
         await this.api("POST", "/api/agent/chat", { reset: true });

@@ -81,6 +81,16 @@ reason — loopback on a shared node is not access control.
   the docs site publishes as the Playground and carry nothing about the tree. A
   cross-origin page cannot use that to reach the API: the token rides a custom
   header, which forces a CORS preflight the app does not answer.
+- The chat panel's **API key is held in the page and nowhere else**. It is typed into
+  the panel, sent with each agent request, and never written to `localStorage`, to a
+  URL, or to a log — unlike the provider and model beside it, which are remembered.
+  It dies with the tab; `CHEMREFINE_LLM_API_KEY` stays the way to avoid retyping it,
+  and a blank field falls through to it. A key that could not be an HTTP header (a
+  newline, a NUL) is refused before it becomes an `Authorization:` one.
+- The chat and its preflight make **outbound requests to an endpoint the request
+  names**, carrying that key. That is the point of the feature — it is how a model is
+  reached — but it means the GUI is not purely local once the panel is used, and the
+  scheme is constrained to HTTP(S) at the one place every caller resolves through.
 
 ### Data at rest
 

@@ -52,6 +52,43 @@ def test_provider_resolution_is_flags_env_preset(monkeypatch: pytest.MonkeyPatch
         "env-key",
     )
     assert ProviderConfig.resolve("ollama", model="flag-model").model == "flag-model"
+    # The key follows the same three tiers, for the GUI panel that holds one per session.
+    assert ProviderConfig.resolve("ollama", api_key="flag-key").api_key == "flag-key"
+    assert ProviderConfig.resolve("ollama", api_key="").api_key == "env-key"  # blank falls through
+
+
+def test_a_supplied_key_reaches_openai_and_hijacks_nothing_else(monkeypatch: pytest.MonkeyPatch):
+    """The one branch where a key changes which model object gets built.
+
+    ``_PRESETS["openai"]`` carries no base URL, so ``build_model`` returned the bare name
+    and PydanticAI read the *server's* ``OPENAI_API_KEY`` — a key the GUI's user cannot
+    set, which made the panel's key box inert for the provider most likely to need it.
+    ``OpenAIProvider`` defaults to api.openai.com, so a key alone is enough.
+
+    Two things it must NOT do, which is why the branch is narrow: hijack a
+    ``provider:model`` string (that spelling *is* the instruction to let PydanticAI
+    resolve the provider, credentials included), and hijack a native provider for anyone
+    who merely has ``CHEMREFINE_LLM_API_KEY`` set.
+    """
+    for var in ("CHEMREFINE_LLM_MODEL", "CHEMREFINE_LLM_BASE_URL", "CHEMREFINE_LLM_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+
+    keyed = ProviderConfig.resolve("openai", model="gpt-5-mini", api_key="sk-panel")
+    assert keyed.keyed_openai is True
+    assert not isinstance(keyed.build_model(), str)  # pinned to OpenAI with our key
+
+    for spelling in (
+        ProviderConfig.resolve("openai", model="openai:gpt-5-mini", api_key="sk-panel"),
+        ProviderConfig.resolve("custom", model="anthropic:claude-x", api_key="sk-panel"),
+        ProviderConfig.resolve("openai", model="gpt-5-mini"),
+    ):
+        assert spelling.keyed_openai is False
+        assert isinstance(spelling.build_model(), str)  # handed to PydanticAI verbatim
+
+    # probe_url and build_model share one predicate, so the preflight can never validate
+    # a key the chat then declines to use.
+    for config in (keyed, *[ProviderConfig.resolve("openai", model="gpt-5-mini")]):
+        assert (config.probe_url is not None) == (not isinstance(config.build_model(), str))
 
 
 def test_provider_refusals_name_the_fix(monkeypatch: pytest.MonkeyPatch):

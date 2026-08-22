@@ -256,9 +256,24 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     # human's allow/deny verdicts).
     chat_state: dict[str, Any] = {"history": None, "pending": None}
 
+    def _preset_shapes() -> dict[str, dict[str, Any]]:
+        """The provider field-shapes, from the module that owns them.
+
+        Served rather than duplicated in JavaScript: a second copy of the URLs in the
+        frontend would quietly beat ``CHEMREFINE_LLM_BASE_URL``, since an explicit URL
+        wins at resolution. The page shows these as placeholders and never sends them back.
+        """
+        from chemrefine.agent import providers
+
+        return providers.preset_shapes()
+
     @app.get("/api/agent/availability")
     def agent_availability() -> Any:
-        """Whether the chat panel can work here: extra installed, model configured."""
+        """Whether the chat panel can work here: extra installed, model configured.
+
+        Carries the preset shapes either way — the panel renders its fields from them
+        before any check has run, and they are true whether or not the extra is installed.
+        """
         try:
             # The probe *is* the import — whether the panel works here is exactly whether
             # this succeeds, which `find_spec` cannot answer (a package can be findable and
@@ -271,15 +286,61 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
                     "installed": False,
                     "configured": False,
                     "detail": "pip install 'chemrefine[agent]'",
+                    "presets": _preset_shapes(),
                 }
             )
         from chemrefine.agent.providers import ProviderConfig
 
         try:
             resolved = ProviderConfig.resolve()
-            return jsonify({"installed": True, "configured": True, "detail": resolved.model})
+            detail, configured = resolved.model, True
         except ChemRefineError as e:
-            return jsonify({"installed": True, "configured": False, "detail": str(e)})
+            detail, configured = str(e), False
+        return jsonify(
+            {
+                "installed": True,
+                "configured": configured,
+                "detail": detail,
+                "presets": _preset_shapes(),
+            }
+        )
+
+    @app.post("/api/agent/check")
+    def agent_check() -> Any:
+        """Probe the panel's settings before a turn is spent on them.
+
+        The same preflight ``chemrefine agent --check`` runs
+        (:func:`chemrefine.agent.providers.check`), reached from the browser: is the
+        endpoint there, and does it serve the model that was named. Answers 200 with a
+        verdict either way, like :func:`agent_availability` beside it — an unreachable
+        Ollama is this endpoint's *answer*, not its failure, so a ``ChemRefineError`` from
+        resolution is caught here rather than becoming :func:`surface`'s 400.
+
+        ``providers`` is imported directly and imports no SDK at runtime, so the check
+        works before ``chemrefine[agent]`` is installed — the same property that lets the
+        CLI preflight run on a bare machine.
+        """
+        from chemrefine.agent import providers
+
+        payload = request.get_json(force=True)
+        key = payload.get("api_key")
+        if key is not None and not _usable_as_header(key):
+            # It becomes an Authorization header inside `check`. A bare newline there
+            # would raise out of urllib and land in that function's `except ValueError`,
+            # which reports "not an OpenAI-style model listing" — a finding about the
+            # endpoint, for a fault in the box the user just typed into.
+            return jsonify({"ok": False, "findings": ["the API key contains invalid characters"]})
+        try:
+            resolved = providers.ProviderConfig.resolve(
+                payload.get("provider", "custom"),
+                model=payload.get("model"),
+                base_url=payload.get("base_url"),
+                api_key=key,
+            )
+        except ChemRefineError as e:
+            return jsonify({"ok": False, "findings": [str(e)]})
+        report = providers.check(resolved)
+        return jsonify({"ok": report.ok, "findings": list(report.findings)})
 
     @app.post("/api/agent/chat")
     def agent_chat() -> Any:
@@ -305,12 +366,18 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
             payload.get("provider", "custom"),
             model=payload.get("model"),
             base_url=payload.get("base_url"),
-        )
-        agent = build_web_agent(
-            resolved.build_model(),
-            config_path=str(config_path) if config_path is not None else None,
+            api_key=payload.get("api_key"),
         )
         try:
+            # Inside the try, not above it: `Agent("gpt-5-mini")` raises `UserError` at
+            # construction for a name PydanticAI cannot place, and that is neither an
+            # HTTPException nor a ChemRefineError — so `surface` re-raised it as a 500 with
+            # a traceback, for a typo in the model box. It belongs with the other
+            # outside-world failures, as the panel's 502.
+            agent = build_web_agent(
+                resolved.build_model(),
+                config_path=str(config_path) if config_path is not None else None,
+            )
             if payload.get("approvals"):
                 pending = chat_state["pending"]
                 if pending is None:
@@ -363,6 +430,18 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         )
 
     return app
+
+
+def _usable_as_header(value: object) -> bool:
+    """Whether ``value`` can be interpolated into an HTTP header without breaking it.
+
+    An API key arrives from the browser and leaves as ``Authorization: Bearer …``. A
+    carriage return or newline in it is header injection in any client that does not
+    reject it, and in ``urllib`` — which does — it is a ``ValueError`` raised from inside
+    the preflight, where the surrounding handler would report it as a fault of the
+    endpoint being probed. Bounded, too: nothing legitimate here is a kilobyte long.
+    """
+    return isinstance(value, str) and 0 < len(value) <= 1024 and not set(value) & set("\r\n\x00")
 
 
 def _step_key(value: str | int) -> int | str:

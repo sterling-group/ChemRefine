@@ -22,6 +22,14 @@ from chemrefine.errors import ConfigError
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
 
+_OPENAI_URL = "https://api.openai.com/v1"
+"""Where OpenAI-the-service lives, for the one thing that needs to know: the preflight.
+
+Deliberately *not* in :data:`_PRESETS`. Putting it there would make every ``openai`` launch
+take the pinned-endpoint branch, so ``--provider openai --model openai:gpt-5-mini`` would
+hand that whole string to ``OpenAIChatModel`` as a model id. The preset stays empty and the
+URL is used only where it is safe to know it."""
+
 _PRESETS: dict[str, tuple[str | None, str | None, str | None]] = {
     # Each preset is (base URL, API key, default model) — None means "not preset".
     "openai": (None, None, None),
@@ -31,6 +39,28 @@ _PRESETS: dict[str, tuple[str | None, str | None, str | None]] = {
 }
 
 
+def preset_shapes() -> dict[str, dict[str, object]]:
+    """Per provider: where it lives when nobody says otherwise, and whether it wants a key.
+
+    What a front end needs to decide which fields to show, derived here rather than
+    copied there. ``default_url`` is the *effective* default, which is why ``openai`` is
+    not simply its (empty) preset row: ``OpenAIProvider`` resolves api.openai.com on its
+    own, so openai needs no URL from the user while ``custom`` — the only entry that
+    genuinely has nowhere to go — needs one.
+
+    A caller must treat ``default_url`` as a placeholder, never as a value to send back:
+    :meth:`ProviderConfig.resolve` lets an explicit URL beat ``CHEMREFINE_LLM_BASE_URL``,
+    so echoing it would override an environment the user set deliberately.
+    """
+    return {
+        name: {
+            "default_url": _OPENAI_URL if name == "openai" else url,
+            "needs_key": key is None,
+        }
+        for name, (url, key, _model) in _PRESETS.items()
+    }
+
+
 @dataclass(frozen=True)
 class ProviderConfig:
     """The resolved answer: a model name, and (for compatible endpoints) where it lives."""
@@ -38,6 +68,10 @@ class ProviderConfig:
     model: str
     base_url: str | None
     api_key: str | None
+    provider: str = "custom"
+    """Which preset resolved this, so :meth:`build_model` can tell OpenAI-the-service from
+    an OpenAI-*compatible* box. Defaulted, because three call sites construct this by
+    keyword and none of them cared until the GUI grew a key field."""
 
     @classmethod
     def resolve(
@@ -45,6 +79,7 @@ class ProviderConfig:
         provider: str = "custom",
         model: str | None = None,
         base_url: str | None = None,
+        api_key: str | None = None,
     ) -> ProviderConfig:
         """Flags → ``CHEMREFINE_LLM_MODEL`` / ``_BASE_URL`` / ``_API_KEY`` → preset.
 
@@ -54,6 +89,11 @@ class ProviderConfig:
         the GUI's chat endpoint takes a request-supplied base URL, and the resolved
         config pairs it with ``CHEMREFINE_LLM_API_KEY``, so an unchecked scheme would
         hand the bearer to whatever ``urlopen``/the SDK makes of it.
+
+        ``api_key`` is the same story one tier up: the GUI's panel holds a key in the
+        page for the session and sends it per request, so it takes precedence over the
+        environment exactly as ``--model`` and ``--base-url`` do. Blank falls through, so
+        an empty box still means "use ``CHEMREFINE_LLM_API_KEY``".
         """
         if provider not in _PRESETS:
             raise ConfigError(f"unknown provider {provider!r}; one of {sorted(_PRESETS)}")
@@ -71,8 +111,38 @@ class ProviderConfig:
         return cls(
             model=resolved_model,
             base_url=resolved_url,
-            api_key=os.environ.get("CHEMREFINE_LLM_API_KEY") or preset_key,
+            api_key=api_key or os.environ.get("CHEMREFINE_LLM_API_KEY") or preset_key,
+            provider=provider,
         )
+
+    @property
+    def keyed_openai(self) -> bool:
+        """Whether this resolves to OpenAI-the-service through a key we were handed.
+
+        The one predicate behind both :attr:`probe_url` and :meth:`build_model`, so the
+        preflight can never validate a key the chat then declines to use. A
+        ``provider:model`` spelling is excluded on purpose: that spelling is the
+        instruction to let PydanticAI resolve the provider, credentials included.
+        """
+        return (
+            self.base_url is None
+            and self.provider == "openai"
+            and bool(self.api_key)
+            and ":" not in self.model
+        )
+
+    @property
+    def probe_url(self) -> str | None:
+        """Where :func:`check` should look, or ``None`` when there is nothing to probe.
+
+        Usually the explicit ``base_url``. The exception is :attr:`keyed_openai`: it has
+        no ``base_url`` because ``OpenAIProvider`` supplies its own, but we know where it
+        lives, and probing it is the only way a preflight can tell a good key from a typo
+        — which is the whole reason the panel has a key box.
+        """
+        if self.base_url is not None:
+            return self.base_url
+        return _OPENAI_URL if self.keyed_openai else None
 
     def build_model(self) -> Model | str:
         """A PydanticAI model: an explicit OpenAI-compatible endpoint, or the name itself.
@@ -80,16 +150,26 @@ class ProviderConfig:
         With a ``base_url`` the model is pinned to that endpoint (Ollama/vLLM/OpenRouter
         speak the OpenAI chat API); without one, the plain string lets PydanticAI infer
         the provider from a ``provider:model`` spelling.
+
+        Between those sits OpenAI-the-service with a key the caller supplied. It has no
+        ``base_url`` — ``OpenAIProvider`` defaults to ``api.openai.com`` on its own — so
+        without this branch the key was silently dropped and PydanticAI read the server's
+        ``OPENAI_API_KEY`` instead, which is not a key the GUI's user can set. A
+        ``provider:model`` spelling still goes through verbatim: that spelling *is* the
+        instruction to let PydanticAI resolve it, and handing ``openai:gpt-5-mini`` to
+        ``OpenAIChatModel`` would send that literal string as a model id.
         """
-        if self.base_url is None:
+        if self.base_url is None and not self.keyed_openai:
             return self.model
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.openai import OpenAIProvider
 
-        return OpenAIChatModel(
-            self.model,
-            provider=OpenAIProvider(base_url=self.base_url, api_key=self.api_key or "unset"),
+        provider = (
+            OpenAIProvider(api_key=self.api_key)
+            if self.keyed_openai
+            else OpenAIProvider(base_url=self.base_url, api_key=self.api_key or "unset")
         )
+        return OpenAIChatModel(self.model, provider=provider)
 
 
 @dataclass(frozen=True)
@@ -125,12 +205,17 @@ def check(config: ProviderConfig, *, timeout: float = 5.0) -> CheckReport:
 
     Verification, not provisioning — one ``GET {base_url}/models`` (the OpenAI-compatible
     listing Ollama, vLLM, Groq and friends all serve), never a download. A
-    provider-native ``provider:model`` string (no ``base_url``) cannot be probed
+    provider-native ``provider:model`` string with nothing to aim at cannot be probed
     generically; it reports usable with a note, and PydanticAI checks credentials on the
     first real request. Works without the ``[agent]`` extra installed — this module
     imports no SDK at runtime — so the preflight can run before anything else is set up.
+
+    What counts as "somewhere to aim at" is :attr:`ProviderConfig.probe_url`, not
+    ``base_url``: OpenAI-the-service with a supplied key has no ``base_url`` and is still
+    probeable, and validating that key is the most useful thing this can do for it.
     """
-    if config.base_url is None:
+    probe = config.probe_url
+    if probe is None:
         return CheckReport(
             ok=True,
             findings=(
@@ -138,12 +223,12 @@ def check(config: ProviderConfig, *, timeout: float = 5.0) -> CheckReport:
                 "come from that provider's own environment on first use",
             ),
         )
-    if not config.base_url.startswith(("http://", "https://")):
-        return CheckReport(ok=False, findings=(f"base URL {config.base_url!r} is not HTTP(S)",))
+    if not probe.startswith(("http://", "https://")):
+        return CheckReport(ok=False, findings=(f"base URL {probe!r} is not HTTP(S)",))
     from urllib.error import HTTPError, URLError
     from urllib.request import Request, urlopen
 
-    url = config.base_url.rstrip("/") + "/models"
+    url = probe.rstrip("/") + "/models"
     request = Request(  # noqa: S310 — scheme constrained to http(s) above
         url, headers={"Authorization": f"Bearer {config.api_key or 'unset'}"}
     )

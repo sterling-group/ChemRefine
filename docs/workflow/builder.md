@@ -121,9 +121,21 @@ Once a config is saved (local GUI only — the playground stays build-and-copy),
 ## The Agent chat panel
 
 With the `[agent]` extra installed, an **Agent chat** section joins the right column —
-the [embedded agent](agents.md) inside the GUI. Pick the provider/model in the panel
-(saved in your browser; local **Ollama** works with no key — see the
-[model-policy note](agents.md#ai-agents)), then talk:
+the [embedded agent](agents.md) inside the GUI. Pick the provider and the panel shows
+only the fields that provider can use: local **Ollama** and **vLLM** need nothing but a
+model name, `custom` needs the endpoint's base URL, and `openai` needs a key (see the
+[model-policy note](agents.md#ai-agents)).
+
+Then press **Check connection** before you type. It runs the same preflight as
+`chemrefine agent --check` — is the endpoint there, does it serve the model you named —
+and Send stays disabled until it passes, so a wrong port or a typo in the model name
+costs you a click rather than a turn. Changing any setting asks for the check again.
+
+Provider and model are remembered in your browser. **The API key is not** — it lives in
+the tab for as long as the tab does, and is gone on reload. Set
+`CHEMREFINE_LLM_API_KEY` before launching if you would rather not retype it.
+
+Then talk:
 the agent uses the same tools as everywhere else. Mutating actions **suspend** the
 agent and appear as allow/deny cards naming the exact call and its arguments; nothing
 touches disk or starts compute until you click *allow*. The panel needs the local
