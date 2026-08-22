@@ -270,6 +270,22 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
             )
         )
 
+    @app.get("/api/structure-list")
+    def structure_list() -> Any:
+        """What the Structure pane's two combo boxes offer: the ids, and each one's modes.
+
+        Same query-argument discipline and same ``step``/seeds sentinel as ``/api/structure``
+        above. Offering only what exists is what stops the pane asking for a mode number the
+        step never computed — the request that could only ever fail.
+        """
+        step = request.args.get("step")
+        return jsonify(
+            agent_tools.list_structures(
+                request.args["config_path"],
+                _step_key(step) if step not in (None, "") else None,
+            )
+        )
+
     @app.post("/api/summary")
     def summary() -> Any:
         """The dry-run-style execution summary for a saved config."""

@@ -81,7 +81,17 @@ function builder() {
       onPick: null,
     },
     tmpl: { open: false, step: null, path: "", text: "" },
-    viewer: { step: "input", structureId: "", modeIndex: "", busy: false, note: "" },
+    // `structures` is what /api/structure-list answered for the chosen step: one row per
+    // structure, carrying its own mode table. Held here rather than fetched per keystroke
+    // so the two combo boxes offer what the step actually holds without a request each.
+    viewer: {
+      step: "input",
+      structureId: "",
+      modeIndex: "",
+      busy: false,
+      note: "",
+      structures: [],
+    },
     _gl: null, // the 3Dmol viewer instance, once the bundle is in
     _glLib: null, // the in-flight or settled load of the vendored bundle
     _timer: null,
@@ -175,7 +185,12 @@ function builder() {
       }
     },
 
-    async api(method, url, body) {
+    // `quiet` suppresses the flash on a failed request, for a caller whose answer is a
+    // convenience rather than the thing the user asked for — the structure lists behind the
+    // combo boxes, where "this step has not run yet" is the ordinary case and announcing it
+    // on every step change is noise. It never suppresses the null return: the caller still
+    // has to cope with not getting an answer.
+    async api(method, url, body, { quiet = false } = {}) {
       if (this.staticMode) return this.staticApi(url, body);
       const options = { method, headers: { "X-ChemRefine-Token": this.token } };
       if (body !== undefined) {
@@ -186,12 +201,14 @@ function builder() {
       try {
         response = await fetch(url, options);
       } catch {
-        this.flash = "the ChemRefine server is unreachable — is `chemrefine gui` still running?";
+        if (!quiet) {
+          this.flash = "the ChemRefine server is unreachable — is `chemrefine gui` still running?";
+        }
         return null;
       }
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        this.flash = data.error || `${response.status} error`;
+        if (!quiet) this.flash = data.error || `${response.status} error`;
         return null;
       }
       return data;
@@ -620,7 +637,10 @@ function builder() {
       // canvas from the container's offsetWidth, and compensates for a hidden one only
       // when the *container's own* inline display is "none" — but x-show sets that on the
       // panel, so a viewer built while its tab is inactive reads 0 and stays 0.
-      if (side === "right" && id === "structure") this.mountViewer();
+      if (side === "right" && id === "structure") {
+        this.mountViewer();
+        this.loadStructureList(); // so the boxes offer something the moment the pane opens
+      }
     },
 
     // A structure id and a mode number belong to the step that was showing when they were
@@ -632,6 +652,58 @@ function builder() {
       this.viewer.structureId = "";
       this.viewer.modeIndex = "";
       this.viewer.note = "";
+      this.viewer.structures = []; // the previous step's ids are not this step's ids
+      this.loadStructureList();
+    },
+
+    // What this step holds, so the two boxes can offer it. Failure is deliberately quiet in
+    // the pane: the lists are a convenience, both boxes stay typable without them, and a
+    // step that has not run yet is the ordinary case rather than an error to announce.
+    async loadStructureList() {
+      if (this.staticMode || !this.savedPath || !this.viewer.step) return;
+      const query = new URLSearchParams({ config_path: this.savedPath });
+      if (this.viewer.step !== "input") query.set("step", this.viewer.step);
+      const asked = this.viewer.step;
+      const data = await this.api("GET", `/api/structure-list?${query}`, undefined, {
+        quiet: true,
+      });
+      // The step can change while this is in flight, and the answer belongs to the step
+      // that asked for it — offering step 1's ids under step 2 is worse than offering none.
+      if (data && String(asked) === String(this.viewer.step)) {
+        this.viewer.structures = data.structures;
+      }
+    },
+
+    // The label beside a structure id in the dropdown — what distinguishes one from another
+    // when the ids are "0", "1", "2". A mode count answers "which of these is the TS?".
+    structureHint(row) {
+      if (!row.modes) return "no frequency data";
+      const count = Object.keys(row.modes).length;
+      const imaginary = (row.imaginary || []).length;
+      if (!count) return "no modes";
+      return imaginary ? `${count} modes, ${imaginary} imaginary` : `${count} modes`;
+    },
+
+    // The mode list for whichever structure is named, or for the first one when the box is
+    // blank — which is the structure Show would pick, so the modes offered are that
+    // structure's modes and not some other one's.
+    modeChoices() {
+      const rows = this.viewer.structures;
+      if (!rows.length) return [];
+      const row = this.viewer.structureId
+        ? rows.find((r) => String(r.id) === String(this.viewer.structureId))
+        : rows[0];
+      if (!row || !row.modes) return [];
+      const imaginary = new Set((row.imaginary || []).map(String));
+      return Object.keys(row.modes)
+        .map(Number)
+        .sort((a, b) => a - b)
+        .map((index) => ({
+          index,
+          // The frequency is the whole point of the list: "mode 6" answers nothing, and
+          // −820 cm⁻¹ (imaginary) is the reaction coordinate you came to look at.
+          label: `${row.modes[index].toFixed(1)} cm⁻¹${imaginary.has(String(index)) ? " (imaginary)" : ""}`,
+        }));
     },
 
     // ---------------- structure viewer ----------------
@@ -853,7 +925,15 @@ function builder() {
       this.resultsStep = "";
       this.report = null; // validation of a file that is no longer the one in the form
       this.tmpl = { open: false, step: null, path: "", text: "" };
-      this.viewer = { ...this.viewer, step: "input", structureId: "", modeIndex: "", note: "" };
+      this.viewer = {
+        ...this.viewer,
+        step: "input",
+        structureId: "",
+        modeIndex: "",
+        note: "",
+        structures: [],
+      };
+      this.loadStructureList(); // savedPath is the new file by now, so these are its seeds
       // The drawn molecule belongs to the old tree too; leaving it up (still animating)
       // reads as the new workflow's answer.
       if (this._gl) {

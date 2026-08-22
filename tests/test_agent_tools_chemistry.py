@@ -566,6 +566,70 @@ def test_get_frequencies_serves_the_whole_table_from_the_cache(tmp_path: Path):
     assert agent_tools.get_frequencies(str(before), 1)["structures"][0]["frequencies"] is None
 
 
+def test_list_structures_offers_the_ids_and_each_ones_modes(tmp_path: Path):
+    """The enumeration ``get_structure`` lacks: what is there, rather than a guess refused.
+
+    Both are read from the step cache, so this answers on a tree copied off a cluster with
+    no output files and no ORCA — which is exactly where naming a structure by guesswork
+    became a request that could only fail.
+    """
+    parsed = orca_coordinator.parse_text(_FREQ_OUT.read_text(encoding="utf-8"), "freq")[0]
+    path = _cache_step(
+        tmp_path,
+        (
+            Structure(
+                id="0",
+                atoms=Atoms(symbols=list(parsed.symbols), positions=parsed.positions),
+                energy_hartree=parsed.energy_hartree,
+                imaginary_freqs=parsed.imaginary_freqs,
+                frequencies=parsed.frequencies,
+            ),
+            Structure(id="7", atoms=Atoms("H"), energy_hartree=-0.5),
+        ),
+    )
+    listed = agent_tools.list_structures(str(path), 1)
+    assert [row["id"] for row in listed["structures"]] == ["0", "7"]
+    assert listed["structures"][0]["imaginary"] == [6]
+    assert listed["structures"][0]["modes"]["7"] == pytest.approx(1464.97)
+    # A structure with no frequency table says so, rather than offering an empty mode list
+    # that reads as "this one has no modes" — unknown is not the same answer.
+    assert listed["structures"][1]["modes"] is None
+    assert listed["structures"][1]["imaginary"] == []
+
+
+def test_list_structures_enumerates_the_seeds_and_refuses_to_embed_them(tmp_path: Path):
+    """Seeds have ids and no modes; a SMILES ``input:`` is refused here as everywhere.
+
+    Enumerating the seeds must go through the same guard the single-seed read does, or
+    listing would embed the molecules that reading them refuses to — the classic way a
+    second entry point loses a refusal.
+    """
+    (tmp_path / "two.xyz").write_text("1\na\nN 0 0 0\n1\nb\nO 0 0 0\n", encoding="utf-8")
+    path = tmp_path / "input.yaml"
+    path.write_text(
+        yaml.safe_dump({"input": "two.xyz", "steps": [{"step": 1, "engine": "orca"}]}), "utf-8"
+    )
+    listed = agent_tools.list_structures(str(path))
+    assert listed["step"] is None
+    assert [row["id"] for row in listed["structures"]] == ["0", "1"]
+    assert all(row["modes"] == {} for row in listed["structures"])  # seeds have no modes
+
+    (tmp_path / "seeds.csv").write_text("smiles\nCCO\n", encoding="utf-8")
+    smiles = tmp_path / "smiles.yaml"
+    smiles.write_text(
+        yaml.safe_dump({"input": "seeds.csv", "steps": [{"step": 1, "engine": "orca"}]}), "utf-8"
+    )
+    with pytest.raises(ConfigError, match="seeds from SMILES"):
+        agent_tools.list_structures(str(smiles))
+    assert not (tmp_path / "outputs" / "_seed").exists()
+
+
+def test_list_structures_says_run_it_first_rather_than_offering_nothing(tmp_path: Path):
+    """An empty list and "nothing has run" are different answers to "which structures?"."""
+    with pytest.raises(ConfigError, match="run it"):
+        agent_tools.list_structures(str(_write_config(tmp_path, {"step": 1, "engine": "orca"})), 1)
+
+
 def test_analyze_mode_names_a_real_mode_range(tmp_path: Path):
     with pytest.raises(ConfigError, match="out of range"):
         agent_tools.analyze_mode(str(_freq_tree(tmp_path)), 1, "0", mode_index=99)

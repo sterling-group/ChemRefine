@@ -821,7 +821,9 @@ def test_the_viewer_asks_for_seeds_by_omitting_the_step():
       await b.showStructure();                      // viewer.step defaults to "input"
       b.chooseViewerStep("2"); b.viewer.modeIndex = "6";
       await b.showStructure();
-      console.log(JSON.stringify(asked));
+      // Only the geometry requests: the pane also asks /api/structure-list to fill its
+      // combo boxes, and this case is about what the *structure* request carries.
+      console.log(JSON.stringify(asked.filter((u) => u.startsWith("/api/structure?"))));
     """)
     seeds, step = json.loads(out)
     assert "step=" not in seeds  # no step at all, not step=input
@@ -858,7 +860,8 @@ def test_a_mode_that_could_not_be_drawn_does_not_follow_you_to_the_next_one():
 
       refuse = false;                              // the very next Show must work
       await b.showStructure();
-      console.log(JSON.stringify({ afterFailure, asked, note: b.viewer.note }));
+      console.log(JSON.stringify({ afterFailure, note: b.viewer.note,
+        asked: asked.filter((u) => u.startsWith("/api/structure?")) }));
     """)
     result = json.loads(out)
     assert result["afterFailure"]["mode"] == ""  # cleared, so it cannot poison the next one
@@ -1072,6 +1075,143 @@ def test_the_viewer_bundle_is_not_fetched_for_a_pane_that_can_show_nothing():
       console.log(JSON.stringify({ created }));
     """)
     assert json.loads(out) == {"created": 0}
+
+
+_LIST_HARNESS = """
+  const b = builder();
+  b.chatAvailability = () => {};
+  b.savedPath = "/p/input.yaml";
+  b.mountViewer = async () => {};
+  const rows = [
+    { id: "0", modes: { "6": -820.38, "7": 1464.97, "11": 3765.42 }, imaginary: [6] },
+    { id: "1", modes: {}, imaginary: [] },
+    { id: "2", modes: null, imaginary: [] },
+  ];
+  b.api = async (m, u) =>
+    u.startsWith("/api/structure-list") ? { step: 1, structures: rows } : null;
+"""
+
+
+def test_the_mode_list_names_each_mode_by_its_frequency():
+    """ "Mode 6" answers nothing; -820.4 cm-1 (imaginary) is what you came to look at.
+
+    The list is the point of the change: a mode number had to be guessed, and a guess that
+    named a mode the step never computed was a request that could only fail.
+    """
+    out = _run_component_in_node(
+        _LIST_HARNESS
+        + """
+      await b.loadStructureList();
+      console.log(JSON.stringify({ choices: b.modeChoices(),
+                                   hint: b.structureHint(b.viewer.structures[0]) }));
+    """
+    )
+    result = json.loads(out)
+    # Sorted by index numerically, not by the string order the JSON object happens to carry.
+    assert [row["index"] for row in result["choices"]] == [6, 7, 11]
+    assert result["choices"][0]["label"] == "-820.4 cm⁻¹ (imaginary)"
+    assert result["choices"][1]["label"] == "1465.0 cm⁻¹"
+    assert result["hint"] == "3 modes, 1 imaginary"
+
+
+def test_the_modes_offered_belong_to_the_structure_that_would_be_shown():
+    """Blank means "the first one", which is what Show picks — so those are its modes.
+
+    Offering structure 0's modes while Show would draw structure 2 is the same class of
+    mismatch as the sticky mode index: a number that is valid somewhere and not here.
+    """
+    out = _run_component_in_node(
+        _LIST_HARNESS
+        + """
+      await b.loadStructureList();
+      const blank = b.modeChoices().length;              // falls back to the first row
+      b.viewer.structureId = "1";                        // ran, no frequencies
+      const none = b.modeChoices().length;
+      b.viewer.structureId = "2";                        // cached before the table existed
+      const unknown = b.modeChoices().length;
+      b.viewer.structureId = "nosuch";                   // typed, matches nothing
+      const typed = b.modeChoices().length;
+      console.log(JSON.stringify({ blank, none, unknown, typed,
+                                   hints: b.viewer.structures.map((r) => b.structureHint(r)) }));
+    """
+    )
+    result = json.loads(out)
+    assert result["blank"] == 3  # structure "0"'s modes, which is what Show would draw
+    assert (result["none"], result["unknown"], result["typed"]) == (0, 0, 0)
+    assert result["hints"] == ["3 modes, 1 imaginary", "no modes", "no frequency data"]
+
+
+def test_a_list_that_arrives_after_you_moved_on_is_dropped():
+    """The answer belongs to the step that asked for it.
+
+    A slow list for step 1 landing after a switch to step 2 would offer step 1's ids under
+    step 2's name — ids that are valid somewhere, which is the failure mode this whole
+    change exists to stop.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chatAvailability = () => {};
+      b.savedPath = "/p/input.yaml";
+      b.mountViewer = async () => {};
+      let release;
+      const held = new Promise((r) => { release = r; });
+      const fresh = { step: 2, structures: [{ id: "b" }] };
+      b.api = async (m, u) => (u.includes("step=1") ? held : fresh);
+      b.viewer.step = "1";
+      const slow = b.loadStructureList();
+      b.viewer.step = "2";                       // the user moves on while it is in flight
+      await b.loadStructureList();               // step 2's answer lands first
+      release({ step: 1, structures: [{ id: "a" }] });
+      await slow;
+      console.log(JSON.stringify(b.viewer.structures.map((r) => r.id)));
+    """)
+    assert json.loads(out) == ["b"]  # never ["a"]
+
+
+def test_switching_steps_asks_again_and_offers_nothing_in_the_meantime():
+    """Stale ids are worse than none: the boxes stay typable either way."""
+    out = _run_component_in_node(
+        _LIST_HARNESS
+        + """
+      await b.loadStructureList();
+      const before = b.viewer.structures.length;
+      b.api = async () => null;                  // step 2 has not run
+      b.chooseViewerStep("2");
+      const cleared = b.viewer.structures.length;
+      await new Promise((r) => setTimeout(r, 0));
+      console.log(JSON.stringify({ before, cleared, after: b.viewer.structures.length }));
+    """
+    )
+    result = json.loads(out)
+    assert result["before"] == 3
+    assert result["cleared"] == 0  # dropped the moment the step changed, not when the reply came
+    assert result["after"] == 0
+
+
+def test_a_step_that_has_not_run_is_not_announced_on_every_switch():
+    """The lists are a convenience; both boxes stay typable without them.
+
+    Driven through the *real* ``api``, with only ``fetch`` stubbed: stubbing ``api`` itself
+    is what a previous version of this did, and it never reached the branch it named — the
+    quiet flag lives inside the method the stub replaced.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chatAvailability = () => {};
+      b.savedPath = "/p/input.yaml";
+      global.fetch = async () => ({
+        ok: false, status: 400,
+        json: async () => ({ error: "step 2 has no cached results yet" }),
+      });
+      await b.loadStructureList();
+      const quiet = b.flash;
+      await b.validateNow();                     // an ordinary call, same failing fetch
+      console.log(JSON.stringify({ quiet, loud: b.flash }));
+    """)
+    result = json.loads(out)
+    assert result["quiet"] == ""  # switching steps must not shout about it
+    # The suppression is per-call, not a hole in the error path: everything else still says so.
+    assert "no cached results" in result["loud"]
 
 
 def test_field_specs_carry_the_schema_bounds_and_default():

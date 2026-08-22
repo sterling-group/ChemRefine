@@ -460,14 +460,33 @@
                       x-text="'step ' + step.step"></option>
             </template>
           </select>
-          <input type="text" x-model="viewer.structureId" placeholder="structure id (first if blank)">
+          <!-- `list=` rather than a <select>: a dropdown of what the step actually holds,
+               still typable for a tree with hundreds of them. Same idiom as the
+               executables row above. -->
+          <input type="text" x-model="viewer.structureId" list="viewer-structures"
+                 placeholder="structure id (first if blank)">
+          <datalist id="viewer-structures">
+            <template x-for="row in viewer.structures" :key="'sid' + row.id">
+              <option :value="row.id" :label="structureHint(row)"></option>
+            </template>
+          </datalist>
           <input type="text" x-model="viewer.modeIndex" x-show="viewer.step !== 'input'"
-                 placeholder="mode # (animates)">
+                 list="viewer-modes" placeholder="mode # (animates)">
+          <datalist id="viewer-modes">
+            <template x-for="row in modeChoices()" :key="'mode' + row.index">
+              <option :value="row.index" :label="row.label"></option>
+            </template>
+          </datalist>
           <button type="button" @click="showStructure()" :disabled="viewer.busy || !viewer.step">
             Show</button>
         </div>
         <div id="viewer"></div>
         <p class="muted" x-text="viewer.busy ? 'reading…' : viewer.note"></p>
+        <p class="muted" x-show="viewer.step !== 'input' && !modeChoices().length">
+          This step has no frequency data, so it offers no modes. A GOAT search or an MLIP
+          screen computes none; a frequency step cached before ChemRefine kept the whole
+          table needs <code>rebuild-cache</code>.
+        </p>
       </div>
     </div>
 

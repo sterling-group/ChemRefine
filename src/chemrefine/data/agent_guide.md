@@ -59,8 +59,10 @@ reaction coordinate — forming/breaking bonds at the top of `bond_changes` (neg
 rate = forming, positive = breaking). A large imaginary frequency on a methyl rotor is
 the classic false positive. `get_structure` returns the same structure as extended-XYZ
 text — with a mode's displacement columns when you pass `mode_index`, which is what a
-viewer animates. Called with no
-`step` it returns the **input seeds** instead, numbered as the run will number them:
+viewer animates. `list_structures` enumerates first: which ids a step holds and each
+one's modes with their frequencies, so a mode is chosen rather than guessed at.
+Called with no `step` either returns the **input seeds** instead, numbered as the
+run will number them:
 the one way to check what a workflow is about to compute on before starting it.
 Spurious extra imaginary modes: set `nms: true` with
 `options: {target: ts}` — ChemRefine displaces along the spurious modes and reruns

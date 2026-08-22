@@ -143,6 +143,12 @@ Picking a **step** instead draws that step's cached structures, so it has to hav
 which, with **Open…**, is how you compare what went into a finished run with what came
 out of it.
 
+Both boxes are dropdowns you can also type into: they offer what the step actually holds —
+its structure ids, and each one's modes named by frequency, so `-820.4 cm-1 (imaginary)` is
+picked rather than a mode number guessed. A step that computed no frequencies (a GOAT
+search, an MLIP screen) offers no modes and says so. Both lists come from the step cache,
+so they work on a tree copied off a cluster with no output files.
+
 Give it a **mode #** and it animates that normal mode instead of drawing a still: the
 displacement vectors are re-parsed from the structure's own output (the tensor is a
 transient the pipeline displaces along and is deliberately not cached), so this is the

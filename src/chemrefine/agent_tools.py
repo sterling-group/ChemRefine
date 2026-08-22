@@ -42,6 +42,7 @@ from chemrefine.cache import load_failure_records
 from chemrefine.config import Config, StepConfig, load_config
 from chemrefine.engines.api import ParsedResult
 from chemrefine.errors import EXIT_CODES, ConfigError, RunLockError
+from chemrefine.state import Structure
 from chemrefine.validate import validate_config_file, validate_config_text
 
 _ACTIONS = ("run", "resume", "rerun", "rerun-errors", "rebuild-cache", "rebuild-nms")
@@ -660,24 +661,64 @@ def get_structure(
     }
 
 
-def _seed_structure(
-    config: Config, structure_id: str | None, mode_index: int | None
-) -> dict[str, Any]:
-    """One of the input seeds, as :func:`chemrefine.pipeline.bootstrap` will number them.
+def list_structures(config_path: str, step: int | str | None = None) -> dict[str, Any]:
+    """What a step actually holds: every structure id, and the modes each one has.
 
-    Reuses the real seeder rather than re-reading ``input:`` here, so the ids the viewer
-    shows are the ids the run will use — a seed the user inspects as ``2`` is the ``2``
-    that appears in ``steps.csv`` afterwards. It also inherits the seeder's own guards,
-    including the non-finite-coordinate check that exists because a seed is the one
-    geometry no parse boundary ever sees.
+    The enumeration :func:`get_structure` lacks. Without it a caller has to *guess* an id
+    and a mode index and read the refusal to find out it guessed wrong — which is how a
+    mode number that belongs to no structure became a request that could only fail.
+
+    ``step`` of ``None`` means the **input seeds**, as everywhere else here. Seeds have no
+    modes, and a step that computed no frequencies (a GOAT search, an MLIP screen) reports
+    ``modes: {}`` — an empty offering is the honest answer to "which mode?" and stops the
+    question being asked at all.
+
+    Reads the step cache only, never an output file, so it works on a tree copied off a
+    cluster: the ids and the mode table are both persisted. ``modes`` is ``null`` rather
+    than ``{}`` where the frequency table predates being cached — unknown, not empty; see
+    :func:`get_frequencies`.
+    """
+    config = load_config(Path(config_path))
+    if step is None:
+        return {
+            "step": None,
+            "structures": [
+                {"id": s.id, "modes": {}, "imaginary": []} for s in _seeds_for_reading(config)
+            ],
+        }
+    step_cfg = _required_step(config, step)
+    cached = cache.load(config.step_dir(step_cfg))
+    if cached is None:
+        raise ConfigError(
+            f"step {step_cfg.step} has no cached results yet — run it (or rebuild-cache) first"
+        )
+    return {
+        "step": step_cfg.step,
+        "structures": [
+            {
+                "id": s.id,
+                "modes": _mode_payload(s.frequencies),
+                "imaginary": sorted(s.imaginary_freqs or {}),
+            }
+            for s in cached.results.structures
+        ],
+    }
+
+
+def _seeds_for_reading(config: Config) -> tuple[Structure, ...]:
+    """The input seeds, for a caller that is only going to look at them.
+
+    Reuses the real seeder rather than re-reading ``input:``, so the ids shown are the ids
+    the run will use — a seed inspected as ``2`` is the ``2`` that appears in ``steps.csv``
+    afterwards. It also inherits the seeder's own guards, including the non-finite-coordinate
+    check that exists because a seed is the one geometry no parse boundary ever sees.
 
     The SMILES-CSV form of ``input:`` is refused rather than served: seeding from it
     *embeds* the molecules and writes them under ``output_dir/_seed``, and a read has no
-    business doing that — nor importing RDKit to answer a GET. The message says so and
-    names the way round it.
+    business doing that — nor importing RDKit to answer a GET. The message says so and names
+    the way round it. Every read of the seeds comes through here so that refusal cannot be
+    true of one entry point and not the next.
     """
-    if mode_index is not None:
-        raise ConfigError("the input seeds have no normal modes — name a step to animate one")
     # is_dir() first, in bootstrap's order: it takes a directory as a directory whatever it
     # is called, so testing the suffix first refused a folder named `batch.csv` here and
     # seeded it happily there.
@@ -692,8 +733,26 @@ def _seed_structure(
             "they can be drawn — run the workflow, or use build_structures to write .xyz "
             "seeds and point input: at those"
         )
-    seeded = pipeline.bootstrap(config)
-    structures = seeded.structures
+    return pipeline.bootstrap(config).structures
+
+
+def _seed_structure(
+    config: Config, structure_id: str | None, mode_index: int | None
+) -> dict[str, Any]:
+    """One of the input seeds, as :func:`chemrefine.pipeline.bootstrap` will number them.
+
+    Reuses the real seeder rather than re-reading ``input:`` here, so the ids the viewer
+    shows are the ids the run will use — a seed the user inspects as ``2`` is the ``2``
+    that appears in ``steps.csv`` afterwards. It also inherits the seeder's own guards,
+    including the non-finite-coordinate check that exists because a seed is the one
+    geometry no parse boundary ever sees.
+
+    The SMILES-CSV form of ``input:`` is refused rather than served — see
+    :func:`_seeds_for_reading`.
+    """
+    if mode_index is not None:
+        raise ConfigError("the input seeds have no normal modes — name a step to animate one")
+    structures = _seeds_for_reading(config)
     if structure_id is not None:
         structures = tuple(s for s in structures if s.id == structure_id)
         if not structures:
@@ -972,6 +1031,7 @@ TOOLS = (
     get_frequencies,
     analyze_mode,
     get_structure,
+    list_structures,
 )
 """Every tool this module offers, in working-loop order — the one list both harnesses
 register (:mod:`chemrefine.mcp_server` and the embedded agent), living here so neither

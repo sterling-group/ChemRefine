@@ -644,6 +644,64 @@ def test_structure_serves_extended_xyz_for_the_viewer(client: Any, tmp_path: Pat
     assert missing.get_json()["exit_code"] == 2
 
 
+def test_structure_list_offers_what_the_step_holds(client: Any, tmp_path: Path):
+    """What fills the pane's two combo boxes, over the wire.
+
+    Same query-argument shape and the same seeds sentinel as ``/api/structure``: no
+    ``step`` at all asks for the input seeds, because a step may be *named* anything and
+    ``step=input`` would be read as a name.
+    """
+    from ase import Atoms
+
+    from chemrefine import cache as cache_mod
+    from chemrefine.config import load_config
+    from chemrefine.state import StepResults, Structure
+
+    (tmp_path / "seeds.xyz").write_text("1\na\nN 0 0 0\n", encoding="utf-8")
+    config = tmp_path / "input.yaml"
+    config.write_text(
+        yaml.safe_dump({"input": "seeds.xyz", "steps": [{"step": 1, "engine": "fake"}]}), "utf-8"
+    )
+    loaded = load_config(config)
+    step_cfg = loaded.steps[0]
+    cache_mod.save(
+        step_cfg=step_cfg,
+        key=cache_mod.StepKey(parent_ids=(), fingerprint="f"),
+        results=StepResults(
+            structures=(
+                Structure(
+                    id="0",
+                    atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]),
+                    energy_hartree=-1.0,
+                    imaginary_freqs={6: -512.4},
+                    frequencies={6: -512.4, 7: 1103.7},
+                ),
+            )
+        ),
+        step_dir=loaded.step_dir(step_cfg),
+        chemrefine_version="test",
+    )
+
+    served = _get(client, f"/api/structure-list?config_path={config}&step=1")
+    assert served.status_code == 200
+    [row] = served.get_json()["structures"]
+    assert row["id"] == "0"
+    assert row["modes"] == {"6": -512.4, "7": 1103.7}
+    assert row["imaginary"] == [6]
+
+    seeds = _get(client, f"/api/structure-list?config_path={config}")
+    assert seeds.status_code == 200
+    assert seeds.get_json() == {
+        "step": None,
+        "structures": [{"id": "0", "modes": {}, "imaginary": []}],
+    }
+
+    # And a library refusal keeps the documented shape, like every other endpoint here.
+    missing = _get(client, f"/api/structure-list?config_path={config}&step=9")
+    assert missing.status_code == 400
+    assert missing.get_json()["exit_code"] == 2
+
+
 @pytest.mark.parametrize("mode", ["7a", "two", "1.5", " "])
 def test_a_mode_number_that_is_not_one_is_a_400(client: Any, tmp_path: Path, mode: str):
     """The mode box is free text, and a bare ``int()`` on it is a 500.
