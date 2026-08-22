@@ -47,6 +47,10 @@ export CHEMREFINE_HOME=/projects/mygroup/chemrefine   # optional; put it on shar
 chemrefine backends install mlip-mace mlip-fairchem   # once, on the login node
 ```
 
+The [workflow builder](../workflow/builder.md#from-a-cluster) belongs on the login node
+too: `chemrefine gui` there prints the SSH forwarding recipe that puts it in the browser
+on your own machine.
+
 ## Job arrays
 
 `slurm_array: true` submits each step as SLURM job array(s) instead of one job per

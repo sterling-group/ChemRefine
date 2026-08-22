@@ -15,13 +15,51 @@ the resulting input on the right.
 pip install 'chemrefine[gui]'
 chemrefine gui                     # start from scratch
 chemrefine gui input.yaml          # load an existing config into the builder
-chemrefine gui --port 8901 --no-browser   # print the URL instead of opening it
+chemrefine gui --no-browser        # print the URL instead of opening it
 ```
 
-The app binds **127.0.0.1 only**, behind a per-session token carried in the launch URL.
-To use it against a cluster checkout, forward the port over SSH
-(`ssh -L 8901:127.0.0.1:8901 login-node`) and run `chemrefine gui --port 8901
---no-browser` there.
+The app binds **127.0.0.1 only**, behind a per-session token carried in the launch URL —
+by default on a **stable per-user port** (hashed from your username), which is what makes
+the one-time cluster setup below possible.
+
+## From a cluster
+
+The GUI runs where the scheduler and the output tree live — the same rule as
+[the MCP server](agents.md#route-1--your-own-mcp-client) — so install `chemrefine[gui]`
+on the cluster and run `chemrefine gui` inside your SSH session. A login node has no
+browser; the launch detects that and prints the route to yours instead. Two shapes:
+
+- **One-time** — add the two lines the launch prints to `~/.ssh/config` on your own
+  machine:
+
+    ```
+    Host login.hpc.example.edu
+        LocalForward 21244 127.0.0.1:21244
+    ```
+
+    Every future connection to that host then carries the tunnel silently, and the
+    routine becomes: run `chemrefine gui` on the cluster, copy the printed URL, paste it
+    into your local browser. The port is hashed from your username, so it holds still
+    across sessions; if something else already holds it, that launch falls back to a
+    free port and prints an adjusted recipe for the session.
+
+- **Ad-hoc** — `ssh -L 21244:127.0.0.1:21244 login.hpc.example.edu` in a second local
+  terminal, for exactly one session. Also the answer when a *second* concurrent
+  connection with the stanza reports `bind: Address already in use` — a warning, not a
+  failure: that connection works, it just carries no tunnel of its own.
+
+Any local machine qualifies — the requirements are an SSH client and a browser. Linux
+and macOS terminals and Windows PowerShell run exactly the commands above (Windows 10+
+ships OpenSSH; the config file is `C:\Users\<you>\.ssh\config`). **VS Code Remote-SSH**
+needs none of it, on any OS: it auto-forwards the port and makes the printed URL
+clickable. MobaXterm (*Tunneling* tab) and PuTTY (*Connection → SSH → Tunnels*) store
+the same forward in their session settings. OpenSSH can even add a forward to a live
+connection (press Enter, type `~C`, then `-L 21244:127.0.0.1:21244`) — though OpenSSH
+≥ 9.2 keeps that command line disabled unless `EnableEscapeCommandline yes` is set.
+
+Always paste the URL the **current** launch printed: yesterday's URL reaches today's
+server on the same stable port, but its token died with its session, so the page
+reports a stale token — that is the gate working, not the tunnel failing.
 
 ## What the builder knows
 

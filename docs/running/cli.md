@@ -39,7 +39,8 @@ A first run usually goes: `chemrefine validate input.yaml` → `chemrefine scaff
 input.yaml` → edit the starters → `chemrefine run input.yaml`.
 
 Two more entry points build on the same tooling: [`chemrefine gui`](../workflow/builder.md) (the
-click-through workflow builder) and [`chemrefine mcp`](../workflow/agents.md) (the tool server for AI
+click-through workflow builder — [from a cluster](../workflow/builder.md#from-a-cluster) it prints
+its own SSH forwarding recipe) and [`chemrefine mcp`](../workflow/agents.md) (the tool server for AI
 agents).
 
 ## Backend environments (`chemrefine backends`)

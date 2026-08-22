@@ -51,10 +51,14 @@ more consequential one: `/api/save` writes a file at a path the request names an
 `/api/run` launches a detached pipeline. It is defended the same way, for the same
 reason — loopback on a shared node is not access control.
 
-- It binds **loopback only** (`127.0.0.1`) on a **kernel-assigned port** by
-  default (`--port 0`); the effective port is read back off the bound socket. Reach
-  it on a cluster with SSH port forwarding, not by binding wider — there is no flag
-  to bind wider.
+- It binds **loopback only** (`127.0.0.1`), by default on a **stable per-user port**
+  hashed from the username (kernel-assigned when that one is taken; `--port 0` asks
+  for a kernel port outright); the socket is bound first and the effective port read
+  back off it. The predictable port is not a weakening: loopback ports are enumerable
+  by any local user regardless, so the token below is the access control and the
+  port number never was — what stability buys is an SSH forwarding setup written
+  once. Reach it on a cluster with SSH port forwarding, not by binding wider — there
+  is no flag to bind wider.
 - Every `/api/*` request must carry a **per-session token**
   (`secrets.token_urlsafe(16)`), rejected in a `before_request` gate before any
   handler runs, and compared with `secrets.compare_digest` on the **encoded
