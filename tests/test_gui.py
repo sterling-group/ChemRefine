@@ -283,6 +283,21 @@ def test_library_errors_carry_the_exit_code_shape(client: Any, tmp_path: Path):
     assert body["exit_code"] == 2
 
 
+@pytest.mark.parametrize("step", ["²", "①"])
+def test_a_digit_that_is_not_a_number_is_still_a_400(client: Any, tmp_path: Path, step: str):
+    """``"²".isdigit()`` is True and ``int("²")`` raises — so the guard let one through.
+
+    The selector was routed to ``int()`` by ``isdigit``, which accepts the Unicode ``No``
+    category ``int`` rejects. The bare ``ValueError`` is neither an ``HTTPException`` nor
+    a ``ChemRefineError``, so the error handler re-raised it: a 500 and a logged traceback
+    where every other unusable selector is the documented 400.
+    """
+    config = _saved_config(tmp_path)
+    response = _get(client, f"/api/template?config_path={config}&step={step}")
+    assert response.status_code == 400
+    assert "no step matches" in response.get_json()["error"]
+
+
 # ---------------------------------------------------------------------------
 # Run dashboard endpoints — thin over agent_tools, against pipeline-writer fixtures
 # ---------------------------------------------------------------------------

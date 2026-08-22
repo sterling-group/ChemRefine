@@ -311,10 +311,17 @@ class StepConfig(BaseModel):
         return f"step{self.step}_{self.name}" if self.name else f"step{self.step}"
 
     def matches(self, key: str | int) -> bool:
-        """Return True if ``key`` (a CLI argument) targets this step."""
+        """Return True if ``key`` (a CLI argument) targets this step.
+
+        ``isdecimal``, not ``isdigit``: the two disagree on the Unicode ``No`` category —
+        ``"²".isdigit()`` is ``True`` and ``int("²")`` raises — and this predicate exists
+        only to guard that ``int``. A target of ``"²"`` from the CLI, an agent's
+        ``start_run`` or the GUI therefore left a raw ``ValueError``, past the module's
+        contract that every failure is a ``ChemRefineError`` carrying an exit code.
+        """
         if isinstance(key, int):
             return key == self.step
-        if key.isdigit():
+        if key.isdecimal():
             return int(key) == self.step
         return key == self.name
 

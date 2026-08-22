@@ -366,9 +366,15 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
 
 
 def _step_key(value: str | int) -> int | str:
-    """A step selector from the wire: digits mean the step number, anything else a name."""
+    """A step selector from the wire: digits mean the step number, anything else a name.
+
+    ``isdecimal``, not ``isdigit``, and for the reason ``StepConfig.matches`` uses it:
+    ``isdigit`` accepts the Unicode ``No`` category that ``int`` rejects, so ``step=²``
+    raised a bare ``ValueError`` here — a 500 with a traceback out of the handler, where
+    every other bad selector is the documented ``{error, exit_code}`` 400.
+    """
     text = str(value)
-    return int(text) if text.isdigit() else text
+    return int(text) if text.isdecimal() else text
 
 
 def _canonical_order(raw: Any) -> Any:

@@ -222,6 +222,13 @@ def test_find_step_by_number_and_name():
     assert cfg.find_step("2") is cfg.steps[1]
     assert cfg.find_step("refine") is cfg.steps[1]
     assert cfg.find_step("missing") is None
+    # `"²".isdigit()` is True and `int("²")` raises, so the old guard routed this into a
+    # bare ValueError — out through `start_run` and the GUI past the contract that every
+    # failure is a ChemRefineError with an exit code. It is simply not a step name.
+    assert cfg.find_step("²") is None
+    # Unicode decimals that `int` *does* accept still resolve, which is why the predicate
+    # is `isdecimal` rather than an ASCII test.
+    assert cfg.find_step("٢") is cfg.steps[1]
 
 
 # ---------------------------------------------------------------------------
