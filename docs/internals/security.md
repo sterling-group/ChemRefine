@@ -48,7 +48,8 @@ user on that node, so binding locally is not by itself access control.
 
 `chemrefine gui` starts the **second** server this package can run, and it is the
 more consequential one: `/api/save` writes a file at a path the request names,
-`/api/load` reads one back, and `/api/run` launches a detached pipeline. It is
+`/api/load` and `/api/structure` read from the tree, and `/api/run` launches a
+detached pipeline. It is
 defended the same way, for the same reason — loopback on a shared node is not
 access control.
 

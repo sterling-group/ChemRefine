@@ -168,7 +168,16 @@ def _node_or_skip(purpose: str) -> str:
     pytest.skip(message)
 
 
-@pytest.mark.parametrize("filename", [*OURS, "vendor/alpine.min.js", "vendor/js-yaml.min.js"])
+VENDORED = tuple(sorted(f"vendor/{p.name}" for p in (STATIC / "vendor").glob("*.js")))
+"""Every vendored bundle, from the directory rather than from a hand-kept list.
+
+The list used to be written out here, which meant a newly vendored bundle was not
+parse-checked until someone remembered to add it — and per this test's own docstring, that
+check is the only thing distinguishing a truncated download from a working one. Reading the
+directory makes forgetting impossible; the assertion below keeps the glob honest."""
+
+
+@pytest.mark.parametrize("filename", [*OURS, *VENDORED])
 def test_the_javascript_parses(filename: str):
     """A syntax error here blanks the entire GUI — no button, no pane, no message.
 
@@ -180,6 +189,21 @@ def test_the_javascript_parses(filename: str):
         [node, "--check", str(STATIC / filename)], capture_output=True, text=True, check=False
     )
     assert result.returncode == 0, f"{filename} does not parse:\n{result.stderr}"
+
+
+def test_every_vendored_bundle_is_found_and_licensed():
+    """The glob must actually find things, and each bundle must ship its licence.
+
+    A glob that silently matches nothing would turn the parse check above into zero cases
+    while pytest still reported them as passing. And a vendored bundle without its licence
+    text is a redistribution problem, not a style one — the two existing pairs set the
+    convention (``ALPINE-LICENSE.md``, ``JS-YAML-LICENSE``: the extension tracks upstream).
+    """
+    assert len(VENDORED) >= 3, f"the vendor glob found {VENDORED} — has the directory moved?"
+    licences = [p.name for p in (STATIC / "vendor").iterdir() if "LICENSE" in p.name.upper()]
+    assert len(licences) == len(VENDORED), (
+        f"{len(VENDORED)} bundles but {len(licences)} licence files: {sorted(licences)}"
+    )
 
 
 def test_every_handler_the_page_calls_exists():

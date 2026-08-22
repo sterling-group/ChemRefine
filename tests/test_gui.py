@@ -598,6 +598,52 @@ def test_the_agent_is_told_about_the_file_the_builder_has_open(
     assert str(launched) in seen[-1]
 
 
+def test_structure_serves_extended_xyz_for_the_viewer(client: Any, tmp_path: Path):
+    """The Molecule pane's data source, as query arguments rather than a path segment.
+
+    ``test_every_route_is_behind_the_gate`` refuses a parameterized rule, because one
+    cannot be probed for the token gate by enumeration — so ``/api/structure/<step>``
+    would fail the suite outright.
+    """
+    from ase import Atoms
+
+    from chemrefine import cache as cache_mod
+    from chemrefine.config import load_config
+    from chemrefine.state import StepResults, Structure
+
+    config = tmp_path / "input.yaml"
+    config.write_text(yaml.safe_dump({"steps": [{"step": 1, "engine": "fake"}]}), "utf-8")
+    loaded = load_config(config)
+    step_cfg = loaded.steps[0]
+    cache_mod.save(
+        step_cfg=step_cfg,
+        key=cache_mod.StepKey(parent_ids=(), fingerprint="f"),
+        results=StepResults(
+            structures=(
+                Structure(
+                    id="0",
+                    atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]),
+                    energy_hartree=-1.0,
+                ),
+            )
+        ),
+        step_dir=loaded.step_dir(step_cfg),
+        chemrefine_version="test",
+    )
+
+    served = _get(client, f"/api/structure?config_path={config}&step=1")
+    assert served.status_code == 200
+    body = served.get_json()
+    assert body["format"] == "extxyz"
+    assert body["structure_id"] == "0"
+    assert body["text"].splitlines()[0] == "2"
+
+    # A library refusal keeps the documented shape, like every other endpoint here.
+    missing = _get(client, f"/api/structure?config_path={config}&step=9")
+    assert missing.status_code == 400
+    assert missing.get_json()["exit_code"] == 2
+
+
 def test_check_answers_a_verdict_never_an_error(client: Any, monkeypatch: pytest.MonkeyPatch):
     """An unreachable endpoint is this endpoint's *answer*, not its failure.
 

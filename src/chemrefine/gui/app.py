@@ -236,6 +236,27 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
             )
         )
 
+    @app.get("/api/structure")
+    def structure() -> Any:
+        """One cached structure as extended-XYZ, for the Molecule pane.
+
+        Query arguments, not a path segment: ``test_every_route_is_behind_the_gate`` walks
+        the url_map and refuses a parameterized rule, because one cannot be probed for the
+        token gate by enumeration.
+
+        ``mode_index`` asks for the structure *with* a normal mode's displacement columns,
+        which is what the viewer animates.
+        """
+        mode = request.args.get("mode_index")
+        return jsonify(
+            agent_tools.get_structure(
+                request.args["config_path"],
+                _step_key(request.args["step"]),
+                structure_id=request.args.get("structure_id"),
+                mode_index=int(mode) if mode not in (None, "") else None,
+            )
+        )
+
     @app.post("/api/summary")
     def summary() -> Any:
         """The dry-run-style execution summary for a saved config."""

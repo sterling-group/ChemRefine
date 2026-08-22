@@ -80,6 +80,9 @@ function builder() {
       onPick: null,
     },
     tmpl: { open: false, step: null, path: "", text: "" },
+    mol: { step: "", structureId: "", modeIndex: "", busy: false, note: "", animating: false },
+    _viewer: null,
+    _viewerLib: null, // the in-flight or settled load of the vendored bundle
     _timer: null,
 
     // ---------------- boot ----------------
@@ -592,6 +595,85 @@ function builder() {
       // so anything destructive in here becomes a per-click side effect — which is why
       // arming lives in armCheck(), driven by settings changes rather than by visibility.
       if (side === "left" && id === "agent") this.chatAvailability();
+      // Mounted here rather than at init(), and this is not a preference. 3Dmol sizes its
+      // canvas from the container's offsetWidth, and compensates for a hidden one only
+      // when the *container's own* inline display is "none" — but x-show sets that on the
+      // panel, so a viewer built while its tab is inactive reads 0 and stays 0.
+      if (side === "right" && id === "molecule") this.mountViewer();
+    },
+
+    // ---------------- structure viewer ----------------
+    // Loaded on first use, never at boot: the bundle is six times the rest of the
+    // frontend put together, and someone who never opens this tab never pays for it. The
+    // promise is cached, so two fast clicks inject one script tag.
+    loadViewerLib() {
+      if (!this._viewerLib) {
+        this._viewerLib = new Promise((resolve, reject) => {
+          if (window.$3Dmol) return resolve(window.$3Dmol);
+          const tag = document.createElement("script");
+          tag.src = "static/vendor/3dmol.min.js"; // relative, like every other asset here
+          tag.onload = () => resolve(window.$3Dmol);
+          tag.onerror = () => reject(new Error("could not load the 3Dmol bundle"));
+          document.head.appendChild(tag);
+        });
+      }
+      return this._viewerLib;
+    },
+    async mountViewer() {
+      if (this.staticMode) return; // the playground has no server to ask for geometry
+      try {
+        const lib = await this.loadViewerLib();
+        const host = document.getElementById("viewer");
+        if (!lib || !host) return;
+        if (!this._viewer) {
+          this._viewer = lib.createViewer(host, { backgroundColor: "white" });
+        }
+        // Both paths, every time: a viewer built while the tab was hidden still has to be
+        // told the container has a size now.
+        this._viewer.resize();
+        this._viewer.render();
+      } catch (err) {
+        // createViewer throws a bare string on a WebGL failure, not an Error.
+        this.mol.note = `the 3D viewer could not start: ${err.message || err}`;
+      }
+    },
+    async showStructure() {
+      if (this.staticMode) {
+        this.flash = "the structure view needs the local chemrefine gui";
+        return;
+      }
+      if (!this.savedPath || !this.mol.step) return;
+      this.mol.busy = true;
+      this.mol.note = "";
+      try {
+        const query = new URLSearchParams({ config_path: this.savedPath, step: this.mol.step });
+        if (this.mol.structureId) query.set("structure_id", this.mol.structureId);
+        if (this.mol.modeIndex !== "") query.set("mode_index", this.mol.modeIndex);
+        const data = await this.api("GET", `/api/structure?${query}`);
+        if (!data) return; // flash carries the reason
+        await this.mountViewer();
+        if (!this._viewer) return;
+        this._viewer.removeAllModels();
+        const model = this._viewer.addModel(data.text, "xyz");
+        this._viewer.setStyle({}, { stick: { radius: 0.12 }, sphere: { scale: 0.25 } });
+        // Extended XYZ carries the cell as Lattice="…" when the structure has one, and
+        // 3Dmol turns that into crystal data — so this draws a box for a periodic
+        // structure and nothing for a molecule, with no branch of our own.
+        this._viewer.addUnitCell(model);
+        this._viewer.zoomTo();
+        this.mol.animating = this.mol.modeIndex !== "";
+        if (this.mol.animating) {
+          // The same extended-XYZ file carries three displacement columns per atom, which
+          // is what 3Dmol reads as dx/dy/dz; vibrate() only builds the frames, animate()
+          // plays them.
+          model.vibrate(10, 1, true);
+          this._viewer.animate({ loop: "backAndForth", interval: 60 });
+        }
+        this._viewer.render();
+        this.mol.note = `step ${data.step} · ${data.structure_id}`;
+      } finally {
+        this.mol.busy = false;
+      }
     },
 
     // ---------------- agent chat ----------------

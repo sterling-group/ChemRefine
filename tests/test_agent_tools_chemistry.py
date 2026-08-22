@@ -275,6 +275,103 @@ def test_a_negative_top_atoms_is_no_atoms_never_all_but_some(
     assert len(result["top_atoms"]) == expected
 
 
+def test_get_structure_returns_extended_xyz_from_the_cache(tmp_path: Path):
+    """Geometry out of the step cache, in the one format that carries everything.
+
+    Extended XYZ because the same text has to serve three cases the viewer cannot tell
+    apart in advance: a molecule, a periodic cell (``Lattice="…"``), and a normal mode
+    (three more columns per atom). Nothing here needs an output file — symbols and
+    positions are persisted with every parsed structure.
+    """
+    path = _cache_step(tmp_path, (_structure("0", {}), _structure("1", {})))
+    result = agent_tools.get_structure(str(path), 1)
+    assert result["format"] == "extxyz"
+    assert result["structure_id"] == "0"  # the first, with no id asked for
+    lines = result["text"].splitlines()
+    assert lines[0] == "2"  # the H2 the fixture caches
+    assert "Properties=species:S:1:pos:R:3" in lines[1]
+    assert len(lines[2].split()) == 4  # symbol + xyz, no displacement columns
+
+    assert agent_tools.get_structure(str(path), 1, structure_id="1")["structure_id"] == "1"
+    with pytest.raises(ConfigError, match="no structure '9'"):
+        agent_tools.get_structure(str(path), 1, structure_id="9")
+
+
+def test_get_structure_without_a_cache_says_run_first(tmp_path: Path):
+    with pytest.raises(ConfigError, match="run it"):
+        agent_tools.get_structure(str(_write_config(tmp_path)), 1)
+
+
+def test_get_structure_on_a_step_that_kept_nothing(tmp_path: Path):
+    """A cache with no survivors is not the same as no cache, and says so differently.
+
+    A filter can leave a step with zero structures — that ran, and it kept nothing.
+    Telling the caller to run it again would send them round a loop that changes nothing.
+    """
+    path = _cache_step(tmp_path, ())
+    with pytest.raises(ConfigError, match="cached no structures"):
+        agent_tools.get_structure(str(path), 1)
+
+
+def test_a_displacement_array_must_match_the_atom_count(tmp_path: Path):
+    """One 3-vector per atom, or the writer refuses rather than mis-pairing them.
+
+    ase would happily attach a shorter array and raise something obscure later, or pair
+    displacements with the wrong atoms — the failure this exists to make loud.
+    """
+    import numpy as np
+
+    from chemrefine import io as crio
+
+    water = Atoms("H2O", positions=[[0, 0, 0], [0.76, 0.59, 0], [-0.76, 0.59, 0]])
+    with pytest.raises(ValueError, match="one 3-vector per atom"):
+        crio.extended_xyz_text(water, displacements=np.zeros((2, 3)))
+
+
+def test_a_periodic_structure_carries_its_cell(tmp_path: Path):
+    """The condensed-matter path, such as it is today.
+
+    ChemRefine's own pipeline is molecular — nothing in it sets a cell, and the step cache
+    does not round-trip one — so this asserts the *writer* rather than a cached structure:
+    when a structure does have a cell, the text says so, and that is the whole of what the
+    viewer needs to draw a box.
+    """
+    from ase import Atoms
+
+    from chemrefine import io as crio
+
+    periodic = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]], cell=[5, 5, 5], pbc=True)
+    text = crio.extended_xyz_text(periodic)
+    assert 'Lattice="5.0 0.0 0.0 0.0 5.0 0.0 0.0 0.0 5.0"' in text
+    assert 'pbc="T T T"' in text
+    # A molecule says so just as explicitly, rather than omitting the key.
+    assert 'pbc="F F F"' in crio.extended_xyz_text(Atoms("H", positions=[[0, 0, 0]]))
+
+
+def test_get_structure_with_a_mode_carries_displacement_columns(tmp_path: Path):
+    """The animated normal mode: seven columns, which is what 3Dmol reads as dx/dy/dz.
+
+    The tensor is deliberately not cached — it is a transient the pipeline displaces
+    along — so this re-parses the recorded output exactly as ``analyze_mode`` does, and
+    the two share one frame helper so they cannot disagree about which frame they mean.
+    """
+    path = _freq_tree(tmp_path)
+    result = agent_tools.get_structure(str(path), 1, structure_id="0", mode_index=6)
+    lines = result["text"].splitlines()
+    assert "displacement:R:3" in lines[1]
+    assert len(lines[2].split()) == 7
+    assert result["mode_index"] == 6
+
+    # The same range check analyze_mode applies, from the same helper.
+    with pytest.raises(ConfigError, match="out of range"):
+        agent_tools.get_structure(str(path), 1, structure_id="0", mode_index=99)
+
+    # A mode belongs to one structure, so asking for one without saying which is a
+    # refusal rather than a guess at the first.
+    with pytest.raises(ConfigError, match="needs a structure_id"):
+        agent_tools.get_structure(str(path), 1, mode_index=6)
+
+
 def test_analyze_mode_speaks_qchem_too(tmp_path: Path):
     """The Q-Chem branch re-parses with Q-Chem's own parser; a minimum's mode is real."""
     path = _write_config(tmp_path, {"step": 1, "engine": "qchem"})

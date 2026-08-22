@@ -105,6 +105,42 @@ def _xyz_frame_lines(atoms: Atoms, comment: str) -> list[str]:
     return lines
 
 
+def extended_xyz_text(atoms: Atoms, *, displacements: NDArray[np.float64] | None = None) -> str:
+    """One structure as extended-XYZ text, optionally carrying a per-atom displacement.
+
+    Extended XYZ rather than the plain frame above, because it is the one format that
+    carries all three things a viewer needs and does it in columns anything can read: the
+    geometry, the cell as ``Lattice="…"`` when the structure has one, and — with
+    ``displacements`` — three more columns per atom. ASE writes it; the GUI's viewer reads
+    the same file for a molecule, for a periodic cell, and for an animated normal mode,
+    which is why this is a text format and not a JSON payload of our own design.
+
+    ``displacements`` must be one 3-vector per atom, in the same order — a normal mode's
+    column out of the ``(n_atoms, 3, n_modes)`` tensor, typically.
+    """
+    import io as _io
+
+    from ase.io import write
+
+    payload = atoms
+    columns = ["symbols", "positions"]
+    if displacements is not None:
+        vectors = np.asarray(displacements, dtype=float)
+        if vectors.shape != (len(atoms), 3):
+            raise ValueError(
+                f"displacements must be one 3-vector per atom: got {vectors.shape}, "
+                f"expected {(len(atoms), 3)}"
+            )
+        # A copy, so attaching the array for a render cannot mutate a caller's structure —
+        # these come out of the step cache, which other readers share.
+        payload = atoms.copy()
+        payload.new_array("displacement", vectors)
+        columns = [*columns, "displacement"]
+    buffer = _io.StringIO()
+    write(buffer, payload, format="extxyz", columns=columns)
+    return buffer.getvalue()
+
+
 def write_single_xyz(geometry: Atoms | CoordList, path: str | Path, *, comment: str = "") -> Path:
     """Write one geometry to ``path`` as plain XYZ; return ``path``.
 

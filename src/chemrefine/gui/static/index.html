@@ -436,7 +436,30 @@
     <!-- Placeholder until the structure viewer lands; a deliberate note rather than a
          dead button, because no endpoint serves geometry yet. -->
     <div x-show="tabs.right === 'molecule'" style="display:none">
-      <p class="muted">A 3D view of the seeds and of each step's structures is coming here.</p>
+      <p class="muted" x-show="staticMode">
+        The 3D view reads structures from the run tree, so it needs the local
+        <code>chemrefine gui</code>.
+      </p>
+      <p class="muted" x-show="!staticMode && !savedPath">
+        Save the workflow first — structures are read from its output tree.
+      </p>
+      <div x-show="!staticMode && savedPath">
+        <div class="row">
+          <select x-model="mol.step">
+            <option value="">step…</option>
+            <template x-for="step in cfg.steps" :key="'mol' + step.step">
+              <option :value="step.step" :selected="String(step.step) === String(mol.step)"
+                      x-text="step.step"></option>
+            </template>
+          </select>
+          <input type="text" x-model="mol.structureId" placeholder="structure id (first if blank)">
+          <input type="text" x-model="mol.modeIndex" placeholder="mode # (animates)">
+          <button type="button" @click="showStructure()" :disabled="mol.busy || !mol.step">
+            Show</button>
+        </div>
+        <div id="viewer"></div>
+        <p class="muted" x-text="mol.busy ? 'reading…' : mol.note"></p>
+      </div>
     </div>
 
     <!-- Run dashboard and validation report sit BELOW both panels, not inside either:

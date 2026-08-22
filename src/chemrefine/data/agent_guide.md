@@ -57,7 +57,10 @@ before trusting**: `get_frequencies` must show *exactly one* imaginary mode
 `analyze_mode` on that mode must show the displacement concentrated on the intended
 reaction coordinate — forming/breaking bonds at the top of `bond_changes` (negative
 rate = forming, positive = breaking). A large imaginary frequency on a methyl rotor is
-the classic false positive. Spurious extra imaginary modes: set `nms: true` with
+the classic false positive. `get_structure` returns the same structure as extended-XYZ
+text — with the cell as `Lattice="…"` if it has one, and with a mode's displacement
+columns when you pass `mode_index`, which is what a viewer animates.
+Spurious extra imaginary modes: set `nms: true` with
 `options: {target: ts}` — ChemRefine displaces along the spurious modes and reruns
 until the count is verified, mechanically.
 

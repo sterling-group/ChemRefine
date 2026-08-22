@@ -123,6 +123,27 @@ Once a config is saved (local GUI only — the playground stays build-and-copy),
 - The **results table** pages through `steps.csv` for a chosen step — energies,
   ΔE, and Boltzmann weights exactly as the pipeline reported them.
 
+## The Molecule pane
+
+The right column's **Molecule** tab draws a step's cached structures — pick the step, and
+a structure id if you want one other than the first. Structures come from the step cache,
+so a step has to have run.
+
+Give it a **mode #** and it animates that normal mode instead of drawing a still: the
+displacement vectors are re-parsed from the structure's own output (the tensor is a
+transient the pipeline displaces along and is deliberately not cached), so this is the
+picture that goes with `analyze_mode`'s numbers — is the imaginary mode the reaction
+coordinate, or a methyl rotor.
+
+Structures are served as extended XYZ, which carries a `Lattice="…"` line for a structure
+with a cell; the viewer draws the box when one is there. ChemRefine's own pipeline is
+molecular today — nothing in it sets a cell — so that path is groundwork rather than a
+feature you can use yet.
+
+The viewer is [3Dmol.js](https://3dmol.csb.pitt.edu/) (BSD-3), vendored under
+`static/vendor/` and loaded the first time you open the tab, so a session that never
+opens it never downloads it.
+
 ## The Agent chat panel
 
 With the `[agent]` extra installed, the left column's **Agent** tab holds the

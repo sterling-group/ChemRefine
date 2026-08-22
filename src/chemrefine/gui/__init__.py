@@ -19,4 +19,5 @@ what makes the CLI's ``except ImportError`` guard fire on a missing extra.
 from pathlib import Path
 
 STATIC_DIR = Path(__file__).parent / "static"
-"""The vendored frontend: ``index.html``, the two scripts, the stylesheet, the vendor bundle."""
+"""The vendored frontend: ``index.html``, the two scripts, the stylesheet, and the
+vendored bundles under ``vendor/`` (Alpine, js-yaml, 3Dmol), each beside its licence."""

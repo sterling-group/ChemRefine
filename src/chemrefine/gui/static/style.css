@@ -207,6 +207,19 @@ h3 {
   font-style: italic;
 }
 
+/* The 3D viewer's box. Viewport-relative like its neighbours (#yaml 52vh, #chatlog
+   34vh, #report 24vh) rather than a pixel height: #right is sticky inside a flex main
+   with no @media rules at all, so a fixed canvas is the one thing that would not give. */
+#viewer {
+  position: relative; /* 3Dmol absolutely-positions its canvas inside this */
+  width: 100%;
+  height: 48vh;
+  min-height: 260px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
 /* Tab strips. There was no selected-state affordance anywhere in this sheet before —
    no .active, no [aria-selected] — so this is the whole vocabulary for one. Built on
    button.mini's borderless base rather than on a new element: a tab IS a button here,

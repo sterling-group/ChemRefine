@@ -572,6 +572,107 @@ def get_frequencies(
     }
 
 
+def get_structure(
+    config_path: str,
+    step: int | str,
+    structure_id: str | None = None,
+    mode_index: int | None = None,
+) -> dict[str, Any]:
+    """One cached structure as extended-XYZ text — geometry, cell, and optionally a mode.
+
+    The geometry half of :func:`get_frequencies`, reading the same step cache: symbols and
+    positions are persisted with every parsed structure, so this needs no output file.
+    Extended XYZ because it carries the cell as ``Lattice="…"`` for a periodic structure
+    and three displacement columns for a mode, in one text format a viewer can read
+    directly — see :func:`chemrefine.io.extended_xyz_text`.
+
+    ``mode_index`` animates rather than describes: it re-parses the structure's output for
+    the normal-mode tensor, exactly as :func:`analyze_mode` does and for the same reason —
+    the tensor is a transient the pipeline displaces along and is deliberately not cached
+    (see :mod:`chemrefine.cache`). Without it, only the cache is touched.
+    """
+    config = load_config(Path(config_path))
+    step_cfg = _required_step(config, step)
+    if mode_index is not None:
+        # Geometry AND displacement from the same parsed frame, never one of each: the
+        # cache is a separate source with its own ordering, and a mode drawn onto
+        # positions it was not computed for is a picture of the wrong molecule moving.
+        # It is also what lets this work on a tree whose cache was rebuilt away.
+        if structure_id is None:
+            raise ConfigError("mode_index needs a structure_id — a mode belongs to one structure")
+        from ase import Atoms  # deferred like every other ase import in this module
+
+        frame = _mode_frame(config, step_cfg, structure_id)
+        displacements = _mode_displacements(frame, mode_index)
+        atoms = Atoms(symbols=list(frame.symbols), positions=np.asarray(frame.positions))
+        return {
+            "step": step_cfg.step,
+            "structure_id": structure_id,
+            "mode_index": mode_index,
+            "format": "extxyz",
+            "text": io.extended_xyz_text(atoms, displacements=displacements),
+        }
+    cached = cache.load(config.step_dir(step_cfg))
+    if cached is None:
+        raise ConfigError(
+            f"step {step_cfg.step} has no cached results yet — run it (or rebuild-cache) first"
+        )
+    structures = cached.results.structures
+    if structure_id is not None:
+        structures = tuple(s for s in structures if s.id == structure_id)
+        if not structures:
+            raise ConfigError(f"no structure {structure_id!r} in step {step_cfg.step}'s cache")
+    if not structures:
+        raise ConfigError(f"step {step_cfg.step} cached no structures")
+    chosen = structures[0]
+    return {
+        "step": step_cfg.step,
+        "structure_id": chosen.id,
+        "mode_index": None,
+        "format": "extxyz",
+        "text": io.extended_xyz_text(chosen.atoms),
+    }
+
+
+def _mode_displacements(frame: ParsedResult, mode_index: int) -> NDArray[np.float64]:
+    """One normal mode's per-atom displacement, out of a frame's ``(n, 3, modes)`` tensor.
+
+    Takes the frame rather than fetching one, so a caller that already has it — both of
+    them do — does not parse the output file a second time to ask about the same mode.
+    """
+    modes = cast("NDArray[np.float64]", frame.normal_modes)
+    n_modes = modes.shape[2]
+    if not 0 <= mode_index < n_modes:
+        raise ConfigError(f"mode_index {mode_index} out of range (0..{n_modes - 1})")
+    return modes[:, :, mode_index]
+
+
+def _mode_frame(config: Config, step_cfg: StepConfig, structure_id: str) -> ParsedResult:
+    """The parsed frame carrying a normal-mode tensor, or the reason there is none.
+
+    Shared by :func:`analyze_mode` and :func:`get_structure` — one describes the mode and
+    the other draws it, and they must agree about which frame they are talking about.
+    """
+    step_dir = config.step_dir(step_cfg)
+    manifest = cache.load_manifest(step_dir)
+    if manifest is None:
+        raise ConfigError(f"step {step_cfg.step} has no manifest — it has not run here")
+    output = next((out for _inp, out, sid in manifest.files if sid == structure_id), None)
+    if output is None:
+        raise ConfigError(f"no structure {structure_id!r} in step {step_cfg.step}'s manifest")
+    if not output.is_file():
+        raise ConfigError(f"output {output} no longer exists; rerun the step to regenerate it")
+    frame = next(
+        (f for f in _parse_output_frames(step_cfg.engine, output) if f.normal_modes is not None),
+        None,
+    )
+    if frame is None:
+        raise ConfigError(
+            f"{output} carries no normal-mode tensor — was this a frequency calculation?"
+        )
+    return frame
+
+
 def _parse_output_frames(engine_name: str, output: Path) -> list[ParsedResult]:
     """Re-parse one output file with the engine family's own parser.
 
@@ -616,29 +717,8 @@ def analyze_mode(
     """
     config = load_config(Path(config_path))
     step_cfg = _required_step(config, step)
-    step_dir = config.step_dir(step_cfg)
-    manifest = cache.load_manifest(step_dir)
-    if manifest is None:
-        raise ConfigError(f"step {step_cfg.step} has no manifest — it has not run here")
-    output = next((out for _inp, out, sid in manifest.files if sid == structure_id), None)
-    if output is None:
-        raise ConfigError(f"no structure {structure_id!r} in step {step_cfg.step}'s manifest")
-    if not output.is_file():
-        raise ConfigError(f"output {output} no longer exists; rerun the step to regenerate it")
-    frame = next(
-        (f for f in _parse_output_frames(step_cfg.engine, output) if f.normal_modes is not None),
-        None,
-    )
-    if frame is None:
-        raise ConfigError(
-            f"{output} carries no normal-mode tensor — was this a frequency calculation?"
-        )
-    # The generator above filtered on it; cast() states the invariant mypy cannot see.
-    modes = cast("NDArray[np.float64]", frame.normal_modes)
-    n_modes = modes.shape[2]
-    if not 0 <= mode_index < n_modes:
-        raise ConfigError(f"mode_index {mode_index} out of range (0..{n_modes - 1})")
-    displacement = modes[:, :, mode_index]
+    frame = _mode_frame(config, step_cfg, structure_id)
+    displacement = _mode_displacements(frame, mode_index)
     norms = np.linalg.norm(displacement, axis=1)
     total = float(norms.sum()) or 1.0
     leaders = np.argsort(norms)[::-1][: max(0, top_atoms)]
@@ -774,6 +854,7 @@ TOOLS = (
     build_structures,
     get_frequencies,
     analyze_mode,
+    get_structure,
 )
 """Every tool this module offers, in working-loop order — the one list both harnesses
 register (:mod:`chemrefine.mcp_server` and the embedded agent), living here so neither
