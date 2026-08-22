@@ -25,7 +25,7 @@ the one-time cluster setup below possible.
 ## From a cluster
 
 The GUI runs where the scheduler and the output tree live — the same rule as
-[the MCP server](agents.md#route-1--your-own-mcp-client) — so install `chemrefine[gui]`
+[the MCP server](agents.md#route-1-your-own-mcp-client) — so install `chemrefine[gui]`
 on the cluster and run `chemrefine gui` inside your SSH session. A login node has no
 browser; the launch detects that and prints the route to yours instead. Two shapes:
 
