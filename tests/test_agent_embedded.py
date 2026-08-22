@@ -62,6 +62,18 @@ def test_provider_refusals_name_the_fix(monkeypatch: pytest.MonkeyPatch):
         ProviderConfig.resolve("custom")
 
 
+def test_resolve_refuses_a_non_http_base_url(monkeypatch: pytest.MonkeyPatch):
+    """The one resolver every caller shares refuses odd schemes before a key rides them.
+
+    The GUI's chat endpoint feeds a request-supplied base URL into resolve, where it is
+    paired with ``CHEMREFINE_LLM_API_KEY`` — the refusal has to live here, not only in
+    the ``--check`` preflight.
+    """
+    monkeypatch.delenv("CHEMREFINE_LLM_BASE_URL", raising=False)
+    with pytest.raises(ConfigError, match="not HTTP"):
+        ProviderConfig.resolve("custom", model="m", base_url="ftp://somewhere/v1")
+
+
 def test_build_model_pins_an_endpoint_or_passes_the_string_through(
     monkeypatch: pytest.MonkeyPatch,
 ):

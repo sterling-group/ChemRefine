@@ -455,6 +455,11 @@ for the full map.
   documented) instead of raising a raw `FileNotFoundError`; and Save… writes atomically
   through the same writer `save_config` uses, so a kill mid-save cannot truncate the
   config a run is pointed at.
+- **A base URL rides no key unless it is HTTP(S).** Provider resolution — the one
+  path the CLI flags, the `CHEMREFINE_LLM_*` variables and the GUI chat panel's
+  request all funnel through — refuses any other scheme before the resolved config
+  pairs the URL with `CHEMREFINE_LLM_API_KEY`; the `--check` preflight was the only
+  place that asked.
 - **The playground's YAML reads like the served GUI's.** The static docs playground
   dumped the config in click order — `steps:` first, settings trailing — because the
   canonical reordering only ever lived server-side; its schema-driven twin now runs

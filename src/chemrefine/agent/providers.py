@@ -49,7 +49,11 @@ class ProviderConfig:
         """Flags → ``CHEMREFINE_LLM_MODEL`` / ``_BASE_URL`` / ``_API_KEY`` → preset.
 
         A missing model is a :class:`ConfigError` naming all three ways to supply one —
-        there is no defensible default across this many providers.
+        there is no defensible default across this many providers. A base URL that is
+        not HTTP(S) is refused here, at the one place every caller resolves through —
+        the GUI's chat endpoint takes a request-supplied base URL, and the resolved
+        config pairs it with ``CHEMREFINE_LLM_API_KEY``, so an unchecked scheme would
+        hand the bearer to whatever ``urlopen``/the SDK makes of it.
         """
         if provider not in _PRESETS:
             raise ConfigError(f"unknown provider {provider!r}; one of {sorted(_PRESETS)}")
@@ -61,9 +65,12 @@ class ProviderConfig:
                 "provider:model string (e.g. --model openai:gpt-5-mini, "
                 "--provider ollama --model qwen3)"
             )
+        resolved_url = base_url or os.environ.get("CHEMREFINE_LLM_BASE_URL") or preset_url
+        if resolved_url is not None and not resolved_url.startswith(("http://", "https://")):
+            raise ConfigError(f"base URL {resolved_url!r} is not HTTP(S)")
         return cls(
             model=resolved_model,
-            base_url=base_url or os.environ.get("CHEMREFINE_LLM_BASE_URL") or preset_url,
+            base_url=resolved_url,
             api_key=os.environ.get("CHEMREFINE_LLM_API_KEY") or preset_key,
         )
 
