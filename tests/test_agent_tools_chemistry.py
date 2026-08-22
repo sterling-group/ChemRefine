@@ -258,6 +258,23 @@ def test_analyze_mode_reads_the_imaginary_mode_off_the_real_output(tmp_path: Pat
     assert all({"atoms", "distance", "rate"} <= set(b) for b in result["bond_changes"])
 
 
+@pytest.mark.parametrize(("top_atoms", "expected"), [(2, 2), (0, 0), (-1, 0), (-3, 0)])
+def test_a_negative_top_atoms_is_no_atoms_never_all_but_some(
+    tmp_path: Path, top_atoms: int, expected: int
+):
+    """``[:top_atoms]`` on a negative counts from the end — here, the wrong end.
+
+    NH₃ has four atoms, so ``top_atoms=-1`` returned three of them: every atom *except*
+    the least-displaced one, dressed as a shorter list, on the tool whose entire job is
+    to report which atoms move most. Same inversion the pagination parameters had, same
+    clamp.
+    """
+    result = agent_tools.analyze_mode(
+        str(_freq_tree(tmp_path)), 1, "0", mode_index=6, top_atoms=top_atoms
+    )
+    assert len(result["top_atoms"]) == expected
+
+
 def test_analyze_mode_speaks_qchem_too(tmp_path: Path):
     """The Q-Chem branch re-parses with Q-Chem's own parser; a minimum's mode is real."""
     path = _write_config(tmp_path, {"step": 1, "engine": "qchem"})

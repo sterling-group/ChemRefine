@@ -47,6 +47,18 @@ from chemrefine.validate import validate_config_file, validate_config_text
 _ACTIONS = ("run", "resume", "rerun", "rerun-errors", "rebuild-cache", "rebuild-nms")
 """CLI actions :func:`start_run` may launch — the recovery vocabulary, nothing else."""
 
+_MAX_ROWS = 200
+"""Hard ceiling on :func:`get_results`' page size — the module's pagination rule, enforced.
+
+The rule is stated at the top of this module ("a tool result cannot flood a model's
+context window") and until now nothing held it: ``limit`` went straight into a slice, so
+``limit=10**9`` returned the whole ensemble and the guarantee was decorative. A refinement
+tree holds thousands of structures, and the caller is usually a model that pays for every
+row twice — once reading, once quoting.
+
+Truncation is never silent: ``total`` is the unpaginated count and the answer echoes the
+``limit`` actually applied, so a caller can always see there is more and page for it."""
+
 
 # ---------------------------------------------------------------------------
 # Introspection + validation (thin re-exposures of the library seams)
@@ -321,13 +333,30 @@ def get_results(
     Rows are exactly what the pipeline reported (already sorted by energy within each
     step, with the ``Energy type`` column naming which energy that step filtered on).
     ``total`` counts the filtered rows so a caller pages without fetching everything.
+
+    ``limit`` and ``offset`` are clamped into range, for the reason ``run_status`` clamps
+    ``log_tail_lines``: handed to a bare slice, a negative counts from the *end* instead
+    of failing. ``limit=-1`` — an ordinary spelling of "no limit" — returned every row but
+    the last while ``total`` still reported them all, so the payload disagreed with itself
+    and the caller was quietly one row short; a negative ``offset`` re-served the tail
+    under an offset a pager cannot page from. Above, ``limit`` is capped at
+    :data:`_MAX_ROWS`. Both the clamped ``offset`` and the applied ``limit`` come back, so
+    the answer always describes the slice actually returned and never implies it is
+    everything.
     """
     config = load_config(Path(config_path))
     rows = _steps_csv_rows(config.output_dir)
     if step is not None:
         wanted = {s.step for s in _steps_for(config, step)}
         rows = [row for row in rows if int(row["Step"]) in wanted]
-    return {"total": len(rows), "offset": offset, "rows": rows[offset : offset + limit]}
+    start = max(0, offset)
+    applied = min(max(0, limit), _MAX_ROWS)
+    return {
+        "total": len(rows),
+        "offset": start,
+        "limit": applied,
+        "rows": rows[start : start + applied],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -547,6 +576,11 @@ def analyze_mode(
     The displacement tensor is deliberately not cached (it is a transient the pipeline
     displaces along), so the structure's output file is re-parsed with the engine's own
     parser; a tree whose outputs were cleaned gets told to rerun or rebuild instead.
+
+    ``top_atoms`` is clamped at zero for the reason :func:`get_results` clamps its
+    pagination: ``[:top_atoms]`` on a negative counts from the end, so ``top_atoms=-1``
+    quietly returned every atom *but* the least-displaced one — the opposite of a shorter
+    list, and on the tool whose whole job is to say which atoms move most.
     """
     config = load_config(Path(config_path))
     step_cfg = _required_step(config, step)
@@ -575,7 +609,7 @@ def analyze_mode(
     displacement = modes[:, :, mode_index]
     norms = np.linalg.norm(displacement, axis=1)
     total = float(norms.sum()) or 1.0
-    leaders = np.argsort(norms)[::-1][:top_atoms]
+    leaders = np.argsort(norms)[::-1][: max(0, top_atoms)]
     imaginary = frame.imaginary_freqs or {}
     return {
         "structure_id": structure_id,

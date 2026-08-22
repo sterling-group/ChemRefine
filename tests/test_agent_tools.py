@@ -445,6 +445,53 @@ def test_get_results_paginates_and_filters(tmp_path: Path):
         agent_tools.get_results(str(path), step=9)
 
 
+@pytest.mark.parametrize(
+    ("limit", "offset", "expected"),
+    [
+        (-1, 0, 0),  # "no limit" is not a licence to slice from the end
+        (-99, 0, 0),
+        (0, 0, 0),
+        (20, -2, 3),  # a pager walking back past zero starts at zero, not at the tail
+        (2, -5, 2),
+    ],
+)
+def test_negative_pagination_never_slices_from_the_end(
+    tmp_path: Path, limit: int, offset: int, expected: int
+):
+    """The guard ``run_status``'s ``log_tail_lines`` already had, on its three siblings.
+
+    A bare slice reads a negative as "count from the end", so ``limit=-1`` returned every
+    row but the last while ``total`` still reported them all — a caller one row short with
+    nothing in the payload to say so — and a negative ``offset`` re-served the tail under
+    an offset no pager could page from. Both are the inversion the module's pagination
+    rule exists to forbid, and both are now clamped to the empty/first page.
+    """
+    path = _reported_tree(tmp_path)
+    page = agent_tools.get_results(str(path), limit=limit, offset=offset)
+    assert page["total"] == 3  # the count is of the filtered set, always
+    assert len(page["rows"]) == expected
+    assert page["offset"] == max(0, offset)  # the answer describes the slice returned
+    if expected:
+        assert page["rows"] == agent_tools.get_results(str(path), limit=expected)["rows"]
+
+
+def test_a_huge_limit_is_capped_and_says_so(tmp_path: Path):
+    """The module's stated pagination rule, enforced rather than merely written down.
+
+    ``limit`` went straight into a slice, so ``limit=10**9`` returned the whole ensemble —
+    exactly what "a tool result cannot flood a model's context window" forbids. The cap
+    cannot be silent either: ``total`` stays the unpaginated count and the answer echoes
+    the ``limit`` actually applied, so a caller can always see there is more.
+    """
+    path = _reported_tree(tmp_path)
+    page = agent_tools.get_results(str(path), limit=10**9)
+    assert page["limit"] == agent_tools._MAX_ROWS
+    assert page["total"] == 3  # three rows here, so the cap does not bite the result
+    assert len(page["rows"]) == 3
+    # A limit under the ceiling is passed through untouched.
+    assert agent_tools.get_results(str(path), limit=2)["limit"] == 2
+
+
 def test_get_failures_carries_the_taxonomy_and_the_next_move(tmp_path: Path):
     path = _reported_tree(tmp_path)
     everything = agent_tools.get_failures(str(path))
