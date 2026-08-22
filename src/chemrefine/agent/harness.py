@@ -55,17 +55,41 @@ def _gated(fn: Callable[..., Any], confirm: ConfirmFn) -> Callable[..., Any]:
     return gate
 
 
-def instructions(config_path: str | None) -> str:
-    """The system prompt: the packaged guide, the gate contract, the session context."""
-    parts = [
-        agent_tools.guide_text(),
-        (
-            "You are running inside `chemrefine agent`, a terminal chat. Mutating tools "
-            "ask the user for confirmation before executing; a `denied` result means "
-            "they said no — adjust course, never retry the same call unprompted. Show "
-            "the YAML and wait for a go-ahead before start_run."
-        ),
-    ]
+TERMINAL_GATE = (
+    "You are running inside `chemrefine agent`, a terminal chat. Mutating tools ask the "
+    "user for confirmation before executing; a result with a `denied` key means they "
+    "said no — adjust course, never retry the same call unprompted. Show the YAML and "
+    "wait for a go-ahead before start_run."
+)
+"""What the terminal harness tells the model — and what it will actually see.
+
+The shape is real: :func:`_gated` returns ``{"denied": …}``, so "a result with a `denied`
+key" is a description of the payload rather than a figure of speech."""
+
+WEB_GATE = (
+    "You are running inside the ChemRefine workflow builder's chat panel, beside a live "
+    "YAML editor the user is watching. Mutating tools pause the run and ask the user to "
+    "allow or deny each call; a denial comes back as a tool result saying the call was "
+    "denied — adjust course, never retry the same call unprompted. Show the YAML and "
+    "wait for a go-ahead before start_run."
+)
+"""The same contract for the web harness, whose denial is the SDK's, not ours.
+
+``requires_approval`` denials arrive as PydanticAI's ``ToolDenied``, whose default message
+is "The tool call was denied." — no ``denied`` key anywhere. Telling the web model to look
+for the terminal's payload named a marker it could never see, so the "never retry"
+instruction had nothing to key on."""
+
+
+def instructions(config_path: str | None, *, gate: str) -> str:
+    """The system prompt: the packaged guide, the gate contract, the session context.
+
+    ``gate`` is required rather than defaulted because there is no safe default: the two
+    harnesses enforce the same guarantee through different machinery and hand the model
+    different evidence of a refusal, and a default would silently give one of them the
+    other's contract — which is exactly the bug this parameter exists to prevent.
+    """
+    parts = [agent_tools.guide_text(), gate]
     if config_path is not None:
         parts.append(
             f"The user's config file for this session: {config_path} — summarize_config "
@@ -81,7 +105,9 @@ def build_agent(
     config_path: str | None = None,
 ) -> Agent[None, str]:
     """The assembled agent — every shared tool registered, mutations behind ``confirm``."""
-    agent: Agent[None, str] = Agent(model, instructions=instructions(config_path))
+    agent: Agent[None, str] = Agent(
+        model, instructions=instructions(config_path, gate=TERMINAL_GATE)
+    )
     for tool in agent_tools.TOOLS:
         if tool.__name__ in agent_tools.MUTATING_TOOLS:
             agent.tool_plain(_gated(tool, confirm))
@@ -105,10 +131,15 @@ def build_web_agent(
     ``DeferredToolResults`` verdict — the tool executes only on an explicit yes,
     exactly the guarantee the terminal gate gives, enforced by the SDK rather than a
     wrapper.
+
+    Same guarantee, different evidence — which is why the instructions carry
+    :data:`WEB_GATE` rather than :data:`TERMINAL_GATE`. A denial here is the SDK's
+    ``ToolDenied``, not the terminal wrapper's ``{"denied": …}``, and the model is told
+    about the one it will actually receive.
     """
     agent: Agent[None, Any] = Agent(
         model,
-        instructions=instructions(config_path),
+        instructions=instructions(config_path, gate=WEB_GATE),
         output_type=[str, DeferredToolRequests],
     )
     for tool in agent_tools.TOOLS:

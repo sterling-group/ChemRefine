@@ -267,11 +267,56 @@ def test_every_shared_tool_is_registered_verbatim():
 
 
 def test_instructions_carry_the_guide_and_the_session_config():
-    text = harness.instructions("/tmp/proj/input.yaml")
+    text = harness.instructions("/tmp/proj/input.yaml", gate=harness.TERMINAL_GATE)
     assert "operating guide" in text
     assert "/tmp/proj/input.yaml" in text
     assert "confirmation" in text
-    assert "input.yaml" not in harness.instructions(None).replace("input.yaml`", "")
+    bare = harness.instructions(None, gate=harness.TERMINAL_GATE)
+    assert "input.yaml" not in bare.replace("input.yaml`", "")
+
+
+def _prompt_seen_by(build: Any) -> str:
+    """The instructions a harness installs, read back from the model that receives them.
+
+    Asserting on ``harness.instructions(...)`` would only prove the helper composes what
+    it was handed; the question is which gate each *builder* passes it, so the prompt is
+    read where the model gets it.
+    """
+    seen: dict[str, str] = {}
+
+    def spy(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen["text"] = info.instructions or ""
+        return ModelResponse(parts=[TextPart("ok")])
+
+    build(FunctionModel(spy)).run_sync("hello")
+    return seen["text"]
+
+
+def test_each_harness_is_told_the_gate_it_actually_enforces():
+    """The two harnesses enforce one guarantee through different machinery.
+
+    The terminal wrapper returns ``{"denied": …}``; the web harness's denial is the SDK's
+    ``ToolDenied``, whose message is "The tool call was denied." — no ``denied`` key
+    anywhere. One shared instruction told *both* models they were in a terminal chat and
+    to watch for the terminal payload, so the web model was given a marker it could never
+    see and the "never retry the same call" rule beside it had nothing to key on.
+    """
+    terminal = _prompt_seen_by(lambda model: harness.build_agent(model, confirm=_allow))
+    web = _prompt_seen_by(harness.build_web_agent)
+
+    assert "terminal chat" in terminal
+    assert "terminal chat" not in web
+    assert "chat panel" in web
+
+    # The denial marker each model will really receive, and only that one.
+    assert "`denied` key" in terminal
+    assert "`denied` key" not in web
+    assert "denied" in web  # it is still told denials happen — just not their spelling
+
+    # Whatever else differs, the shared halves stay shared.
+    for text in (terminal, web):
+        assert "operating guide" in text
+        assert "wait for a go-ahead before start_run" in text
 
 
 def test_a_real_tool_answers_through_the_model_loop():
