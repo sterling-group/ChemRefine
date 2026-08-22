@@ -334,6 +334,102 @@ def _run_in_node(script: str) -> str:
     return result.stdout.strip()
 
 
+def _run_component_in_node(script: str) -> str:
+    """Evaluate ``script`` against a real ``builder()`` instance; return its stdout.
+
+    ``forms.js``'s docstring says logic left in ``app.js`` "cannot be reached by a test at
+    all", because ``builder()`` reads ``window`` and ``localStorage`` as it is constructed.
+    That is true of the *browser* globals, not of the logic: stubbing those three is
+    enough, and what it buys is the ability to check behaviour the markup only describes —
+    which fields a provider shows, and whether a credential reaches ``localStorage``.
+
+    The stubbed ``localStorage`` is a plain object, so a test can read back exactly what
+    the component wrote to it.
+    """
+    node = _node_or_skip("execute the GUI's component logic")
+    preamble = """
+      global.window = { location: { search: "?token=t" } };
+      global.localStorage = { _d: {}, getItem(k){return this._d[k] ?? null;},
+                              setItem(k,v){this._d[k]=v;}, removeItem(k){delete this._d[k];} };
+      global.URLSearchParams = URLSearchParams;
+    """
+    source = preamble + (STATIC / "app.js").read_text(encoding="utf-8") + "\n" + script
+    result = subprocess.run(  # argv list, no shell
+        [node, "-e", source], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def test_the_panel_offers_each_provider_only_the_fields_it_can_use():
+    """The conditional-field rule, run rather than read off the markup.
+
+    Which inputs appear is decided in JavaScript from the shapes ``/api/agent/availability``
+    serves, so the `x-show` expressions alone prove nothing. This drives the real component
+    with the real shapes: ``custom`` is the only provider with nowhere to go and so the only
+    one that must be told where; the two local presets ship a dummy key and so must not ask
+    for one.
+    """
+    from chemrefine.agent import providers  # imports no SDK at runtime
+
+    shapes = json.dumps(providers.preset_shapes())
+    out = _run_component_in_node(f"""
+      const b = builder();
+      b.chat.presets = {shapes};
+      const rows = ["ollama", "vllm", "openai", "custom"].map((p) => {{
+        b.chat.provider = p;
+        return [p, b.needsBaseUrl(), b.needsApiKey()].join(":");
+      }});
+      console.log(rows.join(" "));
+    """)
+    assert out == "ollama:false:false vllm:false:false openai:false:true custom:true:true"
+
+
+def test_the_api_key_never_reaches_localstorage_but_does_reach_the_request():
+    """The panel's security claim, gated instead of asserted.
+
+    The key is a live credential typed into a page whose provider and model *are*
+    remembered, so the symmetry actively invites a fourth ``setItem`` — and a browser
+    profile outlives the session the key was typed for. What must hold is both halves: it
+    goes out with the request, and it is not written down.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chat.model = "m";
+      b.chat.baseUrl = "http://h/v1";
+      b.chat.apiKey = "sk-secret-value";
+      b.saveChatSettings();
+      console.log(JSON.stringify({
+        stored: Object.keys(localStorage._d).sort(),
+        leaked: JSON.stringify(localStorage._d).includes("sk-secret-value"),
+        sent: b._chatPayload({ message: "hi" }).api_key,
+      }));
+    """)
+    result = json.loads(out)
+    assert result["sent"] == "sk-secret-value"  # it does reach the request
+    assert result["leaked"] is False  # and nowhere else
+    assert result["stored"] == ["cr-baseurl", "cr-model", "cr-provider"]
+
+
+def test_send_is_armed_by_a_passing_check_and_disarmed_by_any_edit():
+    """A verdict belongs to the settings that earned it.
+
+    ``ok: null`` (never checked) and ``ok: false`` (checked, failed) both mean "do not
+    send", but only the first is the state a fresh panel is in — which is why the check
+    result is a tri-state and not a boolean.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      const seen = [b.chatReady()];
+      b.chat.check = { ok: true, findings: [], busy: false };
+      seen.push(b.chatReady());
+      b.armCheck();
+      seen.push(b.chatReady(), b.chat.check.ok === null);
+      console.log(JSON.stringify(seen));
+    """)
+    assert json.loads(out) == [False, True, False, True]
+
+
 def test_field_specs_carry_the_schema_bounds_and_default():
     """The spec a number input renders from: bounds for the spinner, default to step from.
 
