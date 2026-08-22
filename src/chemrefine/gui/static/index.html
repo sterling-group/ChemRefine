@@ -479,6 +479,15 @@
           </datalist>
           <button type="button" @click="showStructure()" :disabled="viewer.busy || !viewer.step">
             Show</button>
+          <!-- Redraws what is already on screen, so it never refetches: pick a numbering
+               and the labels appear, without losing the animation or the view angle. -->
+          <select x-model="viewer.labels" @change="drawLabels()"
+                  title="Number the atoms — file order, one-based, or per element">
+            <option value="off" :selected="viewer.labels === 'off'">no numbering</option>
+            <option value="zero" :selected="viewer.labels === 'zero'">0, 1, 2 …</option>
+            <option value="one" :selected="viewer.labels === 'one'">1, 2, 3 …</option>
+            <option value="element" :selected="viewer.labels === 'element'">C1, H1, H2 …</option>
+          </select>
         </div>
         <div id="viewer"></div>
         <p class="muted" x-text="viewer.busy ? 'reading…' : viewer.note"></p>

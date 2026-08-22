@@ -117,8 +117,12 @@ function builder() {
       busy: false,
       note: "",
       structures: [],
+      // Off by default: labels on a 60-atom structure are a wall of text, and the pane's
+      // first job is to show the molecule. See atomLabel() for what the modes mean.
+      labels: "off",
     },
     _gl: null, // the 3Dmol viewer instance, once the bundle is in
+    _model: null, // the drawn model — labels and the unit cell both attach to it
     _glLib: null, // the in-flight or settled load of the vendored bundle
     _timer: null,
 
@@ -785,6 +789,39 @@ function builder() {
         this.viewer.note = `the 3D viewer could not start: ${err.message || err}`;
       }
     },
+    // The cell and the atom labels, redrawn together. They are one operation because
+    // removeAllLabels() takes the a/b/c corner labels addUnitCell adds down with the atom
+    // ones — so clearing atom numbering would silently remove a periodic structure's box.
+    // Cheap enough to call on every change: it relabels an existing model, nothing refetches.
+    drawLabels() {
+      if (!this._gl || !this._model) return;
+      this._gl.removeAllLabels();
+      // No branch of our own for periodic vs molecular: 3Dmol draws a box only when the
+      // extended XYZ carried a Lattice="…", and nothing when it did not.
+      this._gl.addUnitCell(this._model);
+      if (this.viewer.labels !== "off") {
+        // One tally per redraw, so element ordinals restart with the structure rather than
+        // climbing across every one that has been shown.
+        const counts = {};
+        const mode = this.viewer.labels;
+        // mapAtomProperties writes onto each atom; addPropertyLabels then reads that one
+        // property, so all four modes go through a single labelling call.
+        this._gl.mapAtomProperties((atom) => {
+          atom.properties.tag = atomLabel(atom, mode, counts);
+        });
+        this._model.addPropertyLabels(
+          "tag",
+          {},
+          {
+            fontSize: 11,
+            fontColor: "black",
+            showBackground: false,
+            inFront: true,
+          },
+        );
+      }
+      this._gl.render();
+    },
     async showStructure() {
       if (this.staticMode) {
         this.flash = "the structure view needs the local chemrefine gui";
@@ -819,13 +856,13 @@ function builder() {
         }
         await this.mountViewer();
         if (!this._gl) return;
+        this._gl.removeAllLabels();
         this._gl.removeAllModels();
-        const model = this._gl.addModel(data.text, "xyz");
+        this._model = this._gl.addModel(data.text, "xyz");
         this._gl.setStyle({}, { stick: { radius: 0.12 }, sphere: { scale: 0.25 } });
-        // Extended XYZ carries the cell as Lattice="…" when the structure has one, and
-        // 3Dmol turns that into crystal data — so this draws a box for a periodic
-        // structure and nothing for a molecular one, with no branch of our own.
-        this._gl.addUnitCell(model);
+        // The cell and any labels together — drawLabels() re-adds the cell, because
+        // clearing labels clears its a/b/c corner labels with them.
+        this.drawLabels();
         this._gl.zoomTo();
         // From the answer, not from the form: the server decides whether a mode came back,
         // and reading the boxes again here is how the two could disagree.
@@ -833,7 +870,7 @@ function builder() {
           // The same extended-XYZ file carries three displacement columns per atom, which
           // is what 3Dmol reads as dx/dy/dz; vibrate() only builds the frames, animate()
           // plays them.
-          model.vibrate(10, 1, true);
+          this._model.vibrate(10, 1, true);
           this._gl.animate({ loop: "backAndForth", interval: 60 });
         }
         this._gl.render();
@@ -969,6 +1006,7 @@ function builder() {
       // reads as the new workflow's answer.
       if (this._gl) {
         this._gl.stopAnimate();
+        this._gl.removeAllLabels();
         this._gl.removeAllModels();
         this._gl.render();
       }

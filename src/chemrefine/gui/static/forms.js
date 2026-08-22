@@ -242,3 +242,31 @@ function shortPath(path) {
   const parts = path.split("/").filter(Boolean);
   return parts.length <= 2 ? path : `…/${parts.slice(-2).join("/")}`;
 }
+
+/** One atom's label text for a numbering mode, or `null` when there is none.
+ *
+ * Four modes, because the three numbering conventions in use disagree and every one of
+ * them is somebody's default: `zero` is file order as ChemRefine's own tools report it
+ * (`analyze_mode`'s `top_atoms[].index`), `one` is what most chemistry GUIs and papers
+ * count from, and `element` is the per-element ordinal a spectroscopist reads (`C1`, `H1`,
+ * `H2`). Picking wrong by one is how the atom being discussed stops being the atom on
+ * screen.
+ *
+ * `counts` is the caller's per-render tally, mutated here: the element ordinals are the
+ * only mode that cannot be decided from one atom alone. One object per render, so the
+ * numbering restarts with each structure rather than climbing across them.
+ *
+ * `atom.serial` is 3Dmol's own 0-based index for an XYZ model, assigned per atom by its
+ * parser; `atom.index` is never set on this path, which is why serial is what is read.
+ */
+// biome-ignore lint/correctness/noUnusedVariables: app.js is the caller
+function atomLabel(atom, mode, counts) {
+  if (mode === "zero") return String(atom.serial);
+  if (mode === "one") return String(atom.serial + 1);
+  if (mode === "element") {
+    const elem = atom.elem || "?";
+    counts[elem] = (counts[elem] || 0) + 1;
+    return `${elem}${counts[elem]}`;
+  }
+  return null;
+}

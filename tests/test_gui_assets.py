@@ -850,8 +850,10 @@ def test_a_mode_that_could_not_be_drawn_does_not_follow_you_to_the_next_one():
         return refuse ? null : { step: 2, structure_id: "0", mode_index: null, text: "" };
       };
       b.mountViewer = async () => {};
-      b._gl = { stopAnimate(){}, removeAllModels(){}, addModel: () => ({ vibrate(){} }),
-                setStyle(){}, addUnitCell(){}, zoomTo(){}, animate(){}, render(){} };
+      b._gl = { stopAnimate(){}, removeAllModels(){}, removeAllLabels(){},
+                addModel: () => ({ vibrate(){}, addPropertyLabels(){} }),
+                setStyle(){}, addUnitCell(){}, mapAtomProperties(){}, zoomTo(){},
+                animate(){}, render(){} };
 
       b.chooseViewerStep("1");
       b.viewer.modeIndex = "6";
@@ -930,7 +932,7 @@ def test_opening_a_workflow_leaves_none_of_the_previous_one_on_screen():
       b.viewer = { ...b.viewer, step: "7", structureId: "4", modeIndex: "6", note: "stale" };
       let stopped = 0, cleared = 0;
       b._gl = { stopAnimate: () => { stopped++; }, removeAllModels: () => { cleared++; },
-                render: () => {} };
+                removeAllLabels: () => {}, render: () => {} };
       await b.loadConfigFrom("/p/input.yaml", { reason: "open" });
       console.log(JSON.stringify({
         runStatus: b.runStatus, runFailures: b.runFailures, runResults: b.runResults,
@@ -1461,6 +1463,113 @@ def test_a_corrupt_recents_entry_cannot_blank_the_page():
       console.log(JSON.stringify(rows));
     """)
     assert json.loads(out) == [[], [], ["/a.yaml"]]  # never a throw, never a non-string
+
+
+def test_every_3dmol_call_names_a_method_the_vendored_bundle_has():
+    """The viewer's API is reached through hand-written stubs in these tests.
+
+    A stub answers whatever it is asked, so a misspelt 3Dmol call passes every case here
+    and then does nothing in a browser — silent at click time, which is the exact failure
+    this module exists to close for Alpine bindings. The bundle is the authority: every
+    method app.js calls on the viewer or the model must appear in it.
+    """
+    source = (STATIC / "app.js").read_text(encoding="utf-8")
+    bundle = (STATIC / "vendor" / "3dmol.min.js").read_text(encoding="utf-8")
+    called = set(re.findall(r"this\._(?:gl|model)\.(\w+)\(", source))
+    assert len(called) >= 8, (
+        f"the scanner found almost nothing — has the spelling changed? {called}"
+    )
+    # Minified, so a method is `name(` in a class body: the name has to occur followed by
+    # an open paren somewhere in the bundle. Loose on purpose — this catches typos and
+    # removed methods, and a false pass costs nothing that the stubs did not already cost.
+    missing = sorted(name for name in called if f"{name}(" not in bundle)
+    assert missing == [], f"3Dmol has no such method(s): {missing}"
+
+
+def test_the_four_numbering_modes_read_the_way_each_convention_does():
+    """Three numbering conventions are in use and every one is somebody's default.
+
+    ChemRefine's own tools report file order (``analyze_mode``'s ``top_atoms[].index``),
+    papers and most GUIs count from one, and a spectroscopist reads per-element ordinals.
+    Off by one is how the atom being discussed stops being the atom on screen.
+    """
+    out = _run_component_in_node("""
+      const atoms = [
+        { serial: 0, elem: "C" }, { serial: 1, elem: "H" },
+        { serial: 2, elem: "H" }, { serial: 3, elem: "O" },
+      ];
+      const render = (mode) => { const c = {}; return atoms.map((a) => atomLabel(a, mode, c)); };
+      console.log(JSON.stringify({
+        off: render("off"), zero: render("zero"), one: render("one"),
+        element: render("element"),
+        // A second render must restart the ordinals, not carry on from the first.
+        again: render("element"),
+        unknown: atomLabel({ serial: 0 }, "element", {}),
+      }));
+    """)
+    result = json.loads(out)
+    assert result["off"] == [None, None, None, None]  # nothing to draw, not empty strings
+    assert result["zero"] == ["0", "1", "2", "3"]
+    assert result["one"] == ["1", "2", "3", "4"]
+    assert result["element"] == ["C1", "H1", "H2", "O1"]
+    assert result["again"] == result["element"]  # a fresh tally each redraw
+    assert result["unknown"] == "?1"  # an element-less atom is labelled, never crashed on
+
+
+def test_turning_labels_off_does_not_take_the_unit_cell_with_them():
+    """``removeAllLabels()`` removes the a/b/c corner labels ``addUnitCell`` adds.
+
+    Verified against the vendored bundle, which calls ``addLabel`` three times inside
+    ``addUnitCell``. So clearing atom numbering would quietly strip a periodic structure's
+    box — which is why the cell is re-added on every relabel rather than once at draw time.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chatAvailability = () => {};
+      const calls = [];
+      b._model = { addPropertyLabels: (prop) => calls.push("label:" + prop) };
+      b._gl = {
+        removeAllLabels: () => calls.push("clear"),
+        addUnitCell: () => calls.push("cell"),
+        mapAtomProperties: (fn) => {
+          calls.push("map");
+          [{ serial: 0, elem: "C", properties: {} }].forEach(fn);
+        },
+        render: () => calls.push("render"),
+      };
+      b.viewer.labels = "one";
+      b.drawLabels();
+      const on = calls.splice(0);
+      b.viewer.labels = "off";
+      b.drawLabels();
+      console.log(JSON.stringify({ on, off: calls }));
+    """)
+    result = json.loads(out)
+    # Cleared, then the cell back, then the atoms labelled — in that order.
+    assert result["on"] == ["clear", "cell", "map", "label:tag", "render"]
+    # And with numbering off the cell is still re-added; only the atom labels are skipped.
+    assert result["off"] == ["clear", "cell", "render"]
+
+
+def test_labels_are_dropped_before_the_model_they_are_attached_to():
+    """A label is positioned on an atom object, so it outlives the model unless removed.
+
+    Both paths that drop the models — showing the next structure, and opening another
+    workflow — must clear labels first, or the previous structure's numbering floats over
+    whatever is drawn next.
+    """
+    source = (STATIC / "app.js").read_text(encoding="utf-8")
+    drops = source.count("this._gl.removeAllModels()")
+    assert drops >= 2, f"expected both drop sites; found {drops}"
+    # Immediately before, not merely somewhere earlier in the file: `drawLabels` clears
+    # labels too, so a prefix search would be satisfied by that and prove nothing about
+    # the call site being checked. Comment lines between the two are allowed, nothing else.
+    paired = re.compile(
+        r"this\._gl\.removeAllLabels\(\);\n(?:\s*//[^\n]*\n)*\s*this\._gl\.removeAllModels\(\)"
+    )
+    assert len(paired.findall(source)) == drops, (
+        "a removeAllModels() without removeAllLabels() immediately before it"
+    )
 
 
 def test_field_specs_carry_the_schema_bounds_and_default():

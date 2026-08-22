@@ -155,6 +155,13 @@ transient the pipeline displaces along and is deliberately not cached), so this 
 picture that goes with `analyze_mode`'s numbers — is the imaginary mode the reaction
 coordinate, or a methyl rotor.
 
+**Numbering the atoms** is one control with four settings: off, file order (`0, 1, 2`),
+one-based (`1, 2, 3`), and per-element (`C1, H1, H2`). Three conventions are in use and
+each is somebody's default — file order is what `analyze_mode` reports in
+`top_atoms[].index`, so that is the one to pick when reading its output against the
+picture. Changing it redraws what is already on screen: the view angle and any running
+animation survive. Labels sit at un-displaced positions while a mode animates.
+
 A SMILES `input:` (a `.csv`) is the one source the pane refuses: seeding from it *embeds*
 the molecules and writes them into the output tree, which a read has no business doing.
 Use `build_structures` to write `.xyz` seeds and point `input:` at those, or just run it.
