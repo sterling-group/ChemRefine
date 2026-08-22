@@ -580,10 +580,7 @@ function builder() {
 
     // ---------------- actions ----------------
     async validateNow() {
-      if (this.staticMode) {
-        this.flash = "validation runs the real models — pip install chemrefine[gui]";
-        return;
-      }
+      if (this.playgroundRefuses("validation runs the real models, so it")) return;
       const base = this.savedPath ? parentDir(this.savedPath) : null;
       this.report = await this.api("POST", "/api/validate", {
         yaml_text: this.yamlText,
@@ -608,6 +605,15 @@ function builder() {
         // Poll while a driver holds the tree; stop the moment it lets go.
         this._statusTimer = setTimeout(() => this.refreshStatus(), 5000);
       }
+    },
+    // The published playground has no server behind it, so everything that reads or writes
+    // the disk stops here. One wording in one place: the three hand-written refusals had
+    // drifted into three different sentences for the same fact, and the next caller would
+    // have written a fourth. Answers whether it refused, so a caller is one line.
+    playgroundRefuses(what) {
+      if (!this.staticMode) return false;
+      this.flash = `${what} needs the local chemrefine gui — pip install 'chemrefine[gui]'`;
+      return true;
     },
     // Whether this action drives the whole pipeline, and so takes no step. start_run
     // refuses a target for these two, so offering one would be a 400 after the click
@@ -694,12 +700,12 @@ function builder() {
     // step that has not run yet is the ordinary case rather than an error to announce.
     async loadStructureList() {
       if (this.staticMode || !this.savedPath || !this.viewer.step) return;
-      const query = new URLSearchParams({ config_path: this.savedPath });
-      if (this.viewer.step !== "input") query.set("step", this.viewer.step);
       const asked = this.viewer.step;
-      const data = await this.api("GET", `/api/structure-list?${query}`, undefined, {
-        quiet: true,
+      const url = apiUrl("/api/structure-list", {
+        config_path: this.savedPath,
+        step: this.viewer.step === "input" ? "" : this.viewer.step,
       });
+      const data = await this.api("GET", url, undefined, { quiet: true });
       // The step can change while this is in flight, and the answer belongs to the step
       // that asked for it — offering step 1's ids under step 2 is worse than offering none.
       if (data && String(asked) === String(this.viewer.step)) {
@@ -823,26 +829,24 @@ function builder() {
       this._gl.render();
     },
     async showStructure() {
-      if (this.staticMode) {
-        this.flash = "the structure view needs the local chemrefine gui";
-        return;
-      }
+      if (this.playgroundRefuses("the structure view reads a run tree, so it")) return;
       if (!this.savedPath || !this.viewer.step) return;
       this.viewer.busy = true;
       this.viewer.note = "";
       try {
-        const query = new URLSearchParams({ config_path: this.savedPath });
         // No `step` at all is what asks for the input seeds; sending step="input" would
-        // be read as a step *name*, since a step may be named anything.
-        if (this.viewer.step !== "input") query.set("step", this.viewer.step);
-        if (this.viewer.structureId) query.set("structure_id", this.viewer.structureId);
-        if (this.viewer.modeIndex !== "" && this.viewer.step !== "input") {
-          query.set("mode_index", this.viewer.modeIndex);
-        }
+        // be read as a step *name*, since a step may be named anything. apiUrl() drops
+        // every empty value, so the sentinel is the only case needing a line of its own.
+        const url = apiUrl("/api/structure", {
+          config_path: this.savedPath,
+          step: this.viewer.step === "input" ? "" : this.viewer.step,
+          structure_id: this.viewer.structureId,
+          mode_index: this.viewer.step === "input" ? "" : this.viewer.modeIndex,
+        });
         // Stop the old animation before anything can return early, or a failed Show
         // leaves the previous structure oscillating as though it were the answer.
         if (this._gl) this._gl.stopAnimate();
-        const data = await this.api("GET", `/api/structure?${query}`);
+        const data = await this.api("GET", url);
         if (!data) {
           // Into the pane's own line as well as `flash`, which lives below the Run panel
           // and the report — a screen away from where the user is looking. Blanking this
@@ -930,10 +934,7 @@ function builder() {
       this.chat.check = { ok: null, findings: [], busy: false };
     },
     async runCheck() {
-      if (this.staticMode) {
-        this.flash = "the agent runs with the local chemrefine gui";
-        return;
-      }
+      if (this.playgroundRefuses("the agent drives a real tree, so it")) return;
       // A probe takes a second or two, and the settings can change under it. The
       // generation is what makes the answer belong to the settings that asked for it:
       // armCheck() bumps it, so a verdict that arrives for superseded settings is
@@ -962,7 +963,7 @@ function builder() {
         this.pendingReload = { path, reason };
         return true; // handed over to the offer, which is now the route back
       }
-      const data = await this.api("GET", `/api/load?path=${encodeURIComponent(path)}`);
+      const data = await this.api("GET", apiUrl("/api/load", { path }));
       if (!data) return false; // flash explains; the form keeps what it had
       if (!(await this.adopt(data.yaml_text))) return false;
       this.savedPath = data.path;
@@ -1141,7 +1142,9 @@ function builder() {
     },
 
     // ---------------- browse / save ----------------
-    async openBrowse(fieldKey) {
+    // browseField, beside browseExec: both fill one path field from the picker. It was
+    // openBrowse, which collided with the modal opener below — same name, different job.
+    async browseField(fieldKey) {
       await this.openBrowseWith(`Pick ${fieldKey}`, (path) => {
         this.cfg[fieldKey] = path;
         this.syncYaml();
@@ -1153,22 +1156,21 @@ function builder() {
     startDir() {
       return this.savedPath ? parentDir(this.savedPath) : null;
     },
-    async openBrowseWith(title, onPick) {
-      this.browse = { ...this.browse, open: true, mode: "pick", onPick, title };
+    // The one opener. Its three callers differed only in a mode string, a title and
+    // whether they carried an onPick — three spread-and-navigate copies whose only
+    // meaningful difference had been the one that remembered to start beside the file.
+    async openBrowse({ mode, title, onPick = null }) {
+      this.browse = { ...this.browse, open: true, mode, onPick, title };
       await this.navigate(this.startDir());
+    },
+    async openBrowseWith(title, onPick) {
+      await this.openBrowse({ mode: "pick", title, onPick });
     },
     async openConfig() {
       // The counterpart to Save…, and the only way to look at a finished run without
       // restarting: `chemrefine gui <path>` was the single door a config could come
       // through, and it only opens once, at launch.
-      this.browse = {
-        ...this.browse,
-        open: true,
-        mode: "open",
-        onPick: null,
-        title: "Open a workflow…",
-      };
-      await this.navigate(this.startDir());
+      await this.openBrowse({ mode: "open", title: "Open a workflow…" });
     },
     async openConfigFrom(path) {
       // Closed only once the file has actually loaded, the way saveTo() does it. Closing
@@ -1177,20 +1179,10 @@ function builder() {
       if (await this.loadConfigFrom(path, { reason: "open" })) this.browse.open = false;
     },
     async openSave() {
-      this.browse = {
-        ...this.browse,
-        open: true,
-        mode: "save",
-        onPick: null,
-        title: "Save workflow as…",
-      };
-      await this.navigate(this.startDir());
+      await this.openBrowse({ mode: "save", title: "Save workflow as…" });
     },
     async navigate(path) {
-      const data = await this.api(
-        "GET",
-        `/api/browse${path ? `?path=${encodeURIComponent(path)}` : ""}`,
-      );
+      const data = await this.api("GET", apiUrl("/api/browse", { path }));
       if (data) {
         this.browse.path = data.path;
         this.browse.parent = data.parent;
@@ -1208,12 +1200,9 @@ function builder() {
     async goToTyped() {
       const typed = this.browse.typed.trim();
       if (!typed) return;
-      const listing = await this.api(
-        "GET",
-        `/api/browse?path=${encodeURIComponent(typed)}`,
-        undefined,
-        { quiet: true },
-      );
+      const listing = await this.api("GET", apiUrl("/api/browse", { path: typed }), undefined, {
+        quiet: true,
+      });
       if (listing) {
         this.browse.path = listing.path;
         this.browse.parent = listing.parent;
@@ -1262,10 +1251,10 @@ function builder() {
       const key = step.name || step.step;
       const data = await this.api(
         "GET",
-        "/api/template?config_path=" +
-          encodeURIComponent(this.savedPath) +
-          "&step=" +
-          encodeURIComponent(key),
+        apiUrl("/api/template", {
+          config_path: this.savedPath,
+          step: key,
+        }),
       );
       if (data) this.tmpl = { open: true, step: step.step, path: data.path, text: data.text };
       else this.flash += " — run Scaffold templates first?";

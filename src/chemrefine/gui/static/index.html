@@ -90,7 +90,7 @@
                 <input type="text" :value="cfg[field.key] ?? ''" :placeholder="field.fallback"
                        @input="setTop(field, $event.target.value)">
                 <button type="button" x-show="field.path && !staticMode" class="mini" title="Browse"
-                        @click="openBrowse(field.key)">📁</button>
+                        @click="browseField(field.key)">📁</button>
               </span>
             </template>
           </label>
@@ -258,12 +258,27 @@
                     </template>
                   </select>
                 </template>
-                <template x-if="field.kind !== 'select'">
+                <!-- One arm per kind fieldSpec() can return, not "everything that is not a
+                     select". The catch-all renders a number box for a boolean or a string
+                     knob, which silently writes 1 where true was meant — no NMS option is
+                     either today, so this is a trap rather than a live defect, and
+                     test_every_option_widget_kind_has_an_arm is what keeps it shut. -->
+                <template x-if="field.kind === 'number'">
                   <input type="number" step="any" :min="field.min" :max="field.max"
                          :value="(step.options || {})[field.key] ?? field.fallbackNum ?? ''"
                          :placeholder="field.fallbackNum === null ? '(unset)' : ''"
                          :class="((step.options || {})[field.key] ?? null) === null
                                  && field.fallbackNum !== null ? 'isdefault' : ''"
+                         @input="setOption(index, field, $event.target.value)">
+                </template>
+                <template x-if="field.kind === 'checkbox'">
+                  <input type="checkbox"
+                         :checked="(step.options || {})[field.key] ?? field.fallback === 'true'"
+                         @change="setOption(index, field, $event.target.checked)">
+                </template>
+                <template x-if="field.kind === 'text'">
+                  <input type="text" :value="(step.options || {})[field.key] ?? ''"
+                         :placeholder="field.fallback"
                          @input="setOption(index, field, $event.target.value)">
                 </template>
               </label>
@@ -455,9 +470,8 @@
                mode number that belonged to the previous one. -->
           <select @change="chooseViewerStep($event.target.value)">
             <option value="input" :selected="viewer.step === 'input'">input (seeds)</option>
-            <template x-for="step in cfg.steps" :key="'view' + step.step">
-              <option :value="step.step" :selected="String(step.step) === String(viewer.step)"
-                      x-text="'step ' + step.step"></option>
+            <template x-for="opt in stepOptions(cfg.steps, viewer.step)" :key="'view' + opt.value">
+              <option :value="opt.value" :selected="opt.selected" x-text="opt.label"></option>
             </template>
           </select>
           <!-- `list=` rather than a <select>: a dropdown of what the step actually holds,
@@ -534,9 +548,8 @@
              by them: a control that silently does nothing is the worse of the two. -->
         <select x-model="runTarget" title="Which step the four targeted actions act on">
           <option value="">all steps</option>
-          <template x-for="step in cfg.steps" :key="'target' + step.step">
-            <option :value="step.step" :selected="String(step.step) === String(runTarget)"
-                    x-text="'step ' + step.step"></option>
+          <template x-for="opt in stepOptions(cfg.steps, runTarget)" :key="'target' + opt.value">
+            <option :value="opt.value" :selected="opt.selected" x-text="opt.label"></option>
           </template>
         </select>
         <button type="button" class="mini" @click="refreshStatus()">↻ Refresh</button>
@@ -572,9 +585,8 @@
         <label class="muted">results for step
           <select @change="loadResults($event.target.value)">
             <option value="" :selected="!resultsStep">—</option>
-            <template x-for="step in cfg.steps" :key="'r' + step.step">
-              <option :value="step.step" :selected="String(step.step) === String(resultsStep)"
-                      x-text="step.step"></option>
+            <template x-for="opt in stepOptions(cfg.steps, resultsStep)" :key="'r' + opt.value">
+              <option :value="opt.value" :selected="opt.selected" x-text="opt.label"></option>
             </template>
           </select>
         </label>

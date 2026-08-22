@@ -270,3 +270,46 @@ function atomLabel(atom, mode, counts) {
   }
   return null;
 }
+
+/** A GET url with its query, from a plain object — the one place encoding happens here.
+ *
+ * There were four spellings of this: two `URLSearchParams`, a template literal with a
+ * hand-written `?` and `&`, and a concatenation. The hand-written one broke on any value
+ * containing an `&` — a step *named* with one, which the schema permits — by splitting it
+ * into two arguments the server then read as a different step.
+ *
+ * Empty values are dropped rather than sent blank, because absence and emptiness are
+ * different requests to this API: no `step` asks for the input seeds, while `step=` asks
+ * for a step whose name is the empty string.
+ */
+// biome-ignore lint/correctness/noUnusedVariables: app.js is the caller
+function apiUrl(path, params) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") query.set(key, value);
+  }
+  const encoded = query.toString();
+  return encoded ? `${path}?${encoded}` : path;
+}
+
+/** The step rows behind every "which step?" dropdown: value, label, and selectedness.
+ *
+ * Three selects need this — the Structure pane's, the Run panel's target, and the results
+ * picker — and each had its own copy of the same two subtleties. The comparison is
+ * `String(a) === String(b)` because a step number arrives from a DOM value as a string and
+ * from the config as a number, so `===` on the raw values is false for the selected row and
+ * the box then displays something other than the state. And `:selected` has to be on the
+ * option rather than `:value` on the select, because Alpine renders templated options after
+ * the select binds — the engine dropdown showed `mlip` for an `orca` step exactly that way.
+ *
+ * Sentinels stay in the markup: each select has a different one ("input (seeds)", "all
+ * steps", "—") meaning a different thing, and none of them is a step.
+ */
+// biome-ignore lint/correctness/noUnusedVariables: app.js is the caller
+function stepOptions(steps, chosen) {
+  return (steps || []).map((step) => ({
+    value: step.step,
+    label: `step ${step.step}`,
+    selected: String(step.step) === String(chosen),
+  }));
+}

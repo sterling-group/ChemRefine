@@ -200,10 +200,26 @@ def test_every_vendored_bundle_is_found_and_licensed():
     convention (``ALPINE-LICENSE.md``, ``JS-YAML-LICENSE``: the extension tracks upstream).
     """
     assert len(VENDORED) >= 3, f"the vendor glob found {VENDORED} — has the directory moved?"
-    licences = [p.name for p in (STATIC / "vendor").iterdir() if "LICENSE" in p.name.upper()]
-    assert len(licences) == len(VENDORED), (
-        f"{len(VENDORED)} bundles but {len(licences)} licence files: {sorted(licences)}"
+    licences = {
+        p.name.upper() for p in (STATIC / "vendor").iterdir() if "LICENSE" in p.name.upper()
+    }
+    # Paired to its own bundle, not counted against the total: equal counts are satisfied by
+    # a fourth bundle arriving beside a second licence for one of the first three, which is
+    # precisely the redistribution gap the check exists to close. The convention is the
+    # bundle's basename, uppercased, plus -LICENSE (the extension tracks upstream).
+    missing = [
+        name
+        for name in VENDORED
+        for stem in [Path(name).name.removesuffix(".min.js").upper()]
+        if not any(licence.startswith(f"{stem}-LICENSE") for licence in licences)
+    ]
+    assert missing == [], (
+        f"vendored with no licence of their own: {missing} (have {sorted(licences)})"
     )
+    # And nothing orphaned the other way: a licence whose bundle has been removed.
+    stems = {Path(name).name.removesuffix(".min.js").upper() for name in VENDORED}
+    orphans = [lic for lic in licences if lic.split("-LICENSE")[0] not in stems]
+    assert orphans == [], f"licence files for bundles that are gone: {sorted(orphans)}"
 
 
 def test_every_handler_the_page_calls_exists():
@@ -743,7 +759,6 @@ def test_opening_a_workflow_adopts_it_and_makes_its_run_reachable():
       b.showTab("right", "structure");              // where you go to look at a finished run
       b.browse = { ...b.browse, open: true, mode: "open" };
       await b.pickFile({ name: "input.yaml", path: "/p/input.yaml", dir: false });
-      await new Promise((r) => setTimeout(r, 0));   // pickFile is sync; the load is not
       console.log(JSON.stringify({
         savedPath: b.savedPath, modalOpen: b.browse.open,
         clean: !b.dirty(), tab: b.tabs.right, flash: b.flash,
@@ -769,7 +784,6 @@ def test_opening_does_not_discard_unsaved_edits_either():
       b.savedText = "";
       b.browse = { ...b.browse, open: true, mode: "open" };
       await b.pickFile({ name: "other.yaml", path: "/p/other.yaml", dir: false });
-      await new Promise((r) => setTimeout(r, 0));
       console.log(JSON.stringify({ pending: b.pendingReload, savedPath: b.savedPath }));
     """
     )
@@ -788,10 +802,13 @@ def test_picking_a_file_still_means_the_other_two_things_in_the_other_two_modes(
         + """
       let picked = null;
       b.browse = { ...b.browse, mode: "pick", onPick: (p) => { picked = p; } };
-      b.pickFile({ name: "seeds.xyz", path: "/p/seeds.xyz", dir: false });
+      // Awaited, because pickFile's open branch loads. Unawaited, `savedPath is None`
+      // below was true of every mode including open — it just had not happened *yet* —
+      // so the assertion that "neither mode loads anything" proved nothing at all.
+      await b.pickFile({ name: "seeds.xyz", path: "/p/seeds.xyz", dir: false });
       const afterPick = { picked, savedPath: b.savedPath };
       b.browse = { ...b.browse, open: true, mode: "save", onPick: null };
-      b.pickFile({ name: "old.yaml", path: "/p/old.yaml", dir: false });
+      await b.pickFile({ name: "old.yaml", path: "/p/old.yaml", dir: false });
       console.log(JSON.stringify({ afterPick, filename: b.browse.filename,
                                    savedPath: b.savedPath }));
     """
@@ -1570,6 +1587,94 @@ def test_labels_are_dropped_before_the_model_they_are_attached_to():
     assert len(paired.findall(source)) == drops, (
         "a removeAllModels() without removeAllLabels() immediately before it"
     )
+
+
+def test_the_step_dropdowns_mark_the_chosen_row_across_the_type_boundary():
+    """A step number is a number in the config and a string out of the DOM.
+
+    Three selects need this and each had its own copy. `===` on the raw values is false
+    for the row that is actually chosen, so the box displays the first option while the
+    state says otherwise — the same class of mismatch the templated-select guard exists
+    for, one level in.
+    """
+    out = _run_component_in_node("""
+      const steps = [{ step: 1 }, { step: 2 }, { step: 10 }];
+      console.log(JSON.stringify({
+        fromDom: stepOptions(steps, "2").map((o) => o.selected),
+        fromCfg: stepOptions(steps, 2).map((o) => o.selected),
+        sentinel: stepOptions(steps, "").map((o) => o.selected),
+        labels: stepOptions(steps, 1).map((o) => o.label),
+        empty: stepOptions(undefined, 1),
+      }));
+    """)
+    result = json.loads(out)
+    assert result["fromDom"] == [False, True, False]  # the string the DOM hands back
+    assert result["fromCfg"] == [False, True, False]  # and the number the config holds
+    # A sentinel selects no step — "" must not match step 1 through some coercion.
+    assert result["sentinel"] == [False, False, False]
+    assert result["labels"] == ["step 1", "step 2", "step 10"]
+    assert result["empty"] == []  # a config mid-edit can have no steps at all
+
+
+def test_the_playground_refuses_every_disk_backed_action_in_one_voice():
+    """Three hand-written refusals had drifted into three sentences for the same fact.
+
+    The published playground has no server behind it. What matters is that each action
+    stops *and* says why in terms of that one fact, and that the same code says nothing at
+    all when a server is there.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chatAvailability = () => {};
+      b.api = async () => null;
+      b.savedPath = "/p/input.yaml";
+      b.staticMode = true;
+      const said = [];
+      for (const call of ["validateNow", "showStructure", "runCheck"]) {
+        b.flash = "";
+        await b[call]();
+        said.push(b.flash);
+      }
+      b.staticMode = false;
+      console.log(JSON.stringify({ said, served: b.playgroundRefuses("anything") }));
+    """)
+    result = json.loads(out)
+    assert len(result["said"]) == 3
+    for message in result["said"]:
+        assert "needs the local chemrefine gui" in message
+        assert "chemrefine[gui]" in message
+    assert len(set(result["said"])) == 3  # each still names what it was that stopped
+    assert result["served"] is False  # and with a server, it refuses nothing
+
+
+def test_the_one_opener_still_carries_what_each_mode_needs():
+    """Three spread-and-navigate copies became one; the pick mode's callback is the risk.
+
+    ``pick`` is the only mode with an onPick, and it is the whole of that mode's job —
+    dropping it on the way through a shared opener makes the field pickers silently do
+    nothing when a file is chosen.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chatAvailability = () => {};
+      b.api = async () => ({ path: "/x", parent: "/", entries: [] });
+      let picked = null;
+      await b.openBrowseWith("Pick template_dir", (p) => { picked = p; });
+      const pick = { mode: b.browse.mode, title: b.browse.title, hasPick: !!b.browse.onPick };
+      b.browse.onPick("/chosen");
+      await b.openConfig();
+      const open = { mode: b.browse.mode, title: b.browse.title, onPick: b.browse.onPick };
+      await b.openSave();
+      const save = { mode: b.browse.mode, title: b.browse.title, onPick: b.browse.onPick };
+      console.log(JSON.stringify({ pick, picked, open, save, opened: b.browse.open }));
+    """)
+    result = json.loads(out)
+    assert result["pick"] == {"mode": "pick", "title": "Pick template_dir", "hasPick": True}
+    assert result["picked"] == "/chosen"  # the callback survived the shared path
+    # The other two carry no callback — a stale one would fire on the next file clicked.
+    assert result["open"] == {"mode": "open", "title": "Open a workflow…", "onPick": None}
+    assert result["save"] == {"mode": "save", "title": "Save workflow as…", "onPick": None}
+    assert result["opened"] is True
 
 
 def test_field_specs_carry_the_schema_bounds_and_default():
