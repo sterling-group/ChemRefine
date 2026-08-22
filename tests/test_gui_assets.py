@@ -491,7 +491,7 @@ def test_each_column_switches_independently():
       const b = builder();
       b.chatAvailability = () => {};
       const seen = [JSON.stringify(b.tabs)];
-      b.showTab("right", "molecule");
+      b.showTab("right", "structure");
       seen.push(JSON.stringify(b.tabs));
       b.showTab("left", "agent");
       seen.push(JSON.stringify(b.tabs));
@@ -499,8 +499,8 @@ def test_each_column_switches_independently():
     """)
     assert [json.loads(s) for s in json.loads(out)] == [
         {"left": "builder", "right": "yaml"},  # the defaults a fresh page opens on
-        {"left": "builder", "right": "molecule"},
-        {"left": "agent", "right": "molecule"},
+        {"left": "builder", "right": "structure"},
+        {"left": "agent", "right": "structure"},
     ]
 
 
@@ -547,7 +547,7 @@ def test_an_agent_write_reloads_the_form_and_shows_the_pane():
     out = _run_component_in_node(
         _RELOAD_HARNESS
         + """
-      b.showTab("right", "molecule");
+      b.showTab("right", "structure");
       await b.loadConfigFrom("/p/input.yaml");
       console.log(JSON.stringify({
         calls, tab: b.tabs.right, savedPath: b.savedPath,
@@ -740,6 +740,7 @@ def test_opening_a_workflow_adopts_it_and_makes_its_run_reachable():
     out = _run_component_in_node(
         _RELOAD_HARNESS
         + """
+      b.showTab("right", "structure");              // where you go to look at a finished run
       b.browse = { ...b.browse, open: true, mode: "open" };
       await b.pickFile({ name: "input.yaml", path: "/p/input.yaml", dir: false });
       await new Promise((r) => setTimeout(r, 0));   // pickFile is sync; the load is not
@@ -753,7 +754,9 @@ def test_opening_a_workflow_adopts_it_and_makes_its_run_reachable():
     assert result["savedPath"] == "/p/input.yaml"  # the Run panel keys off exactly this
     assert result["modalOpen"] is False
     assert result["clean"] is True  # a freshly opened file is not an unsaved edit
-    assert result["tab"] == "yaml"
+    # Opening a run is how you go and *look* at it, so the tab you chose is kept. Only the
+    # agent's own write steals the pane back, and that is asserted separately above.
+    assert result["tab"] == "structure"
     assert "loaded /p/input.yaml" in result["flash"]  # not "the agent wrote…"
 
 
@@ -902,6 +905,173 @@ def test_the_seed_view_survives_renumbering():
       console.log(JSON.stringify({ sentinel: run("input"), vanished: run("3") }));
     """)
     assert json.loads(out) == {"sentinel": "input", "vanished": "input"}
+
+
+def test_opening_a_workflow_leaves_none_of_the_previous_one_on_screen():
+    """Everything keyed off ``savedPath`` describes the file that *was* loaded.
+
+    The Run panel refreshes only when it is toggled, so after an Open its status table,
+    failure count and results rows kept describing the previous workflow under the new
+    file's name — and the viewer kept pointing at a step number the new config need not
+    have. A stale report and a half-open template editor came along too.
+    """
+    out = _run_component_in_node(
+        _RELOAD_HARNESS
+        + """
+      b.runStatus = { state: "failed", steps: [{ step: 1 }] };
+      b.runFailures = { count: 3 };
+      b.runResults = { rows: [{ id: "0" }] };
+      b.resultsStep = "2";
+      b.report = { ok: false };
+      b.tmpl = { open: true, step: 2, path: "/old/tmpl.inp", text: "old" };
+      b.viewer = { ...b.viewer, step: "7", structureId: "4", modeIndex: "6", note: "stale" };
+      let stopped = 0, cleared = 0;
+      b._gl = { stopAnimate: () => { stopped++; }, removeAllModels: () => { cleared++; },
+                render: () => {} };
+      await b.loadConfigFrom("/p/input.yaml", { reason: "open" });
+      console.log(JSON.stringify({
+        runStatus: b.runStatus, runFailures: b.runFailures, runResults: b.runResults,
+        resultsStep: b.resultsStep, report: b.report, tmplOpen: b.tmpl.open,
+        viewer: b.viewer, stopped, cleared,
+      }));
+    """
+    )
+    result = json.loads(out)
+    assert result["runStatus"] is None
+    assert result["runFailures"] is None
+    assert result["runResults"] is None
+    assert result["resultsStep"] == ""
+    assert result["report"] is None  # it validated a file that is no longer in the form
+    assert result["tmplOpen"] is False
+    # Back to the one view every tree can answer, with nothing carried over from the old one.
+    assert result["viewer"]["step"] == "input"
+    assert (result["viewer"]["structureId"], result["viewer"]["modeIndex"]) == ("", "")
+    assert result["viewer"]["note"] == ""
+    # And the old tree's molecule is off the canvas rather than left there animating.
+    assert (result["stopped"], result["cleared"]) == (1, 1)
+
+
+def test_a_failed_open_keeps_the_browser_where_you_had_navigated_to():
+    """A directory, an unreadable file or a bad ``~user`` must not dismiss the dialog.
+
+    ``openConfigFrom`` closed the modal before the request, unlike ``saveTo()``, so a
+    failure left a flash, no browser, and no way back to wherever you had browsed.
+    """
+    out = _run_component_in_node(
+        _RELOAD_HARNESS
+        + """
+      b.api = async (m, url) => (url.startsWith("/api/load") ? null : { config: { steps: [] } });
+      b.browse = { ...b.browse, open: true, mode: "open", path: "/deep/in/a/tree" };
+      await b.openConfigFrom("/deep/in/a/tree/notes.txt");
+      console.log(JSON.stringify({
+        modalOpen: b.browse.open, where: b.browse.path, savedPath: b.savedPath,
+      }));
+    """
+    )
+    assert json.loads(out) == {
+        "modalOpen": True,
+        "where": "/deep/in/a/tree",
+        "savedPath": None,  # nothing was adopted, so the form keeps what it had
+    }
+
+
+def test_a_failed_accept_puts_the_offer_back():
+    """The banner is the only thing that still names the file the agent wrote.
+
+    ``acceptPendingReload`` cleared it before the load could fail — and it must clear it,
+    or the load re-offers the path to itself — so a failed accept lost the write for good.
+    """
+    out = _run_component_in_node(
+        _RELOAD_HARNESS
+        + """
+      b.yamlText = "steps: [{step: 1}]\\n";        // unsaved edits, so the write is offered
+      b.savedText = "";
+      await b.loadConfigFrom("/p/written.yaml");
+      const offered = b.pendingReload;
+      b.api = async (m, url) => (url.startsWith("/api/load") ? null : { config: { steps: [] } });
+      await b.acceptPendingReload();               // the file has gone in the meantime
+      console.log(JSON.stringify({ offered, after: b.pendingReload }));
+    """
+    )
+    result = json.loads(out)
+    assert result["offered"] == {"path": "/p/written.yaml", "reason": "agent"}
+    assert result["after"] == result["offered"]  # still there to try again
+
+
+def test_a_launched_config_and_an_opened_one_seed_the_same_starter_step():
+    """``adopt()``'s comment named ``init()`` as a caller while ``init()`` hand-rolled it.
+
+    Only ``init()`` had the starter-step fallback, so a config whose ``steps:`` is empty
+    showed one seeded step from the command line and an empty builder through Open… — the
+    same file, two different forms.
+    """
+    out = _run_component_in_node(
+        _RELOAD_HARNESS
+        + """
+      global.fetch = async () => ({
+        ok: true, status: 200,
+        json: async () => ({ schema: { config: { properties: {} } }, host: "",
+                             initial: { path: "/p/input.yaml", yaml_text: "steps: []\\n" } }),
+      });
+      await b.init();
+      const launched = b.cfg.steps.length;
+      const c = builder();
+      c.chatAvailability = () => {};
+      c.api = b.api; c.schema = b.schema;
+      await c.loadConfigFrom("/p/input.yaml", { reason: "open" });
+      console.log(JSON.stringify({ launched, opened: c.cfg.steps.length }));
+    """
+    )
+    assert json.loads(out) == {"launched": 1, "opened": 1}
+
+
+def test_a_bundle_that_loads_but_defines_nothing_is_a_failure_not_a_silence():
+    """Loaded and defined are two facts, and only the first has an event.
+
+    ``onload`` resolved ``window.$3Dmol`` unchecked, so a truncated or shimmed bundle
+    resolved ``undefined`` and every later Show returned at the ``!lib`` guard — no note,
+    no flash, for the rest of the session.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chatAvailability = () => {};
+      let tag = null;
+      global.document = {
+        createElement: () => (tag = {}),
+        head: { appendChild: () => {} },
+        getElementById: () => ({}),
+      };
+      b.savedPath = "/p/input.yaml";               // past the nothing-to-show guard
+      const first = b.mountViewer();
+      tag.onload();                                 // the script arrives, and defines nothing
+      await first;
+      const noted = b.viewer.note;
+      // And the cached rejection is dropped, so the next open still gets to try.
+      const retried = b.loadViewerLib() !== null;
+      console.log(JSON.stringify({ noted, retried }));
+    """)
+    result = json.loads(out)
+    assert "3D viewer could not start" in result["noted"]
+    assert "defined nothing" in result["noted"]
+    assert result["retried"] is True
+
+
+def test_the_viewer_bundle_is_not_fetched_for_a_pane_that_can_show_nothing():
+    """Half a megabyte to render the sentence "save the workflow first"."""
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chatAvailability = () => {};
+      let created = 0;
+      global.document = {
+        createElement: () => { created++; return {}; },
+        head: { appendChild: () => {} },
+        getElementById: () => ({}),
+      };
+      b.showTab("right", "structure");             // opened with nothing saved
+      await new Promise((r) => setTimeout(r, 0));
+      console.log(JSON.stringify({ created }));
+    """)
+    assert json.loads(out) == {"created": 0}
 
 
 def test_field_specs_carry_the_schema_bounds_and_default():

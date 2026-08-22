@@ -100,6 +100,7 @@ function builder() {
       // actual status.
       let data = null;
       let status = null; // stays null when nothing answered on this origin at all
+      let adopted = false; // whether a launched config already went through adopt()
       try {
         const probe = await fetch("/api/bootstrap", {
           headers: { "X-ChemRefine-Token": this.token },
@@ -129,10 +130,9 @@ function builder() {
         this.serverHost = data.host || "";
         if (data.initial) {
           this.savedPath = data.initial.path;
-          const parsed = await this.api("POST", "/api/parse", {
-            yaml_text: data.initial.yaml_text,
-          });
-          if (parsed?.config) this.cfg = this.withSteps(parsed.config);
+          // Through adopt(), like every other route from YAML text to a populated form.
+          // This used to be a fourth hand-written copy, which is exactly how it drifted.
+          adopted = await this.adopt(data.initial.yaml_text);
         }
       } else {
         // Any other *answered* status is the static docs copy (its host says 404).
@@ -146,10 +146,7 @@ function builder() {
           return;
         }
       }
-      this.seedWorkflowDefaults();
-      this.rekeySteps();
-      if (!this.cfg.steps.length) this.addStep();
-      this.syncExecRows();
+      if (!adopted) this.refreshForm(); // adopt() has already done this for a loaded config
       this.ready = true;
       if (this.savedPath) {
         // A launched config is on disk and the form now mirrors it, so record that —
@@ -512,11 +509,20 @@ function builder() {
       const parsed = await this.api("POST", "/api/parse", { yaml_text: yamlText });
       if (!parsed?.config) return false;
       this.cfg = this.withSteps(parsed.config);
-      this.seedWorkflowDefaults(); // the form shows them; the file states them
-      this.rekeySteps();
-      this.syncExecRows();
+      this.refreshForm();
       this.syncYaml();
       return true;
+    },
+    // The tail of adopt(), split out only because init()'s *empty* form needs the same
+    // treatment without any YAML to parse. Keeping the starter step in here is what stops
+    // the two paths diverging again: it used to live in init() alone, so a stepless file
+    // opened from the command line showed one seeded step and the same file opened through
+    // Open… showed an empty builder.
+    refreshForm() {
+      this.seedWorkflowDefaults(); // the form shows them; the file states them
+      this.rekeySteps();
+      if (!this.cfg.steps.length) this.addStep();
+      this.syncExecRows();
     },
     async applyRaw() {
       if (await this.adopt(this.yamlText)) {
@@ -638,7 +644,14 @@ function builder() {
           if (window.$3Dmol) return resolve(window.$3Dmol);
           const tag = document.createElement("script");
           tag.src = "static/vendor/3dmol.min.js"; // relative, like every other asset here
-          tag.onload = () => resolve(window.$3Dmol);
+          tag.onload = () => {
+            // A bundle that loads but defines nothing used to resolve `undefined`, and
+            // every later Show then returned at mountViewer's guard in silence — no note,
+            // no flash, for the rest of the session. Load and define are separate facts.
+            if (window.$3Dmol) return resolve(window.$3Dmol);
+            this._glLib = null;
+            reject(new Error("the 3Dmol bundle loaded but defined nothing"));
+          };
           tag.onerror = () => {
             // Drop the cached rejection: keeping it would make one dropped request
             // disable the Structure tab until the page is reloaded.
@@ -652,10 +665,13 @@ function builder() {
     },
     async mountViewer() {
       if (this.staticMode) return; // the playground has no server to ask for geometry
+      // With nothing saved the pane says "save the workflow first" and can show nothing, so
+      // opening the tab there would fetch half a megabyte of viewer to render that sentence.
+      if (!this.savedPath) return;
       try {
         const lib = await this.loadViewerLib();
         const host = document.getElementById("viewer");
-        if (!lib || !host) return;
+        if (!host) return;
         if (!this._gl) {
           this._gl = lib.createViewer(host, { backgroundColor: "white" });
         }
@@ -797,26 +813,53 @@ function builder() {
 
     // Reload the config the agent just wrote, into the form the user is watching.
     // Refuses to clobber unsaved edits: it offers instead, through pendingReload.
+    // Answers whether the path was dealt with: false means it did not load and the caller
+    // is still holding the only route back to it (the browser dialog, or the offer banner).
     async loadConfigFrom(path, { force = false, reason = "agent" } = {}) {
-      if (this.staticMode) return; // the playground has no server to read a file from
+      if (this.staticMode) return true; // the playground has no server to read a file from
       if (!force && (this.dirty() || this.rawEdit)) {
         // rawEdit counts as dirty even when the text matches: syncYaml() early-returns
         // while raw editing, so adopting underneath it would desync the two panes.
         this.pendingReload = { path, reason };
-        return;
+        return true; // handed over to the offer, which is now the route back
       }
       const data = await this.api("GET", `/api/load?path=${encodeURIComponent(path)}`);
-      if (!data) return; // flash explains; the form keeps what it had
-      if (await this.adopt(data.yaml_text)) {
-        this.savedPath = data.path;
-        this.pendingReload = null;
-        this.rawEdit = false;
-        await this.recordOnDisk();
-        this.showTab("right", "yaml"); // the change is worth nothing behind another tab
-        this.flash =
-          reason === "open"
-            ? `loaded ${data.path}`
-            : `the agent wrote ${data.path} — loaded into the builder`;
+      if (!data) return false; // flash explains; the form keeps what it had
+      if (!(await this.adopt(data.yaml_text))) return false;
+      this.savedPath = data.path;
+      this.pendingReload = null;
+      this.rawEdit = false;
+      this.forgetPreviousWorkflow();
+      await this.recordOnDisk();
+      // Only the agent's own writes steal the tab. Open… is how you go and *look* at a
+      // finished run, and yanking the pane back to the YAML is precisely the wrong answer
+      // when the tab you opened it on was the Structure one.
+      if (reason !== "open") this.showTab("right", "yaml");
+      this.flash =
+        reason === "open"
+          ? `loaded ${data.path}`
+          : `the agent wrote ${data.path} — loaded into the builder`;
+      return true;
+    },
+
+    // Everything on the page that describes the workflow that *was* loaded rather than the
+    // form itself. Without this, Open… left the previous run's status table, failure count
+    // and results rows on screen under the new file's name — they only refresh when the Run
+    // panel is toggled — and pointed the viewer at a step number the new config may not have.
+    forgetPreviousWorkflow() {
+      this.runStatus = null;
+      this.runFailures = null;
+      this.runResults = null;
+      this.resultsStep = "";
+      this.report = null; // validation of a file that is no longer the one in the form
+      this.tmpl = { open: false, step: null, path: "", text: "" };
+      this.viewer = { ...this.viewer, step: "input", structureId: "", modeIndex: "", note: "" };
+      // The drawn molecule belongs to the old tree too; leaving it up (still animating)
+      // reads as the new workflow's answer.
+      if (this._gl) {
+        this._gl.stopAnimate();
+        this._gl.removeAllModels();
+        this._gl.render();
       }
     },
     // Emit the current form and record the result as what is on disk. Awaited, not left
@@ -831,10 +874,17 @@ function builder() {
       }
     },
     async acceptPendingReload() {
-      const path = this.pendingReload?.path;
-      const reason = this.pendingReload?.reason ?? "agent";
+      const offer = this.pendingReload;
+      if (!offer) return;
+      // Cleared first so loadConfigFrom() cannot re-offer the same path to itself, but put
+      // back if the load fails: the banner is the only thing that still names that file,
+      // and losing it on a failed accept lost the agent's write for good.
       this.pendingReload = null;
-      if (path) await this.loadConfigFrom(path, { force: true, reason });
+      const loaded = await this.loadConfigFrom(offer.path, {
+        force: true,
+        reason: offer.reason ?? "agent",
+      });
+      if (!loaded) this.pendingReload = offer;
     },
     dismissPendingReload() {
       this.pendingReload = null;
@@ -967,8 +1017,10 @@ function builder() {
       await this.navigate(this.savedPath ? parentDir(this.savedPath) : null);
     },
     async openConfigFrom(path) {
-      this.browse.open = false;
-      await this.loadConfigFrom(path, { reason: "open" });
+      // Closed only once the file has actually loaded, the way saveTo() does it. Closing
+      // first meant a directory, an unreadable file or a bad ~user dismissed the browser
+      // and threw away wherever you had navigated to, leaving a flash and no way back.
+      if (await this.loadConfigFrom(path, { reason: "open" })) this.browse.open = false;
     },
     async openSave() {
       this.browse = {

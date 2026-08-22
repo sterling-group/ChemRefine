@@ -58,8 +58,8 @@ before trusting**: `get_frequencies` must show *exactly one* imaginary mode
 reaction coordinate — forming/breaking bonds at the top of `bond_changes` (negative
 rate = forming, positive = breaking). A large imaginary frequency on a methyl rotor is
 the classic false positive. `get_structure` returns the same structure as extended-XYZ
-text — with the cell as `Lattice="…"` if it has one, and with a mode's displacement
-columns when you pass `mode_index`, which is what a viewer animates. Called with no
+text — with a mode's displacement columns when you pass `mode_index`, which is what a
+viewer animates. Called with no
 `step` it returns the **input seeds** instead, numbered as the run will number them:
 the one way to check what a workflow is about to compute on before starting it.
 Spurious extra imaginary modes: set `nms: true` with

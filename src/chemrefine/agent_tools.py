@@ -578,13 +578,19 @@ def get_structure(
     structure_id: str | None = None,
     mode_index: int | None = None,
 ) -> dict[str, Any]:
-    """One structure as extended-XYZ text — geometry, cell, and optionally a mode.
+    """One structure as extended-XYZ text — geometry, and optionally a mode.
 
     The geometry half of :func:`get_frequencies`, reading the same step cache: symbols and
     positions are persisted with every parsed structure, so this needs no output file.
-    Extended XYZ because it carries the cell as ``Lattice="…"`` for a periodic structure
-    and three displacement columns for a mode, in one text format a viewer can read
-    directly — see :func:`chemrefine.io.extended_xyz_text`.
+    Extended XYZ because it carries three displacement columns for a mode alongside the
+    geometry, in one text format a viewer can read directly — see
+    :func:`chemrefine.io.extended_xyz_text`.
+
+    That writer also emits the cell as ``Lattice="…"``, but nothing reaching here has one:
+    no engine parser captures a cell (:class:`~chemrefine.engines.api.ParsedResult` has no
+    such field) and :func:`chemrefine.cache.structure_record` persists only symbols and
+    positions, so it is dropped on the way in and again through the cache. The capability
+    is groundwork for periodic support, not something this function returns today.
 
     ``step`` of ``None`` means the **input seeds** — what step 1 will be given, before
     anything has run. That is the one view available on a tree that has never been
@@ -660,7 +666,15 @@ def _seed_structure(
     """
     if mode_index is not None:
         raise ConfigError("the input seeds have no normal modes — name a step to animate one")
-    if config.input is not None and config.input.suffix.lower() == ".csv":
+    # is_dir() first, in bootstrap's order: it takes a directory as a directory whatever it
+    # is called, so testing the suffix first refused a folder named `batch.csv` here and
+    # seeded it happily there.
+    seeds_from_smiles = (
+        config.input is not None
+        and not config.input.is_dir()
+        and config.input.suffix.lower() == ".csv"
+    )
+    if seeds_from_smiles:
         raise ConfigError(
             f"{config.input} seeds from SMILES, which has to embed the molecules before "
             "they can be drawn — run the workflow, or use build_structures to write .xyz "

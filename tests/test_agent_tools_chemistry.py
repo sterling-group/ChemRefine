@@ -383,6 +383,24 @@ def test_smiles_seeds_are_refused_rather_than_embedded_behind_a_read(tmp_path: P
     assert not (tmp_path / "outputs" / "_seed").exists()
 
 
+def test_a_directory_is_a_directory_whatever_it_is_called(tmp_path: Path):
+    """The suffix decides nothing until ``is_dir()`` has said no, as in ``bootstrap``.
+
+    :func:`chemrefine.pipeline.bootstrap` takes a directory as a directory first and only
+    then looks at the suffix, so a folder named ``batch.csv`` seeds from the ``.xyz`` files
+    inside it. Testing the suffix first here refused that same folder as SMILES — the
+    viewer disagreeing with the run about what the config means.
+    """
+    seeds = tmp_path / "batch.csv"
+    seeds.mkdir()
+    (seeds / "one.xyz").write_text("1\nfirst\nN 0 0 0\n", encoding="utf-8")
+    path = tmp_path / "input.yaml"
+    path.write_text(
+        yaml.safe_dump({"input": "batch.csv", "steps": [{"step": 1, "engine": "orca"}]}), "utf-8"
+    )
+    assert agent_tools.get_structure(str(path))["text"].splitlines()[2][0] == "N"
+
+
 def test_get_structure_without_a_cache_says_run_first(tmp_path: Path):
     with pytest.raises(ConfigError, match="run it"):
         agent_tools.get_structure(str(_write_config(tmp_path)), 1)
