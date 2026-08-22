@@ -31,6 +31,8 @@ from pathlib import Path
 
 import pytest
 
+from chemrefine import io
+
 STATIC = Path(__file__).resolve().parent.parent / "src" / "chemrefine" / "gui" / "static"
 INDEX = STATIC / "index.html"
 OURS = ("app.js", "forms.js")
@@ -240,12 +242,17 @@ def _options_after(marker: str) -> list[str]:
 def test_the_pages_hardcoded_vocabularies_match_the_models_that_own_them():
     """Three dropdowns spell out values that live in Python; require them to agree.
 
-    Everything else the builder offers is schema-driven — engines, `operation:`, every
-    option and NMS field come from `/api/bootstrap`. These three do not, and each is a
-    place a future change can be made in Python alone and go silently missing from the UI:
+    Most of what the builder offers is schema-driven — engines, `operation:`, every option
+    and NMS field come from `/api/bootstrap`. These three do not, and each is a place a
+    future change can be made in Python alone and go silently missing from the UI:
     a fourth `SampleConfig` variant is a mypy error in `filtering._dispatch` and a
     `test_docs_drift` failure, but the page would simply never offer it, and a config that
     named it in the YAML pane would render *no* knobs at all (`sampleFields` → `[]`).
+
+    They are not the only such place, which this docstring used to claim: the results
+    table names `steps.csv` columns, which arrive through `/api/results` rather than
+    through the schema. That fourth vocabulary has its own test below — the enumeration
+    was the thing that had drifted, not the list.
 
     Kept as text guards rather than deriving the lists in JavaScript, because the labels
     are prose the models cannot supply ("min (lowest-energy)") — so the duplication is
@@ -282,6 +289,34 @@ def test_the_pages_hardcoded_vocabularies_match_the_models_that_own_them():
 
     # `provider`: mirrors the agent's preset table, which the schema does not publish.
     assert sorted(_options_after('x-model="chat.provider"')) == sorted(providers._PRESETS)
+
+
+def test_the_results_table_names_columns_the_report_actually_writes():
+    """The fourth hardcoded vocabulary, and the one nothing was watching.
+
+    The results table reads `row.Conformer`, `row['Energy (kcal/mol)']` and two more
+    straight off `/api/results`, which hands back `steps.csv` rows verbatim. Those names
+    are owned by `io.save_step_csv` and reach the page through no schema, so renaming a
+    column there left the table rendering the literal string `undefined` in one cell and
+    `NaN` in three — with the whole suite green, which is exactly the failure the three
+    guards above exist to prevent, in the one spot they did not cover.
+    """
+    html = INDEX.read_text(encoding="utf-8")
+    # Scoped to the results table's own x-for: `row` is the loop variable in the run-status
+    # table and the executables rows too, and those iterate objects this module does not
+    # own. Bounded by the element, like `_options_after` above and for the same reason.
+    marker = "runResults.rows"
+    assert marker in html, "the results table's x-for has moved; this guard needs its new anchor"
+    block = html.split(marker, 1)[1]
+    block = block[: block.index("</table>")]
+    # Both spellings the page uses: `row.Name` for the identifier-safe one, `row['A b']`
+    # for the rest. Anything the table reads off a row has to be a column that exists.
+    named = set(re.findall(r"\brow\.([A-Za-z_]\w*)", block)) | set(
+        re.findall(r"\brow\['([^']+)'\]", block)
+    )
+    assert named, "the results table reads no columns — has it been rewritten?"
+    unknown = named - set(io.STEPS_CSV_COLUMNS)
+    assert not unknown, f"the page reads columns steps.csv does not write: {sorted(unknown)}"
 
 
 def _run_in_node(script: str) -> str:

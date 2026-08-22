@@ -45,6 +45,29 @@ if TYPE_CHECKING:
 _CSV_PRECISION = 8
 _NATURAL_PART = re.compile(r"(\d+)")
 
+STEPS_CSV_COLUMNS = (
+    "Step",
+    "Conformer",
+    "Energy (Hartree)",
+    "Energy (kcal/mol)",
+    "dE (kcal/mol)",
+    "Boltzmann Weight",
+    "% Total",
+    "% Cumulative",
+    "Energy type",
+)
+"""The columns of ``steps.csv``, in order — the report's schema, addressable.
+
+Public and load-bearing rather than a line of prose in a docstring, because three things
+outside this function depend on these exact strings: :func:`chemrefine.agent_tools.
+get_results` hands whole rows to agents, the GUI's results table names four of them in
+``index.html``, and whatever a user reads the file with names them too.
+
+:func:`save_step_csv` selects by this tuple before writing, so the frame it assembled and
+the schema it promises cannot drift apart; ``tests/test_gui_assets.py`` compares the
+page's hardcoded names against it, so the page cannot drift from either. Renaming a column
+is still allowed — it just now has to be done here, where every reader is looking."""
+
 logger = logging.getLogger(__name__)
 
 
@@ -324,8 +347,8 @@ def save_step_csv(
 ) -> Path:
     """Append a per-structure summary row for ``step_number`` to a cumulative CSV.
 
-    Columns: ``Step, Conformer, Energy (Hartree), Energy (kcal/mol),
-    dE (kcal/mol), Boltzmann Weight, % Total, % Cumulative, Energy type``.
+    Columns are :data:`STEPS_CSV_COLUMNS`, in that order — selected by it just before the
+    write, so this function cannot quietly emit a shape the constant does not describe.
     Sorted by energy ascending. Step 1 writes the header; later steps
     append without a header.
 
@@ -384,6 +407,11 @@ def save_step_csv(
     )
     # Last column, so the leading header columns stay stable for existing tooling.
     df["Energy type"] = energy_type
+
+    # Order and completeness in one line: a column this function forgot to build raises
+    # KeyError here rather than shipping a report missing it, and the write order is the
+    # documented one by construction instead of by the order the frame happened to grow.
+    df = df[list(STEPS_CSV_COLUMNS)]
 
     # The header follows the *file*, not the step number. Keyed off `step_number == 1`, a
     # step 1 that summarises nothing (every energy None — which `on_failure: best` produces
