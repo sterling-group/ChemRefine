@@ -707,19 +707,71 @@ def test_the_key_is_not_sent_to_a_provider_whose_key_field_is_hidden():
 
 
 def test_renumbering_releases_every_panel_that_names_a_step():
-    """Two panels select a step by number, and both must let go when the numbers move."""
+    """Two panels select a step by number, and both must let go when the numbers move.
+
+    They land differently on purpose: the results table has an em-dash placeholder to fall
+    back to, while the Structure pane's selector has no empty option — so it falls back to
+    the seeds, which are always there.
+    """
     out = _run_component_in_node("""
       const b = builder();
       b.api = async () => ({ yaml_text: "" });
       b.cfg = { steps: [{ step: 1 }, { step: 2 }, { step: 3 }] };
       b.stepKeys = [1, 2, 3];
       b.resultsStep = "3";
-      b.mol.step = "3";
+      b.viewer.step = "3";
       b.cfg.steps.splice(0, 1);              // delete step 1; 3 becomes 2
       b.renumber();
-      console.log(JSON.stringify({ results: b.resultsStep, mol: b.mol.step }));
+      console.log(JSON.stringify({ results: b.resultsStep, viewer: b.viewer.step }));
     """)
-    assert json.loads(out) == {"results": "", "mol": ""}
+    assert json.loads(out) == {"results": "", "viewer": "input"}
+
+
+def test_the_viewer_asks_for_seeds_by_omitting_the_step():
+    """ "input" is a sentinel in the page, never a value the server sees.
+
+    A step may be *named* anything, so sending ``step=input`` would be read as a step name
+    and look up a step nobody has. Absence is the request for the seeds.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.savedPath = "/p/input.yaml";
+      const asked = [];
+      b.api = async (m, u) => { asked.push(u); return null; };   // stop after the request
+      b.mountViewer = async () => {};
+      await b.showStructure();                      // viewer.step defaults to "input"
+      b.viewer.step = "2"; b.viewer.modeIndex = "6";
+      await b.showStructure();
+      console.log(JSON.stringify(asked));
+    """)
+    seeds, step = json.loads(out)
+    assert "step=" not in seeds  # no step at all, not step=input
+    assert "mode_index" not in seeds  # and seeds have no mode to ask for
+    assert "step=2" in step
+    assert "mode_index=6" in step
+
+
+def test_the_seed_view_survives_renumbering():
+    """The sentinel is not a step number, so the staleness guard must not collect it.
+
+    ``renumber()`` releases a panel whose chosen step has gone. "input" never goes — the
+    seeds outlive any renumbering — and a step that *has* gone falls back to it rather
+    than to an empty selection with no matching option.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.api = async () => ({ yaml_text: "" });
+      const run = (chosen) => {
+        b.cfg = { steps: [{step:1},{step:2},{step:3}] };
+        b.stepKeys = [1,2,3];
+        b.viewer.step = chosen;
+        b.cfg.steps.splice(0, 1);
+        b.renumber();
+        return b.viewer.step;
+      };
+      console.log(JSON.stringify({ sentinel: run("input"), vanished: run("3") }));
+    """)
+    assert json.loads(out) == {"sentinel": "input", "vanished": "input"}
 
 
 def test_field_specs_carry_the_schema_bounds_and_default():

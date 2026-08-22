@@ -81,9 +81,16 @@ function builder() {
       onPick: null,
     },
     tmpl: { open: false, step: null, path: "", text: "" },
-    mol: { step: "", structureId: "", modeIndex: "", busy: false, note: "", animating: false },
-    _viewer: null,
-    _viewerLib: null, // the in-flight or settled load of the vendored bundle
+    viewer: {
+      step: "input",
+      structureId: "",
+      modeIndex: "",
+      busy: false,
+      note: "",
+      animating: false,
+    },
+    _gl: null, // the 3Dmol viewer instance, once the bundle is in
+    _glLib: null, // the in-flight or settled load of the vendored bundle
     _timer: null,
 
     // ---------------- boot ----------------
@@ -449,7 +456,7 @@ function builder() {
       });
       // Two panels name a step by number, and after renumbering that number means a
       // different step (or none) — so each must let go rather than keep serving the old
-      // one under a selector that has silently snapped back to "—". The Molecule pane is
+      // one under a selector that has silently snapped back to "—". The Structure pane is
       // the second; it was added later and inherited the bug this guard was written for.
       const gone = (chosen) =>
         chosen && !this.cfg.steps.some((s) => String(s.step) === String(chosen));
@@ -457,9 +464,11 @@ function builder() {
         this.resultsStep = "";
         this.runResults = null;
       }
-      if (gone(this.mol.step)) {
-        this.mol.step = "";
-        this.mol.note = "";
+      // "input" is not a step number and never goes stale — the seeds outlive any
+      // renumbering — so it must survive a guard written for step selections.
+      if (this.viewer.step !== "input" && gone(this.viewer.step)) {
+        this.viewer.step = "input";
+        this.viewer.note = "";
       }
       this.syncYaml();
     },
@@ -612,7 +621,7 @@ function builder() {
       // canvas from the container's offsetWidth, and compensates for a hidden one only
       // when the *container's own* inline display is "none" — but x-show sets that on the
       // panel, so a viewer built while its tab is inactive reads 0 and stays 0.
-      if (side === "right" && id === "molecule") this.mountViewer();
+      if (side === "right" && id === "structure") this.mountViewer();
     },
 
     // ---------------- structure viewer ----------------
@@ -620,22 +629,22 @@ function builder() {
     // frontend put together, and someone who never opens this tab never pays for it. The
     // promise is cached, so two fast clicks inject one script tag.
     loadViewerLib() {
-      if (!this._viewerLib) {
-        this._viewerLib = new Promise((resolve, reject) => {
+      if (!this._glLib) {
+        this._glLib = new Promise((resolve, reject) => {
           if (window.$3Dmol) return resolve(window.$3Dmol);
           const tag = document.createElement("script");
           tag.src = "static/vendor/3dmol.min.js"; // relative, like every other asset here
           tag.onload = () => resolve(window.$3Dmol);
           tag.onerror = () => {
             // Drop the cached rejection: keeping it would make one dropped request
-            // disable the Molecule tab until the page is reloaded.
-            this._viewerLib = null;
+            // disable the Structure tab until the page is reloaded.
+            this._glLib = null;
             reject(new Error("could not load the 3Dmol bundle"));
           };
           document.head.appendChild(tag);
         });
       }
-      return this._viewerLib;
+      return this._glLib;
     },
     async mountViewer() {
       if (this.staticMode) return; // the playground has no server to ask for geometry
@@ -643,16 +652,16 @@ function builder() {
         const lib = await this.loadViewerLib();
         const host = document.getElementById("viewer");
         if (!lib || !host) return;
-        if (!this._viewer) {
-          this._viewer = lib.createViewer(host, { backgroundColor: "white" });
+        if (!this._gl) {
+          this._gl = lib.createViewer(host, { backgroundColor: "white" });
         }
         // Both paths, every time: a viewer built while the tab was hidden still has to be
         // told the container has a size now.
-        this._viewer.resize();
-        this._viewer.render();
+        this._gl.resize();
+        this._gl.render();
       } catch (err) {
         // createViewer throws a bare string on a WebGL failure, not an Error.
-        this.mol.note = `the 3D viewer could not start: ${err.message || err}`;
+        this.viewer.note = `the 3D viewer could not start: ${err.message || err}`;
       }
     },
     async showStructure() {
@@ -660,41 +669,46 @@ function builder() {
         this.flash = "the structure view needs the local chemrefine gui";
         return;
       }
-      if (!this.savedPath || !this.mol.step) return;
-      this.mol.busy = true;
-      this.mol.note = "";
+      if (!this.savedPath || !this.viewer.step) return;
+      this.viewer.busy = true;
+      this.viewer.note = "";
       try {
-        const query = new URLSearchParams({ config_path: this.savedPath, step: this.mol.step });
-        if (this.mol.structureId) query.set("structure_id", this.mol.structureId);
-        if (this.mol.modeIndex !== "") query.set("mode_index", this.mol.modeIndex);
+        const query = new URLSearchParams({ config_path: this.savedPath });
+        // No `step` at all is what asks for the input seeds; sending step="input" would
+        // be read as a step *name*, since a step may be named anything.
+        if (this.viewer.step !== "input") query.set("step", this.viewer.step);
+        if (this.viewer.structureId) query.set("structure_id", this.viewer.structureId);
+        if (this.viewer.modeIndex !== "" && this.viewer.step !== "input") {
+          query.set("mode_index", this.viewer.modeIndex);
+        }
         const data = await this.api("GET", `/api/structure?${query}`);
         if (!data) return; // flash carries the reason
         await this.mountViewer();
-        if (!this._viewer) return;
+        if (!this._gl) return;
         // Before the model goes: animate() pushes a timer per call, so a second Show
         // would leave two driving the same model at different phases, and clearing the
         // mode box would not stop either.
-        this._viewer.stopAnimate();
-        this._viewer.removeAllModels();
-        const model = this._viewer.addModel(data.text, "xyz");
-        this._viewer.setStyle({}, { stick: { radius: 0.12 }, sphere: { scale: 0.25 } });
+        this._gl.stopAnimate();
+        this._gl.removeAllModels();
+        const model = this._gl.addModel(data.text, "xyz");
+        this._gl.setStyle({}, { stick: { radius: 0.12 }, sphere: { scale: 0.25 } });
         // Extended XYZ carries the cell as Lattice="…" when the structure has one, and
         // 3Dmol turns that into crystal data — so this draws a box for a periodic
-        // structure and nothing for a molecule, with no branch of our own.
-        this._viewer.addUnitCell(model);
-        this._viewer.zoomTo();
-        this.mol.animating = this.mol.modeIndex !== "";
-        if (this.mol.animating) {
+        // periodic structure and nothing for a molecular one, with no branch of our own.
+        this._gl.addUnitCell(model);
+        this._gl.zoomTo();
+        this.viewer.animating = this.viewer.modeIndex !== "" && this.viewer.step !== "input";
+        if (this.viewer.animating) {
           // The same extended-XYZ file carries three displacement columns per atom, which
           // is what 3Dmol reads as dx/dy/dz; vibrate() only builds the frames, animate()
           // plays them.
           model.vibrate(10, 1, true);
-          this._viewer.animate({ loop: "backAndForth", interval: 60 });
+          this._gl.animate({ loop: "backAndForth", interval: 60 });
         }
-        this._viewer.render();
-        this.mol.note = `step ${data.step} · ${data.structure_id}`;
+        this._gl.render();
+        this.viewer.note = `${data.step === null ? "seed" : "step " + data.step} · ${data.structure_id}`;
       } finally {
-        this.mol.busy = false;
+        this.viewer.busy = false;
       }
     },
 

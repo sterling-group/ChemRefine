@@ -3,7 +3,7 @@
 `chemrefine gui` opens a click-through builder for the workflow YAML in your browser.
 Two columns, each with its own tabs: on the left **Builder** (workflow settings and steps
 as forms) or **Agent** (the chat); on the right **input.yaml** (the file being built,
-live) or **Molecule** (a 3D view). The layout follows the IQmol submission window —
+live) or **Structure** (a 3D view). The layout follows the IQmol submission window —
 select on the left, read the resulting input on the right — and the tabs mean the editor
 stays visible while the agent works in the other column.
 
@@ -123,17 +123,27 @@ Once a config is saved (local GUI only — the playground stays build-and-copy),
 - The **results table** pages through `steps.csv` for a chosen step — energies,
   ΔE, and Boltzmann weights exactly as the pipeline reported them.
 
-## The Molecule pane
+## The Structure pane
 
-The right column's **Molecule** tab draws a step's cached structures — pick the step, and
-a structure id if you want one other than the first. Structures come from the step cache,
-so a step has to have run.
+The right column's **Structure** tab draws structures — pick what to look at, and a
+structure id if you want one other than the first.
+
+**input (seeds)** is the default, and the only view that works before anything has run:
+it draws what step 1 will be handed, so *"did I point `input:` at the molecule I meant?"*
+is a click rather than a run. The seeds are numbered by the same code the pipeline uses,
+so the id you inspect as `2` is the `2` that turns up in `steps.csv` afterwards.
+
+Picking a **step** instead draws that step's cached structures, so it has to have run.
 
 Give it a **mode #** and it animates that normal mode instead of drawing a still: the
 displacement vectors are re-parsed from the structure's own output (the tensor is a
 transient the pipeline displaces along and is deliberately not cached), so this is the
 picture that goes with `analyze_mode`'s numbers — is the imaginary mode the reaction
 coordinate, or a methyl rotor.
+
+A SMILES `input:` (a `.csv`) is the one source the pane refuses: seeding from it *embeds*
+the molecules and writes them into the output tree, which a read has no business doing.
+Use `build_structures` to write `.xyz` seeds and point `input:` at those, or just run it.
 
 Structures are served as extended XYZ, which carries a `Lattice="…"` line for a structure
 with a cell; the viewer draws the box when one is there. ChemRefine's own pipeline is

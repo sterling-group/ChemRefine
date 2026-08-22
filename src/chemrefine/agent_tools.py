@@ -574,11 +574,11 @@ def get_frequencies(
 
 def get_structure(
     config_path: str,
-    step: int | str,
+    step: int | str | None = None,
     structure_id: str | None = None,
     mode_index: int | None = None,
 ) -> dict[str, Any]:
-    """One cached structure as extended-XYZ text — geometry, cell, and optionally a mode.
+    """One structure as extended-XYZ text — geometry, cell, and optionally a mode.
 
     The geometry half of :func:`get_frequencies`, reading the same step cache: symbols and
     positions are persisted with every parsed structure, so this needs no output file.
@@ -586,12 +586,20 @@ def get_structure(
     and three displacement columns for a mode, in one text format a viewer can read
     directly — see :func:`chemrefine.io.extended_xyz_text`.
 
+    ``step`` of ``None`` means the **input seeds** — what step 1 will be given, before
+    anything has run. That is the one view available on a tree that has never been
+    computed, and the question it answers ("did I point this at the molecule I meant?") is
+    the cheapest one to get wrong. The seeds come from
+    :func:`chemrefine.pipeline.bootstrap`, so the ids here are the ids the run will use.
+
     ``mode_index`` animates rather than describes: it re-parses the structure's output for
     the normal-mode tensor, exactly as :func:`analyze_mode` does and for the same reason —
     the tensor is a transient the pipeline displaces along and is deliberately not cached
     (see :mod:`chemrefine.cache`). Without it, only the cache is touched.
     """
     config = load_config(Path(config_path))
+    if step is None:
+        return _seed_structure(config, structure_id, mode_index)
     step_cfg = _required_step(config, step)
     if mode_index is not None:
         # Geometry AND displacement from the same parsed frame, never one of each: the
@@ -627,6 +635,48 @@ def get_structure(
     chosen = structures[0]
     return {
         "step": step_cfg.step,
+        "structure_id": chosen.id,
+        "mode_index": None,
+        "format": "extxyz",
+        "text": io.extended_xyz_text(chosen.atoms),
+    }
+
+
+def _seed_structure(
+    config: Config, structure_id: str | None, mode_index: int | None
+) -> dict[str, Any]:
+    """One of the input seeds, as :func:`chemrefine.pipeline.bootstrap` will number them.
+
+    Reuses the real seeder rather than re-reading ``input:`` here, so the ids the viewer
+    shows are the ids the run will use — a seed the user inspects as ``2`` is the ``2``
+    that appears in ``steps.csv`` afterwards. It also inherits the seeder's own guards,
+    including the non-finite-coordinate check that exists because a seed is the one
+    geometry no parse boundary ever sees.
+
+    The SMILES-CSV form of ``input:`` is refused rather than served: seeding from it
+    *embeds* the molecules and writes them under ``output_dir/_seed``, and a read has no
+    business doing that — nor importing RDKit to answer a GET. The message says so and
+    names the way round it.
+    """
+    if mode_index is not None:
+        raise ConfigError("the input seeds have no normal modes — name a step to animate one")
+    if config.input is not None and config.input.suffix.lower() == ".csv":
+        raise ConfigError(
+            f"{config.input} seeds from SMILES, which has to embed the molecules before "
+            "they can be drawn — run the workflow, or use build_structures to write .xyz "
+            "seeds and point input: at those"
+        )
+    seeded = pipeline.bootstrap(config)
+    structures = seeded.structures
+    if structure_id is not None:
+        structures = tuple(s for s in structures if s.id == structure_id)
+        if not structures:
+            raise ConfigError(f"no seed structure {structure_id!r} in {config.input}")
+    if not structures:
+        raise ConfigError(f"{config.input} holds no structures")
+    chosen = structures[0]
+    return {
+        "step": None,
         "structure_id": chosen.id,
         "mode_index": None,
         "format": "extxyz",

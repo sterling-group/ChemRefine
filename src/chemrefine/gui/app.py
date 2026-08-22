@@ -243,15 +243,17 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
 
     @app.get("/api/structure")
     def structure() -> Any:
-        """One cached structure as extended-XYZ, for the Molecule pane.
+        """One structure as extended-XYZ, for the Structure pane.
 
         Query arguments, not a path segment: ``test_every_route_is_behind_the_gate`` walks
         the url_map and refuses a parameterized rule, because one cannot be probed for the
         token gate by enumeration.
 
+        No ``step`` means the input seeds — the view that works before anything has run.
         ``mode_index`` asks for the structure *with* a normal mode's displacement columns,
         which is what the viewer animates.
         """
+        step = request.args.get("step")
         mode = request.args.get("mode_index")
         if mode not in (None, "") and not mode.lstrip("-").isdecimal():
             # The same guard `_step_key` gives the `step` argument on the line below, for
@@ -262,7 +264,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         return jsonify(
             agent_tools.get_structure(
                 request.args["config_path"],
-                _step_key(request.args["step"]),
+                _step_key(step) if step not in (None, "") else None,
                 structure_id=request.args.get("structure_id"),
                 mode_index=int(mode) if mode not in (None, "") else None,
             )

@@ -599,7 +599,7 @@ def test_the_agent_is_told_about_the_file_the_builder_has_open(
 
 
 def test_structure_serves_extended_xyz_for_the_viewer(client: Any, tmp_path: Path):
-    """The Molecule pane's data source, as query arguments rather than a path segment.
+    """The Structure pane's data source, as query arguments rather than a path segment.
 
     ``test_every_route_is_behind_the_gate`` refuses a parameterized rule, because one
     cannot be probed for the token gate by enumeration — so ``/api/structure/<step>``

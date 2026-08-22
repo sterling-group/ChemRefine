@@ -297,6 +297,91 @@ def test_get_structure_returns_extended_xyz_from_the_cache(tmp_path: Path):
         agent_tools.get_structure(str(path), 1, structure_id="9")
 
 
+def _seeded_config(tmp_path: Path, **extra: object) -> Path:
+    """A config whose ``input:`` points at a directory of two seed files."""
+    seeds = tmp_path / "seeds"
+    seeds.mkdir()
+    (seeds / "a.xyz").write_text("3\nwater\nO 0 0 0\nH 0.96 0 0\nH -0.24 0.93 0\n", "utf-8")
+    (seeds / "b.xyz").write_text("2\nh2\nH 0 0 0\nH 0.74 0 0\n", "utf-8")
+    path = tmp_path / "input.yaml"
+    path.write_text(
+        yaml.safe_dump({"input": "seeds", "steps": [{"step": 1, "engine": "orca"}], **extra}),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_the_input_seeds_are_viewable_before_anything_has_run(tmp_path: Path):
+    """The one view that works on a tree nothing has computed in.
+
+    Numbered by ``pipeline.bootstrap``, not by a second reader written here, so the id a
+    user inspects as ``1`` is the ``1`` that turns up in ``steps.csv`` afterwards — and so
+    the seeds inherit the bootstrap's own guards, including the non-finite check that
+    exists because a seed is the geometry no parse boundary ever sees.
+    """
+    path = _seeded_config(tmp_path)
+    first = agent_tools.get_structure(str(path))
+    assert first["step"] is None  # not a step: this is what step 1 will be handed
+    assert first["structure_id"] == "0"
+    assert first["text"].splitlines()[0] == "3"  # the water, first in natural sort
+
+    second = agent_tools.get_structure(str(path), structure_id="1")
+    assert second["text"].splitlines()[0] == "2"  # ids number on across files
+
+    with pytest.raises(ConfigError, match="no seed structure '9'"):
+        agent_tools.get_structure(str(path), structure_id="9")
+
+
+def test_a_seed_directory_that_yields_no_frames(tmp_path: Path):
+    """A file is present, so bootstrap does not refuse — but it holds no structures.
+
+    ``_seed_from_directory`` refuses an *empty* directory; a directory holding a frameless
+    ``.xyz`` passes that check and seeds nothing, which is a different sentence to say.
+    """
+    seeds = tmp_path / "seeds"
+    seeds.mkdir()
+    (seeds / "empty.xyz").write_text("", encoding="utf-8")
+    path = tmp_path / "input.yaml"
+    path.write_text(
+        yaml.safe_dump({"input": "seeds", "steps": [{"step": 1, "engine": "orca"}]}), "utf-8"
+    )
+    with pytest.raises(ConfigError, match="holds no structures"):
+        agent_tools.get_structure(str(path))
+
+
+def test_a_seed_has_no_mode_to_animate(tmp_path: Path):
+    """Modes belong to a computed structure; asking for one here is a refusal, not zeros."""
+    with pytest.raises(ConfigError, match="no normal modes"):
+        agent_tools.get_structure(str(_seeded_config(tmp_path)), mode_index=0)
+
+
+def test_a_single_xyz_input_seeds_too(tmp_path: Path):
+    """``input:`` may be one file rather than a directory, and every frame is a seed."""
+    path = tmp_path / "input.yaml"
+    (tmp_path / "two.xyz").write_text("1\nfirst\nH 0 0 0\n1\nsecond\nO 0 0 0\n", encoding="utf-8")
+    path.write_text(
+        yaml.safe_dump({"input": "two.xyz", "steps": [{"step": 1, "engine": "orca"}]}), "utf-8"
+    )
+    assert agent_tools.get_structure(str(path), structure_id="1")["text"].splitlines()[2][0] == "O"
+
+
+def test_smiles_seeds_are_refused_rather_than_embedded_behind_a_read(tmp_path: Path):
+    """Seeding from SMILES embeds molecules and writes them; a read must not do that.
+
+    ``_seed_from_smiles_csv`` writes under ``output_dir/_seed`` and needs RDKit. Serving
+    it here would make a GET that creates files and imports a heavy dependency, so it is
+    refused with the way round it — and the refusal is checked to leave nothing behind.
+    """
+    (tmp_path / "seeds.csv").write_text("smiles\nCCO\n", encoding="utf-8")
+    path = tmp_path / "input.yaml"
+    path.write_text(
+        yaml.safe_dump({"input": "seeds.csv", "steps": [{"step": 1, "engine": "orca"}]}), "utf-8"
+    )
+    with pytest.raises(ConfigError, match="seeds from SMILES"):
+        agent_tools.get_structure(str(path))
+    assert not (tmp_path / "outputs" / "_seed").exists()
+
+
 def test_get_structure_without_a_cache_says_run_first(tmp_path: Path):
     with pytest.raises(ConfigError, match="run it"):
         agent_tools.get_structure(str(_write_config(tmp_path)), 1)
