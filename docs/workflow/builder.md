@@ -127,9 +127,11 @@ Once a config is saved (local GUI only — the playground stays build-and-copy),
 
 With the `[agent]` extra installed, the left column's **Agent** tab holds the
 [embedded agent](agents.md) inside the GUI — switch to it and the `input.yaml` pane on
-the right stays where it is, so you watch what the agent builds. Pick the provider and the panel shows
-only the fields that provider can use: local **Ollama** and **vLLM** need nothing but a
-model name, `custom` needs the endpoint's base URL, and `openai` needs a key (see the
+the right stays where it is, so you watch what the agent builds.
+
+Pick the provider and the panel shows only the fields that provider can use: local
+**Ollama** and **vLLM** need nothing but a model name, `custom` needs the endpoint's
+base URL, and `openai` needs a key (see the
 [model-policy note](agents.md#ai-agents)).
 
 Then press **Check connection** before you type. It runs the same preflight as
@@ -146,6 +148,12 @@ the agent uses the same tools as everywhere else. Mutating actions **suspend** t
 agent and appear as allow/deny cards naming the exact call and its arguments; nothing
 touches disk or starts compute until you click *allow*. The panel needs the local
 server, so the online playground shows a note instead.
+
+When the agent saves the config, **the builder loads it** — the form and the YAML pane
+update, and the right column switches back to `input.yaml` so you see what changed. The
+agent is told about whichever file the builder currently has open, so *"add a freq step
+to that"* means the one on your screen. If you have unsaved edits of your own, nothing is
+overwritten: a notice offers the agent's version and you choose.
 
 A first workflow, end to end: add steps → pick engines and options → Validate →
 Save… → Scaffold templates → edit the ORCA keywords in the template editor → **Run**

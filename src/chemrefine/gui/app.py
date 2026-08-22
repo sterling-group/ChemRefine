@@ -101,12 +101,11 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         """
         import socket
 
-        initial: dict[str, Any] | None = None
-        if config_path is not None and config_path.is_file():
-            initial = {
-                "path": str(config_path),
-                "yaml_text": config_path.read_text(encoding="utf-8"),
-            }
+        initial = (
+            _config_payload(config_path)
+            if config_path is not None and config_path.is_file()
+            else None
+        )
         return jsonify(
             {
                 "schema": introspect.schema_document(),
@@ -114,6 +113,28 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
                 "host": socket.gethostname(),
             }
         )
+
+    @app.get("/api/load")
+    def load() -> Any:
+        """Read a config back off disk, so the builder can adopt what something else wrote.
+
+        The missing half of ``/api/save``. ``/api/bootstrap`` was the only reader and it
+        fires once, for the launch path — so when the agent saved a config, the editor
+        beside it went on showing the previous text and the user had to reload the page to
+        see what had happened.
+
+        A directory or an unreadable file is a plain 400 like every other bad input here.
+        ``UnicodeDecodeError`` is caught with it on purpose: it is a ``ValueError``, not an
+        ``OSError``, so a binary file picked by mistake would otherwise reach
+        :func:`surface` and become a 500 with a traceback.
+        """
+        path = Path(request.args["path"]).expanduser()
+        if not path.is_file():
+            return jsonify({"error": f"not a file: {path}"}), 400
+        try:
+            return jsonify(_config_payload(path))
+        except (OSError, UnicodeDecodeError) as e:
+            return jsonify({"error": f"cannot read {path}: {e}"}), 400
 
     @app.post("/api/validate")
     def validate() -> Any:
@@ -374,9 +395,15 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
             # HTTPException nor a ChemRefineError — so `surface` re-raised it as a 500 with
             # a traceback, for a typo in the model box. It belongs with the other
             # outside-world failures, as the panel's 502.
+            # The GUI's *current* file wins over the launch argument: the user may have
+            # saved somewhere else since, and telling the agent about a path the editor
+            # left behind is how "work on the file I just saved" reached the wrong one.
+            # `or`, not `is None`, so an empty string from a page with nothing saved yet
+            # falls back rather than becoming a config_path of "".
             agent = build_web_agent(
                 resolved.build_model(),
-                config_path=str(config_path) if config_path is not None else None,
+                config_path=payload.get("config_path")
+                or (str(config_path) if config_path is not None else None),
             )
             if payload.get("approvals"):
                 pending = chat_state["pending"]
@@ -395,11 +422,17 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
             raise
         except Exception as e:  # the model endpoint is the outside world
             return jsonify({"error": f"model endpoint failed: {e}"}), 502
+        # Computed once, before the branch, and reported on both: an approved write and a
+        # fresh batch of approval cards arrive in the *same* turn, so a signal attached
+        # only to the text branch would be silently dropped exactly when the agent is
+        # working steadily.
+        wrote_config = _config_written_by(result)
         if isinstance(result.output, DeferredToolRequests):
             chat_state["pending"] = result.all_messages()
             return jsonify(
                 {
                     "reply": None,
+                    "wrote_config": wrote_config,
                     "pending": [
                         {"id": call.tool_call_id, "tool": call.tool_name, "args": call.args}
                         for call in result.output.approvals
@@ -408,7 +441,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
             )
         chat_state["history"] = result.all_messages()
         chat_state["pending"] = None
-        return jsonify({"reply": result.output, "pending": None})
+        return jsonify({"reply": result.output, "pending": None, "wrote_config": wrote_config})
 
     @app.post("/api/run")
     def run() -> Any:
@@ -430,6 +463,37 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         )
 
     return app
+
+
+def _config_payload(path: Path) -> dict[str, str]:
+    """One config file as the page wants it — the shape ``bootstrap`` has always sent."""
+    return {"path": str(path), "yaml_text": path.read_text(encoding="utf-8")}
+
+
+def _config_written_by(result: Any) -> str | None:
+    """The path an agent turn saved a config to, or ``None`` if it saved none.
+
+    Read off the turn's own messages rather than guessed at from the reply text. Four
+    conditions, and each excludes a real case: the part must be a tool *return* (a request
+    is not a write), from ``save_config`` (the other mutating tools touch templates, seeds
+    and runs, never the YAML), with ``outcome`` success (a denied call still leaves a part
+    behind), and carrying ``written: True`` — because ``save_config`` reports
+    ``written: False`` *without raising* when validation refuses the draft, which is the
+    case that would otherwise have the editor adopt a file that was never saved.
+    """
+    from pydantic_ai.messages import ToolReturnPart
+
+    for message in result.new_messages():
+        for part in getattr(message, "parts", []):
+            if (
+                isinstance(part, ToolReturnPart)
+                and part.tool_name == "save_config"
+                and part.outcome == "success"
+                and isinstance(part.content, dict)
+                and part.content.get("written") is True
+            ):
+                return str(part.content.get("path"))
+    return None
 
 
 def _usable_as_header(value: object) -> bool:

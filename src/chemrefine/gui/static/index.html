@@ -534,6 +534,19 @@
       </template>
     </div>
 
+    <!-- Beside #flash, below both panels: the agent writes from the left column while
+         the right one may be showing the molecule, so a notice inside either panel could
+         be raised about a pane the user cannot see. Named methods, not inline state
+         edits, so the handler guard covers them. -->
+    <p class="warn" x-show="pendingReload" style="display:none">
+      <span x-text="pendingReload
+                    ? 'the agent wrote ' + pendingReload.path + ', but the form has unsaved edits'
+                    : ''"></span>
+      <button type="button" class="mini" @click="acceptPendingReload()">
+        load it (discards my edits)</button>
+      <button type="button" class="mini" @click="dismissPendingReload()">keep my edits</button>
+    </p>
+
     <p id="flash" class="muted" x-text="flash"></p>
   </section>
 </main>

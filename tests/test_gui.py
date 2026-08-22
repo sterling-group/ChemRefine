@@ -470,6 +470,134 @@ def test_the_served_preset_shapes_drive_the_panels_fields(client: Any):
     assert shapes["openai"]["needs_key"] is True
 
 
+def _saving_model(path: Path, yaml_text: str) -> Any:
+    """A model that asks to save ``yaml_text`` to ``path`` once, then reports done."""
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("save_config", {"path": str(path), "yaml_text": yaml_text})]
+            )
+        return ModelResponse(parts=[TextPart("saved it")])
+
+    return FunctionModel(script)
+
+
+def test_load_reads_a_config_back_and_refuses_what_it_cannot(client: Any, tmp_path: Path):
+    """The missing half of ``/api/save``, and the three ways it can be asked for nothing.
+
+    ``UnicodeDecodeError`` is the one worth naming: it is a ``ValueError``, not an
+    ``OSError``, so a binary file picked by mistake would sail past an ``OSError`` handler
+    into ``surface`` and come back as a 500 with a traceback, where every other bad input
+    to this app is a plain 400.
+    """
+    config = tmp_path / "input.yaml"
+    config.write_text(yaml.safe_dump({"steps": [{"step": 1, "engine": "orca"}]}), "utf-8")
+
+    loaded = _get(client, f"/api/load?path={config}")
+    assert loaded.status_code == 200
+    assert loaded.get_json()["path"] == str(config)
+    assert "steps" in loaded.get_json()["yaml_text"]
+
+    assert _get(client, f"/api/load?path={tmp_path / 'nope.yaml'}").status_code == 400
+    assert _get(client, f"/api/load?path={tmp_path}").status_code == 400  # a directory
+
+    binary = tmp_path / "binary.yaml"
+    binary.write_bytes(b"\xff\xfe\x00\x01")
+    undecodable = _get(client, f"/api/load?path={binary}")
+    assert undecodable.status_code == 400
+    assert "cannot read" in undecodable.get_json()["error"]
+
+
+def test_a_turn_that_writes_the_config_says_so_on_both_branches(
+    client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path
+):
+    """The signal the editor reloads on, read off the turn's own messages.
+
+    Reported on the suspended branch as well as the text one: an approved write and a
+    fresh batch of approval cards arrive in the *same* turn, so a signal attached only to
+    the reply would be dropped exactly while the agent is working steadily.
+    """
+    config = tmp_path / "input.yaml"
+    runnable = yaml.safe_dump({"steps": [{"step": 1, "engine": "orca", "operation": "sp"}]})
+    _inject_model(chat_env, _saving_model(config, runnable))
+
+    suspended = _post(client, "/api/agent/chat", {"message": "save it"}).get_json()
+    assert suspended["wrote_config"] is None  # nothing has run yet — it is still asking
+    assert [card["tool"] for card in suspended["pending"]] == ["save_config"]
+    assert not config.exists()
+
+    approvals = {card["id"]: True for card in suspended["pending"]}
+    resumed = _post(client, "/api/agent/chat", {"approvals": approvals}).get_json()
+    assert resumed["wrote_config"] == str(config)
+    assert config.is_file()
+
+
+def test_a_refused_or_unwritten_save_is_not_a_write(
+    client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Two ways ``save_config`` runs and writes nothing, both of which must stay silent.
+
+    Denied, it never executes. Handed an unrunnable draft it *returns normally* with
+    ``written: False`` rather than raising — which is precisely the case that would have
+    the editor adopt a file that was never saved.
+    """
+    config = tmp_path / "input.yaml"
+    _inject_model(chat_env, _saving_model(config, yaml.safe_dump({"steps": [{"engine": "nope"}]})))
+
+    suspended = _post(client, "/api/agent/chat", {"message": "save it"}).get_json()
+    denied = _post(
+        client, "/api/agent/chat", {"approvals": {c["id"]: False for c in suspended["pending"]}}
+    ).get_json()
+    assert denied["wrote_config"] is None
+    assert not config.exists()
+
+    _post(client, "/api/agent/chat", {"reset": True})
+    again = _post(client, "/api/agent/chat", {"message": "save it"}).get_json()
+    allowed = _post(
+        client, "/api/agent/chat", {"approvals": {c["id"]: True for c in again["pending"]}}
+    ).get_json()
+    assert allowed["wrote_config"] is None  # it ran, validation refused, nothing written
+    assert not config.exists()
+
+
+def test_the_agent_is_told_about_the_file_the_builder_has_open(
+    client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path
+):
+    """The GUI's current file outranks the launch argument.
+
+    ``create_app`` captured a ``config_path`` once; a user who saved somewhere else since
+    was still introducing the agent to the file the editor had left behind.
+    """
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    launched = tmp_path / "launched.yaml"
+    launched.write_text("steps: []\n", encoding="utf-8")
+    seen: list[str] = []
+
+    def spy(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.instructions or "")
+        return ModelResponse(parts=[TextPart("ok")])
+
+    app = create_app(token=TOKEN, config_path=launched).test_client()
+    _inject_model(chat_env, FunctionModel(spy))
+
+    _post(app, "/api/agent/chat", {"message": "hi"})
+    assert str(launched) in seen[-1]  # with nothing else open, the launch path stands
+
+    _post(app, "/api/agent/chat", {"message": "hi", "config_path": str(tmp_path / "other.yaml")})
+    assert str(tmp_path / "other.yaml") in seen[-1]
+    assert str(launched) not in seen[-1]
+
+    # A page with nothing saved yet sends nothing, and must not end up with a config_path
+    # of "" — `or`, not `is None`, is what makes the fallback survive an empty string.
+    _post(app, "/api/agent/chat", {"message": "hi", "config_path": ""})
+    assert str(launched) in seen[-1]
+
+
 def test_check_answers_a_verdict_never_an_error(client: Any, monkeypatch: pytest.MonkeyPatch):
     """An unreachable endpoint is this endpoint's *answer*, not its failure.
 
@@ -588,7 +716,11 @@ def test_chat_turns_thread_history(client: Any, chat_env: pytest.MonkeyPatch):
 
     _inject_model(chat_env, FunctionModel(script))
     first = _post(client, "/api/agent/chat", {"message": "hello"}).get_json()
-    assert first == {"reply": "reply 1", "pending": None}
+    # A subset, not an exact dict: the response grows keys (a write signal, and whatever
+    # comes next), and an equality assertion here fails for every one of them while
+    # testing nothing about the history threading this case is named for.
+    assert first["reply"] == "reply 1"
+    assert first["pending"] is None
     _post(client, "/api/agent/chat", {"message": "again"})
     assert seen[1] > seen[0]  # the second turn carried the first turn's messages
 

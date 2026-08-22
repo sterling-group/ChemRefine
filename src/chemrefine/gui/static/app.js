@@ -33,6 +33,13 @@ function builder() {
     report: null,
     flash: "",
     savedPath: null,
+    // The YAML as it stands on disk, set whenever we write or read the file. dirty() is
+    // the comparison; without it the agent reload could not tell "adopt this" from
+    // "you have unsaved edits I am about to throw away".
+    savedText: "",
+    // A write the agent made that the form has not taken up, because taking it up would
+    // have discarded unsaved edits: { path } until the user answers.
+    pendingReload: null,
     runStatus: null,
     runFailures: null,
     runResults: null,
@@ -477,16 +484,26 @@ function builder() {
       this.rawEdit = true; // hold the mode until the text parses
       await this.applyRaw();
     },
+    // The one path from "some YAML text" to "the form shows it". init(), applyRaw() and
+    // the agent reload all need the same five steps in the same order, and each is
+    // load-bearing: withSteps guards a `steps:` that parsed as null or a scalar,
+    // seedWorkflowDefaults fills the fields the file omits, rekeySteps issues fresh card
+    // identities so DOM state does not stick to a slot, syncExecRows rebuilds the
+    // executables table. A third hand-written copy is how two of them drift.
+    async adopt(yamlText) {
+      const parsed = await this.api("POST", "/api/parse", { yaml_text: yamlText });
+      if (!parsed?.config) return false;
+      this.cfg = this.withSteps(parsed.config);
+      this.seedWorkflowDefaults(); // the form shows them; the file states them
+      this.rekeySteps();
+      this.syncExecRows();
+      this.syncYaml();
+      return true;
+    },
     async applyRaw() {
-      const parsed = await this.api("POST", "/api/parse", { yaml_text: this.yamlText });
-      if (parsed?.config) {
-        this.cfg = this.withSteps(parsed.config);
-        this.seedWorkflowDefaults(); // the form shows them; the file states them
-        this.rekeySteps();
-        this.syncExecRows();
+      if (await this.adopt(this.yamlText)) {
         this.rawEdit = false;
         this.flash = "text applied to the form";
-        this.syncYaml();
       }
     },
 
@@ -558,6 +575,12 @@ function builder() {
         limit: 20,
         offset,
       });
+    },
+
+    // A method, not a getter: the asset guards resolve a bare name in an expression only
+    // when it is dotted or called, so `dirty` as a getter would be checked by nothing.
+    dirty() {
+      return this.yamlText !== this.savedText;
     },
 
     // ---------------- panels ----------------
@@ -633,11 +656,51 @@ function builder() {
       }
     },
 
+    // Reload the config the agent just wrote, into the form the user is watching.
+    // Refuses to clobber unsaved edits: it offers instead, through pendingReload.
+    async reloadSavedConfig(path, { force = false } = {}) {
+      if (this.staticMode) return; // the playground has no server to read a file from
+      if (!force && (this.dirty() || this.rawEdit)) {
+        // rawEdit counts as dirty even when the text matches: syncYaml() early-returns
+        // while raw editing, so adopting underneath it would desync the two panes.
+        this.pendingReload = { path };
+        return;
+      }
+      const data = await this.api("GET", `/api/load?path=${encodeURIComponent(path)}`);
+      if (!data) return; // flash explains; the form keeps what it had
+      if (await this.adopt(data.yaml_text)) {
+        this.savedPath = data.path;
+        this.pendingReload = null;
+        this.rawEdit = false;
+        // The emitted YAML, not the file's bytes: seedWorkflowDefaults() deliberately
+        // adds keys the file omits, so comparing against the file would read dirty at once.
+        const emitted = await this.api("POST", "/api/yaml", { config: this.cfg });
+        if (emitted) {
+          this.yamlText = emitted.yaml_text;
+          this.savedText = emitted.yaml_text;
+        }
+        this.showTab("right", "yaml"); // the change is worth nothing behind another tab
+        this.flash = `the agent wrote ${data.path} — loaded into the builder`;
+      }
+    },
+    async acceptPendingReload() {
+      const path = this.pendingReload?.path;
+      this.pendingReload = null;
+      if (path) await this.reloadSavedConfig(path, { force: true });
+    },
+    dismissPendingReload() {
+      this.pendingReload = null;
+    },
+
     _chatPayload(extra) {
       const payload = { provider: this.chat.provider, ...extra };
       if (this.chat.model) payload.model = this.chat.model;
       if (this.chat.baseUrl) payload.base_url = this.chat.baseUrl;
       if (this.chat.apiKey) payload.api_key = this.chat.apiKey;
+      // Sourced from savedPath, not from chat state, though every line around it reads
+      // this.chat.*: it is the file the *builder* has open, which is what the agent
+      // should be told about.
+      if (this.savedPath) payload.config_path = this.savedPath;
       return payload;
     },
     async _chatTurn(extra) {
@@ -653,6 +716,11 @@ function builder() {
         } else if (data.reply !== null && data.reply !== undefined) {
           this.chat.msgs.push({ who: "agent", text: data.reply });
         }
+        // Outside that branch on purpose: an approved write and a fresh batch of approval
+        // cards arrive in the same turn, so a reload hung off the reply branch would be
+        // skipped exactly while the agent is working steadily. After the generation guard
+        // above, so a turn a reset has orphaned cannot rewrite the form.
+        if (data.wrote_config) await this.reloadSavedConfig(data.wrote_config);
         return true;
       } catch (err) {
         this.flash = `chat request failed: ${err}`;
@@ -769,6 +837,8 @@ function builder() {
       const data = await this.api("POST", "/api/save", { path, yaml_text: this.yamlText });
       if (data) {
         this.savedPath = data.path;
+        // Exactly the string that was written, so dirty() is a comparison and not a guess.
+        this.savedText = this.yamlText;
         this.browse.open = false;
         this.flash = `saved ${data.path}`;
       }

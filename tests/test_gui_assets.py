@@ -353,7 +353,13 @@ def _run_component_in_node(script: str) -> str:
                               setItem(k,v){this._d[k]=v;}, removeItem(k){delete this._d[k];} };
       global.URLSearchParams = URLSearchParams;
     """
-    source = preamble + (STATIC / "app.js").read_text(encoding="utf-8") + "\n" + script
+    # Both files, into one scope, because that is what the page gives them: classic
+    # scripts sharing globals, where app.js reaches forms.js's helpers (
+    # `seedWorkflowDefaults` → `topFields` → `fieldSpecs`). Loading app.js alone would
+    # model a page that cannot exist. Concatenation order does not matter here — both
+    # files are top-level function declarations, which hoist — which is also why the
+    # page's own load order is not something this has to reproduce.
+    source = preamble + _component_source() + "\n" + script
     result = subprocess.run(  # argv list, no shell
         [node, "-e", source], capture_output=True, text=True, check=False
     )
@@ -490,6 +496,117 @@ def test_every_tab_button_targets_a_panel_that_exists():
     # decoration, and would mean a panel lost its button.
     for side in ("left", "right"):
         assert len({t for s, t in targets if s == side}) >= 2, f"{side} column has one tab"
+
+
+_RELOAD_HARNESS = """
+  const b = builder();
+  b.chatAvailability = () => {};
+  const calls = [];
+  b.api = async (method, url, body) => {
+    calls.push(method + " " + url);
+    if (url.startsWith("/api/load")) return { path: "/p/input.yaml", yaml_text: "steps: []\\n" };
+    if (url === "/api/parse") return { config: { steps: [] } };
+    if (url === "/api/yaml") return { yaml_text: "from-the-server\\n" };
+    return {};
+  };
+  b.schema = { config: { properties: {} } };  // topFields reads it in seedWorkflowDefaults
+"""
+
+
+def test_an_agent_write_reloads_the_form_and_shows_the_pane():
+    """The point of the whole item: the agent saves, the editor catches up.
+
+    Also switches the right column back to the YAML — item 6 made it possible to be
+    looking at the molecule while the agent writes, and a change nobody can see is not
+    much of an improvement.
+    """
+    out = _run_component_in_node(
+        _RELOAD_HARNESS
+        + """
+      b.showTab("right", "molecule");
+      await b.reloadSavedConfig("/p/input.yaml");
+      console.log(JSON.stringify({
+        calls, tab: b.tabs.right, savedPath: b.savedPath,
+        clean: !b.dirty(), pending: b.pendingReload,
+      }));
+    """
+    )
+    result = json.loads(out)
+    assert "GET /api/load?path=%2Fp%2Finput.yaml" in result["calls"]
+    assert result["tab"] == "yaml"  # the pane the change happened in
+    assert result["savedPath"] == "/p/input.yaml"
+    assert result["pending"] is None
+    # Clean straight after a reload: savedText is set from the *re-emitted* YAML, because
+    # seedWorkflowDefaults() adds keys the file omits and comparing to the file's own
+    # bytes would read dirty the instant it loaded.
+    assert result["clean"] is True
+
+
+def test_a_write_never_silently_discards_unsaved_edits():
+    """Unsaved work outranks the agent. It offers; it does not take.
+
+    ``rawEdit`` counts as unsaved even when the text matches, because ``syncYaml()``
+    early-returns while raw editing — adopting underneath it would leave the two panes
+    describing different configs.
+    """
+    dirty = _run_component_in_node(
+        _RELOAD_HARNESS
+        + """
+      b.yamlText = "steps: [{step: 1}]\\n";  // typed, never saved
+      b.savedText = "";
+      await b.reloadSavedConfig("/p/input.yaml");
+      const offered = JSON.parse(JSON.stringify(b.pendingReload));
+      const before = calls.length;
+      await b.acceptPendingReload();          // the user chooses to take it
+      console.log(JSON.stringify({ offered, loadedOnlyAfterConsent: calls.length > before,
+                                   pendingAfter: b.pendingReload }));
+    """
+    )
+    result = json.loads(dirty)
+    assert result["offered"] == {"path": "/p/input.yaml"}  # offered, not applied
+    assert result["loadedOnlyAfterConsent"] is True
+    assert result["pendingAfter"] is None
+
+    raw = _run_component_in_node(
+        _RELOAD_HARNESS
+        + """
+      b.rawEdit = true;                       // text matches, but the pane is authoritative
+      await b.reloadSavedConfig("/p/input.yaml");
+      console.log(JSON.stringify({ pending: b.pendingReload, calls }));
+    """
+    )
+    assert json.loads(raw)["pending"] == {"path": "/p/input.yaml"}
+    assert not any(c.startswith("GET /api/load") for c in json.loads(raw)["calls"])
+
+
+def test_the_playground_never_tries_to_read_a_file():
+    """staticMode has no server behind it; a reload there would only flash an error."""
+    out = _run_component_in_node(
+        _RELOAD_HARNESS
+        + """
+      b.staticMode = true;
+      await b.reloadSavedConfig("/p/input.yaml");
+      console.log(JSON.stringify({ calls, pending: b.pendingReload }));
+    """
+    )
+    assert json.loads(out) == {"calls": [], "pending": None}
+
+
+def test_the_agent_is_sent_the_path_the_builder_has_open():
+    """`config_path` is sourced from savedPath, not from chat state.
+
+    Every neighbouring line in ``_chatPayload`` reads ``this.chat.*``, which makes the
+    wrong source the natural one to reach for; what the agent needs to hear about is the
+    file the *builder* has open.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      const before = b._chatPayload({ message: "hi" }).config_path;
+      b.savedPath = "/p/input.yaml";
+      const after = b._chatPayload({ message: "hi" }).config_path;
+      console.log(JSON.stringify({ before: before ?? null, after }));
+    """)
+    assert json.loads(out) == {"before": None, "after": "/p/input.yaml"}
 
 
 def test_field_specs_carry_the_schema_bounds_and_default():
