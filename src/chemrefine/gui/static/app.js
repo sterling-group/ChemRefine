@@ -783,12 +783,12 @@ function builder() {
 
     // Reload the config the agent just wrote, into the form the user is watching.
     // Refuses to clobber unsaved edits: it offers instead, through pendingReload.
-    async reloadSavedConfig(path, { force = false } = {}) {
+    async loadConfigFrom(path, { force = false, reason = "agent" } = {}) {
       if (this.staticMode) return; // the playground has no server to read a file from
       if (!force && (this.dirty() || this.rawEdit)) {
         // rawEdit counts as dirty even when the text matches: syncYaml() early-returns
         // while raw editing, so adopting underneath it would desync the two panes.
-        this.pendingReload = { path };
+        this.pendingReload = { path, reason };
         return;
       }
       const data = await this.api("GET", `/api/load?path=${encodeURIComponent(path)}`);
@@ -799,7 +799,10 @@ function builder() {
         this.rawEdit = false;
         await this.recordOnDisk();
         this.showTab("right", "yaml"); // the change is worth nothing behind another tab
-        this.flash = `the agent wrote ${data.path} — loaded into the builder`;
+        this.flash =
+          reason === "open"
+            ? `loaded ${data.path}`
+            : `the agent wrote ${data.path} — loaded into the builder`;
       }
     },
     // Emit the current form and record the result as what is on disk. Awaited, not left
@@ -815,8 +818,9 @@ function builder() {
     },
     async acceptPendingReload() {
       const path = this.pendingReload?.path;
+      const reason = this.pendingReload?.reason ?? "agent";
       this.pendingReload = null;
-      if (path) await this.reloadSavedConfig(path, { force: true });
+      if (path) await this.loadConfigFrom(path, { force: true, reason });
     },
     dismissPendingReload() {
       this.pendingReload = null;
@@ -854,7 +858,7 @@ function builder() {
         // cards arrive in the same turn, so a reload hung off the reply branch would be
         // skipped exactly while the agent is working steadily. After the generation guard
         // above, so a turn a reset has orphaned cannot rewrite the form.
-        if (data.wrote_config) await this.reloadSavedConfig(data.wrote_config);
+        if (data.wrote_config) await this.loadConfigFrom(data.wrote_config);
         return true;
       } catch (err) {
         this.flash = `chat request failed: ${err}`;
@@ -934,6 +938,24 @@ function builder() {
       this.browse = { ...this.browse, open: true, mode: "pick", onPick, title };
       await this.navigate(null);
     },
+    async openConfig() {
+      // The counterpart to Save…, and the only way to look at a finished run without
+      // restarting: `chemrefine gui <path>` was the single door a config could come
+      // through, and it only opens once, at launch.
+      this.browse = {
+        ...this.browse,
+        open: true,
+        mode: "open",
+        onPick: null,
+        title: "Open a workflow…",
+      };
+      // Start where the current file lives, since the next one is usually a sibling.
+      await this.navigate(this.savedPath ? parentDir(this.savedPath) : null);
+    },
+    async openConfigFrom(path) {
+      this.browse.open = false;
+      await this.loadConfigFrom(path, { reason: "open" });
+    },
     async openSave() {
       this.browse = {
         ...this.browse,
@@ -962,7 +984,9 @@ function builder() {
       this.browse.open = false;
     },
     pickFile(entry) {
-      if (this.browse.mode === "pick" && this.browse.onPick) {
+      if (this.browse.mode === "open") {
+        this.openConfigFrom(entry.path);
+      } else if (this.browse.mode === "pick" && this.browse.onPick) {
         this.browse.onPick(entry.path);
         this.browse.open = false;
       } else {

@@ -548,7 +548,7 @@ def test_an_agent_write_reloads_the_form_and_shows_the_pane():
         _RELOAD_HARNESS
         + """
       b.showTab("right", "molecule");
-      await b.reloadSavedConfig("/p/input.yaml");
+      await b.loadConfigFrom("/p/input.yaml");
       console.log(JSON.stringify({
         calls, tab: b.tabs.right, savedPath: b.savedPath,
         clean: !b.dirty(), pending: b.pendingReload,
@@ -578,7 +578,7 @@ def test_a_write_never_silently_discards_unsaved_edits():
         + """
       b.yamlText = "steps: [{step: 1}]\\n";  // typed, never saved
       b.savedText = "";
-      await b.reloadSavedConfig("/p/input.yaml");
+      await b.loadConfigFrom("/p/input.yaml");
       const offered = JSON.parse(JSON.stringify(b.pendingReload));
       const before = calls.length;
       await b.acceptPendingReload();          // the user chooses to take it
@@ -587,7 +587,9 @@ def test_a_write_never_silently_discards_unsaved_edits():
     """
     )
     result = json.loads(dirty)
-    assert result["offered"] == {"path": "/p/input.yaml"}  # offered, not applied
+    # Offered, not applied — and it says which kind of load is waiting, because the
+    # notice reads differently for an agent write than for a file the user chose.
+    assert result["offered"] == {"path": "/p/input.yaml", "reason": "agent"}
     assert result["loadedOnlyAfterConsent"] is True
     assert result["pendingAfter"] is None
 
@@ -595,11 +597,11 @@ def test_a_write_never_silently_discards_unsaved_edits():
         _RELOAD_HARNESS
         + """
       b.rawEdit = true;                       // text matches, but the pane is authoritative
-      await b.reloadSavedConfig("/p/input.yaml");
+      await b.loadConfigFrom("/p/input.yaml");
       console.log(JSON.stringify({ pending: b.pendingReload, calls }));
     """
     )
-    assert json.loads(raw)["pending"] == {"path": "/p/input.yaml"}
+    assert json.loads(raw)["pending"] == {"path": "/p/input.yaml", "reason": "agent"}
     assert not any(c.startswith("GET /api/load") for c in json.loads(raw)["calls"])
 
 
@@ -609,7 +611,7 @@ def test_the_playground_never_tries_to_read_a_file():
         _RELOAD_HARNESS
         + """
       b.staticMode = true;
-      await b.reloadSavedConfig("/p/input.yaml");
+      await b.loadConfigFrom("/p/input.yaml");
       console.log(JSON.stringify({ calls, pending: b.pendingReload }));
     """
     )
@@ -648,7 +650,7 @@ def test_a_launched_config_is_clean_at_boot():
       b.cfg = { steps: [] };
       await b.recordOnDisk();               // what init() now does for a launched config
       const clean = !b.dirty();
-      await b.reloadSavedConfig("/p/input.yaml");
+      await b.loadConfigFrom("/p/input.yaml");
       console.log(JSON.stringify({ clean, pending: b.pendingReload }));
     """
     )
@@ -725,6 +727,76 @@ def test_renumbering_releases_every_panel_that_names_a_step():
       console.log(JSON.stringify({ results: b.resultsStep, viewer: b.viewer.step }));
     """)
     assert json.loads(out) == {"results": "", "viewer": "input"}
+
+
+def test_opening_a_workflow_adopts_it_and_makes_its_run_reachable():
+    """The door a config could not come through except at launch.
+
+    `savedPath` had three writers — the launch argument, Save…, and the agent reload — so
+    looking at a finished run meant restarting the GUI pointed at its file. Opening one
+    now sets the same state a launch would, which is what brings its Run panel, its
+    results and its structures with it.
+    """
+    out = _run_component_in_node(
+        _RELOAD_HARNESS
+        + """
+      b.browse = { ...b.browse, open: true, mode: "open" };
+      await b.pickFile({ name: "input.yaml", path: "/p/input.yaml", dir: false });
+      await new Promise((r) => setTimeout(r, 0));   // pickFile is sync; the load is not
+      console.log(JSON.stringify({
+        savedPath: b.savedPath, modalOpen: b.browse.open,
+        clean: !b.dirty(), tab: b.tabs.right, flash: b.flash,
+      }));
+    """
+    )
+    result = json.loads(out)
+    assert result["savedPath"] == "/p/input.yaml"  # the Run panel keys off exactly this
+    assert result["modalOpen"] is False
+    assert result["clean"] is True  # a freshly opened file is not an unsaved edit
+    assert result["tab"] == "yaml"
+    assert "loaded /p/input.yaml" in result["flash"]  # not "the agent wrote…"
+
+
+def test_opening_does_not_discard_unsaved_edits_either():
+    """The same guard the agent write gets, and a notice that says which one is waiting."""
+    out = _run_component_in_node(
+        _RELOAD_HARNESS
+        + """
+      b.yamlText = "steps: [{step: 1}]\\n";   // typed, never saved
+      b.savedText = "";
+      b.browse = { ...b.browse, open: true, mode: "open" };
+      await b.pickFile({ name: "other.yaml", path: "/p/other.yaml", dir: false });
+      await new Promise((r) => setTimeout(r, 0));
+      console.log(JSON.stringify({ pending: b.pendingReload, savedPath: b.savedPath }));
+    """
+    )
+    result = json.loads(out)
+    assert result["pending"] == {"path": "/p/other.yaml", "reason": "open"}
+    assert result["savedPath"] is None  # nothing adopted until the user says so
+
+
+def test_picking_a_file_still_means_the_other_two_things_in_the_other_two_modes():
+    """One modal, three jobs — a new mode must not steal the other two.
+
+    ``pick`` fills a path field, ``save`` fills the filename box, and only ``open`` loads.
+    """
+    out = _run_component_in_node(
+        _RELOAD_HARNESS
+        + """
+      let picked = null;
+      b.browse = { ...b.browse, mode: "pick", onPick: (p) => { picked = p; } };
+      b.pickFile({ name: "seeds.xyz", path: "/p/seeds.xyz", dir: false });
+      const afterPick = { picked, savedPath: b.savedPath };
+      b.browse = { ...b.browse, open: true, mode: "save", onPick: null };
+      b.pickFile({ name: "old.yaml", path: "/p/old.yaml", dir: false });
+      console.log(JSON.stringify({ afterPick, filename: b.browse.filename,
+                                   savedPath: b.savedPath }));
+    """
+    )
+    result = json.loads(out)
+    assert result["afterPick"] == {"picked": "/p/seeds.xyz", "savedPath": None}
+    assert result["filename"] == "old.yaml"  # save mode fills the name box
+    assert result["savedPath"] is None  # and neither mode loads anything
 
 
 def test_the_viewer_asks_for_seeds_by_omitting_the_step():

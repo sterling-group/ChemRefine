@@ -29,6 +29,9 @@
     <!-- Two destinations, not duplicates: Save… writes on the machine the server runs
          on (the HPC node when port-forwarded — the tooltip names it); Download in the
          YAML pane goes through the browser to THIS machine. -->
+    <button type="button" x-show="!staticMode" @click="openConfig()"
+            title="Open a workflow already on disk — its run's structures and results come with it">
+      Open…</button>
     <button type="button" x-show="!staticMode" @click="openSave()"
             :title="serverHost ? 'writes on ' + serverHost : ''">Save…</button>
     <button type="button" x-show="!staticMode" :disabled="!savedPath" @click="scaffold()">
@@ -567,7 +570,8 @@
          edits, so the handler guard covers them. -->
     <p class="warn" x-show="pendingReload" style="display:none">
       <span x-text="pendingReload
-                    ? 'the agent wrote ' + pendingReload.path + ', but the form has unsaved edits'
+                    ? (pendingReload.reason === 'open' ? 'opening ' : 'the agent wrote ')
+                      + pendingReload.path + ', but the form has unsaved edits'
                     : ''"></span>
       <button type="button" class="mini" @click="acceptPendingReload()">
         load it (discards my edits)</button>
@@ -594,6 +598,9 @@
         </li>
       </template>
     </ul>
+    <div class="row" x-show="browse.mode === 'open'" style="display:none">
+      <span class="muted">click a workflow file to open it</span>
+    </div>
     <div class="row" x-show="browse.mode === 'pick'">
       <button type="button" @click="pickHere()">Use this folder</button>
     </div>

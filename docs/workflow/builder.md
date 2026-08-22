@@ -23,6 +23,12 @@ chemrefine gui input.yaml          # load an existing config into the builder
 chemrefine gui --no-browser        # print the URL instead of opening it
 ```
 
+**Open…** in the header loads a workflow already on disk, without restarting. That is how
+you look at a **finished run**: open its `input.yaml` and the whole tree comes with it —
+the Run panel with its per-step survivors and failures, the results table, and the
+Structure pane with every step's computed geometries beside the seeds they came from.
+Unsaved edits are never overwritten; you are asked first.
+
 The app binds **127.0.0.1 only**, behind a per-session token carried in the launch URL —
 by default on a **stable per-user port** (hashed from your username), which is what makes
 the one-time cluster setup below possible.
@@ -133,7 +139,9 @@ it draws what step 1 will be handed, so *"did I point `input:` at the molecule I
 is a click rather than a run. The seeds are numbered by the same code the pipeline uses,
 so the id you inspect as `2` is the `2` that turns up in `steps.csv` afterwards.
 
-Picking a **step** instead draws that step's cached structures, so it has to have run.
+Picking a **step** instead draws that step's cached structures, so it has to have run —
+which, with **Open…**, is how you compare what went into a finished run with what came
+out of it.
 
 Give it a **mode #** and it animates that normal mode instead of drawing a still: the
 displacement vectors are re-parsed from the structure's own output (the tensor is a
