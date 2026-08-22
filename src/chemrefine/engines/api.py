@@ -305,6 +305,12 @@ class ParsedResult:
     its frequency (cm⁻¹) — ``None`` = no frequency table at all (distinct from ``{}`` = a
     table with zero imaginary modes) — and ``normal_modes`` is the displacement tensor NMS
     displaces along.
+
+    ``frequencies`` is the whole mode table in the same index space, of which
+    ``imaginary_freqs`` is a subset. NMS only ever needed the imaginary ones, so for a long
+    time only those were kept and every real mode's frequency was thrown away at the parse
+    boundary — leaving anything that named a mode afterwards (a viewer's mode list,
+    :func:`chemrefine.agent_tools.analyze_mode`) with an index and no cm⁻¹ to put beside it.
     """
 
     symbols: tuple[str, ...]
@@ -317,6 +323,7 @@ class ParsedResult:
     enthalpy_hartree: float | None = None
     energy_zpe_hartree: float | None = None
     imaginary_freqs: dict[int, float] | None = None
+    frequencies: dict[int, float] | None = None
     normal_modes: NDArray[np.float64] | None = None
 
 

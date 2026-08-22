@@ -1045,6 +1045,36 @@ def test_result_record_round_trips_through_structure_from_record(tmp_path: Path)
     assert rebuilt.atoms.get_chemical_symbols() == ["H", "H"]
 
 
+def test_both_mode_tables_round_trip_and_neither_is_required(tmp_path: Path):
+    """The whole table is persisted so a finished tree can be read without its outputs.
+
+    Additive, like ``resolved_from``: a record written before the key existed loads as
+    ``None`` and needs no :data:`RESULT_FORMAT_VERSION` bump. ``None`` must survive as
+    ``None`` rather than flattening to ``{}`` — "no frequency table" and "a table with no
+    imaginary modes" are the difference between "unknown" and "a verified minimum", which
+    is what NMS's ``_is_resolved`` branches on.
+    """
+    structure = Structure(
+        id="0",
+        atoms=Atoms("H2", positions=[[0.0, 0.0, 0.0], [0.0, 0.0, 0.74]]),
+        energy_hartree=-1.17,
+        imaginary_freqs={0: -512.4},
+        frequencies={0: -512.4, 6: 284.9, 7: 1103.7},
+    )
+    record = structure_record(structure)
+    assert record["frequencies"] == {"0": -512.4, "6": 284.9, "7": 1103.7}
+    rebuilt = structure_from_record(record)
+    assert rebuilt.frequencies == structure.frequencies
+    assert rebuilt.imaginary_freqs == structure.imaginary_freqs
+
+    older = {k: v for k, v in record.items() if k != "frequencies"}
+    assert structure_from_record(older).frequencies is None
+
+    empty = structure_record(Structure(id="1", atoms=Atoms("H"), imaginary_freqs={}))
+    assert (empty["imaginary_freqs"], empty["frequencies"]) == ({}, None)
+    assert structure_from_record(empty).imaginary_freqs == {}  # not None: a verified minimum
+
+
 # --- cache: corrupt failed-jobs ledger --------------------------------------
 
 

@@ -80,7 +80,7 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
         raise OutputParseError(f"malformed gradient row in {src}: {e}") from e
 
     thermo = energy.parse_thermochemistry_from_text(text, electronic_hartree=electronic)
-    imaginary, modes = _parse_frequency_block(text, n_atoms=len(symbols))
+    imaginary, table, modes = _parse_frequency_block(text, n_atoms=len(symbols))
     return [
         ParsedResult(
             symbols=symbols,
@@ -93,6 +93,7 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
             enthalpy_hartree=thermo.enthalpy_hartree if thermo else None,
             energy_zpe_hartree=thermo.energy_zpe_hartree if thermo else None,
             imaginary_freqs=imaginary,
+            frequencies=table,
             normal_modes=modes,
         )
     ]
@@ -179,23 +180,24 @@ def _stderr_tail(src: str) -> str:
 
 def _parse_frequency_block(
     text: str, *, n_atoms: int
-) -> tuple[dict[int, float] | None, NDArray[np.float64] | None]:
-    """Imaginary modes + normal-mode tensor from the shared text, or ``(None, None)``.
+) -> tuple[dict[int, float] | None, dict[int, float] | None, NDArray[np.float64] | None]:
+    """Imaginary modes, the whole table, and the normal-mode tensor from the shared text.
 
-    ``None`` for both when the output has no ``VIBRATIONAL FREQUENCIES`` block at all (distinct
-    from ``{}`` = a freq calc with zero imaginary modes); the tensor is ``None`` when it's
-    absent / unparseable.
+    ``None`` for all three when the output has no ``VIBRATIONAL FREQUENCIES`` block at all
+    (distinct from ``{}`` = a freq calc with zero imaginary modes); the tensor is ``None``
+    when it's absent / unparseable.
     """
     if "VIBRATIONAL FREQUENCIES" not in text:
-        return None, None
+        return None, None, None
     imaginary = frequencies.parse_imaginary_frequencies_from_text(text)
+    table = frequencies.parse_mode_table_from_text(text)
     try:
         modes: NDArray[np.float64] | None = frequencies.parse_normal_modes_tensor_from_text(
             text, num_atoms=n_atoms
         )
     except ValueError:
         modes = None
-    return imaginary, modes
+    return imaginary, table, modes
 
 
 def parse_text(text: str, operation: str, *, src: str = "<text>") -> list[ParsedResult]:

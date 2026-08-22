@@ -128,6 +128,26 @@ def test_a_second_mode_block_extends_the_tensor():
     assert modes[0, :, 9] == pytest.approx([0.440, 0.379, -0.045])
 
 
+def test_the_whole_table_lands_in_the_same_shifted_index_space():
+    """The real modes are kept too, shifted exactly like the imaginary ones.
+
+    Q-Chem builds the full table and used to throw away everything that was not negative,
+    which is why ``analyze_mode`` could name a mode's frequency for ORCA and not here. Both
+    now come from one shift, so the subset cannot drift out of the table.
+    """
+    parsed = parse_qchem_text(_ORIENTATION + _ENERGY + _FREQ_BLOCK)[0]
+    assert parsed.frequencies is not None
+    assert parsed.frequencies == {6: -151.64, 7: 505.89, 8: 778.03}
+    assert parsed.imaginary_freqs is not None
+    assert parsed.imaginary_freqs.items() <= parsed.frequencies.items()
+
+
+def test_no_vibrational_section_means_no_table_either():
+    """``None`` for all three, so "not computed" never reads as "nothing found"."""
+    parsed = parse_qchem_text(_ORIENTATION + _ENERGY)[0]
+    assert (parsed.imaginary_freqs, parsed.frequencies, parsed.normal_modes) == (None, None, None)
+
+
 def test_an_all_real_spectrum_is_a_verified_minimum():
     """A frequency section with no negative values yields ``{}`` — counted and zero."""
     text = _ORIENTATION + _ENERGY + _FREQ_BLOCK.replace("-151.64", " 151.64")

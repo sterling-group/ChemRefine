@@ -864,6 +864,7 @@
         ]
       ],
       "imaginary_freqs": null,
+      "frequencies": null,
       "resolved_from": null
     }
   ]

@@ -525,16 +525,31 @@ def _required_step(config: Config, step: int | str) -> StepConfig:
     return step_cfg
 
 
+def _mode_payload(table: dict[int, float] | None) -> dict[str, float] | None:
+    """A mode table as JSON, sorted by index — ``None`` stays ``None``, never ``{}``.
+
+    Sorted because these are read by people and by models, in the order they are printed;
+    ``None`` preserved because "no frequency table" and "a table with nothing in it" are
+    different answers about whether a structure is a verified minimum.
+    """
+    return None if table is None else {str(mode): cm1 for mode, cm1 in sorted(table.items())}
+
+
 def get_frequencies(
     config_path: str, step: int | str, structure_id: str | None = None
 ) -> dict[str, Any]:
     """Cached frequency and thermochemistry facts for a step's structures.
 
-    Read from the step cache — ``imaginary_freqs`` (mode index → cm⁻¹) and the
-    thermochemistry fields are persisted with every parsed structure, so this answers
-    "is it a minimum (0 imaginary) or a TS (exactly 1)?" without touching output files.
-    ``imaginary_count: null`` means the calculation produced no frequency table at all —
-    distinct from a table with zero imaginary modes, and not evidence of a minimum.
+    Read from the step cache — the mode tables and the thermochemistry fields are persisted
+    with every parsed structure, so this answers "is it a minimum (0 imaginary) or a TS
+    (exactly 1)?" without touching output files. ``imaginary_count: null`` means the
+    calculation produced no frequency table at all — distinct from a table with zero
+    imaginary modes, and not evidence of a minimum.
+
+    ``frequencies`` is every mode, of which ``imaginary_freqs`` is the subset worth
+    alarming about; it is what lets a caller name a mode by its frequency rather than by an
+    index alone. It is ``null`` on a tree cached before it was persisted — ``rebuild-cache``
+    re-parses the outputs and fills it in.
     """
     config = load_config(Path(config_path))
     step_cfg = _required_step(config, step)
@@ -555,11 +570,8 @@ def get_frequencies(
             {
                 "id": s.id,
                 "imaginary_count": None if s.imaginary_freqs is None else len(s.imaginary_freqs),
-                "imaginary_freqs": (
-                    None
-                    if s.imaginary_freqs is None
-                    else {str(mode): cm1 for mode, cm1 in sorted(s.imaginary_freqs.items())}
-                ),
+                "imaginary_freqs": _mode_payload(s.imaginary_freqs),
+                "frequencies": _mode_payload(s.frequencies),
                 "energy_hartree": s.energy_hartree,
                 "gibbs_hartree": s.gibbs_hartree,
                 "enthalpy_hartree": s.enthalpy_hartree,
@@ -806,6 +818,10 @@ def analyze_mode(
     displaces along), so the structure's output file is re-parsed with the engine's own
     parser; a tree whose outputs were cleaned gets told to rerun or rebuild instead.
 
+    ``frequency_cm1`` is that mode's frequency whether or not it is imaginary, and
+    ``frequencies`` is the whole table — both from the same re-parse as the displacements,
+    so a real mode is named rather than being handed back its own index.
+
     ``top_atoms`` is clamped at zero for the reason :func:`get_results` clamps its
     pagination: ``[:top_atoms]`` on a negative counts from the end, so ``top_atoms=-1``
     quietly returned every atom *but* the least-displaced one — the opposite of a shorter
@@ -819,12 +835,17 @@ def analyze_mode(
     total = float(norms.sum()) or 1.0
     leaders = np.argsort(norms)[::-1][: max(0, top_atoms)]
     imaginary = frame.imaginary_freqs or {}
+    # From the whole table, not the imaginary subset: asked about a real mode, this used to
+    # answer with its own index echoed back and `frequency_cm1: null`, because the only
+    # frequencies anyone had kept were the ones NMS needed.
+    table = frame.frequencies or {}
     return {
         "structure_id": structure_id,
         "mode_index": mode_index,
-        "frequency_cm1": imaginary.get(mode_index),
+        "frequency_cm1": table.get(mode_index),
         "is_imaginary": mode_index in imaginary,
-        "imaginary_freqs": {str(mode): cm1 for mode, cm1 in sorted(imaginary.items())},
+        "imaginary_freqs": _mode_payload(imaginary) or {},
+        "frequencies": _mode_payload(table) or {},
         "top_atoms": [
             {
                 "index": int(i),

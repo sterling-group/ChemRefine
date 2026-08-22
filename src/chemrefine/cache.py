@@ -478,11 +478,13 @@ def structure_record(s: Structure) -> dict[str, Any]:
     - ``symbols``, ``positions`` — the geometry [Å]
     - ``forces_ev_per_a`` — forces [eV/Å]
     - ``imaginary_freqs`` — mode index (JSON string) → frequency [cm⁻¹]
+    - ``frequencies`` — the whole mode table, same shape, same index space
     - ``resolved_from`` — the NMS child this structure's artifacts came from
 
-    ``resolved_from`` is additive: :func:`structure_from_record` reads it with ``.get``, so a
-    record written before it existed loads as ``None`` and needs no
-    :data:`RESULT_FORMAT_VERSION` bump.
+    ``resolved_from`` and ``frequencies`` are additive: :func:`structure_from_record` reads
+    them with ``.get``, so a record written before they existed loads as ``None`` and needs
+    no :data:`RESULT_FORMAT_VERSION` bump. A tree cached before ``frequencies`` existed
+    gains it by re-parsing its outputs — that is what ``rebuild-cache`` is for.
 
     Only symbols + positions of the ``Atoms`` are stored — that is all the
     pipeline ever reads back (and all that :func:`structure_digest` hashes).
@@ -506,21 +508,34 @@ def structure_record(s: Structure) -> dict[str, Any]:
             if s.forces_ev_per_a is None
             else np.asarray(s.forces_ev_per_a, dtype=np.float64).tolist()
         ),
-        # Imaginary modes round-trip (small, useful metadata); JSON keys must be strings.
+        # The mode tables round-trip (small, useful metadata); JSON keys must be strings.
         # ``normal_modes`` is deliberately NOT persisted — it's a transient displacement tensor
         # only used during an active NMS run (which always re-parses), so a cache-reloaded
         # structure carries ``None`` (never read).
-        "imaginary_freqs": (
-            None if s.imaginary_freqs is None else {str(k): v for k, v in s.imaginary_freqs.items()}
-        ),
+        "imaginary_freqs": _freq_record(s.imaginary_freqs),
+        "frequencies": _freq_record(s.frequencies),
         "resolved_from": s.resolved_from,
     }
+
+
+def _freq_record(table: dict[int, float] | None) -> dict[str, float] | None:
+    """A mode table on its way to JSON, whose object keys can only be strings.
+
+    ``None`` is carried through rather than flattened to ``{}``: no frequency table at all
+    and a table with nothing in it are different answers, and NMS's resolution rule
+    (``nms._is_resolved``) branches on exactly that difference.
+    """
+    return None if table is None else {str(mode): cm1 for mode, cm1 in table.items()}
+
+
+def _freq_from_record(raw: Any) -> dict[int, float] | None:
+    """The inverse of :func:`_freq_record` — mode indices back to the ints they are."""
+    return None if raw is None else {int(mode): cm1 for mode, cm1 in raw.items()}
 
 
 def structure_from_record(d: dict[str, Any]) -> Structure:
     """Rebuild a :class:`Structure` from its canonical record (inverse of the above)."""
     forces = d["forces_ev_per_a"]
-    imaginary = d.get("imaginary_freqs")
     return Structure(
         id=d["id"],
         atoms=Atoms(symbols=d["symbols"], positions=d["positions"]),
@@ -529,11 +544,12 @@ def structure_from_record(d: dict[str, Any]) -> Structure:
         forces_ev_per_a=None if forces is None else np.asarray(forces, dtype=np.float64),
         converged=d["converged"],
         terminated_normally=d["terminated_normally"],
-        # Thermochemistry + imaginary modes are additive — older caches lack these keys.
+        # Thermochemistry + the mode tables are additive — older caches lack these keys.
         gibbs_hartree=d.get("gibbs_hartree"),
         enthalpy_hartree=d.get("enthalpy_hartree"),
         energy_zpe_hartree=d.get("energy_zpe_hartree"),
-        imaginary_freqs=None if imaginary is None else {int(k): v for k, v in imaginary.items()},
+        imaginary_freqs=_freq_from_record(d.get("imaginary_freqs")),
+        frequencies=_freq_from_record(d.get("frequencies")),
         resolved_from=d.get("resolved_from"),
     )
 

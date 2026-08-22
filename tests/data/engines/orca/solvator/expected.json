@@ -310,6 +310,7 @@
       ],
       "forces_ev_per_a": null,
       "imaginary_freqs": null,
+      "frequencies": null,
       "resolved_from": null
     },
     {
@@ -639,6 +640,7 @@
       ],
       "forces_ev_per_a": null,
       "imaginary_freqs": null,
+      "frequencies": null,
       "resolved_from": null
     },
     {
@@ -986,6 +988,7 @@
       ],
       "forces_ev_per_a": null,
       "imaginary_freqs": null,
+      "frequencies": null,
       "resolved_from": null
     }
   ]

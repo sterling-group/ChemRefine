@@ -65,7 +65,7 @@ def parse_qchem_text(text: str, *, src: str = "<text>") -> list[ParsedResult]:
     if not energies:
         raise OutputParseError(f"no 'Total energy in the final basis set' in {src}")
     symbols, positions = _last_orientation(text, src)
-    imaginary, modes = _parse_frequencies(text, n_atoms=len(symbols))
+    imaginary, table, modes = _parse_frequencies(text, n_atoms=len(symbols))
     return [
         ParsedResult(
             symbols=symbols,
@@ -73,6 +73,7 @@ def parse_qchem_text(text: str, *, src: str = "<text>") -> list[ParsedResult]:
             energy_hartree=float(energies[-1]),
             forces_ev_per_a=None,
             imaginary_freqs=imaginary,
+            frequencies=table,
             normal_modes=modes,
         )
     ]
@@ -114,10 +115,10 @@ def _last_orientation(text: str, src: str) -> tuple[tuple[str, ...], NDArray[np.
 
 def _parse_frequencies(
     text: str, *, n_atoms: int
-) -> tuple[dict[int, float] | None, NDArray[np.float64] | None]:
-    """Imaginary modes + padded displacement tensor, or ``(None, None)`` without real data.
+) -> tuple[dict[int, float] | None, dict[int, float] | None, NDArray[np.float64] | None]:
+    """Imaginary modes, the whole table, and the padded displacement tensor.
 
-    ``None`` for both when the output has no ``VIBRATIONAL ANALYSIS`` at all **or** the
+    ``None`` for all three when the output has no ``VIBRATIONAL ANALYSIS`` at all **or** the
     section is there but no mode block parses — a job truncated or died mid-print. Both are
     "no data", distinct from ``{}`` = a parsed table with zero imaginary modes — a verified
     minimum; conflating the truncated case with ``{}`` called a killed freq job a minimum,
@@ -128,7 +129,7 @@ def _parse_frequencies(
     """
     _head, sep, tail = text.rpartition(_VIB_MARKER)
     if not sep:
-        return None, None
+        return None, None, None
     freqs: dict[int, float] = {}
     columns: dict[int, list[list[float]]] = {}
     lines = tail.splitlines()
@@ -150,14 +151,19 @@ def _parse_frequencies(
             for column, index in enumerate(indices):
                 columns[index] = [row[3 * column : 3 * column + 3] for row in block_rows]
     if not freqs:
-        return None, None  # marker present, nothing parsed: no data, not a verified minimum
-    imaginary = {index + _TRIVIAL_MODES - 1: v for index, v in freqs.items() if v < 0.0}
+        # marker present, nothing parsed: no data, not a verified minimum
+        return None, None, None
+    # Q-Chem numbers only the non-trivial modes, from 1; ORCA counts the six translations
+    # and rotations first. The whole table is shifted into that shared index space once,
+    # and the imaginary subset taken from it, so the two cannot come to disagree.
+    table = {index + _TRIVIAL_MODES - 1: v for index, v in freqs.items()}
+    imaginary = {index: v for index, v in table.items() if v < 0.0}
     if not columns:
-        return imaginary, None
+        return imaginary, table, None
     tensor = np.zeros((n_atoms, 3, _TRIVIAL_MODES + max(freqs)), dtype=np.float64)
     for index, block in columns.items():
         tensor[:, :, index + _TRIVIAL_MODES - 1] = np.array(block, dtype=np.float64)
-    return imaginary, tensor
+    return imaginary, table, tensor
 
 
 def _frequency_values(lines: list[str], start: int, *, expected: int) -> list[float] | None:

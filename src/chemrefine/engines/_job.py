@@ -106,6 +106,7 @@ def build_structures(
                     enthalpy_hartree=ps.enthalpy_hartree,
                     energy_zpe_hartree=ps.energy_zpe_hartree,
                     imaginary_freqs=ps.imaginary_freqs,
+                    frequencies=ps.frequencies,
                     normal_modes=ps.normal_modes,
                 )
             )

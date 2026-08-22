@@ -23,6 +23,7 @@ from ase import Atoms
 
 from chemrefine import agent_tools, cache
 from chemrefine.config import load_config
+from chemrefine.engines.orca.output import coordinator as orca_coordinator
 from chemrefine.errors import ConfigError
 from chemrefine.state import StepInputs, StepResults, Structure
 
@@ -496,6 +497,73 @@ def test_analyze_mode_speaks_qchem_too(tmp_path: Path):
     assert result["frequency_cm1"] is None
     assert result["imaginary_freqs"] == {}
     assert len(result["top_atoms"]) == 5
+
+
+def test_analyze_mode_gives_a_real_mode_its_frequency(tmp_path: Path):
+    """Asked about a mode that is not imaginary, it used to hand back the index it was given.
+
+    ``frequency_cm1`` was read from ``imaginary_freqs``, the only table anyone kept, so
+    every real mode answered ``null`` — on the tool whose job is to say what a mode *does*,
+    for a caller deciding whether 1465 cm⁻¹ is the coordinate they meant.
+    """
+    tree = str(_freq_tree(tmp_path))
+    real = agent_tools.analyze_mode(tree, 1, "0", mode_index=7, top_atoms=1)
+    assert real["frequency_cm1"] == pytest.approx(1464.97)
+    assert real["is_imaginary"] is False
+    # The whole table comes with it, so a caller can pick a mode without guessing an index.
+    assert real["frequencies"] == {
+        "6": pytest.approx(-820.38),
+        "7": pytest.approx(1464.97),
+        "8": pytest.approx(1465.36),
+        "9": pytest.approx(3548.96),
+        "10": pytest.approx(3765.14),
+        "11": pytest.approx(3765.42),
+    }
+    # And the imaginary mode still reads as it did — the subset did not move.
+    imaginary = agent_tools.analyze_mode(tree, 1, "0", mode_index=6, top_atoms=1)
+    assert (imaginary["frequency_cm1"], imaginary["is_imaginary"]) == (
+        pytest.approx(-820.38),
+        True,
+    )
+
+
+def test_get_frequencies_serves_the_whole_table_from_the_cache(tmp_path: Path):
+    """Persisted, so a laptop reading a finished tree has it without the ``.out`` files.
+
+    ``analyze_mode`` re-parses and so always had access to the table; ``get_frequencies``
+    reads only the cache, which is what a copied tree still has. A tree cached before the
+    table was persisted answers ``null`` rather than ``{}`` — nothing known, not "no modes"
+    — and ``rebuild-cache`` fills it in.
+    """
+    parsed = orca_coordinator.parse_text(_FREQ_OUT.read_text(encoding="utf-8"), "freq")[0]
+    path = _cache_step(
+        tmp_path,
+        (
+            Structure(
+                id="0",
+                atoms=Atoms(symbols=list(parsed.symbols), positions=parsed.positions),
+                energy_hartree=parsed.energy_hartree,
+                imaginary_freqs=parsed.imaginary_freqs,
+                frequencies=parsed.frequencies,
+            ),
+        ),
+    )
+    served = agent_tools.get_frequencies(str(path), 1)["structures"][0]
+    assert served["frequencies"] == {
+        "6": pytest.approx(-820.38),
+        "7": pytest.approx(1464.97),
+        "8": pytest.approx(1465.36),
+        "9": pytest.approx(3548.96),
+        "10": pytest.approx(3765.14),
+        "11": pytest.approx(3765.42),
+    }
+    assert served["imaginary_freqs"] == {"6": pytest.approx(-820.38)}
+    assert served["imaginary_count"] == 1
+    # And a structure cached before any of this existed says "unknown", not "no modes".
+    older = tmp_path / "older"
+    older.mkdir()
+    before = _cache_step(older, (Structure(id="0", atoms=Atoms("H")),))
+    assert agent_tools.get_frequencies(str(before), 1)["structures"][0]["frequencies"] is None
 
 
 def test_analyze_mode_names_a_real_mode_range(tmp_path: Path):

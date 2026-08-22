@@ -95,6 +95,14 @@ class Structure:
     """Imaginary normal modes (mode index → cm⁻¹) from a frequency calc, read in the same
     pass as energy/geometry; ``None`` = no frequency table (distinct from ``{}`` = a verified
     minimum). The engine-independent NMS coordinator reads this off the structure."""
+    frequencies: dict[int, float] | None = None
+    """Every normal mode (mode index → cm⁻¹) from a frequency calc, in the same index space,
+    of which :attr:`imaginary_freqs` is a subset; ``None`` = no frequency table.
+
+    NMS wants only the imaginary ones, so only those were ever kept — and anything that
+    names a mode *afterwards* (a viewer's mode list, ``analyze_mode``) had an index with no
+    frequency to show beside it. Persisted, so it survives to a laptop reading a finished
+    tree, where the ``.out`` files may not have come along."""
     normal_modes: NDArray[np.float64] | None = None
     """Normal-mode displacement tensor ``(n_atoms, 3, n_modes)`` from a frequency calc; ``None``
     when absent. A **transient** artifact used by NMS to displace along imaginary modes — it is

@@ -30,6 +30,12 @@ from numpy.typing import NDArray
 _FREQ_BLOCK_MARKER = "VIBRATIONAL FREQUENCIES"
 """Banner each Hessian's frequency table opens with; a TS search prints one per recompute."""
 
+LAST_TRIVIAL_MODE = 5
+"""Highest mode index ORCA gives to a translation or rotation, for a non-linear molecule.
+
+Six of them, indices 0-5, printed at ~0 cm⁻¹ before the real vibrations. A linear molecule
+has five, and its sixth mode is discarded with them."""
+
 _NORMAL_MODES_MARKER = "NORMAL MODES"
 """Banner the displacement-tensor scan anchors on (see
 :func:`parse_normal_modes_tensor_from_text`)."""
@@ -40,19 +46,13 @@ _MODE_COL_HEADER_RE = re.compile(r"^\s*(\d+\s+)+\d+\s*$")
 _MODE_ROW_RE = re.compile(r"^\s*\d+\s+[-\d.Ee\s]+$")
 
 
-def parse_frequencies_from_text(
-    text: str,
-    *,
-    only_imaginary: bool = False,
-    skip_first_real: int = 5,
-) -> dict[int, float]:
-    """Return ``{mode_index: frequency_cm_inverse}`` from already-read ORCA output text.
+def _frequency_rows(text: str) -> list[tuple[int, float, bool]]:
+    """``(mode_index, cm⁻¹, is_imaginary)`` for every row of the last frequency block.
 
-    ``only_imaginary`` keeps only the modes ORCA flagged ``***imaginary mode***`` (the
-    NMS-targeting subset); otherwise every mode with an index **greater than**
-    ``skip_first_real`` is kept, so the default of ``5`` drops indices 0-5 — the six
-    translation/rotation modes ORCA prints for a non-linear molecule (a linear one has
-    five, and its sixth mode is discarded with them).
+    The single scan the three public selectors share, so "which block, where does it
+    start, where does it end" is answered once. Each of them then filters this list by its
+    own rule; splitting the scan per rule is how two of them would come to disagree about
+    which Hessian's table they are reading.
 
     Reads the **last** ``VIBRATIONAL FREQUENCIES`` group, matching every sibling parser
     (:func:`~chemrefine.engines.orca.output.energy.parse_final_energy_from_text`,
@@ -64,7 +64,7 @@ def parse_frequencies_from_text(
     :func:`~chemrefine.engines.orca.output.status.parse_converged`: last verdict wins.
     """
     # `sep` empty means the banner is absent — leave `text` alone so a frequency-less
-    # output still yields `{}` rather than being scanned from the top.
+    # output still yields `[]` rather than being scanned from the top.
     _head, sep, tail = text.rpartition(_FREQ_BLOCK_MARKER)
     # The marker itself has to survive: the scan below only enters the block when it *sees*
     # that line, so slicing it off would return nothing at all.
@@ -72,10 +72,10 @@ def parse_frequencies_from_text(
 
     in_block = False
     after_scaling = False
-    out: dict[int, float] = {}
+    rows: list[tuple[int, float, bool]] = []
 
     for line in text.splitlines():
-        if "VIBRATIONAL FREQUENCIES" in line:
+        if _FREQ_BLOCK_MARKER in line:
             in_block = True
             continue
         if not in_block:
@@ -88,26 +88,66 @@ def parse_frequencies_from_text(
 
         m = _FREQ_LINE_RE.match(line)
         if m is None:
-            # End of the block: a blank line or new section header.
-            if line.strip() == "" and out:
+            # End of the block: a blank line or new section header. `rows` guards against
+            # the blank line that separates the scaling factor from the table itself.
+            if line.strip() == "" and rows:
                 break
             continue
+        rows.append(
+            (
+                int(m.group("index")),
+                float(m.group("value")),
+                bool(_IMAG_TAG_RE.search(m.group("rest"))),
+            )
+        )
+    return rows
 
-        index = int(m.group("index"))
-        value = float(m.group("value"))
-        is_imaginary = bool(_IMAG_TAG_RE.search(m.group("rest")))
 
-        if only_imaginary:
-            if is_imaginary:
-                out[index] = value
-        elif index > skip_first_real:
-            out[index] = value
-    return out
+def parse_frequencies_from_text(
+    text: str,
+    *,
+    only_imaginary: bool = False,
+    skip_first_real: int = LAST_TRIVIAL_MODE,
+) -> dict[int, float]:
+    """Return ``{mode_index: frequency_cm_inverse}`` from already-read ORCA output text.
+
+    ``only_imaginary`` keeps only the modes ORCA flagged ``***imaginary mode***`` (the
+    NMS-targeting subset); otherwise every mode with an index **greater than**
+    ``skip_first_real`` is kept, so the default of ``5`` drops indices 0-5 — the six
+    translation/rotation modes ORCA prints for a non-linear molecule (a linear one has
+    five, and its sixth mode is discarded with them).
+
+    Neither subset is the whole table — see :func:`parse_mode_table_from_text`.
+    """
+    return {
+        index: value
+        for index, value, is_imaginary in _frequency_rows(text)
+        if (is_imaginary if only_imaginary else index > skip_first_real)
+    }
 
 
 def parse_imaginary_frequencies_from_text(text: str) -> dict[int, float]:
     """Imaginary-modes subset, operating on already-read output text."""
     return parse_frequencies_from_text(text, only_imaginary=True)
+
+
+def parse_mode_table_from_text(text: str) -> dict[int, float]:
+    """Every mode worth naming: the real vibrations *and* the imaginary ones.
+
+    The union of the two subsets above rather than one index window, because ORCA sorts
+    the table ascending and so prints a transition state's imaginary mode at index 0 —
+    inside the very window :func:`parse_frequencies_from_text` skips as translations and
+    rotations. Selecting by index alone would drop the one mode a TS is looked at for;
+    widening the window to keep it would add five modes at ~0 cm⁻¹ that nobody animates.
+
+    This is the table a viewer offers and :func:`chemrefine.agent_tools.analyze_mode`
+    names a frequency from, so ``imaginary_freqs`` stays a subset of it by construction.
+    """
+    return {
+        index: value
+        for index, value, is_imaginary in _frequency_rows(text)
+        if is_imaginary or index > LAST_TRIVIAL_MODE
+    }
 
 
 def parse_normal_modes_tensor_from_text(text: str, *, num_atoms: int) -> NDArray[np.float64]:

@@ -14,8 +14,32 @@ from synthetic import (
 from chemrefine.engines.orca.output.frequencies import (
     parse_frequencies_from_text,
     parse_imaginary_frequencies_from_text,
+    parse_mode_table_from_text,
     parse_normal_modes_tensor_from_text,
 )
+
+# A transition state as ORCA actually prints one: the table is sorted ascending, so the
+# imaginary mode is index *0* and the five remaining translations/rotations follow it. The
+# synthetic block above puts its imaginary modes at 37/38, above the trivial window, where
+# the difference between "every real mode" and "every mode" cannot show.
+_TS_BLOCK = """
+-----------------------
+VIBRATIONAL FREQUENCIES
+-----------------------
+
+Scaling factor for frequencies =  1.000000000  (already applied!)
+
+     0:    -512.44 cm**-1  ***imaginary mode***
+     1:       0.00 cm**-1
+     2:       0.00 cm**-1
+     3:       0.00 cm**-1
+     4:       0.00 cm**-1
+     5:       0.00 cm**-1
+     6:     284.90 cm**-1
+     7:    1103.68 cm**-1
+
+trailing text
+"""
 
 # ---------------------------------------------------------------------------
 # parse_frequencies_from_text
@@ -60,6 +84,51 @@ def test_parse_frequencies_stops_at_blank_line():
 
 def test_parse_frequencies_empty_when_no_freq_block():
     assert parse_frequencies_from_text("no frequency block here\n") == {}
+
+
+def test_the_mode_table_keeps_the_imaginary_mode_the_index_window_would_drop():
+    """The whole point of the union, on the one output shape where it shows.
+
+    ORCA sorts the table ascending, so a transition state's imaginary mode is index 0 —
+    inside the translation/rotation window the real pass skips. Selecting by index alone
+    drops exactly the mode a TS is looked at for.
+    """
+    table = parse_mode_table_from_text(_TS_BLOCK)
+    assert table == {0: -512.44, 6: 284.90, 7: 1103.68}
+    assert 0 not in parse_frequencies_from_text(_TS_BLOCK)  # which is why the union exists
+
+
+def test_the_mode_table_leaves_the_translations_and_rotations_out():
+    """Five modes at ~0 cm⁻¹ that nobody animates, and that are not the molecule moving."""
+    assert not set(parse_mode_table_from_text(_TS_BLOCK)) & {1, 2, 3, 4, 5}
+
+
+def test_the_imaginary_modes_are_a_subset_of_the_table():
+    """The invariant the two callers rely on, on both block shapes.
+
+    ``analyze_mode`` reads ``frequency_cm1`` from the table and ``is_imaginary`` from the
+    subset. If a mode could be in the subset and not the table, it would be reported as
+    imaginary with no frequency — the null it was changed to stop returning.
+    """
+    for block in (_SYNTH_BLOCK, _TS_BLOCK):
+        assert parse_imaginary_frequencies_from_text(block).items() <= (
+            parse_mode_table_from_text(block).items()
+        )
+
+
+def test_every_selector_reads_the_same_block_when_a_ts_reprints_the_table():
+    """One scan, so the three cannot end up describing different Hessians.
+
+    A TS search recomputes the Hessian as it goes and prints a table per recompute; each
+    selector takes the last. Splitting the scan per rule is how one of them would come to
+    answer from an earlier one — a converged structure reported with the imaginary mode it
+    had on the way there.
+    """
+    stale = _TS_BLOCK.replace("-512.44", "-1999.99").replace("284.90", "111.11")
+    both = stale + _TS_BLOCK
+    assert parse_mode_table_from_text(both) == parse_mode_table_from_text(_TS_BLOCK)
+    assert parse_imaginary_frequencies_from_text(both) == {0: -512.44}
+    assert parse_frequencies_from_text(both) == {6: 284.90, 7: 1103.68}
 
 
 # ---------------------------------------------------------------------------
