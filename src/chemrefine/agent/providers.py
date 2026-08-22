@@ -216,6 +216,20 @@ def check(config: ProviderConfig, *, timeout: float = 5.0) -> CheckReport:
     """
     probe = config.probe_url
     if probe is None:
+        if ":" not in config.model:
+            # "Provider-native" means a `provider:model` spelling PydanticAI can place.
+            # A bare name with nowhere to send it is not that — it is a name PydanticAI
+            # raises `UnknownModel` on at construction — and reporting it usable made the
+            # panel arm Send for a configuration that could never build a model, which is
+            # the one thing the preflight exists to prevent.
+            return CheckReport(
+                ok=False,
+                findings=(
+                    f"model {config.model!r} has no endpoint to reach it: give a base URL, "
+                    "an API key, or a provider:model spelling (e.g. "
+                    f"openai:{config.model}, anthropic:…)",
+                ),
+            )
         return CheckReport(
             ok=True,
             findings=(

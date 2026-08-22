@@ -46,6 +46,7 @@ function builder() {
     resultsStep: "",
     _statusTimer: null,
     _chatGen: 0,
+    _checkGen: 0,
     chat: {
       detail: "",
       msgs: [],
@@ -150,7 +151,15 @@ function builder() {
       if (!this.cfg.steps.length) this.addStep();
       this.syncExecRows();
       this.ready = true;
-      this.syncYaml();
+      if (this.savedPath) {
+        // A launched config is on disk and the form now mirrors it, so record that —
+        // otherwise savedText stays "" and dirty() answers true from the first paint,
+        // which made the agent's very first write arrive as "you have unsaved edits"
+        // for a user who had typed nothing at all.
+        await this.recordOnDisk();
+      } else {
+        this.syncYaml();
+      }
     },
 
     seedWorkflowDefaults() {
@@ -438,15 +447,19 @@ function builder() {
       this.cfg.steps.forEach((step, i) => {
         step.step = i + 1;
       });
-      // The results view names a step by number; after renumbering that number means a
-      // different step (or none), so the panel must let go rather than keep serving
-      // the old one under a selector that has silently snapped back to "—".
-      if (
-        this.resultsStep &&
-        !this.cfg.steps.some((s) => String(s.step) === String(this.resultsStep))
-      ) {
+      // Two panels name a step by number, and after renumbering that number means a
+      // different step (or none) — so each must let go rather than keep serving the old
+      // one under a selector that has silently snapped back to "—". The Molecule pane is
+      // the second; it was added later and inherited the bug this guard was written for.
+      const gone = (chosen) =>
+        chosen && !this.cfg.steps.some((s) => String(s.step) === String(chosen));
+      if (gone(this.resultsStep)) {
         this.resultsStep = "";
         this.runResults = null;
+      }
+      if (gone(this.mol.step)) {
+        this.mol.step = "";
+        this.mol.note = "";
       }
       this.syncYaml();
     },
@@ -613,7 +626,12 @@ function builder() {
           const tag = document.createElement("script");
           tag.src = "static/vendor/3dmol.min.js"; // relative, like every other asset here
           tag.onload = () => resolve(window.$3Dmol);
-          tag.onerror = () => reject(new Error("could not load the 3Dmol bundle"));
+          tag.onerror = () => {
+            // Drop the cached rejection: keeping it would make one dropped request
+            // disable the Molecule tab until the page is reloaded.
+            this._viewerLib = null;
+            reject(new Error("could not load the 3Dmol bundle"));
+          };
           document.head.appendChild(tag);
         });
       }
@@ -653,6 +671,10 @@ function builder() {
         if (!data) return; // flash carries the reason
         await this.mountViewer();
         if (!this._viewer) return;
+        // Before the model goes: animate() pushes a timer per call, so a second Show
+        // would leave two driving the same model at different phases, and clearing the
+        // mode box would not stop either.
+        this._viewer.stopAnimate();
         this._viewer.removeAllModels();
         const model = this._viewer.addModel(data.text, "xyz");
         this._viewer.setStyle({}, { stick: { radius: 0.12 }, sphere: { scale: 0.25 } });
@@ -721,6 +743,7 @@ function builder() {
       // Disarm on *settings change*, never from chatAvailability() — that runs on every
       // panel open, and once the panel is a tab it runs on every switch, which would drop
       // a passing verdict mid-conversation.
+      this._checkGen += 1; // orphan any probe still in flight for the old settings
       this.chat.check = { ok: null, findings: [], busy: false };
     },
     async runCheck() {
@@ -728,13 +751,19 @@ function builder() {
         this.flash = "the agent runs with the local chemrefine gui";
         return;
       }
+      // A probe takes a second or two, and the settings can change under it. The
+      // generation is what makes the answer belong to the settings that asked for it:
+      // armCheck() bumps it, so a verdict that arrives for superseded settings is
+      // dropped rather than re-arming Send against an endpoint nobody checked.
+      const generation = ++this._checkGen;
       this.chat.check.busy = true;
       try {
         const data = await this.api("POST", "/api/agent/check", this._chatPayload({}));
+        if (generation !== this._checkGen) return; // the settings moved on
         // A refused request leaves ok null — unchecked, not failed — and `flash` explains.
         if (data) this.chat.check = { ok: data.ok, findings: data.findings, busy: false };
       } finally {
-        this.chat.check.busy = false;
+        if (generation === this._checkGen) this.chat.check.busy = false;
       }
     },
 
@@ -754,15 +783,20 @@ function builder() {
         this.savedPath = data.path;
         this.pendingReload = null;
         this.rawEdit = false;
-        // The emitted YAML, not the file's bytes: seedWorkflowDefaults() deliberately
-        // adds keys the file omits, so comparing against the file would read dirty at once.
-        const emitted = await this.api("POST", "/api/yaml", { config: this.cfg });
-        if (emitted) {
-          this.yamlText = emitted.yaml_text;
-          this.savedText = emitted.yaml_text;
-        }
+        await this.recordOnDisk();
         this.showTab("right", "yaml"); // the change is worth nothing behind another tab
         this.flash = `the agent wrote ${data.path} — loaded into the builder`;
+      }
+    },
+    // Emit the current form and record the result as what is on disk. Awaited, not left
+    // to syncYaml()'s debounce, because the caller is about to be judged clean or dirty
+    // against it. The *emitted* YAML, not the file's bytes: seedWorkflowDefaults() adds
+    // keys the file omits, so comparing against the file itself reads dirty at once.
+    async recordOnDisk() {
+      const emitted = await this.api("POST", "/api/yaml", { config: this.cfg });
+      if (emitted) {
+        this.yamlText = emitted.yaml_text;
+        this.savedText = emitted.yaml_text;
       }
     },
     async acceptPendingReload() {
@@ -778,7 +812,11 @@ function builder() {
       const payload = { provider: this.chat.provider, ...extra };
       if (this.chat.model) payload.model = this.chat.model;
       if (this.chat.baseUrl) payload.base_url = this.chat.baseUrl;
-      if (this.chat.apiKey) payload.api_key = this.chat.apiKey;
+      // Only when the selected provider actually takes one. The key survives a provider
+      // switch (so going back does not mean retyping it), but sending it to an endpoint
+      // whose field the panel has hidden would hand a credential to a host the user did
+      // not intend it for — a local vLLM box, say.
+      if (this.chat.apiKey && this.needsApiKey()) payload.api_key = this.chat.apiKey;
       // Sourced from savedPath, not from chat state, though every line around it reads
       // this.chat.*: it is the file the *builder* has open, which is what the agent
       // should be told about.
@@ -808,7 +846,10 @@ function builder() {
         this.flash = `chat request failed: ${err}`;
         return false;
       } finally {
-        this.chat.busy = false; // never leave the panel stuck on a failed request
+        // Only if this turn is still the current one: an orphaned turn resolving late
+        // would otherwise clear the flag belonging to the turn that replaced it, and the
+        // panel would accept a second message while the first was still running.
+        if (generation === this._chatGen) this.chat.busy = false;
       }
     },
     async sendChat() {

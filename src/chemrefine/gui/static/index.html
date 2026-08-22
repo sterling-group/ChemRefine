@@ -433,8 +433,8 @@
     <textarea id="yaml" x-model="yamlText" :readonly="!rawEdit" spellcheck="false"></textarea>
     </div>
 
-    <!-- Placeholder until the structure viewer lands; a deliberate note rather than a
-         dead button, because no endpoint serves geometry yet. -->
+    <!-- Structures come from /api/structure, which reads the step cache; the viewer
+         bundle loads on first open of this tab. -->
     <div x-show="tabs.right === 'molecule'" style="display:none">
       <p class="muted" x-show="staticMode">
         The 3D view reads structures from the run tree, so it needs the local

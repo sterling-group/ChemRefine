@@ -128,7 +128,12 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         ``OSError``, so a binary file picked by mistake would otherwise reach
         :func:`surface` and become a 500 with a traceback.
         """
-        path = Path(request.args["path"]).expanduser()
+        try:
+            path = Path(request.args["path"]).expanduser()
+        except RuntimeError as e:
+            # `~nosuchuser/x` raises RuntimeError, which is neither OSError nor
+            # UnicodeDecodeError — so it sailed past the guard below into a 500.
+            return jsonify({"error": f"cannot resolve {request.args['path']!r}: {e}"}), 400
         if not path.is_file():
             return jsonify({"error": f"not a file: {path}"}), 400
         try:
@@ -248,6 +253,12 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         which is what the viewer animates.
         """
         mode = request.args.get("mode_index")
+        if mode not in (None, "") and not mode.lstrip("-").isdecimal():
+            # The same guard `_step_key` gives the `step` argument on the line below, for
+            # the same reason: the mode box is free text, and a bare `int()` on `7a` is a
+            # ValueError that `surface` re-raises as a 500 with a traceback, where every
+            # other unusable input to this app is a plain 400.
+            return jsonify({"error": f"mode_index {mode!r} is not a whole number"}), 400
         return jsonify(
             agent_tools.get_structure(
                 request.args["config_path"],

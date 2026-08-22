@@ -7,8 +7,8 @@ live) or **Molecule** (a 3D view). The layout follows the IQmol submission windo
 select on the left, read the resulting input on the right — and the tabs mean the editor
 stays visible while the agent works in the other column.
 
-The Run panel and the validation report sit below both columns, so they stay visible
-whichever tab is open.
+The Run panel and the validation report sit below the right column's panels, so they
+stay visible whichever tab that column is showing.
 
 !!! tip "Try it online"
     The builder also runs on this site, no install needed: **[open the
@@ -112,7 +112,7 @@ template-driven step gains an *Edit template…* editor.
 ## The Run panel
 
 Once a config is saved (local GUI only — the playground stays build-and-copy), a
-**Run** section appears below the columns:
+**Run** section appears below the right column's panels:
 
 - **Run / Resume / Rerun errors** launch the same detached driver the CLI would —
   each behind a confirmation naming the config, because this is real compute. A tree

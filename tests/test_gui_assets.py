@@ -633,6 +633,95 @@ def test_the_agent_is_sent_the_path_the_builder_has_open():
     assert json.loads(out) == {"before": None, "after": "/p/input.yaml"}
 
 
+def test_a_launched_config_is_clean_at_boot():
+    """The regression that broke the whole reload feature for its most common case.
+
+    ``chemrefine gui input.yaml`` boots with the form mirroring the file, and the user has
+    typed nothing — but ``savedText`` was only ever written by saveTo() and the reload
+    itself, so it stayed "" and ``dirty()`` answered true from the first paint. The very
+    first agent write then arrived as "you have unsaved edits", about edits nobody made.
+    """
+    out = _run_component_in_node(
+        _RELOAD_HARNESS
+        + """
+      b.savedPath = "/p/input.yaml";        // as /api/bootstrap's `initial` sets it
+      b.cfg = { steps: [] };
+      await b.recordOnDisk();               // what init() now does for a launched config
+      const clean = !b.dirty();
+      await b.reloadSavedConfig("/p/input.yaml");
+      console.log(JSON.stringify({ clean, pending: b.pendingReload }));
+    """
+    )
+    result = json.loads(out)
+    assert result["clean"] is True  # a freshly loaded file is not an unsaved edit
+    assert result["pending"] is None  # so the agent's write is adopted, not queued
+
+
+def test_a_superseded_check_cannot_rearm_send():
+    """A probe belongs to the settings that asked for it.
+
+    The check takes a second or two against a real endpoint. Change a setting during it
+    and ``armCheck()`` disarms Send — but the in-flight verdict then landed anyway and
+    re-armed it, against settings nobody had checked. Which is the one thing the gate is
+    for.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      let release;
+      b.api = () => new Promise((r) => { release = () => r({ ok: true, findings: ["served"] }); });
+      const probe = b.runCheck();           // in flight, for the old settings
+      b.chat.model = "something-else";
+      b.armCheck();                          // the user edits a field
+      release();
+      await probe;
+      console.log(JSON.stringify({ ok: b.chat.check.ok, ready: b.chatReady() }));
+    """)
+    assert json.loads(out) == {"ok": None, "ready": False}
+
+
+def test_the_key_is_not_sent_to_a_provider_whose_key_field_is_hidden():
+    """The key survives a provider switch; it must not travel with one that hides it.
+
+    ollama and vllm ship a dummy key in their preset, so the panel hides the field — but
+    the value was still in state and still went out, handing an OpenAI credential to
+    whatever host the local preset points at.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chat.presets = {
+        openai: { default_url: "https://api.openai.com/v1", needs_key: true },
+        vllm:   { default_url: "http://localhost:8000/v1", needs_key: false },
+      };
+      b.chat.provider = "openai";
+      b.chat.apiKey = "sk-secret";
+      const sentToOpenai = b._chatPayload({}).api_key ?? null;
+      b.chat.provider = "vllm";              // the field is hidden now
+      const sentToVllm = b._chatPayload({}).api_key ?? null;
+      console.log(JSON.stringify({ sentToOpenai, sentToVllm, stillHeld: b.chat.apiKey }));
+    """)
+    assert json.loads(out) == {
+        "sentToOpenai": "sk-secret",
+        "sentToVllm": None,
+        "stillHeld": "sk-secret",  # kept, so switching back does not mean retyping
+    }
+
+
+def test_renumbering_releases_every_panel_that_names_a_step():
+    """Two panels select a step by number, and both must let go when the numbers move."""
+    out = _run_component_in_node("""
+      const b = builder();
+      b.api = async () => ({ yaml_text: "" });
+      b.cfg = { steps: [{ step: 1 }, { step: 2 }, { step: 3 }] };
+      b.stepKeys = [1, 2, 3];
+      b.resultsStep = "3";
+      b.mol.step = "3";
+      b.cfg.steps.splice(0, 1);              // delete step 1; 3 becomes 2
+      b.renumber();
+      console.log(JSON.stringify({ results: b.resultsStep, mol: b.mol.step }));
+    """)
+    assert json.loads(out) == {"results": "", "mol": ""}
+
+
 def test_field_specs_carry_the_schema_bounds_and_default():
     """The spec a number input renders from: bounds for the spinner, default to step from.
 

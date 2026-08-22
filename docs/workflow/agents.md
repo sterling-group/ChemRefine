@@ -91,6 +91,7 @@ loop, conformer-funnel and transition-state recipes, hard rules).
 | Execution | `start_run`, `run_status` |
 | Results | `get_results` (paginated `steps.csv`), `get_failures` (ledger + suggested recovery) |
 | Frequency analysis | `get_frequencies` (imaginary-mode counts, thermochemistry), `analyze_mode` (mode composition: which atoms and bonds move) |
+| Geometry | `get_structure` (extended XYZ: the cell as `Lattice=` when there is one, a mode's displacement columns when asked) |
 
 ## A session, end to end
 
@@ -164,4 +165,5 @@ free-tier OpenAI-compatible endpoint works via `--base-url`.
   suggests the recovery action.
 - `analyze_mode` re-parses the structure's output with the engine's own parser
   (ORCA-format and Q-Chem) because the displacement tensor is deliberately not cached;
-  everything else reads persisted state only.
+  `get_structure` re-parses the same way when you ask it for a mode; everything else
+  reads persisted state only.

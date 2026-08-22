@@ -644,6 +644,56 @@ def test_structure_serves_extended_xyz_for_the_viewer(client: Any, tmp_path: Pat
     assert missing.get_json()["exit_code"] == 2
 
 
+@pytest.mark.parametrize("mode", ["7a", "two", "1.5", " "])
+def test_a_mode_number_that_is_not_one_is_a_400(client: Any, tmp_path: Path, mode: str):
+    """The mode box is free text, and a bare ``int()`` on it is a 500.
+
+    The same class ``_step_key`` exists to close, on the sibling argument of the same
+    call: every unusable input to this app is the documented 400, not a traceback.
+    """
+    config = tmp_path / "input.yaml"
+    config.write_text(yaml.safe_dump({"steps": [{"step": 1, "engine": "fake"}]}), "utf-8")
+    response = _get(client, f"/api/structure?config_path={config}&step=1&mode_index={mode}")
+    assert response.status_code == 400
+    assert "not a whole number" in response.get_json()["error"]
+    # A negative one is a number, and gets the library's own range refusal instead.
+    negative = _get(client, f"/api/structure?config_path={config}&step=1&mode_index=-1")
+    assert negative.status_code == 400
+
+
+def test_load_refuses_a_home_it_cannot_resolve(client: Any):
+    """``~nosuchuser/x`` raises ``RuntimeError`` — neither OSError nor UnicodeDecodeError.
+
+    It is raised by ``expanduser()`` before the read guard, so it escaped both and became
+    a 500.
+    """
+    response = _get(client, "/api/load?path=~nosuchuser1234/x.yaml")
+    assert response.status_code == 400
+    assert "cannot resolve" in response.get_json()["error"]
+
+
+def test_a_model_with_nowhere_to_go_does_not_pass_the_preflight(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+):
+    """The gate promised a typo costs a click, not a turn. This case broke that promise.
+
+    ``provider: openai`` with a bare model name and no key resolves to no endpoint at
+    all — ``build_model`` hands the bare string to PydanticAI, which raises ``UserError``
+    at construction. Reporting it "provider-native; not probed" armed Send for a
+    configuration that could never build a model, and the user paid a turn to find out.
+    A ``provider:model`` spelling *is* provider-native and still passes.
+    """
+    monkeypatch.delenv("CHEMREFINE_LLM_API_KEY", raising=False)
+
+    stranded = _post(client, "/api/agent/check", {"provider": "openai", "model": "gpt-5-mini"})
+    assert stranded.get_json()["ok"] is False
+    assert "no endpoint to reach it" in stranded.get_json()["findings"][0]
+
+    native = _post(client, "/api/agent/check", {"provider": "openai", "model": "openai:gpt-5-mini"})
+    assert native.get_json()["ok"] is True
+    assert "not probed" in native.get_json()["findings"][0]
+
+
 def test_check_answers_a_verdict_never_an_error(client: Any, monkeypatch: pytest.MonkeyPatch):
     """An unreachable endpoint is this endpoint's *answer*, not its failure.
 
