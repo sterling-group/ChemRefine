@@ -22,12 +22,22 @@ The app binds **127.0.0.1 only**, behind a per-session token carried in the laun
 by default on a **stable per-user port** (hashed from your username), which is what makes
 the one-time cluster setup below possible.
 
+!!! warning "On a shared machine, use `--no-browser`"
+    Opening a browser for you passes the tokened URL as a command-line argument, where
+    any other user on the node can read it out of `/proc`. The token is the only thing
+    guarding `/api/save` and `/api/run`, so on a multi-user host print the URL and paste
+    it yourself. See [the security notes](../internals/security.md).
+
 ## From a cluster
 
 The GUI runs where the scheduler and the output tree live — the same rule as
 [the MCP server](agents.md#route-1-your-own-mcp-client) — so install `chemrefine[gui]`
 on the cluster and run `chemrefine gui` inside your SSH session. A login node has no
-browser; the launch detects that and prints the route to yours instead. Two shapes:
+browser worth opening: the launch checks whether anything here would open a *window*
+— not merely whether a display is set, since `ssh -X` sets one on nodes whose only
+"browser" is lynx — and prints the route to your own machine instead. Over SSH it
+prints that route even when something did open locally, because a tunnel beats a
+forwarded display. Two shapes:
 
 - **One-time** — add the two lines the launch prints to `~/.ssh/config` on your own
   machine:

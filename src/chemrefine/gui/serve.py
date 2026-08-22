@@ -8,8 +8,13 @@ by default — hashed from the username, so an SSH forwarding setup written once
 working across sessions — with a kernel-assigned free port as the fallback when that one
 is taken (``--port 0`` asks for a kernel port outright). The socket is bound here and
 handed to waitress, so the effective port is known before the URL is printed or opened.
-A session with no way to show a browser gets the SSH forwarding recipe printed instead —
-never a text browser hijacking the terminal.
+A session with no way to show a *window* gets the SSH forwarding recipe printed instead —
+never a text browser hijacking the terminal — and a remote session gets the recipe even
+when something did open, because a local tunnel beats a forwarded display.
+
+The token rides in that URL's query string, which means it also rides in the ``argv`` of
+whatever browser process is launched. See ``docs/internals/security.md``: on a shared node
+that is readable by other users, and ``--no-browser`` is the way to avoid it.
 
 waitress is imported at module scope for the reason :mod:`.app` imports Flask there: this
 is the module the CLI imports inside ``except ImportError``, so a deferred import would
@@ -60,17 +65,53 @@ def _personal_port() -> int:
     return _PORT_BASE + int(digest[:8], 16) % _PORT_SPAN
 
 
-def _headless() -> bool:
-    """No way to show a browser here — a DISPLAY-less POSIX session (think login node).
+def _opens_a_window() -> bool:
+    """Whether handing the URL to ``webbrowser`` opens a window rather than seizing this
+    terminal.
 
-    macOS and Windows open browsers without DISPLAY (``open``/``os.startfile``), so the
-    heuristic applies only elsewhere. ``SSH_CONNECTION`` is deliberately not consulted:
-    tmux/screen and batch jobs drop it, and those are exactly the sessions where
-    ``webbrowser`` would otherwise launch lynx/w3m inside this terminal.
+    This used to be a ``DISPLAY`` check, and ``DISPLAY`` is the wrong question. ``ssh -X``
+    sets it on a login node that has no graphical browser at all, and ``webbrowser``
+    registers the console browsers — lynx, w3m, links — whenever ``TERM`` is set, so it
+    then hands the URL to one of those. Their ``open()`` *waits* for the child, so a text
+    browser draws over the user's shell and the server does not start until they quit it:
+    exactly the outcome this guard was written to prevent, reached through the branch it
+    did not check.
+
+    :class:`webbrowser.BackgroundBrowser` is the discriminator. It is the class every
+    windowed launcher registers as, and the only one whose ``open()`` returns without
+    waiting; the console browsers are plain :class:`~webbrowser.GenericBrowser`. The
+    ``DISPLAY`` test is kept ahead of it because it is free and certain — no display, no
+    window — and because it answers before ``webbrowser`` builds its whole try-order.
+
+    What this does **not** settle, stated so nobody reads more into it: ``xdg-open`` and
+    friends are ``BackgroundBrowser`` and answer yes here, but they *delegate* — on a node
+    where nothing graphical is installed they go on to hand the URL to a console browser
+    anyway. Predicting that would mean asking the desktop's MIME associations, which is not
+    portable. It is bounded rather than solved: those launchers run with
+    ``start_new_session=True`` so the child has no controlling terminal, and the realistic
+    instance of it — a login node reached over SSH — takes the recipe branch through
+    :func:`_is_remote_session` regardless of what the launcher claims.
     """
     if sys.platform in ("darwin", "win32"):
+        return True
+    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         return False
-    return not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    try:
+        return isinstance(webbrowser.get(), webbrowser.BackgroundBrowser)
+    except webbrowser.Error:  # nothing registered at all
+        return False
+
+
+def _is_remote_session() -> bool:
+    """Whether this shell arrived over SSH — the case a forwarding recipe exists for.
+
+    Consulted only to decide whether to *also* print the recipe, never to decide whether
+    to launch a browser. That distinction is what keeps the old rationale intact:
+    tmux/screen and batch jobs drop ``SSH_CONNECTION``, so it must not gate the launch —
+    but a session that does carry it is one where a local tunnel beats whatever the
+    forwarded display is doing, and saying so costs two lines.
+    """
+    return bool(os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"))
 
 
 def _log_forwarding_recipe(port: int) -> None:
@@ -80,7 +121,10 @@ def _log_forwarding_recipe(port: int) -> None:
     # resolve, so it is only mentioned, never prescribed.
     fields = os.environ.get("SSH_CONNECTION", "").split()
     host = fields[2] if len(fields) == 4 else "<the host you ssh to>"
-    logger.info("no browser here — from your machine: ssh -L %d:127.0.0.1:%d %s", port, port, host)
+    # Worded for both callers: this prints when nothing opened here *and* when something
+    # did but the session is remote, where a tunnel still beats a forwarded display.
+    # "no browser here" was true only of the first and would have been a lie in the second.
+    logger.info("to reach it from your machine: ssh -L %d:127.0.0.1:%d %s", port, port, host)
     logger.info(
         "or once in ~/.ssh/config on your machine — Host %s / LocalForward %d 127.0.0.1:%d — "
         "and every future login carries the tunnel",
@@ -118,6 +162,14 @@ def launch(
     server = create_server(app, sockets=[sock])
     url = f"http://127.0.0.1:{bound_port}/?token={token}"
     logger.info("ChemRefine GUI: %s", url)
-    if open_browser and (_headless() or not webbrowser.open(url)):
-        _log_forwarding_recipe(bound_port)
+    if open_browser:
+        # `webbrowser.open` returning True is not evidence that a window opened: every
+        # launcher registers as BackgroundBrowser, whose open() reports `poll() is None`
+        # the instant Popen succeeds. On a node where `xdg-open` exists but finds no
+        # browser it still returns True, having delegated to whatever the session
+        # associates with http. So the recipe is withheld only when a browser opened *and*
+        # this is the machine the user is sitting at.
+        opened = _opens_a_window() and webbrowser.open(url)
+        if not opened or _is_remote_session():
+            _log_forwarding_recipe(bound_port)
     server.run()

@@ -8,13 +8,15 @@ implementation, so the form pane and text pane cannot drift), library errors sur
 the documented ``{error, exit_code}`` shape, and ``serve.launch`` binds loopback on the
 stable per-user port (kernel-assigned when that one is taken) with a fresh token and the
 effective port in the URL it opens — printing the SSH forwarding recipe, never launching
-a text browser, when the session has no display to open a real one on.
+a text browser, whenever nothing here would open a *window*. A display is not that
+question: ``ssh -X`` sets one on nodes whose only browser is lynx.
 """
 
 from __future__ import annotations
 
 import logging
 import types
+import webbrowser
 from pathlib import Path
 from typing import Any
 
@@ -684,14 +686,32 @@ def _fake_socket_module(
     )
 
 
-def _fake_browser(opened: list[str], *, result: bool = True) -> Any:
-    """A stand-in ``webbrowser`` that records calls and reports success or failure."""
+def _fake_browser(opened: list[str], *, result: bool = True, windowed: bool = True) -> Any:
+    """A stand-in ``webbrowser`` that records calls and answers *what kind* of browser is here.
+
+    ``get()`` returns a real controller instance, not a mock, because that is the whole
+    question ``_opens_a_window`` asks: the console browsers register as
+    :class:`~webbrowser.GenericBrowser` and block, every windowed launcher registers as
+    :class:`~webbrowser.BackgroundBrowser` and does not. Constructing either is inert —
+    the class only stores a name until something calls ``open`` on it.
+
+    ``windowed=False`` is the X11-forwarded browserless login node: a display is set, so
+    the old ``DISPLAY`` check said "not headless", and lynx got the terminal.
+    """
+    controller = (
+        webbrowser.BackgroundBrowser("xdg-open") if windowed else webbrowser.GenericBrowser("lynx")
+    )
 
     def _open(url: str) -> bool:
         opened.append(url)
         return result
 
-    return types.SimpleNamespace(open=_open)
+    return types.SimpleNamespace(
+        open=_open,
+        get=lambda *a: controller,
+        BackgroundBrowser=webbrowser.BackgroundBrowser,
+        Error=webbrowser.Error,
+    )
 
 
 def test_personal_port_is_stable_and_in_range(monkeypatch: pytest.MonkeyPatch):
@@ -808,25 +828,81 @@ def test_a_headless_session_gets_the_recipe_not_a_text_browser(
     assert "login03" in caplog.text  # the node names itself, but is never the ssh target
 
 
-def test_a_failed_browser_open_also_prints_the_recipe(monkeypatch: pytest.MonkeyPatch, caplog):
-    """DISPLAY set but nothing opened (X11-forwarded session on a browserless node)."""
+def _launch_capturing(monkeypatch: pytest.MonkeyPatch, caplog, **browser: Any) -> list[str]:
+    """Run ``launch`` with everything faked out; return the URLs the browser was given."""
     created: dict[str, Any] = {}
     opened: list[str] = []
     binds: list[tuple[str, int]] = []
     monkeypatch.setattr(serve_mod, "create_server", lambda app, *, sockets: _FakeServer(created))
     monkeypatch.setattr(serve_mod, "socket", _fake_socket_module(binds, effective=21244))
-    monkeypatch.setattr(serve_mod, "webbrowser", _fake_browser(opened, result=False))
+    monkeypatch.setattr(serve_mod, "webbrowser", _fake_browser(opened, **browser))
     with caplog.at_level(logging.INFO, logger="chemrefine.gui.serve"):
         serve_mod.launch(None, port=0, open_browser=True)
-    assert len(opened) == 1  # it tried the real route first
-    # No SSH_CONNECTION (the autouse fixture scrubs it): the host is an honest placeholder.
-    assert "ssh -L 21244:127.0.0.1:21244 <the host you ssh to>" in caplog.text
+    return opened
+
+
+def test_a_display_with_only_a_console_browser_still_gets_the_recipe(
+    monkeypatch: pytest.MonkeyPatch, caplog
+):
+    """``ssh -X`` onto a browserless node: a display is set, and lynx is not a browser.
+
+    The regression this pins. ``DISPLAY`` was the old test, and ``ssh -X`` sets it, so the
+    launch called ``webbrowser`` — which registers the console browsers whenever ``TERM``
+    is set and returns one when nothing graphical is installed. lynx then took the
+    terminal, and because ``GenericBrowser.open`` reports a clean exit as success, the
+    recipe was suppressed too: the user got a text browser they did not ask for *instead
+    of* the two lines telling them how to reach the GUI from their own machine.
+
+    The old spelling of this test asked for the same scenario and could not fail on it —
+    it forced the fake's return value to ``False``, while every real controller here
+    returns ``True``.
+    """
+    opened = _launch_capturing(monkeypatch, caplog, windowed=False)
+    assert opened == []  # never invoked: a blocking console browser is not a route
+    assert "ssh -L 21244:127.0.0.1:21244" in caplog.text
+
+
+def test_a_launcher_that_reports_success_does_not_silence_the_recipe(
+    monkeypatch: pytest.MonkeyPatch, caplog
+):
+    """A remote session gets the recipe even when something did open.
+
+    ``BackgroundBrowser.open`` returns ``poll() is None`` — true the instant ``Popen``
+    succeeds — so ``xdg-open`` reports success on a node where it went on to find no
+    browser at all. Its "yes" is therefore not evidence, and over SSH the tunnel beats
+    whatever the forwarded display is doing regardless.
+    """
+    monkeypatch.setenv("SSH_CONNECTION", "10.0.0.5 50000 192.0.2.7 22")
+    opened = _launch_capturing(monkeypatch, caplog)
+    assert len(opened) == 1  # it did try the local route
+    assert "ssh -L 21244:127.0.0.1:21244 192.0.2.7" in caplog.text
+
+
+def test_a_local_desktop_that_opened_a_browser_stays_quiet(monkeypatch: pytest.MonkeyPatch, caplog):
+    """The other half of the rule: at your own keyboard, the recipe is noise."""
+    opened = _launch_capturing(monkeypatch, caplog)  # display set, no SSH_* (autouse fixture)
+    assert len(opened) == 1
+    assert "ssh -L" not in caplog.text
 
 
 @pytest.mark.parametrize("platform", ["darwin", "win32"])
-def test_desktop_platforms_are_never_headless(monkeypatch: pytest.MonkeyPatch, platform: str):
-    """macOS and Windows open browsers without DISPLAY — the heuristic is POSIX-only."""
+def test_desktop_platforms_always_open_a_window(monkeypatch: pytest.MonkeyPatch, platform: str):
+    """macOS and Windows open browsers without DISPLAY — the POSIX questions do not apply."""
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     monkeypatch.setattr(serve_mod.sys, "platform", platform)
-    assert serve_mod._headless() is False
+    assert serve_mod._opens_a_window() is True
+
+
+def test_a_session_with_no_browser_registered_at_all_opens_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """``webbrowser.get()`` raises ``Error`` when nothing is registered — that is a no."""
+
+    def raise_error(*_a: Any) -> Any:
+        raise webbrowser.Error("no browser")
+
+    monkeypatch.setattr(
+        serve_mod, "webbrowser", types.SimpleNamespace(get=raise_error, Error=webbrowser.Error)
+    )
+    assert serve_mod._opens_a_window() is False

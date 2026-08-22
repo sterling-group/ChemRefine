@@ -64,8 +64,19 @@ reason — loopback on a shared node is not access control.
   handler runs, and compared with `secrets.compare_digest` on the **encoded
   bytes** — same latin-1 reason as above, and the two were fixed a day apart.
 - The token is handed over once in the URL `chemrefine gui` prints, so it reaches
-  the page without a login form. It is therefore in the browser's history and in
-  that terminal's scrollback; it lasts only as long as the server process.
+  the page without a login form. It lasts only as long as the server process, and it
+  is exposed in three places, not two. Two are per-user and unremarkable: the
+  browser's history, and that terminal's scrollback. The third is not — **when the
+  launch opens a browser for you, the tokened URL is passed as a command-line
+  argument** (`webbrowser` runs `xdg-open <url>`), and on Linux `/proc/<pid>/cmdline`
+  is world-readable unless the node mounts `procfs` with `hidepid`. On a shared node
+  that hands the token — the *only* access control here, per the paragraph above — to
+  any other user who looks while the browser is starting.
+
+  **Use `--no-browser` on a shared or multi-user machine.** It prints the URL and
+  opens nothing, so the token never reaches an `argv`. On a login node this is
+  usually what happens anyway: with no graphical browser the launch declines to open
+  one and prints the SSH forwarding recipe instead.
 - `/` and the static assets are deliberately **ungated** — they are the same files
   the docs site publishes as the Playground and carry nothing about the tree. A
   cross-origin page cannot use that to reach the API: the token rides a custom
