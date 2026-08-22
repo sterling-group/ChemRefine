@@ -428,6 +428,61 @@ def test_a_zero_or_negative_tail_means_no_tail(tmp_path: Path, wanted: int):
     assert status["log"] is not None
 
 
+def test_the_tail_is_read_from_the_end_not_by_reading_the_whole_log(tmp_path: Path):
+    """A driver log outgrows its tail; the read must not grow with it.
+
+    Spans several chunks so the backward walk really loops, and asserts on bytes read
+    rather than on the answer alone — the answer was always right, it was the cost of
+    getting it that scaled, once every five seconds for the length of the run.
+    """
+    path = _reported_tree(tmp_path)
+    log = next((tmp_path / "outputs" / "agent_runs").glob("*.log"))
+    log.write_text("".join(f"line {i:06d}\n" for i in range(60_000)), encoding="utf-8")
+    assert log.stat().st_size > 4 * agent_tools._TAIL_CHUNK  # several backward steps
+
+    read = 0
+    real_open = Path.open
+
+    def counting_open(self: Path, *args: Any, **kwargs: Any) -> Any:
+        handle = real_open(self, *args, **kwargs)
+        if self == log:
+            inner = handle.read
+
+            def read_counting(size: int = -1) -> Any:
+                nonlocal read
+                chunk = inner(size)
+                read += len(chunk)
+                return chunk
+
+            handle.read = read_counting
+        return handle
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, "open", counting_open)
+        status = agent_tools.run_status(str(path), log_tail_lines=3)
+
+    assert status["log_tail"] == ["line 059997", "line 059998", "line 059999"]
+    assert read < log.stat().st_size // 4  # a whole-file read is what this rules out
+
+
+def test_a_multibyte_character_split_across_a_chunk_boundary_survives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Decode once at the end, never per block.
+
+    Reading backwards means chunk boundaries land at arbitrary byte offsets, so a
+    multi-byte character gets cut in half. Decoding each block on its own would turn both
+    halves into replacement characters — ``errors="replace"``, meant to make partial
+    output safe, corrupting output that was never partial. A tiny chunk forces the case.
+    """
+    monkeypatch.setattr(agent_tools, "_TAIL_CHUNK", 8)
+    path = _reported_tree(tmp_path)
+    log = next((tmp_path / "outputs" / "agent_runs").glob("*.log"))
+    log.write_text("ΔE = -12.5 kcal/mol · 1.09 Å\nrésumé ✓\n", encoding="utf-8")
+    status = agent_tools.run_status(str(path), log_tail_lines=2)
+    assert status["log_tail"] == ["ΔE = -12.5 kcal/mol · 1.09 Å", "résumé ✓"]
+
+
 def test_get_results_paginates_and_filters(tmp_path: Path):
     path = _reported_tree(tmp_path)
     everything = agent_tools.get_results(str(path))

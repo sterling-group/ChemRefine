@@ -255,6 +255,37 @@ def _latest_log(output_dir: Path) -> Path | None:
     return logs[-1] if logs else None
 
 
+_TAIL_CHUNK = 64 * 1024
+"""How much of a log to pull back per step when tailing it — comfortably over 40 lines."""
+
+
+def _tail_lines(path: Path, wanted: int) -> list[str]:
+    """The last ``wanted`` lines of ``path``, read from the end rather than whole.
+
+    The tail used to be a slice of ``read_text()``, which materialises the entire log and
+    then a list of every line in it, to keep forty. That is a driver log for a run that
+    can span days, and the GUI re-asks for it every five seconds for the whole of that
+    run — so the cost was not the file's size but paying it again on every poll.
+
+    Decoding happens once, after the blocks are joined, never per block: a multi-byte
+    character straddling a chunk boundary would otherwise be split into replacement
+    characters by the very ``errors="replace"`` that is meant to make partial output safe.
+    """
+    if wanted <= 0:
+        return []
+    end = path.stat().st_size
+    block = b""
+    with path.open("rb") as handle:
+        # One newline more than asked for: the first line in the block is usually a
+        # fragment, and stopping at exactly `wanted` could hand back a truncated line.
+        while end > 0 and block.count(b"\n") <= wanted:
+            step = min(_TAIL_CHUNK, end)
+            end -= step
+            handle.seek(end)
+            block = handle.read(step) + block
+    return block.decode("utf-8", errors="replace").splitlines()[-wanted:]
+
+
 def run_status(config_path: str, log_tail_lines: int = 40) -> dict[str, Any]:
     """Where the tree stands: lock holder, per-step progress, the latest log's tail.
 
@@ -265,6 +296,9 @@ def run_status(config_path: str, log_tail_lines: int = 40) -> dict[str, Any]:
     path still reported. It cannot mean anything larger — Python's ``-0 == 0``, so the
     bare slice read ``[-0:]`` as "the whole file", inverting a zero into the one value the
     module's pagination rule exists to forbid (a multi-MB driver log in a tool result).
+    The tail itself is read backwards from the end (:func:`_tail_lines`) rather than by
+    reading the log and slicing it, because the GUI re-asks for this every five seconds
+    for the length of the run.
     """
     config = load_config(Path(config_path))
     status = pipeline.lock_status(config.output_dir)
@@ -288,9 +322,7 @@ def run_status(config_path: str, log_tail_lines: int = 40) -> dict[str, Any]:
     log_path = _latest_log(config.output_dir)
     tail: list[str] | None = None
     if log_path is not None:
-        wanted = max(0, log_tail_lines)
-        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        tail = lines[-wanted:] if wanted else []
+        tail = _tail_lines(log_path, max(0, log_tail_lines))
     return {
         "running": status.held,
         "holder": (
