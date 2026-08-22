@@ -61,6 +61,24 @@ def test_the_page_is_open_but_the_api_is_gated(client: Any):
     assert _get(client, "/api/bootstrap").status_code == 200
 
 
+def test_every_route_is_behind_the_gate(client: Any):
+    """Walk the route table: everything but the page and its assets answers 401 bare.
+
+    The gate is ``request.path.startswith("/api/")`` — a spelling convention. A future
+    route registered outside the prefix would ship unauthenticated while every
+    hand-written 401 test stayed green; enumerating the url_map turns the convention
+    into an invariant.
+    """
+    ungated = {"index", "static"}  # the same files the docs site publishes openly
+    rules = [r for r in client.application.url_map.iter_rules() if r.endpoint not in ungated]
+    assert len(rules) > 10  # the walk really covers the API surface
+    for rule in rules:
+        assert "<" not in rule.rule, f"{rule.endpoint}: a parameterized route needs its own probe"
+        method = "GET" if "GET" in rule.methods else "POST"
+        response = client.open(rule.rule, method=method)
+        assert response.status_code == 401, f"{rule.endpoint} answers {response.status_code} bare"
+
+
 def test_a_tokenless_app_is_the_unit_test_affordance(tmp_path: Path):
     open_app = create_app(token=None).test_client()
     assert open_app.get("/api/bootstrap").status_code == 200
