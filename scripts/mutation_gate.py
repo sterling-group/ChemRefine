@@ -263,9 +263,25 @@ MUTATIONS = (
 #: Everything a pytest run reads. ``examples`` belongs here because the shipped tutorials
 #: are living documentation and several tests resolve their templates; ``README.md`` and
 #: ``docs`` because ``test_docs_examples`` validates every full config their prose shows.
+#: The last four are ``test_docs_urls``'s: it reads the canonical ``site_url``/``repo_url``
+#: out of ``mkdocs.yml`` at *import* time — so that one's absence was a collection error
+#: rather than a failing test, and the whole gate refused to run — and it resolves every
+#: self-referential ``blob/main/…`` URL against the tree, which is what names the three
+#: top-level files the prose links to.
 #: An incomplete copy fails on its own, which :func:`_assert_baseline_is_green` catches
-#: whatever the missing input turns out to be — it is how these two earned their entries.
-_INPUTS = ("src", "tests", "examples", "docs", "README.md", "pyproject.toml")
+#: whatever the missing input turns out to be — it is how each of these earned its entry.
+_INPUTS = (
+    "src",
+    "tests",
+    "examples",
+    "docs",
+    "README.md",
+    "pyproject.toml",
+    "mkdocs.yml",
+    "CITATION.cff",
+    "CONTRIBUTING.md",
+    "LICENSE",
+)
 
 
 def _copy_tree(dest: Path) -> None:
