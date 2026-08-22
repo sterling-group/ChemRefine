@@ -1303,6 +1303,166 @@ def test_declining_the_dialog_launches_nothing():
     assert json.loads(out) == {"posted": 0, "flash": ""}
 
 
+def test_a_pasted_absolute_name_replaces_the_directory_rather_than_hanging_off_it():
+    """`${dir}/${name}` is a string join, not a path join.
+
+    The Save… filename box is free text, so pasting a full path produced
+    `/home/u//abs/path` — a directory named "" and a file nobody meant — and a `~/…` was
+    joined instead of expanded. Absolute is absolute, in this box as in every shell.
+    """
+    out = _run_component_in_node("""
+      const cases = [
+        ["/home/u", "input.yaml"],
+        ["/home/u", "/abs/path/input.yaml"],
+        ["/home/u", "~/projects/input.yaml"],
+        ["/", "input.yaml"],
+      ];
+      console.log(JSON.stringify(cases.map(([d, n]) => joinPath(d, n))));
+    """)
+    assert json.loads(out) == [
+        "/home/u/input.yaml",
+        "/abs/path/input.yaml",  # not /home/u//abs/path/input.yaml
+        "~/projects/input.yaml",  # the server expanduser()s it; joining would defeat that
+        "/input.yaml",  # and no doubled slash at the root either
+    ]
+
+
+def test_a_typed_path_navigates_when_it_is_a_directory_and_is_taken_when_it_is_not():
+    """The one path field on the page that could not be typed into.
+
+    A cluster tree's interesting directory is eight levels down, and the modal offered
+    only clicking. The server already knows which a path is — /api/browse lists a
+    directory and refuses anything else — so the box needs no guess of its own.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chatAvailability = () => {};
+      const opened = [];
+      b.openConfigFrom = async (p) => { opened.push(p); return true; };
+      // Exact, not a prefix: "/deep/dir/input.yaml" encodes to a string that *contains*
+      // the directory's own encoding, so a loose stub would answer for the file too.
+      b.api = async (m, u) =>
+        u.endsWith("path=%2Fdeep%2Fdir")
+          ? { path: "/deep/dir", parent: "/deep", entries: [] }
+          : null;                                  // not a directory
+
+      b.browse = { ...b.browse, open: true, mode: "open" };
+      b.browse.typed = "  /deep/dir  ";            // trimmed, then navigated
+      await b.goToTyped();
+      const walked = { path: b.browse.path, typed: b.browse.typed, opened: opened.length };
+
+      b.browse.typed = "/deep/dir/input.yaml";     // a file: taken, not navigated
+      await b.goToTyped();
+
+      b.browse.typed = "";                         // nothing typed, nothing done
+      await b.goToTyped();
+      console.log(JSON.stringify({ walked, opened }));
+    """)
+    result = json.loads(out)
+    assert result["walked"]["path"] == "/deep/dir"
+    # The box shows where you are afterwards, so it is a thing to edit, not to retype.
+    assert result["walked"]["typed"] == "/deep/dir"
+    assert result["walked"]["opened"] == 0
+    assert result["opened"] == ["/deep/dir/input.yaml"]  # once, and not for the blank box
+
+
+def test_the_typed_path_does_the_other_two_jobs_in_the_other_two_modes():
+    """One box, the same three jobs the listing's rows have — not an open-only shortcut."""
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chatAvailability = () => {};
+      b.api = async () => null;                    // never a directory here
+      let picked = null;
+      b.browse = { ...b.browse, mode: "pick", onPick: (p) => { picked = p; }, path: "/here" };
+      b.browse.typed = "/seeds/mol.xyz";
+      await b.goToTyped();
+      const afterPick = { picked, closed: !b.browse.open };
+      b.browse = { ...b.browse, open: true, mode: "save", onPick: null };
+      b.browse.typed = "/elsewhere/other.yaml";
+      await b.goToTyped();
+      console.log(JSON.stringify({ afterPick, filename: b.browse.filename }));
+    """)
+    result = json.loads(out)
+    assert result["afterPick"] == {"picked": "/seeds/mol.xyz", "closed": True}
+    assert result["filename"] == "other.yaml"  # the basename, as clicking a row gives
+
+
+def test_every_modal_starts_where_the_open_file_lives():
+    """Only Open… did; Save… and the field pickers always started at $HOME.
+
+    With a config open eight levels down a cluster tree, starting at $HOME is the same
+    eight levels of clicking every time.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chatAvailability = () => {};
+      const asked = [];
+      b.api = async (m, u) => { asked.push(u); return { path: "/x", parent: "/", entries: [] }; };
+      b.savedPath = "/deep/tree/project/input.yaml";
+      await b.openConfig();
+      await b.openSave();
+      await b.openBrowseWith("Pick a folder", () => {});
+      const withFile = asked.slice();
+      b.savedPath = null;                          // nothing open: the server picks $HOME
+      asked.length = 0;
+      await b.openSave();
+      console.log(JSON.stringify({ withFile, without: asked }));
+    """)
+    result = json.loads(out)
+    assert len(result["withFile"]) == 3
+    for url in result["withFile"]:
+        assert "path=%2Fdeep%2Ftree%2Fproject" in url
+    assert result["without"] == ["/api/browse"]  # no path at all, which is $HOME
+
+
+def test_recent_workflows_are_paths_and_only_paths():
+    """A convenience stored in a browser profile, which outlives the session.
+
+    Paths only: file contents in localStorage would be a copy of the user's work sitting
+    in a store this page cannot promise anything about. Newest first, deduplicated, capped.
+    """
+    out = _run_component_in_node(
+        _RELOAD_HARNESS
+        + """
+      const seen = [];
+      for (const p of ["/a/x.yaml", "/b/y.yaml", "/a/x.yaml"]) {
+        b.api = async (m, u) =>
+          u.startsWith("/api/load") ? { path: p, yaml_text: "steps: []\\n" }
+                                    : { config: { steps: [] }, yaml_text: "" };
+        await b.loadConfigFrom(p, { reason: "open" });
+        seen.push([...b.recents]);
+      }
+      console.log(JSON.stringify({
+        seen, stored: JSON.parse(localStorage.getItem("cr-recents")),
+        keys: Object.keys(localStorage._d), short: shortPath("/a/b/c/d/input.yaml"),
+      }));
+    """
+    )
+    result = json.loads(out)
+    assert result["seen"][-1] == ["/a/x.yaml", "/b/y.yaml"]  # newest first, no duplicate
+    assert result["stored"] == ["/a/x.yaml", "/b/y.yaml"]
+    # Nothing but the path list — no yaml text anywhere in this browser's store.
+    assert result["keys"] == ["cr-recents"]
+    assert result["short"] == "…/d/input.yaml"  # the directory that names it, and the file
+
+
+def test_a_corrupt_recents_entry_cannot_blank_the_page():
+    """It is a browser profile: hand-edited, upgraded across builds, shared with old ones.
+
+    An uncaught throw inside ``builder()`` is not a broken list — it is a page that never
+    renders, with every button gone and no message.
+    """
+    out = _run_component_in_node("""
+      const rows = [];
+      for (const raw of ['{"not": "a list"}', 'not json at all', '["/a.yaml", 7, null]']) {
+        localStorage.setItem("cr-recents", raw);
+        rows.push(builder().recents);
+      }
+      console.log(JSON.stringify(rows));
+    """)
+    assert json.loads(out) == [[], [], ["/a.yaml"]]  # never a throw, never a non-string
+
+
 def test_field_specs_carry_the_schema_bounds_and_default():
     """The spec a number input renders from: bounds for the spinner, default to step from.
 

@@ -637,6 +637,25 @@
 <div class="modal" x-show="browse.open" style="display:none" @click.self="browse.open = false">
   <div class="dialog">
     <h3 x-text="browse.title"></h3>
+    <!-- Type or paste a path, in every mode. A cluster tree's interesting directory is
+         eight levels down, and this modal was the one path field on the page that could
+         not be typed into. Enter goes; a directory navigates, anything else is taken as
+         the chosen file. -->
+    <div class="row">
+      <input type="text" class="pathbox" x-model="browse.typed"
+             placeholder="/path/to/somewhere — or paste a file"
+             @keydown.enter.prevent="goToTyped()">
+      <button type="button" class="mini" @click="goToTyped()">Go</button>
+    </div>
+    <!-- Paths only, from this browser's own store; opening one is the same click as
+         picking it out of the listing. -->
+    <div class="row recents" x-show="browse.mode === 'open' && recents.length">
+      <span class="muted">recent:</span>
+      <template x-for="path in recents" :key="'recent' + path">
+        <button type="button" class="mini" @click="openConfigFrom(path)"
+                :title="path" x-text="shortPath(path)"></button>
+      </template>
+    </div>
     <p class="muted" x-text="browse.path"></p>
     <ul class="listing">
       <li><button type="button" @click.prevent="navigate(browse.parent)">⬑ ..</button></li>

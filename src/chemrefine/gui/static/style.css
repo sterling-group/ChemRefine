@@ -431,3 +431,13 @@ button.tab.on {
   border-left: 3px solid var(--warn);
   padding-left: 0.6rem;
 }
+
+/* The modal's typed-path box takes the width the listing has; a path is long. */
+.pathbox {
+  flex: 1 1 24rem;
+  font-family: monospace;
+}
+/* Recents wrap rather than widening the dialog past the listing beneath them. */
+.recents {
+  flex-wrap: wrap;
+}

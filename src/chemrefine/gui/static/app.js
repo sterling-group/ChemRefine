@@ -98,7 +98,14 @@ function builder() {
       entries: [],
       filename: "input.yaml",
       onPick: null,
+      // The typed-path box. Every other path field on this page can be typed or pasted;
+      // this modal was the one place a path could only be walked to, which is a long way
+      // to click on a cluster tree whose interesting directory is eight levels down.
+      typed: "",
     },
+    // The last few workflows opened, newest first. Paths only, never file contents: this
+    // is a browser profile, and it outlives the session that wrote to it.
+    recents: readRecents(),
     tmpl: { open: false, step: null, path: "", text: "" },
     // `structures` is what /api/structure-list answered for the chosen step: one row per
     // structure, carrying its own mode table. Held here rather than fetched per keystroke
@@ -715,7 +722,7 @@ function builder() {
       const row = this.viewer.structureId
         ? rows.find((r) => String(r.id) === String(this.viewer.structureId))
         : rows[0];
-      if (!row || !row.modes) return [];
+      if (!row?.modes) return [];
       const imaginary = new Set((row.imaginary || []).map(String));
       return Object.keys(row.modes)
         .map(Number)
@@ -830,7 +837,8 @@ function builder() {
           this._gl.animate({ loop: "backAndForth", interval: 60 });
         }
         this._gl.render();
-        this.viewer.note = `${data.step === null ? "seed" : "step " + data.step} · ${data.structure_id}`;
+        const where = data.step === null ? "seed" : `step ${data.step}`;
+        this.viewer.note = `${where} · ${data.structure_id}`;
       } finally {
         this.viewer.busy = false;
       }
@@ -923,6 +931,7 @@ function builder() {
       this.savedPath = data.path;
       this.pendingReload = null;
       this.rawEdit = false;
+      this.recents = rememberRecent(this.recents, data.path);
       this.forgetPreviousWorkflow();
       await this.recordOnDisk();
       // Only the agent's own writes steal the tab. Open… is how you go and *look* at a
@@ -1100,9 +1109,15 @@ function builder() {
         this.syncYaml();
       });
     },
+    // Where a modal should open: beside the file being worked on, since the next path is
+    // almost always a sibling of it. Only Open… did this; Save… and the field pickers
+    // always started at $HOME even with a config open elsewhere on the disk.
+    startDir() {
+      return this.savedPath ? parentDir(this.savedPath) : null;
+    },
     async openBrowseWith(title, onPick) {
       this.browse = { ...this.browse, open: true, mode: "pick", onPick, title };
-      await this.navigate(null);
+      await this.navigate(this.startDir());
     },
     async openConfig() {
       // The counterpart to Save…, and the only way to look at a finished run without
@@ -1115,8 +1130,7 @@ function builder() {
         onPick: null,
         title: "Open a workflow…",
       };
-      // Start where the current file lives, since the next one is usually a sibling.
-      await this.navigate(this.savedPath ? parentDir(this.savedPath) : null);
+      await this.navigate(this.startDir());
     },
     async openConfigFrom(path) {
       // Closed only once the file has actually loaded, the way saveTo() does it. Closing
@@ -1132,7 +1146,7 @@ function builder() {
         onPick: null,
         title: "Save workflow as…",
       };
-      await this.navigate(null);
+      await this.navigate(this.startDir());
     },
     async navigate(path) {
       const data = await this.api(
@@ -1143,7 +1157,35 @@ function builder() {
         this.browse.path = data.path;
         this.browse.parent = data.parent;
         this.browse.entries = data.entries;
+        // The box follows the listing, so it always shows where you are and is a starting
+        // point to edit rather than an empty field to retype.
+        this.browse.typed = data.path;
       }
+    },
+    // What the typed box means depends on what the modal is for, and the server is the one
+    // that knows whether a path is a directory: /api/browse answers with the listing for a
+    // directory and a 400 for anything else. So a directory navigates, and anything that is
+    // not one is treated as the chosen file — which is how a full path pasted straight in
+    // opens a workflow, fills a path field, or names a save target, without walking to it.
+    async goToTyped() {
+      const typed = this.browse.typed.trim();
+      if (!typed) return;
+      const listing = await this.api(
+        "GET",
+        `/api/browse?path=${encodeURIComponent(typed)}`,
+        undefined,
+        { quiet: true },
+      );
+      if (listing) {
+        this.browse.path = listing.path;
+        this.browse.parent = listing.parent;
+        this.browse.entries = listing.entries;
+        this.browse.typed = listing.path;
+        return;
+      }
+      // Not a directory: the same three jobs pickFile() does, on a path rather than a row.
+      // `name` is only read in save mode, where it is the filename box's new contents.
+      await this.pickFile({ path: typed, name: typed.slice(typed.lastIndexOf("/") + 1) });
     },
     pickHere() {
       // Directory fields (template_dir, output_dir, scratch_dir) are chosen by
@@ -1151,9 +1193,13 @@ function builder() {
       if (this.browse.onPick) this.browse.onPick(this.browse.path);
       this.browse.open = false;
     },
-    pickFile(entry) {
+    // `async` so a caller can wait for the open to finish — goToTyped() needs to, and the
+    // tests that drive the click path had to sleep a microtask to work around it not being.
+    // The other two branches are still synchronous: an async function's body runs straight
+    // through until its first await.
+    async pickFile(entry) {
       if (this.browse.mode === "open") {
-        this.openConfigFrom(entry.path);
+        await this.openConfigFrom(entry.path);
       } else if (this.browse.mode === "pick" && this.browse.onPick) {
         this.browse.onPick(entry.path);
         this.browse.open = false;
@@ -1162,7 +1208,7 @@ function builder() {
       }
     },
     async saveTo() {
-      const path = `${this.browse.path}/${this.browse.filename || "input.yaml"}`;
+      const path = joinPath(this.browse.path, this.browse.filename || "input.yaml");
       const data = await this.api("POST", "/api/save", { path, yaml_text: this.yamlText });
       if (data) {
         this.savedPath = data.path;

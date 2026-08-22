@@ -185,3 +185,60 @@ function canonicalConfigOrder(config, schemaDoc) {
   }
   return ordered;
 }
+
+/** Join a directory and a filename the way a path is joined, not the way strings are.
+ *
+ * `${dir}/${name}` is right only when `name` is bare. The Save… box is free text, so a
+ * pasted absolute path produced `/home/u//abs/path` — a directory named "" and a file
+ * that never existed — and a `~/…` was joined rather than expanded. An absolute name or
+ * a `~` one *is* the answer: it replaces the directory rather than hanging off it, which
+ * is what every shell and `Path.joinpath` already do.
+ */
+// biome-ignore lint/correctness/noUnusedVariables: app.js is the caller
+function joinPath(dir, name) {
+  if (name.startsWith("/") || name.startsWith("~")) return name;
+  return dir.endsWith("/") ? dir + name : `${dir}/${name}`;
+}
+
+const RECENTS_KEY = "cr-recents";
+const RECENTS_MAX = 8;
+
+/** The recently-opened workflow paths, newest first — never contents, only paths.
+ *
+ * Reads defensively because localStorage is a browser profile: it survives upgrades, can
+ * be edited by hand, and is shared with whatever an older build of this page wrote there.
+ * A malformed value must not blank the whole component, which is what an uncaught throw
+ * inside `builder()` does — the page never renders and every button is gone.
+ */
+// biome-ignore lint/correctness/noUnusedVariables: app.js is the caller
+function readRecents() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RECENTS_KEY) || "[]");
+    return Array.isArray(raw) ? raw.filter((p) => typeof p === "string").slice(0, RECENTS_MAX) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** `path` to the front of the recents list, deduplicated, capped — the new list. */
+// biome-ignore lint/correctness/noUnusedVariables: app.js is the caller
+function rememberRecent(current, path) {
+  const next = [path, ...current.filter((p) => p !== path)].slice(0, RECENTS_MAX);
+  try {
+    localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
+  } catch {
+    // A full or disabled store costs the convenience, never the load that just succeeded.
+  }
+  return next;
+}
+
+/** A path shortened to its last two segments, for a button that must stay button-sized.
+ *
+ * `/groups/sterling/mfshome/dal063121/projects/a3eda/ts-uncat/input.yaml` is a real path
+ * from a real tree; the full string is on the button's `title`, where it can be read.
+ */
+// biome-ignore lint/correctness/noUnusedVariables: app.js is the caller
+function shortPath(path) {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length <= 2 ? path : `…/${parts.slice(-2).join("/")}`;
+}
