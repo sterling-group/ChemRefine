@@ -65,6 +65,24 @@ def _isolate_cuda_visible_devices(
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_display_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin a non-headless display environment — the suite must not care where it runs.
+
+    ``chemrefine.gui.serve`` decides between opening a browser and printing the SSH
+    forwarding recipe from ``DISPLAY``/``WAYLAND_DISPLAY``, and reads ``SSH_CONNECTION``
+    for the recipe's host — so a developer running pytest over ssh (DISPLAY unset) would
+    take the recipe branch in tests that assert a browser opened, while CI's bare runner
+    keeps them green. That is the same environment-leak class as
+    :func:`_isolate_cuda_visible_devices` above. Tests that want the headless posture
+    set their own values over the top.
+    """
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    for name in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def without_extra(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
     """Simulate an environment that never installed one of the optional extras.

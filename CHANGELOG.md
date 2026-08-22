@@ -56,8 +56,10 @@ for the full map.
   inline template editing; a run dashboard (start/resume/rerun-errors behind
   confirmations, polling status, paginated `steps.csv` results); and, with the
   `[agent]` extra, an agent chat panel whose mutating tool calls arrive as allow/deny
-  cards. The builder also publishes on the docs site as the **Playground** (top
-  navigation) in a build-and-copy static mode.
+  cards. A browserless session — an HPC login node — prints the SSH forwarding
+  recipe instead of hijacking the terminal with a text browser. The builder also
+  publishes on the docs site as the **Playground** (top navigation) in a
+  build-and-copy static mode.
 - **Embedded agent** (`chemrefine agent`, extra `chemrefine[agent]`): a terminal chat
   over the same tool surface, harnessed by PydanticAI — multi-provider (presets for
   local Ollama/vLLM, any OpenAI-compatible endpoint via `--base-url`, or native

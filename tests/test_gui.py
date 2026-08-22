@@ -7,7 +7,8 @@ emit/parse pair round-trips a real config (server-side PyYAML is the *single* YA
 implementation, so the form pane and text pane cannot drift), library errors surface as
 the documented ``{error, exit_code}`` shape, and ``serve.launch`` binds loopback on the
 stable per-user port (kernel-assigned when that one is taken) with a fresh token and the
-effective port in the URL it opens.
+effective port in the URL it opens — printing the SSH forwarding recipe, never launching
+a text browser, when the session has no display to open a real one on.
 """
 
 from __future__ import annotations
@@ -660,7 +661,19 @@ def _fake_socket_module(
         def getsockname(self) -> tuple[str, int]:
             return ("127.0.0.1", effective)
 
-    return types.SimpleNamespace(AF_INET=0, SOCK_STREAM=0, socket=lambda *a: _Sock())
+    return types.SimpleNamespace(
+        AF_INET=0, SOCK_STREAM=0, socket=lambda *a: _Sock(), gethostname=lambda: "login03"
+    )
+
+
+def _fake_browser(opened: list[str], *, result: bool = True) -> Any:
+    """A stand-in ``webbrowser`` that records calls and reports success or failure."""
+
+    def _open(url: str) -> bool:
+        opened.append(url)
+        return result
+
+    return types.SimpleNamespace(open=_open)
 
 
 def test_personal_port_is_stable_and_in_range(monkeypatch: pytest.MonkeyPatch):
@@ -685,7 +698,7 @@ def test_personal_port_survives_a_passwdless_environment(monkeypatch: pytest.Mon
     assert serve_mod._PORT_BASE <= port < serve_mod._PORT_BASE + serve_mod._PORT_SPAN
 
 
-def test_launch_binds_loopback_with_a_fresh_token(monkeypatch: pytest.MonkeyPatch):
+def test_launch_binds_loopback_with_a_fresh_token(monkeypatch: pytest.MonkeyPatch, caplog):
     created: dict[str, Any] = {}
     opened: list[str] = []
     binds: list[tuple[str, int]] = []
@@ -702,15 +715,16 @@ def test_launch_binds_loopback_with_a_fresh_token(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(serve_mod.getpass, "getuser", lambda: "ada")
     personal = serve_mod._personal_port()
     monkeypatch.setattr(serve_mod, "socket", _fake_socket_module(binds, effective=personal))
-    fake_browser = type("W", (), {"open": staticmethod(opened.append)})
-    monkeypatch.setattr(serve_mod, "webbrowser", fake_browser)
-    serve_mod.launch(None, open_browser=True)
+    monkeypatch.setattr(serve_mod, "webbrowser", _fake_browser(opened))
+    with caplog.at_level(logging.INFO, logger="chemrefine.gui.serve"):
+        serve_mod.launch(None, open_browser=True)
 
     assert binds == [("127.0.0.1", personal)]  # the default is the personal port
     assert created["ran"] is True
     assert len(created["sockets"]) == 1  # waitress serves the pre-bound socket
     [url] = opened
     assert url.startswith(f"http://127.0.0.1:{personal}/?token=")
+    assert "ssh -L" not in caplog.text  # a browser opened; nobody needs the recipe
 
 
 def test_a_taken_personal_port_falls_back_to_a_kernel_one(monkeypatch: pytest.MonkeyPatch, caplog):
@@ -740,15 +754,61 @@ def test_an_explicit_taken_port_is_not_second_guessed(monkeypatch: pytest.Monkey
     assert binds == [("127.0.0.1", 8123)]
 
 
-def test_launch_can_keep_the_browser_closed(monkeypatch: pytest.MonkeyPatch):
+def test_launch_can_keep_the_browser_closed(monkeypatch: pytest.MonkeyPatch, caplog):
     opened: list[str] = []
     binds: list[tuple[str, int]] = []
     created: dict[str, Any] = {}
 
     monkeypatch.setattr(serve_mod, "create_server", lambda app, *, sockets: _FakeServer(created))
     monkeypatch.setattr(serve_mod, "socket", _fake_socket_module(binds, effective=1))
-    fake_browser = type("W", (), {"open": staticmethod(opened.append)})
-    monkeypatch.setattr(serve_mod, "webbrowser", fake_browser)
-    serve_mod.launch(None, port=0, open_browser=False)
+    monkeypatch.setattr(serve_mod, "webbrowser", _fake_browser(opened))
+    with caplog.at_level(logging.INFO, logger="chemrefine.gui.serve"):
+        serve_mod.launch(None, port=0, open_browser=False)
     assert opened == []
     assert binds == [("127.0.0.1", 0)]  # an explicit 0 still means "the kernel picks"
+    assert "ssh -L" not in caplog.text  # --no-browser prints the URL alone
+
+
+def test_a_headless_session_gets_the_recipe_not_a_text_browser(
+    monkeypatch: pytest.MonkeyPatch, caplog
+):
+    """A DISPLAY-less POSIX session never calls webbrowser — lynx in the terminal is no
+    browser — and the recipe names the address the user's own ssh client connected to."""
+    created: dict[str, Any] = {}
+    opened: list[str] = []
+    binds: list[tuple[str, int]] = []
+    monkeypatch.setattr(serve_mod, "create_server", lambda app, *, sockets: _FakeServer(created))
+    monkeypatch.setattr(serve_mod, "socket", _fake_socket_module(binds, effective=21244))
+    monkeypatch.setattr(serve_mod, "webbrowser", _fake_browser(opened))
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.setenv("SSH_CONNECTION", "10.0.0.5 50000 192.0.2.7 22")
+    with caplog.at_level(logging.INFO, logger="chemrefine.gui.serve"):
+        serve_mod.launch(None, port=0, open_browser=True)
+    assert opened == []  # never invoked, not even to fail
+    assert "ssh -L 21244:127.0.0.1:21244 192.0.2.7" in caplog.text
+    assert "LocalForward 21244 127.0.0.1:21244" in caplog.text
+    assert "login03" in caplog.text  # the node names itself, but is never the ssh target
+
+
+def test_a_failed_browser_open_also_prints_the_recipe(monkeypatch: pytest.MonkeyPatch, caplog):
+    """DISPLAY set but nothing opened (X11-forwarded session on a browserless node)."""
+    created: dict[str, Any] = {}
+    opened: list[str] = []
+    binds: list[tuple[str, int]] = []
+    monkeypatch.setattr(serve_mod, "create_server", lambda app, *, sockets: _FakeServer(created))
+    monkeypatch.setattr(serve_mod, "socket", _fake_socket_module(binds, effective=21244))
+    monkeypatch.setattr(serve_mod, "webbrowser", _fake_browser(opened, result=False))
+    with caplog.at_level(logging.INFO, logger="chemrefine.gui.serve"):
+        serve_mod.launch(None, port=0, open_browser=True)
+    assert len(opened) == 1  # it tried the real route first
+    # No SSH_CONNECTION (the autouse fixture scrubs it): the host is an honest placeholder.
+    assert "ssh -L 21244:127.0.0.1:21244 <the host you ssh to>" in caplog.text
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32"])
+def test_desktop_platforms_are_never_headless(monkeypatch: pytest.MonkeyPatch, platform: str):
+    """macOS and Windows open browsers without DISPLAY — the heuristic is POSIX-only."""
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr(serve_mod.sys, "platform", platform)
+    assert serve_mod._headless() is False

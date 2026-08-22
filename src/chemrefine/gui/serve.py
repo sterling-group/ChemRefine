@@ -8,6 +8,8 @@ by default — hashed from the username, so an SSH forwarding setup written once
 working across sessions — with a kernel-assigned free port as the fallback when that one
 is taken (``--port 0`` asks for a kernel port outright). The socket is bound here and
 handed to waitress, so the effective port is known before the URL is printed or opened.
+A session with no way to show a browser gets the SSH forwarding recipe printed instead —
+never a text browser hijacking the terminal.
 
 waitress is imported at module scope for the reason :mod:`.app` imports Flask there: this
 is the module the CLI imports inside ``except ImportError``, so a deferred import would
@@ -23,6 +25,7 @@ import logging
 import os
 import secrets
 import socket
+import sys
 import webbrowser
 from pathlib import Path
 
@@ -57,6 +60,39 @@ def _personal_port() -> int:
     return _PORT_BASE + int(digest[:8], 16) % _PORT_SPAN
 
 
+def _headless() -> bool:
+    """No way to show a browser here — a DISPLAY-less POSIX session (think login node).
+
+    macOS and Windows open browsers without DISPLAY (``open``/``os.startfile``), so the
+    heuristic applies only elsewhere. ``SSH_CONNECTION`` is deliberately not consulted:
+    tmux/screen and batch jobs drop it, and those are exactly the sessions where
+    ``webbrowser`` would otherwise launch lynx/w3m inside this terminal.
+    """
+    if sys.platform in ("darwin", "win32"):
+        return False
+    return not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+def _log_forwarding_recipe(port: int) -> None:
+    """The copy-paste route from the machine with the browser to this loopback port."""
+    # SSH_CONNECTION's third field is the address the user's ssh client actually
+    # connected to — gethostname() is usually an internal node name a laptop can't
+    # resolve, so it is only mentioned, never prescribed.
+    fields = os.environ.get("SSH_CONNECTION", "").split()
+    host = fields[2] if len(fields) == 4 else "<the host you ssh to>"
+    logger.info("no browser here — from your machine: ssh -L %d:127.0.0.1:%d %s", port, port, host)
+    logger.info(
+        "or once in ~/.ssh/config on your machine — Host %s / LocalForward %d 127.0.0.1:%d — "
+        "and every future login carries the tunnel",
+        host,
+        port,
+        port,
+    )
+    logger.info(
+        "then open the URL above in your local browser (this node is %s)", socket.gethostname()
+    )
+
+
 def launch(
     config_path: Path | None = None, *, port: int | None = None, open_browser: bool = True
 ) -> None:
@@ -82,6 +118,6 @@ def launch(
     server = create_server(app, sockets=[sock])
     url = f"http://127.0.0.1:{bound_port}/?token={token}"
     logger.info("ChemRefine GUI: %s", url)
-    if open_browser:
-        webbrowser.open(url)
+    if open_browser and (_headless() or not webbrowser.open(url)):
+        _log_forwarding_recipe(bound_port)
     server.run()
