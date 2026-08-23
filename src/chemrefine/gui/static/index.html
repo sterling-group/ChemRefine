@@ -78,7 +78,7 @@
                      @change="setTop(field, $event.target.checked)">
             </template>
             <template x-if="field.kind === 'number'">
-              <input type="number" :min="field.min" :max="field.max"
+              <input type="number" step="any" :min="field.min" :max="field.max"
                      :value="cfg[field.key] ?? field.fallbackNum ?? ''"
                      :placeholder="field.fallbackNum === null ? '(unset)' : ''"
                      :class="(cfg[field.key] ?? null) === null && field.fallbackNum !== null
@@ -261,8 +261,10 @@
                 <!-- One arm per kind fieldSpec() can return, not "everything that is not a
                      select". The catch-all renders a number box for a boolean or a string
                      knob, which silently writes 1 where true was meant — no NMS option is
-                     either today, so this is a trap rather than a live defect, and
-                     test_every_option_widget_kind_has_an_arm is what keeps it shut. -->
+                     either today, so this is a trap rather than a live defect. The Sample
+                     block below had the same shape and was missing its `text` arm outright,
+                     while this comment claimed a test that did not exist. It does now:
+                     test_every_option_widget_kind_has_an_arm checks all four blocks. -->
                 <template x-if="field.kind === 'number'">
                   <input type="number" step="any" :min="field.min" :max="field.max"
                          :value="(step.options || {})[field.key] ?? field.fallbackNum ?? ''"
@@ -323,6 +325,11 @@
                          :placeholder="field.fallbackNum === null ? '(unset)' : ''"
                          :class="(step.sample[field.key] ?? null) === null
                                  && field.fallbackNum !== null ? 'isdefault' : ''"
+                         @input="setSample(index, field, $event.target.value)">
+                </template>
+                <template x-if="field.kind === 'text'">
+                  <input type="text" :value="step.sample[field.key] ?? ''"
+                         :placeholder="field.fallback"
                          @input="setSample(index, field, $event.target.value)">
                 </template>
               </label>
@@ -645,10 +652,10 @@
               x-text="runResults ? (runResults.offset + 1) + '–'
                       + (runResults.offset + runResults.rows.length) + ' of ' + runResults.total : ''"></span>
         <button type="button" class="mini" x-show="runResults && runResults.offset > 0"
-                @click="loadResults(resultsStep, runResults.offset - 20)">‹ prev</button>
+                @click="pageResults(-1)">‹ prev</button>
         <button type="button" class="mini"
                 x-show="runResults && runResults.offset + runResults.rows.length < runResults.total"
-                @click="loadResults(resultsStep, runResults.offset + 20)">next ›</button>
+                @click="pageResults(1)">next ›</button>
       </div>
       <table class="runsteps" x-show="runResults && runResults.rows.length">
         <thead><tr><th>conformer</th><th>E (kcal/mol)</th><th>ΔE</th><th>weight</th></tr></thead>

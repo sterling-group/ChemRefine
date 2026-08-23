@@ -14,6 +14,18 @@
 // confirmed as "re-attempt failed jobs". A dialog that misdescribes what it is confirming
 // is worse than no dialog. The keys are `agent_tools._ACTIONS`, the whole recovery
 // vocabulary; a missing one shows up immediately as "undefined" in the prompt.
+// The chat settings that persist, as one vocabulary. They were nine bare string literals
+// across three methods — read, write and reset — while the recents key next door was already
+// a named constant. A typo in any one of the nine is a setting that silently stops
+// persisting, which nothing would have caught.
+const CHAT_KEYS = { provider: "cr-provider", model: "cr-model", baseUrl: "cr-baseurl" };
+const CHAT_DEFAULTS = { provider: "ollama", model: "", baseUrl: "" };
+
+// How many result rows a page holds. One constant: the fetch limit and the two paging
+// buttons were three literals across two files, so changing the limit made the buttons page
+// by the old stride — skipping or repeating rows, with nothing to say so.
+const RESULTS_PAGE = 20;
+
 const RUN_BLURBS = {
   run: "start the full pipeline from step 1, ignoring the cache",
   resume: "carry on where the tree left off, honouring the cache",
@@ -23,7 +35,12 @@ const RUN_BLURBS = {
   "rebuild-nms": "redo the normal-mode resolution from the outputs on disk",
 };
 
-const SPHERE_SCALE = 0.25; // the sphere style both draw paths set on the model
+const SPHERE_SCALE = 0.25;
+// The one style the model is drawn with. Beside SPHERE_SCALE rather than written out at each
+// draw path, because the label push is computed from that same radius: with the literal
+// copied into the draw calls, changing it moved every sphere and left every label pushed by
+// the radius the spheres used to have.
+const MODEL_STYLE = { stick: { radius: 0.12 }, sphere: { scale: SPHERE_SCALE } };
 
 // Three facts about the vendored bundle set the shape of everything below. All three were
 // read out of the build, not out of 3Dmol's docs.
@@ -198,9 +215,9 @@ function builder() {
       decisions: {},
       draft: "",
       busy: false,
-      provider: localStorage.getItem("cr-provider") || "ollama",
-      model: localStorage.getItem("cr-model") || "",
-      baseUrl: localStorage.getItem("cr-baseurl") || "",
+      provider: localStorage.getItem(CHAT_KEYS.provider) || CHAT_DEFAULTS.provider,
+      model: localStorage.getItem(CHAT_KEYS.model) || CHAT_DEFAULTS.model,
+      baseUrl: localStorage.getItem(CHAT_KEYS.baseUrl) || CHAT_DEFAULTS.baseUrl,
       // Deliberately NOT from localStorage, and deliberately not written there either:
       // this is a live credential, and the browser profile outlives the session it was
       // typed for. It lives here for as long as the tab does, and goes out per request.
@@ -618,16 +635,19 @@ function builder() {
       this.cfg.steps.forEach((step, i) => {
         step.step = i + 1;
       });
-      // Two panels name a step by number, and after renumbering that number means a
+      // Three panels name a step by number, and after renumbering that number means a
       // different step (or none) — so each must let go rather than keep serving the old
-      // one under a selector that has silently snapped back to "—". The Structure pane is
-      // the second; it was added later and inherited the bug this guard was written for.
+      // one under a selector that has silently snapped back to "—". Each was added later
+      // than the last and inherited the bug this guard was written for; the Run panel's
+      // target was the third and went longest without it, which disabled Run and Resume
+      // (`:disabled="!!runTarget"`) against a step that no longer existed.
       const gone = (chosen) =>
         chosen && !this.cfg.steps.some((s) => String(s.step) === String(chosen));
       if (gone(this.resultsStep)) {
         this.resultsStep = "";
         this.runResults = null;
       }
+      if (gone(this.runTarget)) this.runTarget = "";
       // "input" is not a step number and never goes stale — the seeds outlive any
       // renumbering — so it must survive a guard written for step selections.
       if (this.viewer.step !== "input" && gone(this.viewer.step)) {
@@ -770,6 +790,11 @@ function builder() {
         this.refreshStatus();
       }
     },
+    // One page forward or back. The stride lived in the markup twice and in the fetch once,
+    // so changing the limit made the buttons page by the old one.
+    pageResults(direction) {
+      this.loadResults(this.resultsStep, this.runResults.offset + direction * RESULTS_PAGE);
+    },
     async loadResults(step, offset = 0) {
       this.resultsStep = step;
       if (!step) {
@@ -779,7 +804,7 @@ function builder() {
       this.runResults = await this.api("POST", "/api/results", {
         config_path: this.savedPath,
         step: Number(step),
-        limit: 20,
+        limit: RESULTS_PAGE,
         offset,
       });
     },
@@ -980,13 +1005,22 @@ function builder() {
     },
     // Draw extended-XYZ text that came from anywhere. The tail showStructure() shares,
     // minus the animation: a file on disk carries no mode to play.
-    async mountViewerFor(text) {
-      await this.mountViewer({ force: true });
+    // Draw extended-XYZ text, from wherever it came. `force` is what tells mountViewer it
+    // has something to show without a workflow open — a dropped or opened file — and is off
+    // for the pane's own Show, which cannot be reached without one.
+    //
+    // Both draw paths come through here. They used to be eight identical statements written
+    // twice, with a comment on this one claiming the sharing that was not happening, and
+    // they had already drifted.
+    async mountViewerFor(text, { force = true } = {}) {
+      await this.mountViewer({ force });
       if (!this._gl) return;
       this.discardLabels();
       this._gl.removeAllModels();
       this._model = this._gl.addModel(text, "xyz");
-      this._gl.setStyle({}, { stick: { radius: 0.12 }, sphere: { scale: 0.25 } });
+      this._gl.setStyle({}, MODEL_STYLE);
+      // The cell and any labels together — drawLabels() re-adds the cell, because clearing
+      // labels clears its a/b/c corner labels with them.
       this.drawLabels();
       this._gl.zoomTo();
     },
@@ -1306,16 +1340,8 @@ function builder() {
           this.viewer.modeIndex = "";
           return;
         }
-        await this.mountViewer();
+        await this.mountViewerFor(data.text, { force: false });
         if (!this._gl) return;
-        this.discardLabels();
-        this._gl.removeAllModels();
-        this._model = this._gl.addModel(data.text, "xyz");
-        this._gl.setStyle({}, { stick: { radius: 0.12 }, sphere: { scale: 0.25 } });
-        // The cell and any labels together — drawLabels() re-adds the cell, because
-        // clearing labels clears its a/b/c corner labels with them.
-        this.drawLabels();
-        this._gl.zoomTo();
         // From the answer, not from the form: the server decides whether a mode came back,
         // and reading the boxes again here is how the two could disagree.
         if (data.mode_index !== null && data.mode_index !== undefined) {
@@ -1337,9 +1363,9 @@ function builder() {
     saveChatSettings() {
       // Three keys, not four: `chat.apiKey` is a live credential and is never persisted.
       // Adding it here would be the natural-looking edit and the wrong one.
-      localStorage.setItem("cr-provider", this.chat.provider);
-      localStorage.setItem("cr-model", this.chat.model);
-      localStorage.setItem("cr-baseurl", this.chat.baseUrl);
+      for (const [field, key] of Object.entries(CHAT_KEYS)) {
+        localStorage.setItem(key, this.chat[field]);
+      }
     },
     async chatAvailability() {
       if (this.staticMode) return;
@@ -1450,7 +1476,11 @@ function builder() {
         note: "",
         structures: [],
       };
+      this.runTarget = ""; // a step number that meant something in the workflow just closed
       this.loadStructureList(); // savedPath is the new file by now, so these are its seeds
+      // Nulling runStatus empties the panel; only its own @toggle and Refresh button ever
+      // refill it, so an expanded Run panel went blank on Open… and stayed blank.
+      this.refreshStatus();
       // The drawn molecule belongs to the old tree too; leaving it up (still animating)
       // reads as the new workflow's answer.
       if (this._gl) {
@@ -1573,14 +1603,12 @@ function builder() {
       this.chat.decisions = {};
       this.chat.draft = "";
       this.chat.busy = false;
-      this.chat.provider = "ollama";
+      this.chat.provider = CHAT_DEFAULTS.provider;
       this.chat.model = "";
       this.chat.baseUrl = "";
       this.chat.apiKey = "";
       this.armCheck(); // the verdict belonged to settings that no longer exist
-      localStorage.removeItem("cr-provider");
-      localStorage.removeItem("cr-model");
-      localStorage.removeItem("cr-baseurl");
+      for (const key of Object.values(CHAT_KEYS)) localStorage.removeItem(key);
       // Never written by this build, removed anyway: an earlier one might have, and a
       // credential left in a browser profile is not something to leave to good intentions.
       localStorage.removeItem("cr-apikey");
@@ -1664,7 +1692,11 @@ function builder() {
       }
       // Not a directory: the same three jobs pickFile() does, on a path rather than a row.
       // `name` is only read in save mode, where it is the filename box's new contents.
-      await this.pickFile({ path: typed, name: typed.slice(typed.lastIndexOf("/") + 1) });
+      // The whole path as the name, not its basename. joinPath() exists so that an absolute
+      // or ~ name replaces the directory rather than hanging off it, and stripping to the
+      // basename here took that decision away from it: typing an absolute path in save mode
+      // wrote the file into whatever directory the listing happened to be showing.
+      await this.pickFile({ path: typed, name: typed });
     },
     pickHere() {
       // Directory fields (template_dir, output_dir, scratch_dir) are chosen by
@@ -1708,8 +1740,12 @@ function builder() {
           step: key,
         }),
       );
+      // No hint appended on failure: `api()` has already written the server's own reason,
+      // and read_template's is "template … does not exist yet (scaffold_templates writes a
+      // starter)" — which says it better. The old ` += " — run Scaffold templates first?"`
+      // was redundant when that was the reason and nonsense when it was not, gluing itself
+      // onto "the ChemRefine server is unreachable — is `chemrefine gui` still running?".
       if (data) this.tmpl = { open: true, step: step.step, path: data.path, text: data.text };
-      else this.flash += " — run Scaffold templates first?";
     },
     async saveTemplate() {
       const data = await this.api("POST", "/api/template", {

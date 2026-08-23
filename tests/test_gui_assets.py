@@ -22,6 +22,7 @@ without Node ran every gate green while checking the frontend not at all.
 
 from __future__ import annotations
 
+import itertools
 import json
 import math
 import os
@@ -825,11 +826,18 @@ def test_renumbering_releases_every_panel_that_names_a_step():
       b.stepKeys = [1, 2, 3];
       b.resultsStep = "3";
       b.viewer.step = "3";
+      b.runTarget = "3";
       b.cfg.steps.splice(0, 1);              // delete step 1; 3 becomes 2
       b.renumber();
-      console.log(JSON.stringify({ results: b.resultsStep, viewer: b.viewer.step }));
+      console.log(JSON.stringify({
+        results: b.resultsStep, viewer: b.viewer.step, target: b.runTarget,
+      }));
     """)
-    assert json.loads(out) == {"results": "", "viewer": "input"}
+    # Three selectors name a step by number, and the Run panel's target was the last to be
+    # added and the longest without this. Left set, it disables Run and Resume — they refuse
+    # a target — against a step that no longer exists, and the four targeted actions submit
+    # a number that now means a different step.
+    assert json.loads(out) == {"results": "", "viewer": "input", "target": ""}
 
 
 def test_opening_a_workflow_adopts_it_and_makes_its_run_reachable():
@@ -1034,22 +1042,29 @@ def test_opening_a_workflow_leaves_none_of_the_previous_one_on_screen():
       b.report = { ok: false };
       b.tmpl = { open: true, step: 2, path: "/old/tmpl.inp", text: "old" };
       b.viewer = { ...b.viewer, step: "7", structureId: "4", modeIndex: "6", note: "stale" };
+      b.runTarget = "2";
       let stopped = 0, cleared = 0;
       b._gl = { stopAnimate: () => { stopped++; }, removeAllModels: () => { cleared++; },
                 labels: [], removeAllLabels: () => {}, render: () => {} };
       await b.loadConfigFrom("/p/input.yaml", { reason: "open" });
       console.log(JSON.stringify({
-        runStatus: b.runStatus, runFailures: b.runFailures, runResults: b.runResults,
-        resultsStep: b.resultsStep, report: b.report, tmplOpen: b.tmpl.open,
+        runStatus: b.runStatus, runFailures: b.runFailures, runResults: b.runResults, calls,
+        resultsStep: b.resultsStep, runTarget: b.runTarget, report: b.report,
+        tmplOpen: b.tmpl.open,
         viewer: b.viewer, stopped, cleared,
       }));
     """
     )
     result = json.loads(out)
-    assert result["runStatus"] is None
-    assert result["runFailures"] is None
+    # The previous workflow's status is gone, and the new file's has been asked for rather
+    # than the panel left blank: nulling it alone emptied an expanded Run panel and only its
+    # own @toggle or the Refresh button ever refilled it.
+    assert result["runStatus"] != {"state": "failed", "steps": [{"step": 1}]}
+    assert "POST /api/status" in result["calls"]
+    assert result["runFailures"] != {"count": 3}
     assert result["runResults"] is None
     assert result["resultsStep"] == ""
+    assert result["runTarget"] == ""  # a step number that meant something in the old workflow
     assert result["report"] is None  # it validated a file that is no longer in the form
     assert result["tmplOpen"] is False
     # Back to the one view every tree can answer, with nothing carried over from the old one.
@@ -1483,14 +1498,35 @@ def test_the_typed_path_does_the_other_two_jobs_in_the_other_two_modes():
       b.browse.typed = "/seeds/mol.xyz";
       await b.goToTyped();
       const afterPick = { picked, closed: !b.browse.open };
-      b.browse = { ...b.browse, open: true, mode: "save", onPick: null };
+      b.browse = { ...b.browse, open: true, mode: "save", onPick: null, path: "/here" };
       b.browse.typed = "/elsewhere/other.yaml";
       await b.goToTyped();
-      console.log(JSON.stringify({ afterPick, filename: b.browse.filename }));
+      const typedAbsolute = b.browse.filename;
+      // Where it would actually be written, which is the thing that matters.
+      let wrote = null;
+      // Only /api/save carries a body; goToTyped's own /api/browse probe is a GET, and must
+      // still answer "not a directory" so the typed path is taken as a file.
+      b.api = async (m, u, body) => {
+        if (!body) return null;
+        wrote = body.path;
+        return { path: body.path };
+      };
+      await b.saveTo();
+      // And a bare name still lands in the directory being browsed.
+      b.browse = { ...b.browse, open: true, mode: "save", path: "/here" };
+      b.browse.typed = "notes.yaml";
+      await b.goToTyped();
+      await b.saveTo();
+      console.log(JSON.stringify({ afterPick, typedAbsolute, wrote, bare: wrote }));
     """)
     result = json.loads(out)
     assert result["afterPick"] == {"picked": "/seeds/mol.xyz", "closed": True}
-    assert result["filename"] == "other.yaml"  # the basename, as clicking a row gives
+    # The whole typed path reaches the filename box, not its basename. Stripping it there
+    # took the decision away from joinPath(), which exists precisely so an absolute name
+    # replaces the directory — so typing an absolute path in save mode quietly wrote the
+    # file into whatever directory the listing happened to be showing.
+    assert result["typedAbsolute"] == "/elsewhere/other.yaml"
+    assert result["bare"] == "/here/notes.yaml"  # and a bare name still joins as before
 
 
 def test_every_modal_starts_where_the_open_file_lives():
@@ -2827,6 +2863,85 @@ def test_the_playgrounds_yaml_order_matches_the_servers():
         "step": ["step", "engine", "template", "mystery"],
         "untouched_scalar": "raw text",
     }
+
+
+def test_every_option_widget_kind_has_an_arm():
+    """Four blocks render a field from a spec, and each must handle every kind fieldSpec emits.
+
+    A missing arm is silent in both directions: the label renders and the input does not, so
+    the knob simply cannot be set and nothing says so. A catch-all is worse — it draws a
+    number box for a boolean and writes 1 where true was meant.
+
+    This test was named in a comment in ``index.html`` for some time before it existed, and
+    while it did not exist the Sample block was missing its ``text`` arm and the top-level
+    block was the only one of the four without ``step="any"`` on the number input — which is
+    the block that renders the one float the schema has. Copying markup four times is how
+    that happens; this is the cheap half of the fix.
+    """
+    html = INDEX.read_text(encoding="utf-8")
+    # The kinds fieldSpec() can return, taken from its own docstring in forms.js rather than
+    # from a list here — a new kind must break this test, not slip past it.
+    forms = (STATIC / "forms.js").read_text(encoding="utf-8")
+    kinds = set(re.findall(r'kind: "(\w+)"', forms))
+    assert kinds == {"text", "number", "checkbox", "select"}, kinds
+
+    # Each block is a `<template x-for="field in …">`; its arms are the `field.kind === '…'`
+    # tests inside it, up to the start of the next block.
+    starts = [m.start() for m in re.finditer(r'x-for="field in ', html)]
+    assert len(starts) == 4, f"expected four field-rendering blocks, found {len(starts)}"
+    bounds = [*starts, len(html)]
+    for index, (begin, end) in enumerate(itertools.pairwise(bounds)):
+        block = html[begin:end]
+        arms = set(re.findall(r"field\.kind === '(\w+)'", block))
+        assert arms == kinds, f"block {index} handles {sorted(arms)}, not {sorted(kinds)}"
+        # And no catch-all: an arm that fires for everything else puts the wrong widget on
+        # whichever kind nobody thought about.
+        assert "field.kind !==" not in block, f"block {index} still has a catch-all arm"
+
+    # Every number input takes fractional values. The schema has a float among the top-level
+    # fields, and the block that renders it was the one without this.
+    for match in re.finditer(r'<input type="number"([^>]*)>', html):
+        attrs = match.group(1)
+        if "field." in attrs:  # a spec-driven field, not a hand-written charge/multiplicity
+            assert 'step="any"' in attrs, attrs
+
+
+def test_the_results_pager_moves_by_the_page_it_fetches():
+    """The stride was a literal in the fetch and two more in the markup, in another file.
+
+    Change the fetch limit and the buttons page by the old number — every page after the
+    first skipping rows or repeating them, with nothing anywhere to say so. One constant, and
+    the markup asks for a direction rather than an offset.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chatAvailability = () => {};
+      const asked = [];
+      b.api = async (m, u, body) => { asked.push(body); return { rows: [], total: 99 }; };
+      b.resultsStep = "1";
+      await b.loadResults("1", 0);
+      b.runResults = { offset: 0 };
+      b.pageResults(1);
+      await new Promise((r) => setTimeout(r, 0));
+      b.runResults = { offset: asked[asked.length - 1].offset };
+      b.pageResults(-1);
+      await new Promise((r) => setTimeout(r, 0));
+      console.log(JSON.stringify(asked.map((a) => ({ limit: a.limit, offset: a.offset }))));
+    """)
+    asked = json.loads(out)
+    stride = asked[0]["limit"]
+    # Forward by exactly one page, then back to where it started.
+    assert asked[1]["offset"] == stride
+    assert asked[2]["offset"] == 0
+    # And every request asks for that same page size.
+    assert {a["limit"] for a in asked} == {stride}
+
+    # The markup no longer carries the number at all — it asks for a direction.
+    html = INDEX.read_text(encoding="utf-8")
+    assert "pageResults(-1)" in html and "pageResults(1)" in html
+    # No page-sized arithmetic left in the markup. `runResults.offset + 1` stays — that is
+    # the 1-based row counter in the "showing 21-40 of 99" label, not a stride.
+    assert not re.search(r"runResults\.offset [-+] (?!1\b)\d+", html), html
 
 
 def test_templated_option_lists_bind_selected():
