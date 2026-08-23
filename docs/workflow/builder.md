@@ -182,8 +182,15 @@ Numbers are drawn at a size fixed in **Angstroms**, not in pixels, so one stays 
 the atom it names at every zoom. That is not how the viewer draws labels by default — a
 label is a sprite whose size is fixed in screen pixels, so it would otherwise stay put while
 the molecule shrank around it — and it is why turning or zooming re-sizes them rather than
-re-drawing them. They are depth-tested too, so a number on the far side of the structure is
-hidden by the atoms in front of it, as it would be in Chemcraft.
+re-drawing them. The size is bounded on **both** axes: a digit's ink is 0.36 Å tall, which
+fits inside the 0.60 Å hydrogen sphere, and no label's ink may exceed 0.85 Å across, so a
+three- or four-character label is scaled down rather than sprawling over its neighbours.
+
+They are depth-tested too, so a number on the far side of the structure is hidden by the
+atoms in front of it, as it would be in Chemcraft. Each one is pushed toward the camera
+along **its own line of sight** — not along a shared view axis, which under perspective
+would slide it off its atom by more the further it sat from the centre of the pane, and
+swing it about as you turned the structure.
 
 A SMILES `input:` (a `.csv`) is the one source the pane refuses: seeding from it *embeds*
 the molecules and writes them into the output tree, which a read has no business doing.

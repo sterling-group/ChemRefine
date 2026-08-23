@@ -23,6 +23,7 @@ without Node ran every gate green while checking the frontend not at all.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -188,6 +189,17 @@ _VIEWER_STUB = """
     scale: { x: 1, y: 1, set(a, b) { this.x = a; this.y = b; } },
     position: { x: 0, y: 0, z: 0, set(a, b, c) { this.x = a; this.y = b; this.z = c; } },
   });
+  // measureText needs a live 2D context, which node has not got, so the advances are read
+  // out of the font instead: these are NotoSans-Bold's, in ems, which is what fontconfig
+  // answers for `sans-serif:bold` on Linux. A flat per-character width would not do — the
+  // whole point of the width budget is that "H10" is far wider than "111", and H is the
+  // widest glyph the numbering can emit. The bundle then adds 2*padding and truncates:
+  // `v = g + 2.5*l + 2*o` with borderThickness forced to 0, then `canvas.width = v`.
+  const ADVANCE = { C: 0.637, H: 0.765, O: 0.687, N: 0.593 };   // digits fall through to 0.572
+  const canvasFor = (text) => ({
+    width: Math.floor([...text].reduce((w, c) => w + (ADVANCE[c] ?? 0.572), 0) * 32 + 4),
+    height: 44,
+  });
   const viewerStub = (atoms, calls = []) => {
     const model = {
       selectedAtoms: () => atoms,
@@ -204,11 +216,20 @@ _VIEWER_STUB = """
         HEIGHT: 400, fov: 20, CAMERA_Z: 150,
         getView: () => view,
         setView(v) { view = v; },
+        // The bundle keeps every Label on the viewer as `this.labels` and removeAllLabels
+        // splices that array without freeing anything — which is why discardLabels() has to
+        // dispose them itself, and why the stub has to expose both halves to be able to
+        // check that it does.
+        labels,
         removeAllLabels() { labels.length = 0; calls.push("clear"); },
         addUnitCell() { calls.push("cell"); },
         addLabel(text, style) {
           calls.push("label:" + text);
-          const label = { text, style, sprite: makeSprite(), canvas: { height: 44 } };
+          const label = {
+            text, style, sprite: makeSprite(), canvas: canvasFor(text),
+            disposed: false,
+            dispose() { this.disposed = true; calls.push("dispose:" + this.text); },
+          };
           labels.push(label);
           return label;
         },
@@ -912,7 +933,7 @@ def test_a_mode_that_could_not_be_drawn_does_not_follow_you_to_the_next_one():
         return refuse ? null : { step: 2, structure_id: "0", mode_index: null, text: "" };
       };
       b.mountViewer = async () => {};
-      b._gl = { stopAnimate(){}, removeAllModels(){}, removeAllLabels(){},
+      b._gl = { stopAnimate(){}, removeAllModels(){}, labels: [], removeAllLabels(){},
                 addModel: () => ({ vibrate(){}, addPropertyLabels(){} }),
                 setStyle(){}, addUnitCell(){}, mapAtomProperties(){}, zoomTo(){},
                 animate(){}, render(){} };
@@ -994,7 +1015,7 @@ def test_opening_a_workflow_leaves_none_of_the_previous_one_on_screen():
       b.viewer = { ...b.viewer, step: "7", structureId: "4", modeIndex: "6", note: "stale" };
       let stopped = 0, cleared = 0;
       b._gl = { stopAnimate: () => { stopped++; }, removeAllModels: () => { cleared++; },
-                removeAllLabels: () => {}, render: () => {} };
+                labels: [], removeAllLabels: () => {}, render: () => {} };
       await b.loadConfigFrom("/p/input.yaml", { reason: "open" });
       console.log(JSON.stringify({
         runStatus: b.runStatus, runFailures: b.runFailures, runResults: b.runResults,
@@ -1643,7 +1664,9 @@ def test_turning_labels_off_does_not_take_the_unit_cell_with_them():
     # Cleared, then the cell back, then the atom labelled — in that order.
     assert result["on"] == ["clear", "cell", "label:1", "render"]
     # And with numbering off the cell is still re-added; only the atom labels are skipped.
-    assert result["off"] == ["clear", "cell", "render"]
+    # The dispose lands after the clear, never before it: removeAllLabels() detaches the
+    # sprites and renders once, and only then is deleting the textures they drew with safe.
+    assert result["off"] == ["clear", "dispose:1", "cell", "render"]
 
 
 def test_each_label_owns_its_own_position_rather_than_sharing_one():
@@ -1740,15 +1763,23 @@ def test_the_label_style_is_bold_centred_and_behind_the_atoms_in_front_of_it():
     assert result["depthWrite"] is False
 
 
-def test_a_label_is_pushed_clear_of_its_own_sphere_by_that_atoms_own_radius():
-    """Depth-testing a label at the nucleus makes the atom punch a hole through its own number.
+def test_a_label_is_pushed_along_its_own_ray_so_it_stays_on_its_atom_at_every_angle():
+    """The push must follow each atom's line to the eye, not one shared view axis.
 
-    All four corners of the sprite carry ONE depth — the anchor's — because the shader adds
-    the quad offset after its own perspective divide. The sphere writes its front *surface*
-    depth, nearer than the nucleus by a full radius. With LEQUAL that is a loss everywhere
-    inside the silhouette, so the anchor is pushed toward the camera by the atom's own
-    radius: 0.425 A for carbon at sphere scale 0.25, not a flat margin, because the push is
-    also the depth a neighbour must beat to occlude the label.
+    Depth-testing a label at the nucleus makes the atom punch a hole through its own number:
+    all four corners of the sprite carry ONE depth — the anchor's — because the shader adds
+    the quad offset after its own perspective divide, while the sphere writes its front
+    *surface* depth, nearer by a full radius. So the anchor is pushed toward the camera by
+    that atom's own radius (0.425 A for carbon at sphere scale 0.25) plus a clearance.
+
+    *Which* direction is the part that has to be exact. Pushing every anchor along the same
+    view axis leaves an atom's x and y untouched in eye space and only shortens its depth —
+    and the shader divides by w, so a shorter depth means a bigger radius on screen. The
+    label is thrown outward from the centre of the pane: nothing at all on the view axis,
+    most at the edge, and swinging around as the structure turns. Pushing along the atom's
+    own ray to the camera instead moves the anchor along the line the eye already collapses
+    to a point, so the projected position does not move at all — which is why the label sits
+    exactly on its atom here rather than approximately on it.
     """
     out = _run_component_in_node(
         _VIEWER_STUB
@@ -1789,20 +1820,35 @@ def test_a_label_is_pushed_clear_of_its_own_sphere_by_that_atoms_own_radius():
     carbon, hydrogen = result["facing"]
     # Carbon: 1.7 vdW x 0.25 + 0.15 clearance. Hydrogen: 1.2 x 0.25 + 0.15. Its own radius,
     # so the smaller atom is pushed less and stays easier for a neighbour to hide.
+    # The stub's view puts the camera 300 A away, so an atom on the axis is pushed straight
+    # along +z and the distance is the whole of it.
     assert carbon["z"] == pytest.approx(0.575)
-    assert hydrogen["z"] == pytest.approx(0.45)
-    assert (carbon["x"], carbon["y"]) == (0, 0)  # straight toward the camera, nowhere else
-    assert hydrogen["x"] == pytest.approx(2)  # and the atom it names has not moved
+    assert (carbon["x"], carbon["y"]) == (0, 0)  # on the axis: the ray IS the axis
+    # The hydrogen is 2 A off-axis, so its ray leans: it is pushed very slightly back toward
+    # the axis as well as forward. That lean is the entire fix — an axis push would leave x
+    # at exactly 2 and throw the label outward on screen instead.
+    assert hydrogen["z"] == pytest.approx(0.45, rel=1e-4)
+    assert hydrogen["x"] < 2  # leaning toward the eye, not straight along +z
+    assert hydrogen["x"] == pytest.approx(2 - 0.45 * 2 / 300.00667, rel=1e-4)
+    # The push length is the atom's own radius plus the clearance, whatever the direction.
+    assert math.dist((hydrogen["x"], hydrogen["y"], hydrogen["z"]), (2, 0, 0)) == pytest.approx(
+        0.45
+    )
     # Rotated to face the other way, the push follows the camera rather than staying on +z.
     assert result["turned"][0]["z"] == pytest.approx(-0.575)
-    assert result["turned"][1]["x"] == pytest.approx(2)
     # A quarter turn puts it on -x, so every component of the direction is exercised: a
     # formula correct in z and wrong in x and y reads fine until the structure is turned.
     assert result["quarter"][0]["x"] == pytest.approx(-0.575)
     assert result["quarter"][0]["z"] == pytest.approx(0, abs=1e-9)
-    assert result["quarter"][1]["x"] == pytest.approx(2 - 0.45)
     assert result["tipped"][0]["y"] == pytest.approx(0.575)
     assert result["tipped"][0]["z"] == pytest.approx(0, abs=1e-9)
+    # Every label, at every one of the four orientations, is exactly its own push away from
+    # the atom it names — the invariant the ray push guarantees and the axis push did not.
+    for state in ("facing", "turned", "quarter", "tipped"):
+        for label, atom, push in zip(
+            result[state], ((0, 0, 0), (2, 0, 0)), (0.575, 0.45), strict=True
+        ):
+            assert math.dist((label["x"], label["y"], label["z"]), atom) == pytest.approx(push)
 
 
 def test_label_size_tracks_the_zoom_so_it_stays_the_size_of_its_atom():
@@ -1838,9 +1884,126 @@ def test_label_size_tracks_the_zoom_so_it_stays_the_size_of_its_atom():
     result = json.loads(out)
     # Closer camera, bigger number — the whole point, and monotonic in between.
     assert result["near"] > result["mid"] > result["far"]
-    # Clamped at both ends: a 32 px texture blurs magnified and shimmers minified.
-    assert result["clampedIn"] == pytest.approx(4.0)
-    assert result["clampedOut"] == pytest.approx(0.35)
+    # Clamped at both ends, and the bounds are on the drawn INK rather than on the scale
+    # factor: LABEL_INK_MIN_PX / (LABEL_CAP_EM * fontSize) = 8 / (0.72 * 32) and
+    # LABEL_INK_MAX_PX / the same. Stated this way they survive a fontSize change, which
+    # multiples of the texture's height did not.
+    assert result["clampedIn"] == pytest.approx(96 / (0.72 * 32))
+    assert result["clampedOut"] == pytest.approx(8 / (0.72 * 32))
+
+
+def test_a_wide_label_is_scaled_down_so_it_never_outgrows_the_atom_it_names():
+    """Height alone cannot bound a label, because the quad's width is the text's.
+
+    Every label's texture is the same 44 px tall — ``1.25 * fontSize + 2 * padding``, which
+    has no term for the string — while its width is ``measureText(text) + 2 * padding``. So
+    one scale factor driven by height alone drew "H1" 0.66 A across and "H10" 1.11 A across:
+    the same nominal size, and the second one nearly two hydrogen blobs wide, sprawling over
+    the bonds either side of the atom it belongs to. The width budget is what stops that, and
+    it must bind only on the labels that need it — a one- or two-character label is already
+    inside its budget and must not be shrunk to pay for a three-character one.
+
+    The legibility floor outranks it, and that is deliberate: zoomed far enough out that
+    meeting the width budget would put the ink under ``LABEL_INK_MIN_PX``, the label stays
+    readable and overruns the budget instead. An unreadable label is not a smaller label,
+    it is a missing one.
+    """
+    out = _run_component_in_node(
+        _VIEWER_STUB
+        + """
+      const b = builder();
+      b.chatAvailability = () => {};
+      // `element` mode emits the widest strings the page can produce, and a two-digit
+      // ordinal on the widest glyph — H — is what makes them widest.
+      const atoms = Array.from({ length: 10 }, (_, i) => (
+        { serial: i, elem: "H", x: i * 3, y: 0, z: 0 }));
+      const stub = viewerStub(atoms);
+      b._model = stub.model;
+      b._gl = stub.gl;
+      b.viewer.labels = "element";
+      b.drawLabels();
+      const perAngstrom = (d) => 400 / (2 * d * Math.tan(Math.PI / 360 * 20));
+      const at = (zoom) => {
+        stub.gl.setView([0, 0, 0, zoom, 0, 0, 0, 1]);
+        b._syncLabels();
+        const perA = perAngstrom(150 - zoom);
+        return stub.labels.map((l) => ({
+          text: l.text,
+          inkHigh: l.sprite.scale.y * 0.72 * 32 / perA,
+          inkWide: l.sprite.scale.x * (l.canvas.width - 4) / perA,
+        }));
+      };
+      console.log(JSON.stringify({ working: at(130), farOut: at(100) }));
+    """
+    )
+    result = json.loads(out)
+    rows = result["working"]  # 20 A away: clear of both clamps, so the budgets decide
+    short = [r for r in rows if len(r["text"]) == 2]  # H1 .. H9
+    wide = [r for r in rows if len(r["text"]) == 3]  # H10
+    assert len(short) == 9 and len(wide) == 1, [r["text"] for r in rows]
+    # No label's ink is wider than one carbon blob, 2 * 1.7 * 0.25 A — the width budget.
+    for row in rows:
+        assert row["inkWide"] < 0.85 + 1e-9, row
+    # The narrow ones are still sized by height, untouched by the budget: a hydrogen blob is
+    # 0.6 A across and their ink stands 0.36 A tall, so the number reads smaller than the
+    # smallest atom rather than sitting on it like a lid.
+    for row in short:
+        assert row["inkHigh"] == pytest.approx(0.36)
+        assert row["inkWide"] < 0.85
+    # And the wide one paid for its width by getting shorter, not by pushing the others out.
+    assert wide[0]["inkWide"] == pytest.approx(0.85)
+    assert wide[0]["inkHigh"] < 0.36
+    # Zoomed out to 50 A the wide label is the first to reach the floor, and there it is
+    # allowed past its width budget rather than shrunk out of legibility — 8 CSS px of ink,
+    # the same as every other label, instead of the 7.2 px the budget alone would have asked
+    # for. The short ones are still above the floor and still sized by height.
+    far = result["farOut"]
+    per_angstrom_far = 400 / (2 * 50 * math.tan(math.radians(10)))
+    far_wide = next(r for r in far if len(r["text"]) == 3)
+    assert far_wide["inkHigh"] * per_angstrom_far == pytest.approx(8)
+    assert far_wide["inkWide"] > 0.85
+    for row in far:
+        if len(row["text"]) == 2:
+            assert row["inkHigh"] == pytest.approx(0.36)
+            assert row["inkHigh"] * per_angstrom_far > 8
+
+
+def test_panning_re_pushes_the_labels_because_the_ray_moved():
+    """The view key may not omit ``modelGroup.position`` now that the push follows a ray.
+
+    Leaving ``view[0..2]`` out was right while every anchor was pushed along one shared view
+    axis: panning slides the model and the camera together, so it cannot turn that axis. A
+    ray to the camera is a different matter — panning changes where the camera is relative to
+    each atom, so a pan that returned early would leave every label pushed along the ray it
+    wanted before the pan, which is the same drift the ray push exists to remove.
+    """
+    out = _run_component_in_node(
+        _VIEWER_STUB
+        + """
+      const b = builder();
+      b.chatAvailability = () => {};
+      const stub = viewerStub([{ serial: 0, elem: "C", x: 4, y: 0, z: 0 }]);
+      b._model = stub.model;
+      b._gl = stub.gl;
+      b.viewer.labels = "one";
+      b.drawLabels();
+      const before = { ...stub.labels[0].sprite.position };
+      // A pan writes modelGroup.position, which getView() reports as view[0..2]; the
+      // quaternion and the zoom are untouched.
+      stub.gl.setView([6, 0, 0, -150, 0, 0, 0, 1]);
+      const resynced = b._syncLabels();
+      console.log(JSON.stringify(
+        { resynced, before, after: { ...stub.labels[0].sprite.position } }));
+    """
+    )
+    result = json.loads(out)
+    assert result["resynced"] is True, "a pan left the labels on their pre-pan rays"
+    # The atom has not moved in model coordinates, so the label must still be exactly its
+    # own push from it — but along a different ray, so at a different point.
+    assert result["before"] != result["after"]
+    for state in ("before", "after"):
+        pos = result[state]
+        assert math.dist((pos["x"], pos["y"], pos["z"]), (4, 0, 0)) == pytest.approx(0.575)
 
 
 def test_the_labels_are_resized_once_per_camera_move_and_not_once_per_show():
@@ -1869,6 +2032,42 @@ def test_the_labels_are_resized_once_per_camera_move_and_not_once_per_show():
     """
     )
     assert json.loads(out) == {"first": False, "moved": True, "again": False}
+
+
+def test_the_viewer_is_built_without_fxaa_but_keeps_its_supersampling():
+    """``antialias`` is not the geometry-smoothing flag it reads as, and it hurt the glyphs.
+
+    The bundle renders into its own framebuffer and blits it with one of two shaders —
+    ``this._antialias ? screenaa : screen`` — and ``screenaa`` is an FXAA pass. FXAA finds
+    high-contrast edges and redistributes pixels along them, which is the wrong treatment
+    for black bold glyphs and is what made the numbers look uneven. The labels are inside
+    that pass: the depth-tested sprites are drawn before the framebuffer reaches the screen.
+
+    Both keys are passed explicitly because the two defaults are chained — GLViewer defaults
+    ``antialias`` to true, and the renderer then defaults ``upscale`` to whatever
+    ``antialias`` is. Dropping one silently drops the other, and ``upscale`` is the one worth
+    keeping: it holds the backing store at two device pixels per CSS pixel, which is the
+    supersampling that actually smooths the spheres and sticks.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chatAvailability = () => {};
+      let options = null;
+      b.loadViewerLib = async () => ({
+        createViewer: (host, opts) => {
+          options = opts;
+          return { resize(){}, render(){}, setViewChangeCallback(){} };
+        },
+      });
+      global.document = { getElementById: () => ({}) };
+      b.savedPath = "/p/input.yaml";
+      await b.mountViewer({ force: true });
+      console.log(JSON.stringify(options));
+    """)
+    options = json.loads(out)
+    assert options["antialias"] is False  # the FXAA blit, which smears the glyph edges
+    assert options["upscale"] is True  # the >=2x backing store, which is the real smoothing
+    assert options["backgroundColor"] == "white"
 
 
 def test_the_view_change_hook_redraws_once_and_cannot_recurse():
@@ -2028,7 +2227,7 @@ def test_clearing_the_canvas_takes_the_labels_choice_with_no_structure_to_apply_
       const drawn = [];
       b._model = { addPropertyLabels: () => drawn.push("labelled") };
       b._gl = {
-        stopAnimate(){}, removeAllLabels(){}, removeAllModels(){}, render(){},
+        stopAnimate(){}, labels: [], removeAllLabels(){}, removeAllModels(){}, render(){},
         addUnitCell: () => drawn.push("boxed"),
         mapAtomProperties: (fn) => [{ serial: 0, elem: "C", properties: {} }].forEach(fn),
       };
@@ -2078,18 +2277,27 @@ def test_labels_are_dropped_before_the_model_they_are_attached_to():
     Both paths that drop the models — showing the next structure, and opening another
     workflow — must clear labels first, or the previous structure's numbering floats over
     whatever is drawn next.
+
+    ``discardLabels()`` rather than ``removeAllLabels()`` directly, because the bundle's
+    method splices its array and frees nothing: the Label, its material, its GL texture and
+    its backing canvas all survive it, and ``_atomLabels`` on this side survives it too. A
+    call site that reached past the wrapper would leak both.
     """
     source = (STATIC / "app.js").read_text(encoding="utf-8")
     drops = source.count("this._gl.removeAllModels()")
     assert drops >= 2, f"expected both drop sites; found {drops}"
-    # Immediately before, not merely somewhere earlier in the file: `drawLabels` clears
-    # labels too, so a prefix search would be satisfied by that and prove nothing about
-    # the call site being checked. Comment lines between the two are allowed, nothing else.
+    # Immediately before, not merely somewhere earlier in the file: a prefix search would be
+    # satisfied by the wrapper's own definition and prove nothing about the call site being
+    # checked. Comment lines between the two are allowed, nothing else.
     paired = re.compile(
-        r"this\._gl\.removeAllLabels\(\);\n(?:\s*//[^\n]*\n)*\s*this\._gl\.removeAllModels\(\)"
+        r"this\.discardLabels\(\);\n(?:\s*//[^\n]*\n)*\s*this\._gl\.removeAllModels\(\)"
     )
     assert len(paired.findall(source)) == drops, (
-        "a removeAllModels() without removeAllLabels() immediately before it"
+        "a removeAllModels() without discardLabels() immediately before it"
+    )
+    # And nothing may call the bundle's own clear except that one wrapper.
+    assert source.count("this._gl.removeAllLabels()") == 1, (
+        "removeAllLabels() belongs to discardLabels() alone — it frees nothing by itself"
     )
 
 
@@ -2186,7 +2394,7 @@ _FILE_HARNESS = """
   b.chatAvailability = () => {};
   const drawn = [];
   const gl = {
-    stopAnimate(){}, removeAllLabels(){}, removeAllModels(){},
+    stopAnimate(){}, labels: [], removeAllLabels(){}, removeAllModels(){},
     addModel: (text) => { drawn.push(text); return { addPropertyLabels(){} }; },
     setStyle(){}, addUnitCell(){}, mapAtomProperties(){}, zoomTo(){}, render(){}, resize(){},
   };

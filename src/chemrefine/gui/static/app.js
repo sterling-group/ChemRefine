@@ -50,19 +50,34 @@ const SPHERE_SCALE = 0.25; // the sphere style both draw paths set on the model
 //    toward the camera by that atom's own radius. That direction is a function of the view,
 //    which is why the sync below runs on rotation and not only on zoom.
 //
+//    The push must follow each atom's own ray to the eye, not one shared view axis. The
+//    same perspective divide quoted above is why: shortening an off-axis atom's depth
+//    without touching its eye-space x and y makes it project FURTHER from the centre of the
+//    pane, so an axis push slides every label outward — nothing on the view axis, most at
+//    the edge, and swinging around as the structure turns. Moving along the ray instead
+//    moves the anchor along the line the eye collapses to a single pixel, so the projected
+//    position does not change at all. See _syncLabels().
+//
 // 3. Dropping the background box costs the halo outright: the bundle never calls
 //    strokeText, shadowBlur or shadowColor, and `borderThickness` strokes the background
 //    box rather than the glyphs. Legibility now rests on the glyphs being bold and roughly
 //    atom-sized. The tightest case is nitrogen, #3050F8 against black at 3.6:1 — the
 //    large-text floor, which these now are.
 const LABEL_STYLE = {
-  // The texture's resolution, not its size on screen — LABEL_WORLD_HEIGHT sets that.
-  // Chosen so the per-frame scale sits near 1 at a working zoom, because the bundle builds
-  // no mipmaps and its filter fallback is LINEAR whatever the texture asks, so magnifying
-  // and minifying this texture both cost quality.
+  // The texture's resolution, not its size on screen — LABEL_INK_HEIGHT sets that. 32 is
+  // not inherited taste, it is where the resampling is least bad. The renderer draws into a
+  // backing store of `devicePixelRatio` device pixels per CSS pixel and forces that ratio to
+  // at least 2 (`_upscale` — see mountViewer), so a texel covers `2 * sprite.scale` device
+  // pixels. With the sizing below that works out to `perAngstrom / fontSize`, and the pane
+  // runs 260–620 CSS px against structures 10–30 A across, i.e. perAngstrom ≈ 9–62. A
+  // fontSize of 32 keeps the ratio inside 0.7–1.4 over almost all of that; raising it drives
+  // the whole range into minification, which this bundle cannot defend against — it builds
+  // no mipmaps (`generateMipmap` appears nowhere in the build) and `filterFallback` returns
+  // LINEAR whatever the texture asks for.
   fontSize: 32,
   // With no background this is bare transparent margin; 2 keeps the antialiased edges off
-  // the texture border without inflating the quad.
+  // the texture border without inflating the quad. Not 0: `o = e.padding ? e.padding : 4`
+  // reads 0 as absent and gives you 4.
   padding: 2,
   fontColor: "black",
   bold: true,
@@ -71,15 +86,41 @@ const LABEL_STYLE = {
   inFront: false,
 };
 
-// Angstroms of scene the label's texture spans vertically. A carbon at sphere scale 0.25 is
-// 0.85 A across, so this makes the number about as tall as the atom it names.
-const LABEL_WORLD_HEIGHT = 0.8;
-// Angstroms the anchor sits in front of its own sphere's surface. This is also the depth by
-// which a neighbour must beat this atom to occlude the label, so: as small as will do.
+// A bold digit's cap height as a fraction of fontSize. The bundle sizes the label canvas
+// `1.25 * fontSize + 2 * padding` tall and puts the baseline at `fontSize + padding`, so
+// roughly half of that texture is leading and descender air no glyph ever touches — which
+// is why sizing a label by its canvas height (what LABEL_WORLD_HEIGHT used to do) describes
+// something the eye cannot see. Measured from the three faces `sans-serif:bold` resolves to
+// on Linux: Noto Sans Bold 0.725, DejaVu Sans Bold 0.742, Liberation Sans Bold 0.698. The
+// ±3% spread moves a label by well under a pixel.
+const LABEL_CAP_EM = 0.72;
+
+// Angstroms of scene a digit's cap spans — the ink, not the texture. The yardstick is the
+// hydrogen blob, the smallest sphere the viewer draws: 2 * vdwRadii.H * SPHERE_SCALE =
+// 2 * 1.2 * 0.25 = 0.600 A. At 0.36 a one-character label's ink box is 0.29 x 0.36 A, whose
+// 0.46 A diagonal fits inside that blob with room to spare, so the number reads as smaller
+// than the smallest atom it can name instead of sitting on it like a lid.
+const LABEL_INK_HEIGHT = 0.36;
+
+// Angstroms of scene the ink may span horizontally before the label is scaled down to fit.
+// Height alone cannot bound a label, and that is the whole of the "too big" complaint: the
+// quad's width is the text's, so at a fixed height "H10" drew 1.11 A across — 1.85 hydrogen
+// blobs — while "1" drew 0.33 A. One carbon blob (2 * 1.7 * 0.25 = 0.850 A) is the budget,
+// which binds only on the three-character strings `element` mode emits and leaves every
+// one- and two-character label sized by height alone.
+const LABEL_INK_WIDTH = 0.85;
+
+// Angstroms the anchor sits in front of its own sphere's surface, along the ray to the
+// camera. This is also the depth by which a neighbour must beat this atom to occlude the
+// label, so: as small as will do.
 const LABEL_CLEARANCE = 0.15;
-// A 32 px texture blurs past ~4x and shimmers below ~0.35x.
-const LABEL_SCALE_MIN = 0.35;
-const LABEL_SCALE_MAX = 4;
+
+// Legibility bounds on the drawn ink, in CSS pixels — a bound on what is seen, not on the
+// scale factor. The old LABEL_SCALE_MIN/MAX were multiples of the texture's height, so they
+// silently meant a different on-screen size the moment fontSize moved. These are the same
+// two limits at today's texture: 0.35 * 0.72 * 32 = 8.1 px and 4 * 0.72 * 32 = 92 px.
+const LABEL_INK_MIN_PX = 8;
+const LABEL_INK_MAX_PX = 96;
 
 // index.html calls this from x-data. Biome reads one file at a time and cannot see
 // the page; tests/test_gui_assets.py checks that wiring, in both directions.
@@ -850,7 +891,25 @@ function builder() {
         const host = document.getElementById("viewer");
         if (!host) return;
         if (!this._gl) {
-          this._gl = lib.createViewer(host, { backgroundColor: "white" });
+          // `antialias` is not the geometry-smoothing flag it reads as. The bundle renders
+          // the scene into its own framebuffer and then blits it with one of two shaders —
+          // `this._antialias ? screenaa : screen` — and `screenaa` is an FXAA pass. FXAA
+          // finds high-contrast edges and redistributes pixels along them, which is exactly
+          // the wrong treatment for black bold glyphs on white: it is what turns the numbers
+          // uneven and blocky. The labels are in that pass, because the depth-tested sprites
+          // are drawn before renderFrameBuffertoScreen().
+          //
+          // Turning it off costs nothing here and `upscale` is why. The GLViewer constructor
+          // defaults `antialias` to true and the Renderer then defaults `upscale` to whatever
+          // `antialias` is, so dropping one silently drops the other; passing it explicitly
+          // keeps the backing store at >= 2 device pixels per CSS pixel. That 2x supersample
+          // is what actually smooths the sphere and stick silhouettes on an ordinary display,
+          // and `screen` is a straight 1:1 texture fetch that leaves the glyphs alone.
+          this._gl = lib.createViewer(host, {
+            backgroundColor: "white",
+            antialias: false,
+            upscale: true,
+          });
           // The only camera hook in the bundle. It fires from inside show(), *after*
           // renderer.render(), so what it writes reaches the screen one show() later —
           // hence the second show() here, and hence the guard, because that show()
@@ -903,7 +962,7 @@ function builder() {
     async mountViewerFor(text) {
       await this.mountViewer({ force: true });
       if (!this._gl) return;
-      this._gl.removeAllLabels();
+      this.discardLabels();
       this._gl.removeAllModels();
       this._model = this._gl.addModel(text, "xyz");
       this._gl.setStyle({}, { stick: { radius: 0.12 }, sphere: { scale: 0.25 } });
@@ -939,15 +998,32 @@ function builder() {
       this.drawLabels();
     },
 
+    // Take every label off the viewer and free what it holds. One method, because the two
+    // halves have to happen together and in this order: removeAllLabels() detaches the
+    // sprites and renders once, and only then is it safe to delete the textures they were
+    // drawing with. It does not free them itself — it splices its array and leaves every
+    // Label, its SpriteMaterial, its GL texture and its backing canvas alive — so without
+    // this a session that opens ten structures keeps the labels of all ten.
+    //
+    // Clearing `_atomLabels` is the other half. It used to be left set when the viewer was
+    // emptied, which meant every camera move for the rest of the session re-sized and
+    // re-pushed sprites that were no longer in the scene, and forced one extra full show()
+    // on a blank canvas to do it.
+    discardLabels() {
+      if (!this._gl) return;
+      const stale = this._gl.labels.slice();
+      this._gl.removeAllLabels();
+      for (const label of stale) label.dispose();
+      this._atomLabels = [];
+      this._labelViewKey = "";
+    },
     // The cell and the atom labels, redrawn together. They are one operation because
     // removeAllLabels() takes the a/b/c corner labels addUnitCell adds down with the atom
     // ones — so clearing atom numbering would silently remove a periodic structure's box.
     // Cheap enough to call on every change: it relabels an existing model, nothing refetches.
     drawLabels() {
       if (!this._gl || !this._model) return;
-      this._atomLabels = [];
-      this._labelViewKey = "";
-      this._gl.removeAllLabels();
+      this.discardLabels();
       // No branch of our own for periodic vs molecular: 3Dmol draws a box only when the
       // extended XYZ carried a Lattice="…", and nothing when it did not.
       this._gl.addUnitCell(this._model);
@@ -978,7 +1054,15 @@ function builder() {
           label.sprite.material.depthWrite = false;
           this._atomLabels.push({
             sprite: label.sprite,
-            height: label.canvas.height,
+            // The ink's size in texels, not the canvas's. setContext() gives the canvas
+            // `1.25 * fontSize + 2 * padding` of height and `measureText(text) + 2 * padding`
+            // of width (borderThickness is forced to 0 when showBackground is false), so the
+            // glyphs own LABEL_CAP_EM * fontSize of the first and all but the padding of the
+            // second. Sizing off these is what lets one budget bound the height and another
+            // bound the width — the canvas box could only ever express the height, which is
+            // why a three-character label used to sprawl.
+            inkHeight: LABEL_CAP_EM * LABEL_STYLE.fontSize,
+            inkWidth: Math.max(1, label.canvas.width - 2 * LABEL_STYLE.padding),
             anchor: { x: atom.x, y: atom.y, z: atom.z },
             // Its own radius, not a flat margin: the push is also the depth a neighbour has
             // to beat to occlude this label, so it should be as small as will clear.
@@ -997,12 +1081,21 @@ function builder() {
     // Float writes only. SpritePlugin re-reads sprite.scale and the sprite's matrix on every
     // frame, so nothing here touches a canvas or uploads a texture. The rebuild route —
     // setLabelStyle() with a larger fontSize — would cost a backing-store reallocation, a
-    // rasterise and a texImage2D per label per frame, and setContext() does not dispose what
-    // it replaces, so it would leak a GL texture per label per frame as well.
+    // rasterise and a texImage2D per label per frame, which is why it is not taken. It would
+    // not leak: setLabelStyle() calls dispose() before setContext(), and Texture.dispose()
+    // dispatches the event the renderer registered deleteTexture against. A bare setContext()
+    // is the one that leaks, and nothing here calls it.
     _syncLabels() {
       if (!this._gl || !this._atomLabels.length) return false;
       const view = this._gl.getView(); // [x, y, z, zoom, qx, qy, qz, qw]
-      const key = [view[3], view[4], view[5], view[6], view[7], this._gl.HEIGHT].join("|");
+      // The whole view, not a chosen subset of it. view[0..2] is modelGroup.position, and it
+      // used to be left out on the grounds that panning slides the model and the camera
+      // together — true, and enough, while every anchor was pushed along one shared view
+      // axis, because a pan cannot turn that axis. It is not enough for a push along each
+      // atom's own ray: panning changes where the camera sits relative to each atom, so a
+      // pan that returned early here would leave every label on the ray it wanted before the
+      // pan — 4.4 px off its atom at the default zoom, the very error the ray push removes.
+      const key = `${view.join("|")}|${this._gl.HEIGHT}`;
       if (key === this._labelViewKey) return false;
       this._labelViewKey = key;
 
@@ -1028,16 +1121,49 @@ function builder() {
       const perAngstrom =
         this._gl.HEIGHT / (2 * distance * Math.tan((Math.PI / 360) * this._gl.fov));
 
+      // The camera, in the coordinates the anchors are written in. Labels hang off
+      // modelGroup, which carries only the translation view[0..2]; rotationGroup carries the
+      // whole rotation R and the translation (0, 0, view[3]); and the camera itself never
+      // moves from (0, 0, CAMERA_Z). Setting R*(C + t) + (0,0,view[3]) equal to that gives
+      // C = distance*n - t, reusing the n above — which is R transposed applied to +z, i.e.
+      // the direction of the camera, not of the push.
+      const cx = nx * distance - view[0];
+      const cy = ny * distance - view[1];
+      const cz = nz * distance - view[2];
+
       for (const entry of this._atomLabels) {
+        // Fit the ink box inside both budgets, then hold it between the legibility bounds.
+        // Two budgets, because one number cannot bound a box whose width is the text's.
         const k = Math.min(
-          LABEL_SCALE_MAX,
-          Math.max(LABEL_SCALE_MIN, (LABEL_WORLD_HEIGHT * perAngstrom) / entry.height),
+          LABEL_INK_MAX_PX / entry.inkHeight,
+          Math.max(
+            LABEL_INK_MIN_PX / entry.inkHeight,
+            Math.min(
+              (LABEL_INK_HEIGHT * perAngstrom) / entry.inkHeight,
+              (LABEL_INK_WIDTH * perAngstrom) / entry.inkWidth,
+            ),
+          ),
         );
         entry.sprite.scale.set(k, k, 1);
+
+        // Along this atom's own ray to the camera, never along a shared axis. The sprite
+        // shader projects the anchor and divides by w before it adds the quad's corners, so
+        // every point on the line from the eye through an atom lands on the same pixel: move
+        // the anchor along that line and the label stays exactly on its atom, at every
+        // orientation and zoom. Pushing along the view axis instead leaves x and y untouched
+        // in eye space while shortening the depth, which under the perspective divide throws
+        // the label radially outward — nothing at the centre of the pane, most at the edge,
+        // and swinging around as the structure turns. That is the drift, and this is its
+        // exact cure, not an approximation of one.
+        const dx = cx - entry.anchor.x;
+        const dy = cy - entry.anchor.y;
+        const dz = cz - entry.anchor.z;
+        const ray = Math.hypot(dx, dy, dz) || 1;
+        const step = entry.push / ray;
         entry.sprite.position.set(
-          entry.anchor.x + nx * entry.push,
-          entry.anchor.y + ny * entry.push,
-          entry.anchor.z + nz * entry.push,
+          entry.anchor.x + dx * step,
+          entry.anchor.y + dy * step,
+          entry.anchor.z + dz * step,
         );
       }
       return true;
@@ -1074,7 +1200,7 @@ function builder() {
         }
         await this.mountViewer();
         if (!this._gl) return;
-        this._gl.removeAllLabels();
+        this.discardLabels();
         this._gl.removeAllModels();
         this._model = this._gl.addModel(data.text, "xyz");
         this._gl.setStyle({}, { stick: { radius: 0.12 }, sphere: { scale: 0.25 } });
@@ -1221,7 +1347,7 @@ function builder() {
       // reads as the new workflow's answer.
       if (this._gl) {
         this._gl.stopAnimate();
-        this._gl.removeAllLabels();
+        this.discardLabels();
         this._gl.removeAllModels();
         // Detached with the models it points at. drawLabels() guards on `_model`, so
         // leaving it set meant choosing a numbering on the now-blank canvas re-labelled —
