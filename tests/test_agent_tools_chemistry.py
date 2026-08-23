@@ -630,6 +630,109 @@ def test_list_structures_says_run_it_first_rather_than_offering_nothing(tmp_path
         agent_tools.list_structures(str(_write_config(tmp_path, {"step": 1, "engine": "orca"})), 1)
 
 
+def test_a_structure_file_is_read_on_its_own_periodic_cell_and_all(tmp_path: Path):
+    """No config, no step, no cache — the question is only "what is in this file".
+
+    ASE reads about ninety formats and most are periodic, so this is the first path in
+    ChemRefine that produces a structure with a cell: the pipeline accepts only ``.xyz``, a
+    directory or a SMILES ``.csv``, no engine parser captures a cell, and the cache stores
+    symbols and positions. Viewing a periodic file is not computing on one.
+    """
+    from ase.build import bulk
+
+    bulk("Si", "diamond", a=5.43).write(tmp_path / "POSCAR", format="vasp")
+    bulk("NaCl", "rocksalt", a=5.64).write(tmp_path / "salt.cif")
+    (tmp_path / "water.xyz").write_text("1\nseed\nO 0 0 0\n", encoding="utf-8")
+
+    for name, formula, periodic in [
+        ("POSCAR", "Si2", True),
+        ("salt.cif", "ClNa", True),
+        ("water.xyz", "O", False),
+    ]:
+        served = agent_tools.read_structure_file(str(tmp_path / name))
+        assert (served["formula"], served["periodic"]) == (formula, periodic)
+        assert served["format"] == "extxyz"
+        # The cell reaches the viewer as Lattice="…", which is what makes it draw a box.
+        assert ('Lattice="' in served["text"]) is periodic
+
+
+def test_a_dropped_file_is_read_from_its_contents_and_its_name(tmp_path: Path):
+    """A file dropped on the page is on the *browser's* machine, not the server's.
+
+    Over a forwarded port those are different machines, so there is no path to read — only
+    contents and a basename. The name still decides the parser: ``POSCAR`` and ``.cif`` are
+    not guessable from a first line.
+    """
+    from ase.build import bulk
+
+    bulk("Si", "diamond", a=5.43).write(tmp_path / "POSCAR", format="vasp")
+    text = (tmp_path / "POSCAR").read_text(encoding="utf-8")
+    served = agent_tools.read_structure_text("POSCAR", text)
+    assert served["formula"] == "Si2"
+    assert served["periodic"] is True
+    assert served["path"] == "POSCAR"  # what the user called it, not where it was staged
+
+    # The same bytes under a name ASE cannot place are refused, rather than guessed at.
+    with pytest.raises(ConfigError, match="cannot read a structure"):
+        agent_tools.read_structure_text("notes.txt", text)
+
+
+def test_a_dropped_name_never_becomes_part_of_a_path(tmp_path: Path):
+    """That string came from a browser, and a browser is not a trusted source of paths.
+
+    ``../../../etc/POSCAR`` must name the staged file and nothing else. It is the basename
+    or nothing, and the staging directory is one this process made and then removes.
+    """
+    from ase.build import bulk
+
+    bulk("Si", "diamond", a=5.43).write(tmp_path / "POSCAR", format="vasp")
+    text = (tmp_path / "POSCAR").read_text(encoding="utf-8")
+    # Directories stripped, the filename kept: still a POSCAR, read as one.
+    for hostile in ("../../../etc/POSCAR", "/etc/POSCAR", "etc/../POSCAR"):
+        assert agent_tools.read_structure_text(hostile, text)["path"] == "POSCAR"
+
+    # And the names that are not filenames at all. `Path("..").name` is `".."` — pathlib
+    # never claimed to sanitize — which resolved to the *parent* of the staging directory
+    # and crashed on writing to a directory. They fall back to a name with no format to
+    # guess, so the refusal is about the format and nothing has been written anywhere.
+    for degenerate in ("..", ".", "", "a/.."):
+        with pytest.raises(ConfigError, match="cannot read a structure from structure"):
+            agent_tools.read_structure_text(degenerate, text)
+
+
+def test_a_structure_file_read_refuses_what_it_cannot_show(tmp_path: Path):
+    """Each refusal names the file and what was wrong, never a traceback.
+
+    The size ceiling is the one worth stating: ASE will read a multi-gigabyte trajectory
+    into memory, synchronously, inside a request.
+    """
+    with pytest.raises(ConfigError, match="not a file"):
+        agent_tools.read_structure_file(str(tmp_path / "nothing.xyz"))
+    with pytest.raises(ConfigError, match="not a file"):
+        agent_tools.read_structure_file(str(tmp_path))  # a directory is not a structure
+
+    (tmp_path / "junk.xyz").write_text("this is not a structure\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="cannot read a structure"):
+        agent_tools.read_structure_file(str(tmp_path / "junk.xyz"))
+
+    (tmp_path / "empty.xyz").write_text("0\nnothing\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="holds no atoms"):
+        agent_tools.read_structure_file(str(tmp_path / "empty.xyz"))
+
+    huge = tmp_path / "huge.xyz"
+    huge.write_bytes(b"x" * (agent_tools._MAX_STRUCTURE_BYTES + 1))
+    with pytest.raises(ConfigError, match="not a trajectory"):
+        agent_tools.read_structure_file(str(huge))
+    with pytest.raises(ConfigError, match="not a trajectory"):
+        agent_tools.read_structure_text("huge.xyz", "x" * (agent_tools._MAX_STRUCTURE_BYTES + 1))
+
+
+def test_a_multi_frame_file_shows_its_last_frame(tmp_path: Path):
+    """A trajectory's last frame is its result — as every other reader here takes the last."""
+    (tmp_path / "two.xyz").write_text("1\nfirst\nN 0 0 0\n1\nsecond\nO 0 0 0\n", encoding="utf-8")
+    assert agent_tools.read_structure_file(str(tmp_path / "two.xyz"))["formula"] == "O"
+
+
 def test_analyze_mode_names_a_real_mode_range(tmp_path: Path):
     with pytest.raises(ConfigError, match="out of range"):
         agent_tools.analyze_mode(str(_freq_tree(tmp_path)), 1, "0", mode_index=99)

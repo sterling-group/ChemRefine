@@ -120,6 +120,8 @@ function builder() {
       // Off by default: labels on a 60-atom structure are a wall of text, and the pane's
       // first job is to show the molecule. See atomLabel() for what the modes mean.
       labels: "off",
+      // Whether a drag is currently over the drop zone — the only feedback a drag gets.
+      dragging: false,
     },
     _gl: null, // the 3Dmol viewer instance, once the bundle is in
     _model: null, // the drawn model — labels and the unit cell both attach to it
@@ -774,11 +776,12 @@ function builder() {
       }
       return this._glLib;
     },
-    async mountViewer() {
+    // `force` is for the callers that have something to draw regardless of a workflow —
+    // a dropped or opened file. Without it, opening the tab with nothing saved would fetch
+    // half a megabyte of viewer to render a sentence about saving first.
+    async mountViewer({ force = false } = {}) {
       if (this.staticMode) return; // the playground has no server to ask for geometry
-      // With nothing saved the pane says "save the workflow first" and can show nothing, so
-      // opening the tab there would fetch half a megabyte of viewer to render that sentence.
-      if (!this.savedPath) return;
+      if (!force && !this.savedPath) return;
       try {
         const lib = await this.loadViewerLib();
         const host = document.getElementById("viewer");
@@ -795,6 +798,62 @@ function builder() {
         this.viewer.note = `the 3D viewer could not start: ${err.message || err}`;
       }
     },
+    // ---------------- a single structure file, on its own ----------------
+    // Deliberately not loadConfigFrom(): that opens a *workflow* and brings its tree with
+    // it — steps, cache, seeds, the Run panel. This answers "what is in this file" and
+    // stops, which is why it neither touches savedPath nor disturbs whatever workflow is
+    // open. The two doors look similar and must never become one.
+    async showStructureFile(body, label) {
+      this.viewer.busy = true;
+      this.viewer.note = "";
+      try {
+        if (this._gl) this._gl.stopAnimate();
+        const data = await this.api("POST", "/api/structure-file", body);
+        if (!data) {
+          this.viewer.note = `could not read ${label} — see the message below`;
+          return;
+        }
+        await this.mountViewerFor(data.text);
+        // The formula and the atom count, because a file that parsed into the wrong thing
+        // (a unit cell where a supercell was meant) looks fine and reads wrong.
+        const cell = data.periodic ? ", periodic" : "";
+        this.viewer.note = `${data.path} — ${data.formula}, ${data.atoms} atoms${cell}`;
+      } finally {
+        this.viewer.busy = false;
+      }
+    },
+    // Draw extended-XYZ text that came from anywhere. The tail showStructure() shares,
+    // minus the animation: a file on disk carries no mode to play.
+    async mountViewerFor(text) {
+      await this.mountViewer({ force: true });
+      if (!this._gl) return;
+      this._gl.removeAllLabels();
+      this._gl.removeAllModels();
+      this._model = this._gl.addModel(text, "xyz");
+      this._gl.setStyle({}, { stick: { radius: 0.12 }, sphere: { scale: 0.25 } });
+      this.drawLabels();
+      this._gl.zoomTo();
+    },
+    // A file dropped from the user's own machine, which over a forwarded port is not the
+    // machine this server runs on: the browser hands over contents and a basename, never
+    // a path, so the contents are what travel.
+    async dropStructure(event) {
+      this.viewer.dragging = false;
+      const file = event.dataTransfer?.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      await this.showStructureFile({ name: file.name, text }, file.name);
+    },
+    // A file on the machine the server runs on, through the same browser modal everything
+    // else uses — which is also the only way to reach a cluster's own files from here.
+    async openStructureFile() {
+      await this.openBrowse({
+        mode: "pick",
+        title: "Open a structure file…",
+        onPick: (path) => this.showStructureFile({ path }, path),
+      });
+    },
+
     // The cell and the atom labels, redrawn together. They are one operation because
     // removeAllLabels() takes the a/b/c corner labels addUnitCell adds down with the atom
     // ones — so clearing atom numbering would silently remove a periodic structure's box.

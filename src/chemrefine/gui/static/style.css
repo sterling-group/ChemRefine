@@ -441,3 +441,32 @@ button.tab.on {
 .recents {
   flex-wrap: wrap;
 }
+
+/* The Structure pane's file drop target. Dashed, so it reads as a place to put something
+   rather than a panel; the .over state is the only feedback a drag gets. */
+.dropzone {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  border: 1px dashed currentColor;
+  border-radius: 6px;
+  padding: 0.55rem 0.7rem;
+  margin-bottom: 0.6rem;
+  opacity: 0.75;
+  /* It is a <button>, so its own chrome has to go before it can look like a zone. */
+  width: 100%;
+  text-align: left;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.dropzone:hover,
+.dropzone:focus-visible {
+  opacity: 1;
+}
+.dropzone.over {
+  opacity: 1;
+  border-style: solid;
+}

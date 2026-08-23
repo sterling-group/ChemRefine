@@ -1677,6 +1677,146 @@ def test_the_one_opener_still_carries_what_each_mode_needs():
     assert result["opened"] is True
 
 
+_FILE_HARNESS = """
+  const b = builder();
+  b.chatAvailability = () => {};
+  const drawn = [];
+  const gl = {
+    stopAnimate(){}, removeAllLabels(){}, removeAllModels(){},
+    addModel: (text) => { drawn.push(text); return { addPropertyLabels(){} }; },
+    setStyle(){}, addUnitCell(){}, mapAtomProperties(){}, zoomTo(){}, render(){}, resize(){},
+  };
+  // The REAL mountViewer runs, with only the bundle and the host element stubbed: it is
+  // the method that refuses to mount without a saved workflow, and stubbing it out is how
+  // a test stops exercising the very guard a dropped file has to get past.
+  b.loadViewerLib = async () => ({ createViewer: () => gl });
+  global.document = { getElementById: () => ({}) };
+  const posted = [];
+  b.api = async (m, u, body) => {
+    posted.push([u, body]);
+    return body && (body.path || body.text)
+      ? { path: body.path || body.name, format: "extxyz", text: "2\\nsi\\nSi 0 0 0\\n",
+          atoms: 2, formula: "Si2", periodic: true }
+      : null;
+  };
+"""
+
+
+def test_a_dropped_file_is_drawn_without_a_workflow_being_open():
+    """A file dropped on the page is on the browser's machine, so contents travel, not a path.
+
+    And nothing about the workflow moves: this is "what is in this file", not "open this
+    project". The two doors look alike, and conflating them is how one silently does the
+    other.
+    """
+    out = _run_component_in_node(
+        _FILE_HARNESS
+        + """
+      const file = { name: "POSCAR", text: async () => "SI POSCAR TEXT" };
+      b.viewer.dragging = true;                    // as a dragover would have left it
+      await b.dropStructure({ dataTransfer: { files: [file] } });
+      console.log(JSON.stringify({
+        posted, drawn, note: b.viewer.note, savedPath: b.savedPath,
+        dragging: b.viewer.dragging, step: b.viewer.step,
+      }));
+    """
+    )
+    result = json.loads(out)
+    [[url, body]] = result["posted"]
+    assert url == "/api/structure-file"
+    assert body == {"name": "POSCAR", "text": "SI POSCAR TEXT"}  # contents, never a path
+    assert result["drawn"] == ["2\nsi\nSi 0 0 0\n"]
+    # The formula and count, because a file that parsed into the wrong thing looks fine.
+    assert "Si2" in result["note"] and "2 atoms" in result["note"]
+    assert "periodic" in result["note"]  # so a drawn box is expected, not a surprise
+    # No workflow was opened: savedPath and the step selector are untouched.
+    assert result["savedPath"] is None
+    assert result["step"] == "input"
+    assert result["dragging"] is False  # the drag state is released on drop
+
+
+def test_a_drop_that_could_not_be_read_says_so_in_the_pane():
+    """The pane's own line, not only #flash — the same lesson as the mode failure."""
+    out = _run_component_in_node(
+        _FILE_HARNESS
+        + """
+      b.api = async () => null;
+      await b.dropStructure({ dataTransfer: { files: [{ name: "notes.txt",
+                                                        text: async () => "hello" }] } });
+      const failed = { note: b.viewer.note, busy: b.viewer.busy, drawn: drawn.length };
+      b.viewer.dragging = true;
+      await b.dropStructure({ dataTransfer: { files: [] } });   // a drag with no file
+      const releasedAnyway = b.viewer.dragging;
+      console.log(JSON.stringify({ failed, after: b.viewer.note, releasedAnyway }));
+    """
+    )
+    result = json.loads(out)
+    assert "notes.txt" in result["failed"]["note"]
+    assert result["failed"]["busy"] is False  # released even on the failing path
+    assert result["failed"]["drawn"] == 0
+    assert result["after"] == result["failed"]["note"]  # an empty drop changes nothing
+    # The drag highlight is released even when the drop carried nothing to read, or the
+    # zone stays lit with no way to turn it off short of dragging something else over it.
+    assert result["releasedAnyway"] is False
+
+
+def test_opening_a_structure_file_goes_through_the_picker_not_the_workflow_door():
+    """The server's own disk — the only way to reach a cluster's files from this page.
+
+    It borrows the browse modal in `pick` mode, so a typed path works here too; what it
+    must not borrow is `open` mode, which loads a workflow.
+    """
+    out = _run_component_in_node(
+        _FILE_HARNESS
+        + """
+      b.api = async (m, u, body) => {
+        posted.push([u, body]);
+        if (u.startsWith("/api/browse")) return { path: "/x", parent: "/", entries: [] };
+        return { path: body.path, format: "extxyz", text: "1\\nsi\\nSi 0 0 0\\n",
+                 atoms: 1, formula: "Si", periodic: false };
+      };
+      await b.openStructureFile();
+      const mode = b.browse.mode;
+      await b.browse.onPick("/on/the/server/POSCAR");
+      console.log(JSON.stringify({
+        mode, title: b.browse.title, posted: posted.map((p) => p[0]),
+        body: posted[posted.length - 1][1], savedPath: b.savedPath, note: b.viewer.note,
+      }));
+    """
+    )
+    result = json.loads(out)
+    assert result["mode"] == "pick"  # never "open": that door loads a workflow
+    assert result["title"] == "Open a structure file…"
+    assert result["posted"][-1] == "/api/structure-file"
+    assert result["body"] == {"path": "/on/the/server/POSCAR"}
+    assert result["savedPath"] is None  # still no workflow open
+    assert "Si" in result["note"]
+
+
+def test_the_viewer_canvas_is_not_behind_the_saved_workflow_gate():
+    """A dropped file needs no workflow, so it must not need a workflow's container either.
+
+    ``#viewer`` lived inside ``x-show="!staticMode && savedPath"``, so with nothing saved
+    the element mountViewer looks up did not exist: the file read fine on the server and
+    then drew nowhere, silently, because the mount returns at its ``!host`` guard. The
+    step and structure controls *do* belong behind that gate — they name things only a
+    workflow has — which is why this is a structural check and not a rule about the pane.
+    """
+    html = INDEX.read_text(encoding="utf-8")
+    at = html.index('id="viewer"')
+    # Walk the open/close tags before it and keep the ones still open: any div gated on
+    # savedPath among them is an ancestor that would hide the canvas.
+    depth_stack: list[str] = []
+    for match in re.finditer(r"<div\b([^>]*)>|</div>", html[:at]):
+        if match.group(0) == "</div>":
+            if depth_stack:
+                depth_stack.pop()
+        else:
+            depth_stack.append(match.group(1))
+    gated = [attrs for attrs in depth_stack if "savedPath" in attrs]
+    assert gated == [], f"#viewer sits inside a savedPath-gated element: {gated}"
+
+
 def test_field_specs_carry_the_schema_bounds_and_default():
     """The spec a number input renders from: bounds for the spinner, default to step from.
 

@@ -458,8 +458,25 @@
         The 3D view reads structures from the run tree, so it needs the local
         <code>chemrefine gui</code>.
       </p>
+      <!-- A single file, drawn on its own: no workflow, no step, no run tree. Separate
+           from the header's Open…, which loads a workflow and brings its whole tree with
+           it. Offered whether or not a workflow is open, because "what is in this file"
+           is a question that comes before there is a workflow at all. -->
+      <!-- A <button>, not a div with a click handler: the whole zone is the target, and a
+           button is reachable by keyboard and announced as clickable without any of that
+           being re-implemented here. The drag handlers live on it too, so there is one
+           element to hit either way. -->
+      <button type="button" x-show="!staticMode" class="dropzone"
+              :class="viewer.dragging ? 'over' : ''"
+              @dragover.prevent="viewer.dragging = true"
+              @dragleave.prevent="viewer.dragging = false"
+              @drop.prevent="dropStructure($event)"
+              @click="openStructureFile()">
+        Drop a structure file here, or click to open one —
+        <span class="muted">anything ASE reads, periodic cells included</span>
+      </button>
       <p class="muted" x-show="!staticMode && !savedPath">
-        Save the workflow first — structures are read from its output tree.
+        Steps and seeds come from a saved workflow — save one, or drop a file above.
       </p>
       <div x-show="!staticMode && savedPath">
         <div class="row">
@@ -503,13 +520,20 @@
             <option value="element" :selected="viewer.labels === 'element'">C1, H1, H2 …</option>
           </select>
         </div>
-        <div id="viewer"></div>
-        <p class="muted" x-text="viewer.busy ? 'reading…' : viewer.note"></p>
         <p class="muted" x-show="viewer.step !== 'input' && !modeChoices().length">
           This step has no frequency data, so it offers no modes. A GOAT search or an MLIP
           screen computes none; a frequency step cached before ChemRefine kept the whole
           table needs <code>rebuild-cache</code>.
         </p>
+      </div>
+      <!-- The canvas and the status line sit OUTSIDE the savedPath gate, unlike the step
+           and structure controls above them, which need a workflow to name anything. A
+           dropped file needs neither — and while #viewer lived inside that gate there was
+           no element to mount into with nothing saved, so a dropped file read fine on the
+           server and then drew nowhere. -->
+      <div x-show="!staticMode">
+        <div id="viewer"></div>
+        <p class="muted" x-text="viewer.busy ? 'reading…' : viewer.note"></p>
       </div>
     </div>
 

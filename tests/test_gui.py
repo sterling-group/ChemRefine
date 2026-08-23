@@ -702,6 +702,43 @@ def test_structure_list_offers_what_the_step_holds(client: Any, tmp_path: Path):
     assert missing.get_json()["exit_code"] == 2
 
 
+def test_a_structure_file_opens_on_its_own_with_no_workflow_at_all(client: Any, tmp_path: Path):
+    """The second door into the Structure pane, and it must stay a separate one.
+
+    ``/api/load`` opens a *workflow* and brings its tree; this answers "what is in this
+    file". Two ways in, because a file reaches the page two ways: a path on the machine the
+    server runs on, and the contents of a file dropped from the machine the browser runs on
+    — over a forwarded port those are different computers, and a browser hands over a
+    basename and bytes, never a path.
+    """
+    from ase.build import bulk
+
+    bulk("Si", "diamond", a=5.43).write(tmp_path / "POSCAR", format="vasp")
+    poscar = (tmp_path / "POSCAR").read_text(encoding="utf-8")
+
+    by_path = _post(client, "/api/structure-file", {"path": str(tmp_path / "POSCAR")})
+    assert by_path.status_code == 200
+    assert by_path.get_json()["formula"] == "Si2"
+    # A periodic file is the first thing in ChemRefine that carries a cell at all, and the
+    # viewer draws its box from exactly this.
+    assert by_path.get_json()["periodic"] is True
+    assert 'Lattice="' in by_path.get_json()["text"]
+
+    dropped = _post(client, "/api/structure-file", {"name": "POSCAR", "text": poscar})
+    assert dropped.status_code == 200
+    assert dropped.get_json()["formula"] == "Si2"
+    # Named as the user knows it, not as the temporary file it was staged at.
+    assert dropped.get_json()["path"] == "POSCAR"
+
+    # Neither is a 400 that says what to send, not a traceback.
+    assert _post(client, "/api/structure-file", {}).status_code == 400
+    assert "path" in _post(client, "/api/structure-file", {}).get_json()["error"]
+    # And a library refusal keeps the documented shape, like every other endpoint here.
+    gone = _post(client, "/api/structure-file", {"path": str(tmp_path / "nope.xyz")})
+    assert gone.status_code == 400
+    assert gone.get_json()["exit_code"] == 2
+
+
 @pytest.mark.parametrize("mode", ["7a", "two", "1.5", " "])
 def test_a_mode_number_that_is_not_one_is_a_400(client: Any, tmp_path: Path, mode: str):
     """The mode box is free text, and a bare ``int()`` on it is a 500.

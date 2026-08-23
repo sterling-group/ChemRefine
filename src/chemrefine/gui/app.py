@@ -286,6 +286,30 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
             )
         )
 
+    @app.post("/api/structure-file")
+    def structure_file() -> Any:
+        """One structure file, drawn on its own — no workflow, no step, no run tree.
+
+        Two ways in, because a file reaches this page two ways. ``path`` is a file on the
+        machine the server runs on, chosen through the browser. ``name`` + ``text`` is a
+        file *dropped* on the page, which over a forwarded port lives on the other machine
+        entirely and has no path here — browsers hand over contents and a basename, never
+        a path, which is also why this is a POST.
+
+        Deliberately not ``/api/load``: that reads a workflow and brings its whole tree,
+        and conflating "show me this molecule" with "open this project" is how one of them
+        ends up doing the other by accident.
+        """
+        payload = request.get_json(force=True)
+        path = payload.get("path")
+        if path:
+            return jsonify(agent_tools.read_structure_file(path))
+        if "text" not in payload:
+            return jsonify({"error": "send either a path, or a name and text"}), 400
+        return jsonify(
+            agent_tools.read_structure_text(payload.get("name") or "structure", payload["text"])
+        )
+
     @app.post("/api/summary")
     def summary() -> Any:
         """The dry-run-style execution summary for a saved config."""

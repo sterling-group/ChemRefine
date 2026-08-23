@@ -166,6 +166,29 @@ A SMILES `input:` (a `.csv`) is the one source the pane refuses: seeding from it
 the molecules and writes them into the output tree, which a read has no business doing.
 Use `build_structures` to write `.xyz` seeds and point `input:` at those, or just run it.
 
+## Opening a structure file on its own
+
+The pane also takes a **single file**, with no workflow involved: drop one onto the
+Structure tab, or use its **Open a file…** button for a file on the machine the server
+runs on. This is deliberately a different door from the header's **Open…**, which loads a
+workflow and brings its whole tree — steps, cache, seeds, the Run panel. This one answers
+"what is in this file" and stops there; it leaves whatever workflow you have open alone.
+
+Reading is ASE's, so it takes about ninety formats — `.xyz`, `.cif`, VASP `POSCAR`,
+Quantum Espresso, CASTEP, FHI-aims, LAMMPS, and the rest. Most of those are **periodic**,
+and those carry a cell, so this is the one path in ChemRefine that produces a structure
+with a `Lattice=` line and the box the viewer draws from it.
+
+!!! note "Viewing a periodic file is not computing on one"
+    Nothing here makes such a structure runnable. `input:` still accepts only an `.xyz`
+    file, a directory, or a SMILES `.csv`; no engine parser captures a cell, and the step
+    cache stores symbols and positions. The pipeline is molecular today.
+
+A dropped file is read from its **contents**, because over a forwarded port your browser
+and the server are different machines and the browser hands over a basename and bytes,
+never a path. A multi-frame file shows its last frame, as every other reader here takes
+the last.
+
 Structures are served as extended XYZ, which carries a `Lattice="…"` line for a structure
 with a cell; the viewer draws the box when one is there. ChemRefine's own pipeline is
 molecular today — nothing in it sets a cell — so that path is groundwork rather than a

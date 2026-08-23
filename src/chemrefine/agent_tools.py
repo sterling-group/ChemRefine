@@ -705,6 +705,118 @@ def list_structures(config_path: str, step: int | str | None = None) -> dict[str
     }
 
 
+_MAX_STRUCTURE_BYTES = 8 * 1024 * 1024
+"""Ceiling on a structure file read for the viewer — a picture, not a trajectory.
+
+ASE will happily read a multi-gigabyte LAMMPS dump into memory, and this is a synchronous
+read inside a request. Eight megabytes is far past any single geometry (a 100k-atom PDB is
+under ten) and far short of a file that would take the server down with it."""
+
+
+def read_structure_file(path: str) -> dict[str, Any]:
+    """Any structure file ASE can read, as extended-XYZ text for a viewer.
+
+    Deliberately nothing to do with a workflow: no config, no step, no cache, no run tree.
+    It answers "what is in this file" and stops there, which is why it is separate from
+    :func:`get_structure` rather than another branch inside it.
+
+    ASE reads about ninety formats and most of them are periodic — CIF, VASP ``POSCAR``,
+    Quantum Espresso, CASTEP, LAMMPS, FHI-aims. Those carry a cell, and
+    :func:`chemrefine.io.extended_xyz_text` emits it as ``Lattice="…"``, so this is the
+    first path in ChemRefine that produces one at all: everything else is molecular by
+    construction (``pipeline.bootstrap`` accepts only ``.xyz``, a directory or a SMILES
+    ``.csv``, no engine parser captures a cell, and the cache stores symbols and positions).
+    **Viewing a periodic file is not computing on one** — nothing here makes such a
+    structure runnable, and the pipeline would refuse it as an ``input:``.
+
+    The last frame of a multi-frame file, matching every other reader in ChemRefine (the
+    energy, the geometry, the frequency table all take the last match): a trajectory's last
+    frame is its result.
+    """
+    target = Path(path).expanduser()
+    if not target.is_file():
+        raise ConfigError(f"not a file: {target}")
+    size = target.stat().st_size
+    if size > _MAX_STRUCTURE_BYTES:
+        raise ConfigError(
+            f"{target} is {size / 1e6:.0f} MB, past the {_MAX_STRUCTURE_BYTES / 1e6:.0f} MB "
+            "this reads — it is sized for one geometry, not a trajectory"
+        )
+    return _structure_payload(target, str(target))
+
+
+def read_structure_text(name: str, text: str) -> dict[str, Any]:
+    """The same read, for a file whose bytes the caller has but whose path is not ours.
+
+    A file dropped onto the page comes from the browser's machine, which over a forwarded
+    port is not the machine this server runs on — so there is no path to hand
+    :func:`read_structure_file`, only contents and a name. The name still matters: ASE
+    picks its parser from the filename, and ``POSCAR`` and ``.cif`` are not guessable from
+    a first line.
+
+    Written to a temporary file rather than parsed from a string, so that format detection
+    and every one of ASE's ninety readers work exactly as they do for a path — several of
+    them seek, and a few open sibling files relative to their own.
+    """
+    import tempfile
+
+    if len(text.encode("utf-8")) > _MAX_STRUCTURE_BYTES:
+        raise ConfigError(
+            f"{name} is past the {_MAX_STRUCTURE_BYTES / 1e6:.0f} MB this reads — "
+            "it is sized for one geometry, not a trajectory"
+        )
+    # The basename only: this string came from a browser, and a name like `../../etc/passwd`
+    # must not become part of a path. It names the temporary file so ASE can see the suffix,
+    # inside a directory that is ours and is then removed.
+    #
+    # `.name` alone is not that guard. It strips the directories off `../../etc/POSCAR`, but
+    # a *bare* `..` is a name to pathlib and comes back whole — which resolved to the parent
+    # of the staging directory rather than a file inside it. The three components that are
+    # not filenames are named here, rather than trusted to a helper that never claimed to
+    # sanitize anything.
+    safe = Path(name).name
+    if safe in ("", ".", ".."):
+        safe = "structure"
+    with tempfile.TemporaryDirectory() as scratch:
+        target = Path(scratch) / safe
+        target.write_text(text, encoding="utf-8")
+        return _structure_payload(target, safe)
+
+
+def _structure_payload(target: Path, shown: str) -> dict[str, Any]:
+    """Parse one structure file and shape the viewer's answer; ``shown`` is what to call it.
+
+    The name is passed separately because a dropped file's real home is the user's own
+    machine — echoing back the temporary path it was staged at would name somewhere that
+    does not exist and will not exist a moment later.
+    """
+    from ase import Atoms
+    from ase.io import read
+
+    try:
+        # `index=-1` selects one frame, so this is an Atoms; the signature says
+        # `Atoms | list[Atoms]` because the same call with a slice returns the list.
+        atoms = cast("Atoms", read(target, index=-1))
+    except Exception as e:
+        # ASE raises whatever the format's reader raises — a dozen exception types across
+        # ninety parsers, none of them documented as a set. The one thing they have in
+        # common is that the caller pointed at something ASE could not make a structure
+        # from, which is a ConfigError like every other unusable input to this module.
+        raise ConfigError(f"cannot read a structure from {shown}: {e}") from e
+    if not len(atoms):
+        raise ConfigError(f"{shown} parsed, but holds no atoms")
+    return {
+        "path": shown,
+        "format": "extxyz",
+        "text": io.extended_xyz_text(atoms),
+        "atoms": len(atoms),
+        "formula": atoms.get_chemical_formula(),
+        # Whether the viewer will draw a box, decided here rather than by the page sniffing
+        # the text it was handed.
+        "periodic": bool(atoms.cell.rank),
+    }
+
+
 def _seeds_for_reading(config: Config) -> tuple[Structure, ...]:
     """The input seeds, for a caller that is only going to look at them.
 
@@ -1032,6 +1144,7 @@ TOOLS = (
     analyze_mode,
     get_structure,
     list_structures,
+    read_structure_file,
 )
 """Every tool this module offers, in working-loop order — the one list both harnesses
 register (:mod:`chemrefine.mcp_server` and the embedded agent), living here so neither
