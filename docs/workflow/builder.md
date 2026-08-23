@@ -178,6 +178,13 @@ workflow at all. Changing it redraws what is already on screen: the view angle a
 running animation survive. Labels sit at un-displaced positions while a mode animates, so
 an animating atom swings through its own number.
 
+Numbers are drawn at a size fixed in **Angstroms**, not in pixels, so one stays the size of
+the atom it names at every zoom. That is not how the viewer draws labels by default — a
+label is a sprite whose size is fixed in screen pixels, so it would otherwise stay put while
+the molecule shrank around it — and it is why turning or zooming re-sizes them rather than
+re-drawing them. They are depth-tested too, so a number on the far side of the structure is
+hidden by the atoms in front of it, as it would be in Chemcraft.
+
 A SMILES `input:` (a `.csv`) is the one source the pane refuses: seeding from it *embeds*
 the molecules and writes them into the output tree, which a read has no business doing.
 Use `build_structures` to write `.xyz` seeds and point `input:` at those, or just run it.

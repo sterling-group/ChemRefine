@@ -23,35 +23,63 @@ const RUN_BLURBS = {
   "rebuild-nms": "redo the normal-mode resolution from the outputs on disk",
 };
 
-// How an atom label is drawn. Every value here was read out of the vendored bundle rather
-// than out of 3Dmol's docs, because the build is the authority:
+const SPHERE_SCALE = 0.25; // the sphere style both draw paths set on the model
+
+// Three facts about the vendored bundle set the shape of everything below. All three were
+// read out of the build, not out of 3Dmol's docs.
 //
-// * `bold` is the ONLY thing in the file that changes glyph weight — `fontWeight`,
-//   `fontStyle` and `strokeText` do not appear at all. It is a bare truthiness check
-//   (`e.bold&&(m="bold ")`), unlike the neighbouring keys that normalise "false", so it
-//   must be a real boolean.
-// * `alignment` defaults to `topLeft`, which is `Vector2(1,-1)` — half the label's own
-//   width and height away from the atom, in *screen* pixels. Sprite scale is hard-wired to
-//   (1,1,1) and the quad offset never passes through the projection, so labels are a fixed
-//   size on screen and that offset is a constant: it reads as the number drifting off the
-//   atom as you zoom out, because the molecule shrinks around it while the gap does not.
-//   `center` is `Vector2(0,0)`, and puts the label on the atom at every zoom.
-// * The white background is what centring costs. Black glyphs directly over 3Dmol's element
-//   colours are unreadable on N, O and dark C. The old off-centre labels were no better
-//   off — their offset is a fixed ~14x22 screen px while the sphere is scene geometry, so
-//   at working zoom they sat on it too; centring makes the overlap total, not new.
-//   Deliberately no `borderOpacity`: the bundle aliases it onto the background's own
-//   colour object, so setting it alone changes the fill's alpha.
+// 1. A label is a Sprite, and the sprite vertex shader adds the quad's corner offset AFTER
+//    its own perspective divide:
+//        finalPosition = projectionMatrix * modelViewMatrix * vec4(0,0,0,1);
+//        finalPosition /= finalPosition.w;
+//        finalPosition.xy += rotatedPosition;
+//    Only the anchor is projected, so a label is a fixed size in SCREEN pixels at every
+//    zoom, and no stylespec key changes that — the molecule shrinks around a number that
+//    does not. `sizeAttenuation` looks like the knob and is not: SpriteMaterial writes
+//    `scaleByViewPort` and SpritePlugin reads `scaleByViewport`, so that branch is dead
+//    code. The one live multiplier is `sprite.scale`, re-read every frame — see
+//    `_syncLabels()`, which is why the labels track the zoom at all.
+//
+// 2. `inFront: false` is what lets a label hide behind the atoms in front of it: the key
+//    becomes the material's `depthTest`, and the depth-tested sprite pass runs immediately
+//    after the opaque geometry, so the spheres are already in the depth buffer. But the
+//    same shader gives all four corners ONE depth — the anchor's — while the sphere writes
+//    its front SURFACE depth. A label left on the nucleus therefore loses LEQUAL to its own
+//    sphere, which is nearer by a full radius (0.425 A for carbon at scale 0.25), and gets
+//    a circular bite punched through it by the very atom it names. So each anchor is pushed
+//    toward the camera by that atom's own radius. That direction is a function of the view,
+//    which is why the sync below runs on rotation and not only on zoom.
+//
+// 3. Dropping the background box costs the halo outright: the bundle never calls
+//    strokeText, shadowBlur or shadowColor, and `borderThickness` strokes the background
+//    box rather than the glyphs. Legibility now rests on the glyphs being bold and roughly
+//    atom-sized. The tightest case is nitrogen, #3050F8 against black at 3.6:1 — the
+//    large-text floor, which these now are.
 const LABEL_STYLE = {
-  fontSize: 12,
+  // The texture's resolution, not its size on screen — LABEL_WORLD_HEIGHT sets that.
+  // Chosen so the per-frame scale sits near 1 at a working zoom, because the bundle builds
+  // no mipmaps and its filter fallback is LINEAR whatever the texture asks, so magnifying
+  // and minifying this texture both cost quality.
+  fontSize: 32,
+  // With no background this is bare transparent margin; 2 keeps the antialiased edges off
+  // the texture border without inflating the quad.
+  padding: 2,
   fontColor: "black",
   bold: true,
   alignment: "center",
-  showBackground: true,
-  backgroundColor: "white",
-  backgroundOpacity: 0.65,
-  inFront: true,
+  showBackground: false,
+  inFront: false,
 };
+
+// Angstroms of scene the label's texture spans vertically. A carbon at sphere scale 0.25 is
+// 0.85 A across, so this makes the number about as tall as the atom it names.
+const LABEL_WORLD_HEIGHT = 0.8;
+// Angstroms the anchor sits in front of its own sphere's surface. This is also the depth by
+// which a neighbour must beat this atom to occlude the label, so: as small as will do.
+const LABEL_CLEARANCE = 0.15;
+// A 32 px texture blurs past ~4x and shimmers below ~0.35x.
+const LABEL_SCALE_MIN = 0.35;
+const LABEL_SCALE_MAX = 4;
 
 // index.html calls this from x-data. Biome reads one file at a time and cannot see
 // the page; tests/test_gui_assets.py checks that wiring, in both directions.
@@ -68,6 +96,11 @@ function builder() {
     execRows: [],
     stepKeys: [], // stable per-card identity; see rekeySteps()
     _uid: 0,
+    // One entry per drawn label: its sprite, its texture height, the atom it names, and how
+    // far in front of that atom it has to sit to clear the atom's own sphere.
+    _atomLabels: [],
+    _labelSync: false, // guards the re-entrant show() the view-change callback issues
+    _labelViewKey: "", // the camera the labels are currently sized and pushed for
     yamlText: "",
     rawEdit: false,
     // Which panel each column shows. Dotted (`tabs.left`), not two flat scalars, and read
@@ -818,6 +851,19 @@ function builder() {
         if (!host) return;
         if (!this._gl) {
           this._gl = lib.createViewer(host, { backgroundColor: "white" });
+          // The only camera hook in the bundle. It fires from inside show(), *after*
+          // renderer.render(), so what it writes reaches the screen one show() later —
+          // hence the second show() here, and hence the guard, because that show()
+          // re-enters this very callback and would otherwise recurse without end.
+          this._gl.setViewChangeCallback(() => {
+            if (this._labelSync) return;
+            this._labelSync = true;
+            try {
+              if (this._syncLabels()) this._gl.show();
+            } finally {
+              this._labelSync = false;
+            }
+          });
         }
         // Both paths, every time: a viewer built while the tab was hidden still has to be
         // told the container has a size now.
@@ -899,6 +945,8 @@ function builder() {
     // Cheap enough to call on every change: it relabels an existing model, nothing refetches.
     drawLabels() {
       if (!this._gl || !this._model) return;
+      this._atomLabels = [];
+      this._labelViewKey = "";
       this._gl.removeAllLabels();
       // No branch of our own for periodic vs molecular: 3Dmol draws a box only when the
       // extended XYZ carried a Lattice="…", and nothing when it did not.
@@ -908,14 +956,91 @@ function builder() {
         // climbing across every one that has been shown.
         const counts = {};
         const mode = this.viewer.labels;
-        // mapAtomProperties writes onto each atom; addPropertyLabels then reads that one
-        // property, so all five modes go through a single labelling call.
-        this._gl.mapAtomProperties((atom) => {
-          atom.properties.tag = atomLabel(atom, mode, counts);
-        });
-        this._model.addPropertyLabels("tag", {}, LABEL_STYLE);
+        for (const atom of this._model.selectedAtoms({})) {
+          const text = atomLabel(atom, mode, counts);
+          if (text === null) continue;
+          // One stylespec object per label, and that is not fussiness. addPropertyLabels()
+          // builds a single spec and rewrites its `.position` for each atom in turn, while
+          // Label keeps the spec by reference (`this.stylespec = t || {}`) — so every label
+          // it makes shares the LAST atom's coordinates. Invisible until something calls
+          // setContext() again, which the bundle does by itself when a lost WebGL context
+          // comes back, and then the whole numbering piles onto one atom.
+          const label = this._gl.addLabel(
+            text,
+            { ...LABEL_STYLE, position: { x: atom.x, y: atom.y, z: atom.z } },
+            undefined,
+            true, // no show() per label: _syncLabels() and the render() below are the redraw
+          );
+          // Not a stylespec key — setContext() forwards only map, useScreenCoordinates,
+          // alignment, depthTest and screenOffset — so the material is written directly.
+          // Without it every antialiased glyph edge writes depth and bites a hole in
+          // whatever draws after it.
+          label.sprite.material.depthWrite = false;
+          this._atomLabels.push({
+            sprite: label.sprite,
+            height: label.canvas.height,
+            anchor: { x: atom.x, y: atom.y, z: atom.z },
+            // Its own radius, not a flat margin: the push is also the depth a neighbour has
+            // to beat to occlude this label, so it should be as small as will clear.
+            push: this._model.getRadiusFromStyle(atom, { scale: SPHERE_SCALE }) + LABEL_CLEARANCE,
+          });
+        }
       }
+      this._syncLabels();
       this._gl.render();
+    },
+
+    // Put every label at the size and depth this camera calls for, and say whether anything
+    // moved — so the many show() calls that are not camera moves (removeAllLabels, addLabel,
+    // setBackgroundColor, a resize to the same size) cost nothing.
+    //
+    // Float writes only. SpritePlugin re-reads sprite.scale and the sprite's matrix on every
+    // frame, so nothing here touches a canvas or uploads a texture. The rebuild route —
+    // setLabelStyle() with a larger fontSize — would cost a backing-store reallocation, a
+    // rasterise and a texImage2D per label per frame, and setContext() does not dispose what
+    // it replaces, so it would leak a GL texture per label per frame as well.
+    _syncLabels() {
+      if (!this._gl || !this._atomLabels.length) return false;
+      const view = this._gl.getView(); // [x, y, z, zoom, qx, qy, qz, qw]
+      const key = [view[3], view[4], view[5], view[6], view[7], this._gl.HEIGHT].join("|");
+      if (key === this._labelViewKey) return false;
+      this._labelViewKey = key;
+
+      // Toward the camera, in the coordinates the anchors are written in. modelGroup carries
+      // only a translation and rotationGroup carries the whole rotation, so this is the third
+      // ROW of the matrix the view quaternion builds — R transposed applied to the world +z
+      // the camera looks down, which is the inverse rotation because R is orthonormal.
+      // Unit length by construction, so it needs no normalising.
+      //
+      // The factors of two are not decoration. Without them the vector is still exactly
+      // right for the identity and for any rotation about z, and wrong everywhere else —
+      // zero for a half-turn about y — so labels would sit correctly until the moment the
+      // structure was turned, and then be swallowed by their own atoms.
+      const [qx, qy, qz, qw] = view.slice(4);
+      const nx = 2 * (qx * qz - qw * qy);
+      const ny = 2 * (qy * qz + qw * qx);
+      const nz = 1 - 2 * (qx * qx + qy * qy);
+
+      // CSS pixels per Angstrom at the model plane. The projection's vertical half-angle is
+      // fov/2 — makePerspective takes tan(fov/2) — and HEIGHT is already CSS pixels, because
+      // the device pixel ratio cancels out of the sprite's own size formula.
+      const distance = Math.max(1, this._gl.CAMERA_Z - view[3]);
+      const perAngstrom =
+        this._gl.HEIGHT / (2 * distance * Math.tan((Math.PI / 360) * this._gl.fov));
+
+      for (const entry of this._atomLabels) {
+        const k = Math.min(
+          LABEL_SCALE_MAX,
+          Math.max(LABEL_SCALE_MIN, (LABEL_WORLD_HEIGHT * perAngstrom) / entry.height),
+        );
+        entry.sprite.scale.set(k, k, 1);
+        entry.sprite.position.set(
+          entry.anchor.x + nx * entry.push,
+          entry.anchor.y + ny * entry.push,
+          entry.anchor.z + nz * entry.push,
+        );
+      }
+      return true;
     },
     async showStructure() {
       if (this.playgroundRefuses("the structure view reads a run tree, so it")) return;

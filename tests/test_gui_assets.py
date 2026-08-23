@@ -177,6 +177,51 @@ check is the only thing distinguishing a truncated download from a working one. 
 directory makes forgetting impossible; the assertion below keeps the glob honest."""
 
 
+# The 3Dmol surface drawLabels() drives, as one stub rather than six hand-rolled ones.
+# `atoms` is what the model reports; every label made is captured in `labels`. Sprite scale
+# and position are recorded per write, because the whole point of _syncLabels() is that it
+# writes them on every camera change without rebuilding anything.
+_VIEWER_STUB = """
+  const labels = [];
+  const makeSprite = () => ({
+    material: {},
+    scale: { x: 1, y: 1, set(a, b) { this.x = a; this.y = b; } },
+    position: { x: 0, y: 0, z: 0, set(a, b, c) { this.x = a; this.y = b; this.z = c; } },
+  });
+  const viewerStub = (atoms, calls = []) => {
+    const model = {
+      selectedAtoms: () => atoms,
+      // Every element the pane can meet is either in 3Dmol's vdW table or falls back to
+      // its default sphere radius; 0.425 is carbon at sphere scale 0.25.
+      getRadiusFromStyle: (atom, style) => ({ C: 1.7, H: 1.2, O: 1.52 }[atom.elem] ?? 1.5)
+                                            * style.scale,
+    };
+    let view = [0, 0, 0, -150, 0, 0, 0, 1];
+    return {
+      model,
+      labels,
+      gl: {
+        HEIGHT: 400, fov: 20, CAMERA_Z: 150,
+        getView: () => view,
+        setView(v) { view = v; },
+        removeAllLabels() { labels.length = 0; calls.push("clear"); },
+        addUnitCell() { calls.push("cell"); },
+        addLabel(text, style) {
+          calls.push("label:" + text);
+          const label = { text, style, sprite: makeSprite(), canvas: { height: 44 } };
+          labels.push(label);
+          return label;
+        },
+        show() { calls.push("show"); },
+        render() { calls.push("render"); },
+        setViewChangeCallback(fn) { this.onView = fn; },
+        stopAnimate(){}, removeAllModels(){}, setStyle(){}, zoomTo(){}, resize(){},
+      },
+    };
+  };
+"""
+
+
 @pytest.mark.parametrize("filename", [*OURS, *VENDORED])
 def test_the_javascript_parses(filename: str):
     """A syntax error here blanks the entire GUI — no button, no pane, no message.
@@ -1577,36 +1622,74 @@ def test_turning_labels_off_does_not_take_the_unit_cell_with_them():
     ``addUnitCell``. So clearing atom numbering would quietly strip a periodic structure's
     box — which is why the cell is re-added on every relabel rather than once at draw time.
     """
-    out = _run_component_in_node("""
+    out = _run_component_in_node(
+        _VIEWER_STUB
+        + """
       const b = builder();
       b.chatAvailability = () => {};
       const calls = [];
-      b._model = { addPropertyLabels: (prop) => calls.push("label:" + prop) };
-      b._gl = {
-        removeAllLabels: () => calls.push("clear"),
-        addUnitCell: () => calls.push("cell"),
-        mapAtomProperties: (fn) => {
-          calls.push("map");
-          [{ serial: 0, elem: "C", properties: {} }].forEach(fn);
-        },
-        render: () => calls.push("render"),
-      };
+      const stub = viewerStub([{ serial: 0, elem: "C", x: 0, y: 0, z: 0 }], calls);
+      b._model = stub.model;
+      b._gl = stub.gl;
       b.viewer.labels = "one";
       b.drawLabels();
       const on = calls.splice(0);
       b.viewer.labels = "off";
       b.drawLabels();
       console.log(JSON.stringify({ on, off: calls }));
-    """)
+    """
+    )
     result = json.loads(out)
-    # Cleared, then the cell back, then the atoms labelled — in that order.
-    assert result["on"] == ["clear", "cell", "map", "label:tag", "render"]
+    # Cleared, then the cell back, then the atom labelled — in that order.
+    assert result["on"] == ["clear", "cell", "label:1", "render"]
     # And with numbering off the cell is still re-added; only the atom labels are skipped.
     assert result["off"] == ["clear", "cell", "render"]
 
 
-def test_the_label_style_is_bold_and_centred_on_the_atom():
-    """Both values were read out of the vendored bundle, and both are pinned here.
+def test_each_label_owns_its_own_position_rather_than_sharing_one():
+    """``addPropertyLabels`` hands every label the same stylespec object.
+
+    It deep-copies the spec once, then rewrites ``.position`` per atom in a loop — and
+    ``Label`` keeps that object by reference (``this.stylespec = t || {}``), re-reading
+    ``.position`` from it whenever ``setContext()`` runs again. So every label made that way
+    is holding the LAST atom's coordinates, and the whole numbering collapses onto one atom
+    the moment a lost WebGL context comes back. The explicit loop gives each its own.
+    """
+    out = _run_component_in_node(
+        _VIEWER_STUB
+        + """
+      const b = builder();
+      b.chatAvailability = () => {};
+      const atoms = [
+        { serial: 0, elem: "C", x: 0, y: 0, z: 0 },
+        { serial: 1, elem: "O", x: 1.2, y: 0, z: 0 },
+        { serial: 2, elem: "H", x: -1.1, y: 0.9, z: 0 },
+      ];
+      const stub = viewerStub(atoms);
+      b._model = stub.model;
+      b._gl = stub.gl;
+      b.viewer.labels = "element";
+      b.drawLabels();
+      console.log(JSON.stringify({
+        texts: stub.labels.map((l) => l.text),
+        anchors: stub.labels.map((l) => l.style.position),
+        shared: stub.labels[0].style === stub.labels[1].style,
+      }));
+    """
+    )
+    result = json.loads(out)
+    assert result["texts"] == ["C1", "O1", "H1"]
+    # Each label's spec carries its own atom, not the last one three times over.
+    assert result["anchors"] == [
+        {"x": 0, "y": 0, "z": 0},
+        {"x": 1.2, "y": 0, "z": 0},
+        {"x": -1.1, "y": 0.9, "z": 0},
+    ]
+    assert result["shared"] is False
+
+
+def test_the_label_style_is_bold_centred_and_behind_the_atoms_in_front_of_it():
+    """Every value here was read out of the vendored bundle, and every one is pinned.
 
     ``bold`` is the only thing in that build that changes glyph weight — ``fontWeight``,
     ``fontStyle`` and ``strokeText`` do not occur in it at all — and it is a bare truthiness
@@ -1618,38 +1701,219 @@ def test_the_label_style_is_bold_and_centred_on_the_atom():
     missing vector's components to zero — so a typo would look right and a later correct
     value could too. The literal is asserted rather than the rendering for exactly that
     reason.
+
+    ``inFront`` becomes the material's ``depthTest``, inverted: ``false`` is what lets an
+    atom in front hide the number behind it. ``true`` — which is what this drew before —
+    makes every label float over the whole molecule whatever its depth.
     """
-    out = _run_component_in_node("""
+    out = _run_component_in_node(
+        _VIEWER_STUB
+        + """
       const b = builder();
       b.chatAvailability = () => {};
-      let style = null;
-      b._model = { addPropertyLabels: (prop, sel, spec) => { style = spec; } };
-      b._gl = {
-        removeAllLabels(){}, addUnitCell(){}, render(){},
-        mapAtomProperties: (fn) => [{ serial: 0, elem: "C", properties: {} }].forEach(fn),
-      };
+      const stub = viewerStub([{ serial: 0, elem: "C", x: 0, y: 0, z: 0 }]);
+      b._model = stub.model;
+      b._gl = stub.gl;
       b.viewer.labels = "one";
       b.drawLabels();
-      console.log(JSON.stringify(style));
-    """)
-    style = json.loads(out)
+      console.log(JSON.stringify({
+        style: stub.labels[0].style,
+        depthWrite: stub.labels[0].sprite.material.depthWrite,
+      }));
+    """
+    )
+    result = json.loads(out)
+    style = result["style"]
     assert style["bold"] is True  # a boolean: `bold: "false"` renders bold in this build
     assert style["alignment"] == "center"
-    # Centring puts the glyphs over 3Dmol's element colours, where black on N, O or a dark
-    # C is unreadable — the old off-centre labels sat clear of the sphere and did not have
-    # to be. The background is what makes centring legible, so it is part of the same fact.
-    assert style["showBackground"] is True
-    assert style["backgroundColor"] == "white"
+    assert style["inFront"] is False  # depth-tested, so atoms in front occlude it
     # The bundle defaults glyphs to WHITE — `Ge(e.fontColor, e.fontOpacity, {r:255,g:255,
-    # b:255,a:1})` — so dropping this key puts white text on the white blob just added.
+    # b:255,a:1})` — so dropping this key leaves them invisible on a light background.
     assert style["fontColor"] == "black"
-    # Banded, not merely non-zero: transparent is an unreadable label and fully opaque is a
-    # disc that hides the atom it belongs to.
-    assert 0.4 <= style["backgroundOpacity"] < 1
+    # No box: it read badly, and with the glyphs now atom-sized it is not what carries them.
+    assert style["showBackground"] is False
     # The bundle aliases borderOpacity onto the background's own colour object, so setting
-    # it alone silently changes the fill's alpha. Neither border key belongs here.
-    assert "borderOpacity" not in style
-    assert "borderColor" not in style
+    # it alone silently changes the fill's alpha. No border key belongs here.
+    assert not any(key.startswith("border") for key in style)
+    # Not a stylespec key, so it is written onto the material: without it every antialiased
+    # glyph edge writes depth and bites a hole in whatever draws after it.
+    assert result["depthWrite"] is False
+
+
+def test_a_label_is_pushed_clear_of_its_own_sphere_by_that_atoms_own_radius():
+    """Depth-testing a label at the nucleus makes the atom punch a hole through its own number.
+
+    All four corners of the sprite carry ONE depth — the anchor's — because the shader adds
+    the quad offset after its own perspective divide. The sphere writes its front *surface*
+    depth, nearer than the nucleus by a full radius. With LEQUAL that is a loss everywhere
+    inside the silhouette, so the anchor is pushed toward the camera by the atom's own
+    radius: 0.425 A for carbon at sphere scale 0.25, not a flat margin, because the push is
+    also the depth a neighbour must beat to occlude the label.
+    """
+    out = _run_component_in_node(
+        _VIEWER_STUB
+        + """
+      const b = builder();
+      b.chatAvailability = () => {};
+      const atoms = [
+        { serial: 0, elem: "C", x: 0, y: 0, z: 0 },
+        { serial: 1, elem: "H", x: 2, y: 0, z: 0 },
+      ];
+      const stub = viewerStub(atoms);
+      b._model = stub.model;
+      b._gl = stub.gl;
+      b.viewer.labels = "one";
+      b.drawLabels();                              // identity view: camera looks down +z
+      // Snapshot, not a reference: _syncLabels() writes into these very objects, so
+      // reading them after the rotation below would compare the rotation with itself.
+      const snap = () => stub.labels.map((l) => ({ ...l.sprite.position }));
+      const facing = snap();
+      // Turn the molecule 180 degrees about y: "toward the camera" is now -z.
+      stub.gl.setView([0, 0, 0, -150, 0, 1, 0, 0]);
+      b._syncLabels();
+      const turned = snap();
+      // And a quarter turn about y, where the push is along -x — the case that catches a
+      // formula right in z and wrong everywhere else.
+      const s = 0.7071067811865476;
+      stub.gl.setView([0, 0, 0, -150, 0, s, 0, s]);
+      b._syncLabels();
+      const quarter = snap();
+      // And a quarter turn about x, which is the only one of the four that puts the push
+      // on +y — so all three components have now been wrong-able independently.
+      stub.gl.setView([0, 0, 0, -150, s, 0, 0, s]);
+      b._syncLabels();
+      console.log(JSON.stringify({ facing, turned, quarter, tipped: snap() }));
+    """
+    )
+    result = json.loads(out)
+    carbon, hydrogen = result["facing"]
+    # Carbon: 1.7 vdW x 0.25 + 0.15 clearance. Hydrogen: 1.2 x 0.25 + 0.15. Its own radius,
+    # so the smaller atom is pushed less and stays easier for a neighbour to hide.
+    assert carbon["z"] == pytest.approx(0.575)
+    assert hydrogen["z"] == pytest.approx(0.45)
+    assert (carbon["x"], carbon["y"]) == (0, 0)  # straight toward the camera, nowhere else
+    assert hydrogen["x"] == pytest.approx(2)  # and the atom it names has not moved
+    # Rotated to face the other way, the push follows the camera rather than staying on +z.
+    assert result["turned"][0]["z"] == pytest.approx(-0.575)
+    assert result["turned"][1]["x"] == pytest.approx(2)
+    # A quarter turn puts it on -x, so every component of the direction is exercised: a
+    # formula correct in z and wrong in x and y reads fine until the structure is turned.
+    assert result["quarter"][0]["x"] == pytest.approx(-0.575)
+    assert result["quarter"][0]["z"] == pytest.approx(0, abs=1e-9)
+    assert result["quarter"][1]["x"] == pytest.approx(2 - 0.45)
+    assert result["tipped"][0]["y"] == pytest.approx(0.575)
+    assert result["tipped"][0]["z"] == pytest.approx(0, abs=1e-9)
+
+
+def test_label_size_tracks_the_zoom_so_it_stays_the_size_of_its_atom():
+    """A sprite is a fixed size in screen pixels; the molecule is not.
+
+    The vertex shader adds the quad offset after its own perspective divide, so nothing in
+    the stylespec makes a label grow as you zoom in — it is the molecule shrinking around a
+    number that does not that reads as the number drifting loose. The one live multiplier is
+    `sprite.scale`, which the sprite plugin re-reads every frame, so the size is recomputed
+    from the camera rather than the label rebuilt: no canvas, no texture upload.
+    """
+    out = _run_component_in_node(
+        _VIEWER_STUB
+        + """
+      const b = builder();
+      b.chatAvailability = () => {};
+      const stub = viewerStub([{ serial: 0, elem: "C", x: 0, y: 0, z: 0 }]);
+      b._model = stub.model;
+      b._gl = stub.gl;
+      b.viewer.labels = "one";
+      b.drawLabels();
+      const sprite = stub.labels[0].sprite;
+      const at = (zoom) => { stub.gl.setView([0, 0, 0, zoom, 0, 0, 0, 1]); b._syncLabels();
+                             return sprite.scale.x; };
+      console.log(JSON.stringify({
+        // distance = CAMERA_Z - zoom, so bigger is closer: 10 A, 20 A, 50 A away.
+        near: at(140), mid: at(130), far: at(100),
+        // Way past the band a 32 px texture survives, both ways.
+        clampedIn: at(148), clampedOut: at(-100000),
+      }));
+    """
+    )
+    result = json.loads(out)
+    # Closer camera, bigger number — the whole point, and monotonic in between.
+    assert result["near"] > result["mid"] > result["far"]
+    # Clamped at both ends: a 32 px texture blurs magnified and shimmers minified.
+    assert result["clampedIn"] == pytest.approx(4.0)
+    assert result["clampedOut"] == pytest.approx(0.35)
+
+
+def test_the_labels_are_resized_once_per_camera_move_and_not_once_per_show():
+    """``show()`` is called by far more than camera moves, and each one re-enters the hook.
+
+    ``removeAllLabels``, ``addLabel``, ``addUnitCell``, ``setBackgroundColor`` and ``resize``
+    all call ``show()``, and the view-change callback fires from inside it. Without the view
+    key every one of those would walk all the labels; without the re-entrancy guard the
+    second ``show()`` this issues would call the callback again, for ever.
+    """
+    out = _run_component_in_node(
+        _VIEWER_STUB
+        + """
+      const b = builder();
+      b.chatAvailability = () => {};
+      const stub = viewerStub([{ serial: 0, elem: "C", x: 0, y: 0, z: 0 }]);
+      b._model = stub.model;
+      b._gl = stub.gl;
+      b.viewer.labels = "one";
+      b.drawLabels();
+      const first = b._syncLabels();               // the camera has not moved since the draw
+      stub.gl.setView([0, 0, 0, -80, 0, 0, 0, 1]);
+      const moved = b._syncLabels();
+      const again = b._syncLabels();               // same camera twice: no work owed
+      console.log(JSON.stringify({ first, moved, again }));
+    """
+    )
+    assert json.loads(out) == {"first": False, "moved": True, "again": False}
+
+
+def test_the_view_change_hook_redraws_once_and_cannot_recurse():
+    """The callback fires *after* the render it belongs to, so what it writes is a frame late.
+
+    That is why it issues a second ``show()`` — and why it must guard, because that ``show()``
+    re-enters the callback. Unguarded this is an unbounded recursion on every mouse move.
+    """
+    out = _run_component_in_node(
+        _VIEWER_STUB
+        + """
+      const b = builder();
+      b.chatAvailability = () => {};
+      const stub = viewerStub([{ serial: 0, elem: "C", x: 0, y: 0, z: 0 }]);
+      let shows = 0, entries = 0;
+      stub.gl.show = () => { shows++; stub.gl.onView(); };   // as the real show() does
+      b.loadViewerLib = async () => ({ createViewer: () => stub.gl });
+      global.document = { getElementById: () => ({}) };
+      b.savedPath = "/p/input.yaml";
+      await b.mountViewer({ force: true });
+      b._model = stub.model;
+      b.viewer.labels = "one";
+      b.drawLabels();
+      // Count how many times the callback's body actually runs, not just how many redraws
+      // it causes: the guard's whole job is to stop the show() it issues from re-entering
+      // it, and the view-key check would mask an unbounded recursion as merely one extra.
+      const real = b._syncLabels.bind(b);
+      b._syncLabels = () => { entries++; return real(); };
+      const before = shows;
+      stub.gl.setView([0, 0, 0, -80, 0, 0, 0, 1]);
+      stub.gl.onView();                            // the camera moved
+      const afterMove = shows - before;
+      const entriesForOneMove = entries;
+      stub.gl.onView();                            // fires again on the same camera
+      console.log(JSON.stringify({ afterMove, afterIdle: shows - before, entriesForOneMove }));
+    """
+    )
+    result = json.loads(out)
+    # Exactly one extra redraw for the move: the labels' new size needs a frame to appear.
+    assert result["afterMove"] == 1
+    # And a callback on an unmoved camera owes nothing, so it costs no redraw at all.
+    assert result["afterIdle"] == 1
+    # One entry, not two: the show() above re-enters the callback and the guard turns it
+    # back at the door. Without it that nesting is bounded only by the view-key check.
+    assert result["entriesForOneMove"] == 1
 
 
 def test_choosing_a_numbering_selects_exactly_one_and_redraws_nothing_else():
@@ -1726,17 +1990,16 @@ def test_a_numbering_chosen_before_anything_is_drawn_applies_when_a_file_arrives
     something later. It does because every draw path ends in drawLabels() — but nothing
     asserted that, so a draw path that forgot it would silently ignore the choice.
     """
-    out = _run_component_in_node("""
+    out = _run_component_in_node(
+        _VIEWER_STUB
+        + """
       const b = builder();
       b.chatAvailability = () => {};
       b.savedPath = null;                          // no workflow whatsoever
-      const drawn = [];
-      const gl = {
-        stopAnimate(){}, removeAllLabels(){}, removeAllModels(){}, setStyle(){},
-        addUnitCell(){}, zoomTo(){}, render(){}, resize(){},
-        addModel: () => ({ addPropertyLabels: (p, s, spec) => drawn.push(spec) }),
-        mapAtomProperties: (fn) => [{ serial: 0, elem: "C", properties: {} }].forEach(fn),
-      };
+      const stub = viewerStub([{ serial: 0, elem: "C", x: 0, y: 0, z: 0 }]);
+      const drawn = stub.labels;
+      const gl = stub.gl;
+      gl.addModel = () => stub.model;
       b.loadViewerLib = async () => ({ createViewer: () => gl });
       global.document = { getElementById: () => ({}) };
 
@@ -1744,7 +2007,8 @@ def test_a_numbering_chosen_before_anything_is_drawn_applies_when_a_file_arrives
       const beforeAnyDraw = drawn.length;
       await b.mountViewerFor("1\\nc\\nC 0 0 0\\n");   // now a dropped file arrives
       console.log(JSON.stringify({ beforeAnyDraw, drawn: drawn.length, labels: b.viewer.labels }));
-    """)
+    """
+    )
     result = json.loads(out)
     assert result["beforeAnyDraw"] == 0  # nothing to label yet, and nothing pretended there was
     assert result["labels"] == "one"  # the choice survived having nowhere to apply
