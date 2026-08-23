@@ -122,6 +122,27 @@ const LABEL_CLEARANCE = 0.15;
 const LABEL_INK_MIN_PX = 8;
 const LABEL_INK_MAX_PX = 96;
 
+// A label is the one thing in this scene that has a resolution of its own. A sphere is
+// solved per pixel by its fragment shader — `lensqr = dot(mapping,mapping); if (lensqr >
+// rsqr) discard; z = sqrt(rsqr - lensqr)` — so it is exactly as sharp as the framebuffer at
+// any zoom, forever. A label is a <canvas> rasterised once into a Texture and then sampled
+// with a filter this build forces to LINEAR, with no mipmaps anywhere in it. Draw it larger
+// than the texels it was drawn with and you are interpolating: that is the blur, and it is
+// the whole of the difference between crisp atoms and soft numbers.
+//
+// So the texture is re-rasterised whenever it drifts out of this band of device pixels per
+// texel. Not a fixed fontSize: the size that would be right spans about 16x across the
+// pane sizes, display densities and structure sizes this has to serve, so no constant can
+// be right for more than one of them. The band is wide enough that an ordinary zoom crosses
+// it once or twice rather than continuously, and biased high because magnification is what
+// is actually visible — below 1 a label is mildly soft, above it the glyphs go blocky.
+const LABEL_TEXELS_LO = 0.55;
+const LABEL_TEXELS_HI = 1.3;
+// Rasterisation bounds. The floor keeps a legible glyph when a label is tiny on screen; the
+// ceiling bounds the texture memory of a large structure zoomed right in.
+const LABEL_FONT_MIN = 16;
+const LABEL_FONT_MAX = 192;
+
 // index.html calls this from x-data. Biome reads one file at a time and cannot see
 // the page; tests/test_gui_assets.py checks that wiring, in both directions.
 // biome-ignore lint/correctness/noUnusedVariables: the page is the caller
@@ -1053,7 +1074,9 @@ function builder() {
           // whatever draws after it.
           label.sprite.material.depthWrite = false;
           this._atomLabels.push({
+            label,
             sprite: label.sprite,
+            fontSize: LABEL_STYLE.fontSize,
             // The ink's size in texels, not the canvas's. setContext() gives the canvas
             // `1.25 * fontSize + 2 * padding` of height and `measureText(text) + 2 * padding`
             // of width (borderThickness is forced to 0 when showBackground is false), so the
@@ -1085,6 +1108,42 @@ function builder() {
     // not leak: setLabelStyle() calls dispose() before setContext(), and Texture.dispose()
     // dispatches the event the renderer registered deleteTexture against. A bare setContext()
     // is the one that leaks, and nothing here calls it.
+    // Redraw one label's texture at `fontSize` texels and take its new measurements.
+    //
+    // Mirrors what the bundle's own setLabelStyle() does — remove, dispose, restyle,
+    // setContext, add — minus its per-label show(), because the caller redraws once for all
+    // of them. The dispose is not optional: setContext() replaces the canvas, the material
+    // and the Texture and frees none of them, so a rebuild without it leaks a GL texture per
+    // label per rebuild. setContext() also resets the sprite's scale and position, which the
+    // caller sets immediately afterwards, and builds a fresh material, so depthWrite has to
+    // be re-applied here.
+    _rasteriseLabel(entry, fontSize) {
+      const { label } = entry;
+      this._gl.modelGroup.remove(label.sprite);
+      label.dispose();
+      label.stylespec = { ...label.stylespec, fontSize };
+      label.setContext();
+      this._gl.modelGroup.add(label.sprite);
+      label.sprite.material.depthWrite = false;
+      entry.fontSize = fontSize;
+      entry.inkHeight = LABEL_CAP_EM * fontSize;
+      entry.inkWidth = Math.max(1, label.canvas.width - 2 * LABEL_STYLE.padding);
+    },
+
+    // The scale that fits this label's ink inside both budgets and the legibility bounds.
+    _labelScale(entry, perAngstrom) {
+      return Math.min(
+        LABEL_INK_MAX_PX / entry.inkHeight,
+        Math.max(
+          LABEL_INK_MIN_PX / entry.inkHeight,
+          Math.min(
+            (LABEL_INK_HEIGHT * perAngstrom) / entry.inkHeight,
+            (LABEL_INK_WIDTH * perAngstrom) / entry.inkWidth,
+          ),
+        ),
+      );
+    },
+
     _syncLabels() {
       if (!this._gl || !this._atomLabels.length) return false;
       const view = this._gl.getView(); // [x, y, z, zoom, qx, qy, qz, qw]
@@ -1131,19 +1190,29 @@ function builder() {
       const cy = ny * distance - view[1];
       const cz = nz * distance - view[2];
 
+      // Device pixels the renderer actually puts on screen per CSS pixel. Read off the
+      // renderer rather than off `window`, because `upscale` holds it at two or more and
+      // that is what the label texture is really being stretched across.
+      const dpr = this._gl.getRenderer().devicePixelRatio || 1;
+
       for (const entry of this._atomLabels) {
         // Fit the ink box inside both budgets, then hold it between the legibility bounds.
         // Two budgets, because one number cannot bound a box whose width is the text's.
-        const k = Math.min(
-          LABEL_INK_MAX_PX / entry.inkHeight,
-          Math.max(
-            LABEL_INK_MIN_PX / entry.inkHeight,
-            Math.min(
-              (LABEL_INK_HEIGHT * perAngstrom) / entry.inkHeight,
-              (LABEL_INK_WIDTH * perAngstrom) / entry.inkWidth,
-            ),
-          ),
-        );
+        let k = this._labelScale(entry, perAngstrom);
+
+        // One texel per device pixel is a sharp label; anything else is a resampled one.
+        // Re-rasterise when it has drifted out of the band, at the size it is actually being
+        // drawn — this is the only thing that makes a label as crisp as the spheres beside
+        // it, which have no texture to outgrow.
+        const texels = k * dpr;
+        if (texels > LABEL_TEXELS_HI || texels < LABEL_TEXELS_LO) {
+          const wanted = Math.round(entry.fontSize * texels);
+          const fontSize = Math.min(LABEL_FONT_MAX, Math.max(LABEL_FONT_MIN, wanted));
+          if (fontSize !== entry.fontSize) {
+            this._rasteriseLabel(entry, fontSize);
+            k = this._labelScale(entry, perAngstrom);
+          }
+        }
         entry.sprite.scale.set(k, k, 1);
 
         // Along this atom's own ray to the camera, never along a shared axis. The sprite

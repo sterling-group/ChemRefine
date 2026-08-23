@@ -186,6 +186,13 @@ re-drawing them. The size is bounded on **both** axes: a digit's ink is 0.36 Å 
 fits inside the 0.60 Å hydrogen sphere, and no label's ink may exceed 0.85 Å across, so a
 three- or four-character label is scaled down rather than sprawling over its neighbours.
 
+Each number's texture is **re-drawn at the resolution it is being shown at**, so a label
+stays as crisp as the atoms beside it. Those atoms are solved per pixel by a shader and have
+no resolution of their own; a label is a bitmap, and drawing a bitmap larger than the pixels
+it was drawn with is what makes text soft. No single texture size can serve every zoom — the
+right one spans more than a factor of ten — so it is re-drawn when it drifts, rather than
+picked once.
+
 They are depth-tested too, so a number on the far side of the structure is hidden by the
 atoms in front of it, as it would be in Chemcraft. Each one is pushed toward the camera
 along **its own line of sight** — not along a shared view axis, which under perspective

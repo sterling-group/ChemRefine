@@ -196,9 +196,9 @@ _VIEWER_STUB = """
   // widest glyph the numbering can emit. The bundle then adds 2*padding and truncates:
   // `v = g + 2.5*l + 2*o` with borderThickness forced to 0, then `canvas.width = v`.
   const ADVANCE = { C: 0.637, H: 0.765, O: 0.687, N: 0.593 };   // digits fall through to 0.572
-  const canvasFor = (text) => ({
-    width: Math.floor([...text].reduce((w, c) => w + (ADVANCE[c] ?? 0.572), 0) * 32 + 4),
-    height: 44,
+  const canvasFor = (text, fontSize) => ({
+    width: Math.floor([...text].reduce((w, c) => w + (ADVANCE[c] ?? 0.572), 0) * fontSize + 4),
+    height: 1.25 * fontSize + 4,
   });
   const viewerStub = (atoms, calls = []) => {
     const model = {
@@ -226,9 +226,26 @@ _VIEWER_STUB = """
         addLabel(text, style) {
           calls.push("label:" + text);
           const label = {
-            text, style, sprite: makeSprite(), canvas: canvasFor(text),
+            text,
+            style,
+            stylespec: style,
+            sprite: makeSprite(),
+            canvas: canvasFor(text, style.fontSize),
             disposed: false,
+            rasterised: 1,
             dispose() { this.disposed = true; calls.push("dispose:" + this.text); },
+            // The bundle's setContext() re-measures the text at the new fontSize, resizes
+            // the canvas, builds a fresh material and Texture, and resets the sprite's
+            // scale and position — every one of which the caller has to cope with.
+            setContext() {
+              this.rasterised++;
+              this.disposed = false;
+              this.canvas = canvasFor(this.text, this.stylespec.fontSize);
+              this.sprite.material = {};
+              this.sprite.scale.set(1, 1);
+              this.sprite.position.set(0, 0, 0);
+              calls.push("raster:" + this.stylespec.fontSize);
+            },
           };
           labels.push(label);
           return label;
@@ -236,6 +253,10 @@ _VIEWER_STUB = """
         show() { calls.push("show"); },
         render() { calls.push("render"); },
         setViewChangeCallback(fn) { this.onView = fn; },
+        // `upscale` holds this at two or more whatever the display is, which is what the
+        // label texture is really being stretched across.
+        getRenderer: () => ({ devicePixelRatio: 2 }),
+        modelGroup: { add(){}, remove(){} },
         stopAnimate(){}, removeAllModels(){}, setStyle(){}, zoomTo(){}, resize(){},
       },
     };
@@ -1871,8 +1892,14 @@ def test_label_size_tracks_the_zoom_so_it_stays_the_size_of_its_atom():
       b.viewer.labels = "one";
       b.drawLabels();
       const sprite = stub.labels[0].sprite;
-      const at = (zoom) => { stub.gl.setView([0, 0, 0, zoom, 0, 0, 0, 1]); b._syncLabels();
-                             return sprite.scale.x; };
+      // The drawn ink in CSS pixels — scale times the texels the glyphs occupy. Stated
+      // this way it is invariant under re-rasterisation, which changes both factors and
+      // must leave their product alone; the raw scale factor is not.
+      const at = (zoom) => {
+        stub.gl.setView([0, 0, 0, zoom, 0, 0, 0, 1]);
+        b._syncLabels();
+        return sprite.scale.y * 0.72 * stub.labels[0].stylespec.fontSize;
+      };
       console.log(JSON.stringify({
         // distance = CAMERA_Z - zoom, so bigger is closer: 10 A, 20 A, 50 A away.
         near: at(140), mid: at(130), far: at(100),
@@ -1884,12 +1911,13 @@ def test_label_size_tracks_the_zoom_so_it_stays_the_size_of_its_atom():
     result = json.loads(out)
     # Closer camera, bigger number — the whole point, and monotonic in between.
     assert result["near"] > result["mid"] > result["far"]
-    # Clamped at both ends, and the bounds are on the drawn INK rather than on the scale
-    # factor: LABEL_INK_MIN_PX / (LABEL_CAP_EM * fontSize) = 8 / (0.72 * 32) and
-    # LABEL_INK_MAX_PX / the same. Stated this way they survive a fontSize change, which
-    # multiples of the texture's height did not.
-    assert result["clampedIn"] == pytest.approx(96 / (0.72 * 32))
-    assert result["clampedOut"] == pytest.approx(8 / (0.72 * 32))
+    # Clamped at both ends, in CSS pixels of drawn ink — LABEL_INK_MAX_PX and
+    # LABEL_INK_MIN_PX. Bounding the ink rather than the scale factor is what makes these
+    # survive a change of texture resolution, which multiples of the texture's own height
+    # did not: the texture is re-rasterised as the zoom moves, and the drawn size must not
+    # move with it.
+    assert result["clampedIn"] == pytest.approx(96)
+    assert result["clampedOut"] == pytest.approx(8)
 
 
 def test_a_wide_label_is_scaled_down_so_it_never_outgrows_the_atom_it_names():
@@ -1929,7 +1957,7 @@ def test_a_wide_label_is_scaled_down_so_it_never_outgrows_the_atom_it_names():
         const perA = perAngstrom(150 - zoom);
         return stub.labels.map((l) => ({
           text: l.text,
-          inkHigh: l.sprite.scale.y * 0.72 * 32 / perA,
+          inkHigh: (l.sprite.scale.y * 0.72 * l.stylespec.fontSize) / perA,
           inkWide: l.sprite.scale.x * (l.canvas.width - 4) / perA,
         }));
       };
@@ -1966,6 +1994,80 @@ def test_a_wide_label_is_scaled_down_so_it_never_outgrows_the_atom_it_names():
         if len(row["text"]) == 2:
             assert row["inkHigh"] == pytest.approx(0.36)
             assert row["inkHigh"] * per_angstrom_far > 8
+
+
+def test_a_label_is_redrawn_at_the_resolution_it_is_being_displayed_at():
+    """The one reason a number is ever softer than the atom beside it.
+
+    A sphere is solved per pixel by its fragment shader, so it has no resolution of its own
+    and is exactly as sharp as the framebuffer at any zoom. A label is a canvas rasterised
+    into a texture and sampled with a filter this build forces to LINEAR, with no mipmaps —
+    so it has a fixed number of texels, and drawing it larger than those interpolates. A
+    fixed fontSize therefore cannot be sharp at more than one zoom, and the size that would
+    be right spans more than an order of magnitude across pane sizes and structures.
+    """
+    out = _run_component_in_node(
+        _VIEWER_STUB
+        + """
+      const b = builder();
+      b.chatAvailability = () => {};
+      const calls = [];
+      const stub = viewerStub([{ serial: 0, elem: "C", x: 0, y: 0, z: 0 }], calls);
+      b._model = stub.model;
+      b._gl = stub.gl;
+      b.viewer.labels = "one";
+      b.drawLabels();
+      const label = stub.labels[0];
+      calls.length = 0;
+      // Device pixels per texel, which is 1 for a label as sharp as the geometry. The stub's
+      // renderer reports devicePixelRatio 2, as `upscale` guarantees on any display.
+      const density = () => label.sprite.scale.y * 2;
+      const at = (zoom) => {
+        stub.gl.setView([0, 0, 0, zoom, 0, 0, 0, 1]);
+        b._syncLabels();
+        return { font: label.stylespec.fontSize, density: density(),
+                 raster: label.rasterised, depthWrite: label.sprite.material.depthWrite };
+      };
+      console.log(JSON.stringify({
+        start: { font: label.stylespec.fontSize, density: density() },
+        // 8 A, 4 A, 350 A and 20 A from the camera.
+        zoomedIn: at(142), further: at(146), zoomedOut: at(-200), back: at(130),
+        calls,
+      }));
+    """
+    )
+    result = json.loads(out)
+    for stage in ("zoomedIn", "further", "zoomedOut", "back"):
+        row = result[stage]
+        # About one texel per device pixel at any zoom — that is the whole claim. Under it a
+        # label is mildly soft; over it the glyphs go blocky. The band may only be left when
+        # the rasterisation bound is what stopped it: texture memory is finite, so at the
+        # extreme of zoom-in the ceiling binds and the label goes soft rather than the page
+        # holding a 4000 px texture per atom. Stated with the escape rather than without it,
+        # because a bare band assertion would be a claim this cannot keep.
+        at_bound = row["font"] in (16, 192)
+        assert at_bound or 0.55 - 1e-9 <= row["density"] <= 1.3 + 1e-9, (stage, row)
+        # The material is rebuilt by setContext(), so the one property that is written
+        # onto it rather than into the stylespec has to be written again — or every
+        # antialiased glyph edge starts writing depth and biting holes in what follows.
+        assert row["depthWrite"] is False, (stage, row)
+    # Zooming in raised the resolution; zooming out lowered it again rather than holding a
+    # texture far larger than anything on screen needs.
+    assert result["further"]["font"] > result["zoomedIn"]["font"] > result["start"]["font"]
+    assert result["zoomedOut"]["font"] < result["further"]["font"]
+    # And it is not re-rasterising on every camera move — the band is wide enough that an
+    # ordinary zoom crosses it a couple of times, not continuously.
+    assert result["back"]["raster"] <= 6
+    # Every rebuild frees the texture it replaces BEFORE building the next one. setContext()
+    # makes a fresh canvas, material and Texture and frees none of them, so a rebuild that
+    # skipped the dispose would leak a GL texture per label per rebuild — invisible until a
+    # session has zoomed around a few structures.
+    freed = [c for c in result["calls"] if c.startswith(("dispose:", "raster:"))]
+    assert freed, "no rebuild happened at all"
+    assert len(freed) % 2 == 0
+    for disposal, rebuild in zip(freed[0::2], freed[1::2], strict=True):
+        assert disposal.startswith("dispose:"), freed
+        assert rebuild.startswith("raster:"), freed
 
 
 def test_panning_re_pushes_the_labels_because_the_ray_moved():
