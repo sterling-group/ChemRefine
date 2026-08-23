@@ -1503,12 +1503,14 @@ def test_every_3dmol_call_names_a_method_the_vendored_bundle_has():
     assert missing == [], f"3Dmol has no such method(s): {missing}"
 
 
-def test_the_four_numbering_modes_read_the_way_each_convention_does():
-    """Three numbering conventions are in use and every one is somebody's default.
+def test_the_five_numbering_modes_read_the_way_each_convention_does():
+    """Chemcraft's "Labels on atoms" vocabulary, because it is the one people already have.
 
-    ChemRefine's own tools report file order (``analyze_mode``'s ``top_atoms[].index``),
-    papers and most GUIs count from one, and a spectroscopist reads per-element ordinals.
-    Off by one is how the atom being discussed stops being the atom on screen.
+    Its menu is Clear labels / Show atoms seq. number / Show types+numbers in group / Show
+    atoms types, and each numbering convention is somebody's default: ChemRefine's own tools
+    report file order (``analyze_mode``'s ``top_atoms[].index``), papers and most GUIs count
+    from one, and a spectroscopist reads per-element ordinals. Off by one is how the atom
+    being discussed stops being the atom on screen.
     """
     out = _run_component_in_node("""
       const atoms = [
@@ -1518,10 +1520,12 @@ def test_the_four_numbering_modes_read_the_way_each_convention_does():
       const render = (mode) => { const c = {}; return atoms.map((a) => atomLabel(a, mode, c)); };
       console.log(JSON.stringify({
         off: render("off"), zero: render("zero"), one: render("one"),
-        element: render("element"),
+        element: render("element"), symbol: render("symbol"),
         // A second render must restart the ordinals, not carry on from the first.
         again: render("element"),
-        unknown: atomLabel({ serial: 0 }, "element", {}),
+        unknownOrdinal: atomLabel({ serial: 0 }, "element", {}),
+        unknownSymbol: atomLabel({ serial: 0 }, "symbol", {}),
+        notAMode: render("numbers"),
       }));
     """)
     result = json.loads(out)
@@ -1529,8 +1533,41 @@ def test_the_four_numbering_modes_read_the_way_each_convention_does():
     assert result["zero"] == ["0", "1", "2", "3"]
     assert result["one"] == ["1", "2", "3", "4"]
     assert result["element"] == ["C1", "H1", "H2", "O1"]
+    # Deliberately not unique: it answers "what is this atom", not "which atom is this".
+    assert result["symbol"] == ["C", "H", "H", "O"]
     assert result["again"] == result["element"]  # a fresh tally each redraw
-    assert result["unknown"] == "?1"  # an element-less atom is labelled, never crashed on
+    # An element-less atom is labelled, never crashed on, in both element-bearing modes.
+    assert result["unknownOrdinal"] == "?1"
+    assert result["unknownSymbol"] == "?"
+    # A mode nothing handles must read as "no label" rather than as a label: `null` here
+    # becomes the literal text "null" on every atom once 3Dmol stringifies the property.
+    assert result["notAMode"] == [None, None, None, None]
+
+
+def test_every_numbering_the_page_offers_is_a_numbering_the_code_draws():
+    """The five blob buttons and the five branches are two lists that must not drift.
+
+    A sixth blob whose mode string nothing handles does not render nothing — 3Dmol's
+    addPropertyLabels stringifies whatever the property holds and skips only a genuinely
+    absent one, so `null` reaches the canvas as the four characters "null", on every atom.
+    Neither file can catch that alone.
+    """
+    html = INDEX.read_text(encoding="utf-8")
+    offered = re.findall(r"chooseLabels\('(\w+)'\)", html)
+    assert len(offered) == 5, f"expected five blobs, found {offered}"
+    assert offered[0] == "off", "the default has to be first — it is the one you come back to"
+
+    out = _run_component_in_node(f"""
+      const modes = {json.dumps(offered)};
+      const drawn = modes.map((m) => atomLabel({{ serial: 0, elem: "C" }}, m, {{}}));
+      console.log(JSON.stringify(drawn));
+    """)
+    drawn = json.loads(out)
+    # Only `off` draws nothing; every other blob must produce actual text.
+    assert drawn[0] is None
+    assert all(isinstance(label, str) and label for label in drawn[1:]), dict(
+        zip(offered, drawn, strict=True)
+    )
 
 
 def test_turning_labels_off_does_not_take_the_unit_cell_with_them():
@@ -1566,6 +1603,209 @@ def test_turning_labels_off_does_not_take_the_unit_cell_with_them():
     assert result["on"] == ["clear", "cell", "map", "label:tag", "render"]
     # And with numbering off the cell is still re-added; only the atom labels are skipped.
     assert result["off"] == ["clear", "cell", "render"]
+
+
+def test_the_label_style_is_bold_and_centred_on_the_atom():
+    """Both values were read out of the vendored bundle, and both are pinned here.
+
+    ``bold`` is the only thing in that build that changes glyph weight — ``fontWeight``,
+    ``fontStyle`` and ``strokeText`` do not occur in it at all — and it is a bare truthiness
+    check, so it has to be a real boolean rather than a string the way its neighbours are.
+
+    ``alignment`` matters more than it looks. Its default is ``topLeft``, i.e. ``(1, -1)``:
+    half the label's own width and height from the atom, in *screen* pixels, at every zoom.
+    Worse, an unrecognised alignment string also centres, because the renderer coerces the
+    missing vector's components to zero — so a typo would look right and a later correct
+    value could too. The literal is asserted rather than the rendering for exactly that
+    reason.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chatAvailability = () => {};
+      let style = null;
+      b._model = { addPropertyLabels: (prop, sel, spec) => { style = spec; } };
+      b._gl = {
+        removeAllLabels(){}, addUnitCell(){}, render(){},
+        mapAtomProperties: (fn) => [{ serial: 0, elem: "C", properties: {} }].forEach(fn),
+      };
+      b.viewer.labels = "one";
+      b.drawLabels();
+      console.log(JSON.stringify(style));
+    """)
+    style = json.loads(out)
+    assert style["bold"] is True  # a boolean: `bold: "false"` renders bold in this build
+    assert style["alignment"] == "center"
+    # Centring puts the glyphs over 3Dmol's element colours, where black on N, O or a dark
+    # C is unreadable — the old off-centre labels sat clear of the sphere and did not have
+    # to be. The background is what makes centring legible, so it is part of the same fact.
+    assert style["showBackground"] is True
+    assert style["backgroundColor"] == "white"
+    # The bundle defaults glyphs to WHITE — `Ge(e.fontColor, e.fontOpacity, {r:255,g:255,
+    # b:255,a:1})` — so dropping this key puts white text on the white blob just added.
+    assert style["fontColor"] == "black"
+    # Banded, not merely non-zero: transparent is an unreadable label and fully opaque is a
+    # disc that hides the atom it belongs to.
+    assert 0.4 <= style["backgroundOpacity"] < 1
+    # The bundle aliases borderOpacity onto the background's own colour object, so setting
+    # it alone silently changes the fill's alpha. Neither border key belongs here.
+    assert "borderOpacity" not in style
+    assert "borderColor" not in style
+
+
+def test_choosing_a_numbering_selects_exactly_one_and_redraws_nothing_else():
+    """Radio behaviour: clicking one blob is what unselects the previous one.
+
+    And it must call ``drawLabels()`` alone. ``drawLabels`` returns at once when nothing is
+    drawn, so choosing a numbering on an empty pane costs nothing; routing it through
+    ``mountViewer`` would fetch half a megabyte of viewer in order to label no atoms.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chatAvailability = () => {};
+      let drew = 0, mounted = 0;
+      b.drawLabels = () => { drew++; };
+      b.mountViewer = async () => { mounted++; };
+      const seen = [b.viewer.labels];
+      // The last two repeat "zero": re-clicking the lit blob must LEAVE it lit. A toggle
+      // would clear it here, which is not what "clicking one unselects the old one" means.
+      for (const mode of ["element", "zero", "zero", "off"]) {
+        b.chooseLabels(mode);
+        seen.push(b.viewer.labels);
+      }
+      console.log(JSON.stringify({ seen, drew, mounted }));
+    """)
+    result = json.loads(out)
+    # One value at a time, so the markup's :class comparison can only ever light one blob.
+    assert result["seen"] == ["off", "element", "zero", "zero", "off"]
+    assert result["drew"] == 4  # every choice redraws
+    assert result["mounted"] == 0  # and none of them fetches the bundle
+
+
+def test_each_blob_wears_the_label_the_mode_it_selects_would_draw():
+    """The blobs are self-describing only if the face and the mode agree — nothing else says so.
+
+    A `0` blob wired to `chooseLabels('one')` reads as file order and turns on one-based
+    numbering: the user's spec inverted, in the one control whose whole point is that you can
+    see what it will do without reading anything. Three bindings per blob must name the same
+    mode — the click, the highlight, and what a screen reader is told — and the face has to be
+    what that mode actually draws.
+    """
+    html = INDEX.read_text(encoding="utf-8")
+    row = html[html.index('class="blobs"') : html.index("</fieldset>")]
+    blobs = re.findall(r"<button\b(.*?)>(.*?)</button>", row, re.DOTALL)
+    assert len(blobs) == 5, f"expected five blobs, parsed {len(blobs)}"
+
+    wired = []
+    for attrs, face in blobs:
+        clicks = re.findall(r"chooseLabels\('(\w+)'\)", attrs)
+        highlights = re.findall(r":class=\"viewer\.labels === '(\w+)'", attrs)
+        pressed = re.findall(r":aria-pressed=\"viewer\.labels === '(\w+)'\"", attrs)
+        assert len(clicks) == len(highlights) == len(pressed) == 1, attrs
+        # All three name the same mode, or the lit blob is not the one that acted.
+        assert clicks == highlights == pressed, f"blob bindings disagree: {attrs}"
+        wired.append((clicks[0], face.strip()))
+
+    modes = [mode for mode, _ in wired]
+    assert modes == ["off", "zero", "one", "element", "symbol"]
+    assert len(set(modes)) == 5  # five buttons, five modes — no mode wired twice
+
+    # And the face each blob wears is exactly what its mode draws on the first carbon of a
+    # C H H O molecule. That is what makes the row readable without a legend.
+    out = _run_component_in_node(f"""
+      const modes = {json.dumps(modes)};
+      const first = {{ serial: 0, elem: "C" }};
+      console.log(JSON.stringify(modes.map((m) => atomLabel(first, m, {{}}) ?? "")));
+    """)
+    assert [face for _, face in wired] == json.loads(out)
+
+
+def test_a_numbering_chosen_before_anything_is_drawn_applies_when_a_file_arrives():
+    """The whole point of taking the control out of the gate, end to end.
+
+    The blobs are now visible with an empty canvas, so choosing one there has to mean
+    something later. It does because every draw path ends in drawLabels() — but nothing
+    asserted that, so a draw path that forgot it would silently ignore the choice.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      b.chatAvailability = () => {};
+      b.savedPath = null;                          // no workflow whatsoever
+      const drawn = [];
+      const gl = {
+        stopAnimate(){}, removeAllLabels(){}, removeAllModels(){}, setStyle(){},
+        addUnitCell(){}, zoomTo(){}, render(){}, resize(){},
+        addModel: () => ({ addPropertyLabels: (p, s, spec) => drawn.push(spec) }),
+        mapAtomProperties: (fn) => [{ serial: 0, elem: "C", properties: {} }].forEach(fn),
+      };
+      b.loadViewerLib = async () => ({ createViewer: () => gl });
+      global.document = { getElementById: () => ({}) };
+
+      b.chooseLabels("one");                       // chosen with nothing on screen
+      const beforeAnyDraw = drawn.length;
+      await b.mountViewerFor("1\\nc\\nC 0 0 0\\n");   // now a dropped file arrives
+      console.log(JSON.stringify({ beforeAnyDraw, drawn: drawn.length, labels: b.viewer.labels }));
+    """)
+    result = json.loads(out)
+    assert result["beforeAnyDraw"] == 0  # nothing to label yet, and nothing pretended there was
+    assert result["labels"] == "one"  # the choice survived having nowhere to apply
+    assert result["drawn"] == 1  # and it applied the moment there was something to apply it to
+
+
+def test_clearing_the_canvas_takes_the_labels_choice_with_no_structure_to_apply_it_to():
+    """Open… blanks the canvas; a blob click after it must not resurrect what was cleared.
+
+    ``drawLabels()`` guards on ``_model``, and ``forgetPreviousWorkflow()`` dropped the
+    models without dropping the handle to them — so choosing a numbering on the blank pane
+    re-labelled, and for a periodic file re-boxed, the structure that had just been removed.
+    """
+    out = _run_component_in_node(
+        _RELOAD_HARNESS
+        + """
+      const drawn = [];
+      b._model = { addPropertyLabels: () => drawn.push("labelled") };
+      b._gl = {
+        stopAnimate(){}, removeAllLabels(){}, removeAllModels(){}, render(){},
+        addUnitCell: () => drawn.push("boxed"),
+        mapAtomProperties: (fn) => [{ serial: 0, elem: "C", properties: {} }].forEach(fn),
+      };
+      await b.loadConfigFrom("/p/input.yaml", { reason: "open" });
+      const modelAfter = b._model;
+      b.chooseLabels("element");                   // the user picks a numbering on the blank pane
+      console.log(JSON.stringify({ modelAfter, drawn, labels: b.viewer.labels }));
+    """
+    )
+    result = json.loads(out)
+    assert result["modelAfter"] is None  # the handle went with the models it pointed at
+    assert result["drawn"] == []  # nothing relabelled, nothing re-boxed
+    assert result["labels"] == "element"  # but the choice is remembered for the next structure
+
+
+def test_the_numbering_control_is_not_behind_the_saved_workflow_gate():
+    """Numbering acts on whatever is drawn, and a dropped file needs no workflow.
+
+    The control was a dropdown inside ``x-show="!staticMode && savedPath"``, so opening a
+    single file gave you a structure you could not number — the pane's one view-only
+    operation, hidden by the one condition that has nothing to do with it. Checked the same
+    structural way the canvas is, because a comment saying so would not hold.
+    """
+    html = INDEX.read_text(encoding="utf-8")
+    # From the start of the control's OWN tag, and including it: a gate written on the
+    # fieldset hides the blobs just as surely as one on an ancestor, and it can sit on
+    # either side of the `class="blobs"` this finds the element by.
+    at = html.rindex("<", 0, html.index('class="blobs"'))
+    open_tags: list[str] = [html[at : html.index(">", at) + 1]]
+    # Every container this page nests with, not `div` alone — `<section>`, `<details>` and
+    # `<fieldset>` are all in use here, and a gate on any of them hides what it wraps.
+    names = "div|section|details|fieldset|template|main|p"
+    container = rf"<({names})\b([^>]*)>|</(?:{names})>"
+    for match in re.finditer(container, html[:at]):
+        if match.group(0).startswith("</"):
+            if open_tags:
+                open_tags.pop()
+        else:
+            open_tags.append(match.group(2))
+    gated = [attrs for attrs in open_tags if "savedPath" in attrs]
+    assert gated == [], f"the numbering blobs sit inside a savedPath-gated element: {gated}"
 
 
 def test_labels_are_dropped_before_the_model_they_are_attached_to():

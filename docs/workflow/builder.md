@@ -155,12 +155,28 @@ transient the pipeline displaces along and is deliberately not cached), so this 
 picture that goes with `analyze_mode`'s numbers — is the imaginary mode the reaction
 coordinate, or a methyl rotor.
 
-**Numbering the atoms** is one control with four settings: off, file order (`0, 1, 2`),
-one-based (`1, 2, 3`), and per-element (`C1, H1, H2`). Three conventions are in use and
-each is somebody's default — file order is what `analyze_mode` reports in
-`top_atoms[].index`, so that is the one to pick when reading its output against the
-picture. Changing it redraws what is already on screen: the view angle and any running
-animation survive. Labels sit at un-displaced positions while a mode animates.
+**Numbering the atoms** is a row of five blobs, each showing the label it draws, after
+Chemcraft's *Labels on atoms* menu — pick one and it replaces the last:
+
+| blob | draws | Chemcraft's name |
+|---|---|---|
+| *(empty)* | nothing — the default | Clear labels |
+| `0` | file order, from zero | Show atoms seq. number |
+| `1` | numbered from one | Show atoms seq. number |
+| `C1` | element and its own ordinal — `C1, H1, H2` | Show types+numbers in group |
+| `C` | the element only | Show atoms types |
+
+Each numbering convention is somebody's default, and they disagree: file order is what
+`analyze_mode` reports in `top_atoms[].index`, so that is the one to pick when reading its
+output against the picture, while papers and most GUIs count from one. `C` is deliberately
+not unique — six carbons all read `C`. It answers "what is this atom" rather than "which
+atom is this", which is the question when reading a geometry you did not build.
+
+The control sits with the viewer rather than with the step and structure pickers, so it
+works on a [file you opened or dropped](#opening-a-structure-file-on-its-own) with no
+workflow at all. Changing it redraws what is already on screen: the view angle and any
+running animation survive. Labels sit at un-displaced positions while a mode animates, so
+an animating atom swings through its own number.
 
 A SMILES `input:` (a `.csv`) is the one source the pane refuses: seeding from it *embeds*
 the molecules and writes them into the output tree, which a read has no business doing.

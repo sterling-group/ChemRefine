@@ -245,12 +245,24 @@ function shortPath(path) {
 
 /** One atom's label text for a numbering mode, or `null` when there is none.
  *
- * Four modes, because the three numbering conventions in use disagree and every one of
- * them is somebody's default: `zero` is file order as ChemRefine's own tools report it
- * (`analyze_mode`'s `top_atoms[].index`), `one` is what most chemistry GUIs and papers
- * count from, and `element` is the per-element ordinal a spectroscopist reads (`C1`, `H1`,
- * `H2`). Picking wrong by one is how the atom being discussed stops being the atom on
- * screen.
+ * Five modes, matching what Chemcraft's "Labels on atoms" menu offers, because that is the
+ * vocabulary the people reading these structures already have: `off` is its "Clear labels",
+ * `zero`/`one` its "Show atoms seq. number", `element` its "Show types+numbers in group",
+ * and `symbol` its "Show atoms types".
+ *
+ * The numbering conventions disagree and every one of them is somebody's default: `zero` is
+ * file order as ChemRefine's own tools report it (`analyze_mode`'s `top_atoms[].index`),
+ * `one` is what most chemistry GUIs and papers count from, and `element` is the per-element
+ * ordinal a spectroscopist reads (`C1`, `H1`, `H2`). Picking wrong by one is how the atom
+ * being discussed stops being the atom on screen.
+ *
+ * `symbol` is deliberately *not* unique — six carbons all read `C`. It answers "what is this
+ * atom" rather than "which atom is this", which is the question when reading an unfamiliar
+ * geometry rather than pointing at one.
+ *
+ * A mode this does not know returns `null`, and a caller must treat that as "no label":
+ * handing `null` to 3Dmol's addPropertyLabels draws the literal text `null` on every atom,
+ * because it stringifies whatever the property holds and only skips a genuinely absent one.
  *
  * `counts` is the caller's per-render tally, mutated here: the element ordinals are the
  * only mode that cannot be decided from one atom alone. One object per render, so the
@@ -268,6 +280,7 @@ function atomLabel(atom, mode, counts) {
     counts[elem] = (counts[elem] || 0) + 1;
     return `${elem}${counts[elem]}`;
   }
+  if (mode === "symbol") return atom.elem || "?";
   return null;
 }
 

@@ -510,15 +510,6 @@
           </datalist>
           <button type="button" @click="showStructure()" :disabled="viewer.busy || !viewer.step">
             Show</button>
-          <!-- Redraws what is already on screen, so it never refetches: pick a numbering
-               and the labels appear, without losing the animation or the view angle. -->
-          <select x-model="viewer.labels" @change="drawLabels()"
-                  title="Number the atoms — file order, one-based, or per element">
-            <option value="off" :selected="viewer.labels === 'off'">no numbering</option>
-            <option value="zero" :selected="viewer.labels === 'zero'">0, 1, 2 …</option>
-            <option value="one" :selected="viewer.labels === 'one'">1, 2, 3 …</option>
-            <option value="element" :selected="viewer.labels === 'element'">C1, H1, H2 …</option>
-          </select>
         </div>
         <p class="muted" x-show="viewer.step !== 'input' && !modeChoices().length">
           This step has no frequency data, so it offers no modes. A GOAT search or an MLIP
@@ -532,6 +523,42 @@
            no element to mount into with nothing saved, so a dropped file read fine on the
            server and then drew nowhere. -->
       <div x-show="!staticMode">
+        <!-- Numbering acts on whatever is drawn, so it lives out here with the canvas
+             rather than behind the saved-workflow gate above: a file opened or dropped with
+             no workflow at all is exactly the case where you want to number the atoms.
+             Redraws what is already on screen and never refetches, so the view angle and a
+             running mode animation both survive a change.
+
+             Blobs rather than a dropdown, after Chemcraft's "Labels on atoms": each button
+             shows the label it produces, so the choice is legible without being read. -->
+        <fieldset class="blobs">
+          <legend>Number the atoms</legend>
+          <button type="button" class="blob"
+                  title="no numbering" aria-label="no numbering"
+                  :class="viewer.labels === 'off' ? 'on' : ''"
+                  :aria-pressed="viewer.labels === 'off'"
+                  @click="chooseLabels('off')"></button>
+          <button type="button" class="blob"
+                  title="file order, from 0 — what analyze_mode reports"
+                  :class="viewer.labels === 'zero' ? 'on' : ''"
+                  :aria-pressed="viewer.labels === 'zero'"
+                  @click="chooseLabels('zero')">0</button>
+          <button type="button" class="blob"
+                  title="numbered from 1, as papers and most GUIs count"
+                  :class="viewer.labels === 'one' ? 'on' : ''"
+                  :aria-pressed="viewer.labels === 'one'"
+                  @click="chooseLabels('one')">1</button>
+          <button type="button" class="blob"
+                  title="element and its own ordinal — C1, H1, H2"
+                  :class="viewer.labels === 'element' ? 'on' : ''"
+                  :aria-pressed="viewer.labels === 'element'"
+                  @click="chooseLabels('element')">C1</button>
+          <button type="button" class="blob"
+                  title="element only — what each atom is, not which one"
+                  :class="viewer.labels === 'symbol' ? 'on' : ''"
+                  :aria-pressed="viewer.labels === 'symbol'"
+                  @click="chooseLabels('symbol')">C</button>
+        </fieldset>
         <div id="viewer"></div>
         <p class="muted" x-text="viewer.busy ? 'reading…' : viewer.note"></p>
       </div>

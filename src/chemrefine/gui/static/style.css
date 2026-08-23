@@ -470,3 +470,49 @@ button.tab.on {
   opacity: 1;
   border-style: solid;
 }
+
+/* The atom-numbering blobs. A fieldset because the five are one choice, not five actions;
+   its legend names the group for a screen reader and is not drawn, because each blob
+   already shows the label it produces. */
+.blobs {
+  display: flex;
+  gap: 0.3rem;
+  margin: 0 0 0.45rem;
+  padding: 0;
+  border: 0;
+}
+.blobs legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* The base button rule is an accent-filled pill, which would make all five read as things
+   to press rather than as one choice with one answer. Undone the same way button.tab
+   undoes it: quiet until chosen, filled when it is. */
+button.blob {
+  min-width: 1.9rem;
+  height: 1.9rem;
+  padding: 0 0.45rem;
+  background: var(--panel);
+  color: var(--muted);
+  /* --muted, not --line: the "no numbering" blob has no glyphs in it, so its border IS the
+     control, and --line on the page background is 1.27:1 — under the 3:1 a non-text
+     boundary needs to be seen at all. --muted is 4.09:1. */
+  border: 1px solid var(--muted);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1;
+}
+button.blob:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+button.blob.on {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}

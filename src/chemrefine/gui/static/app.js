@@ -23,6 +23,36 @@ const RUN_BLURBS = {
   "rebuild-nms": "redo the normal-mode resolution from the outputs on disk",
 };
 
+// How an atom label is drawn. Every value here was read out of the vendored bundle rather
+// than out of 3Dmol's docs, because the build is the authority:
+//
+// * `bold` is the ONLY thing in the file that changes glyph weight — `fontWeight`,
+//   `fontStyle` and `strokeText` do not appear at all. It is a bare truthiness check
+//   (`e.bold&&(m="bold ")`), unlike the neighbouring keys that normalise "false", so it
+//   must be a real boolean.
+// * `alignment` defaults to `topLeft`, which is `Vector2(1,-1)` — half the label's own
+//   width and height away from the atom, in *screen* pixels. Sprite scale is hard-wired to
+//   (1,1,1) and the quad offset never passes through the projection, so labels are a fixed
+//   size on screen and that offset is a constant: it reads as the number drifting off the
+//   atom as you zoom out, because the molecule shrinks around it while the gap does not.
+//   `center` is `Vector2(0,0)`, and puts the label on the atom at every zoom.
+// * The white background is what centring costs. Black glyphs directly over 3Dmol's element
+//   colours are unreadable on N, O and dark C. The old off-centre labels were no better
+//   off — their offset is a fixed ~14x22 screen px while the sphere is scene geometry, so
+//   at working zoom they sat on it too; centring makes the overlap total, not new.
+//   Deliberately no `borderOpacity`: the bundle aliases it onto the background's own
+//   colour object, so setting it alone changes the fill's alpha.
+const LABEL_STYLE = {
+  fontSize: 12,
+  fontColor: "black",
+  bold: true,
+  alignment: "center",
+  showBackground: true,
+  backgroundColor: "white",
+  backgroundOpacity: 0.65,
+  inFront: true,
+};
+
 // index.html calls this from x-data. Biome reads one file at a time and cannot see
 // the page; tests/test_gui_assets.py checks that wiring, in both directions.
 // biome-ignore lint/correctness/noUnusedVariables: the page is the caller
@@ -854,6 +884,15 @@ function builder() {
       });
     },
 
+    // Pick a numbering. Only drawLabels(), deliberately: it relabels a model that is already
+    // there and returns at once when there is none, so choosing a numbering with an empty
+    // pane costs nothing. Calling mountViewer() here would fetch half a megabyte of viewer
+    // in order to label no atoms.
+    chooseLabels(mode) {
+      this.viewer.labels = mode;
+      this.drawLabels();
+    },
+
     // The cell and the atom labels, redrawn together. They are one operation because
     // removeAllLabels() takes the a/b/c corner labels addUnitCell adds down with the atom
     // ones — so clearing atom numbering would silently remove a periodic structure's box.
@@ -870,20 +909,11 @@ function builder() {
         const counts = {};
         const mode = this.viewer.labels;
         // mapAtomProperties writes onto each atom; addPropertyLabels then reads that one
-        // property, so all four modes go through a single labelling call.
+        // property, so all five modes go through a single labelling call.
         this._gl.mapAtomProperties((atom) => {
           atom.properties.tag = atomLabel(atom, mode, counts);
         });
-        this._model.addPropertyLabels(
-          "tag",
-          {},
-          {
-            fontSize: 11,
-            fontColor: "black",
-            showBackground: false,
-            inFront: true,
-          },
-        );
+        this._model.addPropertyLabels("tag", {}, LABEL_STYLE);
       }
       this._gl.render();
     },
@@ -1068,6 +1098,10 @@ function builder() {
         this._gl.stopAnimate();
         this._gl.removeAllLabels();
         this._gl.removeAllModels();
+        // Detached with the models it points at. drawLabels() guards on `_model`, so
+        // leaving it set meant choosing a numbering on the now-blank canvas re-labelled —
+        // and re-boxed — the structure that had just been cleared off it.
+        this._model = null;
         this._gl.render();
       }
     },
