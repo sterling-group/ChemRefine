@@ -1177,8 +1177,12 @@ function builder() {
       // fov/2 — makePerspective takes tan(fov/2) — and HEIGHT is already CSS pixels, because
       // the device pixel ratio cancels out of the sprite's own size formula.
       const distance = Math.max(1, this._gl.CAMERA_Z - view[3]);
-      const perAngstrom =
-        this._gl.HEIGHT / (2 * distance * Math.tan((Math.PI / 360) * this._gl.fov));
+      // The projection's vertical half-angle — makePerspective takes tan(fov/2) — with
+      // HEIGHT already in CSS pixels, because the device pixel ratio cancels out of the
+      // sprite's own size formula. Hoisted because the only term that varies from one label
+      // to the next is the depth underneath it.
+      const tanHalfFov = Math.tan((Math.PI / 360) * this._gl.fov);
+      const pxPerAngstromAt = (depth) => this._gl.HEIGHT / (2 * depth * tanHalfFov);
 
       // The camera, in the coordinates the anchors are written in. Labels hang off
       // modelGroup, which carries only the translation view[0..2]; rotationGroup carries the
@@ -1196,8 +1200,46 @@ function builder() {
       const dpr = this._gl.getRenderer().devicePixelRatio || 1;
 
       for (const entry of this._atomLabels) {
+        // Toward the camera from this atom. One vector read twice: the push below wants its
+        // direction, the size wants its component along the view.
+        const dx = cx - entry.anchor.x;
+        const dy = cy - entry.anchor.y;
+        const dz = cz - entry.anchor.z;
+
+        // This atom's OWN depth — exactly the `w` the perspective divide uses for a point at
+        // the anchor, not an approximation of it. That is the whole of this: it is the same
+        // w the sphere beside it is drawn with. The sphere imposter offsets its billboard in
+        // CLIP space and zeroes adjust.z, so all four corners carry the centre's w and the
+        // drawn radius is exactly r/depth. One scene-wide figure, which is what this used to
+        // compute, therefore cannot track anything — at 3Dmol's own default zoom the nearest
+        // atom of an 8 A-deep molecule sits 14% nearer than the rotation centre and the
+        // farthest 14% further, so a hydrogen at the front drew 0.52 of its own blob and an
+        // identical hydrogen at the back drew 0.68 of its own. Zoomed in three times that
+        // spread is 0.35 against 0.85. On this depth the ratio is LABEL_INK_HEIGHT / 2r at
+        // every depth, every orientation, every zoom and every pane size.
+        //
+        // The anchor, never the pushed sprite position. The push exists to clear the label
+        // from its own sphere in the depth buffer, and it is element-dependent — 0.45 A for
+        // hydrogen against 0.575 for carbon — so sizing off it would restore a smaller copy
+        // of this same bug (+9.9% at 5 A, +2.3% at 20 A) and make an H and a C at one depth
+        // differ in size for no physical reason.
+        const depth = dx * nx + dy * ny + dz * nz;
+
+        // Hidden rather than clamped, and hidden exactly when its own sphere is. Both are
+        // clipped whole rather than sliced — the sprite shader forces w = 1 before adding
+        // the quad's corners, the imposter zeroes adjust.z, so in each case all four corners
+        // share one z — and setSlabAndFog() holds camera.near at 1 or more unconditionally.
+        // Clamping instead would hand _labelScale a depth nobody can see, pin the scale to
+        // its ceiling and drive a full texture rebuild for an invisible label, then another
+        // on the way back. Reachable in ordinary use: each wheel notch multiplies the
+        // distance by 0.68, so six of them from the default zoom put a front atom behind the
+        // camera.
+        entry.sprite.visible = depth >= 1;
+        if (!entry.sprite.visible) continue;
+
         // Fit the ink box inside both budgets, then hold it between the legibility bounds.
         // Two budgets, because one number cannot bound a box whose width is the text's.
+        const perAngstrom = pxPerAngstromAt(depth);
         let k = this._labelScale(entry, perAngstrom);
 
         // One texel per device pixel is a sharp label; anything else is a resampled one.
@@ -1224,9 +1266,6 @@ function builder() {
         // the label radially outward — nothing at the centre of the pane, most at the edge,
         // and swinging around as the structure turns. That is the drift, and this is its
         // exact cure, not an approximation of one.
-        const dx = cx - entry.anchor.x;
-        const dy = cy - entry.anchor.y;
-        const dz = cz - entry.anchor.z;
         const ray = Math.hypot(dx, dy, dz) || 1;
         const step = entry.push / ray;
         entry.sprite.position.set(

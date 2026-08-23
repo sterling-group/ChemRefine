@@ -1996,6 +1996,118 @@ def test_a_wide_label_is_scaled_down_so_it_never_outgrows_the_atom_it_names():
             assert row["inkHigh"] * per_angstrom_far > 8
 
 
+def test_a_label_is_sized_by_its_own_atoms_depth_not_the_molecules():
+    """The spheres are perspective-projected and the labels were not.
+
+    A sprite carries no depth term at all — its shader adds the quad's corners after its own
+    perspective divide — so a size computed once for the whole scene made every label the
+    same on screen while the atoms around them were not. A hydrogen at the front of an
+    8 A-deep molecule is drawn 1.4x the size of an identical hydrogen at the back, so one
+    label sat inside its blob and the other overflowed it. Sized on each atom's own depth the
+    ratio is constant instead, at every depth and every zoom.
+
+    The depth is the atom's, not the pushed anchor's: the sphere it is matched against is
+    itself drawn from its centre's depth, and the push is element-dependent, so pushing into
+    the size would make an H and a C at one depth differ for no physical reason.
+    """
+    out = _run_component_in_node(
+        _VIEWER_STUB
+        + """
+      const b = builder();
+      b.chatAvailability = () => {};
+      // Three identical hydrogens, differing only in depth: 4 A in front of the rotation
+      // centre, on it, and 4 A behind. Identity view, so +z is straight at the camera.
+      const atoms = [
+        { serial: 0, elem: "H", x: 0, y: 0, z: 4 },
+        { serial: 1, elem: "H", x: 0, y: 0, z: 0 },
+        { serial: 2, elem: "H", x: 0, y: 0, z: -4 },
+      ];
+      const stub = viewerStub(atoms);
+      b._model = stub.model;
+      b._gl = stub.gl;
+      b.viewer.labels = "one";
+      b.drawLabels();
+      const at = (zoom) => {
+        stub.gl.setView([0, 0, 0, zoom, 0, 0, 0, 1]);
+        b._syncLabels();
+        const centre = 150 - zoom;
+        return stub.labels.map((l, i) => {
+          const depth = centre - atoms[i].z;
+          const perA = 400 / (2 * depth * Math.tan(Math.PI / 360 * 20));
+          const inkPx = l.sprite.scale.y * 0.72 * l.stylespec.fontSize;
+          // The blob this label has to sit inside, in the same CSS pixels: an H sphere is
+          // 2 * 1.2 * 0.25 A across, projected from that atom's own depth.
+          const blobPx = 0.6 * perA;
+          return { depth, ratio: inkPx / blobPx, visible: l.sprite.visible };
+        });
+      };
+      console.log(JSON.stringify({ fitted: at(122), closer: at(140) }));
+    """
+    )
+    result = json.loads(out)
+    for stage in ("fitted", "closer"):
+        rows = result[stage]
+        assert [round(r["depth"], 3) for r in rows] == sorted(
+            [round(r["depth"], 3) for r in rows]
+        ), rows
+        # Every label the same fraction of its own atom, front to back: 0.36 A of ink in a
+        # 0.60 A blob. Before this, the same three labels were the same size as each other
+        # while their atoms were not.
+        for row in rows:
+            assert row["visible"] is True
+            assert row["ratio"] == pytest.approx(0.6, rel=1e-9), (stage, row)
+
+
+def test_a_label_hides_when_its_own_atom_goes_behind_the_camera():
+    """Hidden, not clamped, and hidden exactly when the atom is.
+
+    Both a sprite and a sphere are clipped whole rather than sliced — each forces all four
+    corners of its quad to one depth — and the camera's near plane is held at 1 or more
+    unconditionally, so a label at a depth below that is drawing nothing either way. Clamping
+    instead would hand the sizing a depth nobody can see, pin the scale to its ceiling and
+    drive a full texture rebuild for an invisible label, then another on the way back.
+
+    Reachable in ordinary use rather than theoretical: the zoom limit bounds the rotation
+    centre alone, and each wheel notch multiplies the distance by about 0.68, so a handful of
+    them from the default zoom puts a front atom behind the camera.
+    """
+    out = _run_component_in_node(
+        _VIEWER_STUB
+        + """
+      const b = builder();
+      b.chatAvailability = () => {};
+      const atoms = [
+        { serial: 0, elem: "H", x: 0, y: 0, z: 4 },    // the near one
+        { serial: 1, elem: "H", x: 0, y: 0, z: -4 },   // still well in front of the camera
+      ];
+      const stub = viewerStub(atoms);
+      b._model = stub.model;
+      b._gl = stub.gl;
+      b.viewer.labels = "one";
+      b.drawLabels();
+      const at = (centre) => {
+        stub.gl.setView([0, 0, 0, 150 - centre, 0, 0, 0, 1]);
+        b._syncLabels();
+        return stub.labels.map((l) => ({
+          visible: l.sprite.visible, raster: l.rasterised,
+        }));
+      };
+      const wide = at(20);              // both far in front of the camera
+      const tight = at(4.5);            // the near atom is now 0.5 A behind the camera plane
+      const backOff = at(20);           // and it comes back
+      console.log(JSON.stringify({ wide, tight, backOff }));
+    """
+    )
+    result = json.loads(out)
+    assert [r["visible"] for r in result["wide"]] == [True, True]
+    # The near atom has crossed the camera plane; its own sphere is gone and so is its number.
+    assert [r["visible"] for r in result["tight"]] == [False, True]
+    assert [r["visible"] for r in result["backOff"]] == [True, True]
+    # And it was not re-rasterised while it was invisible — that is the cost a clamp would
+    # have paid, twice, for a label nobody could see.
+    assert result["tight"][0]["raster"] == result["wide"][0]["raster"]
+
+
 def test_a_label_is_redrawn_at_the_resolution_it_is_being_displayed_at():
     """The one reason a number is ever softer than the atom beside it.
 

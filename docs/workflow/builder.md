@@ -186,6 +186,13 @@ re-drawing them. The size is bounded on **both** axes: a digit's ink is 0.36 Å 
 fits inside the 0.60 Å hydrogen sphere, and no label's ink may exceed 0.85 Å across, so a
 three- or four-character label is scaled down rather than sprawling over its neighbours.
 
+Each number is sized from **its own atom's distance from the camera**, so it keeps the same
+proportion to the atom it names wherever that atom sits in the structure. The spheres are
+perspective-projected — a hydrogen at the front of an 8 Å-deep molecule is drawn about 1.4×
+the size of an identical one at the back — and a label that ignored that fitted its blob at
+one depth and overflowed it at another. A number whose atom passes behind the camera
+disappears with it.
+
 Each number's texture is **re-drawn at the resolution it is being shown at**, so a label
 stays as crisp as the atoms beside it. Those atoms are solved per pixel by a shader and have
 no resolution of their own; a label is a bitmap, and drawing a bitmap larger than the pixels
