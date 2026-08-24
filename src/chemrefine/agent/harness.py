@@ -31,8 +31,10 @@ from typing import Any
 
 from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
 
 from chemrefine import agent_tools
+from chemrefine.agent.providers import chat_timeout_seconds
 
 ConfirmFn = Callable[[str, str], bool]
 """``(tool_name, rendered_args) -> allow?`` — the chat asks the human, tests script it."""
@@ -81,6 +83,17 @@ for the terminal's payload named a marker it could never see, so the "never retr
 instruction had nothing to key on."""
 
 
+def _turn_settings() -> ModelSettings:
+    """Per-request settings both harnesses share — currently just how long a turn may take.
+
+    Applied here rather than at the two call sites so the terminal REPL and the web panel
+    cannot drift apart, and as a request setting rather than a bespoke HTTP client because
+    the web harness builds an agent per turn: a client per turn would leak connections for
+    the lifetime of the server.
+    """
+    return ModelSettings(timeout=chat_timeout_seconds())
+
+
 def instructions(config_path: str | None, *, gate: str) -> str:
     """The system prompt: the packaged guide, the gate contract, the session context.
 
@@ -106,7 +119,9 @@ def build_agent(
 ) -> Agent[None, str]:
     """The assembled agent — every shared tool registered, mutations behind ``confirm``."""
     agent: Agent[None, str] = Agent(
-        model, instructions=instructions(config_path, gate=TERMINAL_GATE)
+        model,
+        instructions=instructions(config_path, gate=TERMINAL_GATE),
+        model_settings=_turn_settings(),
     )
     for tool in agent_tools.TOOLS:
         if tool.__name__ in agent_tools.MUTATING_TOOLS:
@@ -141,6 +156,7 @@ def build_web_agent(
         model,
         instructions=instructions(config_path, gate=WEB_GATE),
         output_type=[str, DeferredToolRequests],
+        model_settings=_turn_settings(),
     )
     for tool in agent_tools.TOOLS:
         register = agent.tool_plain(requires_approval=tool.__name__ in agent_tools.MUTATING_TOOLS)

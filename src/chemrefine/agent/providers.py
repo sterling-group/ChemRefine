@@ -62,6 +62,45 @@ def preset_shapes() -> dict[str, dict[str, object]]:
     }
 
 
+CHAT_TIMEOUT_ENV = "CHEMREFINE_LLM_TIMEOUT"
+"""Environment variable overriding how long one agent turn may take."""
+
+DEFAULT_CHAT_TIMEOUT_SECONDS = 3600.0
+"""Seconds allowed for one agent turn before the client gives up.
+
+Sized for the slowest supported endpoint rather than the fastest. A hosted API answers in
+seconds, but ``ollama`` and ``vllm`` are first-class presets here and they run wherever the
+user has hardware: a small model on CPU can spend minutes on prompt evaluation alone before
+emitting a token, and the panel and the REPL are both non-streaming, so nothing arrives
+until the turn is done. The OpenAI client's own default is ten minutes, which is below that
+floor — a turn that exceeded it surfaced as "model endpoint failed", naming the endpoint for
+what was really a clock.
+
+Bounded rather than disabled, so a genuinely wedged request still ends, and overridable
+through :data:`CHAT_TIMEOUT_ENV` for anyone who wants a tighter one.
+"""
+
+
+def chat_timeout_seconds() -> float:
+    """The resolved per-turn timeout: :data:`CHAT_TIMEOUT_ENV`, else the default.
+
+    A value that is not a positive number is a :class:`~chemrefine.errors.ConfigError`
+    rather than a silent fallback — the same rule the rest of this module holds environment
+    input to, and a mistyped timeout that quietly reverted to an hour would be discovered
+    only by waiting an hour.
+    """
+    raw = os.environ.get(CHAT_TIMEOUT_ENV)
+    if raw is None:
+        return DEFAULT_CHAT_TIMEOUT_SECONDS
+    try:
+        seconds = float(raw)
+    except ValueError:
+        raise ConfigError(f"{CHAT_TIMEOUT_ENV}={raw!r} is not a number") from None
+    if seconds <= 0:
+        raise ConfigError(f"{CHAT_TIMEOUT_ENV}={raw!r} must be greater than zero")
+    return seconds
+
+
 @dataclass(frozen=True)
 class ProviderConfig:
     """The resolved answer: a model name, and (for compatible endpoints) where it lives."""

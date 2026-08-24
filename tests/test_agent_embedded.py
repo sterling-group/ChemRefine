@@ -175,6 +175,55 @@ def test_check_reports_a_served_model_usable():
     assert "m1" in report.findings[0]
 
 
+def test_the_turn_timeout_defaults_and_can_be_overridden(monkeypatch: pytest.MonkeyPatch):
+    """Sized for the slowest supported endpoint, not the fastest.
+
+    ``ollama`` and ``vllm`` are presets here and run on whatever hardware the user has; a
+    small model on CPU can spend minutes on prompt evaluation alone, and neither harness
+    streams, so nothing arrives until the turn ends. The OpenAI client's own ten-minute
+    default sits below that floor and reported the overrun as "model endpoint failed",
+    which names the endpoint for what is really a clock.
+    """
+    from chemrefine.agent.providers import (
+        CHAT_TIMEOUT_ENV,
+        DEFAULT_CHAT_TIMEOUT_SECONDS,
+        chat_timeout_seconds,
+    )
+
+    monkeypatch.delenv(CHAT_TIMEOUT_ENV, raising=False)
+    assert chat_timeout_seconds() == DEFAULT_CHAT_TIMEOUT_SECONDS
+    assert DEFAULT_CHAT_TIMEOUT_SECONDS > 600  # the client default this exists to clear
+
+    monkeypatch.setenv(CHAT_TIMEOUT_ENV, "90")
+    assert chat_timeout_seconds() == 90.0
+
+
+@pytest.mark.parametrize("bad", ["soon", "", "0", "-30"])
+def test_an_unusable_turn_timeout_is_refused_not_ignored(bad: str, monkeypatch: pytest.MonkeyPatch):
+    """A mistyped timeout that silently reverted to the default is found by waiting an hour."""
+    from chemrefine.agent.providers import CHAT_TIMEOUT_ENV, chat_timeout_seconds
+
+    monkeypatch.setenv(CHAT_TIMEOUT_ENV, bad)
+    with pytest.raises(ConfigError, match=CHAT_TIMEOUT_ENV):
+        chat_timeout_seconds()
+
+
+def test_both_harnesses_carry_the_same_turn_timeout(monkeypatch: pytest.MonkeyPatch):
+    """One home for the value, so the REPL and the web panel cannot drift apart."""
+    from chemrefine.agent.providers import CHAT_TIMEOUT_ENV
+
+    def timeout_of(agent: Any) -> float:
+        # `model_settings` is typed as settings-or-callable-or-None; the harness always
+        # sets the mapping form, and narrowing says so rather than indexing past the union.
+        settings = agent.model_settings
+        assert isinstance(settings, dict)
+        return float(settings["timeout"])
+
+    monkeypatch.setenv(CHAT_TIMEOUT_ENV, "1234")
+    assert timeout_of(harness.build_agent(TestModel(), confirm=_allow)) == 1234.0
+    assert timeout_of(harness.build_web_agent(TestModel())) == 1234.0
+
+
 def test_check_identifies_chemrefine_to_the_endpoint():
     """The probe must carry a real ``User-Agent``, not urllib's default.
 
