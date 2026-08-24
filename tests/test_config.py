@@ -23,6 +23,16 @@ from chemrefine.errors import ConfigError
 # ---------------------------------------------------------------------------
 
 
+def _silent(loc: tuple[str | int, ...], message: str) -> None:
+    """A deprecation sink that swallows — for helpers called directly, off the report path."""
+
+
+def _collect() -> tuple[list[tuple[tuple[str | int, ...], str]], object]:
+    """A sink plus the list it fills, for asserting what a rewrite announced and where."""
+    seen: list[tuple[tuple[str | int, ...], str]] = []
+    return seen, lambda loc, message: seen.append((loc, message))
+
+
 def _minimal_config(**overrides) -> dict:
     base = {
         "steps": [
@@ -820,7 +830,7 @@ def test_normalizer_handles_step_without_operation():
     """Engine renames still apply when ``operation`` is absent (validation rejects later)."""
     from chemrefine.config_legacy import _normalize_step
 
-    s = _normalize_step({"step": 1, "engine": "DFT"})
+    s = _normalize_step({"step": 1, "engine": "DFT"}, 0, _silent)
     assert s["engine"] == "orca"
     assert "operation" not in s
 
@@ -887,6 +897,92 @@ def test_config_rejects_a_backslash_in_a_directory_path():
         )
 
 
+# --- config: legacy rewrites announce themselves -----------------------------
+
+
+def test_every_legacy_rewrite_reports_where_it_happened():
+    """Each rewrite reaches the sink anchored at the key that caused it.
+
+    The point of the sink: before it, a rewrite spoke only to a logger, so
+    ``validate_config`` handed the agent, the GUI and every MCP client an empty
+    ``warnings`` list for a config written in a vocabulary due for removal in 3.0.
+    """
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    _normalize_legacy(
+        {
+            "orca_executable": "/opt/orca/orca",
+            "initial_xyz": "./seed.xyz",
+            "steps": [
+                {
+                    "step": 1,
+                    "mlff": {"model_name": "small"},
+                    "normal_mode_sampling": True,
+                    "sample_type": {"method": "integer", "parameters": {"num_structures": 5}},
+                }
+            ],
+        },
+        report=sink,
+    )
+    by_loc = dict(seen)
+    assert by_loc[("orca_executable",)].startswith("`orca_executable` is deprecated")
+    assert by_loc[("initial_xyz",)].startswith("`initial_xyz` is deprecated")
+    assert by_loc[("steps", 0, "mlff")].startswith("step-level `mlff:` block is deprecated")
+    assert by_loc[("steps", 0, "normal_mode_sampling")].startswith("`normal_mode_sampling*`")
+    assert by_loc[("steps", 0, "sample_type")].startswith("`sample_type` is deprecated")
+    assert "`min`" in by_loc[("steps", 0, "sample", "method")]
+    assert "`count`" in by_loc[("steps", 0, "sample", "num_structures")]
+
+
+def test_the_step_index_anchors_the_finding_to_its_own_step():
+    """Two legacy steps produce two findings, each pointing at the right index."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    _normalize_legacy({"steps": [{"step": 1}, {"step": 2, "pyscf": {"xc": "pbe"}}]}, report=sink)
+    assert [loc for loc, _ in seen] == [("steps", 1, "pyscf")]
+
+
+def test_a_current_config_announces_nothing():
+    """Idempotence, from the sink's side: nothing to rewrite, nothing to report."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    _normalize_legacy(
+        {
+            "executables": {"orca": "/opt/orca/orca"},
+            "input": "./seed.xyz",
+            "steps": [{"step": 1, "engine": "orca", "sample": {"method": "min", "count": 5}}],
+        },
+        report=sink,
+    )
+    assert seen == []
+
+
+def test_reporting_replaces_the_log_rather_than_doubling_it(caplog):
+    """``report=`` redirects; it does not add a second voice.
+
+    The validator normalizes twice — once to collect, once inside
+    ``Config.model_validate`` — so a sink that also logged would say everything twice on a
+    path that used to say it once.
+    """
+    import logging
+
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    with caplog.at_level(logging.WARNING, logger="chemrefine.config_legacy"):
+        _normalize_legacy({"orca_executable": "/opt/orca/orca"}, report=sink)
+    assert len(seen) == 1
+    assert caplog.records == []
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="chemrefine.config_legacy"):
+        _normalize_legacy({"orca_executable": "/opt/orca/orca"})
+    assert len(caplog.records) == 1
+
+
 # --- config: legacy sample normalizer edges ---------------------------------
 
 
@@ -894,7 +990,7 @@ def test_normalize_sample_helpers_pass_through_non_dict():
     from chemrefine.config_legacy import _flatten_sample_type, _normalize_sample_block
 
     assert _flatten_sample_type("nope") == "nope"
-    assert _normalize_sample_block("nope") == "nope"
+    assert _normalize_sample_block("nope", (), _silent) == "nope"
 
 
 def test_flatten_then_normalize_carries_through_extra_top_level_keys():
@@ -903,7 +999,7 @@ def test_flatten_then_normalize_carries_through_extra_top_level_keys():
     flat = _flatten_sample_type(
         {"method": "boltzmann", "parameters": {"weight": 95}, "by_parent": True}
     )
-    out = _normalize_sample_block(flat)
+    out = _normalize_sample_block(flat, (), _silent)
     assert out == {"method": "boltzmann", "percent_cumulative": 95, "by_parent": True}
 
 
@@ -911,4 +1007,4 @@ def test_normalize_sample_block_without_method_passes_keys_through():
     """A block with no ``method`` key leaves it out (validation rejects it later)."""
     from chemrefine.config_legacy import _normalize_sample_block
 
-    assert _normalize_sample_block({"count": 5}) == {"count": 5}
+    assert _normalize_sample_block({"count": 5}, (), _silent) == {"count": 5}

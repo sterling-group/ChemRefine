@@ -282,6 +282,45 @@ def test_an_unreadable_file_is_one_io_issue(tmp_path: Path):
     assert _kinds(report) == ["io"]
 
 
+def test_a_deprecated_spelling_is_a_warning_not_silence(tmp_path: Path):
+    """A legacy key still runs, but the report has to say so.
+
+    It used to reach a logger and nowhere else, so ``ok`` came back true with an empty
+    ``warnings`` list — and the agent, whose guide tells it to validate "until ok with no
+    surprising warnings", was handed a clean bill for a spelling due for removal in 3.0.
+    The GUI's Validate button rendered the same file as "valid — no findings".
+    """
+    report = validate_config_text(
+        yaml.safe_dump(
+            {"orca_executable": "/opt/orca/orca", "steps": [{"step": 1, "engine": "fake"}]}
+        ),
+        base_dir=tmp_path,
+    )
+    assert report.ok  # deprecated is not broken
+    deprecations = [w for w in report.warnings if w.kind == "deprecated"]
+    assert [w.loc for w in deprecations] == [("orca_executable",)]
+    assert "executables" in deprecations[0].message
+
+
+def test_deprecations_survive_a_config_that_also_fails_validation(tmp_path: Path):
+    """A file can be both legacy *and* wrong; the vocabulary finding is not lost.
+
+    The model-error path returns early, so without carrying them the deprecation would be
+    dropped exactly when the user is already editing the file.
+    """
+    report = validate_config_text(
+        yaml.safe_dump({"orca_executable": "/opt/orca/orca", "steps": "not-a-list"}),
+        base_dir=tmp_path,
+    )
+    assert not report.ok
+    assert [w.kind for w in report.warnings] == ["deprecated"]
+
+
+def test_a_current_config_still_reports_no_deprecations(tmp_path: Path):
+    report = _validate(tmp_path, executables={"orca": "/opt/orca/orca"})
+    assert [w for w in report.warnings if w.kind == "deprecated"] == []
+
+
 def test_the_report_serializes_whole(tmp_path: Path):
     report = _validate(tmp_path, steps=[{"step": 1, "engine": "no-such-engine"}])
     wire = json.loads(json.dumps(report.to_json()))

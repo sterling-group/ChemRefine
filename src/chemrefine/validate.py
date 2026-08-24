@@ -37,7 +37,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from chemrefine import slurm
+from chemrefine import config_legacy, slurm
 from chemrefine.config import (
     Config,
     StepConfig,
@@ -125,7 +125,22 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
         return _failed("yaml", f"malformed YAML: {e}")
     if not isinstance(raw, dict):
         return _failed("yaml", "config is not a YAML mapping")
+    deprecations: list[ValidationIssue] = []
     try:
+        # A reporting-only pass over the legacy vocabulary, before the model runs. The
+        # rewrites happen anyway inside `Config.model_validate` below — the point is that
+        # until now they announced themselves to a *logger*, so a config using a spelling
+        # slated for removal in 3.0 came back from here with `ok` and an empty warnings
+        # list. That is the whole contract for the agent, the GUI's Validate button and
+        # every MCP client, and it was quietly telling them the file was clean. `normalize`
+        # is idempotent and pure, so running it twice costs a dict copy and nothing else;
+        # `report=` suppresses its logging so the pass below still speaks exactly once.
+        config_legacy.normalize(
+            raw,
+            report=lambda loc, message: deprecations.append(
+                ValidationIssue(loc=loc, kind="deprecated", message=message)
+            ),
+        )
         # `model_validate`, not `Config(**raw)`: splatting imposes a str-keys rule pydantic
         # never sees, so a non-string key — YAML 1.1 reads an unquoted `on:` as a boolean —
         # raised a bare TypeError past both handlers below. pydantic's own answer is a
@@ -136,13 +151,16 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
             ValidationIssue(loc=tuple(err["loc"]), kind=str(err["type"]), message=str(err["msg"]))
             for err in e.errors()
         )
-        return ValidationReport(issues=issues, warnings=(), config=None)
+        return ValidationReport(issues=issues, warnings=tuple(deprecations), config=None)
     except ConfigError as e:
         # The legacy normalizer refuses some v1 spellings before pydantic runs.
         return _failed("legacy", str(e))
     if base_dir is not None:
         config = resolve_relative_paths(config, base=base_dir.resolve())
     issues_list, warnings_list = _inspect_steps(config)
+    # First in the list: a deprecation is about the vocabulary the file is written in, which
+    # is the thing to fix before anything the filesystem checks below have to say.
+    warnings_list = deprecations + warnings_list
     # An issue, not a warning, and not scoped to any engine: every job script exports these
     # three paths, so a metacharacter in one is a broken — or dangerous — script whatever
     # runs. Asked after resolution because that is where a parent directory name gets in.

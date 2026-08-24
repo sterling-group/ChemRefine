@@ -17,11 +17,27 @@ what a step *is* should not have to read two hundred lines of translation for ol
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from chemrefine.errors import ConfigError
 
 logger = logging.getLogger(__name__)
+
+DeprecationSink = Callable[[tuple[str | int, ...], str], None]
+"""``(loc, message) -> None`` — where a rewrite announces itself.
+
+Every legacy spelling this module rewrites is a finding, and until it had somewhere to go
+other than a logger it was a finding only for whoever happened to be watching stderr. The
+agent, the GUI's Validate button and every MCP client read
+:class:`~chemrefine.validate.ValidationReport` and nothing else, so they were told a config
+using a removed-in-3.0 key was clean. ``loc`` follows pydantic's convention, the same one
+:class:`~chemrefine.validate.ValidationIssue` anchors every other finding with."""
+
+
+def _log_deprecation(loc: tuple[str | int, ...], message: str) -> None:
+    """The default sink: what this module has always done, unchanged."""
+    logger.warning("%s", message)
 
 
 #: Old engine name → canonical. Includes the ``mlff`` ↔ ``mlip`` rename aliases.
@@ -61,31 +77,42 @@ _SAMPLE_KEY_RENAMES = {
 }
 
 
-def normalize(raw: dict[str, Any]) -> dict[str, Any]:
+def normalize(raw: dict[str, Any], *, report: DeprecationSink | None = None) -> dict[str, Any]:
     """Rewrite legacy (v1.3.1 / ``mlff``-named) YAML keys to the current schema.
 
     The single place that knows the old vocabulary. Idempotent — new-style input
-    passes through unchanged — and logs one warning per legacy feature rewritten.
-    ``calculation_type`` is intentionally unsupported and raises
+    passes through unchanged — and announces one deprecation per legacy feature
+    rewritten. ``calculation_type`` is intentionally unsupported and raises
     :class:`~chemrefine.errors.ConfigError`.
+
+    ``report`` redirects those announcements to a caller instead of the log, which is how
+    :func:`chemrefine.validate.validate_config_text` turns them into report warnings. It is
+    a redirect rather than an addition on purpose: the validator runs this twice — once to
+    collect, once inside ``Config.model_validate`` — and a sink that also logged would say
+    everything twice on a path that used to say it once.
     """
+    sink = report or _log_deprecation
     out = dict(raw)
     if "orca_executable" in out:
-        logger.warning("`orca_executable` is deprecated; use `executables: {orca: ...}`")
+        sink(
+            ("orca_executable",), "`orca_executable` is deprecated; use `executables: {orca: ...}`"
+        )
         execs = dict(out.get("executables") or {})
         execs.setdefault("orca", out.pop("orca_executable"))
         out["executables"] = execs
     if "initial_xyz" in out:
         if "input" not in out:
-            logger.warning("`initial_xyz` is deprecated; use `input`")
+            sink(("initial_xyz",), "`initial_xyz` is deprecated; use `input`")
             out["input"] = out["initial_xyz"]
         out.pop("initial_xyz")
     if isinstance(out.get("steps"), list):
-        out["steps"] = [_normalize_step(s) for s in out["steps"]]
+        out["steps"] = [_normalize_step(s, i, sink) for i, s in enumerate(out["steps"])]
     return out
 
 
-def _move_engine_block(s: dict[str, Any]) -> str | None:
+def _move_engine_block(
+    s: dict[str, Any], loc: tuple[str | int, ...], sink: DeprecationSink
+) -> str | None:
     """Fold a legacy engine block (``mlff:``/``pyscf:``/``trainer:``) into ``options``.
 
     Mutates ``s`` (pops the block, merges its keys into ``options``) and returns the
@@ -95,7 +122,7 @@ def _move_engine_block(s: dict[str, Any]) -> str | None:
     block_engine: str | None = None
     for block, engine_name in _LEGACY_BLOCKS.items():
         if isinstance(s.get(block), dict):
-            logger.warning("step-level `%s:` block is deprecated; use `options:`", block)
+            sink((*loc, block), f"step-level `{block}:` block is deprecated; use `options:`")
             for k, v in s.pop(block).items():
                 if k not in _OBSOLETE_OPTION_KEYS:
                     options.setdefault(k, v)
@@ -105,7 +132,9 @@ def _move_engine_block(s: dict[str, Any]) -> str | None:
     return block_engine
 
 
-def _normalize_nms_keys(s: dict[str, Any]) -> None:
+def _normalize_nms_keys(
+    s: dict[str, Any], loc: tuple[str | int, ...], sink: DeprecationSink
+) -> None:
     """Rewrite legacy ``normal_mode_sampling{,_parameters}`` into ``nms`` + ``options``.
 
     main's knobs are renamed: ``calc_type`` → ``target`` (``rm_imag`` → ``ts``, the
@@ -114,7 +143,10 @@ def _normalize_nms_keys(s: dict[str, Any]) -> None:
     """
     if "normal_mode_sampling" not in s and "normal_mode_sampling_parameters" not in s:
         return
-    logger.warning("`normal_mode_sampling*` is deprecated; use `nms` + `options`")
+    sink(
+        (*loc, "normal_mode_sampling"),
+        "`normal_mode_sampling*` is deprecated; use `nms` + `options`",
+    )
     nms_on = bool(s.pop("normal_mode_sampling", False))
     if nms_on:
         s["nms"] = True
@@ -131,11 +163,16 @@ def _normalize_nms_keys(s: dict[str, Any]) -> None:
         s["options"] = opts
 
 
-def _normalize_step(step: Any) -> Any:
-    """Rewrite one legacy step dict to the current schema (helper for :func:`normalize`)."""
+def _normalize_step(step: Any, index: int, sink: DeprecationSink) -> Any:
+    """Rewrite one legacy step dict to the current schema (helper for :func:`normalize`).
+
+    ``index`` is the step's position in the list, which is what makes every finding this
+    raises point at the step that caused it rather than at the file.
+    """
     if not isinstance(step, dict):
         return step
     s = dict(step)
+    loc: tuple[str | int, ...] = ("steps", index)
 
     if "calculation_type" in s:
         raise ConfigError(
@@ -144,7 +181,7 @@ def _normalize_step(step: Any) -> Any:
         )
 
     # Engine name: a moved engine-config block decides it, else the rename map.
-    block_engine = _move_engine_block(s)
+    block_engine = _move_engine_block(s, loc, sink)
     if block_engine is not None:
         s["engine"] = block_engine
     elif isinstance(s.get("engine"), str):
@@ -159,7 +196,7 @@ def _normalize_step(step: Any) -> Any:
             s["engine"] = "mlip-train"
             s["operation"] = "mlip_train"
 
-    _normalize_nms_keys(s)
+    _normalize_nms_keys(s, loc, sink)
 
     # sample_type{method, parameters} → sample{method, …}; legacy sample method /
     # key names (integer/high_energy/energy_window, num_structures/energy/…) are
@@ -167,13 +204,13 @@ def _normalize_step(step: Any) -> Any:
     # whether they arrive via the old `sample_type` block or a direct `sample`.
     if "sample_type" in s:
         if "sample" not in s:
-            logger.warning("`sample_type` is deprecated; use `sample`")
+            sink((*loc, "sample_type"), "`sample_type` is deprecated; use `sample`")
             s["sample"] = _flatten_sample_type(s["sample_type"])
         s.pop("sample_type")
     # Normalize the resulting `sample` block (from sample_type, or a direct
     # block, possibly using legacy method/key names) to the v2 vocabulary.
     if isinstance(s.get("sample"), dict):
-        s["sample"] = _normalize_sample_block(s["sample"])
+        s["sample"] = _normalize_sample_block(s["sample"], (*loc, "sample"), sink)
 
     return s
 
@@ -190,12 +227,12 @@ def _flatten_sample_type(sample_type: Any) -> Any:
     return flat
 
 
-def _normalize_sample_block(sample: Any) -> Any:
+def _normalize_sample_block(sample: Any, loc: tuple[str | int, ...], sink: DeprecationSink) -> Any:
     """Rewrite a flat ``sample`` dict's legacy method/key names to the v2 vocabulary.
 
     Idempotent: a current-vocabulary block (``min`` / ``max`` / ``boltzmann`` with
     ``count`` / ``window_kcalmol`` / ``percent_cumulative``) passes through unchanged.
-    Logs one deprecation warning per legacy method or key actually rewritten.
+    Announces one deprecation per legacy method or key actually rewritten.
     """
     if not isinstance(sample, dict):
         return sample
@@ -203,7 +240,7 @@ def _normalize_sample_block(sample: Any) -> Any:
     method = sample.get("method")
     if isinstance(method, str) and method in _SAMPLE_METHOD_RENAMES:
         new_method = _SAMPLE_METHOD_RENAMES[method]
-        logger.warning("sample method `%s` is deprecated; use `%s`", method, new_method)
+        sink((*loc, "method"), f"sample method `{method}` is deprecated; use `{new_method}`")
         out["method"] = new_method
     elif method is not None:
         out["method"] = method
@@ -213,6 +250,6 @@ def _normalize_sample_block(sample: Any) -> Any:
             continue
         new_key = _SAMPLE_KEY_RENAMES.get(key, key)
         if new_key != key:
-            logger.warning("sample key `%s` is deprecated; use `%s`", key, new_key)
+            sink((*loc, key), f"sample key `{key}` is deprecated; use `{new_key}`")
         out.setdefault(new_key, v)
     return out
