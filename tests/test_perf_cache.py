@@ -1,9 +1,10 @@
 """Time the per-step bookkeeping from hundreds to tens of thousands of structures.
 
 Three properties of the design invite the question "does this scale": the step cache is
-rewritten in full on every save, :func:`~chemrefine.cache.parents_digest` re-hashes every
-parent's coordinates once per step, and the per-step CSV round-trips through pandas.
-Whether any is a *problem* is a question about numbers, so this produces them.
+rewritten in full on every save, :meth:`~chemrefine.cache.StepKey.of` re-hashes every
+parent's coordinates and derives a row key from each of them once per step, and the
+per-step CSV round-trips through pandas. Whether any is a *problem* is a question about
+numbers, so this produces them.
 
 So this measures rather than asserts. It prints a table and checks only that the work
 stays roughly linear in the structure count — the shape that would make a 10⁴-structure
@@ -52,7 +53,7 @@ pytestmark = pytest.mark.perf
 SIZES = (200, 2_000, 10_000)
 
 #: Atoms per structure — a mid-sized organic molecule, so the coordinate arrays that
-#: dominate `parents_digest` and the cache document are realistic.
+#: dominate `StepKey.of` and the cache document are realistic.
 N_ATOMS = 30
 
 
@@ -115,7 +116,7 @@ class _timed:
 
 
 def test_per_step_bookkeeping_scales_linearly(tmp_path: Path, capsys) -> None:
-    """Time save / load / digest / CSV across the sizes and report the shape."""
+    """Time key / save / load / CSV across the sizes and report the shape."""
     rows: list[tuple[int, float, float, float, float, float, float]] = []
 
     for n in SIZES:
@@ -125,9 +126,8 @@ def test_per_step_bookkeeping_scales_linearly(tmp_path: Path, capsys) -> None:
         step_dir.mkdir(parents=True)
         ctx = _ctx(step_dir, structures)
 
-        with _timed() as digest:
-            cache.parents_digest(structures)
-        key = cache.StepKey.of(ctx.step_cfg, structures, ctx.template)
+        with _timed() as step_key:
+            key = cache.StepKey.of(ctx.step_cfg, structures, ctx.template)
         with _timed() as save:
             cache.save(
                 step_cfg=ctx.step_cfg,
@@ -147,13 +147,21 @@ def test_per_step_bookkeeping_scales_linearly(tmp_path: Path, capsys) -> None:
             )
         size_mb = sum(p.stat().st_size for p in (step_dir / "_cache").iterdir()) / 1e6
         rows.append(
-            (n, digest.seconds, save.seconds, load.seconds, csv.seconds, size_mb, _residency_mb(n))
+            (
+                n,
+                step_key.seconds,
+                save.seconds,
+                load.seconds,
+                csv.seconds,
+                size_mb,
+                _residency_mb(n),
+            )
         )
 
     with capsys.disabled():
         print(f"\n  {N_ATOMS} atoms per structure\n")
         print(
-            f"  {'n':>7}  {'digest':>8}  {'save':>8}  {'load':>8}  {'csv':>8}"
+            f"  {'n':>7}  {'step key':>8}  {'save':>8}  {'load':>8}  {'csv':>8}"
             f"  {'_cache':>9}  {'residency':>10}"
         )
         for n, d, s, ld, c, mb, res in rows:
@@ -168,7 +176,7 @@ def test_per_step_bookkeeping_scales_linearly(tmp_path: Path, capsys) -> None:
     # and constant overheads at the small end — this is a shape check, not a stopwatch.
     small, large = rows[0], rows[-1]
     ratio_n = large[0] / small[0]
-    for idx, label in ((1, "parents_digest"), (2, "cache.save"), (3, "cache.load")):
+    for idx, label in ((1, "StepKey.of"), (2, "cache.save"), (3, "cache.load")):
         if small[idx] < 1e-4:  # too fast to time meaningfully at the small end
             continue
         growth = large[idx] / small[idx]
