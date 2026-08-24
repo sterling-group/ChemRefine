@@ -1,16 +1,16 @@
-"""Guard: a normal-mode figure must be a viewer with data in it, and the caption must agree.
+"""Guard: a 3D figure must be a viewer with data in it, and a caption must agree with it.
 
-``docs/hooks/modes.py`` replaced two 13.6 MB screen recordings with two 3 KB frequency
-extracts and a viewer built from them at docs-build time. ``mkdocs build --strict`` fails
-if the hook raises, which covers a missing or malformed file — but not the two ways this
-can be quietly wrong: a hook that *succeeds* and emits a viewer with no coordinates in it
-(a blank rectangle nobody sees in review), and a caption whose numbers no longer match the
-file it claims to describe. Those are what these tests are.
+``docs/hooks/viewers.py`` draws every 3D pane on this site from a file in this tree —
+a tutorial's starting geometry, or one imaginary mode of a frequency run. Both used to
+work another way and both were broken by it: the mode figures were 13.6 MB of animated
+GIF with nothing tying them to a run, and the structure viewers fetched their geometry
+from ``raw.githubusercontent.com/…/main/`` at page load, which rendered six empty panes
+because ``main`` is still the layout this branch replaces.
 
-The last one here has nothing to do with modes and is the reason the whole family exists:
-every viewer on this site names its structure in a ``data-xyz`` attribute, and until now
-nothing checked that any of those paths led anywhere. All six of the fetch-based ones
-currently resolve against ``main``, where this branch's layout does not exist yet.
+``mkdocs build --strict`` fails if the hook raises, which covers a missing or malformed
+file. What it cannot see is the failure that put those six panes on the site in the first
+place: a viewer that is *emitted* perfectly and simply has no molecule in it. That is what
+these tests are, along with the caption's numbers agreeing with the file they describe.
 
 ``docs/`` ships in the repository but not in the sdist, so every test skips rather than
 fails when the directory is absent — the same rule as ``test_docs_tables``.
@@ -28,7 +28,7 @@ from typing import Any
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_HOOK = _REPO_ROOT / "docs" / "hooks" / "modes.py"
+_HOOK = _REPO_ROOT / "docs" / "hooks" / "viewers.py"
 _MODES = _REPO_ROOT / "docs" / "tutorials" / "modes"
 _DOCS = _REPO_ROOT / "docs"
 
@@ -39,7 +39,7 @@ pytestmark = pytest.mark.skipif(
 
 def _hook() -> Any:
     """Import the hook the way MkDocs does — by path, not as a package module."""
-    spec = importlib.util.spec_from_file_location("chemrefine_docs_modes", _HOOK)
+    spec = importlib.util.spec_from_file_location("chemrefine_docs_viewers", _HOOK)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -47,29 +47,59 @@ def _hook() -> Any:
     return module
 
 
-def _render(name: str) -> str:
+def _render(directive: str) -> str:
     """The markdown one directive expands to, as a page would receive it."""
-    return str(_hook().on_page_markdown(f"<!-- chemrefine:mode {name} -->"))
+    return str(_hook().on_page_markdown(f"<!-- chemrefine:{directive} -->"))
 
 
-def _shipped() -> list[str]:
+def _modes() -> list[str]:
     """Every mode file's directive name, so adding one adds its coverage."""
     return sorted(path.stem.replace("_", "-") for path in _MODES.glob("*.xyz"))
 
 
-def test_there_are_mode_files_to_check():
-    """The parametrised tests below would all pass vacuously on an empty directory."""
-    assert _shipped(), "no mode files found — the tutorial's figures have gone missing"
+def _structures() -> list[str]:
+    """Every structure a page asks for, so adding a tutorial adds its coverage."""
+    found: set[str] = set()
+    for page in sorted(_DOCS.rglob("*.md")):
+        text = page.read_text(encoding="utf-8")
+        found.update(re.findall(r"<!--\s*chemrefine:structure\s+(\S+)\s*-->", text))
+    return sorted(found)
 
 
-@pytest.mark.parametrize("name", _shipped())
-def test_a_viewer_carries_its_own_coordinates(name: str):
-    """The data is inlined, not fetched — that is the whole point of the file being small.
+def test_there_are_viewers_to_check():
+    """Every parametrised test below would pass vacuously on an empty roster."""
+    assert _modes(), "no mode files found — the tutorial's figures have gone missing"
+    assert _structures(), "no page shows a structure — the viewers have gone missing"
 
-    Fetching is what every other viewer here does, and it makes a figure depend on a branch
-    having been merged, on the reader having a network, and on the file never moving.
+
+@pytest.mark.parametrize("relative", _structures())
+def test_a_structure_viewer_carries_the_geometry_it_names(relative: str):
+    """The molecule is in the page, not behind a request that can fail silently.
+
+    This is the whole reason the fetch is gone: six panes on this site render empty
+    because the file they ask for is not on ``main`` yet, and a blank rectangle looks
+    exactly like a slow load. Resolving the path here is also the cheapest half of that
+    guard — no network needed, and none wanted in a test.
     """
-    rendered = _render(name)
+    path = _REPO_ROOT / relative
+    assert path.is_file(), f"{relative} is named by a page and is not in the tree"
+    rendered = _render(f"structure {relative}")
+    assert "raw.githubusercontent" not in rendered
+    for atom_line in path.read_text(encoding="utf-8").splitlines()[2:]:
+        if atom_line.strip():
+            assert atom_line in rendered, f"{relative} renders without its line {atom_line!r}"
+
+
+@pytest.mark.parametrize("relative", _structures())
+def test_a_structure_viewer_does_not_animate(relative: str):
+    """A still geometry has no displacement columns, so vibrate() would shake nothing."""
+    assert "vibrate" not in _render(f"structure {relative}")
+
+
+@pytest.mark.parametrize("name", _modes())
+def test_a_mode_viewer_carries_its_own_coordinates(name: str):
+    """Same inlining as a structure, for the same reason, with three more columns."""
+    rendered = _render(f"mode {name}")
     lines = (_MODES / f"{name.replace('-', '_')}.xyz").read_text(encoding="utf-8").splitlines()
     assert f'id="chemrefine-mode-{name}"' in rendered
     assert "raw.githubusercontent" not in rendered
@@ -77,19 +107,19 @@ def test_a_viewer_carries_its_own_coordinates(name: str):
         assert atom_line in rendered, f"{name} renders without its own line {atom_line!r}"
 
 
-@pytest.mark.parametrize("name", _shipped())
-def test_a_viewer_animates_the_mode_it_loaded(name: str):
-    """``vibrate()`` builds the frames and ``animate()`` plays them — neither alone shows one.
+@pytest.mark.parametrize("name", _modes())
+def test_a_mode_viewer_animates_the_mode_it_loaded(name: str):
+    """``vibrate()`` builds the frames and ``animate()`` plays them — neither alone moves.
 
     Pinned because a viewer missing the second call renders a still molecule that looks
     like a deliberate choice rather than a broken figure.
     """
-    rendered = _render(name)
+    rendered = _render(f"mode {name}")
     assert "model.vibrate(10, 1, true);" in rendered
     assert 'viewer.animate({ loop: "backAndForth", interval: 60 });' in rendered
 
 
-@pytest.mark.parametrize("name", _shipped())
+@pytest.mark.parametrize("name", _modes())
 def test_the_caption_states_what_the_file_states(name: str):
     """Every number under a viewer comes out of the file, which is why none is typed in prose.
 
@@ -98,8 +128,8 @@ def test_the_caption_states_what_the_file_states(name: str):
     regenerated file and starts lying.
     """
     hook = _hook()
-    _, info = hook._read(name)
-    rendered = _render(name)
+    _, info = hook._read_mode(name)
+    rendered = _render(f"mode {name}")
     assert f"Mode {info['mode']} at {info['frequency_cm1']} cm⁻¹" in rendered
     assert info["method"] in rendered
     assert info["source"] in rendered
@@ -164,35 +194,38 @@ def test_a_malformed_mode_file_fails_the_build(tmp_path: Path, broken: str, comp
         hook.on_page_markdown("<!-- chemrefine:mode wrong -->")
 
 
-def test_a_directive_naming_no_mode_file_fails_the_build():
+def test_a_directive_naming_nothing_fails_the_build():
     """A typo would otherwise render as an HTML comment — invisible on the page and in review."""
     with pytest.raises(ValueError, match="no mode file"):
-        _hook().on_page_markdown("<!-- chemrefine:mode ts-goof -->")
+        _render("mode ts-goof")
+    with pytest.raises(ValueError, match="names no file in the tree"):
+        _render("structure examples/tutorials/nowhere/step1.xyz")
 
 
 def test_the_library_is_loaded_once_per_page():
-    """Two viewers on one page must not fetch the 3Dmol bundle twice."""
+    """Several viewers on one page must not fetch the 3Dmol bundle several times."""
     rendered = str(
         _hook().on_page_markdown(
+            "<!-- chemrefine:structure examples/tutorials/transition_state/step1.xyz -->\n\n"
             "<!-- chemrefine:mode ts-bad -->\n\n<!-- chemrefine:mode ts-good -->\n"
         )
     )
     assert rendered.count("3Dmol-min.js") == 1
 
 
-def test_every_viewer_on_the_site_names_a_structure_that_exists():
-    """A ``data-xyz`` path that leads nowhere is a blank pane, and nothing else looks at these.
+def test_no_page_still_fetches_a_structure_over_the_network():
+    """The fetch is what put six empty panes on the site; nothing should reintroduce it.
 
-    The attribute is resolved by ``docs/_includes/viewer.md`` against the repository root at
-    read time, so the tree is exactly where the answer lives — no network needed, and none
-    wanted in a test.
+    ``data-xyz`` was the attribute the old include read, so its absence is the check —
+    a page that grows a new viewer has to go through the hook, where the file is resolved
+    at build time and the build fails if it is not there.
     """
-    missing = []
-    for page in sorted(_DOCS.rglob("*.md")):
-        for match in re.finditer(r'data-xyz="([^"]+)"', page.read_text(encoding="utf-8")):
-            if not (_REPO_ROOT / match.group(1)).is_file():
-                missing.append(f"{page.relative_to(_REPO_ROOT)} -> {match.group(1)}")
-    assert missing == [], (
-        "these viewers name a structure that is not in the tree, so they render an empty "
-        "pane:\n" + "\n".join(missing)
+    fetching = [
+        str(page.relative_to(_REPO_ROOT))
+        for page in sorted(_DOCS.rglob("*.md"))
+        if "data-xyz" in page.read_text(encoding="utf-8")
+    ]
+    assert fetching == [], (
+        "these pages name a structure for a run-time fetch instead of the build-time "
+        "directive, so they render an empty pane wherever the fetch fails:\n" + "\n".join(fetching)
     )

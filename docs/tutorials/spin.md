@@ -41,10 +41,7 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 
 ### Interactive 3D Viewer
 
-<div id="viewer" data-xyz="examples/tutorials/spin/heme_catalyst/step1.xyz"
-     style="width: 100%; height: 400px; position: relative;"></div>
-
---8<-- "docs/_includes/viewer.md"
+<!-- chemrefine:structure examples/tutorials/spin/heme_catalyst/step1.xyz -->
 
 ---
 
