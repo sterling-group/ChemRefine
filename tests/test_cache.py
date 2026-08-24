@@ -593,7 +593,6 @@ def test_load_rejects_legacy_summary_sidecar(tmp_path: Path):
                 "cache_format": CACHE_FORMAT_VERSION,
                 "chemrefine_version": "2.0.0",
                 "fingerprint": "abc",
-                "reuse_fingerprint": "",
                 "step": 1,
                 "name": None,
                 "engine": "fake",
@@ -738,7 +737,7 @@ def test_a_sidecar_from_another_save_is_refused_not_read(tmp_path: Path):
     it repairs a step and is killed. Nothing upstream can catch it: the records parse, and the
     fingerprint matches because it covers the step's *inputs*, not what is on disk. Read, the
     pair returns each structure's old energy beside another's geometry, and
-    `parents_digest` then carries those coordinates into every step computed from them.
+    `structure_digest` then carries those coordinates into every step computed from them.
     """
     step_dir = _saved(tmp_path)  # ids "0" and "1", both at the origin
     moved = Structure(id="0", atoms=Atoms("H", positions=[[9.0, 9.0, 9.0]]))
@@ -758,7 +757,7 @@ def test_a_non_finite_geometry_is_never_cached(tmp_path: Path, bad: float):
     `allow_nan=False` refuses a non-finite value in the *document*, but coordinates are the
     one part of a record that never reaches it: `_split_arrays` moves them into the
     `arrays.npz` sidecar, a raw buffer with no such check. What that cost is not a crash but
-    a silence — the geometry round-trips save → load intact and `parents_digest` hashes it
+    a silence — the geometry round-trips save → load intact and `structure_digest` hashes it
     to a perfectly stable key, so every later step is computed from coordinates that are not
     numbers with nothing anywhere reporting a problem.
     """

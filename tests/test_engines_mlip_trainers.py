@@ -206,7 +206,7 @@ def test_labelling_copies_rather_than_mutating_the_pipeline_structure(tmp_path: 
 
     `_to_atoms` attaches MACE's label keys and the charge/spin; done in place, every
     structure the trainer saw would carry them onward, and the positions buffer it shares
-    is the one `parents_digest` hashes into downstream cache keys. The `.copy()` is the
+    is the one `structure_digest` hashes into downstream cache keys. The `.copy()` is the
     whole protection (`Structure.atoms` cannot be write-locked the way the force arrays
     are), so this pins it.
     """

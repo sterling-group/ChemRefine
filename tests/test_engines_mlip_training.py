@@ -622,7 +622,7 @@ def test_no_trainer_mutates_the_pipelines_structures(tmp_path: Path, task: str):
     """The dataset lands on copies — the structures go on through the pipeline.
 
     A calculator or label key attached in place would ride the shared reference into
-    every later step, and the positions buffer is the one ``parents_digest`` hashes into
+    every later step, and the positions buffer is the one ``structure_digest`` hashes into
     downstream cache keys.
     """
     structures = [_labelled(str(i)) for i in range(8)]

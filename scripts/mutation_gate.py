@@ -234,7 +234,7 @@ MUTATIONS = (
         tests="tests/test_cache.py",
         breaks="a NaN geometry is written to arrays.npz — the half of a record `write_json`'s "
         "`allow_nan=False` never sees — and served to every downstream step; it round-trips "
-        "the cache and `parents_digest` hashes it to a stable key, so a run reports results "
+        "the cache and `structure_digest` hashes it to a stable key, so a run reports results "
         "computed from coordinates that are not numbers, and nothing anywhere says so",
     ),
     Mutation(

@@ -474,11 +474,13 @@ def test_both_schedulers_agree(cls, tmp_path: Path):
 
 
 def test_results_come_back_in_manifest_order_not_completion_order(tmp_path: Path):
-    """Completion order is nondeterministic; `parents_digest` is order-sensitive.
+    """Completion order is nondeterministic; the step fingerprint is not.
 
-    Emitting results as they land would give the *next* step a different fingerprint on every
-    run and invalidate its cache for nothing. `_StreamingRecorder` completes in reverse, so a
-    ledger that appended as it went would show it.
+    `StepKey.of` composes it from the row keys *in order*, so the same structures in a
+    different order are a different step. Emitting results as they land would give the
+    *next* step a new fingerprint on every run and invalidate its cache for nothing.
+    `_StreamingRecorder` completes in reverse, so a ledger that appended as it went would
+    show it.
     """
     successes, _failures = _run(_StreamingRecorder(unconverged=set()), tmp_path, ("0", "1", "2"))
 

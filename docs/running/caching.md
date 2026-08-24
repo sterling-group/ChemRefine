@@ -156,18 +156,18 @@ rejected the same way rather than pairing one structure's energy with another's 
 
 ## Cost at scale
 
-The cache is rewritten in full on each save, and `parents_digest` re-hashes every parent's
-coordinates once per step. Both are linear in the structure count, and both are negligible
-next to the calculations they bookkeep. Measured on 30-atom structures
-(`tests/test_perf_cache.py`, run with `-m perf`):
+The cache is rewritten in full on each save, and `StepKey.of` re-hashes every parent's
+coordinates and derives a row key from each of them once per step. Both are linear in the
+structure count, and both are negligible next to the calculations they bookkeep. Measured
+on 30-atom structures (`tests/test_perf_cache.py`, run with `-m perf`):
 
-| structures | `parents_digest` | `cache.save` | `cache.load` | `steps.csv` | `_cache/` | live state |
+| structures | `StepKey.of` | `cache.save` | `cache.load` | `steps.csv` | `_cache/` | live state |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 200 | 0.001 s | 0.02 s | 0.01 s | 0.004 s | 0.4 MB | 0.6 MB |
-| 2 000 | 0.01 s | 0.15 s | 0.09 s | 0.01 s | 3.6 MB | 6.5 MB |
-| 10 000 | 0.06 s | 0.97 s | 0.24 s | 0.05 s | 17.9 MB | 32.6 MB |
+| 200 | 0.003 s | 0.03 s | 0.007 s | 0.007 s | 0.4 MB | 0.7 MB |
+| 2 000 | 0.03 s | 0.16 s | 0.06 s | 0.01 s | 3.7 MB | 6.6 MB |
+| 10 000 | 0.20 s | 1.07 s | 0.44 s | 0.08 s | 18.3 MB | 33.0 MB |
 
-A 10 000-structure step spends about a second on all of its bookkeeping, against a step
+A 10 000-structure step spends under two seconds on all of its bookkeeping, against a step
 running 10 000 quantum-chemistry jobs.
 
 The number worth watching is the last column, not the time. The pipeline holds every

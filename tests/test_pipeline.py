@@ -140,7 +140,7 @@ def test_bootstrap_refuses_a_non_finite_seed_coordinate(tmp_path: Path, literal:
     ASE's reader accepts these, and a seed is the one geometry no parse boundary ever
     sees — so left alone it reaches `cache.save`, whose coordinates go to the `arrays.npz`
     sidecar rather than through `write_json`'s `allow_nan=False`. Nothing downstream would
-    object: it round-trips the cache and `parents_digest` hashes it to a stable key, so
+    object: it round-trips the cache and `structure_digest` hashes it to a stable key, so
     every later step would be computed from it silently. `on_failure: best` is the path
     that carries it there, backfilling the seed itself in place of a parse.
     """

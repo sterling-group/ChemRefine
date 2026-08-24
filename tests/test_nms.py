@@ -95,7 +95,7 @@ def test_displaced_copies_rather_than_mutating_the_parent():
     `Structure.atoms` travels by reference and, unlike the force arrays, cannot have its
     write flag cleared (ASE writes through it), so the `.copy()` is the whole protection.
     Dropped, nothing crashes: the parent's geometry silently becomes the child's, and
-    `parents_digest` re-fingerprints every downstream step's cache key.
+    `structure_digest` re-fingerprints every downstream step's cache key.
     """
     parent = _h2("0")
     before = parent.atoms.get_positions().copy()

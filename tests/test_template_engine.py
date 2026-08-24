@@ -239,7 +239,7 @@ def test_atoms_from_output_copies_rather_than_mutating_the_seed():
     """An optimised geometry must land on a copy of the seed, never on the seed.
 
     The fallback is the pipeline's own structure, shared by reference; written in place,
-    the input geometry every later reader sees — including the `parents_digest` behind
+    the input geometry every later reader sees — including the `structure_digest` behind
     downstream cache keys — would silently become the output geometry. The `.copy()` is
     the whole protection (`Structure.atoms` cannot be write-locked the way the force
     arrays are), so this pins it.
