@@ -111,12 +111,45 @@ Each directory contains `.out` logs, `.xyz` geometries, and summary files.
 - Use `nms: true` with `target: ts` on the optimisation step to remove spurious modes.  
 - Always double-check `.xyz` files to confirm correct TS geometry.  
 
-### Identifying Good vs Bad Imaginary Modes
+---
 
-ChemRefine helps distinguish **spurious imaginary modes** (bad TS guesses) from **true transition states**.  
+## Identifying Good vs Bad Imaginary Modes
 
-- ❌ Bad imaginary frequency:  
-![Bad Imaginary](./bad_imag.gif)  
+A transition state is a *first-order* saddle point: it has exactly one imaginary mode, **and
+that mode is the reaction coordinate**. A frequency table only ever answers the first half.
+Both structures below are real states of this workflow — a step-2 candidate, and what step
+3's normal-mode sampling made of it. Drag either viewer to turn the molecule while it moves.
 
-- ✅ Corrected good imaginary frequency:  
-![Good Imaginary](./good_imag.gif)  
+### ❌ Before: a candidate carrying a spurious mode
+
+<!-- chemrefine:mode ts-bad -->
+
+The wavenumber is not what is wrong here. This structure *does* have the reaction
+coordinate — mode 6, at −295.24 cm⁻¹, draws both forming C–N bonds in together. What
+disqualifies it is the mode above: a wag of the phenyl ring that changes the N19–C5
+distance by 0.000 Å and the N17–C6 distance by −0.002 Å per unit of displacement. It goes
+nowhere near the reaction it is supposed to describe. Two imaginary modes make this a
+second-order saddle, not a transition state — which is exactly what step 3 is for.
+
+### ✅ After: normal-mode sampling has removed it
+
+<!-- chemrefine:mode ts-good -->
+
+Step 3 displaced the candidate along its imaginary modes and re-optimised each child. One
+came back still carrying two imaginary modes and was discarded; the other came back with
+one, drawn above. The terminal azide nitrogen and the two alkene carbons carry most of the
+motion, the phenyl ring is almost still, and both forming bonds move in phase — the
+concerted, asynchronous cycloaddition, and nothing else. That is a transition state, and
+it is the geometry this tutorial ships as `step1.xyz`.
+
+### Making this view for your own run
+
+Both figures above are three-kilobyte extracts of the frequency outputs that produced them,
+written by the call below and animated in the browser. The same file is what the
+[workflow builder](../playground.md)'s structure pane draws when you give it a mode index,
+so anything you can see here you can see for a run of your own.
+
+<!-- chemrefine:mode recipe -->
+
+`mode_index` is the index the frequency table prints, and the three extra columns the file
+carries are the per-atom displacements a viewer reads as `dx/dy/dz`.

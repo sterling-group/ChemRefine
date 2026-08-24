@@ -58,11 +58,18 @@ exclude_docs: |
   _includes/
 
 # tables.py fills the `<!-- chemrefine:… -->` directives from the registry, so no page
-# hand-maintains a list of engines, backends or extras. playground.py runs post-build to
-# copy the GUI assets to site/playground/ with a baked schema.json, so the workflow
-# builder is usable on the published docs (static mode: build + copy/download).
+# hand-maintains a list of engines, backends or extras. modes.py does the same for a
+# normal mode: the viewer and its caption come out of a committed 3 KB frequency extract,
+# so no page hand-types a wavenumber. playground.py runs post-build to copy the GUI assets
+# to site/playground/ with a baked schema.json, so the workflow builder is usable on the
+# published docs (static mode: build + copy/download).
+#
+# tables.py runs first and raises on a `chemrefine:` directive it does not know, which is
+# why every directive modes.py owns carries an argument — `chemrefine:mode ts-good`, never
+# a bare name that the other pattern would match and reject.
 hooks:
   - docs/hooks/tables.py
+  - docs/hooks/modes.py
   - docs/hooks/playground.py
 
 plugins:
