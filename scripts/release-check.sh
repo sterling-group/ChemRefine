@@ -181,12 +181,19 @@ PY
 step "the suite passes from the unpacked sdist (CI: install-smoke-test)"
 # The sdist ships tests and examples precisely so the suite can be run from it, and nothing
 # else executes that suite — which is how docs/ and examples/ silently fell out of it. The
-# repo-only guards skip themselves there with named reasons.
+# few remaining repo-only guards (.github/) skip themselves there with named reasons.
 tar -xzf dist/*.tar.gz -C "$work"
 ( cd "$work"/chemrefine-*/ \
   && "$PY" -m venv "$work/sdist-venv" \
   && "$work/sdist-venv/bin/pip" install --disable-pip-version-check --quiet ".[test]" \
   && "$work/sdist-venv/bin/python" -m pytest -q -p no:cacheprovider )
+
+# The sdist also promises it can rebuild the site, which is a promise about *contents*:
+# mkdocs.yml, the hooks, and the two root files two pages `--8<--` are all things that
+# would fall out of the include list without a word, exactly as `examples/` did. Four
+# seconds, and run with this environment's mkdocs rather than a second install — that
+# proves the tarball's own docs sources are complete, which is what can rot here.
+"$bin/mkdocs" build --strict -f "$work"/chemrefine-*/mkdocs.yml > /dev/null
 
 step "critical predicates are checked, not just covered (CI: mutation-gate)"
 # 100% branch coverage proves every line ran; it does not prove an assertion looked at the

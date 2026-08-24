@@ -242,8 +242,17 @@ packages = ["src/chemrefine"]
 # compressed e2e recordings, which is what makes the tests meaningful in the first
 # place. `examples` ships for the same reason (and as the paper artifacts they are):
 # the example sweep and one ORCA-inspect fixture read them, so without them the suite
-# the sdist promises fails. `docs` stays out on size — it is the largest directory in
-# the tree — and its drift tests skip themselves when it is absent.
+# the sdist promises fails.
+#
+# `docs` + `mkdocs.yml` ship so the tarball can rebuild its own site — 92 KB, and it
+# turns ~24 documentation guards from "skipped here" into "checked against the artifact
+# we publish", which is the drift class that let `examples/` fall out unnoticed. They
+# used to stay out on size, back when two tutorial GIFs were 13.6 of the directory's
+# 15 MB; the figures are 3 KB of frequency data now and the reason expired with them.
+# CONTRIBUTING.md and SECURITY.md are not courtesies in that list: `pymdownx.snippets`
+# runs with `check_paths: true` and two pages `--8<--` them, so a docs build without
+# them fails rather than degrades. CITATION.cff ships because a tarball of a cited tool
+# should carry its citation.
 #
 # Every pattern is anchored with a leading `/`. Hatchling patterns are
 # gitignore-style and a bare name matches at any depth — the unanchored
@@ -253,7 +262,12 @@ include = [
     "/src/chemrefine",
     "/tests",
     "/examples",
+    "/docs",
+    "/mkdocs.yml",
     "/README.md",
+    "/CONTRIBUTING.md",
+    "/SECURITY.md",
+    "/CITATION.cff",
     "/LICENSE",
     "/CHANGELOG.md",
     "/pyproject.toml",
