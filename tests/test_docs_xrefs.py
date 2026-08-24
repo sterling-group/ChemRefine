@@ -1,13 +1,20 @@
 """Every role-marked docstring cross-reference must resolve to a real object.
 
-The prose in ``src/`` is load-bearing: rationale lives in docstrings, and they point at
-each other with Sphinx roles (``:func:`chemrefine.cache.fingerprint```). Nothing checks
-those targets — mkdocs never resolves Sphinx roles, so a rename leaves the pointer
-dangling silently and the reader chasing a name that no longer exists. Six had already
-rotted when this test landed: ``chemrefine.config._normalize_legacy`` three times (the
-function is ``config_legacy.normalize``), ``chemrefine.slurm._run_body_lines`` twice
-(stranded by the slurm split into a package), and a bare ``_normalize_legacy`` once —
-which is the evidence prose needs the same mechanical check the code gets.
+The prose is load-bearing: rationale lives in docstrings, and they point at each other
+with Sphinx roles (``:func:`chemrefine.cache.structure_digest```). Nothing checks those
+targets — mkdocs never resolves Sphinx roles, so a rename leaves the pointer dangling
+silently and the reader chasing a name that no longer exists. Six had already rotted when
+this test landed: ``chemrefine.config._normalize_legacy`` three times (the function is
+``config_legacy.normalize``), ``chemrefine.slurm._run_body_lines`` twice (stranded by the
+slurm split into a package), and a bare ``_normalize_legacy`` once — which is the evidence
+prose needs the same mechanical check the code gets.
+
+``tests/`` and ``scripts/`` are scanned on the same footing as ``src/``, because the
+rationale a maintainer actually reads is as often in a test docstring as in the module it
+covers. Scanning only ``src/`` let ``chemrefine.cache.parents_digest`` rot in a perf test
+— and in the sentence above, which named the same removed function — through the release
+that deleted it, because the one test that called it is deselected by default and nothing
+read its prose.
 
 Absolute references only (targets starting ``chemrefine.``): a bare local name has no
 single right module to resolve against, and the absolute form is what the codebase uses
@@ -23,6 +30,13 @@ from pathlib import Path
 import chemrefine
 
 _PACKAGE_ROOT = Path(chemrefine.__file__).parent
+_REPO_ROOT = _PACKAGE_ROOT.parent.parent
+
+#: Directories scanned beside the package itself, when the checkout is there to hold them.
+#: Both are repository artifacts: an installed package has neither, and the package's own
+#: prose is the part that must be checked everywhere, so their absence narrows this test
+#: rather than breaking it.
+_EXTRA_ROOTS = ("tests", "scripts")
 
 _ROLE_RE = re.compile(
     # The dot is required so a bare local name that merely starts with "chemrefine"
@@ -31,18 +45,32 @@ _ROLE_RE = re.compile(
 )
 
 
+def _scanned_paths() -> list[Path]:
+    """Every ``.py`` file whose prose this checks — the package, plus the checkout's own."""
+    paths = list(_PACKAGE_ROOT.rglob("*.py"))
+    for name in _EXTRA_ROOTS:
+        root = _REPO_ROOT / name
+        if root.is_dir():
+            paths.extend(root.rglob("*.py"))
+    return sorted(set(paths))
+
+
 def _iter_refs() -> list[tuple[str, str]]:
-    """Every ``(location, target)`` role reference in the package's source text.
+    """Every ``(location, target)`` role reference in the scanned source text.
 
     Scanned as text rather than via ``__doc__`` because the roles appear in comments and
     attribute docstrings too, and those never reach a runtime ``__doc__``.
     """
     refs: list[tuple[str, str]] = []
-    for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
+    for path in _scanned_paths():
         text = path.read_text(encoding="utf-8")
         for m in _ROLE_RE.finditer(text):
             line = text.count("\n", 0, m.start()) + 1
-            refs.append((f"{path.relative_to(_PACKAGE_ROOT.parent)}:{line}", m.group(1)))
+            try:
+                where = path.relative_to(_REPO_ROOT)
+            except ValueError:  # an installed package, outside any checkout
+                where = path.relative_to(_PACKAGE_ROOT.parent)
+            refs.append((f"{where}:{line}", m.group(1)))
     return refs
 
 
@@ -89,7 +117,6 @@ def test_every_absolute_docstring_reference_resolves():
     )
 
 
-_REPO_ROOT = _PACKAGE_ROOT.parent.parent
 _DOCS = _REPO_ROOT / "docs"
 
 #: A ``docs/…md`` path named in prose. Same claim as a role reference — "go and read
