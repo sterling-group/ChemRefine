@@ -119,6 +119,14 @@ def test_per_step_bookkeeping_scales_linearly(tmp_path: Path, capsys) -> None:
     """Time key / save / load / CSV across the sizes and report the shape."""
     rows: list[tuple[int, float, float, float, float, float, float]] = []
 
+    # `io.save_step_csv` imports pandas lazily, so the first call anywhere pays the import —
+    # a fifth of a second, charged entirely to whichever size runs first. Left alone the CSV
+    # column reports an import cost as its smallest data point and the shape check reads it
+    # as work. One throwaway call up front buys the column its own subject.
+    io.save_step_csv(
+        energies_hartree=[], structure_ids=[], step_number=0, output_dir=tmp_path / "warmup"
+    )
+
     for n in SIZES:
         structures = _structures(n)
         results = StepResults(structures=structures)
