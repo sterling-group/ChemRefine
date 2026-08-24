@@ -59,18 +59,37 @@ class _CannedResponse:
 def test_lookup_smiles_hits_pubchem_and_trims(monkeypatch: pytest.MonkeyPatch):
     seen: dict[str, Any] = {}
 
-    def fake_urlopen(url: str, timeout: float) -> _CannedResponse:
-        seen["url"] = url
+    def fake_urlopen(request: urllib.request.Request, timeout: float) -> _CannedResponse:
+        seen["request"] = request
         return _CannedResponse(b"CC(=O)OC1=CC=CC=C1C(=O)O\n")
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     result = agent_tools.lookup_smiles("aspirin")
     assert result["smiles"] == "CC(=O)OC1=CC=CC=C1C(=O)O"
-    assert "aspirin" in seen["url"]
+    assert "aspirin" in seen["request"].full_url
+
+
+def test_lookup_smiles_identifies_chemrefine_to_pubchem(monkeypatch: pytest.MonkeyPatch):
+    """NCBI's usage policy asks callers to say who they are; urllib will not by default.
+
+    ``get_header`` with the title-cased spelling because that is how urllib stores it.
+    """
+    from chemrefine import USER_AGENT
+
+    seen: dict[str, Any] = {}
+
+    def fake_urlopen(request: urllib.request.Request, timeout: float) -> _CannedResponse:
+        seen["request"] = request
+        return _CannedResponse(b"CCO\n")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    agent_tools.lookup_smiles("ethanol")
+    assert seen["request"].get_header("User-agent") == USER_AGENT
+    assert "urllib" not in USER_AGENT
 
 
 def test_lookup_smiles_offline_names_the_alternative(monkeypatch: pytest.MonkeyPatch):
-    def refuse(url: str, timeout: float) -> _CannedResponse:
+    def refuse(request: urllib.request.Request, timeout: float) -> _CannedResponse:
         raise OSError("network unreachable")
 
     monkeypatch.setattr(urllib.request, "urlopen", refuse)

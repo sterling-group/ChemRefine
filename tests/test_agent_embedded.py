@@ -132,12 +132,19 @@ def test_build_model_pins_an_endpoint_or_passes_the_string_through(
 
 @contextlib.contextmanager
 def _listing_server(payload: bytes, status: int = 200) -> Any:
-    """A one-endpoint OpenAI-compatible ``/models`` stub on a kernel-assigned port."""
+    """A one-endpoint OpenAI-compatible ``/models`` stub on a kernel-assigned port.
+
+    ``seen`` collects the request headers so a test can assert on what we sent, not only
+    on what we did with the answer.
+    """
     import http.server
     import threading
 
+    seen: list[dict[str, str]] = []
+
     class _Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:
+            seen.append(dict(self.headers))
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -149,7 +156,7 @@ def _listing_server(payload: bytes, status: int = 200) -> Any:
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        yield f"http://127.0.0.1:{server.server_address[1]}/v1"
+        yield f"http://127.0.0.1:{server.server_address[1]}/v1", seen
     finally:
         server.shutdown()
         server.server_close()  # both halves, or the listening socket trips filterwarnings=error
@@ -162,16 +169,39 @@ def _cfg(base_url: str | None, model: str = "m1") -> ProviderConfig:
 def test_check_reports_a_served_model_usable():
     from chemrefine.agent.providers import check
 
-    with _listing_server(b'{"data": [{"id": "m1"}, {"id": "m2"}]}') as base:
+    with _listing_server(b'{"data": [{"id": "m1"}, {"id": "m2"}]}') as (base, _seen):
         report = check(_cfg(base))
     assert report.ok is True
     assert "m1" in report.findings[0]
 
 
+def test_check_identifies_chemrefine_to_the_endpoint():
+    """The probe must carry a real ``User-Agent``, not urllib's default.
+
+    Not politeness: urllib announces ``Python-urllib/3.x`` unless told otherwise, and
+    Groq's edge answers that token with a flat 403 — so this preflight reported a valid
+    API key as "authentication rejected", and the GUI's chat panel (whose Send button is
+    gated on the preflight) could not be used with Groq at all, while the chat itself
+    worked fine through the OpenAI SDK and its own product token.
+
+    ``get`` rather than ``["User-Agent"]`` because urllib title-cases what it sends.
+    """
+    from chemrefine import USER_AGENT, __version__
+    from chemrefine.agent.providers import check
+
+    with _listing_server(b'{"data": [{"id": "m1"}]}') as (base, seen):
+        check(_cfg(base))
+    sent = {k.lower(): v for k, v in seen[0].items()}
+    assert sent["user-agent"] == USER_AGENT
+    assert "ChemRefine" in sent["user-agent"]
+    assert __version__ in sent["user-agent"]
+    assert "urllib" not in sent["user-agent"]
+
+
 def test_check_names_the_missing_model_and_what_is_served():
     from chemrefine.agent.providers import check
 
-    with _listing_server(b'{"data": [{"id": "other"}]}') as base:
+    with _listing_server(b'{"data": [{"id": "other"}]}') as (base, _seen):
         report = check(_cfg(base, model="qwen3:4b"))
     assert report.ok is False
     assert "qwen3:4b" in report.findings[0]
@@ -181,7 +211,7 @@ def test_check_names_the_missing_model_and_what_is_served():
 def test_check_maps_auth_rejection_to_the_key_fix():
     from chemrefine.agent.providers import check
 
-    with _listing_server(b"{}", status=401) as base:
+    with _listing_server(b"{}", status=401) as (base, _seen):
         report = check(_cfg(base))
     assert report.ok is False
     assert any("CHEMREFINE_LLM_API_KEY" in line for line in report.findings)
@@ -190,7 +220,7 @@ def test_check_maps_auth_rejection_to_the_key_fix():
 def test_check_reports_other_http_statuses_plainly():
     from chemrefine.agent.providers import check
 
-    with _listing_server(b"{}", status=500) as base:
+    with _listing_server(b"{}", status=500) as (base, _seen):
         report = check(_cfg(base))
     assert report.ok is False
     assert "HTTP 500" in report.findings[0]
@@ -199,7 +229,7 @@ def test_check_reports_other_http_statuses_plainly():
 def test_check_reports_an_unreachable_endpoint():
     from chemrefine.agent.providers import check
 
-    with _listing_server(b"{}") as base:
+    with _listing_server(b"{}") as (base, _seen):
         pass  # the context closed the server — the port now refuses connections
     report = check(_cfg(base), timeout=2.0)
     assert report.ok is False
@@ -234,7 +264,7 @@ def test_check_reports_a_reply_that_is_not_a_model_listing(label: str, body: byt
     """
     from chemrefine.agent.providers import check
 
-    with _listing_server(body) as base:
+    with _listing_server(body) as (base, _seen):
         report = check(_cfg(base))
     assert report.ok is False
     assert "not an OpenAI-style model listing" in report.findings[0], label

@@ -410,11 +410,18 @@ def lookup_smiles(name: str) -> dict[str, Any]:
     """
     from urllib.error import URLError
     from urllib.parse import quote
-    from urllib.request import urlopen
+    from urllib.request import Request, urlopen
+
+    from chemrefine import USER_AGENT
 
     url = _PUBCHEM_URL.format(quote(name))
+    # A `Request` rather than a bare URL for one reason: the header. urllib's default
+    # announces `Python-urllib/3.x`, and NCBI's E-utilities usage policy asks callers to
+    # identify themselves — an unnamed client is the one they throttle first, and other
+    # edges (Groq's, for instance) reject that token outright.
+    request = Request(url, headers={"User-Agent": USER_AGENT})  # noqa: S310 — scheme is fixed https
     try:
-        with urlopen(url, timeout=15) as response:  # noqa: S310 — scheme is fixed https
+        with urlopen(request, timeout=15) as response:  # noqa: S310 — scheme is fixed https
             smiles = response.read().decode("utf-8").strip().splitlines()[0]
     except (URLError, OSError, IndexError) as e:
         raise ConfigError(

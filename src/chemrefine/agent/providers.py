@@ -17,6 +17,7 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from chemrefine import USER_AGENT
 from chemrefine.errors import ConfigError
 
 if TYPE_CHECKING:
@@ -243,8 +244,17 @@ def check(config: ProviderConfig, *, timeout: float = 5.0) -> CheckReport:
     from urllib.request import Request, urlopen
 
     url = probe.rstrip("/") + "/models"
+    # `User-Agent` is not decoration: urllib's default announces `Python-urllib/3.x`, and
+    # Groq's edge answers that token with a flat 403 — so this preflight reported a good key
+    # as "authentication rejected" while the chat, which goes through the OpenAI SDK and its
+    # own product token, worked. Verified by isolating the header: identical request, 403
+    # with the default, 200 with any real name.
     request = Request(  # noqa: S310 — scheme constrained to http(s) above
-        url, headers={"Authorization": f"Bearer {config.api_key or 'unset'}"}
+        url,
+        headers={
+            "Authorization": f"Bearer {config.api_key or 'unset'}",
+            "User-Agent": USER_AGENT,
+        },
     )
     try:
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 — scheme checked above
