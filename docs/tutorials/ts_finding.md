@@ -117,7 +117,7 @@ that mode is the reaction coordinate**. A frequency table only ever answers the 
 Both structures below are real states of this workflow — a step-2 candidate, and what step
 3's normal-mode sampling made of it. Drag either viewer to turn the molecule while it moves.
 
-### ❌ Before: a candidate carrying a spurious mode
+### Before: a candidate carrying a spurious mode
 
 <!-- chemrefine:mode ts-bad -->
 
@@ -128,7 +128,7 @@ distance by 0.000 Å and the N17–C6 distance by −0.002 Å per unit of displa
 nowhere near the reaction it is supposed to describe. Two imaginary modes make this a
 second-order saddle, not a transition state — which is exactly what step 3 is for.
 
-### ✅ After: normal-mode sampling has removed it
+### After: normal-mode sampling has removed it
 
 <!-- chemrefine:mode ts-good -->
 
