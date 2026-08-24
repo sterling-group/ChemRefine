@@ -179,6 +179,20 @@ check is the only thing distinguishing a truncated download from a working one. 
 directory makes forgetting impossible; the assertion below keeps the glob honest."""
 
 
+def _label_const(name: str) -> float:
+    """One of app.js's label constants, read out of app.js.
+
+    Restating them here is what made every one of them a second place to edit — the label
+    sizes are eyed against a running viewer and moved more than once, and a test that
+    hardcodes the old number fails for the wrong reason and gets "fixed" by copying the new
+    one in. Read, they simply follow.
+    """
+    source = (STATIC / "app.js").read_text(encoding="utf-8")
+    match = re.search(rf"^const {name} = ([\d.]+);", source, re.MULTILINE)
+    assert match, f"app.js has no `const {name} = …`"
+    return float(match.group(1))
+
+
 # The 3Dmol surface drawLabels() drives, as one stub rather than six hand-rolled ones.
 # `atoms` is what the model reports; every label made is captured in `labels`. Sprite scale
 # and position are recorded per write, because the whole point of _syncLabels() is that it
@@ -201,6 +215,9 @@ _VIEWER_STUB = """
     width: Math.floor([...text].reduce((w, c) => w + (ADVANCE[c] ?? 0.572), 0) * fontSize + 4),
     height: 1.25 * fontSize + 4,
   });
+  // What is actually attached to the scene, which is the thing removeAllLabels() iterates
+  // `labels` to clear — so a sprite added back without being re-listed is unreachable.
+  const scene = new Set();
   const viewerStub = (atoms, calls = []) => {
     const model = {
       selectedAtoms: () => atoms,
@@ -222,15 +239,25 @@ _VIEWER_STUB = """
         // dispose them itself, and why the stub has to expose both halves to be able to
         // check that it does.
         labels,
-        removeAllLabels() { labels.length = 0; calls.push("clear"); },
+        // The bundle's own shape, because the bug lives in it: detach every sprite, empty
+        // the list, THEN show() — and show() fires the view-change callback, which lands
+        // back in the app while its own bookkeeping may not have been cleared yet.
+        removeAllLabels() {
+          for (const l of labels) scene.delete(l.sprite);
+          labels.length = 0;
+          calls.push("clear");
+          this.show();
+        },
         addUnitCell() { calls.push("cell"); },
         addLabel(text, style) {
           calls.push("label:" + text);
+          const sprite = makeSprite();
+          scene.add(sprite);
           const label = {
             text,
             style,
             stylespec: style,
-            sprite: makeSprite(),
+            sprite,
             canvas: canvasFor(text, style.fontSize),
             disposed: false,
             rasterised: 1,
@@ -251,13 +278,14 @@ _VIEWER_STUB = """
           labels.push(label);
           return label;
         },
-        show() { calls.push("show"); },
+        show() { calls.push("show"); if (this.onView) this.onView(); },
         render() { calls.push("render"); },
         setViewChangeCallback(fn) { this.onView = fn; },
         // `upscale` holds this at two or more whatever the display is, which is what the
         // label texture is really being stretched across.
         getRenderer: () => ({ devicePixelRatio: 2 }),
-        modelGroup: { add(){}, remove(){} },
+        modelGroup: { add: (s) => scene.add(s), remove: (s) => scene.delete(s) },
+        scene,
         stopAnimate(){}, removeAllModels(){}, setStyle(){}, zoomTo(){}, resize(){},
       },
     };
@@ -1709,6 +1737,10 @@ def test_turning_labels_off_does_not_take_the_unit_cell_with_them():
       const stub = viewerStub([{ serial: 0, elem: "C", x: 0, y: 0, z: 0 }], calls);
       b._model = stub.model;
       b._gl = stub.gl;
+      // A zoom at which the starting texture is already the right resolution, so nothing
+      // re-rasterises and the sequence below is the label lifecycle alone. The resolution
+      // work has its own test; mixing the two here made this one fail for its reasons.
+      stub.gl.setView([0, 0, 0, 113, 0, 0, 0, 1]);
       b.viewer.labels = "one";
       b.drawLabels();
       const on = calls.splice(0);
@@ -1719,11 +1751,13 @@ def test_turning_labels_off_does_not_take_the_unit_cell_with_them():
     )
     result = json.loads(out)
     # Cleared, then the cell back, then the atom labelled — in that order.
-    assert result["on"] == ["clear", "cell", "label:1", "render"]
+    # The "show" is removeAllLabels()'s own: it detaches the sprites, empties its list
+    # and then renders — which is the re-entrancy the bookkeeping clear must precede.
+    assert result["on"] == ["clear", "show", "cell", "label:1", "render"]
     # And with numbering off the cell is still re-added; only the atom labels are skipped.
     # The dispose lands after the clear, never before it: removeAllLabels() detaches the
     # sprites and renders once, and only then is deleting the textures they drew with safe.
-    assert result["off"] == ["clear", "dispose:1", "cell", "render"]
+    assert result["off"] == ["clear", "show", "dispose:1", "cell", "render"]
 
 
 def test_each_label_owns_its_own_position_rather_than_sharing_one():
@@ -1952,8 +1986,8 @@ def test_label_size_tracks_the_zoom_so_it_stays_the_size_of_its_atom():
     # survive a change of texture resolution, which multiples of the texture's own height
     # did not: the texture is re-rasterised as the zoom moves, and the drawn size must not
     # move with it.
-    assert result["clampedIn"] == pytest.approx(96)
-    assert result["clampedOut"] == pytest.approx(8)
+    assert result["clampedIn"] == pytest.approx(_label_const("LABEL_INK_MAX_PX"))
+    assert result["clampedOut"] == pytest.approx(_label_const("LABEL_INK_MIN_PX"))
 
 
 def test_a_wide_label_is_scaled_down_so_it_never_outgrows_the_atom_it_names():
@@ -1997,39 +2031,109 @@ def test_a_wide_label_is_scaled_down_so_it_never_outgrows_the_atom_it_names():
           inkWide: l.sprite.scale.x * (l.canvas.width - 4) / perA,
         }));
       };
-      console.log(JSON.stringify({ working: at(130), farOut: at(100) }));
+      console.log(JSON.stringify({ working: at(130), farOut: at(96) }));
     """
     )
     result = json.loads(out)
+    ink = _label_const("LABEL_INK_HEIGHT")
+    width = _label_const("LABEL_INK_WIDTH")
+    floor = _label_const("LABEL_INK_MIN_PX")
     rows = result["working"]  # 20 A away: clear of both clamps, so the budgets decide
     short = [r for r in rows if len(r["text"]) == 2]  # H1 .. H9
     wide = [r for r in rows if len(r["text"]) == 3]  # H10
     assert len(short) == 9 and len(wide) == 1, [r["text"] for r in rows]
     # No label's ink is wider than one carbon blob, 2 * 1.7 * 0.25 A — the width budget.
     for row in rows:
-        assert row["inkWide"] < 0.85 + 1e-9, row
+        assert row["inkWide"] < width + 1e-9, row
     # The narrow ones are still sized by height, untouched by the budget: a hydrogen blob is
-    # 0.6 A across and their ink stands 0.36 A tall, so the number reads smaller than the
+    # 0.6 A across and their ink stands half that tall, so the number reads smaller than the
     # smallest atom rather than sitting on it like a lid.
     for row in short:
-        assert row["inkHigh"] == pytest.approx(0.36)
-        assert row["inkWide"] < 0.85
+        assert row["inkHigh"] == pytest.approx(ink)
+        assert row["inkWide"] < width
     # And the wide one paid for its width by getting shorter, not by pushing the others out.
-    assert wide[0]["inkWide"] == pytest.approx(0.85)
-    assert wide[0]["inkHigh"] < 0.36
-    # Zoomed out to 50 A the wide label is the first to reach the floor, and there it is
+    assert wide[0]["inkWide"] == pytest.approx(width)
+    assert wide[0]["inkHigh"] < ink
+    # Zoomed out to 54 A the wide label is the first to reach the floor, and there it is
     # allowed past its width budget rather than shrunk out of legibility — 8 CSS px of ink,
     # the same as every other label, instead of the 7.2 px the budget alone would have asked
     # for. The short ones are still above the floor and still sized by height.
     far = result["farOut"]
-    per_angstrom_far = 400 / (2 * 50 * math.tan(math.radians(10)))
+    per_angstrom_far = 400 / (2 * 54 * math.tan(math.radians(10)))
     far_wide = next(r for r in far if len(r["text"]) == 3)
-    assert far_wide["inkHigh"] * per_angstrom_far == pytest.approx(8)
-    assert far_wide["inkWide"] > 0.85
+    # The wide label is the first to reach it, because the width budget was already asking
+    # for less height than the height budget was. Between the two thresholds — a narrow
+    # window, and the only place the ordering is observable — it is floored while its
+    # shorter neighbours are not.
+    assert far_wide["inkHigh"] * per_angstrom_far == pytest.approx(floor)
+    assert far_wide["inkWide"] > width
     for row in far:
         if len(row["text"]) == 2:
-            assert row["inkHigh"] == pytest.approx(0.36)
-            assert row["inkHigh"] * per_angstrom_far > 8
+            assert row["inkHigh"] == pytest.approx(ink)
+            assert row["inkHigh"] * per_angstrom_far > floor
+
+
+def test_discarding_labels_leaves_nothing_stranded_in_the_scene():
+    """The viewer's list and the scene must agree, or a sprite becomes unreachable.
+
+    ``removeAllLabels()`` detaches every sprite, empties its own list, and *then* renders —
+    and that render fires the view-change callback, which lands back in ``_syncLabels()``.
+    With the app's own bookkeeping not yet cleared, that sync runs against labels the viewer
+    has just stopped listing, and a re-rasterise inside it ends on ``modelGroup.add()``:
+    putting back a sprite nothing can ever take out again, because ``removeAllLabels()``
+    iterates the list this one is no longer in.
+
+    The result is the reported one — the previous molecule's numbers standing beside the new
+    one, at the smallest size the code can draw, a fresh set every time a workflow is opened.
+    Pinned as an invariant rather than as the symptom: after discarding, the scene holds
+    exactly the sprites the viewer still lists.
+    """
+    out = _run_component_in_node(
+        _VIEWER_STUB
+        + """
+      const b = builder();
+      b.chatAvailability = () => {};
+      const atoms = [
+        { serial: 0, elem: "C", x: 0, y: 0, z: 0 },
+        { serial: 1, elem: "H", x: 1.1, y: 0, z: 0 },
+      ];
+      const stub = viewerStub(atoms);
+      // Through the real mount, so the view-change callback is wired the way the page wires
+      // it — that callback is the re-entrancy, and without it none of this can happen.
+      b.loadViewerLib = async () => ({ createViewer: () => stub.gl });
+      global.document = { getElementById: () => ({}) };
+      b.savedPath = "/p/input.yaml";
+      await b.mountViewer({ force: true });
+      b._model = stub.model;
+      // An ordinary window and an ordinary zoom, which is what makes the first draw
+      // rasterise well above the starting 32 texels. At the pane's 260 px minimum it stays
+      // at 32, the resolution band is never left, and none of this can happen — which is
+      // why the fault looks intermittent rather than constant.
+      stub.gl.HEIGHT = 620;
+      stub.gl.setView([0, 0, 0, 130, 0, 0, 0, 1]);
+      b.viewer.labels = "one";
+      b.drawLabels();
+      const drawn = { scene: stub.gl.scene.size, listed: stub.labels.length,
+                      font: stub.labels[0].stylespec.fontSize };
+
+      // The pane is hidden, so the viewer measures zero and its resize skips the render
+      // that would refresh the key — leaving the app's idea of the camera stale. That is
+      // what makes the re-entrant sync do work rather than return early.
+      stub.gl.HEIGHT = 0;
+      b.discardLabels();
+      console.log(JSON.stringify({
+        drawn, after: { scene: stub.gl.scene.size, listed: stub.labels.length },
+      }));
+    """
+    )
+    result = json.loads(out)
+    assert result["drawn"]["scene"] == 2 and result["drawn"]["listed"] == 2
+    # The precondition: the texture has been rasterised above its starting size, so the
+    # re-entrant sync below has a reason to rebuild rather than to return unchanged.
+    assert result["drawn"]["font"] > 40
+    # Nothing listed, and nothing left behind: a sprite in the scene that the viewer does
+    # not list can never be removed, re-sized or re-pushed again.
+    assert result["after"] == {"scene": 0, "listed": 0}
 
 
 def test_a_label_is_sized_by_its_own_atoms_depth_not_the_molecules():
@@ -2086,12 +2190,12 @@ def test_a_label_is_sized_by_its_own_atoms_depth_not_the_molecules():
         assert [round(r["depth"], 3) for r in rows] == sorted(
             [round(r["depth"], 3) for r in rows]
         ), rows
-        # Every label the same fraction of its own atom, front to back: 0.36 A of ink in a
-        # 0.60 A blob. Before this, the same three labels were the same size as each other
-        # while their atoms were not.
+        # Every label the same fraction of its own atom, front to back. Before this, the
+        # same three labels were the same size as each other while their atoms were not.
+        expected = _label_const("LABEL_INK_HEIGHT") / 0.6  # the H blob it is measured in
         for row in rows:
             assert row["visible"] is True
-            assert row["ratio"] == pytest.approx(0.6, rel=1e-9), (stage, row)
+            assert row["ratio"] == pytest.approx(expected, rel=1e-9), (stage, row)
 
 
 def test_a_label_hides_when_its_own_atom_goes_behind_the_camera():

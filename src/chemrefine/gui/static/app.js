@@ -114,18 +114,23 @@ const LABEL_CAP_EM = 0.72;
 
 // Angstroms of scene a digit's cap spans — the ink, not the texture. The yardstick is the
 // hydrogen blob, the smallest sphere the viewer draws: 2 * vdwRadii.H * SPHERE_SCALE =
-// 2 * 1.2 * 0.25 = 0.600 A. At 0.36 a one-character label's ink box is 0.29 x 0.36 A, whose
-// 0.46 A diagonal fits inside that blob with room to spare, so the number reads as smaller
-// than the smallest atom it can name instead of sitting on it like a lid.
-const LABEL_INK_HEIGHT = 0.36;
+// 2 * 1.2 * 0.25 = 0.600 A. At 0.30 a digit's cap is exactly half of that, so the number
+// reads as smaller than the smallest atom it can name instead of sitting on it like a lid.
+//
+// It was 0.36 until each label started taking its own atom's depth, which made near labels
+// about 16% larger than the shared-depth figure they had been eyed against — so this is
+// mostly that back out again.
+const LABEL_INK_HEIGHT = 0.3;
 
 // Angstroms of scene the ink may span horizontally before the label is scaled down to fit.
-// Height alone cannot bound a label, and that is the whole of the "too big" complaint: the
-// quad's width is the text's, so at a fixed height "H10" drew 1.11 A across — 1.85 hydrogen
-// blobs — while "1" drew 0.33 A. One carbon blob (2 * 1.7 * 0.25 = 0.850 A) is the budget,
-// which binds only on the three-character strings `element` mode emits and leaves every
-// one- and two-character label sized by height alone.
-const LABEL_INK_WIDTH = 0.85;
+// Height alone cannot bound a label: the quad's width is the text's, so at a fixed height
+// "H10" drew 1.85 hydrogen blobs across while "1" drew half of one.
+//
+// The pair is really one number — the text aspect ratio past which width takes over, here
+// 0.71 / 0.3 = 2.36 — so this moves with the height rather than staying put. Held at 0.85
+// while the height fell, the budget would go inert on every label short enough to matter and
+// only the long ones would keep their size.
+const LABEL_INK_WIDTH = 0.71;
 
 // Angstroms the anchor sits in front of its own sphere's surface, along the ray to the
 // camera. This is also the depth by which a neighbour must beat this atom to occlude the
@@ -136,7 +141,13 @@ const LABEL_CLEARANCE = 0.15;
 // scale factor. The old LABEL_SCALE_MIN/MAX were multiples of the texture's height, so they
 // silently meant a different on-screen size the moment fontSize moved. These are the same
 // two limits at today's texture: 0.35 * 0.72 * 32 = 8.1 px and 4 * 0.72 * 32 = 92 px.
-const LABEL_INK_MIN_PX = 8;
+// Six, not eight, and it falls with the ink for the same reason the width budget does: it
+// is a fixed pixel size, so it is what a label stops shrinking at — and left at 8 while the
+// ink dropped, every structure past about 10 A on a small pane would have been pinned there
+// and seen no change at all. It also re-opens the front-to-back size difference that sizing
+// on each atom's own depth closed, since a near label clears the floor while its twin at the
+// back does not.
+const LABEL_INK_MIN_PX = 6;
 const LABEL_INK_MAX_PX = 96;
 
 // A label is the one thing in this scene that has a resolution of its own. A sphere is
@@ -1066,11 +1077,27 @@ function builder() {
     // on a blank canvas to do it.
     discardLabels() {
       if (!this._gl) return;
+      // Read off the viewer's own list, not off `_atomLabels`, so it covers the a/b/c
+      // unit-cell labels that `_atomLabels` never holds.
       const stale = this._gl.labels.slice();
-      this._gl.removeAllLabels();
-      for (const label of stale) label.dispose();
+      // Cleared BEFORE removeAllLabels(), and that order is the whole of this. The bundle's
+      // removeAllLabels() detaches every sprite, empties its own list, and then renders —
+      // and rendering fires the view-change callback, which lands back in _syncLabels().
+      // With `_atomLabels` still set, that sync runs against labels the viewer has just
+      // stopped listing, and a re-rasterise inside it ends on `modelGroup.add(sprite)`,
+      // putting back a sprite nothing can ever take out again: removeAllLabels() iterates
+      // the list this one is no longer in. That is the previous molecule's numbers standing
+      // beside the new one at the smallest size the code can draw, a fresh set per Open…
+      //
+      // Cleared first, that re-entrant sync hits its own `!_atomLabels.length` guard and
+      // returns without touching anything.
       this._atomLabels = [];
       this._labelViewKey = "";
+      this._gl.removeAllLabels();
+      // Freed after the detach, never before: the sprites have to be off the scene before
+      // their textures go. That constraint is real and is not the one above — the two used
+      // to sit in one comment as though they were the same rule.
+      for (const label of stale) label.dispose();
     },
     // The cell and the atom labels, redrawn together. They are one operation because
     // removeAllLabels() takes the a/b/c corner labels addUnitCell adds down with the atom
