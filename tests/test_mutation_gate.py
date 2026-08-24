@@ -32,7 +32,8 @@ _GATE = REPO / "scripts" / "mutation_gate.py"
 # green for the wrong reason is worse than no gate, so the condition is "am I looking at a
 # real checkout", and the answer is whether the script is here at all.
 pytestmark = pytest.mark.skipif(
-    not _GATE.is_file(), reason="no scripts/ — this is the mutation gate's own scratch copy"
+    not _GATE.is_file(),
+    reason="no scripts/ — neither the sdist nor the gate's own scratch copy carries it",
 )
 
 

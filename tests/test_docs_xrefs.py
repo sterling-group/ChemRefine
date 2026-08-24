@@ -30,7 +30,13 @@ from pathlib import Path
 import chemrefine
 
 _PACKAGE_ROOT = Path(chemrefine.__file__).parent
-_REPO_ROOT = _PACKAGE_ROOT.parent.parent
+
+#: The tree under test, located from this file rather than from the imported package —
+#: the idiom ``test_mutation_gate`` and ``test_docs_commit_types`` already use. Derived
+#: from the package it was two directories above an *installed* ``chemrefine``, which is
+#: a site-packages ancestor holding none of this, so every guard below stood down in the
+#: one run that most needed them: the suite executed from the unpacked sdist.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 #: Directories scanned beside the package itself, when the checkout is there to hold them.
 #: Both are repository artifacts: an installed package has neither, and the package's own
@@ -137,11 +143,18 @@ def test_every_documentation_path_named_in_prose_exists():
     reads when their v1 config is rejected. ``--strict`` cannot see them because they are
     not in ``docs/``, so they rot silently in exactly the way a link inside ``docs/``
     no longer can.
-    """
-    if not _DOCS.is_dir():
-        import pytest
 
-        pytest.skip("docs/ is a repository artifact and does not ship in the sdist")
+    A missing ``docs/`` fails rather than skips. Every tree this suite runs in ships one —
+    the sdist by its include list, the mutation gate by ``_INPUTS`` — and the wheel ships
+    no tests at all, so there is no run where its absence is normal. Skipping there would
+    be silence in the exact shape of the regression: ``docs/`` and ``examples/`` have
+    already fallen out of the sdist once, with every gate green.
+    """
+    assert _DOCS.is_dir(), (
+        f"no docs/ beside {_REPO_ROOT} — the sdist and the mutation gate's scratch copy "
+        "both carry it, so its absence is a packaging regression, which is the thing this "
+        "guard is here to notice rather than stand down for"
+    )
 
     found, missing = 0, []
     for pattern in _PROSE_FILES:
