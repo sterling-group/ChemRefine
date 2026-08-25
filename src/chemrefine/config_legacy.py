@@ -131,6 +131,27 @@ def _normalize_nms_keys(s: dict[str, Any]) -> None:
         s["options"] = opts
 
 
+def _normalize_qiskit_active_space(s: dict[str, Any]) -> None:
+    """Move the pre-release flat Qiskit active-space pair into its nested block."""
+    if s.get("engine") != "qiskit" or not isinstance(s.get("options"), dict):
+        return
+    options = dict(s["options"])
+    electrons = options.pop("active_electrons", None)
+    orbitals = options.pop("active_orbitals", None)
+    if electrons is None and orbitals is None:
+        return
+    if "active_space" in options:
+        raise ConfigError("use either active_space or active_electrons/active_orbitals, not both")
+    if electrons is None or orbitals is None:
+        raise ConfigError("active_electrons and active_orbitals must be provided together")
+    logger.warning(
+        "Qiskit `active_electrons`/`active_orbitals` are deprecated; "
+        "use `active_space: {electrons: ..., orbitals: ...}`"
+    )
+    options["active_space"] = {"electrons": electrons, "orbitals": orbitals}
+    s["options"] = options
+
+
 def _normalize_step(step: Any) -> Any:
     """Rewrite one legacy step dict to the current schema (helper for :func:`normalize`)."""
     if not isinstance(step, dict):
@@ -150,6 +171,8 @@ def _normalize_step(step: Any) -> Any:
     elif isinstance(s.get("engine"), str):
         eng = s["engine"].lower()
         s["engine"] = _ENGINE_RENAMES.get(eng, eng)
+
+    _normalize_qiskit_active_space(s)
 
     # Operation: ``OPT+SP`` → ``opt_sp``, ``GOAT`` → ``goat`` (engines lower/replace too).
     if isinstance(s.get("operation"), str):

@@ -618,6 +618,82 @@ def test_legacy_mlff_block_becomes_options_and_extopt_engine():
     assert "bind" not in s.options  # obsolete sub-key dropped
 
 
+def test_legacy_qiskit_active_space_is_canonicalized(caplog: pytest.LogCaptureFixture):
+    """The YAML compatibility layer owns the old flat active-space spelling."""
+    from chemrefine.config_legacy import _normalize_step
+    from chemrefine.engines.qiskit.options import ActiveSpaceOptions, QiskitOptions
+
+    normalized = _normalize_step(
+        {
+            "step": 1,
+            "engine": "qiskit",
+            "operation": "sp",
+            "options": {"basis": "sto-3g", "active_electrons": 2, "active_orbitals": 2},
+        }
+    )
+
+    assert normalized["options"] == {
+        "basis": "sto-3g",
+        "active_space": {"electrons": 2, "orbitals": 2},
+    }
+    assert QiskitOptions.from_raw(normalized["options"]).active_space == ActiveSpaceOptions(
+        electrons=2, orbitals=2
+    )
+    assert "active_electrons" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"active_electrons": 2},
+        {"active_orbitals": 2},
+    ],
+)
+def test_legacy_qiskit_active_space_requires_both_flat_keys(options: dict[str, object]):
+    """An incomplete legacy pair fails before strict engine validation."""
+    from chemrefine.config_legacy import _normalize_step
+
+    with pytest.raises(ConfigError, match="provided together"):
+        _normalize_step({"engine": "qiskit", "options": options})
+
+
+def test_legacy_qiskit_active_space_rejects_mixed_spellings():
+    """Canonical and legacy active-space spellings cannot be combined."""
+    from chemrefine.config_legacy import _normalize_step
+
+    with pytest.raises(ConfigError, match="either active_space"):
+        _normalize_step(
+            {
+                "engine": "qiskit",
+                "options": {
+                    "active_space": {"electrons": 2, "orbitals": 2},
+                    "active_electrons": 2,
+                    "active_orbitals": 2,
+                },
+            }
+        )
+
+
+def test_qiskit_active_space_normalizer_is_scoped_and_idempotent():
+    """Current Qiskit YAML and other engines pass through the legacy quarantine unchanged."""
+    from chemrefine.config_legacy import _normalize_qiskit_active_space, _normalize_step
+
+    canonical = {
+        "engine": "qiskit",
+        "options": {"active_space": {"electrons": 2, "orbitals": 2}},
+    }
+    other = {
+        "engine": "orca",
+        "options": {"active_electrons": 2, "active_orbitals": 2},
+    }
+    invalid_options = {"engine": "qiskit", "options": "not-a-mapping"}
+
+    assert _normalize_step(canonical) == canonical
+    assert _normalize_step(other) == other
+    _normalize_qiskit_active_space(invalid_options)
+    assert invalid_options == {"engine": "qiskit", "options": "not-a-mapping"}
+
+
 def test_legacy_train_operation_selects_trainer():
     cfg = Config(
         template_dir="./t",
