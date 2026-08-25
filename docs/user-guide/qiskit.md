@@ -932,6 +932,7 @@ from chemrefine.engines.api import BackendRequirement
 from chemrefine.engines.qiskit.context import EstimatorResource
 from chemrefine.engines.qiskit.registry import ESTIMATORS
 
+
 @ESTIMATORS.register(
     "provider_estimator",
     ProviderEstimatorOptions,
@@ -940,8 +941,7 @@ from chemrefine.engines.qiskit.registry import ESTIMATORS
         import_name="provider_module",
     ),
 )
-def build_provider_estimator(*, options: ProviderEstimatorOptions) -> EstimatorResource:
-    ...
+def build_provider_estimator(*, options: ProviderEstimatorOptions) -> EstimatorResource: ...
 ```
 
 Preflight selection, managed-environment discovery, and the worker interpreter
