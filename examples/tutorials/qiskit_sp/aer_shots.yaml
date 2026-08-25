@@ -1,0 +1,46 @@
+template_dir: ./templates
+output_dir: ./outputs_aer_shots
+input: ./h2.xyz
+
+charge: 0
+multiplicity: 1
+max_cores: 4
+dispatch: local
+
+steps:
+  - step: 1
+    name: aer_shot_vqe
+    engine: qiskit
+    operation: sp
+    options:
+      basis: sto-3g
+      active_space:
+        electrons: 2
+        orbitals: 2
+      mapper: jordan_wigner
+      algorithm: vqe
+      initial_state: hartree_fock
+      ansatz:
+        name: uccsd
+        options:
+          reps: 1
+          preserve_spin: true
+      estimator:
+        name: aer_shots
+        options:
+          method: statevector
+          default_precision: 0.03125  # approximately 1024 shots per group
+          abelian_grouping: true
+          seed_simulator: 17
+          simulation_precision: double
+          optimization_level: 1
+          seed_transpiler: 17
+          noise_model: null
+      optimizer:
+        name: cobyla
+        options:
+          maxiter: 60
+          tol: 1.0e-5
+      initial_point: zeros
+      device: cpu
+      cores: 2

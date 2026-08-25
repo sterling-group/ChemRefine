@@ -17,6 +17,7 @@ cd <example> && chemrefine run input.yaml
 | [tutorials/transition_state](tutorials/transition_state/) | C₁₃H₁₅N₃ | Relaxed PES scan, `max` sampling, OptTS, TS-targeted normal-mode sampling. |
 | [tutorials/host_guest](tutorials/host_guest/) | macrocycle + Cl⁻ | DOCKER guest docking, per-step charge override, SOLVATOR microsolvation. |
 | [tutorials/mlip_training](tutorials/mlip_training/) | C₁₀H₂₂ | Dataset building with random NMS, MACE training, trained-model validation. |
+| [tutorials/qiskit_sp](tutorials/qiskit_sp/) | H₂ | Modular Qiskit Nature single point with an active space, UCCSD, and VQE; switchable in YAML to exact or ADAPT-VQE and to reference statevector, lightweight shots, Aer statevector, or Aer finite-shot estimators. |
 | [tutorials/redox/amines](tutorials/redox/amines/) | 8 amines (SMILES) | CSV seeding and redox charge/multiplicity ladders per molecule. |
 | [tutorials/redox/dimethylaniline](tutorials/redox/dimethylaniline/) | N,N-dimethylaniline | GOAT + Boltzmann filter, −1/0/+1 redox ladder on MLIP and DFT. |
 | [tutorials/spin/benzophenone](tutorials/spin/benzophenone/) | benzophenone | Singlet/triplet gaps and TDDFT. |
