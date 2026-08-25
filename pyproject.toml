@@ -149,6 +149,20 @@ dev = [
     "types-PyYAML",
     "pre-commit>=3.5",
 ]
+# Qiskit Nature electronic-structure backend.
+# PySCF supplies molecular orbitals and integrals for the initial implementation.
+qiskit = [
+    "qiskit>=1.4,<2.0",
+    "qiskit-nature>=0.8,<0.9",
+    "qiskit-algorithms>=0.4,<0.5",
+    "chemrefine[pyscf]",
+]
+# Local high-performance statevector and finite-shot simulation.  A separate
+# managed environment keeps estimator-provider dependencies modular.
+qiskit-aer = [
+    "qiskit-aer>=0.17,<0.18",
+    "chemrefine[qiskit]",
+]
 
 [project.urls]
 Homepage = "https://github.com/sterling-group/ChemRefine"
@@ -197,7 +211,17 @@ strict = true
 # call". Excluding those packages keeps `disallow_untyped_calls` meaningful for our own
 # code — where it catches a genuinely unannotated helper — without turning every
 # `atoms.get_positions()` into an error.
-untyped_calls_exclude = ["ase", "rdkit", "pyscf", "gpu4pyscf", "pandas"]
+untyped_calls_exclude = [
+    "ase",
+    "rdkit",
+    "pyscf",
+    "gpu4pyscf",
+    "pandas",
+    "qiskit",
+    "qiskit_aer",
+    "qiskit_nature",
+    "qiskit_algorithms",
+]
 # Annotation requirements are relaxed here and re-imposed on `chemrefine.*` below, rather
 # than the other way round. Tests are worth type-checking for the calls they make *into*
 # the package — a wrong argument, a renamed keyword, a field that moved — and that needs
@@ -262,6 +286,10 @@ module = [
     "flask.*",
     "waitress.*",
     "pandas.*",
+    "qiskit.*",
+    "qiskit_aer.*",
+    "qiskit_nature.*",
+    "qiskit_algorithms.*",
 ]
 ignore_missing_imports = true
 
