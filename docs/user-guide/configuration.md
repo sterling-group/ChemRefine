@@ -56,7 +56,7 @@ steps:
 | `slurm_array` | bool | `False` | Submit each step as SLURM job array(s) instead of one job per structure (ignored when running locally). |
 | `dispatch` | `auto` / `local` / `slurm` | `auto` | How jobs are executed. `auto` submits via `sbatch` when it is on PATH and runs the generated scripts locally via `bash` otherwise. `local` forces the local runner even when an `sbatch` binary exists (e.g. a workstation with SLURM client tools but no reachable cluster); `slurm` requires `sbatch` and fails fast when it is missing. |
 | `job_timeout_seconds` | float > 0 / `None` | `None` (wait forever) | How long a step may go with **nothing finishing** before giving up with exit code `8`. The clock restarts on every completed job, so a batch that keeps draining never trips it however long the whole step takes — size it against the longest *single* job, not the step. `None` is right under SLURM: the partition's own time limit already bounds the job. Set it when nothing else will — a `dispatch: local` run, or a cluster where a job can sit in `PD` indefinitely. It bounds *waiting*, not compute, and means the same thing on the per-job and `slurm_array` paths. |
-| `executables` | map | `{}` | Tool → binary-path map for external-binary engines, e.g. `{ orca: /opt/orca/orca }`. Importable backends (mlip, pyscf) need no entry. |
+| `executables` | map | `{}` | Tool → binary-path map for external-binary engines, e.g. `{ orca: /opt/orca/orca }`. Importable backends (mlip, pyscf, qiskit) need no entry. |
 | `steps` | list | — | **Required.** The ordered pipeline stages; `step:` numbers must form a contiguous `1..N`. |
 
 ## Per-step keys
@@ -65,7 +65,7 @@ steps:
 |-----|------|---------|-------------|
 | `step` | int ≥ 1 | — | **Required.** 1-based step number; drives directory naming and order. |
 | `name` | str | `None` | Optional filesystem-safe label (letters/digits/`_`/`-`, not all-digits). Directory becomes `stepN_name/`; usable as a CLI target. |
-| `engine` | str | — | **Required.** One of `orca`, `mlip`, `mlip-extopt`, `mlip-train`, `pyscf`, `pyscf-extopt`. |
+| `engine` | str | — | **Required.** One of `orca`, `mlip`, `mlip-extopt`, `mlip-train`, `pyscf`, `pyscf-extopt`, `qiskit`. |
 | `operation` | str | `None` | Engine-defined: `opt_sp`, `sp`, `freq`, `pes`, `goat`, `docker`, `solvator`. (`mlip_train` is a legacy spelling: it named a step *kind*, which `engine: mlip-train` already says. Old configs are still translated.) **Optional** — when omitted, ORCA infers the run type from the template's `!` keyword lines (`GOAT`/`DOCKER`/`SOLVATOR`/a `%geom Scan` block/`Opt`/`OptTS`/`Freq`; `#` comments are ignored, matching is case-insensitive), defaulting to a single point if it finds no run-type keyword. An explicit value always wins — give it when inspection can't decide. |
 | `template` | str | `stepN.{inp,py}` | Engine input template basename (relative to `template_dir` if not absolute). |
 | `slurm_template` | str | global | Per-step SLURM header override. |
@@ -125,6 +125,34 @@ raises a clear error if the chosen energy wasn't computed.
     | `tensor_folder` | `tensors` | Output dir for `save_tensors` `.npz`. A relative path (the default) is copied back into the structure's own dir (`outputs/stepN/<id>/tensors/`); an absolute path writes there directly. |
     | `cores` | `1` | Per-structure core budget. |
     | `backend_python` | `None` | Explicit interpreter for the backend (escape hatch). Normally unset: the `pyscf` managed env is resolved by name. |
+
+=== "qiskit"
+
+    The Qiskit Nature engine performs modular ground-state single points. Its
+    `mapper`, `algorithm`, `ansatz`, `initial_state`, `estimator`, `optimizer`,
+    and `initial_point` are independent named components with strict option
+    models. Built-ins include exact diagonalization, VQE, ADAPT-VQE, UCCSD,
+    EfficientSU2, reference and Aer statevector/shot estimators, and three
+    optimizers.
+
+    | Key | Default | Description |
+    |-----|---------|-------------|
+    | `basis` | `sto-3g` | PySCF basis used to construct the Qiskit Nature electronic problem. |
+    | `active_space` | `None` | Optional `{electrons, orbitals}` active-space reduction. |
+    | `mapper` | `jordan_wigner` | `jordan_wigner` or `parity` (the latter optionally applies two-qubit reduction). |
+    | `algorithm` | `exact` | `exact`, `vqe`, or `adapt_vqe`. |
+    | `ansatz` | `uccsd` | `uccsd` (circuit + pool) or `efficient_su2` (fixed circuit only). |
+    | `initial_state` | `hartree_fock` | `hartree_fock` or `zero`. |
+    | `estimator` | `statevector` | `statevector`, `basic_backend`, `aer_statevector`, or `aer_shots`. Expanded form accepts strict estimator-specific options. |
+    | `optimizer` | `slsqp` | `slsqp`, `cobyla`, or `spsa`. |
+    | `initial_point` | `zeros` | `zeros` or seeded `random`; fixed VQE only. |
+    | `device` | `cpu` | `cpu`, or `cuda` with an Aer estimator and a compatible Linux `qiskit-aer-gpu` environment. Also drives scheduler GPU allocation. |
+    | `cores` | `1` | Per-structure CPU allocation and Aer maximum parallel-thread count. |
+    | `backend_python` | `None` | Explicit interpreter override; normally let ChemRefine resolve `qiskit` or `qiskit-aer` from the selected estimator. |
+
+    See [Qiskit ground-state calculations](qiskit.md) for all component
+    options, architecture diagrams, complete exact/VQE/ADAPT configurations,
+    metadata, extension contracts, and compatibility notes.
 
 === "mlip-train"
 

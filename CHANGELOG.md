@@ -43,7 +43,18 @@ for the full map.
   MLIP backends are **auto-discovered** — a new engine package or backend
   module is dropped in and registers itself, with no central import list to
   edit. Bundled engines: `orca`, `mlip`, `mlip-extopt`, `mlip-train`,
-  `pyscf`, `pyscf-extopt`.
+  `pyscf`, `pyscf-extopt`, `qiskit`.
+- Modular Qiskit Nature ground-state single points: strict registries make the
+  mapper, algorithm, ansatz/operator pool, initial state, estimator, optimizer,
+  and initial point independently selectable in YAML. Built-ins cover exact
+  diagonalization, fixed VQE, ADAPT-VQE, active-space reduction, UCCSD and
+  EfficientSU2, plus four local estimator modes: reference statevector,
+  lightweight finite shots, exact-expectation Aer, and finite-shot Aer with an
+  optional serialized noise model. The `[qiskit]` extra supplies the core
+  Nature/Algorithms/PySCF stack; `[qiskit-aer]` adds pinned CPU Aer, while a
+  custom Linux GPU environment can select Aer with `device: cuda`. Runs record
+  resolved components, solver diagnostics, and variational evaluations, and a
+  shipped H2 tutorial demonstrates the thin-template architecture.
 - Subcommand CLI — `run`, `resume`, `rerun [step]`, `rerun-errors [step]`,
   `rebuild-cache [step]`, `rebuild-nms [step]` — with documented process
   exit codes per failure class.

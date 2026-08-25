@@ -99,6 +99,7 @@ nav:
       - user-guide/index.md
       - Installation: user-guide/installation.md
       - Configuration: user-guide/configuration.md
+      - Qiskit Ground-State Calculations: user-guide/qiskit.md
       - CLI Reference: user-guide/cli.md
       - Troubleshooting: user-guide/troubleshooting.md
   - Tutorials:

@@ -1,7 +1,7 @@
 # Installation
 
 ChemRefine is a **light orchestrator core** plus optional **compute backends**. The core
-(pipeline, ORCA driving, SLURM) installs anywhere in seconds; backends (MLIPs, PySCF) are
+(pipeline, ORCA driving, SLURM) installs anywhere in seconds; backends (MLIPs, PySCF, Qiskit) are
 added afterwards — either into the same environment or as isolated
 [managed environments](#compute-backends) when you use several.
 
@@ -75,6 +75,9 @@ only host one backend family. Two ways to add one:
 
     ```bash
     pip install "chemrefine[mlip]"        # FAIRChem / UMA (the default backend)
+    # or, for the Qiskit engine:
+    pip install "chemrefine[qiskit]"      # Qiskit Nature + Algorithms + PySCF
+    # or "chemrefine[qiskit-aer]" to add Aer estimators
     ```
 
 - **Several (conflicting) backends** — keep the core light and provision one *managed
@@ -138,7 +141,8 @@ steps:
 Step 1 runs each structure with the `mlip-mace` env's Python, step 2 with
 `mlip-fairchem`'s — the conflicting stacks never share a process. The same works for
 `mlip-extopt` steps (the gradient server launches from the step's env) and for `pyscf`.
-The `options.backend_python` knob overrides the resolution with an explicit interpreter
+The same managed-environment resolution applies to `qiskit`. The
+`options.backend_python` knob overrides the resolution with an explicit interpreter
 (escape hatch — normally envs are resolved by name only).
 
 ### Other extras
@@ -146,8 +150,71 @@ The `options.backend_python` knob overrides the resolution with an explicit inte
 - `[pyscf]` — `pyscf` for the PySCF engine / PySCF-ExtOpt gradients (plus `[server]`);
   `[pyscf-gpu]` adds `gpu4pyscf-cuda12x` + `cutensor-cu12` (CUDA 12; CUDA-11 hosts swap in
   the `-cuda11x` wheels).
+- `[qiskit]` — Qiskit `>=1.4,<2.0`, Qiskit Nature `>=0.8,<0.9`, Qiskit Algorithms
+  `>=0.4,<0.5`, and PySCF for modular exact, VQE, and ADAPT-VQE
+  electronic-structure single points.
+- `[qiskit-aer]` — standard CPU Qiskit Aer `>=0.17,<0.18` plus everything in
+  `[qiskit]`, enabling the `aer_statevector` and `aer_shots` estimators. See
+  [Qiskit ground-state calculations](qiskit.md).
 - `[server]` — just `flask` + `waitress` (the ExtOpt HTTP server); pulled in automatically
   by every MLIP extra and `[pyscf]`.
+
+### Qiskit Nature
+
+The Qiskit engine can share the main environment:
+
+```bash
+pip install "chemrefine[qiskit]"
+# Or include Aer:
+pip install "chemrefine[qiskit-aer]"
+```
+
+For a source checkout, use:
+
+```bash
+pip install -e ".[qiskit]"
+# Or include Aer:
+pip install -e ".[qiskit-aer]"
+```
+
+Or provision it as a managed backend so the scientific stack stays isolated:
+
+```bash
+chemrefine backends install qiskit
+# Use this backend name for Aer estimators:
+chemrefine backends install qiskit-aer
+chemrefine backends list
+```
+
+The four built-in estimators all run locally and need no cloud credentials:
+`statevector`, the lightweight shot-based `basic_backend`, exact-expectation
+`aer_statevector`, and finite-shot `aer_shots`. The first two use `[qiskit]`;
+the Aer estimators require `[qiskit-aer]`. ChemRefine resolves their managed
+backend names accordingly, so a mixed pipeline may provision both `qiskit` and
+`qiskit-aer`. IBM Runtime and quantum-hardware submission are not included.
+
+Aer GPU wheels are a separate Linux distribution and require a compatible CUDA
+stack. Build a managed or custom backend environment in which
+`qiskit-aer-gpu>=0.17,<0.18` replaces standard `qiskit-aer`; do not install both
+distributions in one environment. A custom environment needs the same pinned
+Qiskit, Nature, Algorithms, PySCF, and ChemRefine source/version as the main
+installation. Point a step at its interpreter only when it cannot be
+provisioned under the normal `qiskit-aer` backend name:
+
+```yaml
+steps:
+  - step: 1
+    engine: qiskit
+    operation: sp
+    options:
+      estimator: aer_statevector
+      device: cuda
+      backend_python: /absolute/path/to/qiskit-gpu-env/bin/python
+```
+
+`device: cuda` makes ChemRefine request GPU capacity and tells Aer to use its
+GPU device. It is valid only for an Aer estimator. GPU simulation changes where
+the classical simulator runs; it does not connect the job to quantum hardware.
 
 ## HPC
 
