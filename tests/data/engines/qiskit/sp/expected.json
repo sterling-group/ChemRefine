@@ -1,0 +1,34 @@
+{
+  "result_format": "v1.0",
+  "structures": [
+    {
+      "id": "0",
+      "parent_id": null,
+      "energy_hartree": -1.1373060357534004,
+      "gibbs_hartree": null,
+      "enthalpy_hartree": null,
+      "energy_zpe_hartree": null,
+      "converged": null,
+      "terminated_normally": null,
+      "symbols": [
+        "H",
+        "H"
+      ],
+      "positions": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.735
+        ]
+      ],
+      "forces_ev_per_a": null,
+      "imaginary_freqs": null,
+      "resolved_from": null
+    }
+  ]
+}
