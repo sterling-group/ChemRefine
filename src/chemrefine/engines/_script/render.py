@@ -25,6 +25,7 @@ Name (assign in template)        Footer behaviour
 ``energy_hartree``               REQUIRED. ``NameError`` if missing.
 ``gradient_hartree_per_bohr``    Optional list / numpy array.
 ``positions_angstrom``           Optional list / numpy array.
+``engine_metadata``              Optional engine-specific JSON-compatible diagnostics.
 ==============================  ========================================
 
 The footer writes to a *basename* (relative path) so the file lands
@@ -64,7 +65,9 @@ def _build_output_footer(output_basename: str) -> str:
         "\n"
         "\n"
         '_chemrefine_result = {"energy_hartree": float(energy_hartree)}\n'
-        '_chemrefine_optional = ("gradient_hartree_per_bohr", "positions_angstrom")\n'
+        "_chemrefine_optional = (\n"
+        '    "gradient_hartree_per_bohr", "positions_angstrom", "engine_metadata"\n'
+        ")\n"
         "for _chemrefine_name in _chemrefine_optional:\n"
         "    if _chemrefine_name in dir():\n"
         "        _chemrefine_result[_chemrefine_name] = locals()[_chemrefine_name]\n"
@@ -95,9 +98,9 @@ def build_input(
 
     The appended footer reads the well-known variable names
     ``energy_hartree`` (required), ``gradient_hartree_per_bohr``, and
-    ``positions_angstrom`` out of the template's locals and writes
-    them to ``output_json_path.name`` (a *basename*, so the file
-    lands in ``$WORK_DIR`` / scratch).
+    ``positions_angstrom``, and ``engine_metadata`` out of the template's locals
+    and writes them to ``output_json_path.name`` (a *basename*, so the file lands
+    in ``$WORK_DIR`` / scratch).
 
     Engines call this through
     :class:`chemrefine.engines._script.engine.ScriptEngine`,
