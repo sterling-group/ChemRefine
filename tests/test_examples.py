@@ -31,6 +31,12 @@ from chemrefine.engines.api import get_engine
 from chemrefine.engines.mlip.options import MlipOptions, MlipTrainOptions
 from chemrefine.engines.orca.inspect import inspect_template
 from chemrefine.engines.pyscf.options import PyscfOptions
+from chemrefine.engines.qiskit.options import (
+    ActiveSpaceOptions,
+    ComponentSelection,
+    QiskitOptions,
+)
+from chemrefine.engines.qiskit.registry import REGISTRIES
 from chemrefine.io import read_xyz_frames
 from chemrefine.nms import NmsOptions
 
@@ -217,6 +223,27 @@ REQUIRED = {
     "nms": {"target", "displacement_value", "num_random_displacements"},
     "mlip": {"model_name", "task_name", "device", "cores"},
     "pyscf": {"method", "xc", "basis", "device", "cores"},
+    "qiskit": {
+        "basis",
+        "active_space",
+        "mapper",
+        "algorithm",
+        "ansatz",
+        "initial_state",
+        "estimator",
+        "optimizer",
+        "initial_point",
+        "cores",
+    },
+    "qiskit_active_space": {"electrons", "orbitals"},
+    "qiskit_selection": {"name", "options"},
+    "qiskit_mapper": set(),
+    "qiskit_algorithm": set(),
+    "qiskit_ansatz": {"reps", "preserve_spin"},
+    "qiskit_initial_state": set(),
+    "qiskit_estimator": {"default_precision", "seed"},
+    "qiskit_optimizer": {"maxiter"},
+    "qiskit_initial_point": set(),
     # A training step must name all three: which library trains, what it starts from, and
     # where it runs. None of them has a default, so an example that omitted one would not run.
     "trainer": {"task_name", "model_name", "device"},
@@ -239,6 +266,48 @@ TESTS_ONLY = {
         "backend_python",
         "strict_scf",
     },
+    "qiskit": {"device", "backend_python"},
+    "qiskit_active_space": set(),
+    "qiskit_selection": set(),
+    "qiskit_mapper": {"two_qubit_reduction"},
+    "qiskit_algorithm": {
+        "gradient_threshold",
+        "eigenvalue_threshold",
+        "max_iterations",
+        "reps",
+    },
+    "qiskit_ansatz": {
+        "entanglement",
+        "flatten",
+        "generalized",
+        "include_imaginary",
+        "skip_final_rotation_layer",
+        "su2_gates",
+    },
+    "qiskit_initial_state": set(),
+    "qiskit_estimator": {
+        "abelian_grouping",
+        "backend_name",
+        "method",
+        "noise_model",
+        "optimization_level",
+        "seed_simulator",
+        "seed_transpiler",
+        "simulation_precision",
+    },
+    "qiskit_optimizer": {
+        "blocking",
+        "disp",
+        "ftol",
+        "learning_rate",
+        "perturbation",
+        "rhobeg",
+        "second_order",
+        "seed",
+        "tol",
+        "trust_region",
+    },
+    "qiskit_initial_point": {"scale", "seed"},
     "trainer": {
         "valid_fraction",
         "test_fraction",
@@ -254,6 +323,13 @@ _SAMPLE_FIELDS = (
     set(BoltzmannSample.model_fields) | set(MinSample.model_fields) | set(MaxSample.model_fields)
 )
 
+_QISKIT_COMPONENT_FIELDS = {
+    f"qiskit_{category}": {
+        field for name in registry.names() for field in registry.spec(name).options_cls.model_fields
+    }
+    for category, registry in REGISTRIES.items()
+}
+
 _UNIVERSE = {
     "config": set(Config.model_fields),
     "step": set(StepConfig.model_fields),
@@ -262,6 +338,10 @@ _UNIVERSE = {
     "mlip": set(MlipOptions.model_fields),
     # `cores` is read by the script engine (ScriptEngine.pal), not PyscfOptions.
     "pyscf": set(PyscfOptions.model_fields) | {"cores"},
+    "qiskit": set(QiskitOptions.model_fields),
+    "qiskit_active_space": set(ActiveSpaceOptions.model_fields),
+    "qiskit_selection": set(ComponentSelection.model_fields),
+    **_QISKIT_COMPONENT_FIELDS,
     "trainer": set(MlipTrainOptions.model_fields),
 }
 
@@ -302,6 +382,16 @@ def test_examples_cover_required_knobs() -> None:
                 used["mlip"] |= options
             if engine.startswith("pyscf"):
                 used["pyscf"] |= options
+            if engine == "qiskit":
+                qiskit_options = step.get("options") or {}
+                used["qiskit"] |= set(qiskit_options)
+                used["qiskit_active_space"] |= set(qiskit_options.get("active_space") or {})
+                for category in REGISTRIES:
+                    selection = qiskit_options.get(category)
+                    if not isinstance(selection, dict):
+                        continue
+                    used["qiskit_selection"] |= set(selection)
+                    used[f"qiskit_{category}"] |= set(selection.get("options") or {})
     for section, required in REQUIRED.items():
         missing = required - used[section]
         assert not missing, f"{section}: no example uses {sorted(missing)}"
@@ -333,7 +423,7 @@ def test_examples_cover_required_variants() -> None:
                 devices.add(options["device"])
             step_overrides |= set(step) & {"charge", "multiplicity"}
 
-    assert engines >= {"orca", "mlip", "mlip-extopt", "mlip-train", "pyscf"}
+    assert engines >= {"orca", "mlip", "mlip-extopt", "mlip-train", "pyscf", "qiskit"}
     # `mlip_train` is not here: it was never an operation the way the others are — it named
     # a *step kind*, which `engine: mlip-train` already says. The config normalizer still
     # rewrites the old spelling, and `test_config.py` covers that; an example carrying it

@@ -367,6 +367,20 @@ def test_preflight_and_template_render_agree_on_an_ambiguous_mlip_step(tmp_path:
         engine._template_vars(_ctx(tmp_path, "mlip", both))
 
 
+def test_qiskit_preflight_and_render_agree_on_an_invalid_provider_graph(tmp_path: Path):
+    """Aer component validation must fail before submission and during direct rendering."""
+    raw = {
+        "algorithm": "vqe",
+        "estimator": {"name": "aer_shots", "options": {"default_precision": 0.0}},
+    }
+    engine = get_engine("qiskit")
+
+    with pytest.raises(ConfigError, match="greater than 0"):
+        engine.backend_requirement(raw)
+    with pytest.raises(ConfigError, match="greater than 0"):
+        engine._template_vars(_ctx(tmp_path, "qiskit", raw))
+
+
 # ---------------------------------------------------------------------------
 # No second reader of a declared knob
 # ---------------------------------------------------------------------------

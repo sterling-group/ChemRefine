@@ -178,6 +178,30 @@ MUTATIONS = (
         "parser for a cluster or input problem",
     ),
     Mutation(
+        id="qiskit-particle-sector-filter",
+        path="src/chemrefine/engines/qiskit/components/algorithms.py",
+        old="not np.isclose(particle_number[0], expected_particles)",
+        new="np.isclose(particle_number[0], expected_particles)",
+        breaks="the exact solver discards eigenstates with the requested electron count and "
+        "can report a plausible eigenvalue from the wrong particle-number sector",
+    ),
+    Mutation(
+        id="qiskit-spin-sector-filter",
+        path="src/chemrefine/engines/qiskit/components/algorithms.py",
+        old="np.isclose(angular_momentum[0], expected_angular_momentum)",
+        new="not np.isclose(angular_momentum[0], expected_angular_momentum)",
+        breaks="the exact solver rejects the requested spin sector and can report a state "
+        "with the wrong multiplicity",
+    ),
+    Mutation(
+        id="qiskit-aer-noise-is-applied",
+        path="src/chemrefine/engines/qiskit/components/estimators.py",
+        old="if noise_model is not None:",
+        new="if noise_model is None:",
+        breaks="an explicitly requested Aer noise model is silently ignored, producing an "
+        "ideal-simulator energy that looks valid but models a different experiment",
+    ),
+    Mutation(
         id="finite-energy-guard",
         path="src/chemrefine/engines/_script/output.py",
         old="if not np.isfinite(number):",
