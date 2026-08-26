@@ -1,12 +1,18 @@
-"""Centralised synthetic ORCA-shaped data for tests.
+"""Centralised ORCA-shaped text for tests — the snippets and the captured failures.
 
-The tests/data/ directory holds real (trimmed) ORCA fixtures for the
-happy-path parsers; this module holds **minimal synthetic snippets**
-for fast unit tests and known-failure-mode regression coverage.
+``tests/data/engines/`` holds the outputs that *parse into a golden record*: a real trimmed
+output per engine, checked against ``expected.json``. This module holds the text that has no
+golden record — the **minimal synthetic snippets** the per-section unit tests build on, and
+the **captured failure outputs** that exist to be refused rather than parsed.
 
-Following the pytest community convention (and PyA3EDA's
-``tests/synthetic_outputs.py``): minimal, self-documenting, no
-external file I/O for the basic edge cases.
+Following the pytest community convention (and PyA3EDA's ``tests/synthetic_outputs.py``):
+self-documenting, no external file I/O for an edge case.
+
+The two kinds are not interchangeable and the constants say which they are. A synthetic
+snippet may be edited to sharpen a case; **a captured one may not** — its value is that ORCA
+really printed it, and a fixture edited to agree with a parser is how a wrong regex looks like
+a passing test. Where a captured constant is used, the test asserts against ORCA's own
+wording, so changing the text changes what is being proven.
 """
 
 from __future__ import annotations
@@ -140,3 +146,40 @@ def synthetic_pes_segment(
     parts.append("*** OPTIMIZATION RUN DONE ***")
     parts.append("")
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Captured, not synthesised — ORCA 6.1.1, verbatim. Do not edit to suit a parser.
+# ---------------------------------------------------------------------------
+
+ORCA_ERROR_TERMINATION_STEM = "step2_5-54"
+"""Basename the captured abort was written under, kept so the ``.err`` sidecar pairs with it.
+
+:func:`chemrefine.engines.orca.output.coordinator._stderr_tail` finds the stderr by swapping
+the output's suffix, so the two files have to share a stem for the quoted tail to be found."""
+
+ORCA_ERROR_TERMINATION_OUT = """\
+ Group   1 Type H   : 3s contracted to 1s pattern {3}
+
+Atom   0H    basis set group =>   1
+Atom   1H    basis set group =>   1
+sh: 1: /opt/orca/orca_startup: not found
+
+ORCA finished by error termination in Startup
+Calling Command: /opt/orca/orca_startup step2_5-54.int.tmp 
+[file orca_tools/qcmsg.cpp, line 394]: 
+  .... aborting the run
+"""
+"""A real ORCA 6.1.1 run that died in ``Startup`` — its whole ``.out``.
+
+It carries the abort banner and no ``FINAL SINGLE POINT ENERGY``, which is the pair the
+termination path turns into an :class:`~chemrefine.errors.OutputTerminationError` rather than
+an "unparseable" ledger entry: the run is what failed, not the reader."""
+
+ORCA_ERROR_TERMINATION_ERR = """\
+sh: 1: /opt/orca/orca_startup: not found
+"""
+"""The job's stderr, holding the cause ORCA's own banner does not name.
+
+The banner says which module aborted; this says why. Quoting it is what stops the failure
+reading as "error termination in Startup" with the actual reason in a file nothing points at."""

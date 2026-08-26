@@ -309,6 +309,12 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PTH", "RET", "C4", "TID"
 # assert as their whole purpose. ERA reads their `# section name` dividers as
 # commented-out code.
 "tests/**" = ["S", "ERA"]
+# This module stores captured program output verbatim, and ORCA prints trailing whitespace
+# on two of the lines in its abort. W291 sees those inside the literal and offers to strip
+# them — which would edit a fixture to suit the reader, the one thing a captured fixture must
+# never do. `test_the_captured_abort_is_still_what_orca_printed` pins them so the ignore is a
+# statement about the data rather than a licence.
+"tests/synthetic.py" = ["S", "ERA", "W291"]
 
 [tool.interrogate]
 ignore-init-module = true

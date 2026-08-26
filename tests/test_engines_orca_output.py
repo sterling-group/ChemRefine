@@ -490,12 +490,13 @@ def test_parse_forces_refuses_a_row_it_could_not_read():
 # A run that died is reported as a run that died, not as an unreadable file
 # ---------------------------------------------------------------------------
 
-# A real ORCA 6.1.1 abort, kept outside `engines/` because the contract cases there are
-# outputs that *parse* into a golden record; this one is the opposite.
-ERROR_TERMINATION_FIXTURE = DATA / "orca_failures" / "startup" / "step2_5-54.out"
+# The captured abort comes from the `orca_error_termination` fixture: it is text with no
+# golden record — an output that exists to be refused rather than parsed — so it lives in
+# `synthetic` beside the other ORCA-shaped text, not under `data/engines/`, where every case
+# is an output that parses into `expected.json`.
 
 
-def test_an_error_terminated_run_raises_a_termination_error():
+def test_an_error_terminated_run_raises_a_termination_error(orca_error_termination: Path):
     """Both describe an unusable output; only one of them points at the job.
 
     A section can be missing because the parser cannot read it or because the program
@@ -503,17 +504,17 @@ def test_an_error_terminated_run_raises_a_termination_error():
     the parser for what is a cluster or input problem.
     """
     with pytest.raises(OutputTerminationError) as excinfo:
-        parse_dft(ERROR_TERMINATION_FIXTURE)
+        parse_dft(orca_error_termination)
 
     message = str(excinfo.value)
     assert "error termination in Startup" in message  # ORCA's own verdict
     assert "no FINAL SINGLE POINT ENERGY" in message  # and what it cost us
 
 
-def test_an_error_terminated_run_quotes_the_stderr_that_says_why():
+def test_an_error_terminated_run_quotes_the_stderr_that_says_why(orca_error_termination: Path):
     """ORCA names the module it died in; the cause is on stderr, in the job's `.err`."""
     with pytest.raises(OutputTerminationError, match=r"orca_startup: not found"):
-        parse_dft(ERROR_TERMINATION_FIXTURE)
+        parse_dft(orca_error_termination)
 
 
 def test_the_err_tail_survives_a_non_utf8_locale(tmp_path: Path):
@@ -1170,3 +1171,27 @@ def test_every_parser_reads_the_same_hessian():
     assert whole.gibbs_hartree == converged.gibbs_hartree
     assert whole.energy_hartree == converged.energy_hartree
     np.testing.assert_array_equal(whole.normal_modes, converged.normal_modes)
+
+
+def test_the_captured_abort_is_still_what_orca_printed():
+    """The captured fixture is only worth having while it is byte-for-byte ORCA's own output.
+
+    Stored as a file it was inert; stored as a literal it sits where a formatter can reach it,
+    and ORCA prints trailing whitespace on two lines of this abort — which `W291` offers to
+    strip. The per-file ignore in ``pyproject.toml`` stops that happening silently, and this
+    pins the bytes so the ignore stays a statement about the data rather than a licence to
+    tidy it.
+
+    The three properties asserted are the ones the termination path actually reads: the abort
+    banner it quotes, the absent energy that makes the output unreadable, and the stderr line
+    that says why.
+    """
+    from synthetic import ORCA_ERROR_TERMINATION_ERR, ORCA_ERROR_TERMINATION_OUT
+
+    assert "ORCA finished by error termination in Startup" in ORCA_ERROR_TERMINATION_OUT
+    assert "FINAL SINGLE POINT ENERGY" not in ORCA_ERROR_TERMINATION_OUT
+    assert ORCA_ERROR_TERMINATION_ERR == "sh: 1: /opt/orca/orca_startup: not found\n"
+    assert [line for line in ORCA_ERROR_TERMINATION_OUT.splitlines() if line != line.rstrip()] == [
+        "Calling Command: /opt/orca/orca_startup step2_5-54.int.tmp ",
+        "[file orca_tools/qcmsg.cpp, line 394]: ",
+    ], "ORCA's trailing whitespace has been tidied out of a captured fixture"

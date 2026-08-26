@@ -93,7 +93,9 @@ def test_failure_record_round_trips_through_the_ledger():
     assert record.to_json()["kind"] == "did not converge"
 
 
-def test_a_job_that_died_is_ledgered_as_not_terminated(tmp_path: Path):
+def test_a_job_that_died_is_ledgered_as_not_terminated(
+    tmp_path: Path, orca_error_termination: Path
+):
     """The ledger must name the job, not the parser, when the job is what failed.
 
     Driven through the real ORCA engine over a captured ORCA 6.1.1 abort, because the
@@ -101,13 +103,9 @@ def test_a_job_that_died_is_ledgered_as_not_terminated(tmp_path: Path):
     """
     from chemrefine.engines.api import get_engine
 
-    fixture = Path(__file__).parent / "data" / "orca_failures" / "startup"
-    out = tmp_path / "step2_5-54.out"
-    out.write_text((fixture / "step2_5-54.out").read_text(), encoding="utf-8")
-    out.with_suffix(".err").write_text((fixture / "step2_5-54.err").read_text(), encoding="utf-8")
-
+    out = orca_error_termination
     ctx = replace(_ctx(tmp_path), step_cfg=StepConfig(step=2, engine="orca", operation="opt_sp"))
-    inputs = StepInputs(files=((tmp_path / "step2_5-54.inp", out, "5-54"),))
+    inputs = StepInputs(files=((tmp_path / f"{out.stem}.inp", out, "5-54"),))
 
     successes, failures = lifecycle.parse_with_failures(get_engine("orca"), inputs, ctx)
 

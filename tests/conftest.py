@@ -4,8 +4,10 @@ import builtins
 import importlib
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
+import synthetic
 
 # The in-memory "fake" engine is test scaffolding, not a shipped plugin — it lives here in
 # tests/ and registers itself (via its `@register("fake")`) once for the whole suite.
@@ -126,6 +128,24 @@ def without_extra(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
         monkeypatch.setattr(builtins, "__import__", refuse)
 
     return block
+
+
+@pytest.fixture
+def orca_error_termination(tmp_path: Path) -> Path:
+    """A captured ORCA abort on disk, with its ``.err`` sidecar beside it; returns the ``.out``.
+
+    Written out rather than passed as text because both readers take a *path*: ``parse_dft``
+    opens the output, and the termination message quotes the stderr it finds by swapping the
+    suffix — so the pair has to exist as files sharing a stem for the test to prove anything
+    about the message.
+
+    In ``tmp_path``, so a test that also builds a step directory there gets both from one
+    place. The bytes are in :mod:`synthetic`, marked captured.
+    """
+    out = tmp_path / f"{synthetic.ORCA_ERROR_TERMINATION_STEM}.out"
+    out.write_text(synthetic.ORCA_ERROR_TERMINATION_OUT, encoding="utf-8")
+    out.with_suffix(".err").write_text(synthetic.ORCA_ERROR_TERMINATION_ERR, encoding="utf-8")
+    return out
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
