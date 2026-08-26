@@ -1,10 +1,19 @@
-"""Pydantic validator for PySCF engine YAML options.
+"""Pydantic validators for the PySCF engines' YAML options.
 
-``step.options`` is a free-form ``dict[str, Any]`` so the orchestrator
-stays engine-agnostic; backend-specific validation lives here.
-:class:`PyscfOptions` covers both the SCF knobs (method, xc, basis,
-df, gpu, device) and the active-space tensor-extraction knobs
-(save_tensors, localized, tensor_folder).
+``step.options`` is a free-form ``dict[str, Any]`` so the orchestrator stays engine-agnostic;
+backend-specific validation lives here. Two models, because the engines in this package share
+a backend and not a set of knobs:
+
+* :class:`PyscfOptions` — what both read: the SCF selection (``method`` / ``xc`` / ``basis``)
+  and the GPU request, on top of :class:`~chemrefine.engines._options.EngineOptions`.
+* :class:`PyscfExtOptOptions` — those, plus the knobs only the gradient *server* acts on.
+
+An engine declares the model whose fields it reads. Declared together, the direct engine
+accepts knobs it has no way to honour — and because ``accepted_names()`` reports them as
+declared, ``chemrefine validate`` cannot warn about them either, so naming one is silence in
+both directions. The same split :class:`~chemrefine.engines.mlip.options.MlipOptions` and
+:class:`~chemrefine.engines.mlip.options.MlipTrainOptions` make, so an inference step cannot
+accept a training knob.
 """
 
 from __future__ import annotations
@@ -35,14 +44,64 @@ class PyscfOptions(EngineOptions):
     :meth:`from_raw`). The field keeps a value only so the server CLI and
     programmatic callers can construct an instance."""
 
-    df: bool = True
-    """Enable density fitting / RI. Defaults **on** — DF is a large speed-up at
-    negligible accuracy cost for the gradient-server use case."""
-
     gpu: bool = False
     """Attempt :mod:`gpu4pyscf` if installed. When omitted it is derived from
     ``device`` (``cuda`` ⇒ ``True``); set it explicitly to override. The SCF
     falls back to CPU if gpu4pyscf can't initialise."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_gpu_from_device(cls, data: Any) -> Any:
+        """Default ``gpu`` from ``device`` when ``gpu`` isn't given (``cuda`` ⇒ ``True``).
+
+        The fallback reads ``device``'s own field default rather than repeating the
+        literal. Spelled twice, the two drift the first time the field default moves: an
+        unset ``device`` would derive ``gpu: true`` here while the scheduler books a CPU
+        job from the model.
+        """
+        if isinstance(data, dict) and "gpu" not in data:
+            default_device = cls.model_fields["device"].default
+            device = str(data.get("device", default_device)).lower()
+            data = {**data, "gpu": device == "cuda"}
+        return data
+
+    @classmethod
+    def from_raw(cls, raw: Mapping[str, Any] | None) -> Self:
+        """Validate a raw ``step.options`` dict from the YAML.
+
+        ``basis`` must be named explicitly (no silent default), and ``xc`` must
+        be named when ``method`` is ``dft`` — a misconfigured PySCF step fails
+        fast rather than running with a surprise level of theory. (The model
+        fields keep values only so the server CLI / programmatic callers can
+        still construct an instance.)
+
+        Validation is delegated to the base rather than calling ``cls`` directly, so a
+        pydantic error still becomes a :class:`~chemrefine.errors.ConfigError` and a typoed
+        knob stays inside the CLI's exit-code contract. The extra requirements below are the
+        only thing this override adds.
+        """
+        raw = raw or {}
+        opts = super().from_raw(raw)
+        if "basis" not in raw:
+            raise ConfigError("pyscf: 'basis' is required (name the basis set explicitly)")
+        if opts.method == "dft" and "xc" not in raw:
+            raise ConfigError("pyscf: 'xc' is required when method is 'dft'")
+        return opts
+
+
+class PyscfExtOptOptions(PyscfOptions):
+    """The SCF knobs, plus the ones only the gradient server reads.
+
+    ``pyscf`` renders a user ``step{N}.py`` and reaches its options through template
+    placeholders; ``pyscf-extopt`` builds a long-running server from the whole set. The knobs
+    below are that difference, and ``strict_scf`` is why it matters: a non-converged SCF is
+    refused on the ExtOpt path for the reason its own docstring gives, and the direct path has
+    no channel to refuse it with — a script reports what its output contract declares.
+    """
+
+    df: bool = True
+    """Enable density fitting / RI. Defaults **on** — DF is a large speed-up at
+    negligible accuracy cost for the gradient-server use case."""
 
     strict_scf: bool = True
     """Refuse to serve a gradient from an SCF that did not converge.
@@ -73,22 +132,6 @@ class PyscfOptions(EngineOptions):
     (and persists) directly at that location instead.
     """
 
-    @model_validator(mode="before")
-    @classmethod
-    def _derive_gpu_from_device(cls, data: Any) -> Any:
-        """Default ``gpu`` from ``device`` when ``gpu`` isn't given (``cuda`` ⇒ ``True``).
-
-        The fallback reads ``device``'s own field default rather than repeating the
-        literal. Spelled twice, the two drift the first time the field default moves: an
-        unset ``device`` would derive ``gpu: true`` here while the scheduler books a CPU
-        job from the model.
-        """
-        if isinstance(data, dict) and "gpu" not in data:
-            default_device = cls.model_fields["device"].default
-            device = str(data.get("device", default_device)).lower()
-            data = {**data, "gpu": device == "cuda"}
-        return data
-
     @field_validator("tensor_folder")
     @classmethod
     def _non_empty_and_shell_safe(cls, v: str) -> str:
@@ -110,26 +153,3 @@ class PyscfOptions(EngineOptions):
             raise ValueError("tensor_folder must be a non-empty string")
         reject_shell_unsafe(v, what="tensor_folder", fix="rename the folder")
         return v
-
-    @classmethod
-    def from_raw(cls, raw: Mapping[str, Any] | None) -> Self:
-        """Validate a raw ``step.options`` dict from the YAML.
-
-        ``basis`` must be named explicitly (no silent default), and ``xc`` must
-        be named when ``method`` is ``dft`` — a misconfigured PySCF step fails
-        fast rather than running with a surprise level of theory. (The model
-        fields keep values only so the server CLI / programmatic callers can
-        still construct an instance.)
-
-        Validation is delegated to the base rather than calling ``cls`` directly, so a
-        pydantic error still becomes a :class:`~chemrefine.errors.ConfigError` and a typoed
-        knob stays inside the CLI's exit-code contract. The extra requirements below are the
-        only thing this override adds.
-        """
-        raw = raw or {}
-        opts = super().from_raw(raw)
-        if "basis" not in raw:
-            raise ConfigError("pyscf: 'basis' is required (name the basis set explicitly)")
-        if opts.method == "dft" and "xc" not in raw:
-            raise ConfigError("pyscf: 'xc' is required when method is 'dft'")
-        return opts

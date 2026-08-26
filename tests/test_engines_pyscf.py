@@ -415,3 +415,38 @@ def test_both_pyscf_stacks_share_one_managed_env():
 
     assert backend_env_path("pyscf-gpu") == backend_env_path("pyscf")
     assert backend_env_path("mlip-mace") != backend_env_path("mlip-fairchem")
+
+
+def test_the_direct_engine_declares_only_knobs_it_can_honour():
+    """An engine's options model is the set of knobs it reads, not its backend's.
+
+    ``pyscf`` reaches its options through template placeholders and ``pyscf-extopt`` builds a
+    gradient server from them, so the two share a backend and not a set of knobs. Sharing one
+    model lets the direct engine accept knobs it has no channel for — and because
+    ``accepted_names()`` reports them as declared, ``chemrefine validate`` cannot warn either,
+    so naming one is silence in both directions.
+
+    ``strict_scf`` is the one that matters: the ExtOpt path refuses a non-converged SCF, and
+    the direct path has no way to, because a script reports what its output contract declares.
+    """
+    from chemrefine.engines.api import get_engine
+    from chemrefine.engines.pyscf.options import PyscfExtOptOptions, PyscfOptions
+
+    server_only = set(PyscfExtOptOptions.model_fields) - set(PyscfOptions.model_fields)
+    assert server_only == {"df", "strict_scf", "save_tensors", "localized", "tensor_folder"}
+
+    direct = get_engine("pyscf")
+    assert direct.options_cls is PyscfOptions
+    assert not server_only & direct.options_cls.accepted_names(), (
+        "the direct engine declares a knob only the gradient server reads"
+    )
+    assert get_engine("pyscf-extopt").options_cls is PyscfExtOptOptions
+
+
+def test_a_server_only_knob_is_refused_on_a_direct_step():
+    """Refused by name, rather than accepted and ignored."""
+    from chemrefine.engines.pyscf.options import PyscfOptions
+    from chemrefine.errors import ConfigError
+
+    with pytest.raises(ConfigError, match="strict_scf"):
+        PyscfOptions.from_raw({"basis": "def2-svp", "xc": "pbe", "strict_scf": False})

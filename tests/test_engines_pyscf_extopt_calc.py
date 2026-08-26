@@ -20,7 +20,7 @@ import pytest
 
 from chemrefine.engines._backend_server.base import CalculationData
 from chemrefine.engines.pyscf import _runtime, extopt_calc
-from chemrefine.engines.pyscf.options import PyscfOptions
+from chemrefine.engines.pyscf.options import PyscfExtOptOptions
 from chemrefine.errors import ConfigError, JobFailureError
 
 
@@ -129,12 +129,12 @@ def _install_fake_pyscf(monkeypatch, *, mol_spin: int = 0) -> dict[str, MagicMoc
 
 
 # ---------------------------------------------------------------------------
-# PyscfOptions
+# PyscfExtOptOptions
 # ---------------------------------------------------------------------------
 
 
 def test_pyscf_options_defaults():
-    opt = PyscfOptions()
+    opt = PyscfExtOptOptions()
     assert opt.method == "dft"
     assert opt.xc == "pbe"
     assert opt.basis == "def2-svp"
@@ -150,11 +150,11 @@ def test_pyscf_options_defaults():
 
 
 def test_pyscf_options_gpu_derived_from_device():
-    assert PyscfOptions(device="cpu").gpu is False
-    assert PyscfOptions(device="cuda").gpu is True
+    assert PyscfExtOptOptions(device="cpu").gpu is False
+    assert PyscfExtOptOptions(device="cuda").gpu is True
     # An explicit gpu always wins over the device-derived default.
-    assert PyscfOptions(device="cuda", gpu=False).gpu is False
-    assert PyscfOptions(device="cpu", gpu=True).gpu is True
+    assert PyscfExtOptOptions(device="cuda", gpu=False).gpu is False
+    assert PyscfExtOptOptions(device="cpu", gpu=True).gpu is True
 
 
 def test_pyscf_options_gpu_derivation_tracks_the_device_field_default():
@@ -163,22 +163,22 @@ def test_pyscf_options_gpu_derivation_tracks_the_device_field_default():
     Repeating the literal `"cuda"` in the derivation means moving the field default leaves
     it deriving `gpu: true` for a step the scheduler books on CPU.
     """
-    assert PyscfOptions().gpu is (PyscfOptions.model_fields["device"].default == "cuda")
+    assert PyscfExtOptOptions().gpu is (PyscfExtOptOptions.model_fields["device"].default == "cuda")
 
 
 def test_pyscf_options_rejects_empty_tensor_folder():
     with pytest.raises(ValueError):
-        PyscfOptions(tensor_folder="")
+        PyscfExtOptOptions(tensor_folder="")
 
 
 def test_pyscf_options_rejects_whitespace_tensor_folder():
     with pytest.raises(ValueError, match="non-empty"):
-        PyscfOptions(tensor_folder="   ")
+        PyscfExtOptOptions(tensor_folder="   ")
 
 
 def test_pyscf_options_rejects_unknown_field():
     with pytest.raises(ValueError):
-        PyscfOptions(unknown_field=True)  # type: ignore[call-arg]
+        PyscfExtOptOptions(unknown_field=True)  # type: ignore[call-arg]
 
 
 def test_pyscf_options_from_raw_requires_basis():
@@ -187,17 +187,17 @@ def test_pyscf_options_from_raw_requires_basis():
     ConfigError, like every other option failure, so it carries the documented exit code.
     """
     with pytest.raises(ConfigError, match="'basis' is required"):
-        PyscfOptions.from_raw(None)
+        PyscfExtOptOptions.from_raw(None)
     with pytest.raises(ConfigError, match="'basis' is required"):
-        PyscfOptions.from_raw({"method": "hf"})
+        PyscfExtOptOptions.from_raw({"method": "hf"})
 
 
 def test_pyscf_options_from_raw_requires_xc_for_dft():
     """A dft step must name xc; hf does not need it."""
     with pytest.raises(ConfigError, match="'xc' is required"):
-        PyscfOptions.from_raw({"method": "dft", "basis": "def2-svp"})
+        PyscfExtOptOptions.from_raw({"method": "dft", "basis": "def2-svp"})
     # hf needs no xc.
-    assert PyscfOptions.from_raw({"method": "hf", "basis": "def2-svp"}).method == "hf"
+    assert PyscfExtOptOptions.from_raw({"method": "hf", "basis": "def2-svp"}).method == "hf"
 
 
 def test_pyscf_options_from_raw_round_trip():
@@ -209,7 +209,7 @@ def test_pyscf_options_from_raw_round_trip():
         "localized": True,
         "tensor_folder": "/abs/mytensors",
     }
-    opt = PyscfOptions.from_raw(raw)
+    opt = PyscfExtOptOptions.from_raw(raw)
     assert opt.method == "hf"
     assert opt.basis == "def2-svp"
     assert opt.save_tensors is True
@@ -219,12 +219,12 @@ def test_pyscf_options_from_raw_round_trip():
 
 def test_pyscf_options_save_tensors_allows_relative_folder():
     """A relative tensor_folder is fine now — it's copied back into the structure dir."""
-    opt = PyscfOptions(save_tensors=True, tensor_folder="tensors")
+    opt = PyscfExtOptOptions(save_tensors=True, tensor_folder="tensors")
     assert opt.tensor_folder == "tensors"
 
 
 def test_pyscf_options_save_tensors_accepts_absolute_folder():
-    opt = PyscfOptions(save_tensors=True, tensor_folder="/scratch/keep/tensors")
+    opt = PyscfExtOptOptions(save_tensors=True, tensor_folder="/scratch/keep/tensors")
     assert opt.tensor_folder == "/scratch/keep/tensors"
 
 
@@ -610,13 +610,13 @@ def test_add_cli_args_registers_pyscf_flags_with_pydantic_defaults():
     parser = argparse.ArgumentParser()
     extopt_calc.PyscfExtOptCalculator.add_cli_args(parser)
     args = parser.parse_args([])
-    defaults = PyscfOptions()
+    defaults = PyscfExtOptOptions()
     assert args.method == defaults.method
     assert args.xc == defaults.xc
     assert args.basis == defaults.basis
     assert args.df is False
     assert args.gpu is False
-    # Tensor-extraction knobs default to PyscfOptions' values.
+    # Tensor-extraction knobs default to PyscfExtOptOptions' values.
     assert args.save_tensors is False
     assert args.localized is False
     assert args.tensor_folder == defaults.tensor_folder
@@ -723,7 +723,7 @@ def test_a_converged_scf_is_unaffected_by_the_guard(monkeypatch):
 def test_the_guard_defaults_on_for_a_directly_constructed_calculator():
     """Unlike the other booleans here, its safe state is the default one."""
     assert extopt_calc.PyscfExtOptCalculator(basis="def2-svp").strict_scf is True
-    assert PyscfOptions(basis="def2-svp", xc="pbe").strict_scf is True
+    assert PyscfExtOptOptions(basis="def2-svp", xc="pbe").strict_scf is True
 
 
 def test_strict_scf_reaches_the_server_as_its_opt_out():

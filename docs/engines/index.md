@@ -175,18 +175,23 @@ artifact, with the same `task_name`.
 
 ## PySCF (`pyscf`, `pyscf-extopt`)
 
+The two engines share a backend and not a set of knobs: `pyscf` renders your `stepN.py` and
+reaches its options through `$METHOD` / `$XC` / `$BASIS`, while `pyscf-extopt` builds a
+gradient server from the whole set. The **ExtOpt only** rows below are declared by
+`PyscfExtOptOptions` and are rejected on a `pyscf` step, rather than accepted and ignored.
+
 | Key | Default | Description |
 |-----|---------|-------------|
 | `method` | `dft` | `dft` or `hf`. |
 | `xc` | — (**required** for `dft`) | Exchange-correlation functional. No silent default — name it explicitly. |
 | `basis` | — (**required**) | Orbital basis set. No silent default — name it explicitly. |
-| `df` | `True` | Density fitting / RI (defaults on — large speed-up, negligible cost). |
-| `strict_scf` | `True` | Refuse to serve a gradient from an SCF that did not converge. PySCF returns the last iterate rather than raising, and ORCA's `.out` reports only *its own* geometry convergence — so a loose result would rank against converged siblings unmarked. Set `false` for a knowingly loose SCF. |
+| `df` *(ExtOpt only)* | `True` | Density fitting / RI (defaults on — large speed-up, negligible cost). |
+| `strict_scf` *(ExtOpt only)* | `True` | Refuse to serve a gradient from an SCF that did not converge. PySCF returns the last iterate rather than raising, and ORCA's `.out` reports only *its own* geometry convergence — so a loose result would rank against converged siblings unmarked. Set `false` for a knowingly loose SCF. |
 | `device` | `cpu` | Compute device; drives `gpu` when `gpu` is unset (`cuda` ⇒ attempt GPU). |
 | `gpu` | derived from `device` | Attempt `gpu4pyscf` if installed (falls back to CPU). Set explicitly to override the `device`-derived default. |
-| `save_tensors` | `False` | Dump 1e/2e MO tensors after the SCF. |
-| `localized` | `False` | Boys-localize before tensor extraction. |
-| `tensor_folder` | `tensors` | Output dir for `save_tensors` `.npz`. A relative path (the default) is copied back into the structure's own dir (`outputs/stepN/<id>/tensors/`); an absolute path writes there directly. |
+| `save_tensors` *(ExtOpt only)* | `False` | Dump 1e/2e MO tensors after the SCF. |
+| `localized` *(ExtOpt only)* | `False` | Boys-localize before tensor extraction. |
+| `tensor_folder` *(ExtOpt only)* | `tensors` | Output dir for `save_tensors` `.npz`. A relative path (the default) is copied back into the structure's own dir (`outputs/stepN/<id>/tensors/`); an absolute path writes there directly. |
 | `cores` | `1` | Per-structure core budget. |
 | `backend_python` | `None` | Explicit interpreter for the backend (escape hatch). Normally unset: the `pyscf` managed env is resolved by name. |
 

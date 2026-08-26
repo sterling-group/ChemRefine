@@ -2,9 +2,10 @@
 
 Mirrors :class:`~chemrefine.engines.mlip.extopt_engine.MlipExtOptEngine` — a pure declaration
 over :class:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine`, differing only in the
-backend name + option/calculator classes (method / xc / basis / df / gpu / tensor knobs live on
-:class:`PyscfExtOptCalculator`). The one extra behaviour is copying the ``save_tensors`` output
-directory back into each structure's dir.
+backend name + option/calculator classes. Its knobs are
+:class:`~chemrefine.engines.pyscf.options.PyscfExtOptOptions` — the SCF selection the direct
+engine also reads, plus the ones only the gradient server acts on. The one extra behaviour is
+copying the ``save_tensors`` output directory back into each structure's dir.
 """
 
 from __future__ import annotations
@@ -13,12 +14,11 @@ from pathlib import Path
 from typing import ClassVar
 
 from chemrefine.engines._backend_server.base import ComputeBackend
-from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import register
 from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
 from chemrefine.engines.pyscf.backend import PyscfBackend
 from chemrefine.engines.pyscf.extopt_calc import PyscfExtOptCalculator
-from chemrefine.engines.pyscf.options import PyscfOptions
+from chemrefine.engines.pyscf.options import PyscfExtOptOptions
 from chemrefine.errors import ConfigError
 from chemrefine.state import StepContext, StepInputs
 
@@ -30,20 +30,17 @@ class PyscfExtOptEngine(PyscfBackend, ExtOptOrcaEngine):
     name: ClassVar[str] = "pyscf-extopt"
     backend: ClassVar[str] = "pyscf"
     wrapper_filename: ClassVar[str] = "pyscf_extopt.sh"
-    options_cls: ClassVar[type[EngineOptions]] = PyscfOptions
+    options_cls: ClassVar[type[PyscfExtOptOptions]] = PyscfExtOptOptions
     calculator_cls: ClassVar[type[ComputeBackend]] = PyscfExtOptCalculator
 
-    def _opts(self, ctx: StepContext) -> PyscfOptions:
+    def _opts(self, ctx: StepContext) -> PyscfExtOptOptions:
         """This step's validated options, read through the model this engine declares.
 
-        Through :attr:`options_cls` rather than by naming ``PyscfOptions`` twice below: two
-        readers of one knob is what the ClassVar exists to prevent, and this class is the one
-        that would have shown it — a subclass narrowing the model would be read as the base
-        type by these two methods and as its own everywhere else.
+        Through :attr:`options_cls` rather than by naming the model again: two readers of one
+        knob is what the ClassVar exists to prevent. The ClassVar is narrowed to this engine's
+        own model, so the read is typed without a cast or a narrowing assertion.
         """
-        opts = self.options_cls.from_raw(ctx.step_cfg.options)
-        assert isinstance(opts, PyscfOptions)  # noqa: S101 - narrows the ClassVar's base type
-        return opts
+        return self.options_cls.from_raw(ctx.step_cfg.options)
 
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Refuse ``save_tensors`` on an open-shell step before anything submits.

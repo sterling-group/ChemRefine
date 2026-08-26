@@ -29,7 +29,7 @@ from chemrefine.engines._backend_server.base import (
     tokens_from_options,
 )
 from chemrefine.engines.pyscf import _runtime
-from chemrefine.engines.pyscf.options import PyscfOptions
+from chemrefine.engines.pyscf.options import PyscfExtOptOptions
 from chemrefine.errors import JobFailureError
 
 logger = logging.getLogger(__name__)
@@ -84,13 +84,13 @@ class PyscfExtOptCalculator(ComputeBackend):
     def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:
         """Register PySCF flags on a shared server / client parser.
 
-        Defaults mirror :class:`PyscfOptions`; the Pydantic model stays
+        Defaults mirror :class:`PyscfExtOptOptions`; the Pydantic model stays
         the canonical name + default source. Adding a knob here means
-        also adding it to ``PyscfOptions`` (or vice-versa) — the
+        also adding it to ``PyscfExtOptOptions`` (or vice-versa) — the
         ``_KEY_VALUE_FLAGS`` / ``_BOOL_FLAGS`` tuples gate which knobs
         are CLI-exposed.
         """
-        defaults = PyscfOptions()
+        defaults = PyscfExtOptOptions()
         parser.add_argument(
             "--method",
             default=defaults.method,

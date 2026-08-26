@@ -16,7 +16,7 @@ from ase import Atoms
 
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import ENGINES, NmsCapableEngine, get_engine
-from chemrefine.engines.pyscf.options import PyscfOptions
+from chemrefine.engines.pyscf.options import PyscfExtOptOptions
 from chemrefine.errors import ConfigError
 from chemrefine.state import PipelineState, StepContext, Structure
 
@@ -213,7 +213,7 @@ def test_pyscf_unknown_option_fails_fast(tmp_path: Path):
     """A typoed knob (``basis_set:`` for ``basis:``) raises instead of silently
     running the calculation with the default basis.
 
-    The raw options dict must not bypass :class:`PyscfOptions`, or
+    The raw options dict must not bypass :class:`PyscfExtOptOptions`, or
     unknown keys were dropped and the run proceeded with wrong settings.
 
     ConfigError rather than pydantic's ValidationError — a bad knob is a config error
@@ -325,12 +325,12 @@ def test_tensor_folder_with_shell_metacharacters_rejected(bad: str):
     fields some report happens to name.
     """
     with pytest.raises(ConfigError):
-        PyscfOptions.from_raw({"basis": "def2-svp", "xc": "pbe", "tensor_folder": bad})
+        PyscfExtOptOptions.from_raw({"basis": "def2-svp", "xc": "pbe", "tensor_folder": bad})
 
 
 def test_tensor_folder_allows_ordinary_names():
     """Only metacharacters are refused; a plain or nested folder name stays legal."""
-    opts = PyscfOptions.from_raw(
+    opts = PyscfExtOptOptions.from_raw(
         {"basis": "def2-svp", "xc": "pbe", "tensor_folder": "run1/tensors"}
     )
     assert opts.tensor_folder == "run1/tensors"

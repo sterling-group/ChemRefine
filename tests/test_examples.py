@@ -30,7 +30,7 @@ from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import get_engine
 from chemrefine.engines.mlip.options import MlipOptions, MlipTrainOptions
 from chemrefine.engines.orca.inspect import inspect_template
-from chemrefine.engines.pyscf.options import PyscfOptions
+from chemrefine.engines.pyscf.options import PyscfExtOptOptions
 from chemrefine.io import read_xyz_frames
 from chemrefine.nms import NmsOptions
 
@@ -260,8 +260,10 @@ _UNIVERSE = {
     "sample": _SAMPLE_FIELDS,
     "nms": set(NmsOptions.model_fields),
     "mlip": set(MlipOptions.model_fields),
-    # `cores` is read by the script engine (ScriptEngine.pal), not PyscfOptions.
-    "pyscf": set(PyscfOptions.model_fields) | {"cores"},
+    # The ExtOpt model, because it is the superset: `pyscf` and `pyscf-extopt` share a
+    # backend and split their knobs, and both spellings are things a user may write.
+    # `cores` is read by the script engine (ScriptEngine.pal), not by either model.
+    "pyscf": set(PyscfExtOptOptions.model_fields) | {"cores"},
     "trainer": set(MlipTrainOptions.model_fields),
 }
 
