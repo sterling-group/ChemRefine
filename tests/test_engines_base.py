@@ -194,8 +194,11 @@ def test_register_refuses_a_class_that_inherits_the_protocol():
     # the gap between the two checkers, which is exactly what this gate closes.
     assert isinstance(_Hollow(), CalculationEngine), "the hazard this refuses"  # type: ignore[abstract]
     assert _Hollow().prepare(None) is None  # type: ignore[abstract]
+    # mypy refuses this call outright now that `register` is typed over the contract, which
+    # is the static half of the same gate; the ignore is what lets the runtime half be
+    # exercised from a test.
     with pytest.raises(TypeError, match="inherits CalculationEngine"):
-        register("gate-probe")(_Hollow)
+        register("gate-probe")(_Hollow)  # type: ignore[type-abstract]
     assert "gate-probe" not in ENGINES
 
 

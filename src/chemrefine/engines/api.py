@@ -568,7 +568,7 @@ def contract_members(protocol: type) -> frozenset[str]:
 _CONTRACT_MEMBERS = contract_members(CalculationEngine)
 
 
-def register(name: str) -> Callable[[type], type]:
+def register(name: str) -> Callable[[type[CalculationEngine]], type[CalculationEngine]]:
     """Decorator: register ``cls`` under ``name`` in :data:`ENGINES`, if it qualifies.
 
     **The decorator is the gate**, in the shape
@@ -580,9 +580,10 @@ def register(name: str) -> Callable[[type], type]:
 
     * **It does not satisfy the contract.** ``ENGINES`` is annotated
       ``dict[str, type[CalculationEngine]]`` and :func:`get_engine` hands what it holds to the
-      pipeline as one. Nothing checked that: ``register`` was typed ``Callable[[type], type]``,
-      and ``type`` is ``type[Any]``, so a class with only a ``name`` registered and mypy said
-      nothing at the decorator site.
+      pipeline as one. The signature above is what makes that claim checkable statically —
+      typed over ``type``, the decorator would accept anything, since ``type`` is ``type[Any]``
+      and mypy has nothing to compare a decorated class against. The runtime check below is the
+      other half, for a plugin whose author does not run the type checker.
     * **It inherits the Protocol.** :class:`CalculationEngine` is ``runtime_checkable``, and a
       subclass of it inherits every method as an ellipsis body returning ``None`` — so
       ``isinstance`` says yes, ``prepare`` returns ``None``, and every structural check in the
@@ -601,7 +602,7 @@ def register(name: str) -> Callable[[type], type]:
     make an engine's ``__init__`` run at import of the package that defines it.
     """
 
-    def decorator(cls: type) -> type:
+    def decorator(cls: type[CalculationEngine]) -> type[CalculationEngine]:
         if name in ENGINES and ENGINES[name] is not cls:
             raise ValueError(f"engine {name!r} is already registered to {ENGINES[name]!r}")
         if CalculationEngine in getattr(cls, "__mro__", ()):
