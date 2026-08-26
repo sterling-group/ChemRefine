@@ -15,7 +15,7 @@ discipline the energy readers already use: ``parse_final_energy_from_text`` keep
 ``FINAL SINGLE POINT ENERGY``.
 
 "Last verdict wins" is also what makes ``The optimization has not yet converged`` usable as a
-negative: ORCA prints it after every non-final geometry cycle, so 72 of the 108 recorded
+negative: ORCA prints it after every non-final geometry cycle, so most recorded optimisation
 outputs contain it — but in none of them is it the *last* verdict, because the success banner
 always follows. When it genuinely is last, the optimisation ran out of cycles.
 """
@@ -28,7 +28,7 @@ _TERMINATED_RE = re.compile(r"ORCA TERMINATED NORMALLY")
 
 #: Every convergence verdict ORCA prints, positive or negative, in one pass so the
 #: **last** one decides. Each alternative is a string ORCA 6.1.1 actually emits — verified
-#: against its binaries and against 108 recorded outputs — because guessing at the wording
+#: against its binaries and against the recorded outputs — because guessing at the wording
 #: here fails silently in both directions.
 #:
 #: Two deliberate omissions:

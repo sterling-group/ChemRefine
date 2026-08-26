@@ -2,7 +2,7 @@
 
 The ExtOpt engines declare the mapping themselves (their ``backend`` and
 ``calculator_cls`` ClassVars); this module just scans the engine registry.
-Adding a third backend is: write ``engines/<name>/extopt_calc.py`` with a
+Adding a backend is: write ``engines/<name>/extopt_calc.py`` with a
 ``ComputeBackend``-conforming class and register the engine plugin — there
 is no list here to update.
 """

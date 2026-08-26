@@ -141,8 +141,8 @@ def test_converged_false_when_the_optimisation_runs_out_of_cycles():
 
 
 def test_converged_true_when_the_optimisation_finishes_after_pending_cycles():
-    """The common case: 72 of the 108 recorded outputs contain the pending line, and in
-    every one of them the success banner follows it."""
+    """The common case: most recorded outputs contain the pending line, and in every one of
+    them the success banner follows it."""
     assert (
         status.parse_converged("\n".join([_GEOM_PENDING, _GEOM_PENDING, _GEOM_OK, _SCF_OK])) is True
     )

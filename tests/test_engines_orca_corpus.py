@@ -11,7 +11,7 @@ the corpus-wide expectation is simple and strong: every output must read as term
 converged, and every frequency job must yield a well-shaped normal-mode tensor. A reader
 that starts finding failures here is wrong about real ORCA, whatever the unit tests say.
 
-Marked ``slow``, not ``integration``: it reads every ``.out`` out of six compressed archives,
+Marked ``slow``, not ``integration``: it reads every ``.out`` out of the compressed archives,
 which is a second or so, but it invokes no ORCA, no SLURM and no external service. That
 distinction decides whether the file ever runs. ``integration`` is deselected by the default
 ``addopts``, which would exclude this — the strongest reader-versus-real-output assertion in
@@ -65,9 +65,9 @@ def _recorded_outputs() -> Iterator[tuple[str, str]]:
 def test_the_corpus_is_actually_there():
     """Guards against this file silently passing because it found nothing to check.
 
-    Sized against the *distinct* runs in the archives, not the tar member count.
-    The corpus holds 18 today, down from 26 — the conformers case stopped running a
-    DFT opt+freq on eleven GOAT conformers to prove that the next filter picks two.
+    Sized against the *distinct* runs in the archives, not the tar member count. The floor is
+    deliberately below the current corpus: it catches an archive that stops being read, not
+    every change to what is recorded.
     """
     assert sum(1 for _ in _recorded_outputs()) >= 17
 

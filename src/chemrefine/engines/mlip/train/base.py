@@ -101,8 +101,8 @@ class DatasetSplit:
     def items(self) -> tuple[tuple[str, tuple[Structure, ...]], ...]:
         """The three splits in writing order, under the names their files take.
 
-        The triple every dataset writer iterates — owned here so five trainers cannot
-        each spell the ``("train", …), ("valid", …), ("test", …)`` sequence and drift.
+        The triple every dataset writer iterates — owned here so no trainer spells the
+        ``("train", …), ("valid", …), ("test", …)`` sequence for itself and drifts.
         """
         return (("train", self.train), ("valid", self.valid), ("test", self.test))
 

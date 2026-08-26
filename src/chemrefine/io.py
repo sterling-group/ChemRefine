@@ -60,7 +60,7 @@ STEPS_CSV_COLUMNS = (
 
 Public and load-bearing rather than a line of prose in a docstring, because three things
 outside this function depend on these exact strings: :func:`chemrefine.agent_tools.
-get_results` hands whole rows to agents, the GUI's results table names four of them in
+get_results` hands whole rows to agents, the GUI's results table names them in
 ``index.html``, and whatever a user reads the file with names them too.
 
 :func:`save_step_csv` selects by this tuple before writing, so the frame it assembled and

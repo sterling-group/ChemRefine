@@ -66,7 +66,7 @@ provisioned). It declares its environment once and hangs its capabilities off it
     class MyTrainer(TrainerBase): ...                  # or ApiTrainerBase, for API-only libs
 
 Both decorators are variadic, which is what lets one library register a family of heads from a
-single list rather than a stack of decorators per capability — FAIRChem's seven heads are
+single list rather than a stack of decorators per capability — FAIRChem's head family is
 declared once and used by both.
 """
 

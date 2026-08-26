@@ -5,8 +5,8 @@ FAIRChem is *one family with many checkpoints and a fixed set of task heads*.
 ``pretrained_mlip.available_models``); ``task_name`` *is* the head and keys the
 registry, so it is passed straight through to
 :class:`~fairchem.core.FAIRChemCalculator`. The one builder is registered under
-each of the 7 heads, so ``task_name: omat`` builds the materials head — not a
-hardcoded ``omol``.
+every head in :data:`HEADS`, so ``task_name: omat`` builds the materials head — not
+a hardcoded ``omol``.
 """
 
 from __future__ import annotations

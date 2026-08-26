@@ -44,7 +44,7 @@ from chemrefine.state import PipelineState, Structure
 # Importing :mod:`chemrefine.step` pulls in :mod:`chemrefine.engines.api`,
 # which runs :mod:`chemrefine.engines`'s ``__init__`` and self-registers every
 # bundled engine. No explicit ``import chemrefine.engines`` needed.
-# No ``StepMode`` import: with the three questions about it answered by the enum's own
+# No ``StepMode`` import: with every question about it answered by the enum's own
 # predicates, this module composes modes without naming a single member.
 from chemrefine.step import (
     RunPlan,

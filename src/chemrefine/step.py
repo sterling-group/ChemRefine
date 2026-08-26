@@ -168,12 +168,12 @@ class StepMode(StrEnum):
         chain.
 
         A predicate on the enum rather than a member test in the pipeline, for the same
-        reason :meth:`may_submit` is one: three separate questions are asked about
+        reason :meth:`may_submit` is one: separate questions are asked about
         :class:`StepMode` — may it submit, does it go through ``run_step``, can it halt —
-        and each answered in a different module means adding a fourth mode is a search
+        and each answered in a different module means adding a mode is a search
         rather than a compiler error. The exhaustive ``match`` — every member named, the
         wildcard arm holding only :func:`typing.assert_never` — is what makes it the
-        compiler error, in all three predicates: a fifth member stops narrowing to
+        compiler error, in every predicate: a new member stops narrowing to
         ``Never`` there and strict mypy rejects the call, where a negative membership test
         would hand the new mode the *permissive* answer silently.
         """
@@ -384,7 +384,7 @@ def run_step(
     key = derive_step_key(ctx, step_cfg, engine)
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     # Narrow once, here, instead of asserting the capability again with a cast at
-    # each of the four places that need it. `nms_engine is not None` then carries
+    # each place that needs it. `nms_engine is not None` then carries
     # both facts — the step asked for NMS, and this engine can do it — and mypy
     # checks the calls rather than being told to trust them.
     nms_engine: NmsCapableEngine | None = None

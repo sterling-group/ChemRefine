@@ -4,8 +4,8 @@ Both `engines.pyscf.engine.PyscfEngine` and `engines.mlip.engine.MlipEngine`
 take a user-supplied ``step{N}.py`` template, substitute geometry
 placeholders, and append a footer that harvests well-known variable
 names from the template's locals and writes a canonical JSON output.
-This module owns that renderer so adding a third template-driven
-backend is "import the renderer + call build_input".
+This module owns that renderer so adding a template-driven backend
+is "import the renderer + call build_input".
 
 Placeholders the renderer substitutes (``string.Template`` ``$VAR``
 syntax — collision-free with Python's ``{`` / ``}`` brackets):

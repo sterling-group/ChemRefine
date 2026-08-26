@@ -12,7 +12,7 @@ chemrefine **declares** a small contract; an engine **provides** it. Reusable bu
 (underscored, never edited to add an engine) live in the subsystem: :class:`._job.JobEngine`
 (the per-structure lifecycle), :mod:`._execution` (the scheduler), :class:`._script.ScriptEngine`
 (the user-Python-script kind), :mod:`._backend_server` (the ExtOpt server). Plugins are the
-bare-named packages (``orca`` / ``mlip`` / ``pyscf``).
+bare-named packages under ``engines/``.
 
 Adding a new engine — pick a *kind* and provide the requested pieces
 ---------------------------------------------------------------------

@@ -11,7 +11,7 @@ this process:
 
 * :mod:`~chemrefine.slurm.script` turns values into text and returns it. Pure, so its
   tests need no cluster and no patching, and so the shell-safety invariant can enumerate
-  every value that reaches generated bash from three signatures.
+  every value that reaches generated bash from its signatures.
 * :mod:`~chemrefine.slurm.dispatch` runs those scripts — ``sbatch``, ``squeue``, and the
   local-process fallback that lets the same pipeline run on a laptop. Everything that
   shells out is here, which is why the tests patch ``subprocess.run``.

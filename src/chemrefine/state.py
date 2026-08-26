@@ -14,8 +14,8 @@ the other to name an outcome.
 
 ``StepConfig`` lives in :mod:`chemrefine.config` and is imported here for
 :class:`StepContext`, which carries a step's own specification alongside the
-state it runs over. That makes this module a Pydantic importer too — seventeen
-modules import it, so it is not a leaf on cost, only on direction: it depends on
+state it runs over. That makes this module a Pydantic importer too, and most of the
+package imports it — so it is not a leaf on cost, only on direction: it depends on
 the configuration vocabulary and on nothing above it.
 """
 
@@ -338,7 +338,7 @@ class FailureRecord:
     """A ledger entry — one failed structure, as persisted to ``failed_jobs.json``.
 
     The recovery paths read this back to decide what to re-attempt, so it is a typed
-    record rather than a bare dict indexed with string literals at four call sites.
+    record rather than a bare dict indexed with string literals at each of its call sites.
     """
 
     structure_id: str
