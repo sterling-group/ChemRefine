@@ -46,13 +46,13 @@ def parse_forces_from_text(
       :func:`chemrefine.cache._require_finite_arrays` is the backstop, and reaching it costs
       the whole step's results rather than one structure).
     * **One row per atom.** A row the pattern cannot read is *skipped*, because it has to
-      be: ORCA closes the block with its own summary lines (``Difference to translation
-      invariance``, ``Norm of the Cartesian gradient``), which are not atom rows and appear
-      in all 227 recorded blocks. That makes the count the only thing that can tell a
-      summary line from a lost atom — an unreadable row (a ``*****`` field overflow) would
-      otherwise yield a short array against a full geometry, which nothing downstream
-      re-checks: :attr:`~chemrefine.state.Structure.forces_ev_per_a` declares no shape, the
-      finiteness backstop passes it, and FAIRChem's dataset writer stores it.
+      be: ORCA closes every block with its own summary lines (``Difference to translation
+      invariance``, ``Norm of the Cartesian gradient``), which are not atom rows. That makes
+      the count the only thing that can tell a summary line from a lost atom — an unreadable
+      row (a ``*****`` field overflow) would otherwise yield a short array against a full
+      geometry, which nothing downstream re-checks:
+      :attr:`~chemrefine.state.Structure.forces_ev_per_a` declares no shape, the finiteness
+      backstop passes it, and FAIRChem's dataset writer stores it.
       :func:`chemrefine.engines._script.contract.forces_from_gradient` holds the other forces
       reader to the same count, and is where this wording comes from.
     """

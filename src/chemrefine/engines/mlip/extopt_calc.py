@@ -77,8 +77,8 @@ class MlipExtOptCalculator(ComputeBackend):
             kwargs: dict[str, Any] = {
                 "default": MlipOptions.model_fields[name].default,
                 # `.get`, so the claim above holds: a knob added to CALCULATOR_KNOBS grows a
-                # flag here with no edit. Spelled `_FLAG_HELP[name]`, it raised KeyError at
-                # server startup instead — the one place the promise did not survive contact.
+                # flag here with no edit. Subscripting would make a knob without a help entry a
+                # KeyError at server startup instead.
                 "help": _FLAG_HELP.get(name, f"MLIP {name.replace('_', ' ')}"),
             }
             if name == "device":

@@ -125,8 +125,8 @@ class MlipTrainEngine(MlipBackend):
         and product in one directory that nothing else writes to.
 
         Public, and named by :class:`~chemrefine.engines.api.ArtifactEngine`, because the
-        orchestrator archives it before a re-run: it used to reach for ``ids.TRAINING_ID``
-        itself, which is this same answer written down twice.
+        orchestrator archives it before a re-run and has no way to derive it. Left to the
+        orchestrator, the answer would be written down twice.
         """
         return ctx.step_dir / ids.TRAINING_ID
 

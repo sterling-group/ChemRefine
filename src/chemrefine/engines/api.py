@@ -344,9 +344,8 @@ class JobExecutable(Protocol):
     The narrow provision surface a :class:`~chemrefine.engines._job.JobEngine` exposes so
     the flat scheduler can run one job per structure without knowing the engine's type —
     Interface Segregation: ``run_batch`` depends on the members below and not the whole
-    engine. ``JobEngine`` satisfies it structurally. (The count is deliberately not
-    written out: it said "six" from the day this was extracted until ``slurm_layout``
-    and ``memory_mb`` each added one without anybody updating the prose.)
+    engine. ``JobEngine`` satisfies it structurally. The members are listed rather than
+    counted, so a new one does not date the sentence above it.
     """
 
     @property
@@ -476,7 +475,7 @@ class ArtifactEngine(CalculationEngine, Protocol):
     def run_dir(self, ctx: StepContext) -> Path:
         """The directory this step's single job runs in, under ``ctx.step_dir``.
 
-        Declared rather than assumed, because the orchestrator needs it and used to guess.
+        Declared rather than assumed, because the orchestrator needs it and cannot derive it.
         :func:`chemrefine.step._run_artifact_step` moves the previous run aside before
         re-executing, and that archive is what makes :meth:`artifact` a usable success test:
         ``artifact.exists()`` cannot tell this run's product from the last one's, so a re-run
@@ -484,10 +483,10 @@ class ArtifactEngine(CalculationEngine, Protocol):
         digest it into the sidecar, and cache it under the **new** fingerprint — a run that is
         internally consistent and describes a training that never happened.
 
-        It was a literal, ``ids.TRAINING_ID``, spelled in ``step.py``. That is correct for the
-        one artifact engine that exists and silently wrong for the second: its run directory
-        would not be archived, and the guard would pass while protecting nothing. A capability
-        the orchestrator acts on belongs in the contract, like every other one here.
+        A constant named in ``step.py`` would answer for whichever engine happens to use that
+        directory and be silently wrong for any other: its run directory would go unarchived,
+        and the guard would pass while protecting nothing. A capability the orchestrator acts
+        on belongs in the contract, like every other one here.
         """
         ...
 
@@ -590,13 +589,12 @@ def register(name: str) -> Callable[[type[CalculationEngine]], type[CalculationE
       codebase passes. A structural contract used as a base defeats the checks that stand in
       for this gate, which is why it is refused rather than merely discouraged.
     * **It leaves a declaration the machinery reads unset.** The engine bases declare ClassVars
-      with no default — ``JobEngine`` five, ``ExtOptOrcaEngine`` four more — and no ``ABCMeta``
-      machinery watches those: ``abstractmethod`` covers the *methods* only. A base names its
-      own in ``required_declarations``, which is the ``required = [...]`` list ``@trainer``
-      checks, one subsystem over. Unset, ``output_suffix`` surfaces as a bare ``AttributeError``
-      inside ``prepare``, and ``template_suffix`` is worse: the engine simply stops satisfying
-      :class:`TemplateDriven`, and the user is told their template does not exist while it sits
-      on disk.
+      with no default, and no ``ABCMeta`` machinery watches those: ``abstractmethod`` covers the
+      *methods* only. A base names its own in ``required_declarations``, which is the
+      ``required = [...]`` list ``@trainer`` checks, one subsystem over. Unset, ``output_suffix``
+      surfaces as a bare ``AttributeError`` inside ``prepare``, and ``template_suffix`` is
+      worse: the engine simply stops satisfying :class:`TemplateDriven`, and the user is told
+      their template does not exist while it sits on disk.
 
     The check runs on the class, never on an instance: constructing one to interrogate it would
     make an engine's ``__init__`` run at import of the package that defines it.

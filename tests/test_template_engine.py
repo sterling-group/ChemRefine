@@ -459,11 +459,11 @@ def test_an_engine_can_extend_the_output_contract_without_touching_a_building_bl
 
 
 def test_an_extended_field_is_swept_for_finiteness_like_every_other(tmp_path: Path):
-    """The guard follows the declaration, which is the half that used to go missing.
+    """The guard follows the declaration, which is the half a hand-kept roster drops.
 
-    A quantity added to the footer but not to a tuple in the reader was written by the
-    script, read onto the structure, and never checked — so a diverged calculation reported
-    ``nan`` and cached as a result. Declaring ``finite`` is now the only thing that decides.
+    A quantity the footer harvests but a tuple in the reader does not know about is written by
+    the script, read onto the structure, and never checked — so a diverged calculation reports
+    ``nan`` and caches as a result. Declaring ``finite`` is the only thing that decides.
     """
     fields = (*SCRIPT_OUTPUT, OutputField("gibbs_hartree", "gibbs_hartree"))
     seed = Atoms("H", positions=[[0, 0, 0]])

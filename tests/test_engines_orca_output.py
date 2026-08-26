@@ -436,7 +436,7 @@ def test_parse_forces_keeps_orcas_own_summary_lines_out_of_the_count():
 
     ORCA closes every gradient block with its own summary — translation/rotation invariance
     and the gradient norms — which is why unreadable lines are skipped rather than refused.
-    All 227 recorded blocks carry it, so a count that included them would reject every real
+    Every recorded block carries it, so a count that included them would reject every real
     output.
     """
     text = (
@@ -591,11 +591,10 @@ def test_a_malformed_gradient_row_is_a_parse_error_not_a_crash():
     contains only `OutputParseError` — one bad row would end the run in a traceback rather
     than becoming that structure's ledgered failure.
 
-    Driven through the **real** reader. This used to patch `parse_forces_from_text` to raise,
-    which proved the handler and nothing about the parser — and the parser did not raise:
-    the row below overflows to `-inf`, which was carried on the structure, written to the
-    cache sidecar, and only stopped by `cache.save`'s backstop, one step too late and at the
-    cost of every sibling's results.
+    Driven through the **real** reader. Patching `parse_forces_from_text` to raise would prove
+    the handler and nothing about the parser: the row below overflows to `-inf`, and unrefused
+    it rides the structure into the cache sidecar, where only `cache.save`'s backstop stops it
+    — one step too late, and at the cost of every sibling's results.
     """
     text = (
         "FINAL SINGLE POINT ENERGY  -1.0\n"
@@ -1045,12 +1044,11 @@ def test_xyz_ensemble_skips_non_digit_lines(tmp_path: Path):
 def test_parse_forces_refuses_a_block_it_could_read_nothing_from(tmp_path: Path):
     """A gradient block ORCA wrote and the reader cannot read is a parse failure, not "no forces".
 
-    It used to return ``None``, which is the answer for an output with **no** gradient block
-    — a plain single point. Saying the same thing about a block that is present and
-    unreadable loses the distinction, and with it the only signal that the output is
-    damaged: the structure would be cached as a perfectly good result that happens to carry
-    no forces, and the next ``mlip-train`` step would refuse it with a message about the
-    step that computed it.
+    ``None`` is the answer for an output with **no** gradient block — a plain single point.
+    Saying the same thing about a block that is present and unreadable loses the distinction,
+    and with it the only signal that the output is damaged: the structure would be cached as a
+    perfectly good result that happens to carry no forces, and the next ``mlip-train`` step
+    would refuse it with a message about the step that computed it.
     """
     text = (
         "CARTESIAN GRADIENT\n"

@@ -188,9 +188,8 @@ def _output_contract_comment(engine: object) -> str:
     """The "assign these names" comment, written from the engine's own output contract.
 
     Generated rather than typed into each starter, for the reason the contract is declared at
-    all: the roster used to be restated here as prose, so a starter could tell a user to
-    assign a name the footer no longer harvested — or, more likely, fail to mention one it
-    did. An engine that extends
+    all: a roster restated here as prose can tell a user to assign a name the footer does not
+    harvest, or fail to mention one it does. An engine that extends
     :attr:`~chemrefine.engines._script.engine.ScriptEngine.output_fields` gets its extra names
     into its own starter with no edit to this module.
 

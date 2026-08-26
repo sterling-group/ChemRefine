@@ -35,9 +35,9 @@ def test_every_bundled_backend_is_discovered():
 def test_dropped_in_plugin_package_is_discovered(monkeypatch, tmp_path: Path):
     """A bare-named package dropped into engines/ registers itself; others are skipped."""
     (tmp_path / "goodplug").mkdir()
-    # A conforming class, because `@register` is a gate now: it refuses one that does not
-    # satisfy CalculationEngine, which is the whole point — this test is about *discovery*,
-    # so it drops in the smallest plugin that is actually registrable.
+    # A conforming class, because `@register` is a gate: it refuses one that does not satisfy
+    # CalculationEngine. This test is about *discovery*, so it drops in the smallest plugin
+    # that is actually registrable.
     (tmp_path / "goodplug" / "__init__.py").write_text(
         "from chemrefine.engines.api import register\n"
         "\n"

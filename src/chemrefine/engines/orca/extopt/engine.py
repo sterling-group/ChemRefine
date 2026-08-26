@@ -37,7 +37,7 @@ class ExtOptOrcaEngine(OrcaEngine):
         "options_cls",
         "calculator_cls",
     )
-    """ORCA's five, plus the four ClassVars this kind adds — see
+    """ORCA's own declarations, plus the ClassVars this kind adds — see
     :attr:`chemrefine.engines._job.JobEngine.required_declarations`. Unset, they surface as an
     ``AttributeError`` from inside ``_server_cmd`` or ``prepare``, in a job rather than at
     import."""
@@ -51,8 +51,8 @@ class ExtOptOrcaEngine(OrcaEngine):
         """Refuse a subclass whose ``calculator_cls`` only *looks* like a backend.
 
         :class:`~chemrefine.engines._backend_server.base.ComputeBackend` is a
-        ``runtime_checkable`` Protocol, and both shipped backends subclass it explicitly. That
-        is the shape that hides an omission: a subclass inherits every member as an ellipsis
+        ``runtime_checkable`` Protocol that the shipped backends subclass explicitly. That is
+        the shape that hides an omission: a subclass inherits every member as an ellipsis
         body, so ``hasattr`` and ``isinstance`` both pass while ``calc`` returns ``None`` and
         ``server_cli_from_options`` returns ``None`` — which reaches the run as
         ``TypeError: 'NoneType' object is not iterable`` while building the job script, or as a

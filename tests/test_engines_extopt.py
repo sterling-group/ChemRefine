@@ -352,12 +352,11 @@ def _own_members(cls: type) -> set[str]:
 def test_every_registered_backend_implements_the_contract_itself():
     """Conformance means *implementing* the contract, not inheriting its stubs.
 
-    This used to assert ``hasattr`` / ``callable`` for six members, which cannot fail: both
-    shipped backends subclass the ``ComputeBackend`` Protocol, so a subclass that implements
-    nothing at all still has all six — each an ellipsis body returning ``None``. The test
-    passed on a class whose ``calc`` returned ``None``, which is precisely the failure it
-    existed to catch. Checking *own* members is what makes it able to fail; the negative case
-    below is what proves it can.
+    Asserting ``hasattr`` / ``callable`` cannot fail here: the shipped backends subclass the
+    ``ComputeBackend`` Protocol, so a subclass that implements nothing at all still carries
+    every member — each an ellipsis body returning ``None``. That admits a class whose ``calc``
+    returns ``None``, which is precisely what this exists to catch. Checking *own* members is
+    what makes it able to fail; the negative case below is what proves it can.
     """
     from chemrefine.engines._backend_server.base import ComputeBackend
 
@@ -368,19 +367,19 @@ def test_every_registered_backend_implements_the_contract_itself():
 
 
 def test_the_conformance_check_rejects_a_backend_that_only_inherits():
-    """The negative the old test could not express — an empty subclass of the Protocol."""
+    """The negative an inherited-member check cannot express — an empty Protocol subclass."""
     from chemrefine.engines._backend_server.base import ComputeBackend
 
     class _Empty(ComputeBackend):
         name = "empty"
 
-    # It satisfies every check the codebase used to make. (mypy refuses to construct it —
+    # It satisfies every check that reads inherited members. (mypy refuses to construct it —
     # a Protocol subclass leaves its stubs implicitly abstract — while the runtime allows it
     # and returns None from everything. That gap is the hazard.)
     assert isinstance(_Empty(), ComputeBackend)  # type: ignore[abstract]
     assert callable(_Empty.calc) and callable(_Empty.server_cli_from_options)
     assert _Empty().calc(None) is None and _Empty.server_cli_from_options({}) is None  # type: ignore[abstract]
-    # ...and none of the one that replaced them.
+    # ...and none of the one that reads its own.
     assert sorted(ComputeBackend.required_implementations - _own_members(_Empty)) == [
         "add_cli_args",
         "calc",
@@ -1078,7 +1077,7 @@ def test_no_two_backends_claim_the_same_cli_flag():
     and let each add its own flags to a single parser — which is what keeps backend literals
     out of the shared layer, and what makes a collision everyone's problem rather than the
     newcomer's: argparse raises at ``parse_args``, so a third backend claiming a flag one of
-    the two shipped ones already has takes the gradient server and the wrapper down for
+    a registered one already has takes the gradient server and the wrapper down for
     *all* of them.
 
     ``--device`` is the one to watch. It is the shared ``EngineOptions.device`` knob, MLIP

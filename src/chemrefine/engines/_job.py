@@ -133,14 +133,13 @@ class JobEngine(abc.ABC):
     :func:`~chemrefine.engines.api.register` at its decorator line.
 
     ``abstractmethod`` already fails an incomplete subclass at construction, which is where
-    ``get_engine`` builds it — but it watches *methods*. These five are bare annotations, and
-    nothing watched them: an unset ``output_suffix`` surfaced as a bare ``AttributeError``
-    inside ``prepare``, and an unset ``template_suffix`` stopped the engine satisfying
-    :class:`~chemrefine.engines.api.TemplateDriven`, so the step reported the user's template
-    as missing while it sat on disk. Naming them here is the same move
+    ``get_engine`` builds it — but it watches *methods*. The names below are bare annotations,
+    which no ``ABCMeta`` machinery sees: unset, ``output_suffix`` surfaces as a bare
+    ``AttributeError`` inside ``prepare``, and ``template_suffix`` stops the engine satisfying
+    :class:`~chemrefine.engines.api.TemplateDriven`, so the step reports the user's template as
+    missing while it sits on disk. Naming them here is the same move
     :meth:`chemrefine.engines.mlip.registry.MlipLibrary.trainer` makes with its
-    ``required = [...]``, and for the same stated reason: it covers the declarations no
-    ``ABCMeta`` machinery watches.
+    ``required = [...]``, and for the same stated reason.
 
     A base extends the tuple rather than replacing it, so a kind's requirements accumulate
     down the chain (see :class:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine`)."""

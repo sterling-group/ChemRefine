@@ -56,12 +56,12 @@ class _StubArtifactEngine:
     that scattered those over the step dir instead would sidestep the archiving `step.py` does
     and make these tests agree with code that could not work.
 
-    That directory is deliberately **not** ``ids.TRAINING_ID``. `step.py` used to archive the
-    previous run by naming that constant itself, so a stub answering the same word could not
-    tell "the orchestrator asked the engine" from "the orchestrator guessed, and guessed the
-    same" — and a second artifact engine, whose whole point is that it is not a trainer, would
-    have found its run directory unarchived and the staleness guard passing while protecting
-    nothing. Naming it something else is what makes the tests below able to fail.
+    That directory is deliberately **not** ``ids.TRAINING_ID``. A stub answering the same word
+    a constant in `step.py` would name cannot tell "the orchestrator asked the engine" from
+    "the orchestrator guessed, and guessed the same" — and an artifact engine that is not a
+    trainer would then find its run directory unarchived, with the staleness guard passing
+    while protecting nothing. Naming it something else is what makes the tests below able to
+    fail.
     """
 
     RUN_DIR_NAME: ClassVar[str] = "distill"

@@ -175,10 +175,9 @@ def _backend_python(engine: CalculationEngine, options: dict[str, Any]) -> str |
     :func:`chemrefine.engines._job.gpus_from_options` does.
 
     Detected with :class:`~chemrefine.engines.api.OptionsDeclaring`, like every other
-    capability in ``engines/``. It was the subsystem's last ``getattr`` duck-probe — and the
-    annotation on it was an assertion nothing checked, since ``getattr`` with a default is
-    ``Any``. :mod:`chemrefine.engines._backend_server.registry` records having removed the
-    other one for the same reason.
+    capability in ``engines/``: a ``getattr`` probe puts the answer beyond the type checker,
+    because ``getattr`` with a default is ``Any``, so the annotation on it would assert a type
+    nothing had checked.
     """
     options_cls = engine.options_cls if isinstance(engine, OptionsDeclaring) else EngineOptions
     return options_cls.from_raw_lenient(options).backend_python

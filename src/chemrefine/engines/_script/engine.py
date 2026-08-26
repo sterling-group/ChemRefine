@@ -54,7 +54,7 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
 
     The input seam lets an engine choose which options reach the template; this is the same
     choice for the return trip, and the two are the whole of what a script engine varies. A
-    subclass that needs more than the shared three extends the tuple in its own module::
+    subclass reporting more than the shared set extends the tuple in its own module::
 
         output_fields = (*SCRIPT_OUTPUT, OutputField("converged", "converged", finite=False))
 

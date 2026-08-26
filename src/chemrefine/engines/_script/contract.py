@@ -1,27 +1,24 @@
-"""What a rendered ``step{N}.py`` may report back — declared once, read by four consumers.
+"""What a rendered ``step{N}.py`` may report back — declared once, derived by every reader.
 
-A script engine's output contract used to be a list of names spelled at four independent
-sites: the harvest loop inside the generated footer (:mod:`chemrefine.engines._script.render`),
-the finiteness sweep and the :class:`~chemrefine.engines.api.ParsedResult` mapping
+Each consumer derives its own view from :data:`SCRIPT_OUTPUT` rather than restating the roster:
+the harvest loop inside the generated footer (:mod:`chemrefine.engines._script.render`), the
+finiteness sweep and the :class:`~chemrefine.engines.api.ParsedResult` mapping
 (:mod:`chemrefine.engines._script.output`), and the starter comment
-:mod:`chemrefine.scaffold` writes. Four copies of one contract, agreeing only by discipline —
-and the failure mode was silent in the direction that matters: a quantity added to the footer
-but not to the finiteness sweep is written by the script, read onto the structure, and skips
-the guard that stops a diverged calculation being cached as a result.
+:mod:`chemrefine.scaffold` writes. A roster spelled once per reader agrees only by discipline,
+and it fails silently in the direction that matters: a quantity the footer harvests but the
+sweep does not know about is written by the script, read onto the structure, and skips the
+guard that stops a diverged calculation being cached as a result.
 
-Declared here instead, so every consumer derives from it. This is the shape
-:data:`chemrefine.engines.mlip.options.CALCULATOR_KNOBS` already gives the MLIP knob list, for
-the reason it gives: spelled once, beside the thing that defines it, after a sweep found that
-tuple hand-enumerated at ten sites.
+The same shape :data:`chemrefine.engines.mlip.options.CALCULATOR_KNOBS` gives the MLIP knob
+list, for the reason it gives: spelled once, beside the thing that defines it.
 
-The second thing this buys is what the old shape could not offer at all. Because the contract
-is a *value*, an engine can extend it:
+Because the contract is a *value*, an engine can extend it:
 :attr:`chemrefine.engines._script.engine.ScriptEngine.output_fields` is a ClassVar a subclass
-overrides — the mirror of ``_vars_from`` on the input side. A script engine that needs to
-report something beyond the shared three declares it in its own module, and the footer, the
-finiteness guard, the JSON mapping and the scaffold comment all follow. No building block is
-edited, which is what ``docs/developer/adding-an-engine.md`` promises and what this makes true
-for the script kind.
+overrides — the mirror of ``_vars_from`` on the input side. A script engine that reports
+anything beyond the shared set declares it in its own module, and the footer, the finiteness
+guard, the JSON mapping and the scaffold comment all follow. No building block is edited, which
+is what ``docs/developer/adding-an-engine.md`` promises and what this makes true for the script
+kind.
 
 The conversions live here rather than in the reader because they *are* the contract: what
 ``gradient_hartree_per_bohr`` means is "Hartree/Bohr, one row per atom, and forces are its
@@ -115,10 +112,10 @@ def forces_from_gradient(value: Any, seed: Atoms) -> NDArray[np.float64] | None:
     exit-code contract the same way — and a well-formed array of the wrong *shape* would leave
     it silently. The positions path has ``set_positions`` as its shape oracle; a gradient has
     none, so the flat ``3N`` list the positions guard names as "the natural mistake"
-    (``grad.ravel()``) parsed here as a perfectly valid ``(3N,)`` array, became
-    :attr:`~chemrefine.state.Structure.forces_ev_per_a` — which declares no shape — and
-    round-tripped the cache into any downstream ``mlip-train`` dataset. Nothing between this
-    line and the trainer re-checks, so this is the one place the contract can be held.
+    (``grad.ravel()``) reads here as a perfectly valid ``(3N,)`` array. Unrefused it becomes
+    :attr:`~chemrefine.state.Structure.forces_ev_per_a`, which declares no shape, and
+    round-trips the cache into any downstream ``mlip-train`` dataset. Nothing between this line
+    and the trainer re-checks, so this is the one place the contract can be held.
     """
     if not value:
         return None
@@ -141,4 +138,4 @@ SCRIPT_OUTPUT: tuple[OutputField, ...] = (
     OutputField("positions_angstrom", "positions", convert=positions_from),
     OutputField("gradient_hartree_per_bohr", "forces_ev_per_a", convert=forces_from_gradient),
 )
-"""The three quantities every script engine shares — the contract as it has always been."""
+"""The quantities every script engine shares, whatever its backend."""

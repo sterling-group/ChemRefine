@@ -41,8 +41,7 @@ def parse_output(
     is the engine's output contract, defaulting to the shared one.
 
     The seed is required outright rather than only when ``positions_angstrom`` is absent: a
-    parsed structure needs symbols, and the output document carries none. That has always been
-    true — the message is the one this has always raised.
+    parsed structure needs symbols, and the output document carries none.
     """
     data = _load_output_json(output_path, label=label, fields=fields)
     if fallback is None:

@@ -22,8 +22,8 @@ Output contract: **not stated here.** The names the appended footer harvests are
 through :attr:`~chemrefine.engines._script.engine.ScriptEngine.output_fields` — a required
 field is emitted into the result dict directly (so an omission is a ``NameError`` where it
 happened), and an optional one goes through the harvest loop, which skips what the template
-never defined. This module used to restate the roster in a table, which is exactly how a
-contract comes to be spelled four times and to disagree with itself in one place.
+never defined. Restating the roster here as a table would be one more copy to keep in step
+with the declaration, and the copy that disagrees is the one nothing checks.
 
 The footer writes to a *basename* (relative path) so the file lands
 in ``cwd = $WORK_DIR`` (scratch). The surrounding SLURM machinery

@@ -166,11 +166,10 @@ def test_the_derived_contract_members_match_the_interpreters_own():
 
 
 def test_register_refuses_a_class_that_does_not_satisfy_the_contract():
-    """``ENGINES`` is typed ``type[CalculationEngine]``; nothing used to check that.
+    """``ENGINES`` is typed ``type[CalculationEngine]``, and this is what makes that true.
 
-    ``register`` was ``Callable[[type], type]`` and ``type`` is ``type[Any]``, so a class with
-    only a ``name`` registered, `get_engine` handed it to the pipeline as a
-    ``CalculationEngine``, and mypy said nothing at the decorator site.
+    Without the gate a class carrying only a ``name`` registers, and :func:`get_engine` hands
+    it to the pipeline as a ``CalculationEngine``.
     """
     with pytest.raises(TypeError, match=r"does not satisfy CalculationEngine — missing"):
         register("gate-probe")(type("Bare", (), {"name": "gate-probe"}))
@@ -205,8 +204,9 @@ def test_register_refuses_a_class_that_inherits_the_protocol():
 def test_register_refuses_an_engine_that_leaves_a_declaration_unset():
     """The ClassVars no ``ABCMeta`` machinery watches — ``abstractmethod`` covers methods only.
 
-    Unset, ``output_suffix`` surfaced as a bare ``AttributeError`` from inside ``prepare``,
-    after ``run_step`` had built a context, derived a cache key and made a directory.
+    Unrefused here, an unset ``output_suffix`` surfaces as a bare ``AttributeError`` from
+    inside ``prepare`` — after ``run_step`` has built a context, derived a cache key and made
+    a directory.
     """
 
     class _NoSuffix(JobEngine):
