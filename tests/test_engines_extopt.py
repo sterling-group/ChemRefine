@@ -1069,3 +1069,99 @@ def test_an_extopt_intermediate_base_declares_no_calculator_and_is_allowed():
         """Shares plumbing; a concrete engine below it names the backend."""
 
     assert "calculator_cls" not in _Intermediate.__dict__
+
+
+def test_no_two_backends_claim_the_same_cli_flag():
+    """The shared parsers put every backend's flags in one flat namespace.
+
+    ``server.parse_args`` and ``bridge.parse_args`` both loop over every registered backend
+    and let each add its own flags to a single parser — which is what keeps backend literals
+    out of the shared layer, and what makes a collision everyone's problem rather than the
+    newcomer's: argparse raises at ``parse_args``, so a third backend claiming a flag one of
+    the two shipped ones already has takes the gradient server and the wrapper down for
+    *all* of them.
+
+    ``--device`` is the one to watch. It is the shared ``EngineOptions.device`` knob, MLIP
+    already exposes it, and it is the first thing a GPU-capable backend reaches for. The
+    registry's own docstring promises "adding a third backend is: write
+    engines/<name>/extopt_calc.py … there is no list here to update" — this is what keeps
+    that true, by failing here instead of in a job.
+    """
+    claimed: dict[str, str] = {}
+    for name in registry.known_backends():
+        parser = argparse.ArgumentParser()
+        registry.load_calculator(name).add_cli_args(parser)
+        for action in parser._actions:
+            for flag in action.option_strings:
+                if flag in ("-h", "--help"):
+                    continue
+                assert flag not in claimed, (
+                    f"backends {claimed[flag]!r} and {name!r} both claim {flag} — the shared "
+                    f"server and bridge parsers would raise for every backend, not just these"
+                )
+                claimed[flag] = name
+    assert claimed, "no backend contributed a flag — has the registry broken?"
+
+
+def test_the_shared_parsers_assemble_with_every_backend_registered():
+    """The collision above, asserted through the parsers that actually suffer it."""
+    from chemrefine.engines._backend_server import server
+
+    assert server.parse_args(["--backend", "mlip"]).backend == "mlip"
+    assert bridge.parse_args(["--backend", "pyscf", "x.extinp.tmp"]).backend == "pyscf"
+
+
+def test_the_flag_collision_guard_can_actually_fail():
+    """The negative case, because a guard that cannot fire is not a guard.
+
+    Registers a third backend claiming ``--device`` — the shared ``EngineOptions`` knob MLIP
+    already exposes — and asserts both that the guard above notices and that the shared
+    parsers really do break for *every* backend, not only the newcomer.
+    """
+    from typing import cast
+
+    from chemrefine.engines._backend_server import server
+    from chemrefine.engines._backend_server.base import ComputeBackend
+    from chemrefine.engines.api import ENGINES, CalculationEngine
+
+    class _Colliding(ComputeBackend):
+        name = "collide-probe"
+
+        @classmethod
+        def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:
+            parser.add_argument("--device", default="cpu")
+
+        @classmethod
+        def from_args(cls, args: argparse.Namespace) -> _Colliding:
+            return cls()
+
+        @classmethod
+        def server_cli_from_options(cls, options: dict[str, object]) -> list[str]:
+            return []
+
+        def calc(self, data: object) -> tuple[float, list[list[float]]]:
+            return 0.0, []
+
+    class _CollidingEngine:
+        name = "collide-probe"
+        backend = "collide-probe"
+        calculator_cls = _Colliding
+
+        def prepare(self, ctx: object) -> None: ...
+        def submit(self, inputs: object, ctx: object) -> None: ...
+        def parse(self, inputs: object, ctx: object) -> None: ...
+
+    # The stub answers the contract structurally but not by signature — it returns None where
+    # a real engine returns StepInputs — and nothing here calls those methods: the collision
+    # happens while the parsers are being *built*.
+    ENGINES["collide-probe"] = cast("type[CalculationEngine]", _CollidingEngine)
+    try:
+        with pytest.raises(AssertionError, match="both claim --device"):
+            test_no_two_backends_claim_the_same_cli_flag()
+        # ...and this is what it stands in for: the shared parsers stop working for mlip too.
+        with pytest.raises(argparse.ArgumentError, match="conflicting option string: --device"):
+            server.parse_args(["--backend", "mlip"])
+        with pytest.raises(argparse.ArgumentError, match="conflicting option string: --device"):
+            bridge.parse_args(["--backend", "mlip", "x.extinp.tmp"])
+    finally:
+        ENGINES.pop("collide-probe", None)
