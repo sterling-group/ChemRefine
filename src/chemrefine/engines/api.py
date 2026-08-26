@@ -461,12 +461,34 @@ class ArtifactEngine(CalculationEngine, Protocol):
     never produced.
     """
 
+    def run_dir(self, ctx: StepContext) -> Path:
+        """The directory this step's single job runs in, under ``ctx.step_dir``.
+
+        Declared rather than assumed, because the orchestrator needs it and used to guess.
+        :func:`chemrefine.step._run_artifact_step` moves the previous run aside before
+        re-executing, and that archive is what makes :meth:`artifact` a usable success test:
+        ``artifact.exists()`` cannot tell this run's product from the last one's, so a re-run
+        whose job dies having written nothing would otherwise find the *previous* model,
+        digest it into the sidecar, and cache it under the **new** fingerprint — a run that is
+        internally consistent and describes a training that never happened.
+
+        It was a literal, ``ids.TRAINING_ID``, spelled in ``step.py``. That is correct for the
+        one artifact engine that exists and silently wrong for the second: its run directory
+        would not be archived, and the guard would pass while protecting nothing. A capability
+        the orchestrator acts on belongs in the contract, like every other one here.
+        """
+        ...
+
     def artifact(self, ctx: StepContext) -> Path:
         """Where this step's product lives once its job has run.
 
         Called both to decide success and — by ``rebuild-cache`` — to adopt a product whose
         run finished before the driver died, so it must be derivable from ``ctx`` alone
         rather than from anything the submission returned.
+
+        May sit *inside* :meth:`run_dir` rather than directly in it — FAIRChem's is at
+        ``checkpoints/final/inference_ckpt.pt`` under a directory it names itself — which is
+        why the two are separate questions.
         """
         ...
 

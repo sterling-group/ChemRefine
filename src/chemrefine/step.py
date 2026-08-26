@@ -706,7 +706,7 @@ def _run_artifact_step(
     too, leaving a run that is internally consistent and describes a training that never
     happened. Moving the run directory aside first turns that into the failure it is.
     """
-    attempts.archive_previous(ctx.step_dir, (ids.TRAINING_ID,))
+    attempts.archive_previous(ctx.step_dir, (engine.run_dir(ctx).name,))
     inputs = engine.prepare(ctx)
     cache.save_manifest(
         inputs,

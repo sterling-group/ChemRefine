@@ -118,11 +118,15 @@ class MlipTrainEngine(MlipBackend):
         """
         return trainer_for(self._opts(ctx).task_name)()
 
-    def _run_dir(self, ctx: StepContext) -> Path:
+    def run_dir(self, ctx: StepContext) -> Path:
         """Where the run's files live: the training job's own directory under the step.
 
         The same shape a structure gets, for the same reason — config, script, runlog, logs
         and product in one directory that nothing else writes to.
+
+        Public, and named by :class:`~chemrefine.engines.api.ArtifactEngine`, because the
+        orchestrator archives it before a re-run: it used to reach for ``ids.TRAINING_ID``
+        itself, which is this same answer written down twice.
         """
         return ctx.step_dir / ids.TRAINING_ID
 
@@ -133,7 +137,7 @@ class MlipTrainEngine(MlipBackend):
         ``checkpoints/final/inference_ckpt.pt`` under a directory it names itself. That is why
         it is not also the job's output path — see :meth:`_job_output`.
         """
-        return self._trainer(ctx).artifact(self._run_dir(ctx), ids.TRAINING_ID)
+        return self._trainer(ctx).artifact(self.run_dir(ctx), ids.TRAINING_ID)
 
     def _job_output(self, ctx: StepContext) -> Path:
         """The job's output path for the scheduler — always directly in the run directory.
@@ -149,7 +153,7 @@ class MlipTrainEngine(MlipBackend):
         still saying what the job is for. For MACE the two paths are the same file; for a
         trainer that nests, this one is the anchor and :meth:`artifact` is the product.
         """
-        return self._run_dir(ctx) / self.artifact(ctx).name
+        return self.run_dir(ctx) / self.artifact(ctx).name
 
     def _plan(self, ctx: StepContext) -> TrainingPlan:
         """Where and how this step's job runs — derivable from the config alone.
@@ -164,7 +168,7 @@ class MlipTrainEngine(MlipBackend):
         # `cores:` above the budget thread past what the scheduler grants and charges.
         ntasks, cpus_per_task = self.slurm_layout(ctx)
         return TrainingPlan(
-            run_dir=self._run_dir(ctx),
+            run_dir=self.run_dir(ctx),
             run_name=ids.TRAINING_ID,
             device=opts.device,
             gpus=self.gpus(ctx),
@@ -269,7 +273,7 @@ class MlipTrainEngine(MlipBackend):
             "multiplicity": ctx.multiplicity,
             "n_structures": len(ctx.prev_state.structures),
         }
-        (self._run_dir(ctx) / SIDECAR_NAME).write_text(
+        (self.run_dir(ctx) / SIDECAR_NAME).write_text(
             json.dumps(record, indent=2) + "\n", encoding="utf-8"
         )
         logger.info("step %d: trained model at %s", ctx.step_cfg.step, model)

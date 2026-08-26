@@ -51,12 +51,20 @@ class _StubArtifactEngine:
     ``artifact`` hook. ``weights`` distinguishes *which* run wrote the product, which is what
     the staleness test below reads.
 
-    Everything is written under ``step_dir/<TRAINING_ID>/`` because that is the shape
-    :data:`~chemrefine.ids.TRAINING_ID` documents for an artifact step's single job — its own
-    directory under the step dir, holding its config, its runlog and its product. A stub that
-    scattered those over the step dir instead would sidestep the archiving `step.py` does and
-    make these tests agree with code that could not work.
+    Everything is written under one directory of its own beneath the step dir — its config,
+    its runlog and its product — which is the shape an artifact step's single job has. A stub
+    that scattered those over the step dir instead would sidestep the archiving `step.py` does
+    and make these tests agree with code that could not work.
+
+    That directory is deliberately **not** ``ids.TRAINING_ID``. `step.py` used to archive the
+    previous run by naming that constant itself, so a stub answering the same word could not
+    tell "the orchestrator asked the engine" from "the orchestrator guessed, and guessed the
+    same" — and a second artifact engine, whose whole point is that it is not a trainer, would
+    have found its run directory unarchived and the staleness guard passing while protecting
+    nothing. Naming it something else is what makes the tests below able to fail.
     """
+
+    RUN_DIR_NAME: ClassVar[str] = "distill"
 
     name: ClassVar[str] = "fake"
     options_cls: ClassVar[type[EngineOptions]] = _StubTrainOptions
@@ -68,7 +76,7 @@ class _StubArtifactEngine:
 
     def run_dir(self, ctx: StepContext) -> Path:
         """The job's own directory under the step — where a real trainer runs."""
-        return ctx.step_dir / ids.TRAINING_ID
+        return ctx.step_dir / self.RUN_DIR_NAME
 
     def artifact(self, ctx: StepContext) -> Path:
         """The product — derived from ``ctx`` alone, so a rebuild can find it too."""
@@ -218,7 +226,7 @@ def test_a_rerun_that_produces_nothing_does_not_adopt_the_previous_run(tmp_path:
     config = _config(tmp_path)
     seeds = _seeds(3)
     run_step(config, config.steps[0], seeds, engine=_StubArtifactEngine(weights="run-1"))
-    assert (_step_dir(config) / ids.TRAINING_ID / ARTIFACT_NAME).exists()
+    assert (_step_dir(config) / _StubArtifactEngine.RUN_DIR_NAME / ARTIFACT_NAME).exists()
 
     # A different configuration: the cache misses, so the step really re-runs.
     changed = _config(tmp_path, options={"epochs": 99})
@@ -232,7 +240,7 @@ def test_a_rerun_that_produces_nothing_does_not_adopt_the_previous_run(tmp_path:
     assert cached is not None
     assert cached.fingerprint == _key_for(config, seeds).fingerprint
 
-    run_dir = _step_dir(changed) / ids.TRAINING_ID
+    run_dir = _step_dir(changed) / _StubArtifactEngine.RUN_DIR_NAME
     assert not (run_dir / ARTIFACT_NAME).exists(), "run 1's model is not left at the canonical path"
     assert list(run_dir.glob(f"attempt*/{ARTIFACT_NAME}")), "but it is kept, inside its attempt"
 
@@ -276,7 +284,7 @@ def test_rebuild_cache_adopts_a_finished_product_without_rerunning(tmp_path: Pat
     # driver killed after the job but before `finalize` would have.
     run_step(config, config.steps[0], seeds, engine=engine)
     cache.invalidate(_step_dir(config))
-    product = _step_dir(config) / ids.TRAINING_ID / ARTIFACT_NAME
+    product = _step_dir(config) / _StubArtifactEngine.RUN_DIR_NAME / ARTIFACT_NAME
     assert product.exists(), "the product survives the lost cache"
 
     rebuilt = _StubArtifactEngine()
