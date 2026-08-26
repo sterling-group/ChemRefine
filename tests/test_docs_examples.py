@@ -63,3 +63,60 @@ def test_the_documented_config_validates(block: str):
     raw = yaml.safe_load(block)
     assert isinstance(raw, dict), "a steps: block must be a mapping — is the fence a fragment?"
     Config(**raw)
+
+
+# ---------------------------------------------------------------------------
+# The engine guide's Python — the one artefact a new engine author copies
+# ---------------------------------------------------------------------------
+
+_PY_FENCE_RE = re.compile(r"```python\n(.*?)```", re.DOTALL)
+_ENGINE_GUIDE = _REPO_ROOT / "docs" / "developer" / "adding-an-engine.md"
+
+
+def _engine_guide_python() -> list[str]:
+    """The engine guide's ``python`` fences that are meant to be code.
+
+    A fence carrying an ``engines/<name>/`` placeholder is a shape, not a snippet — it names
+    the file you create rather than one that exists — so it is not held to compiling. Every
+    other fence is the worked engine, which is copied verbatim by whoever writes the next one.
+    """
+    if not _ENGINE_GUIDE.is_file():  # pragma: no cover - docs/ is absent from the sdist
+        pytest.skip("docs/ not shipped in this tree")
+    fences = _PY_FENCE_RE.findall(_ENGINE_GUIDE.read_text(encoding="utf-8"))
+    return [f for f in fences if "<name>" not in f]
+
+
+def test_the_engine_guides_python_parses():
+    """A worked example that is not Python is not an example."""
+    fences = _engine_guide_python()
+    assert any("class DemoqmEngine" in f for f in fences), (
+        "the scanner found no worked engine — have the fences been renamed?"
+    )
+    for fence in fences:
+        compile(fence, str(_ENGINE_GUIDE), "exec")
+
+
+@pytest.mark.parametrize(
+    ("method", "returns"),
+    [("build_input", "None"), ("run_block", "RunBlock"), ("parse_one", "list[ParsedResult]")],
+)
+def test_the_engine_guides_primitives_return_what_the_base_declares(method: str, returns: str):
+    """The guide claims "every signature matches the real base". This is that claim, checked.
+
+    ``run_block`` is why: it returned a bare ``str`` for four weeks after ``RunBlock`` landed,
+    through five edits of this page — one of them titled "eleven things the documentation said
+    that were not true". Copied, it fails with ``AttributeError: 'str' object has no attribute
+    'cleanup'`` while the first job script is assembled. Nothing type-checked or executed the
+    page's Python, so nothing could have said so.
+    """
+    import inspect
+
+    from chemrefine.engines._job import JobEngine
+
+    base = inspect.signature(getattr(JobEngine, method)).return_annotation
+    assert base == returns, f"JobEngine.{method} now returns {base!r} — update the guide too"
+    guide = "\n".join(_engine_guide_python())
+    assert f"def {method}(" in guide, f"the guide's worked engine no longer defines {method}"
+    assert f"-> {returns}:" in guide, (
+        f"the guide's {method} does not return {returns}, which JobEngine declares"
+    )

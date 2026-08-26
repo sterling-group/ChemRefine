@@ -46,9 +46,9 @@ Decorate the class with `@register("<name>")` and choose the **kind** that match
 | Kind | Base | You provide |
 |------|------|-------------|
 | Per-structure program (own input format) | [`JobEngine`](../api/engines_job.md) | `build_input`, `run_block`, `parse_one`, `pal`, `gpus` + the ClassVars (`label` / `template_suffix` / `output_suffix` / `output_globs`) |
-| User Python script | [`ScriptEngine`](../api/engines_job.md) (a `JobEngine`) | usually only `_vars_from` (inject `$VAR`s from `step.options`) |
+| User Python script | [`ScriptEngine`](../api/engines_job.md) (a `JobEngine`) | `_vars_from` (inject `$VAR`s from `step.options`), and `output_fields` when the template reports more than energy / geometry / gradient |
 | ORCA optimises using *this* engine's gradients | `ExtOptOrcaEngine` | the ClassVars `backend` / `wrapper_filename` / `options_cls` / `calculator_cls`, plus a `ComputeBackend` in `extopt_calc.py` |
-| Not a per-structure job (e.g. a training step) | `CalculationEngine` directly | `prepare` / `submit` / `parse` |
+| Not a per-structure job (e.g. a training step) | `CalculationEngine` directly | `prepare` / `submit` / `parse`, plus `artifact` + `run_dir` for `ArtifactEngine`, and the `JobExecutable` members to run through the scheduler |
 
 A `JobEngine` provides only **primitives** — the public provision surface chemrefine requests
 (`build_input` / `run_block` / `parse_one` / `pal` / `gpus`, the `JobExecutable` contract). The
@@ -135,6 +135,13 @@ the two ExtOpt engines):
 
 Everything else — displacement, round-2 submission, resolution, retry — is generic.
 
+The second bullet is a `JobEngine`'s own `parse_one` to satisfy, which is why ORCA and Q-Chem
+do. A `ScriptEngine` parses through the shared reader instead, so it reports what its
+[output contract](#the-parsed-result-contract) declares: add the two fields to its
+`output_fields` and have the template assign them. Until it does, `nms: true` on a script step
+is ignored with a warning from `chemrefine validate` — the capability is detected, not
+assumed.
+
 ## Tests
 
 Add `tests/test_engines_<name>*.py`, mirroring the existing engine tests. New code ships at 100%
@@ -209,7 +216,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from chemrefine.engines._job import JobEngine
-from chemrefine.engines.api import ParsedResult, register
+from chemrefine.engines.api import ParsedResult, RunBlock, register
 from chemrefine.engines.demoqm.options import DemoqmOptions
 from chemrefine.state import StepContext
 
@@ -245,10 +252,10 @@ class DemoqmEngine(JobEngine):
         """Cores per job, before the scheduler clamps it to ``max_cores``."""
         return 1
 
-    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
+    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> RunBlock:
         """The bash that runs inside the job's work dir."""
         demoqm = ctx.executables.get("demoqm", "demoqm")
-        return f"{demoqm} {inp_path.name} > $OUTPUT_DIR/{out_path.name}"
+        return RunBlock(body=f'{demoqm} {inp_path.name} > "$OUTPUT_DIR/{out_path.name}"')
 
     def parse_one(
         self, output_path: Path, structure_id: str, ctx: StepContext
