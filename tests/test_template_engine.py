@@ -4,7 +4,7 @@ The per-engine ``test_engines_pyscf.py`` and ``test_engines_mlip.py``
 exercise the lifecycle end-to-end with their backend labels. The
 tests here exercise the *shared* surface area — the renderer
 (``_template_render.build_input``) and the output-parsing helpers
-(``_template_output._atoms_from_output`` / ``_forces_from_gradient``) — once,
+(the contract's ``positions_from`` / ``forces_from_gradient`` converters) — once,
 not twice.
 """
 
@@ -16,16 +16,19 @@ import numpy as np
 import pytest
 from ase import Atoms
 
+from chemrefine.config import StepConfig
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines._script import render as _template_render
-from chemrefine.engines._script.engine import ScriptEngine
-from chemrefine.engines._script.output import (
-    _atoms_from_output,
-    _forces_from_gradient,
-    _load_output_json,
-    parse_output,
+from chemrefine.engines._script.contract import (
+    SCRIPT_OUTPUT,
+    OutputField,
+    forces_from_gradient,
+    positions_from,
 )
+from chemrefine.engines._script.engine import ScriptEngine
+from chemrefine.engines._script.output import _load_output_json, parse_output
 from chemrefine.errors import ChemRefineError, ConfigError, OutputParseError
+from chemrefine.state import PipelineState, StepContext
 
 
 def test_base_template_vars_default_is_empty():
@@ -164,44 +167,74 @@ def test_build_input_leaves_unknown_placeholders_intact(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# _atoms_from_output / _forces_from_gradient — shared helpers
+# positions_from / forces_from_gradient — the contract's own converters
 # ---------------------------------------------------------------------------
 
 
-def test_atoms_from_output_falls_back_to_seed_atoms():
-    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
-    atoms = _atoms_from_output({"energy_hartree": -1.0}, fallback=seed)
-    np.testing.assert_allclose(atoms.get_positions(), seed.get_positions())
-
-
-def test_atoms_from_output_uses_positions_when_present():
-    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
-    atoms = _atoms_from_output(
-        {"energy_hartree": -1.0, "positions_angstrom": [[0.0, 0.0, 0.0], [0.0, 0.0, 1.5]]},
-        fallback=seed,
+def _ctx(tmp: Path) -> StepContext:
+    """The smallest StepContext ``build_input`` reads — step number, charge, multiplicity."""
+    return StepContext(
+        step_cfg=StepConfig(step=1, engine="extended-probe", operation="sp", options={}),
+        step_dir=tmp,
+        template_dir=tmp,
+        template=tmp / "step1.py",
+        scratch_dir=None,
+        prev_state=PipelineState(structures=()),
+        charge=0,
+        multiplicity=1,
+        max_cores=1,
+        slurm_template="cpu.slurm.header",
     )
-    np.testing.assert_allclose(atoms.get_positions(), [[0.0, 0.0, 0.0], [0.0, 0.0, 1.5]])
 
 
-def test_atoms_from_output_raises_without_fallback_and_no_positions():
+def _parse(document: dict, seed: Atoms, *, fields=SCRIPT_OUTPUT, tmp: Path | None = None):
+    """Round-trip one output document through ``parse_output`` and return its ParsedResult."""
+    import json
+    import tempfile
+
+    out = Path(tmp or tempfile.mkdtemp()) / "step1_0.json"
+    out.write_text(json.dumps(document), encoding="utf-8")
+    return parse_output(out, label="MLIP", fallback=seed, fields=fields)[0]
+
+
+def test_a_script_that_reports_no_geometry_keeps_the_seeds():
+    """An absent optional field leaves the ParsedResult with the seed's own positions."""
+    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    parsed = _parse({"energy_hartree": -1.0}, seed)
+    np.testing.assert_allclose(parsed.positions, seed.get_positions())
+
+
+def test_positions_from_uses_what_the_script_reported():
+    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    moved = positions_from([[0.0, 0.0, 0.0], [0.0, 0.0, 1.5]], seed)
+    np.testing.assert_allclose(moved, [[0.0, 0.0, 0.0], [0.0, 0.0, 1.5]])
+
+
+def test_parse_output_raises_without_a_seed(tmp_path: Path):
+    """The symbols come from the seed always, so a parse without one cannot produce one.
+
+    The document itself is perfectly good — the refusal is about what it does not carry.
+    """
+    out = tmp_path / "step1_0.json"
+    out.write_text('{"energy_hartree": -1.0}', encoding="utf-8")
     with pytest.raises(OutputParseError, match="positions_angstrom"):
-        _atoms_from_output({"energy_hartree": -1.0}, fallback=None)
+        parse_output(out, label="MLIP", fallback=None)
 
 
 def test_forces_from_gradient_converts_units():
     from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
 
-    forces = _forces_from_gradient([[1.0, 0.0, 0.0]], n_atoms=1)
+    forces = forces_from_gradient([[1.0, 0.0, 0.0]], Atoms("H", positions=[[0, 0, 0]]))
     assert forces is not None
     np.testing.assert_allclose(forces[0], [-HARTREE_PER_BOHR_TO_EV_PER_A, 0.0, 0.0])
 
 
 def test_forces_from_gradient_handles_none():
-    assert _forces_from_gradient(None, n_atoms=1) is None
+    assert forces_from_gradient(None, Atoms("H", positions=[[0, 0, 0]])) is None
 
 
 def test_forces_from_gradient_handles_empty():
-    assert _forces_from_gradient([], n_atoms=2) is None
+    assert forces_from_gradient([], Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])) is None
 
 
 # ---------------------------------------------------------------------------
@@ -232,10 +265,10 @@ def test_positions_of_the_wrong_shape_are_refused(positions: list):
     """
     seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
     with pytest.raises(OutputParseError, match="positions_angstrom"):
-        _atoms_from_output({"energy_hartree": -1.0, "positions_angstrom": positions}, fallback=seed)
+        positions_from(positions, seed)
 
 
-def test_atoms_from_output_copies_rather_than_mutating_the_seed():
+def test_positions_from_copies_rather_than_mutating_the_seed():
     """An optimised geometry must land on a copy of the seed, never on the seed.
 
     The fallback is the pipeline's own structure, shared by reference; written in place,
@@ -247,17 +280,16 @@ def test_atoms_from_output_copies_rather_than_mutating_the_seed():
     seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
     before = seed.get_positions().copy()
     moved = [[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]]
-    updated = _atoms_from_output(
-        {"energy_hartree": -1.0, "positions_angstrom": moved}, fallback=seed
-    )
+    updated = positions_from(moved, seed)
     assert np.array_equal(seed.get_positions(), before)
-    assert np.array_equal(updated.get_positions(), np.asarray(moved))
+    assert np.array_equal(updated, np.asarray(moved))
 
 
 def test_a_ragged_gradient_is_refused():
     """The other half of the same shape contract — `np.asarray` would raise bare, too."""
+    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
     with pytest.raises(OutputParseError, match="gradient_hartree_per_bohr"):
-        _forces_from_gradient([[0.1, 0.2, 0.3], [0.1, 0.2]], n_atoms=2)
+        forces_from_gradient([[0.1, 0.2, 0.3], [0.1, 0.2]], seed)
 
 
 @pytest.mark.parametrize(
@@ -277,8 +309,9 @@ def test_a_gradient_of_the_wrong_shape_is_refused(gradient: list):
     cache and into any downstream ``mlip-train`` dataset, where the positions equivalent
     was an ordinary ledger entry naming the atom count.
     """
+    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
     with pytest.raises(OutputParseError, match="gradient_hartree_per_bohr"):
-        _forces_from_gradient(gradient, n_atoms=2)
+        forces_from_gradient(gradient, seed)
 
 
 @pytest.mark.parametrize(
@@ -364,3 +397,140 @@ def test_a_finite_energy_and_gradient_still_pass(tmp_path: Path):
         tmp_path, '{"energy_hartree": -1.5, "gradient_hartree_per_bohr": [[0.0, 1e-9, -2.0]]}'
     )
     assert _load_output_json(out, label="MLIP")["energy_hartree"] == -1.5
+
+
+# ---------------------------------------------------------------------------
+# The seam: an engine that reports more than the shared three
+# ---------------------------------------------------------------------------
+
+
+def test_an_engine_can_extend_the_output_contract_without_touching_a_building_block(
+    tmp_path: Path,
+):
+    """The promise the declaration exists for, exercised end to end.
+
+    A script engine that needs to report something beyond energy / geometry / gradient used
+    to have no way to say so: the harvested names lived in a string literal inside
+    ``_script/render.py`` and the mapping in ``_script/output.py``, so a fourth quantity meant
+    editing two building blocks that ``docs/developer/adding-an-engine.md`` says are never
+    edited to add an engine. Here the whole extension is one ClassVar on the engine, and the
+    footer, the JSON mapping and the ``ParsedResult`` follow from it.
+
+    ``converged`` is the case that matters most, because it is the one a *shipped* engine
+    already needs: ``pyscf-extopt`` refuses a non-converged SCF, and direct ``pyscf`` could
+    not, having no channel to report one.
+    """
+
+    class _Extended(ScriptEngine[EngineOptions]):
+        name = "extended-probe"
+        label = "Extended"
+        output_fields = (
+            *SCRIPT_OUTPUT,
+            OutputField("converged", "converged", finite=False),
+            OutputField("gibbs_hartree", "gibbs_hartree"),
+        )
+
+    engine = _Extended()
+
+    # The footer it renders offers the template the extra names...
+    template = tmp_path / "step1.py"
+    template.write_text("energy_hartree = -1.0\n", encoding="utf-8")
+    rendered = tmp_path / "step1_0.py"
+    engine.build_input(
+        xyz_path=tmp_path / "step1_0_inp.xyz",
+        template_path=template,
+        input_path=rendered,
+        output_path=tmp_path / "step1_0.json",
+        ctx=_ctx(tmp_path),
+    )
+    footer = rendered.read_text(encoding="utf-8")
+    assert '"converged"' in footer and '"gibbs_hartree"' in footer
+
+    # ...and the reader lands them on the ParsedResult, with no edit to _script/.
+    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    parsed = _parse(
+        {"energy_hartree": -1.0, "converged": False, "gibbs_hartree": -0.9},
+        seed,
+        fields=_Extended.output_fields,
+        tmp=tmp_path,
+    )
+    assert parsed.converged is False
+    assert parsed.gibbs_hartree == -0.9
+
+
+def test_an_extended_field_is_swept_for_finiteness_like_every_other(tmp_path: Path):
+    """The guard follows the declaration, which is the half that used to go missing.
+
+    A quantity added to the footer but not to a tuple in the reader was written by the
+    script, read onto the structure, and never checked — so a diverged calculation reported
+    ``nan`` and cached as a result. Declaring ``finite`` is now the only thing that decides.
+    """
+    fields = (*SCRIPT_OUTPUT, OutputField("gibbs_hartree", "gibbs_hartree"))
+    seed = Atoms("H", positions=[[0, 0, 0]])
+    with pytest.raises(OutputParseError, match="non-finite 'gibbs_hartree'"):
+        _parse({"energy_hartree": -1.0, "gibbs_hartree": float("nan")}, seed, fields=fields)
+
+
+def test_a_flag_field_is_exempt_from_the_finiteness_sweep():
+    """``finite=False`` is for a value the question does not apply to."""
+    fields = (*SCRIPT_OUTPUT, OutputField("converged", "converged", finite=False))
+    seed = Atoms("H", positions=[[0, 0, 0]])
+    assert (
+        _parse({"energy_hartree": -1.0, "converged": True}, seed, fields=fields).converged is True
+    )
+
+
+def test_the_scaffold_starter_names_the_engines_own_contract():
+    """The starter comment is generated from the engine's fields, not typed per starter."""
+    from chemrefine.engines.api import get_engine
+    from chemrefine.scaffold import _output_contract_comment
+
+    comment = _output_contract_comment(get_engine("mlip"))
+    for name in ("energy_hartree", "positions_angstrom", "gradient_hartree_per_bohr"):
+        assert name in comment
+    assert _output_contract_comment(get_engine("orca")) == "", (
+        "a non-script engine has no such contract"
+    )
+
+
+@pytest.mark.parametrize(
+    ("fields", "expected_tuple"),
+    [
+        pytest.param(
+            SCRIPT_OUTPUT, '("positions_angstrom", "gradient_hartree_per_bohr")', id="two"
+        ),
+        pytest.param(SCRIPT_OUTPUT[:2], '("positions_angstrom",)', id="one"),
+        pytest.param(SCRIPT_OUTPUT[:1], "()", id="none"),
+    ],
+)
+def test_the_footers_optional_tuple_is_a_tuple_at_every_arity(
+    fields, expected_tuple: str, tmp_path: Path
+):
+    """A one-element tuple needs its trailing comma; a zero-element one must not have one.
+
+    ``("x")`` is a string, and the harvest loop would iterate its characters — looking up
+    ``"p"``, ``"o"``, ``"s"`` in the template's locals and finding nothing, so a contract with
+    exactly one optional field would silently report none of it.
+    """
+    # An absolute destination, because the footer's own `open()` really runs below and its
+    # basename is relative to the process cwd by design — which for a test is the checkout.
+    footer = _template_render._build_output_footer(str(tmp_path / "out.json"), fields)
+    assert f"_chemrefine_optional = {expected_tuple}\n" in footer
+    namespace: dict[str, object] = {"energy_hartree": -1.0, "positions_angstrom": [[0.0, 0.0, 0.0]]}
+    exec(compile(footer, "<footer>", "exec"), namespace)
+    assert isinstance(namespace["_chemrefine_optional"], tuple)
+    assert (tmp_path / "out.json").is_file()
+
+
+def test_a_required_only_contract_names_no_optional_fields():
+    """The comment must not read "(optionally )" for a contract that has none."""
+    from chemrefine.scaffold import _output_contract_comment
+
+    class _RequiredOnly(ScriptEngine[EngineOptions]):
+        name = "required-only-probe"
+        label = "RequiredOnly"
+        output_fields = (OutputField("energy_hartree", "energy_hartree", required=True),)
+
+    assert _output_contract_comment(_RequiredOnly) == (
+        "# Assign `energy_hartree` — the appended output footer harvests them.\n"
+    )

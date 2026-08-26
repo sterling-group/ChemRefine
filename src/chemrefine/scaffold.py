@@ -23,12 +23,14 @@ file's name.
 from __future__ import annotations
 
 import dataclasses
+import textwrap
+from contextlib import suppress
 from pathlib import Path
 from typing import Literal
 
 from chemrefine.config import Config
 from chemrefine.engines.api import JobExecutable, TemplateDriven, get_engine
-from chemrefine.errors import ConfigError
+from chemrefine.errors import ConfigError, EngineNotFoundError
 from chemrefine.ids import step_template_path
 from chemrefine.validate import effective_header
 
@@ -62,8 +64,7 @@ _STEP_STARTERS: dict[str, str] = {
     "mlip": (
         "# MLIP starter. Rendered per structure: $XYZ_PATH / $CHARGE / $MULTIPLICITY come\n"
         "# from the pipeline, $MODEL_NAME / $TASK_NAME / $DEVICE from the step options.\n"
-        "# Assign `energy_hartree` (optionally `positions_angstrom` /\n"
-        "# `gradient_hartree_per_bohr`) — the appended output footer harvests them.\n"
+        "$OUTPUT_CONTRACT"
         "from ase.io import read\n"
         "from ase.units import Hartree\n"
         "\n"
@@ -79,7 +80,7 @@ _STEP_STARTERS: dict[str, str] = {
     "pyscf": (
         "# PySCF starter. Rendered per structure: $XYZ_PATH / $CHARGE / $MULTIPLICITY come\n"
         "# from the pipeline, $METHOD / $XC / $BASIS from the step options.\n"
-        "# Assign `energy_hartree` — the appended output footer harvests it.\n"
+        "$OUTPUT_CONTRACT"
         "from pyscf import dft, gto, scf\n"
         "\n"
         "mol = gto.M(\n"
@@ -114,7 +115,7 @@ _SUFFIX_FALLBACKS: dict[str, str] = {
     "py": (
         "# Script starter. Rendered per structure: $XYZ_PATH / $CHARGE / $MULTIPLICITY\n"
         "# come from the pipeline; step options render as $UPPERCASE placeholders.\n"
-        "# Assign `energy_hartree` — the appended output footer harvests it.\n"
+        "$OUTPUT_CONTRACT"
     ),
 }
 _GENERIC_STARTER = "# ChemRefine step template — this engine documents its own format.\n"
@@ -183,15 +184,51 @@ def plan_templates(config: Config) -> tuple[TemplatePlan, ...]:
     return tuple(plans)
 
 
+def _output_contract_comment(engine: object) -> str:
+    """The "assign these names" comment, written from the engine's own output contract.
+
+    Generated rather than typed into each starter, for the reason the contract is declared at
+    all: the roster used to be restated here as prose, so a starter could tell a user to
+    assign a name the footer no longer harvested — or, more likely, fail to mention one it
+    did. An engine that extends
+    :attr:`~chemrefine.engines._script.engine.ScriptEngine.output_fields` gets its extra names
+    into its own starter with no edit to this module.
+
+    Takes the engine rather than its name because describing a contract and finding the
+    engine that declares one are two jobs; the caller already has the object.
+    """
+    fields = getattr(engine, "output_fields", None)
+    if not fields:
+        return ""
+    required = [f.name for f in fields if f.required]
+    optional = [f.name for f in fields if not f.required]
+    line = f"# Assign {', '.join(f'`{n}`' for n in required)}"
+    if optional:
+        line += f" (optionally {', '.join(f'`{n}`' for n in optional)})"
+    line += " — the appended output footer harvests them."
+    # Wrapped, because this lands in a file a person opens: the roster grows with the
+    # engine's contract, and one starter comment should not run off the side of an editor.
+    return "".join(f"{chunk}\n" for chunk in textwrap.wrap(line, width=88, subsequent_indent="# "))
+
+
 def _starter_for(plan: TemplatePlan) -> str:
     """The starter body for one planned file — engine-keyed, suffix fallback, generic."""
     if plan.kind == "slurm-header":
         return _HEADER_STARTERS.get(plan.path.name, _HEADER_DEFAULT)
     starter = _STEP_STARTERS.get(plan.engine) if plan.engine is not None else None
-    if starter is not None:
-        return starter
-    suffix = plan.path.suffix.lstrip(".")
-    return _SUFFIX_FALLBACKS.get(suffix, _GENERIC_STARTER)
+    if starter is None:
+        suffix = plan.path.suffix.lstrip(".")
+        starter = _SUFFIX_FALLBACKS.get(suffix, _GENERIC_STARTER)
+    # `plan_templates` resolves every engine before any starter is chosen, so a name that
+    # does not resolve reaches here only from a direct caller — and an engine nobody can look
+    # up has no contract to describe, which is what a non-script engine answers too.
+    engine: object = None
+    if plan.engine is not None:
+        with suppress(EngineNotFoundError):
+            engine = get_engine(plan.engine)
+    # Only this one placeholder is filled: a starter is a *template*, and its `$XYZ_PATH`,
+    # `$CHARGE` and option placeholders belong to the renderer that runs per structure.
+    return starter.replace("$OUTPUT_CONTRACT", _output_contract_comment(engine))
 
 
 def scaffold_templates(config: Config, *, overwrite: bool = False) -> tuple[Path, ...]:

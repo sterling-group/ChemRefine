@@ -23,6 +23,7 @@ from chemrefine.engines._job import JobEngine, gpus_from_options
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines._script import output as script_output
 from chemrefine.engines._script import render as script_render
+from chemrefine.engines._script.contract import SCRIPT_OUTPUT, OutputField
 from chemrefine.engines.api import ParsedResult, RunBlock
 from chemrefine.state import StepContext
 
@@ -48,6 +49,23 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
     placeholders all resolve the same defaults; the ExtOpt engines declare the same
     ClassVar for the same reason."""
 
+    output_fields: ClassVar[tuple[OutputField, ...]] = SCRIPT_OUTPUT
+    """What this engine's ``step{N}.py`` may report back — the output side's ``_vars_from``.
+
+    The input seam lets an engine choose which options reach the template; this is the same
+    choice for the return trip, and the two are the whole of what a script engine varies. A
+    subclass that needs more than the shared three extends the tuple in its own module::
+
+        output_fields = (*SCRIPT_OUTPUT, OutputField("converged", "converged", finite=False))
+
+    and the generated footer, the finiteness sweep, the JSON mapping and the scaffold's
+    starter comment all follow from it — no building block edited, which is what
+    ``docs/developer/adding-an-engine.md`` promises for every engine kind.
+
+    Declared here rather than passed per call because it is a property of the engine, not of
+    a step: the writer and the reader are two processes on two machines, and they have to
+    agree without talking."""
+
     # -- input -------------------------------------------------------------
 
     def build_input(
@@ -68,6 +86,7 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
             charge=ctx.charge,
             multiplicity=ctx.multiplicity,
             extra_vars=self._template_vars(ctx),
+            fields=self.output_fields,
         )
 
     def _template_vars(self, ctx: StepContext) -> dict[str, object]:
@@ -136,8 +155,16 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
     def parse_one(
         self, output_path: Path, structure_id: str, ctx: StepContext
     ) -> list[ParsedResult]:
-        """Read one output JSON into a single ``ParsedResult`` (seed geometry as fallback)."""
+        """Read one output JSON into a single ``ParsedResult`` (seed geometry as fallback).
+
+        Read through :attr:`output_fields`, the same contract :meth:`build_input` rendered the
+        footer from — so what the script was told it could write and what the driver reads
+        back cannot come apart.
+        """
         seed = next((s for s in ctx.prev_state.structures if s.id == structure_id), None)
         return script_output.parse_output(
-            output_path, label=self.label, fallback=seed.atoms if seed is not None else None
+            output_path,
+            label=self.label,
+            fallback=seed.atoms if seed is not None else None,
+            fields=self.output_fields,
         )

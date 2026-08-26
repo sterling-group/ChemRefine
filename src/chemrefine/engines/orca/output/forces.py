@@ -53,7 +53,7 @@ def parse_forces_from_text(
       otherwise yield a short array against a full geometry, which nothing downstream
       re-checks: :attr:`~chemrefine.state.Structure.forces_ev_per_a` declares no shape, the
       finiteness backstop passes it, and FAIRChem's dataset writer stores it.
-      :func:`chemrefine.engines._script.output._forces_from_gradient` holds the other forces
+      :func:`chemrefine.engines._script.contract.forces_from_gradient` holds the other forces
       reader to the same count, and is where this wording comes from.
     """
     blocks = _GRAD_BLOCK_RE.findall(text)

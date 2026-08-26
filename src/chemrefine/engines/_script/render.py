@@ -17,15 +17,13 @@ syntax — collision-free with Python's ``{`` / ``}`` brackets):
   the template. The MLIP engine passes ``$MODEL_NAME`` / ``$TASK_NAME`` /
   ``$DEVICE`` from ``step.options`` (see :meth:`ScriptEngine._vars_from`).
 
-Output contract (the appended footer harvests these names if present):
-
-==============================  ========================================
-Name (assign in template)        Footer behaviour
-==============================  ========================================
-``energy_hartree``               REQUIRED. ``NameError`` if missing.
-``gradient_hartree_per_bohr``    Optional list / numpy array.
-``positions_angstrom``           Optional list / numpy array.
-==============================  ========================================
+Output contract: **not stated here.** The names the appended footer harvests are
+:data:`chemrefine.engines._script.contract.SCRIPT_OUTPUT`, which the engine may extend
+through :attr:`~chemrefine.engines._script.engine.ScriptEngine.output_fields` — a required
+field is emitted into the result dict directly (so an omission is a ``NameError`` where it
+happened), and an optional one goes through the harvest loop, which skips what the template
+never defined. This module used to restate the roster in a table, which is exactly how a
+contract comes to be spelled four times and to disagree with itself in one place.
 
 The footer writes to a *basename* (relative path) so the file lands
 in ``cwd = $WORK_DIR`` (scratch). The surrounding SLURM machinery
@@ -34,14 +32,19 @@ copies it back to step_dir at exit.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from string import Template
 
+from chemrefine.engines._script.contract import SCRIPT_OUTPUT, OutputField
 from chemrefine.errors import ConfigError
 
 
-def _build_output_footer(output_basename: str) -> str:
+def _build_output_footer(output_basename: str, fields: Sequence[OutputField]) -> str:
     """Return the appended footer that harvests result vars and writes the JSON.
+
+    Both name lists are derived from ``fields``, so the script writes exactly what the
+    contract declares and the reader sweeps exactly what the script may write.
 
     The output filename is a basename — the script runs with
     ``cwd = $WORK_DIR`` (scratch), so a relative write goes into
@@ -56,6 +59,11 @@ def _build_output_footer(output_basename: str) -> str:
     ``ensure_ascii=True`` and every plausible locale agrees about ASCII; naming it is what
     keeps that a property of the format rather than of the hosts.
     """
+    required = ", ".join(f'"{f.name}": float({f.name})' for f in fields if f.required)
+    # A one-element tuple needs its trailing comma, and only a one-element tuple: `("x")` is
+    # a string, and the harvest loop would then iterate its characters.
+    names = [f'"{f.name}"' for f in fields if not f.required]
+    optional = ", ".join(names) + ("," if len(names) == 1 else "")
     return (
         "\n"
         "# --- ChemRefine output footer (generated; do not edit) ---\n"
@@ -71,8 +79,8 @@ def _build_output_footer(output_basename: str) -> str:
         "        return super().default(o)\n"
         "\n"
         "\n"
-        '_chemrefine_result = {"energy_hartree": float(energy_hartree)}\n'
-        '_chemrefine_optional = ("gradient_hartree_per_bohr", "positions_angstrom")\n'
+        f"_chemrefine_result = {{{required}}}\n"
+        f"_chemrefine_optional = ({optional})\n"
         "for _chemrefine_name in _chemrefine_optional:\n"
         "    if _chemrefine_name in dir():\n"
         "        _chemrefine_result[_chemrefine_name] = locals()[_chemrefine_name]\n"
@@ -92,6 +100,7 @@ def build_input(
     charge: int,
     multiplicity: int,
     extra_vars: dict[str, object] | None = None,
+    fields: Sequence[OutputField] = SCRIPT_OUTPUT,
 ) -> Path:
     """Render ``template_path`` into ``output_path`` and return the rendered path.
 
@@ -101,11 +110,11 @@ def build_input(
     ``$NAME`` references in the template are left alone — users can keep
     shell-style ``$VAR`` lookups inside their script without collision.
 
-    The appended footer reads the well-known variable names
-    ``energy_hartree`` (required), ``gradient_hartree_per_bohr``, and
-    ``positions_angstrom`` out of the template's locals and writes
-    them to ``output_json_path.name`` (a *basename*, so the file
-    lands in ``$WORK_DIR`` / scratch).
+    The appended footer reads the names ``fields`` declares out of the template's locals and
+    writes them to ``output_json_path.name`` (a *basename*, so the file lands in ``$WORK_DIR``
+    / scratch). ``fields`` defaults to the shared contract; an engine passes its own to let a
+    template report more (see
+    :attr:`~chemrefine.engines._script.engine.ScriptEngine.output_fields`).
 
     Engines call this through
     :class:`chemrefine.engines._script.engine.ScriptEngine`,
@@ -123,7 +132,7 @@ def build_input(
     }
     substitutions.update({k: str(v) for k, v in (extra_vars or {}).items()})
     rendered = Template(text).safe_substitute(substitutions)
-    rendered = rendered.rstrip() + _build_output_footer(output_json_path.name)
+    rendered = rendered.rstrip() + _build_output_footer(output_json_path.name, fields)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(rendered, encoding="utf-8")
     return output_path
