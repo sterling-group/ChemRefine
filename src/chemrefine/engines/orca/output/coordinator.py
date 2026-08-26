@@ -71,7 +71,9 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
     if not symbols:
         raise _unreadable("CARTESIAN COORDINATES block has no atoms", text, src)
     try:
-        force_vectors = forces.parse_forces_from_text(text)
+        # The atom count comes from the coordinates block just read, which is what lets the
+        # gradient reader tell a skipped summary line from a lost atom row.
+        force_vectors = forces.parse_forces_from_text(text, n_atoms=len(symbols))
     except ValueError as e:
         # Held to the same rule as the coordinates above. A bare ValueError escaping here
         # would pass straight through `lifecycle._parse_job`, which contains only

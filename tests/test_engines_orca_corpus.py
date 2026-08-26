@@ -25,9 +25,11 @@ import tarfile
 from collections.abc import Iterator
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from chemrefine.engines.orca.output import status
+from chemrefine.engines.orca.output.forces import parse_forces_from_text
 from chemrefine.engines.orca.output.frequencies import (
     _NORMAL_MODES_MARKER,
     parse_normal_modes_tensor_from_text,
@@ -116,3 +118,28 @@ def test_every_frequency_output_yields_a_well_shaped_normal_mode_tensor():
         assert tensor.shape[2] >= 1, label
         checked += 1
     assert checked >= 7, f"only {checked} frequency outputs found — corpus shrank?"
+
+
+def test_every_recorded_gradient_reads_one_finite_row_per_atom():
+    """The forces reader, held to the corpus like every other reader in this file.
+
+    It was the one numeric reader here that nothing checked against real output, which is
+    how it came to have neither of the two guards its siblings carry. Both are asserted from
+    the outside: ``parse_forces_from_text`` refuses a non-finite component and refuses a row
+    count that disagrees with the geometry, so a clean pass over every recorded gradient is
+    what proves those guards do not fire on real ORCA — in particular that the summary lines
+    ORCA closes each block with are still skipped rather than counted.
+    """
+    checked = 0
+    for label, text in _recorded_outputs():
+        coords = parse_coordinates_from_text(text)
+        if coords is None:
+            continue
+        n_atoms = len(coords[0])
+        forces = parse_forces_from_text(text, n_atoms=n_atoms)
+        if forces is None:  # a plain single point writes no gradient block
+            continue
+        assert forces.shape == (n_atoms, 3), label
+        assert np.isfinite(forces).all(), label
+        checked += 1
+    assert checked >= 11, f"only {checked} gradient outputs found — corpus shrank?"

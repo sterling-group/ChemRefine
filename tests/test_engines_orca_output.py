@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from unittest.mock import patch
 
 import numpy as np
 import pytest
 from synthetic import THERMOCHEMISTRY_BLOCK, synthetic_dft_output
 
 from chemrefine.engines.api import ParsedResult
-from chemrefine.engines.orca.output import forces as forces_module
 from chemrefine.engines.orca.output import parse_dft, parse_dft_from_text, parse_output, status
 from chemrefine.engines.orca.output.ensembles import (
     parse_docker,
@@ -415,7 +413,7 @@ def test_parse_dft_non_finite_coordinate_raises_parse_error(tmp_path: Path, lite
 
 
 def test_parse_forces_returns_none_when_absent():
-    assert parse_forces("no gradient here") is None
+    assert parse_forces("no gradient here", n_atoms=1) is None
 
 
 def test_parse_forces_handles_synthetic_block():
@@ -426,11 +424,66 @@ def test_parse_forces_handles_synthetic_block():
         "   1  H :   -0.004000    0.005000   -0.006000\n"
         "------------------\n"
     )
-    forces = parse_forces(text, to_ev_per_A=False)
+    forces = parse_forces(text, n_atoms=2, to_ev_per_A=False)
     assert forces is not None
     assert forces.shape == (2, 3)
     # F = -dE/dx, so first atom's fx should be -0.001
     assert abs(forces[0][0] - (-0.001)) < 1e-9
+
+
+def test_parse_forces_keeps_orcas_own_summary_lines_out_of_the_count():
+    """The block does not end at the last atom, and the count has to know that.
+
+    ORCA closes every gradient block with its own summary — translation/rotation invariance
+    and the gradient norms — which is why unreadable lines are skipped rather than refused.
+    All 227 recorded blocks carry it, so a count that included them would reject every real
+    output.
+    """
+    text = (
+        "CARTESIAN GRADIENT\n"
+        "------------------\n"
+        "   1  H :    0.001000   -0.002000    0.003000\n"
+        "   2  H :   -0.004000    0.005000   -0.006000\n"
+        "\n"
+        "Difference to translation invariance:\n"
+        "           :   -0.0000000000    0.0000000000    0.0000000000\n"
+        "\n"
+        "Norm of the Cartesian gradient     ...    0.0407487453\n"
+        "RMS gradient                       ...    0.0074396690\n"
+        "------------------\n"
+    )
+    forces = parse_forces(text, n_atoms=2, to_ev_per_A=False)
+    assert forces is not None and forces.shape == (2, 3)
+
+
+def test_parse_forces_refuses_a_non_finite_component():
+    """`float()` accepts an overflowing exponent and yields `inf`, exactly as it accepts nan.
+
+    Unrefused, it reaches the `arrays.npz` sidecar (which has no such check) and is what an
+    `mlip-train` step would fit; the cache backstop catches it only at `save`, where it
+    costs the whole step's results instead of this one structure.
+    """
+    text = "CARTESIAN GRADIENT\n----\n   0  H :   1.0e999999   0.000000   0.000000\n----\n"
+    with pytest.raises(ValueError, match="non-finite gradient component"):
+        parse_forces(text, n_atoms=1)
+
+
+def test_parse_forces_refuses_a_row_it_could_not_read():
+    """A `*****` field overflow is skipped by the pattern, so only the count can see it.
+
+    `Structure.forces_ev_per_a` declares no shape and the finiteness backstop passes a short
+    array of finite numbers, so an unnoticed lost row reaches a training set intact.
+    """
+    text = (
+        "CARTESIAN GRADIENT\n"
+        "----\n"
+        "   1  O :    0.000123   -0.000234    0.000345\n"
+        "   2  H :    *********  -0.000234    0.000345\n"
+        "   3  H :    0.000123   -0.000234    0.000345\n"
+        "----\n"
+    )
+    with pytest.raises(ValueError, match="read 2 gradient row\\(s\\) for a 3-atom structure"):
+        parse_forces(text, n_atoms=3)
 
 
 # ---------------------------------------------------------------------------
@@ -526,7 +579,7 @@ def test_parse_forces_reads_every_exponent_spelling_it_admits(exponent: str):
     handling of its own.
     """
     text = f"CARTESIAN GRADIENT\n----\n   0  H :   {exponent}   0.000000   0.000000\n----\n"
-    forces = parse_forces(text, to_ev_per_A=False)
+    forces = parse_forces(text, n_atoms=1, to_ev_per_A=False)
     assert forces is not None
     assert abs(forces[0][0] - (-1.0e-3)) < 1e-12
 
@@ -537,6 +590,12 @@ def test_a_malformed_gradient_row_is_a_parse_error_not_a_crash():
     A bare ValueError here would pass straight through `lifecycle._parse_job`, which
     contains only `OutputParseError` — one bad row would end the run in a traceback rather
     than becoming that structure's ledgered failure.
+
+    Driven through the **real** reader. This used to patch `parse_forces_from_text` to raise,
+    which proved the handler and nothing about the parser — and the parser did not raise:
+    the row below overflows to `-inf`, which was carried on the structure, written to the
+    cache sidecar, and only stopped by `cache.save`'s backstop, one step too late and at the
+    cost of every sibling's results.
     """
     text = (
         "FINAL SINGLE POINT ENERGY  -1.0\n"
@@ -549,10 +608,7 @@ def test_a_malformed_gradient_row_is_a_parse_error_not_a_crash():
         "   0  H :   1.0e999999   0.000000   0.000000\n"
         "----\n"
     )
-    with (
-        patch.object(forces_module, "parse_forces_from_text", side_effect=ValueError("bad row")),
-        pytest.raises(OutputParseError, match="malformed gradient row"),
-    ):
+    with pytest.raises(OutputParseError, match="malformed gradient row"):
         parse_dft_from_text(text, src="job.out")
 
 
@@ -986,15 +1042,24 @@ def test_xyz_ensemble_skips_non_digit_lines(tmp_path: Path):
     assert len(parsed) == 1
 
 
-def test_parse_forces_returns_none_when_block_has_no_valid_rows(tmp_path: Path):
-    """Gradient block with no parseable rows must yield None."""
+def test_parse_forces_refuses_a_block_it_could_read_nothing_from(tmp_path: Path):
+    """A gradient block ORCA wrote and the reader cannot read is a parse failure, not "no forces".
+
+    It used to return ``None``, which is the answer for an output with **no** gradient block
+    — a plain single point. Saying the same thing about a block that is present and
+    unreadable loses the distinction, and with it the only signal that the output is
+    damaged: the structure would be cached as a perfectly good result that happens to carry
+    no forces, and the next ``mlip-train`` step would refuse it with a message about the
+    step that computed it.
+    """
     text = (
         "CARTESIAN GRADIENT\n"
         "------------------\n"
         "nothing parseable here at all\n"
         "------------------\n"
     )
-    assert parse_forces(text) is None
+    with pytest.raises(ValueError, match="read 0 gradient row\\(s\\) for a 2-atom structure"):
+        parse_forces(text, n_atoms=2)
 
 
 def test_xyz_ensemble_breaks_on_truncated_file(tmp_path: Path):
