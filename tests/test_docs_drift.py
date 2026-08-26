@@ -19,7 +19,9 @@ list of defaults. So the page keeps the prose and the guard keeps the page hones
 
 from __future__ import annotations
 
+import ast
 import re
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -79,4 +81,82 @@ def test_every_schema_field_is_named_in_the_configuration_page(
     assert not missing, (
         f"{model} field(s) {missing} are not mentioned in {_DOC.name}; the schema moved "
         "and the hand-written reference did not. Document them (or generate the page)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Prose that counts something the tree can grow
+# ---------------------------------------------------------------------------
+
+_SRC = Path(__file__).resolve().parent.parent / "src" / "chemrefine"
+_TESTS = Path(__file__).resolve().parent
+
+# Populations the tree *grows*: a registry gains an entry, a recording is captured, a module
+# imports one more thing. Deliberately not "readers" / "call sites" / "places" — those are
+# usually an argument's shape ("two readers of one knob cannot disagree"), not a census.
+_COUNTABLE = (
+    r"engines|backends|trainers|builders|libraries|plugins|heads|extras"
+    r"|modules|archives|recordings|recorded outputs|recorded blocks|recorded runs"
+)
+_MAGNITUDE = r"\b(?:\d+|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|seventeen)\b"
+_COUNTED_PROSE = re.compile(rf"{_MAGNITUDE}\s+(?:{_COUNTABLE})\b", re.IGNORECASE)
+
+_ALLOWED = (
+    # Structural constants — fixed by a format or by geometry, not by what the tree holds.
+    "three Cartesian",
+    "three splits",
+)
+
+
+def _prose_blocks(path: Path) -> Iterator[tuple[int, str]]:
+    """Yield ``(line number, text)`` for every docstring and comment block in ``path``.
+
+    Every bare string expression, not only what :func:`ast.get_docstring` returns. This
+    codebase hangs prose off nearly every ClassVar and module constant, and an *attribute*
+    docstring is a bare ``Expr`` the AST helper does not report — so reading only the helper
+    would leave the guard blind to most of the surface it claims to cover.
+
+    Comments by scan, since a decision written as a ``#`` block rots exactly as a docstring
+    does.
+    """
+    source = path.read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(source)):
+        if (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            yield node.lineno, node.value.value
+    for number, line in enumerate(source.splitlines(), 1):
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            yield number, stripped
+
+
+def test_no_docstring_counts_something_the_tree_can_grow() -> None:
+    """A magnitude in prose rots the moment an engine, backend or recording arrives.
+
+    Nothing recounts it, so it is wrong silently and stays wrong: this guard was written
+    after five such claims were found already false — a plugin roster that had not heard of
+    Q-Chem, an importer count off by eight, and a corpus tally naming more than twice the
+    outputs the archives hold.
+
+    The fix is never a fresh number. It is the invariant the number was standing in for:
+    "every registered trainer" rather than five of them, "the recorded outputs" rather than
+    108 of them. Where a count really is structural — three Cartesian components, the three
+    splits a dataset has — add it to ``_ALLOWED`` with the reason.
+    """
+    offenders: list[str] = []
+    for path in sorted([*_SRC.rglob("*.py"), *_TESTS.glob("test_*.py")]):
+        for number, text in _prose_blocks(path):
+            flat = " ".join(text.split())
+            for match in _COUNTED_PROSE.finditer(flat):
+                phrase = match.group(0)
+                window = flat[max(0, match.start() - 30) : match.end() + 30]
+                if any(ok in window for ok in _ALLOWED):
+                    continue
+                offenders.append(f"{path.relative_to(_SRC.parent.parent)}:{number}: {phrase!r}")
+    assert offenders == [], (
+        "prose counts something the tree can grow; state the invariant instead:\n  "
+        + "\n  ".join(offenders)
     )

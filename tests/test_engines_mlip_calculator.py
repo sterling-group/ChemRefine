@@ -117,8 +117,8 @@ def test_a_checkpoint_that_is_not_there_names_the_task(tmp_path: Path, task: str
     The refusal names the ``task_name`` the user wrote — the YAML value they can act on.
     A library's own failure is a ``torch.load`` traceback naming neither the step nor the
     option, which on a pipeline whose training step ran overnight is the difference
-    between a typo and a hunt. One parametrised test replaced five pasted per-backend
-    copies, because the check itself moved from five builders into the one dispatch.
+    between a typo and a hunt. One parametrised test rather than a copy per backend,
+    because the check itself lives in the dispatch rather than in each builder.
     """
     missing = tmp_path / "does_not_exist.model"
     with pytest.raises(FileNotFoundError, match=f"{task} checkpoint not found: {missing}"):

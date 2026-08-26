@@ -90,7 +90,7 @@ def test_every_backend_extra_and_task_name_is_in_the_backend_table():
 
 
 def test_the_extras_table_names_every_extra_pyproject_declares():
-    """The gap this table closes: the install page named 11 of the 16 extras."""
+    """The gap this table closes: an install page naming only some of the declared extras."""
     data = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     declared = set(data["project"]["optional-dependencies"])
     table = _render("extras")

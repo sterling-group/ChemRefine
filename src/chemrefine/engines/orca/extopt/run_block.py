@@ -1,7 +1,7 @@
 """Bash that orchestrates the ExtOpt HTTP server alongside ORCA in one SLURM job.
 
-The two engines that drive ORCA through an external optimizer (MLIP and
-PySCF) emit a SLURM ``run_block`` that spins up the shared
+Every engine that drives ORCA through an external optimizer emits a SLURM
+``run_block`` that spins up the shared
 :mod:`chemrefine.engines._backend_server.server`, polls ``/healthz`` until it is
 ready, runs ORCA, and tears the server down on exit. This module owns
 that bash so neither engine ends up importing helpers from the other.

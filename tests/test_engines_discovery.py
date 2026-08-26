@@ -93,7 +93,7 @@ def test_a_dropped_in_library_module_registers_both_its_capabilities(monkeypatch
     The promise `backends/` makes is that making an MLIP available — to run, to train, or
     both — is one new module and no edit to any existing one. Registering both capabilities
     from a single `MlipLibrary` is also what makes the environment they resolve identical by
-    construction rather than by two modules agreeing; this drops in a module that does it and
+    construction rather than by separate modules agreeing; this drops in one that does it and
     checks the entry carries both.
 
     Underscored modules stay helpers and are not discovered.
@@ -264,7 +264,7 @@ def test_a_trainer_that_breaks_the_contract_is_refused_at_its_own_line():
 def test_one_task_cannot_name_two_libraries(monkeypatch, tmp_path: Path):
     """The drift the single registry exists to make impossible, refused at registration.
 
-    Two modules claiming the same `task_name` for different environments is exactly what the
+    Separate modules claiming the same `task_name` for different environments is what the
     old split registries could not see: each was internally consistent, and the step was
     provisioned into one env and launched expecting the other.
     """

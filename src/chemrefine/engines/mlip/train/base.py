@@ -181,9 +181,9 @@ class TrainingPlan:
     def is_neutral_singlet(self) -> bool:
         """Whether this run's species is the neutral singlet every chargeless library assumes.
 
-        The predicate behind the charge/spin warning, owned once: three trainers each
-        wrote ``charge != 0 or multiplicity != 1`` and had already drifted in how they
-        described the consequence.
+        The predicate behind the charge/spin warning, owned once, so no trainer spells
+        ``charge != 0 or multiplicity != 1`` for itself and drifts in how it describes the
+        consequence.
         """
         return self.charge == 0 and self.multiplicity == 1
 
@@ -196,7 +196,7 @@ class TrainerBase(ABC):
     placeholders its template must reference, what to copy home — and writes only the
     three hooks that are genuinely a library fact: how one split is written
     (:meth:`write_split`), what command trains (:meth:`command`), and where the product
-    lands (:meth:`artifact`). Everything five trainers used to each write — the
+    lands (:meth:`artifact`). Everything a trainer would otherwise write for itself — the
     validation refusal, the charge/spin warning, the split loop, the placeholder triple,
     the launcher quoting — is concrete here, written once.
 

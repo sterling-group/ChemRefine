@@ -545,8 +545,8 @@ def test_a_missing_validation_set_is_refused_exactly_when_the_library_needs_one(
 ):
     """The refusal fires iff ``needs_validation`` — and says why in the library's words.
 
-    Three trainers each wrote this refusal by hand; now it is one base branch driven by
-    two declarations, so the invariant to hold is the *iff*: a library that cannot train
+    The refusal is one base branch driven by two declarations rather than a copy per
+    trainer, so the invariant to hold is the *iff*: a library that cannot train
     without validation refuses with its own reason, and one that can trains on.
     """
     trainer = trainer_for(task)()

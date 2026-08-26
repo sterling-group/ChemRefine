@@ -256,7 +256,7 @@ def test_an_array_run_block_leaves_its_sentinels_expandable(
     The sibling test above cannot catch it: the exit trap fires whether or not the command it
     wrapped found its input, so a step can copy its results back and have computed nothing.
     Asserted for every `JobExecutable` because the trap is what the whole array path shares —
-    the two engines that had this bug were the two most recently written.
+    the engines that had this bug were the most recently written ones.
     """
     engine = get_engine(engine_name)
     ctx = _ctx(tmp_path, engine_name, {})

@@ -69,7 +69,7 @@ from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
 # returns one from `run_block`, so it reads the type from the same place it reads the
 # Protocol. The redundant alias is how a re-export is spelled explicitly, which
 # `no_implicit_reexport` requires — importing it for our own annotations would not say that
-# the three engines importing it from here are meant to.
+# the engines importing it from here are meant to.
 from chemrefine.state import JobTriple as JobTriple
 from chemrefine.state import RunBlock as RunBlock
 
