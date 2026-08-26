@@ -433,7 +433,10 @@ def test_the_direct_engine_declares_only_knobs_it_can_honour():
     from chemrefine.engines.pyscf.options import PyscfExtOptOptions, PyscfOptions
 
     server_only = set(PyscfExtOptOptions.model_fields) - set(PyscfOptions.model_fields)
-    assert server_only == {"df", "strict_scf", "save_tensors", "localized", "tensor_folder"}
+    assert server_only == {"strict_scf", "save_tensors", "localized", "tensor_folder"}, (
+        "the split is work a server does *for* the user, not every knob the server reads: "
+        "`df` shapes the SCF like method/xc/basis and both engines honour it"
+    )
 
     direct = get_engine("pyscf")
     assert direct.options_cls is PyscfOptions

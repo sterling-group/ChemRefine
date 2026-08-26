@@ -79,7 +79,7 @@ _STEP_STARTERS: dict[str, str] = {
     ),
     "pyscf": (
         "# PySCF starter. Rendered per structure: $XYZ_PATH / $CHARGE / $MULTIPLICITY come\n"
-        "# from the pipeline, $METHOD / $XC / $BASIS from the step options.\n"
+        "# from the pipeline, $METHOD / $XC / $BASIS / $DF from the step options.\n"
         "$OUTPUT_CONTRACT"
         "from pyscf import dft, gto, scf\n"
         "\n"
@@ -94,6 +94,8 @@ _STEP_STARTERS: dict[str, str] = {
         "    mf = scf.HF(mol)\n"
         "else:\n"
         '    mf = dft.KS(mol, xc="$XC")\n'
+        "if $DF:\n"
+        "    mf = mf.density_fit()\n"
         "\n"
         "energy_hartree = mf.kernel()\n"
     ),

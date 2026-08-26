@@ -44,6 +44,17 @@ class PyscfOptions(EngineOptions):
     :meth:`from_raw`). The field keeps a value only so the server CLI and
     programmatic callers can construct an instance."""
 
+    df: bool = True
+    """Enable density fitting / RI, on both engines. Defaults **on** — a large speed-up at
+    negligible accuracy cost.
+
+    Shared rather than server-only because it shapes the SCF, like ``method`` / ``xc`` /
+    ``basis``: the ExtOpt server passes it to :func:`~chemrefine.engines.pyscf._runtime.run_dft`
+    and a direct template reads it as ``$DF``. What separates the two models is work the user
+    has no code of their own to do — post-SCF extraction on a path where ORCA drives and there
+    is no ``step{N}.py`` — and density fitting is not that.
+    """
+
     gpu: bool = False
     """Attempt :mod:`gpu4pyscf` if installed. When omitted it is derived from
     ``device`` (``cuda`` ⇒ ``True``); set it explicitly to override. The SCF
@@ -98,10 +109,6 @@ class PyscfExtOptOptions(PyscfOptions):
     refused on the ExtOpt path for the reason its own docstring gives, and the direct path has
     no channel to refuse it with — a script reports what its output contract declares.
     """
-
-    df: bool = True
-    """Enable density fitting / RI. Defaults **on** — DF is a large speed-up at
-    negligible accuracy cost for the gradient-server use case."""
 
     strict_scf: bool = True
     """Refuse to serve a gradient from an SCF that did not converge.

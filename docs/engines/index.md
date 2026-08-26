@@ -175,17 +175,20 @@ artifact, with the same `task_name`.
 
 ## PySCF (`pyscf`, `pyscf-extopt`)
 
-The two engines share a backend and not a set of knobs: `pyscf` renders your `stepN.py` and
-reaches its options through `$METHOD` / `$XC` / `$BASIS`, while `pyscf-extopt` builds a
-gradient server from the whole set. The **ExtOpt only** rows below are declared by
-`PyscfExtOptOptions` and are rejected on a `pyscf` step, rather than accepted and ignored.
+Both engines read the SCF selection — `pyscf` renders your `stepN.py` with `$METHOD` /
+`$XC` / `$BASIS` / `$DF`, `pyscf-extopt` builds a gradient server from the same values. The
+**ExtOpt only** rows are the ones a server has to do *for* you: on the ExtOpt path ORCA drives
+and there is no `stepN.py`, so anything after the SCF has nowhere else to live. In a direct
+step that work is yours to call — `chemrefine.engines.pyscf._runtime` exports
+`get_active_space_tensors` and `save_tensors` — so those knobs are rejected there by name
+rather than accepted and ignored.
 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `method` | `dft` | `dft` or `hf`. |
 | `xc` | — (**required** for `dft`) | Exchange-correlation functional. No silent default — name it explicitly. |
 | `basis` | — (**required**) | Orbital basis set. No silent default — name it explicitly. |
-| `df` *(ExtOpt only)* | `True` | Density fitting / RI (defaults on — large speed-up, negligible cost). |
+| `df` | `True` | Density fitting / RI (defaults on — large speed-up, negligible cost). |
 | `strict_scf` *(ExtOpt only)* | `True` | Refuse to serve a gradient from an SCF that did not converge. PySCF returns the last iterate rather than raising, and ORCA's `.out` reports only *its own* geometry convergence — so a loose result would rank against converged siblings unmarked. Set `false` for a knowingly loose SCF. |
 | `device` | `cpu` | Compute device; drives `gpu` when `gpu` is unset (`cuda` ⇒ attempt GPU). |
 | `gpu` | derived from `device` | Attempt `gpu4pyscf` if installed (falls back to CPU). Set explicitly to override the `device`-derived default. |

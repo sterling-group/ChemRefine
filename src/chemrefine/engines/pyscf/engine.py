@@ -30,9 +30,9 @@ class PyscfEngine(PyscfBackend, ScriptEngine[PyscfOptions]):
     def _vars_from(self, opts: PyscfOptions) -> dict[str, object]:
         """Expose the SCF knobs as template placeholders, for parity with direct MLIP.
 
-        Lets a direct ``step{N}.py`` read ``$METHOD`` / ``$XC`` / ``$BASIS`` from the YAML
+        Lets a direct ``step{N}.py`` read ``$METHOD`` / ``$XC`` / ``$BASIS`` / ``$DF`` from the YAML
         ``step.options`` instead of hardcoding them. The base reads them leniently, so a
         template's extra knobs never fail the render — the ``pyscf-extopt`` path is the one
         that validates strictly, since it also has to require ``basis`` / ``xc`` explicitly.
         """
-        return {"METHOD": opts.method, "XC": opts.xc, "BASIS": opts.basis}
+        return {"METHOD": opts.method, "XC": opts.xc, "BASIS": opts.basis, "DF": opts.df}
