@@ -1,4 +1,4 @@
-"""``ComputeBackend`` ABC + the dataclass it consumes.
+"""The ``ComputeBackend`` Protocol + the dataclass it consumes.
 
 Every ExtOpt-served backend implements one method — :meth:`calc` — and
 returns ``(energy_hartree, gradient_hartree_per_bohr)``. The shared
@@ -92,6 +92,24 @@ class ComputeBackend(Protocol):
       the parsed server CLI namespace.
     * :meth:`calc` answers one ``/calculate`` request.
     """
+
+    required_implementations: ClassVar[frozenset[str]] = frozenset(
+        {"name", "add_cli_args", "server_cli_from_options", "from_args", "calc"}
+    )
+    """The members a backend must implement itself — every one below whose body is ``...``.
+
+    ``settings_from_args`` is deliberately absent: it has a real default (``{}``), so
+    inheriting it is the correct answer for a single-channel backend, which is both shipped
+    ones. The distinction cannot be read off the class, because both spellings arrive by the
+    same route — a subclass inherits a stub exactly as it inherits a default — so the contract
+    states which is which.
+
+    Read by :meth:`chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine.__init_subclass__`,
+    which refuses a ``calculator_cls`` that implements none of them of its own: this is a
+    ``runtime_checkable`` Protocol *and* the base both backends subclass, and inheriting it
+    supplies every stub as an ellipsis body returning ``None``. ``hasattr`` and ``isinstance``
+    then both pass a class that does nothing, and the failure surfaces as a 500 per geometry
+    or a ``TypeError`` while building the job script."""
 
     name: str
 

@@ -30,10 +30,52 @@ from chemrefine.state import RunBlock, StepContext, StepInputs
 class ExtOptOrcaEngine(OrcaEngine):
     """ORCA driven by an ExtOpt HTTP server; subclasses declare four ClassVars."""
 
+    required_declarations: ClassVar[tuple[str, ...]] = (
+        *OrcaEngine.required_declarations,
+        "backend",
+        "wrapper_filename",
+        "options_cls",
+        "calculator_cls",
+    )
+    """ORCA's five, plus the four ClassVars this kind adds — see
+    :attr:`chemrefine.engines._job.JobEngine.required_declarations`. Unset, they surface as an
+    ``AttributeError`` from inside ``_server_cmd`` or ``prepare``, in a job rather than at
+    import."""
+
     backend: ClassVar[str]
     wrapper_filename: ClassVar[str]
     options_cls: ClassVar[type[EngineOptions]]
     calculator_cls: ClassVar[type[ComputeBackend]]
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """Refuse a subclass whose ``calculator_cls`` only *looks* like a backend.
+
+        :class:`~chemrefine.engines._backend_server.base.ComputeBackend` is a
+        ``runtime_checkable`` Protocol, and both shipped backends subclass it explicitly. That
+        is the shape that hides an omission: a subclass inherits every member as an ellipsis
+        body, so ``hasattr`` and ``isinstance`` both pass while ``calc`` returns ``None`` and
+        ``server_cli_from_options`` returns ``None`` — which reaches the run as
+        ``TypeError: 'NoneType' object is not iterable`` while building the job script, or as a
+        500 per geometry whose actual cause is "this class implements nothing".
+
+        Checked here rather than at ``@register`` because this is the kind's own requirement,
+        and here is the first moment it can be asked. Own members, not inherited ones, for the
+        reason above.
+        """
+        super().__init_subclass__(**kwargs)
+        backend = cls.__dict__.get("calculator_cls")
+        if backend is None:  # an intermediate base; `register` catches one that never declares
+            return
+        own = {
+            name for klass in backend.__mro__ if klass is not ComputeBackend for name in vars(klass)
+        }
+        missing = sorted(ComputeBackend.required_implementations - own)
+        if missing:
+            raise TypeError(
+                f"{cls.__name__}: calculator_cls {backend.__name__} implements none of "
+                f"{missing} of its own — it inherits them from the ComputeBackend Protocol, "
+                f"where each is an ellipsis body returning None."
+            )
 
     def gpus(self, ctx: StepContext) -> int:
         """A GPU when the backend's **validated** options request one; else CPU.

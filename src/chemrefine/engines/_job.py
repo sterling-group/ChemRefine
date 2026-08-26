@@ -122,6 +122,29 @@ class JobEngine(abc.ABC):
     still registers, and still submits every job of a step before anything notices.
     """
 
+    required_declarations: ClassVar[tuple[str, ...]] = (
+        "name",
+        "label",
+        "template_suffix",
+        "output_suffix",
+        "output_globs",
+    )
+    """The ClassVars below that a concrete engine must define — checked by
+    :func:`~chemrefine.engines.api.register` at its decorator line.
+
+    ``abstractmethod`` already fails an incomplete subclass at construction, which is where
+    ``get_engine`` builds it — but it watches *methods*. These five are bare annotations, and
+    nothing watched them: an unset ``output_suffix`` surfaced as a bare ``AttributeError``
+    inside ``prepare``, and an unset ``template_suffix`` stopped the engine satisfying
+    :class:`~chemrefine.engines.api.TemplateDriven`, so the step reported the user's template
+    as missing while it sat on disk. Naming them here is the same move
+    :meth:`chemrefine.engines.mlip.registry.MlipLibrary.trainer` makes with its
+    ``required = [...]``, and for the same stated reason: it covers the declarations no
+    ``ABCMeta`` machinery watches.
+
+    A base extends the tuple rather than replacing it, so a kind's requirements accumulate
+    down the chain (see :class:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine`)."""
+
     name: ClassVar[str]
     label: ClassVar[str]
     template_suffix: ClassVar[str]

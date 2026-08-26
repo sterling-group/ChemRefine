@@ -518,12 +518,81 @@ legacy vocabulary — before any lookup, so the registry stays alias-free.
 """
 
 
+def contract_members(protocol: type) -> frozenset[str]:
+    """Every member a Protocol declares — its methods plus its annotated attributes.
+
+    Derived rather than restated, so the gate below cannot come to disagree with the contract
+    it enforces. Written out by hand instead of read from ``__protocol_attrs__`` because that
+    is a 3.12 addition and ``requires-python`` is ``>=3.11``; the two are asserted equal by
+    ``test_engines_base.py`` wherever the interpreter offers both.
+    """
+    return frozenset(n for n in dir(protocol) if not n.startswith("_")) | frozenset(
+        getattr(protocol, "__annotations__", {})
+    )
+
+
+_CONTRACT_MEMBERS = contract_members(CalculationEngine)
+
+
 def register(name: str) -> Callable[[type], type]:
-    """Decorator: register ``cls`` under ``name`` in :data:`ENGINES`."""
+    """Decorator: register ``cls`` under ``name`` in :data:`ENGINES`, if it qualifies.
+
+    **The decorator is the gate**, in the shape
+    :meth:`chemrefine.engines.mlip.registry.MlipLibrary.trainer` already sets one subsystem
+    over: a class that cannot serve as an engine is refused *here*, at its own decorator line
+    during discovery, naming what is missing — rather than at the first step that submits, by
+    which time ``run_step`` has built a context, derived a cache key and created a directory.
+    Three ways a class can fail to qualify, each with its own reason:
+
+    * **It does not satisfy the contract.** ``ENGINES`` is annotated
+      ``dict[str, type[CalculationEngine]]`` and :func:`get_engine` hands what it holds to the
+      pipeline as one. Nothing checked that: ``register`` was typed ``Callable[[type], type]``,
+      and ``type`` is ``type[Any]``, so a class with only a ``name`` registered and mypy said
+      nothing at the decorator site.
+    * **It inherits the Protocol.** :class:`CalculationEngine` is ``runtime_checkable``, and a
+      subclass of it inherits every method as an ellipsis body returning ``None`` — so
+      ``isinstance`` says yes, ``prepare`` returns ``None``, and every structural check in the
+      codebase passes. A structural contract used as a base defeats the checks that stand in
+      for this gate, which is why it is refused rather than merely discouraged.
+    * **It leaves a declaration the machinery reads unset.** The engine bases declare ClassVars
+      with no default — ``JobEngine`` five, ``ExtOptOrcaEngine`` four more — and no ``ABCMeta``
+      machinery watches those: ``abstractmethod`` covers the *methods* only. A base names its
+      own in ``required_declarations``, which is the ``required = [...]`` list ``@trainer``
+      checks, one subsystem over. Unset, ``output_suffix`` surfaces as a bare ``AttributeError``
+      inside ``prepare``, and ``template_suffix`` is worse: the engine simply stops satisfying
+      :class:`TemplateDriven`, and the user is told their template does not exist while it sits
+      on disk.
+
+    The check runs on the class, never on an instance: constructing one to interrogate it would
+    make an engine's ``__init__`` run at import of the package that defines it.
+    """
 
     def decorator(cls: type) -> type:
         if name in ENGINES and ENGINES[name] is not cls:
             raise ValueError(f"engine {name!r} is already registered to {ENGINES[name]!r}")
+        if CalculationEngine in getattr(cls, "__mro__", ()):
+            raise TypeError(
+                f"engine {name!r}: {cls.__name__} inherits CalculationEngine, which is a "
+                f"structural contract — inheriting it supplies every method as a no-op "
+                f"returning None, so isinstance would pass a class that does nothing. "
+                f"Satisfy it structurally, or subclass a base such as JobEngine."
+            )
+        missing = sorted(m for m in _CONTRACT_MEMBERS if not hasattr(cls, m))
+        if missing:
+            raise TypeError(
+                f"engine {name!r}: {cls.__name__} does not satisfy CalculationEngine — "
+                f"missing {missing}. Members are looked for on the class, so declare them "
+                f"there: an attribute bound in __init__ is not visible to this check, which "
+                f"runs without constructing anything. See chemrefine.engines.api."
+            )
+        undeclared = sorted(
+            d for d in getattr(cls, "required_declarations", ()) if not hasattr(cls, d)
+        )
+        if undeclared:
+            raise TypeError(
+                f"engine {name!r}: {cls.__name__} is missing declaration(s) {undeclared} — "
+                f"the machinery reads them; see the base it inherits from."
+            )
         ENGINES[name] = cls
         return cls
 

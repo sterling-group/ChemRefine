@@ -342,21 +342,68 @@ def test_load_calculator_unknown_raises_keyerror():
         registry.load_calculator("not_a_backend")
 
 
-def test_every_registered_backend_conforms_to_base_protocol():
-    """Loaded backends should be ``ComputeBackend``-conformant classes.
+def _own_members(cls: type) -> set[str]:
+    """Every name ``cls`` or a base of its own defines — the Protocol itself excluded."""
+    from chemrefine.engines._backend_server.base import ComputeBackend
 
-    We only check class-level shape (``name`` + ``calc`` + ``from_args``)
-    here — real instantiation requires backend dependencies (torch /
-    pyscf) the test env doesn't install.
+    return {n for k in cls.__mro__ if k is not ComputeBackend for n in vars(k)}
+
+
+def test_every_registered_backend_implements_the_contract_itself():
+    """Conformance means *implementing* the contract, not inheriting its stubs.
+
+    This used to assert ``hasattr`` / ``callable`` for six members, which cannot fail: both
+    shipped backends subclass the ``ComputeBackend`` Protocol, so a subclass that implements
+    nothing at all still has all six — each an ellipsis body returning ``None``. The test
+    passed on a class whose ``calc`` returned ``None``, which is precisely the failure it
+    existed to catch. Checking *own* members is what makes it able to fail; the negative case
+    below is what proves it can.
     """
+    from chemrefine.engines._backend_server.base import ComputeBackend
+
     for name in registry.known_backends():
         cls = registry.load_calculator(name)
-        assert hasattr(cls, "name")
-        assert callable(cls.calc)
-        assert callable(cls.from_args)
-        assert callable(cls.add_cli_args)
-        assert callable(cls.settings_from_args)
-        assert callable(cls.server_cli_from_options)
+        missing = sorted(ComputeBackend.required_implementations - _own_members(cls))
+        assert missing == [], f"{name}: {cls.__name__} inherits {missing} as no-op stubs"
+
+
+def test_the_conformance_check_rejects_a_backend_that_only_inherits():
+    """The negative the old test could not express — an empty subclass of the Protocol."""
+    from chemrefine.engines._backend_server.base import ComputeBackend
+
+    class _Empty(ComputeBackend):
+        name = "empty"
+
+    # It satisfies every check the codebase used to make. (mypy refuses to construct it —
+    # a Protocol subclass leaves its stubs implicitly abstract — while the runtime allows it
+    # and returns None from everything. That gap is the hazard.)
+    assert isinstance(_Empty(), ComputeBackend)  # type: ignore[abstract]
+    assert callable(_Empty.calc) and callable(_Empty.server_cli_from_options)
+    assert _Empty().calc(None) is None and _Empty.server_cli_from_options({}) is None  # type: ignore[abstract]
+    # ...and none of the one that replaced them.
+    assert sorted(ComputeBackend.required_implementations - _own_members(_Empty)) == [
+        "add_cli_args",
+        "calc",
+        "from_args",
+        "server_cli_from_options",
+    ]
+
+
+def test_settings_from_args_is_a_default_a_backend_may_inherit():
+    """The distinction the declaration exists to make.
+
+    Both shipped backends are single-channel and inherit ``settings_from_args``, whose body is
+    a real ``return {}`` rather than a stub — so a check that demanded every member be
+    implemented would reject both. The Protocol names its stubs instead of the class being
+    asked to tell them apart, because it cannot: a subclass inherits both by the same route.
+    """
+    from chemrefine.engines._backend_server.base import ComputeBackend
+
+    assert "settings_from_args" not in ComputeBackend.required_implementations
+    for name in registry.known_backends():
+        cls = registry.load_calculator(name)
+        assert "settings_from_args" not in _own_members(cls)
+        assert cls.settings_from_args(argparse.Namespace()) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -983,3 +1030,42 @@ def test_server_main_logs_why_it_cannot_start_when_the_server_deps_are_missing(m
     assert "waitress" in caplog.text
     assert "chemrefine[server]" in caplog.text
     assert "backends install" in caplog.text
+
+
+def test_an_extopt_subclass_is_refused_if_its_calculator_only_inherits():
+    """The gate at the kind's own base — earliest point the requirement can be asked.
+
+    Reaching a run, this surfaces as a ``TypeError: 'NoneType' object is not iterable`` while
+    building the job script (``server_cli_from_options`` returned ``None``), or as a 500 per
+    geometry whose real cause — "this class implements nothing" — is only in the server log.
+    """
+    from chemrefine.engines._backend_server.base import ComputeBackend
+    from chemrefine.engines._options import EngineOptions
+    from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
+
+    class _Empty(ComputeBackend):
+        name = "empty"
+
+    with pytest.raises(TypeError, match="implements none of"):
+
+        class _Bad(ExtOptOrcaEngine):
+            name = "bad-probe"
+            backend = "bad-probe"
+            wrapper_filename = "bad.sh"
+            options_cls = EngineOptions
+            calculator_cls = _Empty
+
+
+def test_an_extopt_intermediate_base_declares_no_calculator_and_is_allowed():
+    """A base between ``ExtOptOrcaEngine`` and a concrete engine names no backend of its own.
+
+    It has nothing to check yet, and refusing it would make the kind unsubclassable. A class
+    that never declares one at all is caught later, by ``register``'s
+    ``required_declarations``.
+    """
+    from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
+
+    class _Intermediate(ExtOptOrcaEngine):
+        """Shares plumbing; a concrete engine below it names the backend."""
+
+    assert "calculator_cls" not in _Intermediate.__dict__
