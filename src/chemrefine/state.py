@@ -258,11 +258,12 @@ class RunBlock:
 
 @dataclass(frozen=True)
 class JobBatch:
-    """Opaque handle returned by ``engine.submit`` and consumed by ``engine.wait``.
+    """Opaque handle returned by ``engine.submit``, which blocks until the jobs finish.
 
     ``jobs`` maps each input file path to its job identifier (a SLURM
     job ID, a local-runner PID, or whatever the engine's submitter
-    produces). The wait step polls this mapping.
+    produces). There is no ``wait``: submission blocks, so the batch a caller receives
+    describes jobs that have already finished.
 
     **Opaque** is the operative word: a structure re-run in the same batch reuses its input
     path, so the mapping holds that structure's *latest* attempt and there is no longer one

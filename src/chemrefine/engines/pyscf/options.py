@@ -9,7 +9,8 @@ df, gpu, device) and the active-space tensor-extraction knobs
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from collections.abc import Mapping
+from typing import Any, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
@@ -111,7 +112,7 @@ class PyscfOptions(EngineOptions):
         return v
 
     @classmethod
-    def from_raw(cls, raw: dict[str, Any] | None) -> PyscfOptions:
+    def from_raw(cls, raw: Mapping[str, Any] | None) -> Self:
         """Validate a raw ``step.options`` dict from the YAML.
 
         ``basis`` must be named explicitly (no silent default), and ``xc`` must

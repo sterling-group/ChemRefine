@@ -55,6 +55,8 @@ from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import (
     ENGINES,
     BackendRequirement,
+    CalculationEngine,
+    OptionsDeclaring,
     ProvisionableEngine,
     get_engine,
 )
@@ -150,7 +152,7 @@ def resolve_launcher(requirement: BackendRequirement, override: str | None = Non
     return sys.executable
 
 
-def launcher_for(engine: object, options: dict[str, Any] | None) -> str:
+def launcher_for(engine: CalculationEngine, options: dict[str, Any] | None) -> str:
     """The interpreter that runs ``engine``'s backend for a step with ``options``.
 
     The one home for the "is this engine provisionable, and what does it need?"
@@ -163,16 +165,22 @@ def launcher_for(engine: object, options: dict[str, Any] | None) -> str:
     return sys.executable
 
 
-def _backend_python(engine: object, options: dict[str, Any]) -> str | None:
+def _backend_python(engine: CalculationEngine, options: dict[str, Any]) -> str | None:
     """The step's ``backend_python`` override, read through the engine's own model.
 
-    ``backend_python`` is an :class:`~chemrefine.engines._options.EngineOptions` field, so
-    it is read through the model that declares it rather than off the raw dict: a second
-    reader of a declared knob is free to disagree with the first about defaults and aliases.
-    The engine's ``options_cls`` is used when it declares one, exactly as
+    ``backend_python`` is an :class:`~chemrefine.engines._options.EngineOptions` field, so it
+    is read through the model that declares it rather than off the raw dict: a second reader
+    of a declared knob is free to disagree with the first about defaults and aliases. The
+    engine's ``options_cls`` is used when it declares one, exactly as
     :func:`chemrefine.engines._job.gpus_from_options` does.
+
+    Detected with :class:`~chemrefine.engines.api.OptionsDeclaring`, like every other
+    capability in ``engines/``. It was the subsystem's last ``getattr`` duck-probe — and the
+    annotation on it was an assertion nothing checked, since ``getattr`` with a default is
+    ``Any``. :mod:`chemrefine.engines._backend_server.registry` records having removed the
+    other one for the same reason.
     """
-    options_cls: type[EngineOptions] = getattr(engine, "options_cls", EngineOptions)
+    options_cls = engine.options_cls if isinstance(engine, OptionsDeclaring) else EngineOptions
     return options_cls.from_raw_lenient(options).backend_python
 
 

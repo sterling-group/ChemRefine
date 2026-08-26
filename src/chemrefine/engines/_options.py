@@ -9,6 +9,7 @@ adds its own fields. It also lets the ExtOpt base type its ``options_cls`` Class
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal, Self
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
@@ -44,7 +45,7 @@ class EngineOptions(BaseModel):
     every job engine for (``JobEngine.pal``), not something one backend invented."""
 
     @classmethod
-    def from_raw(cls, raw: dict[str, Any] | None) -> Self:
+    def from_raw(cls, raw: Mapping[str, Any] | None) -> Self:
         """Validate a raw ``step.options`` dict; empty/``None`` yields defaults.
 
         Strict — ``extra="forbid"`` means a typoed knob fails the step rather than
@@ -80,7 +81,7 @@ class EngineOptions(BaseModel):
         return {name for names in cls._spellings_by_field().values() for name in names}
 
     @classmethod
-    def _reject_ambiguous_spellings(cls, raw: dict[str, Any]) -> None:
+    def _reject_ambiguous_spellings(cls, raw: Mapping[str, Any]) -> None:
         """Refuse a step that sets two spellings of the same knob.
 
         Aliases exist so each backend reads naturally (``task`` for ``task_name``,
@@ -102,7 +103,7 @@ class EngineOptions(BaseModel):
                 )
 
     @classmethod
-    def from_raw_lenient(cls, raw: dict[str, Any] | None) -> Self:
+    def from_raw_lenient(cls, raw: Mapping[str, Any] | None) -> Self:
         """Validate only the keys this model knows, ignoring any others.
 
         For the one place strictness would be wrong: a direct ``step{N}.py`` template
@@ -117,7 +118,7 @@ class EngineOptions(BaseModel):
         return cls._validate({k: v for k, v in raw.items() if k in accepted})
 
     @classmethod
-    def _validate(cls, data: dict[str, Any]) -> Self:
+    def _validate(cls, data: Mapping[str, Any]) -> Self:
         """Build the model, reporting a bad knob as a :class:`ConfigError`.
 
         An invalid ``step.options`` value is a config error and must exit with the code

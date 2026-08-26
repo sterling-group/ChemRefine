@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 # Importing from ``chemrefine.engines.api`` triggers the parent package's
@@ -60,7 +62,9 @@ def test_register_decorator_adds_entry_and_returns_class():
             return None
 
     try:
-        assert ENGINES["temp-test-engine"] is _TempEngine
+        # `is`-compared through `object`: ENGINES is typed `type[CalculationEngine]`,
+        # and mypy calls the identity check non-overlapping against a concrete class.
+        assert ENGINES["temp-test-engine"] is cast("object", _TempEngine)
     finally:
         ENGINES.pop("temp-test-engine", None)
 

@@ -53,7 +53,7 @@ One job, one product          :class:`CalculationEngine` +    ``prepare`` / ``su
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Protocol, runtime_checkable
@@ -91,7 +91,17 @@ class CalculationEngine(Protocol):
     :class:`chemrefine.engines._job.JobEngine` and supply only primitives.
     """
 
-    name: str
+    name: ClassVar[str]
+    """The canonical YAML ``engine:`` spelling, on the class.
+
+    A ``ClassVar``, not an instance attribute, because that is what every engine declares and
+    what :func:`register` requires: the gate runs on the class without constructing anything,
+    so an engine's ``__init__`` never runs at import of the package that defines it. Declared
+    as a plain ``name: str``, the Protocol said an *instance* variable — which no engine has,
+    so ``type[Engine]`` did not satisfy it and any function annotating this Protocol had to
+    take ``object`` instead. That is a typing lie in the load-bearing direction: it is the
+    contract every consumer narrows from.
+    """
 
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Write engine-specific input files for this step's seed structures."""
@@ -333,8 +343,10 @@ class JobExecutable(Protocol):
 
     The narrow provision surface a :class:`~chemrefine.engines._job.JobEngine` exposes so
     the flat scheduler can run one job per structure without knowing the engine's type —
-    Interface Segregation: ``run_batch`` depends on these six members, not the whole
-    engine. ``JobEngine`` satisfies it structurally.
+    Interface Segregation: ``run_batch`` depends on the members below and not the whole
+    engine. ``JobEngine`` satisfies it structurally. (The count is deliberately not
+    written out: it said "six" from the day this was extracted until ``slurm_layout``
+    and ``memory_mb`` each added one without anybody updating the prose.)
     """
 
     @property
@@ -521,7 +533,7 @@ class ProvisionableEngine(CalculationEngine, Protocol):
     Both methods are required for the capability to be detected.
     """
 
-    def backend_requirement(self, options: dict[str, Any] | None) -> BackendRequirement:
+    def backend_requirement(self, options: Mapping[str, Any] | None) -> BackendRequirement:
         """The backend env this step needs, derived from its ``step.options``."""
         ...
 

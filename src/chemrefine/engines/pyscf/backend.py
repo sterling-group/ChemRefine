@@ -13,6 +13,7 @@ with ``gpu4pyscf`` in it. Both install into a single env — see
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from chemrefine.engines.api import BackendRequirement
@@ -39,7 +40,7 @@ class PyscfBackend:
     env.
     """
 
-    def backend_requirement(self, options: dict[str, Any] | None) -> BackendRequirement:
+    def backend_requirement(self, options: Mapping[str, Any] | None) -> BackendRequirement:
         """PySCF — the GPU stack when the step asks for one.
 
         Read through :class:`~chemrefine.engines.pyscf.options.PyscfOptions` rather than off

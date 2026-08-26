@@ -33,6 +33,18 @@ class PyscfExtOptEngine(PyscfBackend, ExtOptOrcaEngine):
     options_cls: ClassVar[type[EngineOptions]] = PyscfOptions
     calculator_cls: ClassVar[type[ComputeBackend]] = PyscfExtOptCalculator
 
+    def _opts(self, ctx: StepContext) -> PyscfOptions:
+        """This step's validated options, read through the model this engine declares.
+
+        Through :attr:`options_cls` rather than by naming ``PyscfOptions`` twice below: two
+        readers of one knob is what the ClassVar exists to prevent, and this class is the one
+        that would have shown it — a subclass narrowing the model would be read as the base
+        type by these two methods and as its own everywhere else.
+        """
+        opts = self.options_cls.from_raw(ctx.step_cfg.options)
+        assert isinstance(opts, PyscfOptions)  # noqa: S101 - narrows the ClassVar's base type
+        return opts
+
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Refuse ``save_tensors`` on an open-shell step before anything submits.
 
@@ -43,7 +55,7 @@ class PyscfExtOptEngine(PyscfBackend, ExtOptOrcaEngine):
         multiplicity is in hand and nothing has been spent, so the refusal names the knob
         and the spin with the documented exit code.
         """
-        opts = PyscfOptions.from_raw(ctx.step_cfg.options)
+        opts = self._opts(ctx)
         if opts.save_tensors and ctx.multiplicity != 1:
             raise ConfigError(
                 f"step {ctx.step_cfg.step}: save_tensors supports closed-shell systems "
@@ -61,7 +73,7 @@ class PyscfExtOptEngine(PyscfBackend, ExtOptOrcaEngine):
         artifacts. An absolute ``tensor_folder`` already persists at its own location, so
         nothing extra is copied.
         """
-        opts = PyscfOptions.from_raw(ctx.step_cfg.options)
+        opts = self._opts(ctx)
         if opts.save_tensors and not Path(opts.tensor_folder).is_absolute():
             return (opts.tensor_folder,)
         return ()
