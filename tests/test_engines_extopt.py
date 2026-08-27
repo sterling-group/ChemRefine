@@ -342,45 +342,39 @@ def test_load_calculator_unknown_raises_keyerror():
         registry.load_calculator("not_a_backend")
 
 
-def _own_members(cls: type) -> set[str]:
-    """Every name ``cls`` or a base of its own defines — the Protocol itself excluded."""
-    from chemrefine.engines._backend_server.base import ComputeBackend
-
-    return {n for k in cls.__mro__ if k is not ComputeBackend for n in vars(k)}
-
-
 def test_every_registered_backend_implements_the_contract_itself():
-    """Conformance means *implementing* the contract, not inheriting its stubs.
+    """Conformance is Python's own ledger now: no hook left abstract, ``name`` declared.
 
-    Asserting ``hasattr`` / ``callable`` cannot fail here: the shipped backends subclass the
-    ``ComputeBackend`` Protocol, so a subclass that implements nothing at all still carries
-    every member — each an ellipsis body returning ``None``. That admits a class whose ``calc``
-    returns ``None``, which is precisely what this exists to catch. Checking *own* members is
-    what makes it able to fail; the negative case below is what proves it can.
+    ``ComputeBackend`` is an ABC, so an incomplete backend carries its missing hooks in
+    ``__abstractmethods__`` rather than inheriting them as no-op stubs — the shape the
+    old Protocol base allowed, where a class implementing nothing passed ``hasattr``
+    and ``isinstance`` and failed as a 500 per geometry. ``name`` is a bare ClassVar no
+    ``ABCMeta`` machinery sees, which is why it rides ``required_declarations``.
     """
-    from chemrefine.engines._backend_server.base import ComputeBackend
-
     for name in registry.known_backends():
         cls = registry.load_calculator(name)
-        missing = sorted(ComputeBackend.required_implementations - _own_members(cls))
-        assert missing == [], f"{name}: {cls.__name__} inherits {missing} as no-op stubs"
+        assert not getattr(cls, "__abstractmethods__", None), (
+            f"{name}: {cls.__name__} leaves hooks abstract"
+        )
+        assert [d for d in cls.required_declarations if not hasattr(cls, d)] == []
 
 
-def test_the_conformance_check_rejects_a_backend_that_only_inherits():
-    """The negative an inherited-member check cannot express — an empty Protocol subclass."""
+def test_an_empty_subclass_cannot_even_be_instantiated():
+    """The hazard the Protocol base allowed, closed by ``ABCMeta`` itself.
+
+    A subclass implementing nothing used to inherit every member as an ellipsis body
+    returning ``None`` — instantiable, passing every structural check, serving 500s.
+    Now Python refuses the construction and names the missing methods, and the class
+    carries its own ledger for the engine gate to read before any job exists.
+    """
     from chemrefine.engines._backend_server.base import ComputeBackend
 
     class _Empty(ComputeBackend):
         name = "empty"
 
-    # It satisfies every check that reads inherited members. (mypy refuses to construct it —
-    # a Protocol subclass leaves its stubs implicitly abstract — while the runtime allows it
-    # and returns None from everything. That gap is the hazard.)
-    assert isinstance(_Empty(), ComputeBackend)  # type: ignore[abstract]
-    assert callable(_Empty.calc) and callable(_Empty.server_cli_from_options)
-    assert _Empty().calc(None) is None and _Empty.server_cli_from_options({}) is None  # type: ignore[abstract]
-    # ...and none of the one that reads its own.
-    assert sorted(ComputeBackend.required_implementations - _own_members(_Empty)) == [
+    with pytest.raises(TypeError, match="abstract"):
+        _Empty()  # type: ignore[abstract]
+    assert sorted(_Empty.__abstractmethods__) == [
         "add_cli_args",
         "calc",
         "from_args",
@@ -389,19 +383,20 @@ def test_the_conformance_check_rejects_a_backend_that_only_inherits():
 
 
 def test_settings_from_args_is_a_default_a_backend_may_inherit():
-    """The distinction the declaration exists to make.
+    """The one concrete method on the base — inheriting it is right, not an omission.
 
-    Both shipped backends are single-channel and inherit ``settings_from_args``, whose body is
-    a real ``return {}`` rather than a stub — so a check that demanded every member be
-    implemented would reject both. The Protocol names its stubs instead of the class being
-    asked to tell them apart, because it cannot: a subclass inherits both by the same route.
+    Both shipped backends are single-channel and inherit ``settings_from_args``, whose
+    body is a real ``return {}`` rather than a stub — which is why it is neither
+    abstract nor in ``required_declarations``: a check demanding every member be
+    implemented would reject both shipped backends.
     """
     from chemrefine.engines._backend_server.base import ComputeBackend
 
-    assert "settings_from_args" not in ComputeBackend.required_implementations
+    assert "settings_from_args" not in ComputeBackend.__abstractmethods__
+    assert "settings_from_args" not in ComputeBackend.required_declarations
     for name in registry.known_backends():
         cls = registry.load_calculator(name)
-        assert "settings_from_args" not in _own_members(cls)
+        assert "settings_from_args" not in vars(cls)  # inherited — the default, not a copy
         assert cls.settings_from_args(argparse.Namespace()) == {}
 
 
@@ -1031,12 +1026,14 @@ def test_server_main_logs_why_it_cannot_start_when_the_server_deps_are_missing(m
     assert "backends install" in caplog.text
 
 
-def test_an_extopt_subclass_is_refused_if_its_calculator_only_inherits():
+def test_an_extopt_subclass_is_refused_if_its_calculator_is_abstract():
     """The gate at the kind's own base — earliest point the requirement can be asked.
 
-    Reaching a run, this surfaces as a ``TypeError: 'NoneType' object is not iterable`` while
-    building the job script (``server_cli_from_options`` returned ``None``), or as a 500 per
-    geometry whose real cause — "this class implements nothing" — is only in the server log.
+    ``ABCMeta`` refuses to *instantiate* an incomplete backend, but nothing instantiates
+    one before ``from_args`` runs inside the job — and the abstract classmethods stay
+    callable on the class, so left to the run this surfaces as a ``TypeError`` while
+    building the job script or a 500 per geometry. The gate reads
+    ``__abstractmethods__`` — Python's own ledger — at the engine's class statement.
     """
     from chemrefine.engines._backend_server.base import ComputeBackend
     from chemrefine.engines._options import EngineOptions
@@ -1045,7 +1042,7 @@ def test_an_extopt_subclass_is_refused_if_its_calculator_only_inherits():
     class _Empty(ComputeBackend):
         name = "empty"
 
-    with pytest.raises(TypeError, match="implements none of"):
+    with pytest.raises(TypeError, match=r"leaves .* abstract"):
 
         class _Bad(ExtOptOrcaEngine):
             name = "bad-probe"
@@ -1053,6 +1050,42 @@ def test_an_extopt_subclass_is_refused_if_its_calculator_only_inherits():
             wrapper_filename = "bad.sh"
             options_cls = EngineOptions
             calculator_cls = _Empty
+
+
+def test_an_extopt_subclass_is_refused_if_its_calculator_declares_no_name():
+    """The gate's other half: ``name`` is a bare ClassVar no ``ABCMeta`` watches.
+
+    A backend implementing every hook but never naming itself would serve — and then
+    answer ``/healthz`` and tag every log line off a missing attribute. The
+    ``required_declarations`` check refuses it at the same class statement.
+    """
+    from chemrefine.engines._backend_server.base import ComputeBackend
+    from chemrefine.engines._options import EngineOptions
+    from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
+
+    class _Nameless(ComputeBackend):
+        @classmethod
+        def add_cli_args(cls, parser: argparse.ArgumentParser) -> None: ...
+
+        @classmethod
+        def server_cli_from_options(cls, options: dict) -> list[str]:
+            return []
+
+        @classmethod
+        def from_args(cls, args: argparse.Namespace) -> _Nameless:
+            return cls()
+
+        def calc(self, data: CalculationData) -> tuple[float, list[list[float]]]:
+            return 0.0, []
+
+    with pytest.raises(TypeError, match=r"missing declaration\(s\) \['name'\]"):
+
+        class _Bad(ExtOptOrcaEngine):
+            name = "bad-probe"
+            backend = "bad-probe"
+            wrapper_filename = "bad.sh"
+            options_cls = EngineOptions
+            calculator_cls = _Nameless
 
 
 def test_an_extopt_intermediate_base_declares_no_calculator_and_is_allowed():

@@ -49,33 +49,37 @@ class ExtOptOrcaEngine(OrcaEngine):
     calculator_cls: ClassVar[type[ComputeBackend]]
 
     def __init_subclass__(cls, **kwargs: object) -> None:
-        """Refuse a subclass whose ``calculator_cls`` only *looks* like a backend.
+        """Refuse a subclass whose ``calculator_cls`` cannot serve.
 
-        :class:`~chemrefine.engines._backend_server.base.ComputeBackend` is a
-        ``runtime_checkable`` Protocol that the shipped backends subclass explicitly. That is
-        the shape that hides an omission: a subclass inherits every member as an ellipsis
-        body, so ``hasattr`` and ``isinstance`` both pass while ``calc`` returns ``None`` and
-        ``server_cli_from_options`` returns ``None`` — which reaches the run as
-        ``TypeError: 'NoneType' object is not iterable`` while building the job script, or as a
-        500 per geometry whose actual cause is "this class implements nothing".
-
-        Checked here rather than at ``@register`` because this is the kind's own requirement,
-        and here is the first moment it can be asked. Own members, not inherited ones, for the
-        reason above.
+        :class:`~chemrefine.engines._backend_server.base.ComputeBackend` is an ABC, so
+        an incomplete backend cannot be *instantiated* — but nothing instantiates one
+        before the server calls ``from_args`` inside the job, and abstract classmethods
+        stay callable on the class. Checked here because it is the first moment the
+        declaration exists; left to the run, the failure surfaces as a ``TypeError``
+        while building the job script or a 500 per geometry whose actual cause is
+        "this class implements nothing". ``__abstractmethods__`` is Python's own ledger
+        of what is missing; ``required_declarations`` covers the bare ClassVars no
+        ``ABCMeta`` machinery sees — the :class:`~chemrefine.engines._job.JobEngine`
+        idiom, read from the backend's own declaration.
         """
         super().__init_subclass__(**kwargs)
         backend = cls.__dict__.get("calculator_cls")
         if backend is None:  # an intermediate base; `register` catches one that never declares
             return
-        own = {
-            name for klass in backend.__mro__ if klass is not ComputeBackend for name in vars(klass)
-        }
-        missing = sorted(ComputeBackend.required_implementations - own)
+        missing = sorted(getattr(backend, "__abstractmethods__", ()))
         if missing:
             raise TypeError(
-                f"{cls.__name__}: calculator_cls {backend.__name__} implements none of "
-                f"{missing} of its own — it inherits them from the ComputeBackend Protocol, "
-                f"where each is an ellipsis body returning None."
+                f"{cls.__name__}: calculator_cls {backend.__name__} leaves {missing} "
+                f"abstract — every ComputeBackend hook must be implemented before an "
+                f"engine can serve it."
+            )
+        undeclared = sorted(
+            d for d in getattr(backend, "required_declarations", ()) if not hasattr(backend, d)
+        )
+        if undeclared:
+            raise TypeError(
+                f"{cls.__name__}: calculator_cls {backend.__name__} is missing "
+                f"declaration(s) {undeclared} — the machinery reads them; see ComputeBackend."
             )
 
     def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
