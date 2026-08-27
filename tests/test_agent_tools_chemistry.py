@@ -24,7 +24,7 @@ from ase import Atoms
 from chemrefine import agent_tools, cache
 from chemrefine.config import load_config
 from chemrefine.engines.orca.output import coordinator as orca_coordinator
-from chemrefine.errors import ConfigError
+from chemrefine.errors import ConfigError, EngineNotFoundError
 from chemrefine.state import StepInputs, StepResults, Structure
 
 _FREQ_OUT = Path(__file__).resolve().parent / "data" / "engines" / "orca" / "freq" / "step1_0.out"
@@ -856,6 +856,31 @@ def test_analyze_mode_refuses_an_unsupported_engine(tmp_path: Path):
         engine="fake",
     )
     with pytest.raises(ConfigError, match="not supported for engine 'fake'"):
+        agent_tools.analyze_mode(str(path), 1, "0", mode_index=0)
+
+
+def test_analyze_mode_names_the_registry_for_an_unregistered_engine(tmp_path: Path):
+    """An engine name the registry has never heard of gets the registry's own error.
+
+    `load_config` keeps `engine:` a free string, so a tree written elsewhere can name an
+    engine this install lacks (a plugin not installed here). That is not "outputs carry
+    no modes" — it is "no such engine", and `EngineNotFoundError` (exit 3) says so and
+    lists what is registered. Pinned deliberately: capability dispatch resolves the
+    engine first, and the truer error must not regress to the blanket refusal.
+    """
+    path = _write_config(tmp_path, {"step": 1, "engine": "not-installed-here"})
+    config = load_config(path)
+    step_dir = config.step_dir(config.steps[0])
+    out = step_dir / "0" / "step1_0.out"
+    out.parent.mkdir(parents=True)
+    out.write_text("whatever", encoding="utf-8")
+    cache.save_manifest(
+        StepInputs(files=((out.with_suffix(".inp"), out, "0"),)),
+        step_dir,
+        operation=None,
+        engine="not-installed-here",
+    )
+    with pytest.raises(EngineNotFoundError, match="not-installed-here"):
         agent_tools.analyze_mode(str(path), 1, "0", mode_index=0)
 
 

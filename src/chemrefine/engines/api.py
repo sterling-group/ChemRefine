@@ -450,6 +450,28 @@ class NmsCapableEngine(CalculationEngine, StructureArtifacts, Protocol):
 
 
 @runtime_checkable
+class FrequencyOutputParsing(Protocol):
+    """An engine whose native output re-parses into frequency frames without a step context.
+
+    The mode-viewer tools (``analyze_mode``, ``get_structure(mode_index=...)``) work on a
+    *finished* step: the normal-mode tensor is deliberately not cached (see
+    :mod:`chemrefine.cache`), so they re-read the output file on demand. ``parse_one``
+    cannot serve them — it needs the live run's :class:`~chemrefine.state.StepContext` —
+    so this hook is the ctx-free entry: one output path in, the parsed frames out.
+
+    Every :class:`NmsCapableEngine` must also declare this capability — its ``parse_one``
+    already populates ``imaginary_freqs``/``normal_modes``, so an output it produced is
+    viewable by definition; the invariant suite holds the two together. An engine whose
+    outputs carry no frequency section simply declares nothing, and mode analysis
+    refuses it by name.
+    """
+
+    def parse_frequency_output(self, output_path: Path) -> list[ParsedResult]:
+        """Re-parse one finished output file into its frames, no step context needed."""
+        ...
+
+
+@runtime_checkable
 class ArtifactEngine(CalculationEngine, Protocol):
     """An engine whose product is one **artifact**, and whose structures pass straight through.
 

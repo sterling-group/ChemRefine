@@ -135,6 +135,10 @@ the two ExtOpt engines):
 
 Everything else — displacement, round-2 submission, resolution, retry — is generic.
 
+An NMS-capable engine also implements the [`FrequencyOutputParsing`](../api/engines_api.md)
+hook (`parse_frequency_output`) — the ctx-free re-parse the mode-viewer tools use on a
+finished step; the invariant suite holds the two capabilities together.
+
 The second bullet is a `JobEngine`'s own `parse_one` to satisfy, which is why ORCA and Q-Chem
 do. A `ScriptEngine` parses through the shared reader instead, so it reports what its
 [output contract](#the-parsed-result-contract) declares: add the two fields to its

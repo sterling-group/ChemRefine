@@ -198,3 +198,7 @@ class QchemEngine(JobEngine):
         """Whether the template runs a TS search and computes frequencies (``JOBTYPE`` scan)."""
         info = inspect.inspect_template(require_template(ctx.template, label=self.label))
         return NmsInputInfo(is_transition_state=info.is_ts, computes_frequencies=info.has_freq)
+
+    def parse_frequency_output(self, output_path: Path) -> list[ParsedResult]:
+        """Re-parse one finished ``.out`` ctx-free — the viewer half of NMS capability."""
+        return output.parse_qchem(output_path)

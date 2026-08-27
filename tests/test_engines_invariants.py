@@ -28,6 +28,7 @@ from chemrefine.config import StepConfig, reject_shell_unsafe
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import (
     ENGINES,
+    FrequencyOutputParsing,
     JobExecutable,
     NmsCapableEngine,
     OptionsDeclaring,
@@ -630,6 +631,24 @@ def test_every_engine_with_the_nms_hook_satisfies_the_nms_protocol():
     assert not_capable == [], (
         f"{not_capable} declare nms_input_info but fail isinstance(NmsCapableEngine), "
         f"so `nms: true` would silently run a plain step"
+    )
+
+
+def test_every_nms_capable_engine_can_reparse_its_frequency_output():
+    """NMS capability implies the viewer capability — the two must never come apart.
+
+    `agent_tools._parse_output_frames` re-reads a finished step's output through
+    `FrequencyOutputParsing` when `analyze_mode` or `get_structure` asks about a mode
+    (the tensor is deliberately not cached, so the file is the source). An engine whose
+    `parse_one` populates the tensor but that skips the ctx-free hook would compute
+    normal modes the viewer tools then refuse to show.
+    """
+    capable = [n for n in sorted(ENGINES) if isinstance(get_engine(n), NmsCapableEngine)]
+    assert capable, "no engine is NMS-capable — has the protocol been renamed?"
+    blind = [n for n in capable if not isinstance(get_engine(n), FrequencyOutputParsing)]
+    assert blind == [], (
+        f"{blind} are NMS-capable but not FrequencyOutputParsing, so mode analysis "
+        f"would refuse outputs that really carry a normal-mode section"
     )
 
 

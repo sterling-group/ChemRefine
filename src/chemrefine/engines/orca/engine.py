@@ -229,3 +229,7 @@ class OrcaEngine(JobEngine):
         """Whether the template runs a TS search and computes frequencies (keyword scan)."""
         run = inspect.inspect_template(require_template(ctx.template, label=self.label))
         return NmsInputInfo(is_transition_state=run.is_ts, computes_frequencies=run.has_freq)
+
+    def parse_frequency_output(self, output_path: Path) -> list[ParsedResult]:
+        """Re-parse one finished ``.out`` ctx-free — the viewer half of NMS capability."""
+        return output.parse_dft(output_path)

@@ -40,7 +40,7 @@ from numpy.typing import NDArray
 from chemrefine import cache, introspect, io, pipeline, scaffold
 from chemrefine.cache import load_failure_records
 from chemrefine.config import Config, StepConfig, load_config
-from chemrefine.engines.api import ParsedResult
+from chemrefine.engines.api import FrequencyOutputParsing, ParsedResult, get_engine
 from chemrefine.errors import EXIT_CODES, ConfigError, RunLockError
 from chemrefine.state import Structure
 from chemrefine.validate import validate_config_file, validate_config_text
@@ -960,22 +960,19 @@ def _mode_frame(config: Config, step_cfg: StepConfig, structure_id: str) -> Pars
 
 
 def _parse_output_frames(engine_name: str, output: Path) -> list[ParsedResult]:
-    """Re-parse one output file with the engine family's own parser.
+    """Re-parse one output file with the engine's own ctx-free parser.
 
-    Only the ORCA-format family and Q-Chem write the frequency/normal-mode sections the
-    mode analysis needs; anything else gets a plain refusal naming that fact.
+    Dispatch is the :class:`FrequencyOutputParsing` capability, never a name roster, so
+    an engine whose outputs carry the frequency/normal-mode sections joins by declaring
+    the hook. A name that is not registered at all propagates ``get_engine``'s
+    ``EngineNotFoundError`` (exit 3) — the truer refusal, and it lists the registry.
     """
-    if engine_name in ("orca", "mlip-extopt", "pyscf-extopt"):
-        from chemrefine.engines.orca.output.coordinator import parse_dft
-
-        return parse_dft(output)
-    if engine_name == "qchem":
-        from chemrefine.engines.qchem.output import parse_qchem
-
-        return parse_qchem(output)
+    engine = get_engine(engine_name)
+    if isinstance(engine, FrequencyOutputParsing):
+        return engine.parse_frequency_output(output)
     raise ConfigError(
-        f"mode analysis is not supported for engine {engine_name!r} "
-        "(ORCA-format and Q-Chem outputs only)"
+        f"mode analysis is not supported for engine {engine_name!r}: "
+        "its outputs carry no re-parseable normal-mode section"
     )
 
 
