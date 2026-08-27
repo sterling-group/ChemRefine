@@ -446,6 +446,85 @@ def test_single_point_returns_energy_and_negative_gradient(monkeypatch):
     assert atoms.calc is calc.calculator
 
 
+class _StubAtomsWithInfo:
+    """The duck-typed stub above, plus the ``info`` dict the species stamping writes."""
+
+    def __init__(self, info: dict | None = None):
+        self.calc = None
+        self.info: dict = dict(info or {})
+
+    def get_potential_energy(self):
+        return -1.0
+
+    def get_forces(self):
+        return np.zeros((1, 3))
+
+
+def test_single_point_stamps_charge_and_spin_where_the_libraries_read_them(monkeypatch):
+    """Constructor charge/multiplicity land in ``atoms.info`` — the per-geometry channel.
+
+    Both shipped charge-aware backends read ``atoms.info["charge"]`` / ``["spin"]``
+    (FAIRChem's a2g args name exactly those keys; MACE's calculator maps them onto its
+    ``total_charge``/``total_spin`` inputs) and silently assume a neutral singlet when
+    they are absent. Before the wrapper stamped them, the constructor arguments
+    selected nothing on the direct path — an anion scored as a neutral molecule with
+    nothing said — while the ExtOpt adapter stamped the very same keys from ORCA's
+    per-call values (its own test sits in ``test_engines_mlip.py``).
+    """
+    _install_fake_mace(monkeypatch)
+    calc = MlipCalculator(task_name="mace_omol", device="cpu", charge=-1, multiplicity=2)
+
+    atoms = _StubAtomsWithInfo()
+    calc.single_point(atoms)
+
+    assert atoms.info == {"charge": -1, "spin": 2}
+
+
+def test_a_value_the_template_set_on_the_atoms_itself_wins(monkeypatch):
+    """``setdefault``: ``atoms.info`` is per-structure state, more specific than the step's.
+
+    A template that sets its own per-geometry charge (a scan over charge states, say)
+    must not have it overwritten by the step-wide constructor value.
+    """
+    _install_fake_mace(monkeypatch)
+    calc = MlipCalculator(task_name="mace_omol", device="cpu", charge=-1, multiplicity=2)
+
+    atoms = _StubAtomsWithInfo({"charge": 0})
+    calc.single_point(atoms)
+
+    assert atoms.info == {"charge": 0, "spin": 2}
+
+
+def test_unset_charge_and_multiplicity_stamp_nothing(monkeypatch):
+    """The defaults invent no keys — absent stays absent, and the library's own
+    neutral-singlet assumption applies exactly as it would to a bare calculator."""
+    calc = _calc_with_fake(monkeypatch)
+
+    atoms = _StubAtomsWithInfo()
+    calc.single_point(atoms)
+
+    assert atoms.info == {}
+
+
+def test_optimize_stamps_the_same_keys(monkeypatch):
+    """The optimisation path shares the stamping — LBFGS calls the calculator per step,
+    and every one of those calls reads the same ``atoms.info``."""
+    _install_fake_mace(monkeypatch)
+    calc = MlipCalculator(task_name="mace_omol", device="cpu", charge=1, multiplicity=1)
+
+    lbfgs_instance = MagicMock()
+    monkeypatch.setitem(
+        sys.modules,
+        "ase.optimize",
+        _fake_module("ase.optimize", LBFGS=MagicMock(return_value=lbfgs_instance)),
+    )
+    atoms = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    calc.optimize(atoms, fmax=0.05, steps=10)
+
+    assert atoms.info["charge"] == 1
+    assert atoms.info["spin"] == 1
+
+
 def test_optimize_invokes_lbfgs_with_fmax_and_steps(monkeypatch):
     """``optimize`` runs ``ase.optimize.LBFGS(...).run(fmax=…, steps=…)``."""
     calc = _calc_with_fake(monkeypatch)

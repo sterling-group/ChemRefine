@@ -109,9 +109,11 @@ class MlipExtOptCalculator(ComputeBackend):
             symbols=list(data.symbols),
             positions=data.positions_angstrom,
         )
-        # The FAIRChem ``omol`` head reads charge + spin from atoms.info (other
-        # backends/heads ignore them); pass ORCA's values through so charged /
-        # open-shell molecules aren't silently treated as neutral singlets.
+        # Both charge-aware libraries read charge + spin from these atoms.info keys —
+        # FAIRChem's ``omol`` head via its a2g args, MACE's calculator via its default
+        # info_keys mapping (charge-blind backends ignore them); pass ORCA's values
+        # through so charged / open-shell molecules aren't silently treated as
+        # neutral singlets.
         atoms.info["charge"] = data.charge
         atoms.info["spin"] = data.multiplicity
         energy_ev, gradient_ev_per_a = self._calculator.single_point(atoms)

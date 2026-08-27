@@ -70,8 +70,15 @@ _STEP_STARTERS: dict[str, str] = {
         "\n"
         "from chemrefine.engines.mlip.calculator import MlipCalculator\n"
         "\n"
-        'mlip = MlipCalculator(model_name="$MODEL_NAME", task_name="$TASK_NAME", '
-        'device="$DEVICE")\n'
+        "mlip = MlipCalculator(\n"
+        '    model_name="$MODEL_NAME",\n'
+        '    task_name="$TASK_NAME",\n'
+        '    device="$DEVICE",\n'
+        "    # Charge-aware backends (FAIRChem omol, mace_omol) silently assume a neutral\n"
+        "    # singlet without these; the wrapper passes them where those libraries read.\n"
+        "    charge=$CHARGE,\n"
+        "    multiplicity=$MULTIPLICITY,\n"
+        ")\n"
         'atoms = mlip.optimize(read("$XYZ_PATH"), fmax=0.03)\n'
         "\n"
         "energy_hartree = atoms.get_potential_energy() / Hartree\n"

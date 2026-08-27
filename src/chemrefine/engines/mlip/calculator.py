@@ -80,10 +80,17 @@ def build_calculator(
     which loader it belongs to, and handing it to the wrong one fails as a tensor-shape
     error deep inside that library rather than as anything naming the actual mistake.
 
-    ``charge`` / ``multiplicity`` are optional and reach the spec untouched — the door for
-    charge-aware libraries; a charge-blind builder never reads them. There is deliberately
-    no ``**extra``: a knob no field names has nowhere to hide, which is the property the
-    spec exists for (a backend-specific knob starts life as a declared option instead).
+    ``charge`` / ``multiplicity`` are optional and reach the spec untouched. The spec
+    fields are the door for a library whose calculator takes a charge at *construction*
+    (AIMNet2's does); no shipped builder reads them, because both shipped charge-aware
+    libraries read charge and spin **per geometry**, off ``atoms.info["charge"]`` /
+    ``["spin"]`` — FAIRChem's ``a2g_args`` names exactly those keys, and MACE's
+    calculator maps them to its ``total_charge``/``total_spin`` model inputs. A bare
+    calculator from here therefore carries no charge of its own; :class:`MlipCalculator`
+    is the wrapper that bridges the two channels by stamping the info keys per call.
+    There is deliberately no ``**extra``: a knob no field names has nowhere to hide,
+    which is the property the spec exists for (a backend-specific knob starts life as a
+    declared option instead).
 
     Raises :class:`~chemrefine.errors.ConfigError` listing known keys if nothing is
     registered; a missing backend *library* surfaces as an ``ImportError`` naming the
@@ -140,14 +147,19 @@ class MlipCalculator:
     ):
         """``task_name`` selects the library; ``model_path`` only says where its weights are.
 
-        ``charge`` / ``multiplicity`` are optional and additive — the charge-aware door,
-        ignored by libraries without a charge channel. Everything else is the shape the
+        ``charge`` / ``multiplicity`` are optional and additive, and this wrapper is
+        where they take effect for the shipped libraries: both charge-aware backends
+        read them per geometry off ``atoms.info`` (see :meth:`_stamp_species`), so the
+        values are kept and stamped at each call rather than only handed to the builder.
+        A charge-blind library never reads the keys. Everything else is the shape the
         shipped templates have always called.
         """
         self.model_name = model_name
         self.task_name = task_name
         self.device = device
         self.model_path = Path(model_path) if model_path else None
+        self.charge = charge
+        self.multiplicity = multiplicity
         self.calculator = build_calculator(
             task_name=task_name,
             model_name=model_name,
@@ -157,10 +169,34 @@ class MlipCalculator:
             multiplicity=multiplicity,
         )
 
+    def _stamp_species(self, atoms: Atoms) -> None:
+        """Put this wrapper's charge and multiplicity where the libraries read them.
+
+        Both shipped charge-aware backends take the values **per geometry**, off
+        ``atoms.info`` — FAIRChem's calculator asks its atoms-to-graph converter for the
+        ``charge`` and ``spin`` keys, and MACE's maps the same two names onto its
+        ``total_charge``/``total_spin`` model inputs, silently assuming a neutral
+        singlet when they are absent. Stamping here is what connects the constructor
+        arguments to that channel; without it they selected nothing (no builder reads
+        the spec fields — construction-time charge is a door for a library that takes
+        one, which none shipped does). The ExtOpt adapter stamps the same keys from
+        ORCA's per-call values; this is the direct path's half of that pattern.
+
+        ``setdefault``, not assignment: ``atoms.info`` is per-structure state, so a
+        value the template set on the atoms itself is more specific than the step-wide
+        one and must win. Charge-blind libraries never read the keys, so stamping is
+        inert for them.
+        """
+        if self.charge is not None:
+            atoms.info.setdefault("charge", self.charge)
+        if self.multiplicity is not None:
+            atoms.info.setdefault("spin", self.multiplicity)
+
     # -- inference ---------------------------------------------------------
 
     def single_point(self, atoms: Atoms) -> tuple[float, list[list[float]]]:
         """Return ``(energy_eV, gradient_eV_per_A)`` for one geometry."""
+        self._stamp_species(atoms)
         atoms.calc = self.calculator
         energy = atoms.get_potential_energy()
         forces = atoms.get_forces()
@@ -171,6 +207,7 @@ class MlipCalculator:
         """In-process LBFGS optimisation; returns the relaxed ``atoms``."""
         from ase.optimize import LBFGS
 
+        self._stamp_species(atoms)
         atoms.calc = self.calculator
         # Named rather than passed as `None`: ase's own `IOContext.openfile` turns `None`
         # into `open(os.devnull)`, so this is the same file by the shorter route — and it
