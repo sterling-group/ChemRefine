@@ -27,10 +27,9 @@ from chemrefine.config import (
 )
 from chemrefine.engines._job import gpus_from_options
 from chemrefine.engines._options import EngineOptions
-from chemrefine.engines.api import get_engine
-from chemrefine.engines.mlip.options import MlipOptions, MlipTrainOptions
+from chemrefine.engines.api import ENGINES, OptionsDeclaring, get_engine
+from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.engines.orca.inspect import inspect_template
-from chemrefine.engines.pyscf.options import PyscfExtOptOptions
 from chemrefine.io import read_xyz_frames
 from chemrefine.nms import NmsOptions
 
@@ -38,7 +37,12 @@ REPO = Path(__file__).resolve().parent.parent
 EXAMPLES = sorted(REPO.glob("examples/**/input.yaml"))
 IDS = [str(p.parent.relative_to(REPO / "examples")) or "canonical" for p in EXAMPLES]
 
-_ORCA_FAMILY = {"orca", "mlip-extopt", "pyscf-extopt"}
+# Derived, not spelled: every engine driven by the ORCA parser is in the family, so a
+# fourth member joins these gates by existing. The authoritative behavior pin lives in
+# test_engines_invariants.test_every_orca_family_engine_refuses_an_unknown_operation_up_front
+# — that file pins the set, this one derives it.
+_ORCA_FAMILY = frozenset(n for n in ENGINES if isinstance(get_engine(n), OrcaEngine))
+assert _ORCA_FAMILY, "the ORCA family derives empty — the example gates would all skip"
 
 
 def _seed_path(cfg: Config) -> Path:
@@ -215,11 +219,11 @@ REQUIRED = {
     },
     "sample": {"method", "percent_cumulative", "count", "window_kcalmol"},
     "nms": {"target", "displacement_value", "num_random_displacements"},
-    "mlip": {"model_name", "task_name", "device", "cores"},
-    "pyscf": {"method", "xc", "basis", "device", "cores"},
+    "MlipOptions": {"model_name", "task_name", "device", "cores"},
+    "PyscfOptions": {"method", "xc", "basis", "device", "cores"},
     # A training step must name all three: which library trains, what it starts from, and
     # where it runs. None of them has a default, so an example that omitted one would not run.
-    "trainer": {"task_name", "model_name", "device"},
+    "MlipTrainOptions": {"task_name", "model_name", "device"},
 }
 
 TESTS_ONLY = {
@@ -227,19 +231,28 @@ TESTS_ONLY = {
     "step": {"slurm_template", "on_failure"},
     "sample": {"by_parent", "temperature_k", "energy_type"},
     "nms": {"ts_mode_index", "seed"},
-    "mlip": {"model_path", "backend_python"},
-    # `strict_scf` is an opt-*out*: it defaults on, and the tutorials have no reason to
-    # turn a correctness guard off, so it is filed here rather than shown in an example.
-    "pyscf": {
+    "MlipOptions": {"model_path", "backend_python"},
+    "PyscfOptions": {"df", "gpu", "backend_python"},
+    # Whole models filed here: no shipped example runs `pyscf-extopt` or `qchem` — the
+    # examples are frozen paper artifacts — so every knob is tests-only until a tutorial
+    # demonstrating the engine ships. `strict_scf` in particular is an opt-*out*: it
+    # defaults on, and a tutorial would have no reason to turn a correctness guard off.
+    "PyscfExtOptOptions": {
+        "method",
+        "xc",
+        "basis",
         "df",
         "gpu",
+        "strict_scf",
         "save_tensors",
         "localized",
         "tensor_folder",
+        "device",
+        "cores",
         "backend_python",
-        "strict_scf",
     },
-    "trainer": {
+    "QchemOptions": {"nprocs", "save", "device", "cores", "backend_python"},
+    "MlipTrainOptions": {
         "valid_fraction",
         "test_fraction",
         "seed",
@@ -254,17 +267,23 @@ _SAMPLE_FIELDS = (
     set(BoltzmannSample.model_fields) | set(MinSample.model_fields) | set(MaxSample.model_fields)
 )
 
+# The engine half of the universe is derived: one section per OptionsDeclaring engine's
+# model, keyed by the model's name, with the full field set (inherited included — the
+# shared base knobs get a deliberate verdict per model). A new engine's model joins the
+# universe by registering, and fails test_knob_universe_is_fully_filed until its knobs
+# are filed above.
+_ENGINE_MODELS = {
+    engine.options_cls
+    for engine in (get_engine(name) for name in ENGINES)
+    if isinstance(engine, OptionsDeclaring)
+}
+
 _UNIVERSE = {
     "config": set(Config.model_fields),
     "step": set(StepConfig.model_fields),
     "sample": _SAMPLE_FIELDS,
     "nms": set(NmsOptions.model_fields),
-    "mlip": set(MlipOptions.model_fields),
-    # The ExtOpt model, because it is the superset: `pyscf` and `pyscf-extopt` share a
-    # backend and split their knobs, and both spellings are things a user may write.
-    # `cores` is read by the script engine (ScriptEngine.pal), not by either model.
-    "pyscf": set(PyscfExtOptOptions.model_fields) | {"cores"},
-    "trainer": set(MlipTrainOptions.model_fields),
+    **{model.__name__: set(model.model_fields) for model in _ENGINE_MODELS},
 }
 
 
@@ -274,6 +293,10 @@ def _raw_examples() -> list[dict[str, Any]]:
 
 def test_knob_universe_is_fully_filed() -> None:
     """Every schema field is deliberately REQUIRED or TESTS_ONLY — never neither."""
+    assert set(REQUIRED) | set(TESTS_ONLY) <= set(_UNIVERSE), (
+        "a filed section matches no universe section — its verdicts would go unchecked: "
+        f"{sorted((set(REQUIRED) | set(TESTS_ONLY)) - set(_UNIVERSE))}"
+    )
     for section, universe in _UNIVERSE.items():
         required = REQUIRED.get(section, set())
         tests_only = TESTS_ONLY.get(section, set())
@@ -285,25 +308,23 @@ def test_knob_universe_is_fully_filed() -> None:
 
 def test_examples_cover_required_knobs() -> None:
     """Each REQUIRED knob appears, at its nesting level, in at least one example."""
-    used: dict[str, set[str]] = {key: set() for key in REQUIRED}
+    used: dict[str, set[str]] = {key: set() for key in _UNIVERSE}
     for doc in _raw_examples():
         used["config"] |= set(doc)
         for step in doc.get("steps", []):
             used["step"] |= set(step)
             used["sample"] |= set(step.get("sample") or {})
             options = set(step.get("options") or {})
-            engine = step.get("engine", "")
+            engine = step.get("engine")
             if step.get("nms"):
                 used["nms"] |= options
-            # `mlip-train` before the prefix test: its options are a different model with
-            # different required knobs, and a prefix match would file them as the inference
-            # engine's — letting a knob count as demonstrated by a step that cannot take it.
-            if engine == "mlip-train":
-                used["trainer"] |= options
-            elif engine.startswith("mlip"):
-                used["mlip"] |= options
-            if engine.startswith("pyscf"):
-                used["pyscf"] |= options
+            # Filed under the model the engine itself declares, so a knob counts as
+            # demonstrated only for the model that can take it: mlip-extopt shares
+            # MlipOptions with mlip, mlip-train's different model files apart with no
+            # special case, and a future OptionsDeclaring engine joins with no edit here.
+            engine_obj = get_engine(engine) if engine else None
+            if isinstance(engine_obj, OptionsDeclaring):
+                used[engine_obj.options_cls.__name__] |= options
     for section, required in REQUIRED.items():
         missing = required - used[section]
         assert not missing, f"{section}: no example uses {sorted(missing)}"
