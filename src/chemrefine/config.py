@@ -310,6 +310,21 @@ class StepConfig(BaseModel):
         """Return the directory name for this step (``stepN`` or ``stepN_name``)."""
         return f"step{self.step}_{self.name}" if self.name else f"step{self.step}"
 
+    def effective_charge(self, default: int) -> int:
+        """This step's charge: its own override, else the config-wide ``default``.
+
+        The one spelling of the fallback, shared by the context builder
+        (:func:`chemrefine.step.build_context`), the preflight walk
+        (:func:`chemrefine.engines.api.preflight_steps`) and ``chemrefine validate`` —
+        three readers deciding "unset means the config's value" separately is how two
+        of them come to disagree about which species a step runs.
+        """
+        return self.charge if self.charge is not None else default
+
+    def effective_multiplicity(self, default: int) -> int:
+        """This step's multiplicity: its own override, else the config-wide ``default``."""
+        return self.multiplicity if self.multiplicity is not None else default
+
     def matches(self, key: str | int) -> bool:
         """Return True if ``key`` (a CLI argument) targets this step.
 

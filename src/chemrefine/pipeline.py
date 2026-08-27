@@ -36,7 +36,7 @@ from ase import Atoms
 
 from chemrefine import filtering, io, slurm
 from chemrefine.config import Config, StepConfig
-from chemrefine.engines import preflight_backends
+from chemrefine.engines import preflight_backends, preflight_steps
 from chemrefine.errors import ConfigError, NoUsableCacheError, RunLockError
 from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 from chemrefine.state import PipelineState, Structure
@@ -464,7 +464,9 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
             config.output_dir,
         )
         # Fail fast: every step's backend env must be resolvable before ANY job submits,
-        # and `dispatch: slurm` must actually have sbatch available.
+        # every step's own preflight refusals (a training step without a device, an
+        # open-shell save_tensors) must fire now rather than at that step's turn, and
+        # `dispatch: slurm` must actually have sbatch available.
         #
         # The steps checked are the ones that *can* submit, which is `StepMode.may_submit` and
         # nothing else. A guard for something that will not happen is just a wall: it would
@@ -478,8 +480,10 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
         # leaves the wall standing on all the others, and a two-step MLIP config still cannot
         # be rebuilt off-cluster. Nothing is weakened by the wider exemption: a step that
         # cannot submit reaches `ChemRefineError` from `run_step` if its cache is unusable,
-        # never the engine.
-        preflight_backends([cfg for cfg in config.steps if plan.for_step(cfg.step).may_submit()])
+        # never the engine — and its own `prepare` repeats the preflight checks anyway.
+        submittable = [cfg for cfg in config.steps if plan.for_step(cfg.step).may_submit()]
+        preflight_backends(submittable)
+        preflight_steps(submittable, charge=config.charge, multiplicity=config.multiplicity)
         slurm.dispatch_locally(config.dispatch)
         state = bootstrap(config)
         logger.info("bootstrapped pipeline with %d seed structure(s)", len(state.structures))

@@ -8,6 +8,7 @@ import pytest
 
 # Importing from ``chemrefine.engines.api`` triggers the parent package's
 # ``__init__``, which self-registers every bundled engine into ``ENGINES``.
+from chemrefine.config import StepConfig
 from chemrefine.engines._job import JobEngine
 from chemrefine.engines.api import (
     ENGINES,
@@ -67,6 +68,45 @@ def test_register_decorator_adds_entry_and_returns_class():
         assert ENGINES["temp-test-engine"] is cast("object", _TempEngine)
     finally:
         ENGINES.pop("temp-test-engine", None)
+
+
+def test_preflight_steps_asks_only_the_engines_that_declare_the_capability():
+    """``preflight_steps`` is the run's t=0 walk: opt-in, with the effective species.
+
+    Opt-in via ``PreflightChecking`` because a generic strict pass would refuse valid
+    configs — the direct script engines read leniently by documented design. The hook
+    receives the *effective* charge and multiplicity (config defaults with the step's
+    own override applied), the same resolution ``build_context`` performs for the run
+    itself — resolved in the walk so no hook re-spells the fallback.
+    """
+    from chemrefine.engines.api import preflight_steps
+
+    calls: list[tuple[int, int, int]] = []
+
+    class _Checked:
+        name = "preflight-probe"
+
+        def prepare(self, ctx: object) -> None: ...
+
+        def submit(self, inputs: object, ctx: object) -> None: ...
+
+        def parse(self, inputs: object, ctx: object) -> None: ...
+
+        def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
+            calls.append((step_cfg.step, charge, multiplicity))
+
+    try:
+        register("preflight-probe")(_Checked)
+        steps = [
+            StepConfig(step=1, engine="fake"),  # no capability — not asked
+            StepConfig(step=2, engine="preflight-probe"),  # config defaults apply
+            StepConfig(step=3, engine="preflight-probe", charge=-1, multiplicity=2),
+        ]
+        preflight_steps(steps, charge=0, multiplicity=1)
+    finally:
+        ENGINES.pop("preflight-probe", None)
+
+    assert calls == [(2, 0, 1), (3, -1, 2)]
 
 
 def _conforming(engine_name: str) -> type:

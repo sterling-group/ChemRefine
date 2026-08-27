@@ -31,6 +31,7 @@ from chemrefine.engines.api import (
     JobExecutable,
     NmsCapableEngine,
     OptionsDeclaring,
+    PreflightChecking,
     StructureArtifacts,
     TemplateDriven,
     get_engine,
@@ -315,6 +316,22 @@ def test_options_capability_matches_the_getattr_consumers():
         engine = get_engine(name)
         assert isinstance(engine, OptionsDeclaring)
         assert issubclass(engine.options_cls, EngineOptions)
+
+
+def test_the_preflight_capability_stays_a_claim_not_boilerplate():
+    """Exactly the engines that own a fail-fast refusal declare ``check_step``.
+
+    ``mlip-train`` (its refusals — no device, no task, a policy with nothing to act on
+    — are decidable from the config, and the step usually sits after days of label
+    computation) and the ExtOpt family (their options configure a server, so the
+    strict read the run block makes is made up front too). The direct script engines
+    stay out by documented design — lenient reads over templates that may carry knobs
+    of their own — and the fake engine is the minimal third-party shape. A new engine
+    that takes the hook extends this pin; one that grows a prepare-time refusal
+    without the hook is the Thursday failure coming back.
+    """
+    checking = {n for n in ENGINES if isinstance(get_engine(n), PreflightChecking)}
+    assert sorted(checking) == ["mlip-extopt", "mlip-train", "pyscf-extopt"]
 
 
 def test_declaring_an_options_model_stays_a_claim_not_boilerplate():

@@ -51,6 +51,7 @@ from chemrefine.engines.api import (
     JobExecutable,
     NmsCapableEngine,
     OptionsDeclaring,
+    PreflightChecking,
     TemplateDriven,
     WhitespacePathIntolerant,
     get_engine,
@@ -67,8 +68,9 @@ class ValidationIssue:
     ``loc`` follows pydantic's convention — a path of keys/indices into the YAML
     (``("steps", 1, "options")``) — so a GUI walks it to the field to highlight and an
     agent quotes it verbatim. ``kind`` is a short machine-checkable class of finding
-    (``yaml`` / ``legacy`` / a pydantic error type / ``engine`` / ``options`` / ``nms``
-    / ``template`` / ``slurm-header``); the message alone is for humans.
+    (``yaml`` / ``legacy`` / a pydantic error type / ``engine`` / ``options`` /
+    ``preflight`` / ``nms`` / ``template`` / ``slurm-header``); the message alone is
+    for humans.
     """
 
     loc: tuple[str | int, ...]
@@ -206,13 +208,32 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
             continue
         engine = get_engine(step.engine)
         declared: set[str] = set()
+        options_ok = True
         if isinstance(engine, OptionsDeclaring):
             declared |= engine.options_cls.accepted_names()
             try:
                 engine.options_cls.from_raw_lenient(step.options)
             except ConfigError as e:
+                options_ok = False
                 issues.append(
                     ValidationIssue(loc=("steps", index, "options"), kind="options", message=str(e))
+                )
+        if options_ok and isinstance(engine, PreflightChecking):
+            # The engine's own preflight refusals — the same hook the run's t=0 walk
+            # calls (`preflight_steps`), so `chemrefine validate` and the run cannot
+            # disagree about whether a step is runnable. Skipped when the lenient read
+            # already failed: the strict read inside the hook would repeat that issue.
+            try:
+                engine.check_step(
+                    step,
+                    charge=step.effective_charge(config.charge),
+                    multiplicity=step.effective_multiplicity(config.multiplicity),
+                )
+            except ConfigError as e:
+                issues.append(
+                    ValidationIssue(
+                        loc=("steps", index, "options"), kind="preflight", message=str(e)
+                    )
                 )
         if step.nms:
             declared |= set(NmsOptions.model_fields)

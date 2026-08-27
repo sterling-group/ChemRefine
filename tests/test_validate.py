@@ -164,6 +164,41 @@ def test_a_bad_declared_option_value_is_an_error(tmp_path: Path):
     assert report.issues[0].loc == ("steps", 0, "options")
 
 
+def test_an_engines_own_preflight_refusal_is_an_issue(tmp_path: Path):
+    """The report makes the same refusals the run's t=0 walk makes — one hook, two readers.
+
+    A training step without a device passed every pre-run pass before the
+    ``PreflightChecking`` hook existed: the lenient options read fills the default,
+    and the refusal lived only in ``prepare`` — reached after the steps computing the
+    labels had run for days. ``kind: preflight`` is the row an agent branches on.
+    """
+    report = _validate(
+        tmp_path,
+        steps=[{"step": 1, "engine": "mlip-train", "options": {"task_name": "mace_off"}}],
+    )
+    assert not report.ok
+    assert any(
+        issue.kind == "preflight" and "must name a device" in issue.message
+        for issue in report.issues
+    )
+
+
+def test_a_lenient_options_failure_is_not_double_reported(tmp_path: Path):
+    """A bad declared value fails the lenient read; the preflight hook must not repeat it."""
+    report = _validate(
+        tmp_path,
+        steps=[
+            {
+                "step": 1,
+                "engine": "mlip-train",
+                "options": {"task_name": "mace_off", "device": "not-a-device"},
+            }
+        ],
+    )
+    assert not report.ok
+    assert [issue.kind for issue in report.issues] == ["options"]
+
+
 def test_bad_nms_knobs_are_an_error(tmp_path: Path):
     report = _validate(
         tmp_path,

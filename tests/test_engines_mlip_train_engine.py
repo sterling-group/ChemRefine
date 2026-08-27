@@ -149,6 +149,31 @@ def test_a_typoed_knob_fails_the_step_rather_than_being_ignored(tmp_path: Path):
         MlipTrainEngine().prepare(ctx)
 
 
+def test_the_refusals_fire_at_the_runs_preflight_walk_not_thursday():
+    """The same refusals, at t=0 — a training step usually sits after days of labels.
+
+    ``prepare`` has always made these checks, but a training step's prepare runs only
+    once every upstream step has computed its labels — the docstrings' "typo caught on
+    Thursday". ``check_step`` is the same refusal on the ``PreflightChecking`` hook,
+    which ``pipeline.run`` walks (and ``chemrefine validate`` reports) before anything
+    runs at all. The strict read is part of it: the typoed knob here would pass every
+    lenient pre-run pass.
+    """
+    from chemrefine.engines.api import preflight_steps
+
+    missing_device = StepConfig(step=4, engine="mlip-train", options={"task_name": "mace_off"})
+    with pytest.raises(ConfigError, match="must name a device"):
+        preflight_steps([missing_device], charge=0, multiplicity=1)
+
+    typoed = StepConfig(
+        step=4,
+        engine="mlip-train",
+        options={"task_name": "mace_off", "device": "cpu", "valid_fractoin": 0.2},
+    )
+    with pytest.raises(ConfigError, match="invalid mliptrain options"):
+        preflight_steps([typoed], charge=0, multiplicity=1)
+
+
 # ---------------------------------------------------------------------------
 # prepare
 # ---------------------------------------------------------------------------

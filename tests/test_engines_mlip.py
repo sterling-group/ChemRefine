@@ -113,6 +113,25 @@ def test_orca_and_fake_are_not_provisionable():
     assert not isinstance(get_engine("fake"), ProvisionableEngine)
 
 
+def test_a_typoed_extopt_knob_is_refused_at_the_runs_preflight_walk():
+    """The ExtOpt base's strict options read, made at t=0 rather than at submit time.
+
+    ``_server_cmd`` has always validated strictly when the job script is built — this
+    step's own turn. The ``PreflightChecking`` hook on the base makes the same read
+    before any step runs, so a typo in a late ExtOpt step no longer costs the steps
+    before it.
+    """
+    from chemrefine.config import StepConfig
+    from chemrefine.engines.api import preflight_steps
+    from chemrefine.errors import ConfigError
+
+    step_cfg = StepConfig(
+        step=3, engine="mlip-extopt", options={"task_name": "mace_off", "modle": "small"}
+    )
+    with pytest.raises(ConfigError, match="modle"):
+        preflight_steps([step_cfg], charge=0, multiplicity=1)
+
+
 def test_requirement_from_options_maps_the_task_family():
     """task/task_name aliases resolve; the default (omol) is the FAIRChem env."""
     from chemrefine.engines.mlip.registry import requirement_from_options

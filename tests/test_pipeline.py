@@ -492,6 +492,34 @@ def _preflighted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plan: RunPlan)
     return calls
 
 
+def test_the_run_walks_every_submittable_steps_own_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``preflight_steps`` rides beside ``preflight_backends``: same list, same t=0.
+
+    The engine-owned refusals (``PreflightChecking``) fire for exactly the steps that
+    may submit — keyed on ``may_submit`` for the same rebuild-cache reason the backend
+    walk is — and receive the config's charge/multiplicity defaults so each hook can
+    resolve its step's effective species.
+    """
+    calls: list[tuple[list[str], int, int]] = []
+    monkeypatch.setattr(
+        pipeline,
+        "preflight_steps",
+        lambda steps, *, charge, multiplicity: calls.append(
+            ([s.engine for s in steps], charge, multiplicity)
+        ),
+    )
+    cfg = Config(
+        template_dir=tmp_path / "templates",
+        output_dir=tmp_path / "outputs",
+        steps=[StepConfig(step=1, engine="fake", operation="opt_sp")],
+    )
+    with pytest.raises(ChemRefineError):
+        pipeline.run(cfg)
+    assert calls == [(["fake"], 0, 1)]
+
+
 def test_rebuild_cache_requires_no_backend_from_any_of_its_steps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -104,10 +104,8 @@ def build_context(
         template=_template_for(config, step_cfg, engine),
         scratch_dir=config.scratch_dir.resolve() if config.scratch_dir is not None else None,
         prev_state=prev_state,
-        charge=step_cfg.charge if step_cfg.charge is not None else config.charge,
-        multiplicity=(
-            step_cfg.multiplicity if step_cfg.multiplicity is not None else config.multiplicity
-        ),
+        charge=step_cfg.effective_charge(config.charge),
+        multiplicity=step_cfg.effective_multiplicity(config.multiplicity),
         max_cores=config.max_cores,
         slurm_template=config.slurm_template,
         executables=config.executables,

@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import ClassVar
 
+from chemrefine.config import StepConfig
 from chemrefine.engines import _provision
 from chemrefine.engines._backend_server.base import SERVER_URL_FILENAME, ComputeBackend
 from chemrefine.engines._job import gpus_from_options
@@ -76,6 +77,20 @@ class ExtOptOrcaEngine(OrcaEngine):
                 f"{missing} of its own — it inherits them from the ComputeBackend Protocol, "
                 f"where each is an ellipsis body returning None."
             )
+
+    def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
+        """Validate the step's options through this engine's own model, up front.
+
+        The same strict read :meth:`_server_cmd` makes when the job script is built —
+        hoisted onto :class:`~chemrefine.engines.api.PreflightChecking` so a typoed
+        knob (``extra="forbid"``) or a missing required one (PySCF's ``basis``/``xc``)
+        is refused before any earlier step is paid for, rather than at this step's own
+        turn. On the base because every ExtOpt engine validates strictly — its options
+        configure a server, not a template a user's own code reads — so each subclass
+        gets the preflight for the price of its existing ``options_cls`` declaration; a
+        subclass with a refusal of its own extends rather than replaces.
+        """
+        self.options_cls.from_raw(step_cfg.options)
 
     def gpus(self, ctx: StepContext) -> int:
         """A GPU when the backend's **validated** options request one; else CPU.

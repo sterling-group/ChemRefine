@@ -193,6 +193,26 @@ def test_save_tensors_on_a_closed_shell_step_prepares_normally(tmp_path: Path):
     assert len(inputs.files) == 1
 
 
+def test_the_open_shell_refusal_also_fires_at_the_runs_preflight_walk():
+    """The same refusal, at t=0 — before any upstream step is paid for.
+
+    The prepare-time test above holds the recovery paths; this one holds the
+    ``PreflightChecking`` route ``pipeline.run`` walks before anything submits. The
+    step's own ``multiplicity: 3`` override is applied over the config default passed
+    to the walk, so the hook judges the species the step would actually run.
+    """
+    from chemrefine.engines.api import preflight_steps
+
+    step_cfg = StepConfig(
+        step=3,
+        engine="pyscf-extopt",
+        multiplicity=3,
+        options={"basis": "def2-svp", "xc": "pbe", "save_tensors": True},
+    )
+    with pytest.raises(ConfigError, match=r"closed-shell.*multiplicity is 3"):
+        preflight_steps([step_cfg], charge=0, multiplicity=1)
+
+
 def test_pyscf_run_block_omits_bool_flags_when_unset(tmp_path: Path):
     """Bool flags stay gated on their option; key-value knobs carry validated values."""
     engine = get_engine("pyscf-extopt")

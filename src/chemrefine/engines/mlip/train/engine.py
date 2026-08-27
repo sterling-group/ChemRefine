@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from chemrefine import ids
+from chemrefine.config import StepConfig
 from chemrefine.engines import _provision
 from chemrefine.engines.api import BackendRequirement, RunBlock, register
 from chemrefine.engines.mlip.backend import MlipBackend
@@ -182,6 +183,41 @@ class MlipTrainEngine(MlipBackend):
 
     # -- the lifecycle ------------------------------------------------------
 
+    def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
+        """Refuse a step that cannot train, before any upstream step is paid for.
+
+        The refusals :meth:`prepare` has always made, hoisted onto the
+        :class:`~chemrefine.engines.api.PreflightChecking` capability so the run's
+        preflight walk (and ``chemrefine validate``) makes them at t=0 — a training
+        step usually sits *after* the steps that compute its labels, so a refusal at
+        its own ``prepare`` lands only once those have run for days. The strict
+        options read is part of the check: ``from_raw`` refuses a typoed knob, which
+        the lenient read every pre-run pass used until now silently dropped.
+
+        ``charge`` / ``multiplicity`` are unread — a training step trains whatever
+        species its labels carry — but the hook's signature is the capability's.
+        """
+        opts = self.options_cls.from_raw(step_cfg.options)
+        if "task_name" not in opts.model_fields_set:
+            raise ConfigError(
+                f"step {step_cfg.step} (mlip-train) must name a `task_name`: it selects "
+                f"which library trains, and there is no default worth guessing. Its "
+                f"inference default names a foundation model to *run*, which is not the "
+                f"same choice. Trainable: {sorted(registered_trainers())}."
+            )
+        if "device" not in opts.model_fields_set:
+            raise ConfigError(
+                f"step {step_cfg.step} (mlip-train) must name a device: training on CPU "
+                f"is impractical rather than merely slow, so there is no default. Set "
+                f"`options: {{device: cuda}}` (or `cpu` if you mean it)."
+            )
+        if step_cfg.on_failure != "stop":
+            raise ConfigError(
+                f"step {step_cfg.step} (mlip-train) sets `on_failure: "
+                f"{step_cfg.on_failure}`, which has nothing to act on — a training step "
+                f"has no per-structure failures to skip or backfill. Remove it."
+            )
+
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Write the dataset and render the trainer config; return the one job.
 
@@ -189,27 +225,13 @@ class MlipTrainEngine(MlipBackend):
         whose "output" is the model — so the scheduler runs it in the run directory, the
         manifest records what this step was asked to do, and a resume can prove the product on
         disk belongs to this configuration.
+
+        :meth:`check_step` runs again here, not only at preflight: the recovery paths
+        (``rerun-errors``, a resumed step) reach ``prepare`` without the preflight walk,
+        and the checks are cheap and idempotent.
         """
+        self.check_step(ctx.step_cfg, charge=ctx.charge, multiplicity=ctx.multiplicity)
         opts = self._opts(ctx)
-        if "task_name" not in opts.model_fields_set:
-            raise ConfigError(
-                f"step {ctx.step_cfg.step} (mlip-train) must name a `task_name`: it selects "
-                f"which library trains, and there is no default worth guessing. Its "
-                f"inference default names a foundation model to *run*, which is not the "
-                f"same choice. Trainable: {sorted(registered_trainers())}."
-            )
-        if "device" not in opts.model_fields_set:
-            raise ConfigError(
-                f"step {ctx.step_cfg.step} (mlip-train) must name a device: training on CPU "
-                f"is impractical rather than merely slow, so there is no default. Set "
-                f"`options: {{device: cuda}}` (or `cpu` if you mean it)."
-            )
-        if ctx.step_cfg.on_failure != "stop":
-            raise ConfigError(
-                f"step {ctx.step_cfg.step} (mlip-train) sets `on_failure: "
-                f"{ctx.step_cfg.on_failure}`, which has nothing to act on — a training step "
-                f"has no per-structure failures to skip or backfill. Remove it."
-            )
         trainer = self._trainer(ctx)
         plan = self._plan(ctx)
         split = split_structures(

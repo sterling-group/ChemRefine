@@ -53,7 +53,7 @@ One job, one product          :class:`CalculationEngine` +    ``prepare`` / ``su
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Protocol, runtime_checkable
@@ -61,6 +61,7 @@ from typing import Any, ClassVar, Protocol, runtime_checkable
 import numpy as np
 from numpy.typing import NDArray
 
+from chemrefine.config import StepConfig
 from chemrefine.engines._options import EngineOptions
 from chemrefine.errors import EngineNotFoundError
 from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
@@ -541,6 +542,37 @@ class ProvisionableEngine(CalculationEngine, Protocol):
         ...
 
 
+@runtime_checkable
+class PreflightChecking(Protocol):
+    """An engine that can vet a step's configuration before the run starts.
+
+    The refusals an engine would otherwise make in ``prepare`` — a required knob left
+    unset, an option combination its backend cannot serve — fire there only when the
+    step's own turn comes, which for a late step is after every earlier one has been
+    computed and paid for. This hook is the sanctioned earlier moment:
+    :func:`preflight_steps` calls it for every submittable step before anything runs
+    (the walk that already checks backend envs), and ``chemrefine validate`` reports
+    the same refusals without running anything. An engine keeps making its own checks
+    in ``prepare`` too — the recovery paths that skip the preflight still deserve them.
+
+    A capability detected via ``isinstance`` like every other one here, and an opt-in
+    deliberately, never a generic strict pass over every options model: the direct
+    script engines read their options leniently by documented design (a ``step{N}.py``
+    template may carry knobs no model declares), so only an engine that *owns* a
+    fail-fast refusal declares the hook.
+    """
+
+    def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
+        """Raise :class:`~chemrefine.errors.ConfigError` if this step cannot run as configured.
+
+        ``charge`` and ``multiplicity`` are the step's **effective** values — the
+        config defaults with any per-step override applied — because a refusal may
+        hinge on them: an open-shell step asking for a closed-shell-only extraction is
+        decidable from the config alone, but only from the resolved species.
+        """
+        ...
+
+
 ENGINES: dict[str, type[CalculationEngine]] = {}
 """Registry mapping the YAML ``engine:`` string to a concrete engine class.
 
@@ -643,3 +675,28 @@ def get_engine(name: str) -> CalculationEngine:
     if engine_cls is None:
         raise EngineNotFoundError(f"unknown engine {name!r}; registered: {sorted(ENGINES)}")
     return engine_cls()
+
+
+def preflight_steps(steps: Sequence[StepConfig], *, charge: int, multiplicity: int) -> None:
+    """Ask every step's engine to vet its configuration before anything runs.
+
+    Called from :func:`chemrefine.pipeline.run` beside ``preflight_backends``, over the
+    same submittable steps and for the same reason: a refusal decidable from the config
+    alone must not wait for the failing step's own turn — in a pipeline that spends
+    days computing labels before a training step, that is the difference between a
+    typo caught in seconds and one caught on Thursday. Engines without the capability
+    have nothing to check and are not asked.
+
+    ``charge`` / ``multiplicity`` are the config-wide defaults; each step's own
+    override is applied here (:meth:`~chemrefine.config.StepConfig.effective_charge`),
+    so a hook always sees the effective values its step would run with — the same
+    resolution :func:`chemrefine.step.build_context` performs for the run itself.
+    """
+    for step_cfg in steps:
+        engine = get_engine(step_cfg.engine)
+        if isinstance(engine, PreflightChecking):
+            engine.check_step(
+                step_cfg,
+                charge=step_cfg.effective_charge(charge),
+                multiplicity=step_cfg.effective_multiplicity(multiplicity),
+            )
