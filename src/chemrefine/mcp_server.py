@@ -17,7 +17,12 @@ message instead of a traceback.
 
 from __future__ import annotations
 
+import functools
+from collections.abc import Callable
+from typing import Any
+
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from chemrefine import __version__
 
@@ -25,6 +30,41 @@ from chemrefine import __version__
 # mcp_server.guide_text, and `no_implicit_reexport` requires the spelling to say so.
 from chemrefine.agent_tools import TOOLS as TOOLS
 from chemrefine.agent_tools import guide_text as guide_text
+from chemrefine.errors import ChemRefineError
+
+
+def actionable(tool: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap a tool so a :class:`~chemrefine.errors.ChemRefineError` reaches the model.
+
+    The SDK distinguishes an error a tool raised *on purpose* from a crash, and only the
+    first keeps its text: a ``ToolError`` is relayed as an ``is_error`` result carrying the
+    message, while any other exception becomes a generic "Error executing tool <name>" with
+    the detail deliberately left on the server. That is the right default — an arbitrary
+    traceback can carry paths and environment — and it is the wrong answer for
+    :class:`ChemRefineError`, which exists precisely to be shown: it is the class every
+    config mistake, missing template and unknown action is raised as, and its message names
+    what to change.
+
+    Unwrapped, ``action: explode`` reaches an agent as "Error executing tool start_run" and
+    the sentence listing the valid actions never leaves the process, so the model has nothing
+    to act on and no reason to believe a retry would differ.
+
+    Only ``ChemRefineError`` is translated. A genuine crash keeps the generic message, which
+    is the SDK's hygiene and worth keeping — this says which of our exceptions are answers to
+    the caller rather than failures of the server.
+
+    :func:`functools.wraps` carries ``__wrapped__``, so the SDK still derives the tool's
+    schema from the original signature and its description from the original docstring.
+    """
+
+    @functools.wraps(tool)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return tool(*args, **kwargs)
+        except ChemRefineError as exc:
+            raise ToolError(str(exc)) from exc
+
+    return wrapper
 
 
 def build_server() -> MCPServer:
@@ -41,7 +81,7 @@ def build_server() -> MCPServer:
         ),
     )
     for tool in TOOLS:
-        server.tool()(tool)
+        server.tool()(actionable(tool))
 
     @server.resource(
         "chemrefine://guide",

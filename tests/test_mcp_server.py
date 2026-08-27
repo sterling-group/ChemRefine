@@ -62,6 +62,38 @@ async def test_a_chemrefine_error_is_a_tool_error_not_a_dead_session():
         assert follow_up.is_error is False
 
 
+def test_actionable_translates_only_our_own_deliberate_errors():
+    """The translation is narrow, and that is the point of it.
+
+    The SDK relays the message of a ``ToolError`` a tool raised on purpose and replaces any
+    other exception's text with a generic line — right, because an arbitrary traceback can
+    carry paths and environment. :class:`~chemrefine.errors.ChemRefineError` is the class
+    whose message *is* the answer to the caller, so it earns the translation; nothing else
+    does, and a crash must keep travelling as a crash.
+
+    Asserted on the wrapper rather than over a session because this is a property of our
+    code at every supported SDK version. What the SDK then does with each kind is its own,
+    and it changed inside our supported range: mcp 2.0 appends a crash's own text to the
+    client, 2.1 keeps it on the server. The relaying of a ``ToolError`` is the part both
+    do, which is why the translation is what makes the actionable case work on either.
+    """
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from chemrefine.errors import ConfigError
+
+    def deliberate() -> str:
+        raise ConfigError("name the basis set explicitly")
+
+    def crash() -> str:
+        raise RuntimeError("/home/someone/private/path blew up")
+
+    with pytest.raises(ToolError, match="name the basis set explicitly"):
+        mcp_server.actionable(deliberate)()
+
+    with pytest.raises(RuntimeError, match="private/path"):
+        mcp_server.actionable(crash)()
+
+
 @pytest.mark.anyio
 async def test_the_guide_resource_serves_the_packaged_markdown():
     async with Client(mcp_server.build_server()) as client:

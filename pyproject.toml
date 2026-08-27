@@ -84,6 +84,14 @@ server = [
 # The MCP server (`chemrefine mcp`) — the official Model Context Protocol SDK.
 # v2 is its stable line (MCPServer, in-memory Client for tests); <3 guards the
 # next breaking major the way the v1→v2 rename broke FastMCP imports.
+#
+# The floor stays at 2 because that is the lowest version the code runs on, per the rule
+# above. The range does span one behaviour change worth knowing: 2.0 appends a crashing
+# tool's own exception text to the client, 2.1 keeps it on the server and sends a generic
+# line. Both relay a `ToolError` raised deliberately, which is why
+# `mcp_server.actionable` translates our `ChemRefineError` into one — the actionable
+# message then reaches the model on either. Raising the floor to 2.1 would additionally
+# guarantee that an unexpected traceback never leaves the process.
 mcp = ["mcp>=2,<3"]
 # The YAML-builder GUI (`chemrefine gui`) — pure re-use of the [server] pins
 # (flask/waitress); the frontend is vendored static JS, no dependency of its own.
