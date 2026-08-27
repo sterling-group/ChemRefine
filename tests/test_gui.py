@@ -1004,6 +1004,53 @@ def test_chat_reset_forgets_the_conversation(client: Any, chat_env: pytest.Monke
     assert seen[0] == seen[1]  # the second conversation started fresh
 
 
+def test_overlapping_chat_turns_contend_on_a_lock_not_on_the_state(
+    client: Any, chat_env: pytest.MonkeyPatch
+):
+    """A second Send during a turn hears "busy" — it must not run from the same history.
+
+    The chat state is one conversation for one user, but waitress serves on four threads
+    and a turn is a read-modify-write around a model call that takes seconds to a minute.
+    Unsynchronised, two overlapping POSTs both read the same history, both run turns from
+    it, and the last writer wins: a turn's messages silently vanish, or a ``reset``
+    lands mid-turn and the finishing turn resurrects the conversation it was told to
+    forget. Non-blocking with a 409 rather than queueing, so a Send during a wedged turn
+    answers now instead of hanging behind it — and the lock's release is proven by the
+    follow-up request going through normally.
+    """
+    import threading
+
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.models.function import FunctionModel
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow(messages: Any, info: Any) -> ModelResponse:
+        entered.set()
+        assert release.wait(timeout=10), "the test never released the model"
+        return ModelResponse(parts=[TextPart("slow reply")])
+
+    _inject_model(chat_env, FunctionModel(slow))
+    first: dict[str, Any] = {}
+
+    def send_first() -> None:
+        first["response"] = _post(client, "/api/agent/chat", {"message": "one"})
+
+    turn = threading.Thread(target=send_first)
+    turn.start()
+    try:
+        assert entered.wait(timeout=10), "the first turn never reached the model"
+        contended = _post(client.application.test_client(), "/api/agent/chat", {"message": "two"})
+        assert contended.status_code == 409
+        assert "already running" in contended.get_json()["error"]
+    finally:
+        release.set()
+        turn.join(timeout=10)
+    assert first["response"].get_json()["reply"] == "slow reply"
+    assert _post(client, "/api/agent/chat", {"message": "three"}).status_code == 200
+
+
 def test_non_chemrefine_errors_are_not_swallowed(client: Any):
     """Only ChemRefineError gets the JSON shape; a genuine bug must stay a loud bug."""
     with pytest.raises(KeyError):

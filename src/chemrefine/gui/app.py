@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import importlib
 import secrets
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -350,6 +351,14 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     # (history = PydanticAI's own message list; pending = the suspended run awaiting the
     # human's allow/deny verdicts).
     chat_state: dict[str, Any] = {"history": None, "pending": None}
+    # One conversation, but four waitress threads — and a turn is a read-modify-write
+    # around a model call that takes seconds to a minute. Two overlapping POSTs would
+    # both run from the same history and the last writer would win: a turn's messages
+    # silently gone, or `pending` clobbered mid-approval. Non-blocking, answering 409,
+    # rather than queueing: a Send during a wedged turn should hear "busy" now, not hang
+    # behind it. `reset` takes the same lock — a reset landing mid-turn would otherwise
+    # be resurrected by the turn it interrupted.
+    chat_lock = threading.Lock()
 
     def _preset_shapes() -> dict[str, dict[str, Any]]:
         """The provider field-shapes, from the module that owns them.
@@ -439,13 +448,28 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
 
     @app.post("/api/agent/chat")
     def agent_chat() -> Any:
-        """One agent turn: a message, or the verdicts that resume a suspended run.
+        """One agent turn at a time: contend on the lock, then run it.
 
-        Non-streaming by design (a local-model turn takes seconds to a minute inside
-        this worker thread); the reply is either text or a list of approval requests
-        the frontend renders as allow/deny cards. Provider errors — an unreachable
-        Ollama, a bad key — come back as a 502 with the message, not a traceback: at
-        the network boundary the failure is the answer.
+        A turn is a read-modify-write of ``chat_state`` around the model call, so
+        overlapping requests must not interleave — see ``chat_lock`` above for what a
+        lost race costs. The contended answer is a 409 in the same ``{error: …}`` shape
+        as every other refusal here, so the panel flashes it like any other.
+        """
+        if not chat_lock.acquire(blocking=False):
+            return jsonify({"error": "a chat turn is already running; wait for it to finish"}), 409
+        try:
+            return _chat_turn()
+        finally:
+            chat_lock.release()
+
+    def _chat_turn() -> Any:
+        """The turn itself — a message, or the verdicts that resume a suspended run.
+
+        Runs under ``agent_chat``'s lock, always. Non-streaming by design (a local-model
+        turn takes seconds to a minute inside this worker thread); the reply is either
+        text or a list of approval requests the frontend renders as allow/deny cards.
+        Provider errors — an unreachable Ollama, a bad key — come back as a 502 with the
+        message, not a traceback: at the network boundary the failure is the answer.
         """
         from pydantic_ai import DeferredToolRequests, DeferredToolResults
 
