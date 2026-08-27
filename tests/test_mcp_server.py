@@ -62,36 +62,49 @@ async def test_a_chemrefine_error_is_a_tool_error_not_a_dead_session():
         assert follow_up.is_error is False
 
 
-def test_actionable_translates_only_our_own_deliberate_errors():
-    """The translation is narrow, and that is the point of it.
+@pytest.mark.anyio
+async def test_only_a_deliberate_error_keeps_its_text_on_the_wire():
+    """Both halves of the contract, over a real session.
 
     The SDK relays the message of a ``ToolError`` a tool raised on purpose and replaces any
-    other exception's text with a generic line — right, because an arbitrary traceback can
-    carry paths and environment. :class:`~chemrefine.errors.ChemRefineError` is the class
-    whose message *is* the answer to the caller, so it earns the translation; nothing else
-    does, and a crash must keep travelling as a crash.
+    other exception's text with a generic line, keeping the detail on the server. That is a
+    property of the floor rather than of this code — ``mcp`` 2.0 appended a crash's own text
+    and 2.1 does not, which is why the extra floors at 2.1 — and it is only worth anything
+    while the translation stays narrow: :class:`~chemrefine.errors.ChemRefineError` is the
+    class whose message *is* the answer to the caller, and a crash has to keep travelling as
+    a crash.
 
-    Asserted on the wrapper rather than over a session because this is a property of our
-    code at every supported SDK version. What the SDK then does with each kind is its own,
-    and it changed inside our supported range: mcp 2.0 appends a crash's own text to the
-    client, 2.1 keeps it on the server. The relaying of a ``ToolError`` is the part both
-    do, which is why the translation is what makes the actionable case work on either.
+    Driven through a session rather than the wrapper, because what is pinned is the pair:
+    what we raise, and what the SDK then sends.
     """
-    from mcp.server.mcpserver.exceptions import ToolError
+    from mcp.server import MCPServer
 
     from chemrefine.errors import ConfigError
 
     def deliberate() -> str:
+        """Raise the class every config mistake is raised as."""
         raise ConfigError("name the basis set explicitly")
 
     def crash() -> str:
+        """Raise anything else."""
         raise RuntimeError("/home/someone/private/path blew up")
 
-    with pytest.raises(ToolError, match="name the basis set explicitly"):
-        mcp_server.actionable(deliberate)()
+    server = MCPServer(name="probe", version="0")
+    for tool in (deliberate, crash):
+        server.tool()(mcp_server.actionable(tool))
 
-    with pytest.raises(RuntimeError, match="private/path"):
-        mcp_server.actionable(crash)()
+    async with Client(server) as client:
+        answered = await client.call_tool("deliberate", {})
+        crashed = await client.call_tool("crash", {})
+
+    assert answered.is_error is True
+    assert "name the basis set explicitly" in answered.content[0].text
+
+    assert crashed.is_error is True
+    assert "private/path" not in crashed.content[0].text, (
+        "a crash's own text must stay on the server — this is what the 2.1 floor buys"
+    )
+    assert "crash" in crashed.content[0].text, "but the caller still learns which tool failed"
 
 
 @pytest.mark.anyio

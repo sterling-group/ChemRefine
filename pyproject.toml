@@ -85,14 +85,14 @@ server = [
 # v2 is its stable line (MCPServer, in-memory Client for tests); <3 guards the
 # next breaking major the way the v1→v2 rename broke FastMCP imports.
 #
-# The floor stays at 2 because that is the lowest version the code runs on, per the rule
-# above. The range does span one behaviour change worth knowing: 2.0 appends a crashing
-# tool's own exception text to the client, 2.1 keeps it on the server and sends a generic
-# line. Both relay a `ToolError` raised deliberately, which is why
-# `mcp_server.actionable` translates our `ChemRefineError` into one — the actionable
-# message then reaches the model on either. Raising the floor to 2.1 would additionally
-# guarantee that an unexpected traceback never leaves the process.
-mcp = ["mcp>=2,<3"]
+# 2.1, not 2: the two differ in what a *crashing* tool sends the client. 2.0 appends the
+# exception's own text; 2.1 keeps it on the server behind a generic line. Only the second
+# is a safe promise to make about a server that runs a user's pipelines and touches their
+# filesystem, so the floor is where the guarantee starts rather than where the code merely
+# runs. `mcp_server.actionable` is the other half — it raises our own `ChemRefineError` as
+# the SDK's `ToolError`, which both versions relay, so the actionable message still
+# reaches the model while a traceback does not.
+mcp = ["mcp>=2.1,<3"]
 # The YAML-builder GUI (`chemrefine gui`) — pure re-use of the [server] pins
 # (flask/waitress); the frontend is vendored static JS, no dependency of its own.
 gui = ["chemrefine[server]"]
