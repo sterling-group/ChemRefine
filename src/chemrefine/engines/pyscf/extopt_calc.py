@@ -61,7 +61,7 @@ class PyscfExtOptCalculator(ComputeBackend):
         method: str = "dft",
         xc: str = "pbe",
         basis: str = "def2-svp",
-        df: bool = False,
+        df: bool = True,
         gpu: bool = False,
         save_tensors: bool = False,
         localized: bool = False,
@@ -76,19 +76,28 @@ class PyscfExtOptCalculator(ComputeBackend):
         self.save_tensors = save_tensors
         self.localized = localized
         self.tensor_folder = tensor_folder
-        # Defaults on, unlike the other booleans here, because it is a correctness guard:
-        # a directly-constructed calculator must not be the lenient one.
+        # Every default here restates PyscfExtOptOptions' — the model is the canonical
+        # source, and a directly-constructed calculator must be the same calculator a
+        # YAML step's defaults build. `df` sat off here for a release after the model
+        # flipped it on, so a bare construction solved a different SCF shape than a
+        # default step; the lockstep test now holds every shared knob equal.
         self.strict_scf = strict_scf
 
     @classmethod
     def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:
         """Register PySCF flags on a shared server / client parser.
 
-        Defaults mirror :class:`PyscfExtOptOptions`; the Pydantic model stays
-        the canonical name + default source. Adding a knob here means
-        also adding it to ``PyscfExtOptOptions`` (or vice-versa) — the
-        ``_KEY_VALUE_FLAGS`` / ``_BOOL_FLAGS`` tuples gate which knobs
-        are CLI-exposed.
+        Defaults mirror :class:`PyscfExtOptOptions` — with one deliberate exception.
+        ``--df`` is a ``store_true`` whose argparse default stays ``False`` although the
+        model's is ``True``: the engine emits every *resolved* value as a token
+        (``--df`` when on, nothing when off — see :meth:`server_cli_from_options`), so
+        the argparse default is what an omitted token means, and it has to be the off
+        state for a ``df: false`` step to survive the trip. No generated run block can
+        reach the argparse default; only a hand-run server does, and a hand-run without
+        ``--df`` runs the bare SCF. The Pydantic model stays the canonical name +
+        default source everywhere else. Adding a knob here means also adding it to
+        ``PyscfExtOptOptions`` (or vice-versa) — the ``_KEY_VALUE_FLAGS`` /
+        ``_BOOL_FLAGS`` tuples gate which knobs are CLI-exposed.
         """
         defaults = PyscfExtOptOptions()
         parser.add_argument(

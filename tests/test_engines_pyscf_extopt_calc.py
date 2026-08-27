@@ -82,6 +82,11 @@ def _install_fake_pyscf(monkeypatch, *, mol_spin: int = 0) -> dict[str, MagicMoc
     df_mf.kernel.return_value = -1.75
     df_mf.converged = True
     df_mf.nuc_grad_method.return_value.kernel.return_value = np.zeros((2, 3))
+    # The DF copy carries the same orbital surface as the bare object, the way PySCF's
+    # does after kernel() — with DF the shipped default, the tensor extraction reads
+    # *this* object's mo_coeff/mo_occ, not the bare one's.
+    df_mf.mo_coeff = np.eye(2)
+    df_mf.mo_occ = np.array([2.0, 0.0])
     rks.density_fit.return_value = df_mf
     mocks["rks"] = rks
     mocks["df_mf"] = df_mf
@@ -547,10 +552,15 @@ def test_save_tensors_writes_npz_with_expected_keys(tmp_path: Path):
 
 
 def test_extopt_calc_returns_energy_and_gradient(monkeypatch):
+    """A bare calculator solves the DF-decorated SCF — the model's own default shape.
+
+    -1.75 is the fake's DF sentinel, distinct from the bare -1.5 precisely so this
+    assertion can tell the shipped default really applied density fitting.
+    """
     _install_fake_pyscf(monkeypatch)
     calc = extopt_calc.PyscfExtOptCalculator()
     energy, gradient = calc.calc(_data())
-    assert energy == -1.5
+    assert energy == -1.75
     assert len(gradient) == 2
 
 
@@ -614,6 +624,9 @@ def test_add_cli_args_registers_pyscf_flags_with_pydantic_defaults():
     assert args.method == defaults.method
     assert args.xc == defaults.xc
     assert args.basis == defaults.basis
+    # The one deliberate deviation from the model (whose df defaults True): the engine
+    # emits every resolved value as a token, so an omitted --df must mean off for a
+    # `df: false` step to survive the trip — add_cli_args' docstring carries the rule.
     assert args.df is False
     assert args.gpu is False
     # Tensor-extraction knobs default to PyscfExtOptOptions' values.
@@ -696,7 +709,8 @@ def test_an_unconverged_scf_is_refused(monkeypatch):
     correctly-converged siblings with nothing marking it.
     """
     mocks = _install_fake_pyscf(monkeypatch)
-    mocks["rks"].converged = False
+    # The default path solves the DF-decorated object, so that is the verdict read.
+    mocks["df_mf"].converged = False
 
     with pytest.raises(JobFailureError, match="did not converge"):
         extopt_calc.PyscfExtOptCalculator().calc(_data())
@@ -705,11 +719,11 @@ def test_an_unconverged_scf_is_refused(monkeypatch):
 def test_an_unconverged_scf_is_served_when_the_step_opts_out(monkeypatch):
     """`strict_scf: false` is for a knowingly loose SCF — the energy is the last iterate."""
     mocks = _install_fake_pyscf(monkeypatch)
-    mocks["rks"].converged = False
+    mocks["df_mf"].converged = False
 
     energy, gradient = extopt_calc.PyscfExtOptCalculator(strict_scf=False).calc(_data())
 
-    assert energy == -1.5
+    assert energy == -1.75
     assert len(gradient) == 2
 
 
@@ -717,13 +731,34 @@ def test_a_converged_scf_is_unaffected_by_the_guard(monkeypatch):
     """The ordinary case must not change."""
     _install_fake_pyscf(monkeypatch)
     energy, _gradient = extopt_calc.PyscfExtOptCalculator().calc(_data())
-    assert energy == -1.5
+    assert energy == -1.75
 
 
 def test_the_guard_defaults_on_for_a_directly_constructed_calculator():
-    """Unlike the other booleans here, its safe state is the default one."""
+    """The correctness guard's safe state is the default one, in both spellings."""
     assert extopt_calc.PyscfExtOptCalculator(basis="def2-svp").strict_scf is True
     assert PyscfExtOptOptions(basis="def2-svp", xc="pbe").strict_scf is True
+
+
+def test_a_bare_calculator_carries_the_models_own_defaults():
+    """``PyscfExtOptCalculator()`` equals ``PyscfExtOptOptions()`` on every shared knob.
+
+    The model is the canonical default source and the constructor restates its values
+    so programmatic callers can build one bare. Restated is how they drift: ``df``
+    flipped to on in the model and sat off here for a release, so a bare construction
+    solved a different SCF shape than a YAML step's defaults. Held equal by iteration
+    over the model's own fields, so a knob added to both cannot drift unnoticed either.
+    """
+    defaults = PyscfExtOptOptions()
+    calc = extopt_calc.PyscfExtOptCalculator()
+    shared = [name for name in PyscfExtOptOptions.model_fields if hasattr(calc, name)]
+    assert shared, "no shared knobs — has the calculator been restructured?"
+    mismatched = {
+        name: (getattr(calc, name), getattr(defaults, name))
+        for name in shared
+        if getattr(calc, name) != getattr(defaults, name)
+    }
+    assert mismatched == {}
 
 
 def test_strict_scf_reaches_the_server_as_its_opt_out():
