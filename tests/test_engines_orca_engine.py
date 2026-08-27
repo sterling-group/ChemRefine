@@ -357,6 +357,57 @@ def test_parse_unknown_operation_raises(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# check_step — the parser's operation refusal, before any job is paid for
+# ---------------------------------------------------------------------------
+
+
+def test_check_step_refuses_an_operation_the_parser_cannot_dispatch():
+    """A typo'd ``operation:`` must be refused from the config alone, naming the vocabulary.
+
+    Unchecked, it is first refused by the *parser* — after every job in the step has run
+    at full cost — and because the operation is part of every row key, correcting the typo
+    re-keys the rows so no recovery command adopts the paid outputs. The refusal has to
+    fire where the other config-decidable ones do: at preflight, and in ``validate``.
+    """
+    engine = get_engine("orca")
+    with pytest.raises(ConfigError, match="opt-sp") as excinfo:
+        engine.check_step(
+            StepConfig(step=1, engine="orca", operation="opt-sp"), charge=0, multiplicity=1
+        )
+    assert "opt_sp" in str(excinfo.value), "the vocabulary the parser dispatches is named"
+
+
+def test_check_step_accepts_everything_the_parser_dispatches():
+    """The accepted set is the parser's own — offered names, the legacy ``dft``, any case.
+
+    ``GOAT`` covers the normalisation branch: the legacy YAML rewriter lowercases an
+    operation, but a :class:`StepConfig` built directly (tests, the GUI's form state)
+    arrives unrewritten, and the parser normalises at dispatch — so the check must too.
+    ``None`` is the inferred-from-template case and is not this check's business.
+    """
+    from chemrefine.engines.orca.output import known_operations
+
+    engine = get_engine("orca")
+    for operation in (*sorted(known_operations()), "dft", "GOAT", None):
+        engine.check_step(
+            StepConfig(step=1, engine="orca", operation=operation), charge=0, multiplicity=1
+        )
+
+
+def test_the_operation_refusal_fires_at_the_runs_preflight_walk():
+    """The same refusal at t=0 — before any upstream step is paid for.
+
+    The hook rides :class:`~chemrefine.engines.api.PreflightChecking`, so
+    ``pipeline.run``'s walk and ``chemrefine validate`` both make it; this holds the walk.
+    """
+    from chemrefine.engines.api import preflight_steps
+
+    step_cfg = StepConfig(step=2, engine="orca", operation="opt-sp")
+    with pytest.raises(ConfigError, match="opt-sp"):
+        preflight_steps([step_cfg], charge=0, multiplicity=1)
+
+
+# ---------------------------------------------------------------------------
 # operation is optional: explicit value wins, else the template is inspected
 # ---------------------------------------------------------------------------
 

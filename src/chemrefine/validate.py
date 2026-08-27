@@ -13,6 +13,10 @@ become issues or warnings up front:
 * a bad value for a knob the engine's declared options model reads — through
   ``from_raw_lenient``, the engine's own read, so validation and the run cannot
   disagree,
+* a backend selection no registered backend answers to (an MLIP ``task_name`` typo) —
+  the registry half of the run's ``preflight_backends``, and only that half: the lookup
+  imports no backend, so a config authored on a laptop for a cluster still validates
+  without the cluster's environments,
 * invalid NMS knobs on an ``nms: true`` step — and ``nms: true`` on an engine that
   cannot NMS, which the run would silently skip (warning),
 * option keys no reader of this step declares (warning — a script-engine template may
@@ -52,6 +56,7 @@ from chemrefine.engines.api import (
     NmsCapableEngine,
     OptionsDeclaring,
     PreflightChecking,
+    ProvisionableEngine,
     TemplateDriven,
     WhitespacePathIntolerant,
     get_engine,
@@ -69,8 +74,8 @@ class ValidationIssue:
     (``("steps", 1, "options")``) — so a GUI walks it to the field to highlight and an
     agent quotes it verbatim. ``kind`` is a short machine-checkable class of finding
     (``yaml`` / ``legacy`` / a pydantic error type / ``engine`` / ``options`` /
-    ``preflight`` / ``nms`` / ``template`` / ``slurm-header``); the message alone is
-    for humans.
+    ``backend`` / ``preflight`` / ``nms`` / ``template`` / ``slurm-header``); the
+    message alone is for humans.
     """
 
     loc: tuple[str | int, ...]
@@ -234,6 +239,21 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                     ValidationIssue(
                         loc=("steps", index, "options"), kind="preflight", message=str(e)
                     )
+                )
+        if options_ok and isinstance(engine, ProvisionableEngine):
+            # The registry half of the run's `preflight_backends`, and only that half:
+            # `backend_requirement` resolves the selection by name with no backend
+            # import, so a `task_name` typo becomes a row here instead of `ok: true`
+            # followed by the run refusing one second in. The installed-env probes stay
+            # out on purpose — a config authored on a laptop for a cluster must not fail
+            # validation over an environment only the cluster has. Skipped when the
+            # lenient read already failed: the lookup reads the same model, and would
+            # repeat that issue.
+            try:
+                engine.backend_requirement(step.options)
+            except ConfigError as e:
+                issues.append(
+                    ValidationIssue(loc=("steps", index, "options"), kind="backend", message=str(e))
                 )
         if step.nms:
             declared |= set(NmsOptions.model_fields)

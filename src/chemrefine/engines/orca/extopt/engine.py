@@ -93,7 +93,13 @@ class ExtOptOrcaEngine(OrcaEngine):
         configure a server, not a template a user's own code reads — so each subclass
         gets the preflight for the price of its existing ``options_cls`` declaration; a
         subclass with a refusal of its own extends rather than replaces.
+
+        Extends rather than replaces *upward* too: the ``super()`` call is ORCA's own
+        operation-vocabulary refusal, which these engines inherit because they parse the
+        same outputs — held family-wide by
+        ``test_every_orca_family_engine_refuses_an_unknown_operation_up_front``.
         """
+        super().check_step(step_cfg, charge=charge, multiplicity=multiplicity)
         self.options_cls.from_raw(step_cfg.options)
 
     def gpus(self, ctx: StepContext) -> int:

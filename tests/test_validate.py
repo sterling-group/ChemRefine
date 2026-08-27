@@ -199,6 +199,59 @@ def test_a_lenient_options_failure_is_not_double_reported(tmp_path: Path):
     assert [issue.kind for issue in report.issues] == ["options"]
 
 
+def test_an_unknown_orca_operation_is_an_issue(tmp_path: Path):
+    """A typo'd ``operation:`` must fail here, not after the step's jobs have run.
+
+    Without the ORCA-family ``check_step`` this passed validation and the run's preflight,
+    submitted and paid for every job, and was then refused per output by the parser — with
+    the paid outputs unadoptable afterwards, since the operation is part of every row key.
+    """
+    report = _validate(tmp_path, steps=[{"step": 1, "engine": "orca", "operation": "opt-sp"}])
+    assert not report.ok
+    assert any(issue.kind == "preflight" and "opt-sp" in issue.message for issue in report.issues)
+
+
+def test_an_unknown_mlip_task_name_is_an_issue(tmp_path: Path):
+    """The registry lookup the run's ``preflight_backends`` makes, made here too.
+
+    Without it the report said ``ok: true`` for a config ``chemrefine run`` refuses one
+    second in — the GUI's Validate button, the agent's ``validate_config`` and every MCP
+    client all read this report and nothing else. Only the *registry* half is asked: the
+    lookup imports no backend, so a config authored on a laptop for a cluster still
+    validates without the cluster's environments.
+    """
+    report = _validate(
+        tmp_path,
+        steps=[{"step": 1, "engine": "mlip", "options": {"task_name": "mace_of"}}],
+    )
+    assert not report.ok
+    assert report.issues[0].kind == "backend"
+    assert report.issues[0].loc == ("steps", 0, "options")
+    assert "mace_off" in report.issues[0].message, "the known names are offered"
+
+
+def test_a_known_task_name_passes_the_backend_check(tmp_path: Path):
+    report = _validate(
+        tmp_path,
+        steps=[{"step": 1, "engine": "mlip", "options": {"task_name": "mace_off"}}],
+    )
+    assert report.ok
+
+
+def test_a_lenient_options_failure_skips_the_backend_check(tmp_path: Path):
+    """A bad declared value already failed the options read; the lookup must not pile on.
+
+    ``backend_requirement`` reads the selection through the same lenient model, so run
+    against options that cannot be read it would raise the *options* error a second time
+    — one mistake, two rows, and neither naming the other.
+    """
+    report = _validate(
+        tmp_path,
+        steps=[{"step": 1, "engine": "mlip", "options": {"task_name": "mace_of", "cores": 0}}],
+    )
+    assert _kinds(report) == ["options"]
+
+
 def test_bad_nms_knobs_are_an_error(tmp_path: Path):
     report = _validate(
         tmp_path,

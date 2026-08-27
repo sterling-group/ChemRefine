@@ -20,10 +20,12 @@ import shlex
 from pathlib import Path
 from typing import ClassVar
 
+from chemrefine.config import StepConfig
 from chemrefine.engines._job import JobEngine
 from chemrefine.engines.api import NmsInputInfo, ParsedResult, RunBlock, register
 from chemrefine.engines.orca import input as orca_input
 from chemrefine.engines.orca import inspect, output
+from chemrefine.errors import ConfigError
 from chemrefine.ids import require_template
 from chemrefine.state import StepContext
 
@@ -97,6 +99,39 @@ class OrcaEngine(JobEngine):
     def _extra_blocks(self, ctx: StepContext) -> str:
         """Extra ORCA blocks; MLIP/PySCF ExtOpt override to inject ``%method ProgExt …``."""
         return ""
+
+    # -- preflight ---------------------------------------------------------
+
+    def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
+        """Refuse an ``operation`` the parser dispatch does not know, before any job runs.
+
+        ``operation`` never changes the generated input — it only picks the parser — so a
+        value outside the dispatch's vocabulary cannot fail until the outputs are read:
+        every job runs at full cost first, each output is then ledgered ``UNPARSEABLE``,
+        and because the operation is part of every row key, correcting the typo re-keys
+        the rows and no recovery command adopts the paid outputs. Decidable from the
+        config alone, so it belongs on :class:`~chemrefine.engines.api.PreflightChecking`,
+        where the run's t=0 walk and ``chemrefine validate`` both make it.
+
+        The accepted set is the parser's own:
+        :func:`~chemrefine.engines.orca.output.known_operations` plus the legacy ``dft``
+        spelling the dispatch still reads (deliberately absent from what introspection
+        *offers*). Normalised the way the dispatch normalises, so ``GOAT`` and ``OPT+SP``
+        stay legal however the config was built — the legacy YAML rewriter lowercases on
+        the way in, but a :class:`~chemrefine.config.StepConfig` built directly does not.
+        ``None`` is untouched: the template inspection decides, and a template problem
+        has refusals of its own. ``charge`` / ``multiplicity`` are unread — the
+        signature is the capability's.
+        """
+        if step_cfg.operation is None:
+            return
+        normalized = step_cfg.operation.lower().replace("+", "_")
+        if normalized not in output.known_operations() | {"dft"}:
+            raise ConfigError(
+                f"step {step_cfg.step}: unknown ORCA operation {step_cfg.operation!r} — "
+                f"this engine parses {sorted(output.known_operations())}. Correct it, or "
+                f"omit `operation:` to infer the run type from the template's keywords."
+            )
 
     # -- run ---------------------------------------------------------------
 

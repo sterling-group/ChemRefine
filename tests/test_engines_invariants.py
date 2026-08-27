@@ -323,15 +323,42 @@ def test_the_preflight_capability_stays_a_claim_not_boilerplate():
 
     ``mlip-train`` (its refusals — no device, no task, a policy with nothing to act on
     — are decidable from the config, and the step usually sits after days of label
-    computation) and the ExtOpt family (their options configure a server, so the
-    strict read the run block makes is made up front too). The direct script engines
+    computation), the ExtOpt family (their options configure a server, so the
+    strict read the run block makes is made up front too), and ``orca`` (an explicit
+    ``operation`` outside its parser dispatch would otherwise fail only after the
+    step's jobs had run). The direct script engines
     stay out by documented design — lenient reads over templates that may carry knobs
     of their own — and the fake engine is the minimal third-party shape. A new engine
     that takes the hook extends this pin; one that grows a prepare-time refusal
     without the hook is the Thursday failure coming back.
     """
     checking = {n for n in ENGINES if isinstance(get_engine(n), PreflightChecking)}
-    assert sorted(checking) == ["mlip-extopt", "mlip-train", "pyscf-extopt"]
+    assert sorted(checking) == ["mlip-extopt", "mlip-train", "orca", "pyscf-extopt"]
+
+
+def test_every_orca_family_engine_refuses_an_unknown_operation_up_front():
+    """The parser's operation vocabulary is enforced at ``check_step``, family-wide.
+
+    An explicit ``operation`` picks the parser and nothing else, so a value the dispatch
+    does not know cannot fail until the outputs are read — after every job in the step
+    has run at full cost, with the paid outputs then unadoptable because the operation
+    is part of every row key. The refusal lives on :class:`OrcaEngine.check_step`; this
+    holds the *inheritance*: an ExtOpt subclass that overrides ``check_step`` for its own
+    options must still call up the chain, or its steps quietly lose the guard. Derived
+    from the registry, so a fourth ORCA-driven engine is covered by existing.
+    """
+    from chemrefine.engines.orca.engine import OrcaEngine
+
+    family = sorted(n for n in ENGINES if isinstance(get_engine(n), OrcaEngine))
+    assert family == ["mlip-extopt", "orca", "pyscf-extopt"], "the inheriting set moved"
+    for name in family:
+        engine = get_engine(name)
+        assert isinstance(engine, PreflightChecking)
+        step_cfg = StepConfig(
+            step=1, engine=name, operation="opt-sp", options=_REQUIRED_OPTIONS.get(name, {})
+        )
+        with pytest.raises(ConfigError, match="opt-sp"):
+            engine.check_step(step_cfg, charge=0, multiplicity=1)
 
 
 def test_declaring_an_options_model_stays_a_claim_not_boilerplate():
