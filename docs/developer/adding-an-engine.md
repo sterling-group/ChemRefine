@@ -66,8 +66,9 @@ step, not an engine-specific feature.
 ## Validate the YAML knobs
 
 Add a Pydantic model in `engines/<name>/options.py` subclassing
-[`EngineOptions`](../api/engines_api.md) (it carries the shared `device` field + frozen /
-`extra="forbid"` config + `from_raw`); add your own fields and read it in the primitives. This
+[`EngineOptions`](../api/engines_api.md) (it carries the shared `device` / `cores` /
+`backend_python` fields + frozen / `extra="forbid"` config + `from_raw`); add your own
+fields and read it in the primitives. This
 keeps `step.options` a free dict at the orchestrator level while giving the engine typed
 validation.
 
@@ -124,8 +125,7 @@ prepare → submit → parse
 Normal-mode sampling is **engine-independent**: the two-round algorithm lives in
 `chemrefine.nms`. NMS is a capability, not a flag — implement the
 [`NmsCapableEngine`](../api/engines_api.md) Protocol's one hook and populate two structure
-fields; capability is detected with `isinstance` (today ORCA, Q-Chem, and — for free from ORCA —
-the two ExtOpt engines):
+fields; capability is detected with `isinstance`:
 
 - `nms_input_info(ctx) -> NmsInputInfo` — introspect the step's input (is it a TS search? does it
   compute frequencies?), driving the default target and the freq gate.
@@ -145,6 +145,41 @@ do. A `ScriptEngine` parses through the shared reader instead, so it reports wha
 `output_fields` and have the template assign them. Until it does, `nms: true` on a script step
 is ignored with a warning from `chemrefine validate` — the capability is detected, not
 assumed.
+
+## Parsing output that depends on the input
+
+Some programs write different sections depending on what was computed — an `opt` repeats its
+energy every cycle, an ensemble generator emits many geometries, a correlated method prints
+more than one total energy. The shipped reference for handling that is `orca/`, and the shape
+is worth mirroring because it keeps the input→output coupling in one explicit chain instead of
+scattered through the parser:
+
+- **`inspect.py` reads the input, once, into a frozen `InputInfo`** — which keywords ran, is
+  it a TS search, does it compute frequencies. Nothing else re-derives facts from the
+  template.
+- **An explicit `operation:` wins; otherwise the inspection decides** (ORCA:
+  `OrcaEngine._resolve_operation`). If the vocabulary is real, declare `OperationsDeclaring` —
+  `check_step` then refuses an unknown operation at preflight, and the schema document and
+  agent guide serve the vocabulary with no further wiring.
+- **A read-once coordinator hands shared text to per-section extractors** (see
+  `orca/output/`: coordinator / energy / geometry / frequencies / status) — the file is read
+  once, and each section owns its own block grammar.
+- **The disciplines**, held by the contract goldens and the recorded-output sweep: *last
+  match wins* (an `opt`'s repeated prints resolve to the final one); *finite refusal at the
+  boundary* (a value that cannot be read raises `OutputParseError`, an abnormal ending
+  `OutputTerminationError` with the `.err` tail — never a silent `NaN`); and every case ships
+  a *trimmed real* contract fixture.
+
+For **method-dependent scalars** — "the" energy differs between a plain SCF and a correlated
+run that prints both — declare a priority chain over the *output text*: rows tried highest
+level of theory first, the first whose pattern matches wins, each row at its own first/last
+occurrence policy. Selection is by evidence in the output, never by inspecting the input to
+pick a parser: whichever method actually ran left its line.
+
+Parsing stays **per-engine** on purpose: the formats genuinely differ, and the shared ground
+is the [`ParsedResult` contract](#the-parsed-result-contract) with its goldens, plus the
+extracted seams — `NmsInputInfo`, `OperationsDeclaring`, `FrequencyOutputParsing`. A new
+engine mirrors the *shape* above without importing a line of another engine's parser.
 
 ## Tests
 
@@ -192,7 +227,7 @@ engines/demoqm/
   options.py      # the YAML knobs
 ```
 
-**Step 1 + 3 — `options.py`** validates `step.options`, reusing the shared `device` field and
+**Step 1 + 3 — `options.py`** validates `step.options`, reusing the shared fields and
 frozen config from `EngineOptions`:
 
 ```python
@@ -303,6 +338,69 @@ Pick by how the calculation is reached, not by what it computes: a program with 
 input format is a `JobEngine` like the one above; a Python library is a `ScriptEngine`
 (chemrefine renders a `step{N}.py` that imports it) or a `_backend_server` backend (ORCA
 drives it over the ExtOpt bridge) — never a binary wrapper.
+
+## Adding an MLIP backend
+
+A new MLIP *library* is not a new engine — the `mlip` / `mlip-extopt` / `mlip-train` engines
+drive whichever backends the registry knows. One dropped-in module under
+`engines/mlip/backends/`, auto-discovered like the engine packages, declares the library once
+and hangs its capabilities off it:
+
+```python
+from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
+
+MY_MLIP = MlipLibrary(
+    extra="mlip-my_mlip", package="my-mlip-lib", import_name="my_mlip_library"
+)
+
+
+@MY_MLIP.calculator("my_task")
+def _build_my_mlip(spec: CalculatorSpec):
+    from my_mlip_library import MyCalculator  # imported lazily, inside the builder
+
+    return MyCalculator(model=spec.weights or spec.model_name, device=spec.device)
+
+
+@MY_MLIP.trainer("my_task")  # optional — omit if the library cannot train
+class MyTrainer(TrainerBase): ...  # or ApiTrainerBase, for API-driven libraries
+```
+
+Two obligations live outside the module, both enforced by the suite:
+
+- **The pyproject extra.** Declare `mlip-my_mlip` under `[project.optional-dependencies]` —
+  `test_every_registered_extra_is_declared_in_pyproject` fails until you do, because an extra
+  nothing installs provisions an empty environment that then dies on the backend import. If
+  the library supports only some Python versions, put a `python_version` marker on every
+  requirement of the extra and record the supported versions in `test_provision.py`'s
+  `capped` table.
+- **Fake-module tests for the builder.** The registry imports every backend module at
+  discovery, so the heavy import must stay inside the builder (an AST scan asserts it); test
+  the builder by planting fake modules in `sys.modules` — the `_install_fake_*` pattern in
+  `tests/test_engines_mlip_calculator.py`.
+
+The registry-derived gates do the rest with no edit: the missing-dependency test tries your
+tasks and expects the install hint naming the package and extra, the trainer-contract
+invariants parametrize over `registered_trainers()`, and `chemrefine backends` lists the new
+environment.
+
+### Adding a calculator knob
+
+The calculator surface is deliberately **closed**: `CalculatorSpec` is frozen with no
+catch-all `**extra`, so a knob no field names has nowhere to hide — the property that ended a
+bug class where builders silently swallowed knobs the dispatch was passing. The price is that
+a new knob is declared in four places, each visible and typed:
+
+1. `mlip/options.py` — the field on `MlipOptions`, and its name appended to
+   `CALCULATOR_KNOBS`.
+2. `mlip/registry.py` — the matching `CalculatorSpec` field (a builder that ignores it
+   ignores it *visibly*).
+3. `mlip/calculator.py` — thread it through `build_calculator` into the spec, and keep it on
+   `MlipCalculator.__init__`.
+4. `mlip/extopt_calc.py` — accept it in `MlipExtOptCalculator.__init__` and forward it.
+
+Everything downstream derives from `CALCULATOR_KNOBS` and the model: the direct engine's
+`$KNOB` template placeholder, the ExtOpt server's `--knob` CLI flag (with the model's own
+default), and the server reading it back off the parsed args — no further edits.
 
 See the [Engine Contract & Registry API](../api/engines_api.md) for the exact signatures, and
 [Architecture & Code Flow](../internals/architecture.md) for where the lifecycle sits in the run.
