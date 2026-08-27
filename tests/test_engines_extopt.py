@@ -242,7 +242,12 @@ def test_extopt_modules_have_main_entry_guard():
     for mod in (server, bridge):
         src = Path(mod.__file__).read_text(encoding="utf-8")
         assert 'if __name__ == "__main__":' in src, f"{mod.__name__} missing -m entry guard"
-        assert "main()" in src
+        # The guard must *invoke* main, not merely exist beside it: a bare "main()"
+        # substring is satisfied by the `def main()` line itself, so a guard rewritten
+        # to `pass` would import, exit 0, and start nothing.
+        assert 'if __name__ == "__main__":\n    raise SystemExit(main())' in src, (
+            f"{mod.__name__}'s -m entry guard does not invoke main()"
+        )
 
 
 def test_wrapper_passes_input_file_as_final_positional(tmp_path: Path):

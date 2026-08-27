@@ -1198,13 +1198,19 @@ def test_a_bundle_that_loads_but_defines_nothing_is_a_failure_not_a_silence():
       tag.onload();                                 // the script arrives, and defines nothing
       await first;
       const noted = b.viewer.note;
-      // And the cached rejection is dropped, so the next open still gets to try.
-      const retried = b.loadViewerLib() !== null;
-      console.log(JSON.stringify({ noted, retried }));
+      // And the cached rejection is dropped, so the next open still gets to try. The
+      // handle being null is that fact; a truthiness test on loadViewerLib() is not —
+      // it returns a Promise either way, retained rejection included.
+      const dropped = b._glLib === null;
+      const firstTag = tag;
+      b.loadViewerLib();
+      const retried = tag !== firstTag && tag !== null;  // a fresh script tag went out
+      console.log(JSON.stringify({ noted, dropped, retried }));
     """)
     result = json.loads(out)
     assert "3D viewer could not start" in result["noted"]
     assert "defined nothing" in result["noted"]
+    assert result["dropped"] is True
     assert result["retried"] is True
 
 

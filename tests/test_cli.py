@@ -343,8 +343,17 @@ def test_rebuild_nms_on_a_config_with_no_nms_step_says_so(tmp_path: Path):
 
 
 def test_maxcores_overrides_yaml_value(tmp_path: Path):
+    """--maxcores beats the YAML; dry-run echoes the resolved value.
+
+    The echo is the observable: a bare exit code passes even when the flag is dropped
+    on the floor, which is exactly what deleting the one-line override in `cli._load`
+    does — the maxgpus sibling below already pins its half this way.
+    """
     config_path = _write_config(tmp_path, max_cores=8)
-    # Override to 1 via flag; pipeline still completes with the fake engine.
+    result = runner.invoke(app, ["run", str(config_path), "--maxcores", "1", "--dry-run"])
+    assert result.exit_code == 0
+    assert "max_cores=1" in result.stdout
+    # And the override actually runs: the pipeline completes with the fake engine.
     result = runner.invoke(app, ["run", str(config_path), "--maxcores", "1"])
     assert result.exit_code == 0
 
