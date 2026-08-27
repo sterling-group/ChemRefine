@@ -79,17 +79,20 @@ def test_operations_belong_to_the_family_that_interprets_them():
     The GUI's dropdown renders exactly a descriptor's ``operations`` — an engine that
     treats the field as a free label (the script engines, qchem, the fake) must report
     an empty tuple, or the UI would offer ORCA's ensemble operations to an engine that
-    would silently ignore them.
+    would silently ignore them. The declaring set is pinned so a change is a decision:
+    a new engine that grows a real ``operation:`` vocabulary declares
+    ``OperationsDeclaring`` and extends this list.
     """
     from chemrefine.engines.orca.output.coordinator import known_operations
 
     by_name = _by_name()
-    family = {"orca", "mlip-extopt", "pyscf-extopt"}
-    for name, descriptor in by_name.items():
-        if name in family:
-            assert descriptor.operations == tuple(sorted(known_operations())), name
-        else:
-            assert descriptor.operations == (), name
+    declaring = {name for name, d in by_name.items() if d.operations}
+    assert sorted(declaring) == ["mlip-extopt", "orca", "pyscf-extopt"], (
+        "the set of operation-declaring engines moved — extend this pin if that was a "
+        "decision, and make sure the new vocabulary reaches the agent guide"
+    )
+    for name in declaring:
+        assert by_name[name].operations == tuple(sorted(known_operations())), name
 
 
 def test_schema_document_serializes_whole_and_carries_the_config_schema():
@@ -112,9 +115,11 @@ def test_schema_document_serializes_whole_and_carries_the_config_schema():
 
 def test_the_operation_vocabulary_is_served_canonical_and_sorted():
     """The config schema keeps ``operation`` a free string (engines interpret it), so
-    the document carries the dropdown-worthy vocabulary from the dispatch that
-    implements it — canonical spellings only, the legacy ``dft`` excluded."""
+    the document's top-level list is the union of every descriptor's declared
+    vocabulary — a future declarer's operations join with no edit here — served
+    canonical and sorted, the legacy ``dft`` excluded."""
     operations = schema_document()["operations"]
     assert operations == sorted(operations)
+    assert set(operations) == {op for d in describe_engines() for op in d.operations}
     assert set(operations) >= {"opt_sp", "sp", "freq", "pes", "goat", "docker", "solvator"}
     assert "dft" not in operations

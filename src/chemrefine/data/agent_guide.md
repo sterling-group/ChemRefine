@@ -40,7 +40,8 @@ at HPC scale without you in the loop.
 
 ## Recipes
 
-The ORCA-family `operation:` vocabulary (also in `get_schema`'s `operations`):
+The ORCA-family `operation:` vocabulary (each engine's own list is in `get_schema`'s
+`engines.<name>.operations`; the top-level `operations` is the union across engines):
 `opt_sp` (optimize + single point), `sp`, `freq`, `pes` (scans), and the ensemble
 generators `goat` (conformers), `docker` (poses), `solvator` (explicit solvent).
 

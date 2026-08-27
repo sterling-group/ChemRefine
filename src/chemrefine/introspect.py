@@ -133,16 +133,15 @@ def schema_document() -> dict[str, Any]:
     every engine's model), one :class:`EngineDescriptor` per registered engine, and the
     ``operation:`` vocabulary. That last one is deliberately *not* in the config schema
     — the model keeps the field a free string because engines interpret it themselves
-    (ORCA even infers it from the template) — so the dropdown-worthy list comes from the
-    dispatch that actually implements it
-    (:func:`chemrefine.engines.orca.output.coordinator.known_operations`).
+    (ORCA even infers it from the template) — so the top-level list is the **union of
+    every engine's declared vocabulary**, kept for flat-list consumers; the per-engine
+    truth is each descriptor's ``operations``, which is what the GUI's dropdown reads.
     """
-    from chemrefine.engines.orca.output.coordinator import known_operations
-
+    descriptors = describe_engines()
     return {
         "chemrefine_version": __version__,
         "config": Config.model_json_schema(),
         "nms": NmsOptions.model_json_schema(),
-        "engines": {d.name: dataclasses.asdict(d) for d in describe_engines()},
-        "operations": sorted(known_operations()),
+        "engines": {d.name: dataclasses.asdict(d) for d in descriptors},
+        "operations": sorted({op for d in descriptors for op in d.operations}),
     }

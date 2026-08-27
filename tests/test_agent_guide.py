@@ -16,7 +16,7 @@ import re
 import pytest
 
 from chemrefine import agent_tools
-from chemrefine.engines.orca.output.coordinator import known_operations
+from chemrefine.introspect import describe_engines
 from chemrefine.state import FailureKind
 
 GUIDE = agent_tools.guide_text()
@@ -28,8 +28,14 @@ _TOOL_SHAPED = re.compile(
 
 
 def test_every_operation_is_taught():
-    """A model that never hears of `solvator` will never use it."""
-    for operation in sorted(known_operations()):
+    """A model that never hears of `solvator` will never use it.
+
+    Sourced from the union over every engine descriptor, not from ORCA's dispatch, so a
+    future engine that declares its own vocabulary forces guide coverage for it too.
+    """
+    operations = {op for d in describe_engines() for op in d.operations}
+    assert operations, "no engine declares an operation vocabulary — has the hook moved?"
+    for operation in sorted(operations):
         assert f"`{operation}`" in GUIDE or f"`operation: {operation}`" in GUIDE, operation
 
 
