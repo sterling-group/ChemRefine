@@ -165,7 +165,16 @@ class OrbTrainer(ApiTrainerBase):
         from orb_models.forcefield import pretrained
         from torch.utils.data import BatchSampler, DataLoader, RandomSampler
 
-        device = init_device()
+        # The config's device wins over orb's own pick: `init_device()` takes `cuda:0`
+        # whenever torch sees a GPU, unconditionally — so a `device: cpu` step on a
+        # machine with CUDA torch would train on hardware the scheduler never booked
+        # (a CPU step is charged zero GPUs and gets no CUDA_VISIBLE_DEVICES pin), the
+        # silent wrong-hardware failure the preflight exists to prevent. A named
+        # `cuda` that is not there fails loudly in `.to` rather than quietly running
+        # on CPU for days against a GPU booking. The fallback keeps the old behaviour
+        # for a hand-written config that names no device.
+        cfg_device = str(config.get("device") or "")
+        device = torch.device(cfg_device) if cfg_device else init_device()
         seed_everything(int(config.get("seed", 42)))
         base_model = str(config["base_model"])
         loader_fn = getattr(pretrained, base_model, None)

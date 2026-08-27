@@ -922,7 +922,9 @@ def _install_fake_orb_stack(monkeypatch) -> dict:
     optimizer, scheduler = MagicMock(), MagicMock()
     util_mod = types.ModuleType("orb_models.common.training.util")
     util_mod.get_optim = MagicMock(return_value=(optimizer, scheduler))
-    util_mod.init_device = MagicMock(return_value="cpu")
+    # A value distinct from any torch.device result, so an assertion can tell which
+    # source the hook took the device from — orb's own pick vs the config's.
+    util_mod.init_device = MagicMock(return_value="INIT_DEV")
     training_pkg = types.ModuleType("orb_models.common.training")
     training_pkg.util = util_mod
     utils_mod = types.ModuleType("orb_models.common.utils")
@@ -948,6 +950,7 @@ def _install_fake_orb_stack(monkeypatch) -> dict:
     torch_mod = types.ModuleType("torch")
     torch_mod.utils = torch_utils
     torch_mod.nn = torch_nn
+    torch_mod.device = MagicMock(side_effect=lambda name: f"DEV:{name}")
     torch_mod.save = MagicMock(
         side_effect=lambda payload, path: recorded.setdefault("saves", []).append(str(path))
     )
@@ -978,6 +981,7 @@ def _install_fake_orb_stack(monkeypatch) -> dict:
         optimizer=optimizer,
         scheduler=scheduler,
         get_optim=util_mod.get_optim,
+        init_device=util_mod.init_device,
         seed=utils_mod.seed_everything,
         clip=nn_utils.clip_grad_norm_,
         dataset_cls=ase_ds_mod.AseSqliteDataset,
@@ -1016,7 +1020,12 @@ def test_the_orb_hook_rebuilds_the_scripts_loop(monkeypatch, tmp_path: Path):
     monkeypatch.chdir(tmp_path)
     assert OrbTrainer().run_training(_orb_config()) == 0
 
-    recorded["loader_fn"].assert_called_once_with(device="cpu", train=True)
+    # DEV:cpu = the config's own device through torch.device — never orb's
+    # init_device(), whose unconditional cuda-if-available pick would put a CPU-booked
+    # step on a GPU the scheduler never charged (init_device returns a distinct
+    # sentinel here precisely so the source is provable).
+    recorded["loader_fn"].assert_called_once_with(device="DEV:cpu", train=True)
+    recorded["init_device"].assert_not_called()
     recorded["seed"].assert_called_once_with(11)
     recorded["get_optim"].assert_called_once()
     lr, total_steps, _model = recorded["get_optim"].call_args.args
@@ -1040,8 +1049,26 @@ def test_the_orb_hook_fine_tunes_from_a_local_checkpoint(monkeypatch, tmp_path: 
     monkeypatch.chdir(tmp_path)
     OrbTrainer().run_training(_orb_config(start_from="/models/prev.ckpt"))
     recorded["loader_fn"].assert_called_once_with(
-        device="cpu", train=True, weights_path="/models/prev.ckpt"
+        device="DEV:cpu", train=True, weights_path="/models/prev.ckpt"
     )
+
+
+def test_a_config_without_a_device_falls_back_to_orbs_own_pick(monkeypatch, tmp_path: Path):
+    """No ``device`` key: the pre-existing behaviour stands — orb's ``init_device``.
+
+    Only a hand-written config can reach this (the engine's render always fills
+    ``$DEVICE``); the fallback keeps such a config running rather than refusing it.
+    """
+    from chemrefine.engines.mlip.backends.orb import OrbTrainer
+
+    recorded = _install_fake_orb_stack(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    config = _orb_config(epochs=1)
+    del config["device"]
+    assert OrbTrainer().run_training(config) == 0
+
+    recorded["init_device"].assert_called_once_with()
+    recorded["loader_fn"].assert_called_once_with(device="INIT_DEV", train=True)
 
 
 def test_the_orb_hook_refuses_what_it_cannot_invent(monkeypatch, tmp_path: Path):
