@@ -17,6 +17,7 @@ Coverage:
 from __future__ import annotations
 
 import json
+import re
 import sys
 import types
 from dataclasses import replace
@@ -959,23 +960,48 @@ def test_build_orb_success_path(monkeypatch):
 # --- orb older-layout fallback ----------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "task, lib, package, extra",
-    [
-        ("mace_off", "mace", "mace-torch", "mlip-mace"),
-        ("omol", "fairchem", "fairchem-core", "mlip-fairchem"),
-        ("sevenn", "sevenn", "sevenn", "mlip-sevenn"),
-        ("chgnet", "chgnet", "chgnet", "mlip-chgnet"),
-        ("orb", "orb_models", "orb-models", "mlip-orb"),
-    ],
-)
-def test_backend_missing_dependency_names_the_extra(task, lib, package, extra, monkeypatch):
-    """A missing backend lib → a helpful ImportError naming the package + extra."""
+def _runnable_libraries() -> list[pytest.param]:
+    """One row per runnable library: its import name, package, extra, and every task.
+
+    Derived from the registry so a new backend joins this gate by registering — these
+    rosters were spelled by hand before, and a new library was silently untested. Only
+    libraries with a calculator builder appear: a trainer-only registration has no lazy
+    calculator import for this test to break.
+    """
+    by_extra: dict[str, tuple[str, str, list[str]]] = {}
+    for task in sorted(mlip_registry.registered_backends()):
+        spec = mlip_registry.backend_spec(task)
+        if spec.builder is None:
+            continue
+        by_extra.setdefault(spec.extra, (spec.import_name, spec.package, []))[2].append(task)
+    return [
+        pytest.param(lib, package, extra, tasks, id=extra)
+        for extra, (lib, package, tasks) in sorted(by_extra.items())
+    ]
+
+
+@pytest.mark.parametrize("lib, package, extra, tasks", _runnable_libraries())
+def test_backend_missing_dependency_names_the_extra(lib, package, extra, tasks, monkeypatch):
+    """A missing backend lib → a helpful ImportError naming the package + extra.
+
+    Every task of the library is tried: one whose builder refuses before its lazy
+    import (``custom_mace`` with nothing to load) may raise its own ConfigError, but at
+    least one task per library must reach the import and surface the install hint.
+    """
     monkeypatch.setitem(sys.modules, lib, None)  # force the lazy import to fail
     from chemrefine.engines.mlip.calculator import build_calculator
 
-    with pytest.raises(ImportError, match=f"{package}.*{extra}"):
-        build_calculator(task_name=task, model_name="x")
+    hints: list[str] = []
+    for task in tasks:
+        try:
+            build_calculator(task_name=task, model_name="x")
+        except ImportError as exc:
+            hints.append(str(exc))
+        except ConfigError:
+            continue  # a pre-import refusal is that builder's own documented business
+    assert hints, f"no {extra} task reaches its lazy import — the install hint can never fire"
+    for hint in hints:
+        assert re.search(f"{package}.*{extra}", hint), hint
 
 
 def test_build_orb_older_layout(monkeypatch):

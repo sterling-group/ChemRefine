@@ -426,7 +426,9 @@ def test_every_backend_module_imports_with_no_mlip_library_installed():
     import ast
 
     backends = Path(__file__).resolve().parent.parent / "src/chemrefine/engines/mlip/backends"
-    heavy = {"mace", "fairchem", "sevenn", "orb_models", "chgnet", "torch", "aimnet"}
+    # Derived from the registry so a new backend's own library is scanned by existing.
+    # torch joins by hand: every stack's substrate, but no backend's own import_name.
+    heavy = {backend_spec(t).import_name for t in registered_backends()} | {"torch"}
     for module in sorted(backends.glob("*.py")):
         tree = ast.parse(module.read_text(encoding="utf-8"))
         for node in tree.body:  # top level only — inside a function is the whole point
