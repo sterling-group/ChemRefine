@@ -713,9 +713,97 @@ def test_legacy_sample_type_and_param_renames():
     # integer -> min, num_structures -> count
     assert isinstance(cfg.steps[1].sample, MinSample)
     assert cfg.steps[1].sample.count == 3
-    # energy_window -> min, energy -> window_kcalmol (unit dropped)
+    # energy_window -> min, energy -> window_kcalmol (an explicit kcal/mol value
+    # crosses unchanged; every other unit converts -- see the tests below)
     assert isinstance(cfg.steps[2].sample, MinSample)
     assert cfg.steps[2].sample.window_kcalmol == 8
+
+
+def _legacy_window_sample(parameters: dict) -> MinSample:
+    """The validated sample a v1 ``energy_window`` block with ``parameters`` becomes."""
+    cfg = Config(
+        template_dir="./t",
+        steps=[
+            {
+                "step": 1,
+                "engine": "orca",
+                "operation": "sp",
+                "sample_type": {"method": "energy_window", "parameters": parameters},
+            }
+        ],
+    )
+    sample = cfg.steps[0].sample
+    assert isinstance(sample, MinSample)
+    return sample
+
+
+def test_legacy_energy_window_value_keeps_its_hartree_meaning():
+    """v1's ``energy`` was hartree unless ``unit: kcal/mol`` said otherwise — so it converts.
+
+    ``window_kcalmol`` is kcal/mol by definition; carrying the number across unchanged
+    shrank the window ~627.5x for every v1 config that relied on the default, silently
+    discarding structures the run should have kept. The conversion mirrors v1's own rule:
+    only an explicit ``kcal/mol`` converted anything there, so any other spelling —
+    including none at all — meant the number was hartree.
+    """
+    implicit = _legacy_window_sample({"energy": 0.5})
+    assert implicit.window_kcalmol == pytest.approx(313.754737, abs=1e-4)
+    explicit = _legacy_window_sample({"energy": 0.5, "unit": "hartree"})
+    assert explicit.window_kcalmol == pytest.approx(313.754737, abs=1e-4)
+    # v1 compared any unit it did not recognise as hartree; mirrored, so a config
+    # that ran on v1 filters identically here rather than differently-wrong.
+    odd = _legacy_window_sample({"energy": 0.5, "unit": "eV"})
+    assert odd.window_kcalmol == pytest.approx(313.754737, abs=1e-4)
+    kcal = _legacy_window_sample({"energy": 8, "unit": "kcal/mol"})
+    assert kcal.window_kcalmol == 8
+
+
+def test_legacy_energy_window_conversion_names_both_numbers():
+    """The deprecation row states the conversion, not just the rename.
+
+    The rename row alone ("use `window_kcalmol`") reads as an endorsement of the value —
+    which is exactly how a silently reinterpreted window would go unnoticed. A row that
+    names the hartree number and the kcal/mol number it became is checkable at a glance.
+    """
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    rows: list[tuple[tuple[str | int, ...], str]] = []
+    _normalize_legacy(
+        {
+            "steps": [
+                {
+                    "step": 1,
+                    "engine": "orca",
+                    "sample": {"method": "energy_window", "energy": 0.5},
+                }
+            ]
+        },
+        report=lambda loc, message: rows.append((loc, message)),
+    )
+    [(loc, message)] = [(loc, m) for loc, m in rows if "window_kcalmol:" in m]
+    assert loc == ("steps", 0, "sample", "energy")
+    assert "0.5" in message and "313.755" in message
+
+
+def test_legacy_energy_window_non_numeric_value_is_left_for_validation():
+    """A value the conversion cannot read passes through for pydantic to refuse.
+
+    v1 would have crashed on it at filter time; v2 refuses it at the boundary with the
+    field error every other bad sample value gets — the conversion must not turn that
+    refusal into its own arithmetic traceback.
+    """
+    with pytest.raises(ValidationError):
+        Config(
+            template_dir="./t",
+            steps=[
+                {
+                    "step": 1,
+                    "engine": "orca",
+                    "operation": "sp",
+                    "sample_type": {"method": "energy_window", "parameters": {"energy": [1]}},
+                }
+            ],
+        )
 
 
 def test_legacy_normal_mode_sampling_renamed():

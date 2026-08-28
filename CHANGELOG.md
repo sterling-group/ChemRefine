@@ -359,6 +359,13 @@ for the full map.
 ### Fixed
 
 
+- **A v1 `energy_window` value keeps its hartree meaning across migration.** v1 read
+  `energy` as hartree unless `unit: kcal/mol` was explicit; the translation layer
+  carried the bare number into `window_kcalmol` — kcal/mol by definition — so a config
+  that relied on v1's default filtered with a window ~627.5× too narrow, silently, while
+  the deprecation warning ("use `window_kcalmol`") read as an endorsement of the value.
+  The number now converts (mirroring v1's own rule: only an explicit `kcal/mol` crosses
+  unchanged), and the warning names both values so the translation is checkable.
 - **`model_path` now reaches every MLIP builder — sevenn and orb silently dropped it.**
   Both signatures swallowed the checkpoint into `**_` and loaded the *named release*
   instead, with the fingerprint digesting the file so the run even looked pinned to the

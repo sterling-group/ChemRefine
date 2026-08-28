@@ -86,6 +86,12 @@ The methods were also renamed — `integer`/`high_energy` are now `min`/`max`, a
 `min` / `max` take **exactly one** of `count` / `window_kcalmol`. All the old
 spellings auto-translate with one deprecation warning each.
 
+The `energy` value also changes **units** on the way: v1 read it as hartree unless
+`unit: kcal/mol` was explicit, and `window_kcalmol` is kcal/mol by definition — so the
+translation converts the number (`energy: 0.5` becomes `window_kcalmol: 313.755`) and
+the deprecation warning names both values. An explicit `unit: kcal/mol` crosses
+unchanged.
+
 ## Example
 
 ```yaml

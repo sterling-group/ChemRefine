@@ -21,6 +21,7 @@ from collections.abc import Callable
 from typing import Any
 
 from chemrefine.errors import ConfigError
+from chemrefine.quantities import HARTREE_TO_KCALMOL
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +234,16 @@ def _normalize_sample_block(sample: Any, loc: tuple[str | int, ...], sink: Depre
     Idempotent: a current-vocabulary block (``min`` / ``max`` / ``boltzmann`` with
     ``count`` / ``window_kcalmol`` / ``percent_cumulative``) passes through unchanged.
     Announces one deprecation per legacy method or key actually rewritten.
+
+    The legacy ``energy`` key carries a **unit conversion**, not just a rename. v1's
+    ``energy_window`` read ``unit`` with a default of ``hartree`` and converted only an
+    explicit ``kcal/mol`` — any other spelling, including none at all, meant the number
+    was compared against hartree energies as-is. ``window_kcalmol`` is kcal/mol by
+    definition, so carrying the number across unchanged silently shrank the window
+    ~627.5x for every v1 config that relied on the default — and the rename row it got
+    ("use `window_kcalmol`") read as an endorsement of the value. The conversion mirrors
+    v1's own rule (an explicit ``kcal/mol`` passes through, everything else is hartree),
+    and its announcement names both numbers so the translation is checkable at a glance.
     """
     if not isinstance(sample, dict):
         return sample
@@ -244,11 +255,29 @@ def _normalize_sample_block(sample: Any, loc: tuple[str | int, ...], sink: Depre
         out["method"] = new_method
     elif method is not None:
         out["method"] = method
+    unit = str(sample.get("unit", "hartree")).strip().lower()
     for raw_key, v in sample.items():
         key = str(raw_key)
-        if key in ("method", "unit"):  # energy_window unit (kcal/mol) is implicit now
+        if key in ("method", "unit"):
+            # `unit` is consumed by the `energy` conversion below rather than merely
+            # dropped: v1 read it there and nowhere else, so it has no v2 key of its own.
             continue
         new_key = _SAMPLE_KEY_RENAMES.get(key, key)
+        if (
+            key == "energy"
+            and unit != "kcal/mol"
+            and isinstance(v, (int, float))
+            and not isinstance(v, bool)
+        ):
+            converted = v * HARTREE_TO_KCALMOL
+            sink(
+                (*loc, key),
+                f"sample key `energy` is deprecated; use `window_kcalmol` — and the unit "
+                f"moves with it: v1 read {v!r} as hartree ({unit!r} converted nothing "
+                f"there), so this becomes window_kcalmol: {converted:.6g}",
+            )
+            out.setdefault(new_key, converted)
+            continue
         if new_key != key:
             sink((*loc, key), f"sample key `{key}` is deprecated; use `{new_key}`")
         out.setdefault(new_key, v)
