@@ -36,6 +36,11 @@ _MOLECULE_BLOCK_RE = re.compile(
     r"^[ \t]*\$molecule\b.*?^[ \t]*\$end[ \t]*$", re.IGNORECASE | re.DOTALL | re.MULTILINE
 )
 
+# `INPUT_BOHR true` in a $rem section, in Q-Chem's accepted spellings (`=` optional,
+# case-free, `1` for true). Anchored to its own line so a comment merely mentioning the
+# rem cannot trip it.
+_INPUT_BOHR_RE = re.compile(r"^[ \t]*input_bohr[ \t=]+(?:true|1)\b", re.IGNORECASE | re.MULTILINE)
+
 
 def _molecule_block(xyz_path: Path, charge: int, multiplicity: int) -> str:
     """Render the ``$molecule`` block for one structure's ``_inp.xyz`` geometry.
@@ -72,6 +77,18 @@ def build_input(
     if not template_path.is_file():
         raise ConfigError(f"Q-Chem template not found: {template_path}")
     template = template_path.read_text(encoding="utf-8")
+    if _INPUT_BOHR_RE.search(template):
+        # The block below is written in Å (every geometry this package writes is), so a
+        # template declaring Bohr input would have Q-Chem compute on a molecule scaled by
+        # 1/0.529 — and the output parser holds the other half of the same rule: its
+        # banner match pins `(Angstroms)`, so a Bohr run would parse to nothing rather
+        # than to wrong coordinates. Refused at the point of use, like ORCA's
+        # whitespace-path rule, because this is the moment the two units would meet.
+        raise ConfigError(
+            f"Q-Chem template {template_path} sets `input_bohr`, but ChemRefine writes the "
+            f"$molecule geometry in Ångström — the job would run on a molecule scaled by "
+            f"1/0.529. Remove the rem; coordinates are supplied in Å."
+        )
     block = _molecule_block(xyz_path, charge, multiplicity)
     rendered, replaced = _MOLECULE_BLOCK_RE.subn(lambda _m: block, template, count=1)
     if not replaced:

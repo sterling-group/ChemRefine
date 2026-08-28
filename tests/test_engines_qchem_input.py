@@ -88,6 +88,30 @@ def test_a_missing_template_is_a_config_error(tmp_path: Path):
         )
 
 
+@pytest.mark.parametrize("rem", ["input_bohr true", "INPUT_BOHR  TRUE", "input_bohr = 1"])
+def test_an_input_bohr_template_is_refused_by_name(tmp_path: Path, rem: str):
+    """``input_bohr`` would read the Å geometry this writer emits as Bohr — refused up front.
+
+    The rendered ``$molecule`` is Ångström (every geometry this package writes is), so a
+    template declaring Bohr input has Q-Chem compute on a molecule scaled by 1/0.529 —
+    silently wrong science, not a crash. The output parser holds the other half of the
+    same rule by pinning ``(Angstroms)`` in its banner match; this is the point of use,
+    where the two units would actually meet.
+    """
+    with pytest.raises(ConfigError, match="input_bohr"):
+        _render(tmp_path, f"$rem\n  jobtype sp\n  {rem}\n$end\n")
+
+
+def test_a_comment_mentioning_input_bohr_is_not_the_rem(tmp_path: Path):
+    """The refusal is line-anchored, so prose about the rem does not trip it."""
+    text = _render(
+        tmp_path,
+        "$comment\nnever set input_bohr true here — geometry arrives in Angstrom\n$end\n\n"
+        "$rem\n  jobtype sp\n$end\n",
+    )
+    assert "jobtype sp" in text
+
+
 def test_a_comment_mentioning_the_block_name_is_not_the_block(tmp_path: Path):
     """``$molecule`` in a ``$comment``'s prose must not become the replacement target.
 

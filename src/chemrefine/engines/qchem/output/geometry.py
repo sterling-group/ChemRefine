@@ -9,9 +9,18 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
-ORIENTATION_MARKER = "Standard Nuclear Orientation"
-"""The banner every geometry block opens with — public because the coordinator names it
-in the error a block-less output raises."""
+ORIENTATION_MARKER = "Standard Nuclear Orientation (Angstroms)"
+"""The banner every geometry block opens with, **unit suffix included** — public because
+the coordinator names it in the error a block-less output raises.
+
+The suffix is the family rule (stated in this package's docstring): a geometry banner
+pins its units, or the parser refuses. Q-Chem prints ``(Bohr)`` here under
+``$rem input_bohr true``, and matched without the suffix those values landed unconverted
+in :class:`~chemrefine.engines.api.ParsedResult.positions`, whose contract is Å — a
+geometry silently wrong by a factor of 0.529 everywhere downstream. Unmatched, a Bohr
+output is an ordinary "no block" refusal instead (and the input writer refuses the rem
+up front — :func:`chemrefine.engines.qchem.input.build_input`). The ORCA counterpart
+pins ``(ANGSTROEM)`` the same way."""
 
 
 def parse_orientation_from_text(

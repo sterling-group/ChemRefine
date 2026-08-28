@@ -71,6 +71,20 @@ def test_a_missing_geometry_is_unparseable():
         parse_qchem_text(_ENERGY)
 
 
+def test_a_bohr_orientation_refuses_rather_than_misreads():
+    """The banner match pins ``(Angstroms)`` — a Bohr block is *no* block, never Å.
+
+    Q-Chem prints ``Standard Nuclear Orientation (Bohr)`` under ``input_bohr``, and a
+    match without the unit consumed those values straight into ``ParsedResult.positions``
+    (contract: Å) — a geometry silently wrong by 0.529 everywhere downstream, with no
+    later check able to see it. Refusing makes it an ordinary parse failure; the input
+    writer refuses the rem itself one layer earlier. Same rule as ORCA's ``(ANGSTROEM)``.
+    """
+    bohr = _ORIENTATION.replace("(Angstroms)", "(Bohr)")
+    with pytest.raises(OutputParseError, match=r"Standard Nuclear Orientation \(Angstroms\)"):
+        parse_qchem_text(bohr + _ENERGY)
+
+
 def test_a_corrupt_coordinate_is_unparseable():
     """A ``*****`` overflow token becomes a per-file parse failure, not a bare ValueError."""
     with pytest.raises(OutputParseError, match="malformed coordinate row"):
