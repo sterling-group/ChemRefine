@@ -28,7 +28,7 @@ def test_parse_dft_attaches_thermochemistry_when_present():
     parsed = parse_dft_from_text(text)
     assert parsed[0].gibbs_hartree == -76.41
     assert parsed[0].enthalpy_hartree == -76.38
-    assert parsed[0].energy_zpe_hartree == pytest.approx(-76.38)
+    assert parsed[0].energy_zpe_hartree == pytest.approx(-76.37)  # -76.40 + 0.03, != enthalpy
 
 
 def test_parse_dft_without_thermochemistry_leaves_none():

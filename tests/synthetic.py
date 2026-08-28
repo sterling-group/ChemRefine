@@ -101,13 +101,18 @@ NORMAL MODES
 
 # A minimal ORCA THERMOCHEMISTRY block. ``Zero point energy`` is the (positive)
 # ZPE correction; ``Total Enthalpy`` / ``Final Gibbs free energy`` are absolute Eh.
-# With an electronic energy of -76.40, electronic+ZPE = -76.40 + 0.02 = -76.38.
+# With an electronic energy of -76.40, electronic+ZPE = -76.40 + 0.03 = -76.37.
+#
+# The correction is 0.03 so that electronic+ZPE (-76.37) differs from the enthalpy
+# (-76.38): at the old 0.02 the two coincided, and the assertion meant to pin the ZPE
+# arithmetic could not tell it from "return the enthalpy" — a degenerate fixture is an
+# assertion that cannot fail.
 THERMOCHEMISTRY_BLOCK = """\
 -------------------------
 THERMOCHEMISTRY AT 298.15K
 -------------------------
 
-Zero point energy                ...      0.02000000 Eh      12.55 kcal/mol
+Zero point energy                ...      0.03000000 Eh      18.83 kcal/mol
 Total Enthalpy                   ...    -76.38000000 Eh
 Final Gibbs free energy          ...    -76.41000000 Eh
 """

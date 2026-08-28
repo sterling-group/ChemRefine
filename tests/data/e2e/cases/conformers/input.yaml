@@ -28,6 +28,13 @@ steps:
 
   # Opt + freq, then keep the 2 lowest by Gibbs free energy (not electronic) —
   # `count 2` of 3 rather than 3 of 3, so the Gibbs ranking still selects.
+  #
+  # KNOWN DEGENERACY in the current recording: the three captured conformers order
+  # identically by electronic and by Gibbs energy, so at the replay tier the
+  # Gibbs-vs-electronic distinction is vacuous (the unit tier pins it with adversarial
+  # data — tests/test_filtering.py / test_pipeline.py). A future live re-capture should
+  # pick an ensemble whose two orderings differ, and may then assert exactly that as a
+  # fixture guard.
   - step: 2
     engine: orca
     operation: opt_sp

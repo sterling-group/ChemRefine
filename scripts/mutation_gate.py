@@ -126,6 +126,26 @@ MUTATIONS = (
         "keeps less than it promises — the high-energy mirror of min-window-boundary",
     ),
     Mutation(
+        id="report-kcal-conversion",
+        path="src/chemrefine/io.py",
+        old='df["Energy (Hartree)"] * HARTREE_TO_KCALMOL',
+        new='df["Energy (Hartree)"] / HARTREE_TO_KCALMOL',
+        tests="tests/test_io.py",
+        breaks="every kcal/mol column in steps.csv is wrong by a factor of ~627.5^2 while "
+        "row order, headers and dE=0 all still hold — the user-facing report ships wrong "
+        "numbers with nothing else red",
+    ),
+    Mutation(
+        id="best-backfills-best-not-seed",
+        path="src/chemrefine/lifecycle.py",
+        old="if (fallback := (f.best if f.best is not None else prev_by_id.get(f.sid)))",
+        new="if (fallback := prev_by_id.get(f.sid))",
+        tests="tests/test_step.py",
+        breaks="`on_failure: best` silently carries the submitted seed geometry downstream "
+        "instead of the best geometry the failed run reached — ids and counts unchanged, "
+        "so only a positions assertion can see it",
+    ),
+    Mutation(
         id="retry-best-frame",
         path="src/chemrefine/lifecycle.py",
         old="best = min(bad, key=lambda s: (s.energy_hartree is None, s.energy_hartree or 0.0))",

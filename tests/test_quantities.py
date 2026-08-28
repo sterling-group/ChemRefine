@@ -25,6 +25,12 @@ def test_constants_use_codata_values():
     # factor), and it labels every MLIP training energy — a wrong digit would mislabel
     # every fine-tuning dataset with the suite green.
     assert abs(HARTREE_TO_EV - 27.211386245988) < 1e-9
+    # IUPAC standard ambient temperature, as its own literal. Every other reference to
+    # it reads the constant back (the boltzmann_weights default, the sample model's
+    # field, the report's default column), so this line is the only place a fat-fingered
+    # edit — 273.15, 300.0 — can fail instead of silently retuning every
+    # default-temperature Boltzmann filter in the pipeline.
+    assert DEFAULT_TEMPERATURE_K == 298.15
 
 
 def test_convert_scalar_hartree_to_kcalmol():

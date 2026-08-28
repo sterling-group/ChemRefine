@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import subprocess
 import sys
 from pathlib import Path
@@ -292,6 +293,35 @@ def test_save_step_csv_sorts_by_energy(tmp_path: Path):
     rows = path.read_text().strip().splitlines()[1:]  # drop header
     conformers = [row.split(",")[1] for row in rows]
     assert conformers == ["b", "a", "c"]  # ascending by absolute energy
+
+
+def test_save_step_csv_derived_columns_carry_the_right_numbers(tmp_path: Path):
+    """The report's numbers are pinned by literals, not by shape.
+
+    Every other assertion on this file checks headers, order or truncation — all of
+    which survive a wrong unit factor or a wrong percentage scale, because both are
+    order-preserving. This is the user-facing artifact of the whole run, so the values
+    are held to independently computed literals: two energies exactly 1 kcal/mol apart
+    (the second is ``-1 Eh + 1/627.5094740629``), whose Boltzmann split at the default
+    298.15 K is 84.39/15.61 — numbers a mutation of ``HARTREE_TO_KCALMOL``'s use, the
+    ``* 100.0`` percentage scale, or the default temperature cannot reproduce.
+    """
+    path = save_step_csv(
+        [-1.0, -1.0 + 1.0 / 627.5094740629], ["low", "high"], step_number=1, output_dir=tmp_path
+    )
+    with path.open(encoding="utf-8", newline="") as handle:
+        low, high = list(csv.DictReader(handle))
+    assert low["Conformer"] == "low" and high["Conformer"] == "high"
+    assert float(low["Energy (kcal/mol)"]) == pytest.approx(-627.50947406, abs=1e-6)
+    assert float(high["Energy (kcal/mol)"]) == pytest.approx(-626.50947406, abs=1e-6)
+    assert float(low["dE (kcal/mol)"]) == 0.0
+    assert float(high["dE (kcal/mol)"]) == pytest.approx(1.0, abs=1e-8)
+    assert float(low["Boltzmann Weight"]) == pytest.approx(0.84393549, abs=1e-6)
+    assert float(high["Boltzmann Weight"]) == pytest.approx(0.15606451, abs=1e-6)
+    assert float(low["% Total"]) == pytest.approx(84.39354867, abs=1e-4)
+    assert float(high["% Total"]) == pytest.approx(15.60645133, abs=1e-4)
+    assert float(low["% Cumulative"]) == pytest.approx(84.39354867, abs=1e-4)
+    assert float(high["% Cumulative"]) == pytest.approx(100.0, abs=1e-6)
 
 
 def test_save_step_csv_all_nan_energies_skips_write(tmp_path: Path):

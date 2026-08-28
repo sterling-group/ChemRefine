@@ -211,11 +211,22 @@ def test_cache_load_after_run_returns_results(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
+FAIL_ENGINE_DRIFT = 0.25
+"""How far the fail engine's ``"unconverged"`` parse moves each coordinate off the seed.
+
+The geometry a failed run *reached* must be distinguishable from the geometry it was
+*given*, or a test of ``on_failure: best`` cannot tell "backfilled the best obtained"
+from "backfilled the submitted input" — the preference `apply_failure_policy` exists
+to make."""
+
+
 def _register_fail_engine():
     """Register a fake engine whose ``fail`` ClassVar marks per-sid failures.
 
     ``fail[sid] == "missing"`` produces no output; ``"unconverged"`` produces an
-    output that parses but with ``terminated_normally=False``; anything else succeeds.
+    output that parses but with ``terminated_normally=False`` and a geometry moved
+    :data:`FAIL_ENGINE_DRIFT` off the seed (the point the failed run reached); anything
+    else succeeds.
     """
     from typing import ClassVar
 
@@ -250,10 +261,17 @@ def _register_fail_engine():
             out = []
             for _inp, _o, sid in inputs.files:
                 seed = seeds[sid]
+                atoms = seed.atoms
+                if self.fail.get(sid) == "unconverged":
+                    # The geometry the failed run reached — off the seed by a fixed
+                    # drift, so a test can tell the best-obtained backfill from the
+                    # submitted input.
+                    atoms = seed.atoms.copy()
+                    atoms.set_positions(atoms.get_positions() + FAIL_ENGINE_DRIFT)
                 out.append(
                     Structure(
                         id=sid,
-                        atoms=seed.atoms,
+                        atoms=atoms,
                         parent_id=seed.parent_id,
                         energy_hartree=-1.0 - int(sid) * 1e-3,
                         terminated_normally=self.fail.get(sid) != "unconverged",
@@ -310,6 +328,40 @@ def test_on_failure_stop_caches_successes_then_halts(tmp_path: Path):
         # … and the run is halted by the single pipeline-level check.
         with pytest.raises(ChemRefineError):
             step_mod.halt_if_pending(cfg, cfg.steps[0], StepMode.RESUME)
+    finally:
+        eng.fail = {}
+        ENGINES.pop("fake-fail", None)
+
+
+def test_on_failure_best_backfills_the_best_geometry_not_the_seed(tmp_path: Path):
+    """``best`` carries the geometry the failed run *reached*, not the input it was given.
+
+    ``apply_failure_policy``'s preference — ``f.best if f.best is not None else`` the
+    submitted seed — is the whole difference between ``best`` and a re-labelled ``skip``
+    for a structure that produced anything at all. Both arms live on one line, which
+    branch coverage cannot see, and every other exerciser asserts ids or counts — so
+    dropping the preference (always backfilling the seed) survived the suite. The
+    positions are the only witness, and the fail engine's ``"unconverged"`` parse moves
+    them :data:`FAIL_ENGINE_DRIFT` off the seed precisely so this can fail.
+    """
+    from chemrefine.engines.api import ENGINES
+
+    seeds = PipelineState(
+        structures=(Structure(id="1", atoms=Atoms("H", positions=[[0.0, 0.0, 0.0]])),)
+    )
+    eng = _register_fail_engine()
+    try:
+        eng.fail = {"1": "unconverged"}
+        cfg = _config(tmp_path, engine="fake-fail", on_failure="best")
+        outcome = run_step(cfg, cfg.steps[0], seeds)
+        [survivor] = outcome.state.structures
+        assert survivor.id == "1"
+        assert survivor.atoms.get_positions()[0] == pytest.approx(
+            [FAIL_ENGINE_DRIFT, FAIL_ENGINE_DRIFT, FAIL_ENGINE_DRIFT]
+        ), "the backfill must be the best geometry obtained, not the submitted seed"
+        # Still ledgered — best keeps going without hiding the failure.
+        step_dir = cfg.output_dir.resolve() / "step1"
+        assert [f.structure_id for f in cache.load_failure_records(step_dir)] == ["1"]
     finally:
         eng.fail = {}
         ENGINES.pop("fake-fail", None)
