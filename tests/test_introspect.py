@@ -74,25 +74,27 @@ def test_orca_descriptor_pins_the_template_facts():
 
 
 def test_operations_belong_to_the_family_that_interprets_them():
-    """The ORCA family declares the parser dispatch's vocabulary; nobody else invents one.
+    """Each parser family declares its own dispatch vocabulary; nobody else invents one.
 
     The GUI's dropdown renders exactly a descriptor's ``operations`` — an engine that
-    treats the field as a free label (the script engines, qchem, the fake) must report
-    an empty tuple, or the UI would offer ORCA's ensemble operations to an engine that
-    would silently ignore them. The declaring set is pinned so a change is a decision:
-    a new engine that grows a real ``operation:`` vocabulary declares
-    ``OperationsDeclaring`` and extends this list.
+    treats the field as a free label (the script engines, the fake) must report an
+    empty tuple, or the UI would offer one family's operations to an engine that would
+    silently ignore them. The declaring set is pinned so a change is a decision: a new
+    engine that grows a real ``operation:`` vocabulary declares ``OperationsDeclaring``
+    and extends this list — as qchem did when its output package gained a dispatch.
     """
-    from chemrefine.engines.orca.output.coordinator import known_operations
+    from chemrefine.engines.orca.output.coordinator import known_operations as orca_operations
+    from chemrefine.engines.qchem.output.coordinator import known_operations as qchem_operations
 
     by_name = _by_name()
     declaring = {name for name, d in by_name.items() if d.operations}
-    assert sorted(declaring) == ["mlip-extopt", "orca", "pyscf-extopt"], (
+    assert sorted(declaring) == ["mlip-extopt", "orca", "pyscf-extopt", "qchem"], (
         "the set of operation-declaring engines moved — extend this pin if that was a "
         "decision, and make sure the new vocabulary reaches the agent guide"
     )
-    for name in declaring:
-        assert by_name[name].operations == tuple(sorted(known_operations())), name
+    for name in ("mlip-extopt", "orca", "pyscf-extopt"):
+        assert by_name[name].operations == tuple(sorted(orca_operations())), name
+    assert by_name["qchem"].operations == tuple(sorted(qchem_operations()))
 
 
 def test_schema_document_serializes_whole_and_carries_the_config_schema():

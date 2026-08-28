@@ -35,11 +35,13 @@ import shlex
 from pathlib import Path
 from typing import ClassVar
 
+from chemrefine.config import StepConfig
 from chemrefine.engines._job import JobEngine, gpus_from_options
 from chemrefine.engines.api import NmsInputInfo, ParsedResult, RunBlock, register
 from chemrefine.engines.qchem import input as qchem_input
 from chemrefine.engines.qchem import inspect, output
 from chemrefine.engines.qchem.options import QchemOptions
+from chemrefine.errors import ConfigError
 from chemrefine.ids import require_template
 from chemrefine.state import StepContext
 
@@ -52,6 +54,12 @@ class QchemEngine(JobEngine):
     label: ClassVar[str] = "Q-Chem"
     template_suffix: ClassVar[str] = "in"
     output_suffix: ClassVar[str] = "out"
+    operations: ClassVar[tuple[str, ...]] = tuple(sorted(output.known_operations()))
+    """The ``operation:`` vocabulary this engine interprets — the parser dispatch's own
+    set (see :class:`~chemrefine.engines.api.OperationsDeclaring`), derived rather than
+    restated so the dropdown, the schema document and the preflight refusal cannot
+    disagree with what :func:`~chemrefine.engines.qchem.output.parse_output`
+    accepts."""
     output_globs: ClassVar[tuple[str, ...]] = ("*.out", "*.fchk")
     """Result files copied back out of ``$WORK_DIR``.
 
@@ -80,6 +88,28 @@ class QchemEngine(JobEngine):
             charge=ctx.charge,
             multiplicity=ctx.multiplicity,
         )
+
+    # -- preflight ---------------------------------------------------------
+
+    def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
+        """Refuse an ``operation`` the parser dispatch does not know, before any job runs.
+
+        ``operation`` never changes the generated input — it only picks the parser — so
+        a value outside the vocabulary cannot fail until every job has run at full cost
+        and each output is ledgered ``UNPARSEABLE``. Decidable from the config alone,
+        so it fires at the run's t=0 walk and in ``chemrefine validate``. ``None`` is
+        untouched: the template inspection decides. ``charge`` / ``multiplicity`` are
+        unread — the signature is the capability's.
+        """
+        if step_cfg.operation is None:
+            return
+        normalized = step_cfg.operation.lower().replace("+", "_")
+        if normalized not in output.known_operations():
+            raise ConfigError(
+                f"step {step_cfg.step}: unknown Q-Chem operation {step_cfg.operation!r} — "
+                f"this engine parses {sorted(output.known_operations())}. Correct it, or "
+                f"omit `operation:` to infer the run type from the template's JOBTYPE."
+            )
 
     # -- run ---------------------------------------------------------------
 
@@ -186,11 +216,21 @@ class QchemEngine(JobEngine):
 
     # -- parse -------------------------------------------------------------
 
+    def _resolve_operation(self, ctx: StepContext) -> str:
+        """Operation for parsing: an explicit ``operation`` wins, else inspect the template.
+
+        The template's ``JOBTYPE`` facts pick the parser when ``operation`` is omitted,
+        through the one reader :mod:`~chemrefine.engines.qchem.inspect` already is.
+        """
+        if ctx.step_cfg.operation is not None:
+            return ctx.step_cfg.operation
+        return inspect.inspect_template(require_template(ctx.template, label=self.label)).operation
+
     def parse_one(
         self, output_path: Path, structure_id: str, ctx: StepContext
     ) -> list[ParsedResult]:
         """Parse one Q-Chem output — energy, final geometry, and the NMS frequency feed."""
-        return output.parse_qchem(output_path)
+        return output.parse_output(output_path, self._resolve_operation(ctx))
 
     # -- nms hook (the only engine-specific half of chemrefine.nms) --------
 

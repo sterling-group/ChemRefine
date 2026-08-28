@@ -1,5 +1,5 @@
 {
-  "operation": null,
+  "operation": "freq",
   "charge": 0,
   "multiplicity": 1,
   "source": "IQmol3 samples/Acetaldehyde-Freq.out, trimmed to the parsed blocks (real Q-Chem output)"

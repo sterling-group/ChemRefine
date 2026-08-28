@@ -311,6 +311,14 @@ for the full map.
 
 ### Added (post-audit round)
 
+- **Q-Chem's output reader became a per-section package.** `engines/qchem/output/` is
+  now a read-once coordinator over per-section modules — geometry, energies,
+  frequencies, forces and run status each own their section's grammar, and the
+  coordinator threads every answer onto the parsed structure, so completing or changing
+  a section is confined to its own module. Along the way the engine declares its
+  `operation:` vocabulary (`sp` / `opt_sp` / `freq` — the GUI dropdown and the schema
+  document pick it up), refuses an unknown operation at the run's preflight, and infers
+  the run type from the template's `JOBTYPE` when a step omits `operation:`.
 - **Every shipped MLIP backend now fine-tunes** — `task_name: sevenn | chgnet | orb` join
   MACE and the FAIRChem heads as `mlip-train` selections, each through its library's own
   door: SevenNet via its unified CLI (`sevenn train`, the `mlip-sevenn` floor moves to

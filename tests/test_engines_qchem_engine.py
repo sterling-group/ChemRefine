@@ -229,3 +229,49 @@ def test_a_qchem_step_runs_end_to_end_through_local_dispatch(tmp_path: Path):
     # A second run is a pure cache hit — no submission, same survivors.
     rerun = pipeline.run(config)
     assert rerun[0].cache_hit
+
+
+# ---------------------------------------------------------------------------
+# The operation vocabulary — declared, refused up front, resolved before parsing
+# ---------------------------------------------------------------------------
+
+
+def test_an_unknown_operation_is_refused_up_front():
+    """A typo'd ``operation:`` fails at the run's t=0 walk, not after every job ran.
+
+    ``operation`` only picks the parser, so left to run it costs the whole step and
+    ledgers every output UNPARSEABLE.
+    """
+    engine = get_engine("qchem")
+    bad = StepConfig(step=1, engine="qchem", operation="goat")
+    with pytest.raises(ConfigError, match="unknown Q-Chem operation"):
+        engine.check_step(bad, charge=0, multiplicity=1)
+
+
+def test_known_and_absent_operations_pass_preflight():
+    """Every declared spelling — either case, ``+`` or ``_`` — and ``None`` pass."""
+    engine = get_engine("qchem")
+    for operation in (None, "sp", "opt_sp", "OPT+SP", "freq"):
+        engine.check_step(
+            StepConfig(step=1, engine="qchem", operation=operation), charge=0, multiplicity=1
+        )
+
+
+def test_an_explicit_operation_beats_the_template(tmp_path: Path):
+    """``operation:`` wins over inspection — explicit beats inferred, always."""
+    engine = get_engine("qchem")
+    ctx = _ctx(tmp_path, template="$rem\n  jobtype opt\n$end\n")
+    assert engine._resolve_operation(ctx) == "opt_sp"  # inspected: opt -> opt_sp
+    explicit = StepContext(
+        step_cfg=StepConfig(step=1, engine="qchem", operation="sp"),
+        step_dir=ctx.step_dir,
+        template_dir=ctx.template_dir,
+        template=ctx.template,
+        scratch_dir=None,
+        prev_state=ctx.prev_state,
+        charge=0,
+        multiplicity=1,
+        max_cores=8,
+        slurm_template="cpu.slurm.header",
+    )
+    assert engine._resolve_operation(explicit) == "sp"

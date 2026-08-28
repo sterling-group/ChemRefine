@@ -53,6 +53,21 @@ def test_no_mem_total_declares_no_memory(tmp_path: Path):
     assert inspect_template(_write(tmp_path, "$rem\n  jobtype sp\n$end\n")).mem_total_mb is None
 
 
+def test_run_type_inference_is_opt_sp_or_sp(tmp_path: Path):
+    """opt/ts anywhere in the chain -> ``opt_sp``; anything else -> ``sp``.
+
+    The parser-dispatch key when a step omits ``operation:``. ``freq`` is deliberately
+    never inferred — frequencies parse off the output unconditionally and ``has_freq``
+    carries the fact.
+    """
+    assert inspect_template(_write(tmp_path, "$rem\n  jobtype opt\n$end\n")).operation == "opt_sp"
+    assert inspect_template(_write(tmp_path, "$rem\n  jobtype ts\n$end\n")).operation == "opt_sp"
+    assert inspect_template(_write(tmp_path, "$rem\n  jobtype freq\n$end\n")).operation == "sp"
+    assert inspect_template(_write(tmp_path, "$rem\n  jobtype sp\n$end\n")).operation == "sp"
+    chain = "$rem\n  jobtype opt\n$end\n\n@@@\n\n$rem\n  jobtype freq\n$end\n"
+    assert inspect_template(_write(tmp_path, chain)).operation == "opt_sp"
+
+
 def test_a_comment_block_naming_rem_facts_declares_nothing(tmp_path: Path):
     """``$rem`` and ``jobtype ts`` in a ``$comment``'s prose are words, not directives.
 

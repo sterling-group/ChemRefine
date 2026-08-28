@@ -1,8 +1,11 @@
-"""Tests for the Q-Chem output reader (``engines/qchem/output.py``).
+"""Tests for the Q-Chem output package (``engines/qchem/output/``).
 
 The synthetic snippets restate the exact layout of a real Q-Chem output
 (``IQmol3/samples/Acetaldehyde-Freq.out`` is the reference); the trimmed real file itself
-arrives with the engine's contract fixture.
+arrives with the engine's contract fixture. The package holds full readers beside
+sections that answer "not reported" until they parse — the tests below pin *today's*
+``None`` answers and the seams a full reader lands in, so implementing one flips
+documented tests rather than silence.
 """
 
 from __future__ import annotations
@@ -10,8 +13,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from chemrefine.engines.qchem.output import parse_qchem_text
-from chemrefine.errors import OutputParseError
+from chemrefine.engines.qchem.output import energy as qchem_energy
+from chemrefine.engines.qchem.output import forces as qchem_forces
+from chemrefine.engines.qchem.output import known_operations, parse_output, parse_qchem_text
+from chemrefine.engines.qchem.output import status as qchem_status
+from chemrefine.errors import OutputParseError, OutputTerminationError
 
 _ORIENTATION = """\
        Standard Nuclear Orientation (Angstroms)
@@ -294,3 +300,144 @@ def test_a_blank_line_inside_the_displacement_table_is_skipped():
     modes = parsed.normal_modes
     assert modes is not None and modes.shape == (2, 3, 9)
     assert modes[0, :, 6] == pytest.approx([-0.279, 0.388, -0.343])
+
+
+# ---------------------------------------------------------------------------
+# The operation dispatch — one table, every known key on the one assembler
+# ---------------------------------------------------------------------------
+
+
+def test_every_known_operation_routes_to_the_assembler(tmp_path):
+    """``sp`` / ``opt_sp`` / ``freq`` all parse the same output the same way, today.
+
+    The uniformity is deliberate (the coordinator's docstring says why); this pins that
+    naming any of them — in either spelling — is never a behavior fork until a parser
+    genuinely diverges.
+    """
+    out = tmp_path / "step1_0.out"
+    out.write_text(_ORIENTATION + _ENERGY, encoding="utf-8")
+    assert known_operations() == {"sp", "opt_sp", "freq"}
+    for operation in (*known_operations(), "OPT+SP"):
+        [parsed] = parse_output(out, operation)
+        assert parsed.energy_hartree == -153.8301110890
+
+
+def test_an_unknown_operation_is_refused_by_name(tmp_path):
+    """A vocabulary miss is a config mistake, raised before any behavior is guessed at.
+
+    The preflight (`QchemEngine.check_step`) refuses it at t=0; this is the same refusal
+    for a caller that skipped the preflight.
+    """
+    out = tmp_path / "step1_0.out"
+    out.write_text(_ORIENTATION + _ENERGY, encoding="utf-8")
+    with pytest.raises(OutputParseError, match="unknown Q-Chem operation"):
+        parse_output(out, "goat")
+
+
+# ---------------------------------------------------------------------------
+# The unparsed sections — today's "not reported" answers, pinned
+# ---------------------------------------------------------------------------
+#
+# Each of these fails the moment its section starts answering, which is the point:
+# implementing a reader flips a documented test naming the contract, never silence.
+
+
+_CLEAN_EXIT = "        Thank you very much for using Q-Chem.  Have a nice day.\n"
+_FATAL = " Q-Chem fatal error occurred in module x\n"
+
+
+def test_status_answers_not_reported_even_on_banner_text():
+    """``None`` whatever the text says — the banners are the *contract*, not yet the code.
+
+    A full status reader takes the clean-exit and fatal banners (pinned against full
+    captured output, never guessed) and makes these three answers True/False/False.
+    """
+    assert qchem_status.parse_terminated_normally(_ENERGY + _CLEAN_EXIT) is None
+    assert qchem_status.parse_terminated_normally(_ENERGY + _FATAL) is None
+    assert qchem_status.parse_converged(_ENERGY) is None
+
+
+def test_thermochemistry_answers_not_reported():
+    """``None`` even over a thermodynamics-shaped section — the reader does not parse yet."""
+    text = _ENERGY + " Zero point vibrational energy:      34.675 kcal/mol\n"
+    assert qchem_energy.parse_thermochemistry_from_text(text, electronic_hartree=-1.0) is None
+
+
+def test_forces_answer_not_reported():
+    """``None`` even over a gradient-shaped section — the reader does not parse yet."""
+    text = _ENERGY + " Gradient of SCF Energy\n  1  0.001  0.002  0.003\n"
+    assert qchem_forces.parse_forces_from_text(text, n_atoms=1) is None
+
+
+# ---------------------------------------------------------------------------
+# The seams — the coordinator threads each section's answer where it belongs,
+# proven by substituting a real answer, so a full reader lands already wired.
+# ---------------------------------------------------------------------------
+
+
+def test_a_dead_run_upgrades_a_missing_section_once_status_can_say_so(monkeypatch):
+    """The unreadable-vs-dead distinction is wired; only the verdict is missing.
+
+    A died run's unusable output is filed as NOT_TERMINATED_NORMALLY so the reader
+    looks at the job, not the parser. The moment `parse_terminated_normally` can answer
+    False, the coordinator makes that upgrade — with no edit to it.
+    """
+    monkeypatch.setattr(qchem_status, "parse_terminated_normally", lambda text: False)
+    with pytest.raises(OutputTerminationError, match="did not terminate normally"):
+        parse_qchem_text(_ORIENTATION)  # killed before any energy line
+
+
+def test_the_status_verdicts_land_on_the_parsed_structure(monkeypatch):
+    """Both flags flow to the fields `lifecycle.succeeded` reads."""
+    monkeypatch.setattr(qchem_status, "parse_terminated_normally", lambda text: True)
+    monkeypatch.setattr(qchem_status, "parse_converged", lambda text: False)
+    parsed = parse_qchem_text(_ORIENTATION + _ENERGY)[0]
+    assert parsed.terminated_normally is True
+    assert parsed.converged is False
+
+
+def test_thermochemistry_lands_on_the_parsed_structure(monkeypatch):
+    """The three energies flow to the fields the filters and `steps.csv` read."""
+
+    def fake(text: str, *, electronic_hartree: float) -> qchem_energy.Thermochemistry:
+        return qchem_energy.Thermochemistry(
+            gibbs_hartree=-153.70,
+            enthalpy_hartree=-153.65,
+            energy_zpe_hartree=electronic_hartree + 0.03,
+        )
+
+    monkeypatch.setattr(qchem_energy, "parse_thermochemistry_from_text", fake)
+    parsed = parse_qchem_text(_ORIENTATION + _ENERGY)[0]
+    assert parsed.gibbs_hartree == -153.70
+    assert parsed.enthalpy_hartree == -153.65
+    assert parsed.energy_zpe_hartree == pytest.approx(-153.8301110890 + 0.03)
+
+
+def test_forces_land_on_the_parsed_structure(monkeypatch):
+    """The gradient's forces flow to `forces_ev_per_a`, atom count threaded through."""
+    seen: dict[str, int] = {}
+
+    def fake(text: str, *, n_atoms: int) -> np.ndarray:
+        seen["n_atoms"] = n_atoms
+        return np.array([[0.0, 0.0, 1.0], [0.0, 0.0, -1.0]])
+
+    monkeypatch.setattr(qchem_forces, "parse_forces_from_text", fake)
+    parsed = parse_qchem_text(_ORIENTATION + _ENERGY)[0]
+    assert seen["n_atoms"] == 2  # the geometry block's own count, threaded through
+    assert parsed.forces_ev_per_a is not None
+    assert parsed.forces_ev_per_a[1] == pytest.approx([0.0, 0.0, -1.0])
+
+
+def test_a_malformed_gradient_becomes_this_structures_failure(monkeypatch):
+    """A ValueError from the forces reader is wrapped, naming the gradient — not a crash.
+
+    The rule the real parser inherits: a bad row must become this structure's ledgered
+    failure, and `lifecycle._parse_job` catches only OutputParseError.
+    """
+
+    def explode(text: str, *, n_atoms: int) -> np.ndarray:
+        raise ValueError("read 1 gradient row(s) for a 2-atom structure")
+
+    monkeypatch.setattr(qchem_forces, "parse_forces_from_text", explode)
+    with pytest.raises(OutputParseError, match="malformed gradient row"):
+        parse_qchem_text(_ORIENTATION + _ENERGY)
