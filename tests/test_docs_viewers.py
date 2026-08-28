@@ -47,9 +47,20 @@ def _hook() -> Any:
     return module
 
 
+def _page(url: str = "tutorials/transition-state/") -> Any:
+    """What mkdocs hands the hook alongside the markdown — the page, for its own URL.
+
+    The URL is what anchors the vendored 3Dmol path to the page's depth, so the default
+    here is a realistic two-level one rather than the site root.
+    """
+    import types
+
+    return types.SimpleNamespace(url=url)
+
+
 def _render(directive: str) -> str:
     """The markdown one directive expands to, as a page would receive it."""
-    return str(_hook().on_page_markdown(f"<!-- chemrefine:{directive} -->"))
+    return str(_hook().on_page_markdown(f"<!-- chemrefine:{directive} -->", page=_page()))
 
 
 def _modes() -> list[str]:
@@ -145,7 +156,7 @@ def test_the_caption_states_what_the_file_states(name: str):
 def test_the_recipe_is_the_function_it_claims_to_be():
     """Rendered from the live source, so the how-to cannot drift from what made the files."""
     hook = _hook()
-    rendered = str(hook.on_page_markdown("<!-- chemrefine:mode recipe -->"))
+    rendered = str(hook.on_page_markdown("<!-- chemrefine:mode recipe -->", page=_page()))
     assert rendered.startswith("```python")
     assert inspect.getsource(hook.viewer_file).rstrip() in rendered
 
@@ -191,7 +202,7 @@ def test_a_malformed_mode_file_fails_the_build(tmp_path: Path, broken: str, comp
     hook._MODES = tmp_path
     (tmp_path / "wrong.xyz").write_text(broken, encoding="utf-8")
     with pytest.raises(ValueError, match=complaint):
-        hook.on_page_markdown("<!-- chemrefine:mode wrong -->")
+        hook.on_page_markdown("<!-- chemrefine:mode wrong -->", page=_page())
 
 
 def test_a_directive_naming_nothing_fails_the_build():
@@ -203,14 +214,37 @@ def test_a_directive_naming_nothing_fails_the_build():
 
 
 def test_the_library_is_loaded_once_per_page():
-    """Several viewers on one page must not fetch the 3Dmol bundle several times."""
+    """Several viewers on one page must not load the 3Dmol bundle several times."""
     rendered = str(
         _hook().on_page_markdown(
             "<!-- chemrefine:structure examples/tutorials/transition_state/step1.xyz -->\n\n"
-            "<!-- chemrefine:mode ts-bad -->\n\n<!-- chemrefine:mode ts-good -->\n"
+            "<!-- chemrefine:mode ts-bad -->\n\n<!-- chemrefine:mode ts-good -->\n",
+            page=_page(),
         )
     )
-    assert rendered.count("3Dmol-min.js") == 1
+    assert rendered.count("3dmol.min.js") == 1
+
+
+def test_the_library_is_the_sites_own_vendored_bundle():
+    """The 3Dmol tag points into the site itself, at this page's own depth — never a CDN.
+
+    Inlining the geometries bought "the built docs work with no network at all —
+    including from the unpacked sdist", and a CDN library tag quietly took it back:
+    offline, every viewer was the blank rectangle the hook's docstring calls the worst
+    possible failure. The vendored bundle is already published into the site on every
+    build (the playground hook copies STATIC_DIR, vendor included), so the tag has a
+    local target at a page-relative path — which is what still works under ``file://``,
+    where no site root exists to anchor an absolute one.
+    """
+    rendered = str(
+        _hook().on_page_markdown(
+            "<!-- chemrefine:mode ts-good -->", page=_page("tutorials/transition-state/")
+        )
+    )
+    assert 'src="../../playground/static/vendor/3dmol.min.js"' in rendered
+    assert "3Dmol.org" not in rendered
+    shallow = str(_hook().on_page_markdown("<!-- chemrefine:mode ts-good -->", page=_page("")))
+    assert 'src="playground/static/vendor/3dmol.min.js"' in shallow
 
 
 def test_no_page_still_fetches_a_structure_over_the_network():

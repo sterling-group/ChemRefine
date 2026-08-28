@@ -62,9 +62,27 @@ _INFO = re.compile(r'(\w+)=("(?:[^"]*)"|\S+)')
 #: file whose numbers nobody can trace, which is the state this hook exists to leave behind.
 _REQUIRED = ("method", "mode", "frequency_cm1", "imaginary", "source")
 
-#: 3Dmol, emitted once per page: a classic ``<script src>`` blocks until it has run, so
-#: every init below it can rely on ``$3Dmol`` being there.
-_LIBRARY = '<script src="https://3Dmol.org/build/3Dmol-min.js"></script>'
+#: The vendored 3Dmol bundle, as the playground hook publishes it into the site — the same
+#: bytes the GUI serves and ``tests/test_gui_assets.py`` parses.
+_LIBRARY_ASSET = "playground/static/vendor/3dmol.min.js"
+
+
+def _library(page_url: str) -> str:
+    """The 3Dmol ``<script src>`` for one page, pointing at the site's own vendored copy.
+
+    Emitted once per page; a classic ``<script src>`` blocks until it has run, so every
+    init below it can rely on ``$3Dmol`` being there. The *vendored* bundle rather than a
+    CDN, because the CDN tag quietly took back what inlining the geometries bought: the
+    module's whole claim is that the built docs work with no network at all — including
+    from the unpacked sdist — and offline, a CDN library is the blank rectangle the
+    docstring above calls the worst possible failure. The copy is already in the site:
+    :mod:`playground` publishes ``STATIC_DIR`` (vendor bundle included) on every build.
+
+    Relative to the page rather than site-absolute, because ``file://`` browsing — the
+    sdist case — has no site root to anchor an absolute path. mkdocs URLs are
+    ``dir/page/`` (or ``dir/page.html``), so the segment count is the depth either way.
+    """
+    return f'<script src="{"../" * page_url.count("/")}{_LIBRARY_ASSET}"></script>'
 
 
 def viewer_file(out_path: Path, mode_index: int, *, method: str) -> str:
@@ -220,6 +238,9 @@ def on_page_markdown(markdown: str, **kwargs: Any) -> str:
         reach the built page as a silently empty viewer.
     """
     seen_library = False
+    # mkdocs hands the Page alongside the markdown; its site-relative URL is what anchors
+    # the vendored-library path to this page's own depth.
+    page_url = str(kwargs["page"].url)
 
     def expand(match: re.Match[str]) -> str:
         nonlocal seen_library
@@ -229,7 +250,7 @@ def on_page_markdown(markdown: str, **kwargs: Any) -> str:
         block = _structure(argument) if kind == "structure" else _mode(argument)
         if not seen_library:
             seen_library = True
-            return f"{_LIBRARY}\n{block}"
+            return f"{_library(page_url)}\n{block}"
         return block
 
     return _DIRECTIVE.sub(expand, markdown)
