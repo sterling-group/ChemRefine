@@ -217,7 +217,7 @@ def test_parse_output_raises_without_a_seed(tmp_path: Path):
     """
     out = tmp_path / "step1_0.json"
     out.write_text('{"energy_hartree": -1.0}', encoding="utf-8")
-    with pytest.raises(OutputParseError, match="positions_angstrom"):
+    with pytest.raises(OutputParseError, match="no seed atoms"):
         parse_output(out, label="MLIP", fallback=None)
 
 
@@ -331,6 +331,35 @@ def test_a_malformed_shape_stays_inside_the_exit_code_contract(tmp_path: Path, b
     seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
     with pytest.raises(ChemRefineError):
         parse_output(_write_output(tmp_path, body), label="MLIP", fallback=seed)
+
+
+def test_a_null_required_field_is_refused_by_name(tmp_path: Path):
+    """`required` means present *and non-null* — key presence alone let null through.
+
+    `{"energy_hartree": null}` passed the old presence check, was skipped by every later
+    read, and surfaced as `TypeError: ParsedResult.__init__() missing 1 required
+    positional argument` — outside the OutputParseError family `lifecycle._parse_job`
+    contains, so one structure's odd output ended the whole run with a traceback instead
+    of a ledgered failure.
+    """
+    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    out = _write_output(tmp_path, '{"energy_hartree": null}')
+    with pytest.raises(OutputParseError, match=r"energy_hartree.*absent or null"):
+        parse_output(out, label="MLIP", fallback=seed)
+
+
+@pytest.mark.parametrize("body", ["null", "[1, 2]", '"a string"'])
+def test_a_non_mapping_document_is_refused_as_a_parse_failure(tmp_path: Path, body: str):
+    """Valid JSON that is not an object must refuse like malformed JSON does.
+
+    A top-level null raised `TypeError` at the `in` test and a list raised
+    `AttributeError` at `.get` — the same escape route as the null field above. The
+    refusal names the shape so the reader is sent to their document, not to a traceback.
+    """
+    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    out = _write_output(tmp_path, body)
+    with pytest.raises(OutputParseError, match="not a JSON mapping"):
+        parse_output(out, label="MLIP", fallback=seed)
 
 
 # ---------------------------------------------------------------------------

@@ -45,7 +45,10 @@ def parse_output(
     """
     data = _load_output_json(output_path, label=label, fields=fields)
     if fallback is None:
-        raise OutputParseError("output lacks positions_angstrom and no seed atoms are available")
+        raise OutputParseError(
+            "no seed atoms are available to parse against — the output document carries no "
+            "symbols, so a structure cannot be assembled without the seed geometry"
+        )
     seed = fallback.copy()
 
     # `forces_ev_per_a` is the one ParsedResult field with no default of its own, so the
@@ -77,6 +80,16 @@ def _load_output_json(
     Both checks are driven by ``fields`` rather than by a list of names spelled here — which
     is the point of the declaration. A quantity that is declared ``finite`` is swept whether
     or not anyone remembered to add it to a tuple in this module.
+
+    ``required`` means present **and non-null**, and the document must be a mapping at all.
+    Judged by key presence alone, ``{"energy_hartree": null}`` sailed through: the null was
+    skipped by every later read, and ``ParsedResult`` raised a bare ``TypeError`` for its
+    missing argument — outside the :class:`OutputParseError` family
+    :func:`chemrefine.lifecycle._parse_job` contains, so one structure's odd output ended
+    the whole run with a traceback instead of a ledgered failure. A top-level ``null`` or
+    list escaped the same way, one line earlier. The generated footer can write none of
+    these — the trigger is a template that writes its output document itself, which the
+    script engines document as the user's right.
     """
     if not out_path.is_file():
         raise OutputParseError(f"{label} output not found: {out_path}")
@@ -84,10 +97,15 @@ def _load_output_json(
         data: dict[str, Any] = json.loads(out_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise OutputParseError(f"{label} output {out_path} is not valid JSON: {e}") from e
+    if not isinstance(data, dict):
+        raise OutputParseError(
+            f"{label} output {out_path} is not a JSON mapping "
+            f"(got {type(data).__name__}); the document must be an object of named fields"
+        )
     for spec in fields:
-        if spec.required and spec.name not in data:
+        if spec.required and data.get(spec.name) is None:
             raise OutputParseError(
-                f"{label} output {out_path} missing required {spec.name!r} field"
+                f"{label} output {out_path} is missing required {spec.name!r} (absent or null)"
             )
         if not spec.finite:
             continue
