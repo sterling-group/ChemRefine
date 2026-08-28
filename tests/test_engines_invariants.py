@@ -15,6 +15,7 @@ from __future__ import annotations
 import ast
 import inspect
 import os
+import re
 import shlex
 import subprocess
 from dataclasses import replace
@@ -559,6 +560,56 @@ def test_no_engine_emits_a_trap_of_its_own(engine_name: str, tmp_path: Path):
 
     assert "trap " not in block.body, f"{engine_name}: run block installs its own trap"
     assert "trap " not in block.cleanup, f"{engine_name}: cleanup installs its own trap"
+
+
+# Options that switch an engine's teardown *on*, so the cleanup rule below sweeps the bash
+# the engine actually emits rather than an empty string. Separate from _REQUIRED_OPTIONS,
+# which is about validating at all.
+_CLEANUP_OPTIONS: dict[str, dict[str, object]] = {
+    "qchem": {"save": True},
+}
+
+_BRACED_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)([^}]*)\}")
+_UNBRACED_VAR = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)")
+
+#: Variables the generated preamble exports before the trap is armed — the only names a
+#: cleanup may expand bare. Everything else is set (if at all) by the body, which the
+#: cleanup cannot assume ran: the handler is armed first, deliberately.
+_PREAMBLE_EXPORTS = frozenset({"WORK_DIR", "OUTPUT_DIR"})
+
+
+@pytest.mark.parametrize("engine_name", _job_executables())
+def test_every_cleanup_survives_the_armed_trap_window(engine_name: str, tmp_path: Path):
+    """A cleanup expansion is `${VAR:-…}` unless the preamble exported the name.
+
+    The other half of the single-trap doctrine. The EXIT handler is armed *before* the
+    body runs — it has to be, or a failure inside the body would clean up nothing — and
+    the script runs under `set -u`. So a cleanup that expands a variable the *body* sets
+    is a nounset abort whenever the job dies in the armed-trap window: the handler exits
+    mid-line and takes the copy-back, the output_dirs copy and the runlog footer with it
+    (`set +e` does not suppress nounset). Q-Chem's `save: true` copy shipped exactly
+    that, referencing the body-set `$QCSAVE`.
+
+    The rule is mechanical so the sweep is: every `${VAR …}` carries a default
+    (`:-` spelling), and every bare `$VAR` names a preamble export. A `-n` guard around
+    the action is welcome but not sufficient — the guard keeps the action from firing on
+    nothing, the `:-` keeps the expansion itself from aborting the handler.
+    """
+    engine = get_engine(engine_name)
+    ctx = _ctx(tmp_path, engine_name, _CLEANUP_OPTIONS.get(engine_name, {}))
+    cleanup = engine.run_block(ctx, Path("in.inp"), Path("out.out")).cleanup
+
+    for name, spec in _BRACED_VAR.findall(cleanup):
+        assert spec.startswith(":-") or name in _PREAMBLE_EXPORTS, (
+            f"{engine_name}: cleanup expands ${{{name}{spec}}} without a `:-` default; "
+            f"in the armed-trap window that is a nounset abort inside the exit handler"
+        )
+    for name in _UNBRACED_VAR.findall(_BRACED_VAR.sub(" ", cleanup)):
+        assert name in _PREAMBLE_EXPORTS, (
+            f"{engine_name}: cleanup expands bare ${name}, which only the body sets; "
+            f"spell it ${{{name}:-}} so a death in the armed-trap window cannot abort "
+            f"the exit handler"
+        )
 
 
 # ---------------------------------------------------------------------------

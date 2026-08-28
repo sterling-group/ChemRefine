@@ -119,12 +119,22 @@ def test_mpi_is_opt_in_and_emits_qqchems_flags(tmp_path: Path):
 
 
 def test_save_toggles_the_cleanup_copy(tmp_path: Path):
-    """``save: true`` copies the savename dir home inside the script's one EXIT trap."""
+    """``save: true`` copies the savename dir home inside the script's one EXIT trap.
+
+    Every expansion is nounset-proof (``${…:-}``) and the copy is gated on QCSAVE being
+    set at all: the trap is armed *before* the body runs under ``set -u``, so a job dying
+    in that window reaches this cleanup with the body's variables unset — a bare
+    ``$QCSAVE`` there aborted the whole handler, copy-back and footer included, and an
+    unguarded empty expansion would have made the source a bare scratch root.
+    """
     engine = get_engine("qchem")
     kept = engine.run_block(
         _ctx(tmp_path, options={"save": True}), Path("step1_0.in"), Path("step1_0.out")
     )
-    assert kept.cleanup == 'cp -r "$QCSCRATCH/$QCSAVE" "$OUTPUT_DIR/" 2>/dev/null || true'
+    assert kept.cleanup == (
+        'if [ -n "${QCSAVE:-}" ]; then '
+        'cp -r "${QCSCRATCH:-}/${QCSAVE:-}" "$OUTPUT_DIR/" 2>/dev/null || true; fi'
+    )
     assert engine.run_block(_ctx(tmp_path), Path("step1_0.in"), Path("step1_0.out")).cleanup == ""
 
 

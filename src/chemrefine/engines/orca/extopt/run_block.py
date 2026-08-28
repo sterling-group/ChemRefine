@@ -83,10 +83,16 @@ def build_extopt_run_block(
     every ExtOpt engine's block through it — the MLIP and PySCF engines inherit that
     method rather than calling here themselves.
     """
+    # Every expansion carries `:-`, not only the guard's: the trap is armed before the
+    # body runs under `set -u`, so a cleanup entered in that window must be nounset-proof
+    # in every reference — the rule `test_every_cleanup_survives_the_armed_trap_window`
+    # holds for all engines. Redundant inside the `-n` guard, and deliberately so: the
+    # guard keeps the *actions* from firing on nothing, the `:-` keeps the *expansion*
+    # from aborting the handler.
     cleanup = (
         'if [ -n "${SERVER_PID:-}" ]; then\n'
-        '  kill -TERM "$SERVER_PID" 2>/dev/null || true\n'
-        '  wait "$SERVER_PID" 2>/dev/null || true\n'
+        '  kill -TERM "${SERVER_PID:-}" 2>/dev/null || true\n'
+        '  wait "${SERVER_PID:-}" 2>/dev/null || true\n'
         "fi"
     )
     body = (

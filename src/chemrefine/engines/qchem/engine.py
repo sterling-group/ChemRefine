@@ -205,8 +205,18 @@ class QchemEngine(JobEngine):
             f"{self._executable(ctx)} {self._parallel_flags(ctx)} "
             f'{inp_path.name} "$OUTPUT_DIR/{out_path.name}" "$QCSAVE"',
         ]
+        # Guarded expansions, because the exit trap is armed *before* the body runs under
+        # `set -u`: a TERM landing in that window reaches this cleanup with QCSAVE unset,
+        # and a bare `$QCSAVE` is then a nounset abort *inside the handler* — taking the
+        # copy-back, the output_dirs copy and the runlog footer with it (`set +e` does not
+        # suppress nounset). The `-n` test also keeps an empty QCSAVE from turning the
+        # source into a bare scratch root. The rule is held for every engine by
+        # `test_every_cleanup_survives_the_armed_trap_window`.
         cleanup = (
-            'cp -r "$QCSCRATCH/$QCSAVE" "$OUTPUT_DIR/" 2>/dev/null || true' if opts.save else ""
+            'if [ -n "${QCSAVE:-}" ]; then '
+            'cp -r "${QCSCRATCH:-}/${QCSAVE:-}" "$OUTPUT_DIR/" 2>/dev/null || true; fi'
+            if opts.save
+            else ""
         )
         return RunBlock(body="\n".join(lines), cleanup=cleanup)
 
