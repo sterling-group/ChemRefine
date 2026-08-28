@@ -1183,25 +1183,49 @@ class _FakeServer:
         self._record["ran"] = True
 
 
+_FAKE_SOL_SOCKET = 65535
+_FAKE_SO_REUSEADDR = 2
+
+
 def _fake_socket_module(
     binds: list[tuple[str, int]],
     *,
     refuse: frozenset[int] = frozenset(),
+    time_wait: frozenset[int] = frozenset(),
     effective: int = 43210,
 ) -> Any:
-    """A stand-in ``socket`` module: records binds, refuses named ports, opens no fd."""
+    """A stand-in ``socket`` module: records binds, refuses named ports, opens no fd.
+
+    Two refusal sets, because the kernel makes exactly this distinction: ``refuse`` is a
+    *live listener* (EADDRINUSE whatever the options — ``SO_REUSEADDR`` never binds over
+    one), ``time_wait`` is a previous session's connection remnants, which refuse only
+    when the flag was not set first. Modelling both is what lets a test say "a restart
+    keeps the stable port" and mean the mechanism, not a recorded option tuple.
+    """
 
     class _Sock:
+        def __init__(self) -> None:
+            self._reuse = False
+
+        def setsockopt(self, level: int, optname: int, value: int) -> None:
+            if (level, optname) == (_FAKE_SOL_SOCKET, _FAKE_SO_REUSEADDR) and value:
+                self._reuse = True
+
         def bind(self, addr: tuple[str, int]) -> None:
             binds.append(addr)
-            if addr[1] in refuse:
+            if addr[1] in refuse or (addr[1] in time_wait and not self._reuse):
                 raise OSError(98, "Address already in use")
 
         def getsockname(self) -> tuple[str, int]:
             return ("127.0.0.1", effective)
 
     return types.SimpleNamespace(
-        AF_INET=0, SOCK_STREAM=0, socket=lambda *a: _Sock(), gethostname=lambda: "login03"
+        AF_INET=0,
+        SOCK_STREAM=0,
+        SOL_SOCKET=_FAKE_SOL_SOCKET,
+        SO_REUSEADDR=_FAKE_SO_REUSEADDR,
+        socket=lambda *a: _Sock(),
+        gethostname=lambda: "login03",
     )
 
 
@@ -1284,8 +1308,36 @@ def test_launch_binds_loopback_with_a_fresh_token(monkeypatch: pytest.MonkeyPatc
     assert "ssh -L" not in caplog.text  # a browser opened; nobody needs the recipe
 
 
+def test_a_quick_restart_keeps_the_personal_port(monkeypatch: pytest.MonkeyPatch):
+    """TIME_WAIT remnants from the previous session must not move the stable port.
+
+    Binding by hand bypasses the ``SO_REUSEADDR`` waitress would have set, so stopping
+    the GUI with a browser tab connected and restarting within ~60 s hit EADDRINUSE from
+    the old connections — and the fallback silently moved the "stable per-user port" to
+    a kernel one, breaking the SSH forwarding stanza the stable port exists to keep. The
+    fake refuses the port in TIME_WAIT fashion (only without the flag), so this fails if
+    the flag is ever dropped, not merely if an option tuple stops being recorded.
+    """
+    created: dict[str, Any] = {}
+    binds: list[tuple[str, int]] = []
+    monkeypatch.setattr(serve_mod, "create_server", lambda app, *, sockets: _FakeServer(created))
+    monkeypatch.setattr(serve_mod.getpass, "getuser", lambda: "ada")
+    personal = serve_mod._personal_port()
+    monkeypatch.setattr(
+        serve_mod,
+        "socket",
+        _fake_socket_module(binds, time_wait=frozenset({personal}), effective=personal),
+    )
+    serve_mod.launch(None, open_browser=False)
+    assert binds == [("127.0.0.1", personal)]  # one bind, on the personal port, no fallback
+
+
 def test_a_taken_personal_port_falls_back_to_a_kernel_one(monkeypatch: pytest.MonkeyPatch, caplog):
-    """A squatted personal port degrades to a free one, and the URL names the real port."""
+    """A live listener on the personal port degrades to a free one; the URL names the real port.
+
+    ``SO_REUSEADDR`` never binds over a live listener, so this branch is still real with
+    the flag set — the fake's ``refuse`` models exactly that.
+    """
     created: dict[str, Any] = {}
     binds: list[tuple[str, int]] = []
     monkeypatch.setattr(serve_mod, "create_server", lambda app, *, sockets: _FakeServer(created))

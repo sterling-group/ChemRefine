@@ -151,11 +151,19 @@ def launch(
     # already-started handler threads behind, and the pre-bound socket is what waitress's
     # documented ``sockets=`` parameter exists for (same pattern as the ExtOpt server).
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # SO_REUSEADDR, because binding by hand bypasses the one waitress would have set: a
+    # stop-and-restart with a browser tab still connected leaves the previous session's
+    # connections in TIME_WAIT, and without the flag the personal-port bind fails for the
+    # next ~60 s — silently moving a "stable per-user port" onto a kernel-assigned one,
+    # which is exactly the SSH-forwarding breakage the stable port exists to prevent. Safe
+    # for a loopback listener: the flag admits rebinding over TIME_WAIT remnants, not over
+    # a *live* listener, so a genuinely squatted port still refuses below.
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     if port is None:
         try:
             sock.bind(("127.0.0.1", _personal_port()))
-        except OSError:  # squatted or hash-shared — any free port, and the URL says so
-            sock.bind(("127.0.0.1", 0))
+        except OSError:  # a live listener squats the port, or the hash collides — any
+            sock.bind(("127.0.0.1", 0))  # free port instead, and the printed URL says so
     else:
         sock.bind(("127.0.0.1", port))
     bound_port = sock.getsockname()[1]
