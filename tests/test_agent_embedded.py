@@ -198,7 +198,7 @@ def test_the_turn_timeout_defaults_and_can_be_overridden(monkeypatch: pytest.Mon
     assert chat_timeout_seconds() == 90.0
 
 
-@pytest.mark.parametrize("bad", ["soon", "", "0", "-30"])
+@pytest.mark.parametrize("bad", ["soon", "", "0", "-30", "nan", "inf", "-inf"])
 def test_an_unusable_turn_timeout_is_refused_not_ignored(bad: str, monkeypatch: pytest.MonkeyPatch):
     """A mistyped timeout that silently reverted to the default is found by waiting an hour."""
     from chemrefine.agent.providers import CHAT_TIMEOUT_ENV, chat_timeout_seconds
@@ -281,6 +281,27 @@ def test_check_reports_an_unreachable_endpoint():
     with _listing_server(b"{}") as (base, _seen):
         pass  # the context closed the server — the port now refuses connections
     report = check(_cfg(base), timeout=2.0)
+    assert report.ok is False
+    assert "unreachable" in report.findings[0]
+
+
+def test_check_reports_an_endpoint_that_breaks_the_protocol(monkeypatch: pytest.MonkeyPatch):
+    """A truncated reply (IncompleteRead) is a finding, not a traceback.
+
+    `http.client.HTTPException` subclasses neither OSError nor ValueError, so an endpoint
+    that answered and then died mid-body escaped the function whose whole contract is
+    that a bad endpoint becomes a finding.
+    """
+    import urllib.request
+    from http.client import IncompleteRead
+
+    from chemrefine.agent.providers import check
+
+    def die_mid_body(request, timeout):
+        raise IncompleteRead(b"{")
+
+    monkeypatch.setattr(urllib.request, "urlopen", die_mid_body)
+    report = check(_cfg("http://127.0.0.1:1/v1"))
     assert report.ok is False
     assert "unreachable" in report.findings[0]
 

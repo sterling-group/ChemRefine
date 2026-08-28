@@ -97,6 +97,23 @@ def test_lookup_smiles_offline_names_the_alternative(monkeypatch: pytest.MonkeyP
         agent_tools.lookup_smiles("aspirin")
 
 
+def test_lookup_smiles_survives_a_truncated_reply(monkeypatch: pytest.MonkeyPatch):
+    """IncompleteRead — a reply that arrives and then breaks — gets the same offline hint.
+
+    `http.client.HTTPException` is neither an OSError nor a URLError, so a dropped
+    connection mid-body escaped as a traceback where every other network failure became
+    the actionable ConfigError.
+    """
+    from http.client import IncompleteRead
+
+    def die_mid_body(request: urllib.request.Request, timeout: float) -> _CannedResponse:
+        raise IncompleteRead(b"CC")
+
+    monkeypatch.setattr(urllib.request, "urlopen", die_mid_body)
+    with pytest.raises(ConfigError, match="pass a SMILES"):
+        agent_tools.lookup_smiles("aspirin")
+
+
 # ---------------------------------------------------------------------------
 # build_structures
 # ---------------------------------------------------------------------------

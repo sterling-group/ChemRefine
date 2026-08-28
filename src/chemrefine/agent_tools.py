@@ -408,6 +408,7 @@ def lookup_smiles(name: str) -> dict[str, Any]:
     an offline compute node; a failed lookup says so and names the offline alternative
     (pass a SMILES to :func:`build_structures` directly).
     """
+    from http.client import HTTPException
     from urllib.error import URLError
     from urllib.parse import quote
     from urllib.request import Request, urlopen
@@ -423,7 +424,10 @@ def lookup_smiles(name: str) -> dict[str, Any]:
     try:
         with urlopen(request, timeout=15) as response:  # noqa: S310 — scheme is fixed https
             smiles = response.read().decode("utf-8").strip().splitlines()[0]
-    except (URLError, OSError, IndexError) as e:
+    except (URLError, OSError, IndexError, HTTPException) as e:
+        # HTTPException covers a response that arrives and then breaks the protocol
+        # (IncompleteRead on a dropped connection) — neither an OSError nor a URLError,
+        # so it escaped as a traceback where every other network failure became this hint.
         raise ConfigError(
             f"PubChem lookup for {name!r} failed ({e}); offline or unknown name — "
             "pass a SMILES to build_structures instead"

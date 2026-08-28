@@ -794,6 +794,22 @@ def test_submit_calculation_url_error_becomes_jobfailure():
         bridge.submit_calculation(server_url="x", data=_data())
 
 
+def test_submit_calculation_truncated_response_becomes_jobfailure():
+    """IncompleteRead — a server that answers and dies mid-body — is a classified failure.
+
+    `http.client.HTTPException` is neither an HTTPError nor a URLError, so it crashed the
+    wrapper with a traceback in the runlog instead of the JobFailureError every other
+    server fault becomes.
+    """
+    from http.client import IncompleteRead
+
+    with (
+        patch.object(bridge, "urlopen", side_effect=IncompleteRead(b"{")),
+        pytest.raises(JobFailureError, match="broken response"),
+    ):
+        bridge.submit_calculation(server_url="x", data=_data())
+
+
 def test_submit_calculation_non_json_response_becomes_jobfailure():
     with patch.object(bridge, "urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(b"<html>")

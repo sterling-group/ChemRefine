@@ -17,6 +17,8 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from chemrefine import USER_AGENT
 from chemrefine.errors import ConfigError
 
@@ -96,8 +98,11 @@ def chat_timeout_seconds() -> float:
         seconds = float(raw)
     except ValueError:
         raise ConfigError(f"{CHAT_TIMEOUT_ENV}={raw!r} is not a number") from None
-    if seconds <= 0:
-        raise ConfigError(f"{CHAT_TIMEOUT_ENV}={raw!r} must be greater than zero")
+    # Finite as well as positive: every NaN comparison is false, so `nan <= 0` let the one
+    # value that is not a number at all through the "is not a number" gate — and `inf`
+    # passed a plain sign test while defeating the bound the docstring promises.
+    if not np.isfinite(seconds) or seconds <= 0:
+        raise ConfigError(f"{CHAT_TIMEOUT_ENV}={raw!r} must be a finite number of seconds > 0")
     return seconds
 
 
@@ -279,6 +284,7 @@ def check(config: ProviderConfig, *, timeout: float = 5.0) -> CheckReport:
         )
     if not probe.startswith(("http://", "https://")):
         return CheckReport(ok=False, findings=(f"base URL {probe!r} is not HTTP(S)",))
+    from http.client import HTTPException
     from urllib.error import HTTPError, URLError
     from urllib.request import Request, urlopen
 
@@ -305,7 +311,11 @@ def check(config: ProviderConfig, *, timeout: float = 5.0) -> CheckReport:
                 findings=(f"{url}: authentication rejected ({e.code})", *_fixes(url, "auth")),
             )
         return CheckReport(ok=False, findings=(f"{url}: HTTP {e.code}",))
-    except (URLError, OSError, TimeoutError) as e:
+    except (URLError, OSError, TimeoutError, HTTPException) as e:
+        # HTTPException is in the net for the endpoint that *answers* and then breaks the
+        # protocol — a truncated listing (IncompleteRead), a garbled status line. It
+        # subclasses neither OSError nor ValueError, so it escaped the function whose whole
+        # contract is that a bad endpoint becomes a finding, not a traceback.
         return CheckReport(
             ok=False, findings=(f"{url}: unreachable ({e})", *_fixes(url, "unreachable"))
         )

@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from http.client import HTTPException
 from pathlib import Path
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
@@ -123,6 +124,12 @@ def submit_calculation(
         raise JobFailureError(f"ExtOpt server returned HTTP {e.code}: {e.reason}") from e
     except URLError as e:
         raise JobFailureError(f"ExtOpt server unreachable at {server_url}: {e.reason}") from e
+    except HTTPException as e:
+        # A server that answers and then breaks the protocol mid-body (IncompleteRead on a
+        # dying worker) — neither an HTTPError nor a URLError, so it crashed the wrapper
+        # with a traceback in the runlog instead of the classified failure ORCA's step
+        # records like every other server fault.
+        raise JobFailureError(f"ExtOpt server sent a broken response: {e!r}") from e
     try:
         parsed = json.loads(body)
     except json.JSONDecodeError as e:
