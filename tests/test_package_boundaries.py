@@ -105,6 +105,30 @@ def _crossings(path: Path, tree: ast.AST, owners: dict[str, set[str]]) -> list[s
     return out
 
 
+def _exempted_name(detail: str) -> str:
+    """The bare private name a crossing is about — the second half of an ``_ALLOWED`` key.
+
+    The two crossing shapes spell the name differently: an import detail reads
+    ``imports _x from …`` (the second token is the name) while an attribute detail reads
+    ``reads cache._atomic_write (…)`` (the second token is the dotted expression). Keyed
+    on the raw token, the first attribute exemption anyone wrote per ``_ALLOWED``'s own
+    docstring — a ``(path, name)`` pair — silently failed to apply, and the gate went on
+    failing over an entry that looked correct. Taking the last dotted segment gives both
+    shapes the one spelling the docstring promises.
+    """
+    return detail.split()[1].rsplit(".", 1)[-1]
+
+
+def test_an_exemption_key_matches_both_crossing_shapes():
+    """One ``_ALLOWED`` spelling serves an import crossing and an attribute crossing alike.
+
+    With no crossing in the tree the helper above otherwise runs on nothing, so this is
+    what keeps its two-shape promise from rotting into exactly the mismatch it fixes.
+    """
+    assert _exempted_name("imports _atomic_write from chemrefine.cache") == "_atomic_write"
+    assert _exempted_name("reads cache._atomic_write (defined in ['cache.py'])") == "_atomic_write"
+
+
 def test_no_module_reaches_for_another_modules_private_name():
     """A helper another module needs is public and says who needs it.
 
@@ -127,7 +151,7 @@ def test_no_module_reaches_for_another_modules_private_name():
         f"{path.relative_to(_PACKAGE_ROOT.parent)}: {detail}"
         for path, tree in trees.items()
         for detail in _crossings(path, tree, owners)
-        if (_module_key(path), detail.split()[1]) not in _ALLOWED
+        if (_module_key(path), _exempted_name(detail)) not in _ALLOWED
     ]
     assert not offences, (
         "a module reached past another's leading underscore:\n  "

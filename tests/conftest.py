@@ -3,7 +3,7 @@
 import builtins
 import importlib
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -65,6 +65,55 @@ def _isolate_cuda_visible_devices(
     if request.node.get_closest_marker("integration") or request.node.get_closest_marker("gpu"):
         return
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_gpu_probe(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Answer the ``nvidia-smi`` probe with one fixed device — the isolation's other half.
+
+    Deleting ``CUDA_VISIBLE_DEVICES`` above is what *forces* the probe:
+    :func:`~chemrefine.slurm.dispatch.resolve_gpu_budget` reads the variable first and
+    falls through to :func:`~chemrefine.slurm.dispatch._detected_devices` exactly when it
+    is absent — so the fixture meant to stop the budget varying by machine sent every
+    test that reaches a local batch to fork ``nvidia-smi`` and memoize the *developer's*
+    hardware for the session. One fixed device is CI's bare-runner answer everywhere.
+
+    Exempt alongside its sibling for the tiers that exist to meet the real thing, and for
+    any test that takes ``uncached_gpu_probe`` — the fixture whose whole purpose is to
+    vary what the real probe sees. Tests that fake a specific device set still patch
+    ``_detected_devices`` over the top, as they always have.
+    """
+    if request.node.get_closest_marker("integration") or request.node.get_closest_marker("gpu"):
+        return
+    if "uncached_gpu_probe" in request.fixturenames:
+        return
+    from chemrefine.slurm import dispatch
+
+    monkeypatch.setattr(dispatch, "_detected_devices", lambda: ("0",))
+
+
+@pytest.fixture(autouse=True)
+def _restore_engine_registries() -> Iterator[None]:
+    """Snapshot the engine (and MLIP backend) registries; restore them after every test.
+
+    Both are process-global dicts a test may extend with a scratch plugin, and the suite
+    holds *exact* membership invariants over them from another file
+    (``test_engines_invariants``) — so one missed hand-written ``finally`` cascades into
+    failures pointing at the wrong module, and re-registering a name raises from
+    ``register`` itself. The hand-written cleanups in the individual tests stay (each is
+    local documentation of what that test touches); this is the net under all of them,
+    so a missed one can no longer reach a different file.
+    """
+    from chemrefine.engines.api import ENGINES
+    from chemrefine.engines.mlip import registry
+
+    engines_before = dict(ENGINES)
+    backends_before = dict(registry._BACKENDS)
+    yield
+    ENGINES.clear()
+    ENGINES.update(engines_before)
+    registry._BACKENDS.clear()
+    registry._BACKENDS.update(backends_before)
 
 
 @pytest.fixture(autouse=True)

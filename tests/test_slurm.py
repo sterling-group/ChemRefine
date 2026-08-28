@@ -1277,15 +1277,20 @@ def test_wait_for_jobs_deadline_bounds_the_stall_not_the_whole_drain():
     and the two paths would disagree about what the same knob means.
     """
     remaining = ["1", "2", "3", "4"]
+    # An injected clock, not real sleeps: 0.03 s stretches against a 0.05 s bound left
+    # 20 ms for a GC pause or a loaded runner to turn green into ThrottleTimeoutError —
+    # the technique test_throttle._clock_that_expires documents, applied here.
+    now = [0.0]
 
     def one_at_a_time(ids: Collection[str]) -> slurm.QueueState:
-        time.sleep(0.03)  # each stretch is under the bound; four of them exceed it
+        now[0] += 0.03  # each stretch is under the bound; four of them exceed it
         done = {remaining.pop()} if remaining else set(ids)
         return slurm.QueueState(frozenset(done), frozenset(set(ids) - done))
 
-    slurm.wait_for_jobs(
-        ["1", "2", "3", "4"], poll_interval=0, poll=one_at_a_time, max_wait_seconds=0.05
-    )
+    with patch("time.monotonic", side_effect=lambda: now[0]):
+        slurm.wait_for_jobs(
+            ["1", "2", "3", "4"], poll_interval=0, poll=one_at_a_time, max_wait_seconds=0.05
+        )
 
 
 def test_wait_for_jobs_re_anchors_on_array_tasks_not_on_the_array():
@@ -1298,15 +1303,21 @@ def test_wait_for_jobs_re_anchors_on_array_tasks_not_on_the_array():
     rows underneath the parent are what move.
     """
     tasks = [f"12345_{i}" for i in range(8)]
+    # Injected clock for the reason the sibling above gives — the stretches are data here,
+    # not wall time to race a runner against.
+    now = [0.0]
 
     def one_task_at_a_time(ids: Collection[str]) -> slurm.QueueState:
-        time.sleep(0.03)  # each stretch is under the bound; eight of them are far over it
+        now[0] += 0.03  # each stretch is under the bound; eight of them are far over it
         tasks.pop()
         # The parent leaves the queue only once its last task has exited — the whole reason
         # this path cannot judge progress by ids.
         return slurm.QueueState(frozenset() if tasks else frozenset(ids), frozenset(tasks))
 
-    slurm.wait_for_jobs(["12345"], poll_interval=0, poll=one_task_at_a_time, max_wait_seconds=0.05)
+    with patch("time.monotonic", side_effect=lambda: now[0]):
+        slurm.wait_for_jobs(
+            ["12345"], poll_interval=0, poll=one_task_at_a_time, max_wait_seconds=0.05
+        )
 
 
 def test_wait_for_jobs_times_out_on_an_array_whose_tasks_are_all_stuck():

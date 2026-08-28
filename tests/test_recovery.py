@@ -812,27 +812,35 @@ def _recording_engine():
     return _Recorder
 
 
+#: The recovery routing matrix — a module constant rather than an inline parametrize,
+#: because the coverage meta-gate below derives its answer from these rows. Hand-copied
+#: into that gate as a literal, deleting a row (say both RERUN ones) left the gate
+#: asserting RERUN was covered by a matrix that no longer ran it — the transcription
+#: blind spot 8bce099 closed in four sibling gates, in the one gate it missed.
+_RECOVERY_MATRIX: list[tuple[Action, int | None, list[int]]] = [
+    # run: every cache is invalidated, so both steps execute again.
+    (Action.RUN, None, [1, 2]),
+    # resume: both caches are valid and clean, so nothing re-executes.
+    (Action.RESUME, None, []),
+    # rerun N: only that step's cache is dropped; the other cache-hits. Step 2
+    # follows because step 1's survivors are unchanged, so its fingerprint holds.
+    (Action.RERUN, 1, [1]),
+    (Action.RERUN, 2, [2]),
+    # rerun-errors N: nothing is pending, so it degrades to a plain resume.
+    (Action.RERUN_ERRORS, 2, []),
+    # rebuild-cache N: re-parses from disk. No submission, by definition.
+    (Action.REBUILD_CACHE, 2, []),
+    # Both scoped actions aimed at a step that is *not* the last one. Every row above
+    # targets the final step, which is the one arrangement where "what happens after the
+    # target" cannot be observed.
+    (Action.RERUN_ERRORS, 1, []),
+    (Action.REBUILD_CACHE, 1, []),
+]
+
+
 @pytest.mark.parametrize(
     ("action", "target", "expected_submits"),
-    [
-        # run: every cache is invalidated, so both steps execute again.
-        (Action.RUN, None, [1, 2]),
-        # resume: both caches are valid and clean, so nothing re-executes.
-        (Action.RESUME, None, []),
-        # rerun N: only that step's cache is dropped; the other cache-hits. Step 2
-        # follows because step 1's survivors are unchanged, so its fingerprint holds.
-        (Action.RERUN, 1, [1]),
-        (Action.RERUN, 2, [2]),
-        # rerun-errors N: nothing is pending, so it degrades to a plain resume.
-        (Action.RERUN_ERRORS, 2, []),
-        # rebuild-cache N: re-parses from disk. No submission, by definition.
-        (Action.REBUILD_CACHE, 2, []),
-        # Both scoped actions aimed at a step that is *not* the last one. Every row above
-        # targets the final step, which is the one arrangement where "what happens after the
-        # target" cannot be observed.
-        (Action.RERUN_ERRORS, 1, []),
-        (Action.REBUILD_CACHE, 1, []),
-    ],
+    _RECOVERY_MATRIX,
     ids=[
         "run-reexecutes-everything",
         "resume-hits-every-cache",
@@ -995,18 +1003,15 @@ _COVERED_ELSEWHERE = {Action.REBUILD_NMS: "test_rebuild_nms_*"}
 
 
 def test_recovery_matrix_covers_every_action():
-    """A new Action must be given a row above, or named here with the test that covers it.
+    """A new Action must be given a row in the matrix, or named here with its own test.
 
     Either way it is covered deliberately rather than left to inherit another action's
-    routing by accident.
+    routing by accident. ``covered`` is *derived* from the matrix rather than restated:
+    the hand-written literal it replaces stayed true after deleting an action's rows, so
+    the gate certified coverage the matrix no longer provided — the transcription blind
+    spot 8bce099 closed in its four siblings.
     """
-    covered = {
-        Action.RUN,
-        Action.RESUME,
-        Action.RERUN,
-        Action.RERUN_ERRORS,
-        Action.REBUILD_CACHE,
-    }
+    covered = {row[0] for row in _RECOVERY_MATRIX}
     assert covered | set(_COVERED_ELSEWHERE) == set(Action)
     assert not covered & set(_COVERED_ELSEWHERE), "an action is covered in two places"
 

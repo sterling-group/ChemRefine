@@ -9,7 +9,9 @@ fixtures never stales them.
 
 from __future__ import annotations
 
+import csv
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -72,13 +74,29 @@ def test_conformers_full_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert fan_out == min(3, len(ensemble)), "step 2 runs step 1's three survivors"
     assert len(outcomes[1].state.structures) == min(2, fan_out)
     assert len(outcomes[2].state.structures) == 1
-    csv_text = (case.output_dir / "steps.csv").read_text()
-    assert csv_text.count("\n") >= 4, "steps.csv gains rows for all three steps"
+    # Per step, not a total: the case is 3 -> 2 -> 1 survivors, so the report's exact
+    # shape is knowable. The `count("\n") >= 4` this replaces was satisfied by the header
+    # plus step 1's rows alone — dropping step 2's and step 3's CSV emission entirely
+    # stayed green, the same class 944aade pinned with literals elsewhere.
+    with (case.output_dir / "steps.csv").open(encoding="utf-8", newline="") as fh:
+        rows_per_step = Counter(row["Step"] for row in csv.DictReader(fh))
+    assert rows_per_step == {"1": 3, "2": 2, "3": 1}, "every step reports its survivors"
 
 
-def test_conformers_sorts_by_gibbs_not_electronic(
+def test_conformers_survivors_follow_the_steps_ranking_energy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Step 2's survivors are the lowest structures by the energy its filter names.
+
+    Named for what this recording can actually test. The old name promised
+    "sorts by Gibbs, *not* electronic" — a discrimination these three conformers cannot
+    make: they order identically by both energies (the KNOWN DEGENERACY the case's own
+    input.yaml documents), so inverting the `energy_type` handling stayed green here. The
+    Gibbs-vs-electronic distinction is pinned at the unit tier with adversarial orderings
+    (test_filtering); what the replay adds is the end-to-end fact that the ranking energy
+    reaches the filter at all, and that Gibbs values survive to the survivors. A future
+    re-record with split orderings can take the stronger name back.
+    """
     case, _submitter, config = _replay("conformers", tmp_path, monkeypatch)
     outcomes = pipeline.run(config)
 
