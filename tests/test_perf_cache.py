@@ -184,7 +184,10 @@ def test_per_step_bookkeeping_scales_linearly(tmp_path: Path, capsys) -> None:
     # and constant overheads at the small end — this is a shape check, not a stopwatch.
     small, large = rows[0], rows[-1]
     ratio_n = large[0] / small[0]
-    for idx, label in ((1, "StepKey.of"), (2, "cache.save"), (3, "cache.load")):
+    # The CSV column is in the loop, not merely printed: the module docstring names the
+    # pandas round-trip as one of the scaling questions this test exists to check, and a
+    # measured-but-unasserted column is a regression that is reported and never failed.
+    for idx, label in ((1, "StepKey.of"), (2, "cache.save"), (3, "cache.load"), (4, "steps.csv")):
         if small[idx] < 1e-4:  # too fast to time meaningfully at the small end
             continue
         growth = large[idx] / small[idx]

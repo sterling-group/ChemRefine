@@ -1675,8 +1675,9 @@ def test_run_step_writes_results_and_survivors_ensembles(tmp_path: Path):
     step_dir = cfg.output_dir.resolve() / "step1"
     assert len(io.read_xyz_frames(step_dir / "step1_ensemble.xyz")) == 3
     survivors = (step_dir / "step1_survivors.xyz").read_text(encoding="utf-8")
-    # The fake engine's energy is monotonic in the id, so "2" is the one min keeps —
-    # and the caption ties the frame back to its structure directory.
+    # The fake engine's energy is ordered within single-digit ids (its documented safe
+    # range), so "2" is the one min keeps — and the caption ties the frame back to its
+    # structure directory.
     assert survivors.splitlines()[1].startswith("step1 id=2 E=-1.000")
     assert len(io.read_xyz_frames(step_dir / "step1_survivors.xyz")) == 1
 

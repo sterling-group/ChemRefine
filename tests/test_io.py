@@ -383,9 +383,11 @@ def test_smiles_to_xyz_skips_blank_and_invalid_smiles(tmp_path: Path):
     from chemrefine.io import smiles_to_xyz
 
     csv = tmp_path / "mixed.csv"
-    # Row 0: blank string  → skipped (line 144 branch)
-    # Row 1: invalid SMILES → skipped (line 147-148 branch)
-    # Row 2: valid SMILES   → produces a file
+    # The blank line never reaches the loop: pandas' default skip_blank_lines=True drops
+    # it at read time, so this file exercises the invalid-SMILES skip and the valid row
+    # only. The blank/NaN skip branch is covered by the next test, which patches the
+    # DataFrame in precisely because a CSV cannot deliver those rows — do not delete it
+    # on the strength of this file's shape.
     csv.write_text("smiles\n\n!!!nonsense!!!\nC\n", encoding="utf-8")
     written = smiles_to_xyz(csv, tmp_path / "out")
     assert len(written) == 1  # only the valid one

@@ -7,8 +7,13 @@ also "blocks") with a deterministic energy derived from the structure ID.
 full prepare → submit → parse → filter → cache pipeline through realistic
 file I/O.
 
-The energy formula is monotonic in the integer part of the structure ID
-so tests can assert ordering without depending on Python's hash seed.
+The energy formula is deterministic (no :func:`hash`, so no hash-seed
+dependence) and strictly ordered for single-digit numeric IDs — the range
+every ordering assertion in the suite uses. It is **not** monotonic past
+"9": the base is a digit *sum*, so ``"10"`` (base 1) sits above ``"9"``
+(base 9). A test asserting order across that boundary asserts the wrong
+survivor; keep ordering assertions inside 0-9 or spell the energies
+yourself.
 """
 
 from __future__ import annotations
@@ -33,9 +38,12 @@ from chemrefine.state import (
 def _fake_energy(structure_id: str) -> float:
     """Return a deterministic Hartree-scale energy for an ID.
 
-    Pure numeric IDs map to ``-1.0 - n * 1e-4``; hierarchical IDs
-    accumulate every digit they contain. The result is reproducible
-    across Python runs (no :func:`hash`).
+    The base is the **sum of the ID's digits** (so ``"7"`` maps to
+    ``-1.0 - 7e-4``, but ``"10"`` sums to 1 and lands *above* ``"9"``),
+    plus a length term that breaks ties between hierarchical IDs. Strictly
+    ordered only for single-digit numeric IDs — see the module docstring
+    before asserting order over anything wider. Reproducible across Python
+    runs (no :func:`hash`).
     """
     digits = [int(c) for c in structure_id if c.isdigit()]
     base = sum(digits) if digits else 0
