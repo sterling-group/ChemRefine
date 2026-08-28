@@ -238,3 +238,70 @@ def test_an_unwritable_template_dir_is_a_config_error_not_a_traceback(tmp_path: 
             scaffold_templates(load_config(path))
     finally:
         fortress.chmod(0o755)
+
+
+def test_steps_sharing_a_template_scaffold_it_once(tmp_path: Path):
+    """Same engine, one shared ``template:`` — every step keeps a plan, the file is written once.
+
+    Each sharing step needs a plan of its own (per-step lookups like ``read_template``
+    answer from ``plan.step``), but the *file* must land once: ``exists`` is snapshotted
+    before any write, so writing per sharing step re-did the same work at best.
+    """
+    config = _config(
+        tmp_path,
+        {"step": 1, "engine": "orca", "template": "shared.inp"},
+        {"step": 2, "engine": "orca", "template": "shared.inp"},
+    )
+    step_plans = [p for p in plan_templates(config) if p.kind == "step"]
+    assert [(p.step, p.path.name) for p in step_plans] == [(1, "shared.inp"), (2, "shared.inp")]
+    written = scaffold_templates(config)
+    assert [p.name for p in written if p.name.endswith(".inp")] == ["shared.inp"]
+
+
+def test_a_cross_engine_template_share_is_refused_at_planning(tmp_path: Path):
+    """Engines of different formats naming one template file refuse by name, never clobber.
+
+    Both plans snapshot ``exists=False`` before either writes, so with ``overwrite``
+    still False the second engine's starter replaced the first — against the docstring's
+    "existing files are left alone". Refusing in ``plan_templates`` puts the refusal at
+    the seam every consumer (CLI, GUI chips, agent tools) reads through.
+    """
+    import pytest
+
+    from chemrefine.errors import ConfigError
+
+    config = _config(
+        tmp_path,
+        {"step": 1, "engine": "orca", "template": "shared.tpl"},
+        {"step": 2, "engine": "qchem", "template": "shared.tpl"},
+    )
+    with pytest.raises(ConfigError, match=r"shared\.tpl"):
+        plan_templates(config)
+
+
+def test_a_mid_scaffold_failure_names_what_already_landed(tmp_path: Path, monkeypatch):
+    """A disk refusal partway through says which starters are already on disk.
+
+    The failure leaves the earlier starters behind, and a retry reads a half-written
+    last file as "exists — kept"; naming what landed is what makes that state
+    inspectable rather than invisible.
+    """
+    import pytest
+
+    from chemrefine.errors import ConfigError
+
+    config = _config(
+        tmp_path,
+        {"step": 1, "engine": "orca"},
+        {"step": 2, "engine": "qchem"},
+    )
+    real_write = Path.write_text
+
+    def fail_on_qchem(self: Path, *args: object, **kwargs: object):
+        if self.name == "step2.in":
+            raise OSError(28, "No space left on device")
+        return real_write(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_on_qchem)
+    with pytest.raises(ConfigError, match=r"already written before the failure: .*step1\.inp"):
+        scaffold_templates(config)

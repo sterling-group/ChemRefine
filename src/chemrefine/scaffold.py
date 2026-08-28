@@ -160,8 +160,18 @@ def plan_templates(config: Config) -> tuple[TemplatePlan, ...]:
     unknown engine raises :class:`~chemrefine.errors.EngineNotFoundError` here rather
     than producing a plan for files no engine would read — run ``chemrefine validate``
     first for the report shape.
+
+    Steps may share a ``template:`` name — reusing one input across steps is ordinary —
+    and each sharing step keeps a plan of its own, so per-step lookups
+    (:func:`chemrefine.agent_tools.read_template`) keep answering for every step. What a
+    share must *not* cross is an engine boundary: the sharers' starters then differ, and
+    ``scaffold_templates`` snapshots ``exists`` before writing anything, so the second
+    starter silently replaced the first with ``overwrite`` still False. Refused here, at
+    planning time, so every consumer of this seam — the CLI, the GUI's chips, the agent
+    tools — inherits the refusal before a byte is written.
     """
     plans: list[TemplatePlan] = []
+    step_plans: dict[Path, TemplatePlan] = {}
     headers: dict[str, None] = {}
     for step in config.steps:
         engine = get_engine(step.engine)
@@ -172,15 +182,23 @@ def plan_templates(config: Config) -> tuple[TemplatePlan, ...]:
                 template=step.template,
                 suffix=engine.template_suffix,
             )
-            plans.append(
-                TemplatePlan(
-                    path=path,
-                    exists=path.is_file(),
-                    kind="step",
-                    step=step.step,
-                    engine=step.engine,
+            earlier = step_plans.get(path)
+            if earlier is not None and earlier.engine != step.engine:
+                raise ConfigError(
+                    f"steps {earlier.step} ({earlier.engine}) and {step.step} "
+                    f"({step.engine}) both name {path.name} as their template, and the "
+                    f"two engines read different formats — one starter would silently "
+                    f"overwrite the other. Give each engine's steps a template of its own."
                 )
+            plan = TemplatePlan(
+                path=path,
+                exists=path.is_file(),
+                kind="step",
+                step=step.step,
+                engine=step.engine,
             )
+            step_plans.setdefault(path, plan)
+            plans.append(plan)
         if isinstance(engine, JobExecutable):
             headers.setdefault(effective_header(config, step, engine), None)
     for name in headers:
@@ -256,7 +274,10 @@ def scaffold_templates(config: Config, *, overwrite: bool = False) -> tuple[Path
     try:
         config.template_dir.mkdir(parents=True, exist_ok=True)
         for plan in plan_templates(config):
-            if plan.exists and not overwrite:
+            # Steps sharing a template each carry a plan (per-step lookups need one), so
+            # the file itself is written once: `exists` was snapshotted before any write,
+            # and re-writing per sharing step re-did identical work at best.
+            if plan.path in written or (plan.exists and not overwrite):
                 continue
             # A `template:` override may name a subdirectory (or an absolute path elsewhere)
             # — the same shape `agent_tools.write_template` already creates parents for.
@@ -264,5 +285,12 @@ def scaffold_templates(config: Config, *, overwrite: bool = False) -> tuple[Path
             plan.path.write_text(_starter_for(plan), encoding="utf-8")
             written.append(plan.path)
     except OSError as e:
-        raise ConfigError(f"cannot scaffold templates under {config.template_dir}: {e}") from e
+        # `written` is in the message because the failure is mid-loop: the starters
+        # already on disk stay there, and a retry would read a half-written last file as
+        # "exists — kept". Naming what landed makes the partial state inspectable.
+        landed = ", ".join(str(p) for p in written) or "nothing"
+        raise ConfigError(
+            f"cannot scaffold templates under {config.template_dir}: {e} "
+            f"(already written before the failure: {landed})"
+        ) from e
     return tuple(written)
