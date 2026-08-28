@@ -1678,8 +1678,6 @@ def test_the_five_numbering_modes_read_the_way_each_convention_does():
       console.log(JSON.stringify({
         off: render("off"), zero: render("zero"), one: render("one"),
         element: render("element"), symbol: render("symbol"),
-        // A second render must restart the ordinals, not carry on from the first.
-        again: render("element"),
         unknownOrdinal: atomLabel({ serial: 0 }, "element", {}),
         unknownSymbol: atomLabel({ serial: 0 }, "symbol", {}),
         notAMode: render("numbers"),
@@ -1692,7 +1690,9 @@ def test_the_five_numbering_modes_read_the_way_each_convention_does():
     assert result["element"] == ["C1", "H1", "H2", "O1"]
     # Deliberately not unique: it answers "what is this atom", not "which atom is this".
     assert result["symbol"] == ["C", "H", "H", "O"]
-    assert result["again"] == result["element"]  # a fresh tally each redraw
+    # (The per-redraw ordinal restart is drawLabels()' own property — held by
+    # test_a_second_redraw_restarts_the_ordinals through the real seam; a helper here
+    # that built a fresh counter per render could not fail it.)
     # An element-less atom is labelled, never crashed on, in both element-bearing modes.
     assert result["unknownOrdinal"] == "?1"
     assert result["unknownSymbol"] == "?"
@@ -1806,6 +1806,38 @@ def test_each_label_owns_its_own_position_rather_than_sharing_one():
         {"x": -1.1, "y": 0.9, "z": 0},
     ]
     assert result["shared"] is False
+
+
+def test_a_second_redraw_restarts_the_ordinals():
+    """``drawLabels()`` tallies per redraw — through the real seam, twice.
+
+    The property lives in drawLabels' own ``const counts = {}``: hoisted to a persistent
+    component field, ordinals climb (C2, H3, …) on every redraw in the browser. The old
+    guard rendered through a test helper that built a fresh counter per call, so it was
+    true by construction; this drives the component's drawLabels twice and compares.
+    """
+    out = _run_component_in_node(
+        _VIEWER_STUB
+        + """
+      const b = builder();
+      b.chatAvailability = () => {};
+      const atoms = [
+        { serial: 0, elem: "C", x: 0, y: 0, z: 0 },
+        { serial: 1, elem: "H", x: 1.0, y: 0, z: 0 },
+      ];
+      const stub = viewerStub(atoms);
+      b._model = stub.model;
+      b._gl = stub.gl;
+      b.viewer.labels = "element";
+      b.drawLabels();
+      const first = stub.labels.map((l) => l.text);
+      b.drawLabels();
+      console.log(JSON.stringify({ first, second: stub.labels.map((l) => l.text) }));
+    """
+    )
+    result = json.loads(out)
+    assert result["first"] == ["C1", "H1"]
+    assert result["second"] == result["first"], "a redraw restarts the ordinals"
 
 
 def test_the_label_style_is_bold_centred_and_behind_the_atoms_in_front_of_it():

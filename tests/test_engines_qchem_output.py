@@ -171,6 +171,25 @@ def test_the_transdip_row_is_not_a_displacement_row():
     assert not np.isclose(modes[1, 2, 6], 0.017)  # TransDip's z never enters
 
 
+def test_the_transdip_exclusion_is_decisive_on_a_short_table():
+    """A table missing one atom row must not absorb ``TransDip`` as the missing atom.
+
+    On the complete table above the name test is never decisive: the row loop stops at
+    ``n_atoms`` rows before TransDip is ever evaluated, so deleting the exclusion clause
+    passed that test — and every other, since the truncation cases all cut *before*
+    TransDip. Here one atom row is gone and TransDip has exactly the right width
+    (1 + 3·n_modes tokens): without the name test it becomes the final "atom" and the
+    NMS tensor silently carries a transition-dipole vector as an atomic displacement.
+    """
+    o_row = " O          0.000  0.000 -0.004   -0.166  0.024  0.000   -0.000  0.000 -0.070\n"
+    short = _FREQ_BLOCK.replace(o_row, "")  # atom 2 lost; TransDip still follows
+    parsed = parse_qchem_text(_ORIENTATION + _ENERGY + short)[0]
+    assert parsed.imaginary_freqs == {6: -151.64}  # the spectrum survives
+    assert parsed.normal_modes is None, (
+        "one real row + TransDip is not two atoms — the tensor must be withheld"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Failure paths — the coverage gate's findings, each pinned
 # ---------------------------------------------------------------------------

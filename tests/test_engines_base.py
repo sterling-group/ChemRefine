@@ -22,8 +22,15 @@ from chemrefine.state import RunBlock
 
 
 def test_engines_registry_is_populated_by_side_effect_import():
-    """Importing chemrefine.engines must trigger every bundled engine's registration."""
-    assert "fake" in ENGINES
+    """Importing chemrefine.engines must trigger every bundled engine's registration.
+
+    Asserted on a *bundled* engine: ``fake`` is test scaffolding conftest registers
+    itself, so it stays in the registry with the package's ``_load_plugins()`` deleted —
+    which is exactly the side effect this test is named for. (The full bundled roster is
+    ``test_engines_discovery``'s; one shipped name is enough to prove the mechanism.)
+    """
+    assert "orca" in ENGINES
+    assert "fake" in ENGINES  # and conftest's scaffolding engine is present for the suite
 
 
 def test_get_engine_returns_fresh_instance():

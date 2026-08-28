@@ -85,8 +85,10 @@ def test_build_script_overrides_ntasks_and_writes_script(tmp_path: Path):
     assert "#SBATCH --time=24:00:00" in text
     assert "#SBATCH --ntasks=12" in text
     assert "#SBATCH --cpus-per-task=1" in text
-    # the user's --ntasks=1 must not survive
-    assert "--ntasks=1" not in text or "--ntasks=12" in text
+    # The header's own --ntasks=1 must not survive. Probed with its trailing newline:
+    # "--ntasks=1" bare is a substring of the re-added "--ntasks=12", so the old
+    # disjunction here was implied by the assertion above it and could never fail.
+    assert "#SBATCH --ntasks=1\n" not in text
     assert "module load orca/6.0" in text
 
 
@@ -182,6 +184,21 @@ def test_a_kilobyte_header_grant_is_floored_to_mb(tmp_path: Path):
     text = script.read_text()
     assert "#SBATCH --mem-per-cpu=2048K" in text  # 2 MB covers the 2 MB requirement
     assert text.count("--mem-per-cpu") == 1
+
+
+def test_a_kilobyte_header_grant_is_not_read_as_megabytes(tmp_path: Path):
+    """The same ``2048K`` grant must be *extended* against a 3 MB requirement.
+
+    The stands-untouched case above pins the unit only from below: a mutant reading
+    ``2048K`` as 2048 MB still satisfies ``granted >= 2`` and passes it identically —
+    while a real header granting kilobytes would wrongly stand against any requirement
+    and the job would OOM. This side can only pass when K genuinely reads as 2 MB.
+    """
+    header = _write_header_with(tmp_path, "--mem-per-cpu=2048K")
+    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, memory_mb=3))
+    text = script.read_text()
+    assert "2048K" not in text, "a 2 MB grant cannot cover 3 MB and must be replaced"
+    assert "#SBATCH --mem-per-cpu=3" in text  # ceil(3 / (1 task x 1 cpu))
 
 
 def test_a_whole_node_grant_satisfies_any_requirement(tmp_path: Path):

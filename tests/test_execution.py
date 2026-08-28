@@ -480,8 +480,12 @@ def test_multi_chunk_arrays_share_one_core_budget(_submit, _finished, tmp_path: 
 
     limits = [call.kwargs["max_concurrent"] for call in submit_array.call_args_list]
     assert len(limits) == 3, "the chunking this test depends on did not happen"
-    # _FakeJobEngine.pal is 1, clamped to max_cores; 12 // (1 * 3) = 4 per chunk.
-    assert sum(limits) * engine.pal(ctx) <= ctx.max_cores
+    # _FakeJobEngine.pal is 1, clamped to max_cores; 12 // (1 * 3) = 4 per chunk. The
+    # exact shares, not a `sum(...) <= budget` bound: any under-allocating mutant of the
+    # arithmetic — an extra chunk factor, a wrong divisor — still satisfies the
+    # inequality while a 2500-structure step silently runs at a fraction of max_cores.
+    assert limits == [4, 4, 4]
+    assert sum(limits) * engine.pal(ctx) <= ctx.max_cores  # and the shares fit the budget
 
 
 @patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))

@@ -33,7 +33,7 @@ from chemrefine.engines import _execution as submit
 from chemrefine.engines.api import ENGINES, NmsCapableEngine, get_engine
 from chemrefine.engines.mlip import registry as mlip_registry
 from chemrefine.engines.mlip.calculator import MlipCalculator, build_calculator
-from chemrefine.engines.mlip.registry import BackendSpec, MlipLibrary
+from chemrefine.engines.mlip.registry import BackendSpec, CalculatorSpec, MlipLibrary
 from chemrefine.errors import ConfigError, OutputParseError
 from chemrefine.state import PipelineState, StepContext, Structure
 
@@ -213,17 +213,42 @@ def test_the_checkpoint_reaches_the_builder_the_task_name_chose(tmp_path: Path, 
     assert seen[0].weights == model_file  # vetted into a Path by the dispatch
 
 
-def test_a_selection_that_names_no_library_uses_the_options_default(tmp_path: Path):
-    """`build_calculator`'s default is read off `MlipOptions`, not restated beside it.
+def test_a_selection_that_names_no_library_uses_the_options_default(monkeypatch):
+    """A bare call's *signature defaults* dispatch what `MlipOptions` declares.
 
-    It is public API a user's `step{N}.py` may call without a YAML in sight, so it needs a
-    default of its own — and a second copy of the string is how a template comes to run a
-    different model from the config that describes it.
+    It is public API a user's `step{N}.py` may call without a YAML in sight, so it needs
+    defaults of its own — and a second copy of any string is how a template comes to run
+    a different model from the config that describes it. Asserting
+    `MlipOptions().task_name == DEFAULT_TASK` alone was X == X (`DEFAULT_TASK` is
+    *defined as* that field's default), and every call site in the suite passed
+    `task_name` explicitly — so a stray literal in `build_calculator`'s or
+    `MlipCalculator`'s signature survived everything while a bare template call would
+    silently run the wrong library. The dispatch is faked and the spec it receives is
+    compared to the model's own defaults, which is the property by its real seam.
     """
-    from chemrefine.engines.mlip.calculator import DEFAULT_TASK
+    from chemrefine.engines.mlip import calculator as calc_mod
     from chemrefine.engines.mlip.options import MlipOptions
 
-    assert MlipOptions().task_name == DEFAULT_TASK
+    captured: list[CalculatorSpec] = []
+
+    def fake_builder(spec: CalculatorSpec):
+        captured.append(spec)
+        return "CALC"
+
+    monkeypatch.setattr(
+        calc_mod, "backend_spec", lambda task: BackendSpec(_TEST_LIB, builder=fake_builder)
+    )
+    monkeypatch.setattr(calc_mod, "calculator_for", lambda task: fake_builder)
+
+    defaults = MlipOptions()
+    assert build_calculator() == "CALC"
+    wrapper = MlipCalculator()
+    assert wrapper.calculator == "CALC"
+    for spec in captured:
+        assert spec.task_name == defaults.task_name
+        assert spec.device == defaults.device
+        assert (spec.model_name or "") == defaults.model_name
+        assert spec.weights is None
 
 
 def test_a_trainer_only_task_cannot_be_run():

@@ -587,7 +587,11 @@ def test_extopt_calc_sanitizes_tag_before_filename_use(tmp_path: Path, monkeypat
     _install_fake_pyscf(monkeypatch)
     monkeypatch.chdir(tmp_path)
     extopt_calc.PyscfExtOptCalculator(save_tensors=True).calc(_data(tag="../../evil"))
-    assert not (tmp_path.parent.parent / "evil.npz").exists()
+    # Where the unsanitized path would actually land: tensors/../../evil.npz resolves
+    # one level above tmp_path ("tensors/.." cancels the first ".."). The old assertion
+    # probed tmp_path.parent.parent — a directory the traversal can never reach — so it
+    # was vacuously true with sanitization removed.
+    assert not (tmp_path.parent / "evil.npz").exists()
     assert (tmp_path / "tensors" / ".._.._evil.npz").is_file()
 
 

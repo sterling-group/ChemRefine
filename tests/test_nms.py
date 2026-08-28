@@ -713,9 +713,21 @@ def test_random_mode_selection_is_per_structure_not_stream_order():
     modes[0, 0, :] = 1.0
 
     def drawn(structure_id: str) -> str:
-        struct = Structure(id=structure_id, atoms=Atoms("H3", positions=np.zeros((3, 3))))
-        rng = nms.rng_for(struct.id, opts.seed)
-        return nms.select_displacements(struct, {}, modes, opts, rng)[0][0]
+        """The mode suffix the *coordinator's own* fan-out draws for this structure.
+
+        Through ``_children_for`` — the seam both coordinators share — never through a
+        hand-built ``rng_for``: a helper that constructs the per-id generator itself is
+        order-independent by construction and proves nothing about the code under test.
+        A coordinator regressed to a shared module-level stream fails here; a fresh
+        per-structure draw passes.
+        """
+        struct = Structure(
+            id=structure_id,
+            atoms=Atoms("H3", positions=np.zeros((3, 3))),
+            normal_modes=modes,
+        )
+        [first_child, _neg] = nms._children_for(struct, opts)
+        return first_child.id.removeprefix(f"{structure_id}_")
 
     visited_all = [drawn(sid) for sid in ("0", "1", "2")]
     skipped_one = [drawn(sid) for sid in ("0", "2")]
@@ -981,6 +993,23 @@ def test_the_two_schedulers_resolve_identically(cls, tmp_path: Path):
     for sid in ("0", "1"):
         assert (ctx.step_dir / sid / "attempt1").is_dir()
     assert not (ctx.step_dir / "2" / "attempt1").exists(), "already at target, never displaced"
+
+
+def test_the_two_schedulers_produce_identical_records(tmp_path: Path):
+    """Batched and streaming runs are compared to *each other*, record for record.
+
+    The parametrized test above runs each scheduler against its own expectations, and
+    its record comparison sorts a run's survivors against themselves — an ordering
+    check. Cross-scheduler identity of the full content (energy, geometry, lineage,
+    ``resolved_from``) is only held by comparing the two runs' records directly.
+    """
+    records = {}
+    for label, cls in (("batched", _FakeNms), ("streaming", _StreamingFakeNms)):
+        engine = cls(freqs={**_two_parents_needing_nms(), "2": _Freq(imaginary={}, modes=None)})
+        ctx = _ctx(tmp_path / label, (_h2("0"), _h2("1"), _h2("2")))
+        res = _resolve_like_a_step(engine, ctx)
+        records[label] = [cache.structure_record(s) for s in res.survivors]
+    assert records["batched"] == records["streaming"]
 
 
 # ---------------------------------------------------------------------------

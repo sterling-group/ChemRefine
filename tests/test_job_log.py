@@ -25,6 +25,15 @@ def test_bash_header_contains_every_required_field(tmp_path: Path):
     )
     for key in job_log._HEADER_KEYS:
         assert f"{key}=" in snippet
+    # The roster loop above derives its expectation from the same _HEADER_KEYS constant
+    # the emitter iterates, so a key deleted from the tuple vanishes from both sides in
+    # one edit. The four rows no other test pins are held here as literals — value and
+    # all — so the runlog corpus cannot silently lose them. (`mode=` alone would even be
+    # satisfied by the `__cr_mode=slurm` probe line with the field row gone.)
+    assert "  host=$(hostname)" in snippet
+    assert "  job_id=${SLURM_JOB_ID:-$$}" in snippet
+    assert "  mode=$__cr_mode" in snippet
+    assert "  scratch=$WORK_DIR" in snippet
     assert "ChemRefine mlff step2_refine starting" in snippet
     assert "__cr_mode=slurm" in snippet
     assert "__cr_mode=bash" in snippet

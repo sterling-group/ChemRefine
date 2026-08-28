@@ -534,20 +534,35 @@ def test_chat_confirm_names_the_tool_and_defaults_to_no(monkeypatch: pytest.Monk
 
 
 def test_chat_repl_threads_history_until_exit(monkeypatch: pytest.MonkeyPatch):
+    """The second turn carries the first turn's messages — the web twin's assertion.
+
+    Two model turns before ``exit``, scripted through a ``FunctionModel`` that counts
+    the messages each turn receives, exactly as ``test_gui.py``'s
+    ``test_chat_turns_thread_history`` does for the panel. One turn plus a banner count
+    — this test's old shape — stayed green with the REPL's ``message_history=``
+    threading deleted entirely, because no second successful turn ever ran.
+    """
     import typer
 
     from chemrefine.agent import chat
 
     monkeypatch.setenv("CHEMREFINE_LLM_MODEL", "test-model")
-    monkeypatch.setattr(ProviderConfig, "build_model", lambda self: TestModel(call_tools=[]))
-    prompts = iter(["hello there", "exit"])
+    seen: list[int] = []
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(len(messages))
+        return ModelResponse(parts=[TextPart(f"reply {len(seen)}")])
+
+    monkeypatch.setattr(ProviderConfig, "build_model", lambda self: FunctionModel(script))
+    prompts = iter(["hello there", "and after that?", "exit"])
     monkeypatch.setattr(typer, "prompt", lambda *a, **k: next(prompts))
     echoed: list[str] = []
     monkeypatch.setattr(typer, "echo", echoed.append)
 
     chat.main(provider="custom")
     assert any("ChemRefine agent" in line for line in echoed)
-    assert len(echoed) >= 2  # banner + at least one model reply
+    assert "reply 1" in echoed and "reply 2" in echoed
+    assert seen[1] > seen[0], "the second turn must carry the first turn's messages"
 
 
 def test_chat_repl_ends_on_eof(monkeypatch: pytest.MonkeyPatch):

@@ -992,6 +992,11 @@ def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
         rc = server.main()
     assert rc == 0
     create_server_mock.assert_called_once()
+    # The pre-bound socket must be what waitress serves on — the one property the fake
+    # socket exists to prove. Passing the app without `sockets=` starts a second server
+    # on 0.0.0.0:8080 and leaves the advertised kernel port dead (the src comment's own
+    # warning), which `assert_called_once()` alone cannot see.
+    assert create_server_mock.call_args.kwargs["sockets"] == [fake_sock]
     fake_server.run.assert_called_once_with()
     assert url_file.read_text(encoding="utf-8") == "127.0.0.1:54321"
     # main() also writes the per-run bearer token next to the URL sidecar,

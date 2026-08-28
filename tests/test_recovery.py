@@ -1057,11 +1057,14 @@ def test_rebuild_nms_rebuilds_the_nms_step_without_submitting(tmp_path: Path, ta
         execute(cfg, Action.RESUME)
         document = (cfg.output_dir / "step1_s" / "_cache" / "step.json").resolve()
         before = document.stat().st_mtime_ns
-        eng.submitted, eng.nms_seen = [], []
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
 
         assert execute(cfg, Action.REBUILD_NMS, target=target) == 0
 
-        assert eng.submitted == [], "a rebuild submits nothing"
+        # Both spies, as the resume test asserts them: `submitted` records only round-1
+        # parents, so on its own it would stay empty while a mutated rebuild fanned out
+        # and submitted fresh round-2 displacement children.
+        assert eng.submitted == [] and eng.children_submitted == [], "a rebuild submits nothing"
         assert document.stat().st_mtime_ns != before, "the NMS step's cache was rewritten"
         assert eng.nms_seen, "round 1 was re-parsed, which is where the frequencies come from"
     finally:

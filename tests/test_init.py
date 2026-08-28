@@ -68,21 +68,29 @@ def test_python_dash_m_translates_legacy_argv():
 
 @pytest.mark.filterwarnings("ignore:.*found in sys.modules.*:RuntimeWarning")
 @pytest.mark.parametrize(
-    "module",
+    ("module", "argparse_help"),
     [
-        "chemrefine.engines.orca.extopt.bridge",
-        "chemrefine.engines._backend_server.server",
-        "chemrefine.engines.mlip.train.driver",
+        ("chemrefine.engines.orca.extopt.bridge", True),
+        ("chemrefine.engines._backend_server.server", True),
+        ("chemrefine.engines.mlip.train.driver", False),
     ],
 )
-def test_module_entrypoint_runs_main(module, monkeypatch):
+def test_module_entrypoint_runs_main(module, argparse_help, monkeypatch):
     """`python -m <module>` dispatches through the ``if __name__ == "__main__"`` guard.
 
-    Driven via ``--help`` so ``main()`` exits cleanly (argparse SystemExit) without
-    binding a socket or contacting a backend. ``runpy`` executes the module as
-    ``__main__`` in-process so the guard line runs under coverage — a spawned
-    subprocess isn't viable here (the server blocks; the bridge needs a live backend).
+    Driven via ``--help`` without binding a socket or contacting a backend. ``runpy``
+    executes the module as ``__main__`` in-process so the guard line runs under coverage
+    — a spawned subprocess isn't viable here (the server blocks; the bridge needs a live
+    backend). The bridge and the server carry argparse, so their ``--help`` exits code 0
+    like the CLI's; the train driver deliberately has no parser — its two-argument usage
+    refusal is the SystemExit, carrying the usage line as the code. A bare
+    ``raises(SystemExit)`` hid exactly that difference (and would equally have hidden a
+    broken argument table exiting 2).
     """
     monkeypatch.setattr(sys, "argv", [module, "--help"])
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as excinfo:
         runpy.run_module(module, run_name="__main__")
+    if argparse_help:
+        assert excinfo.value.code == 0
+    else:
+        assert "usage:" in str(excinfo.value.code)
