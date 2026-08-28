@@ -376,7 +376,8 @@ def reject_shell_unsafe(text: str, *, what: str, fix: str) -> None:
                                 exports them
     ``operation``               this rule — same heredoc
     ``tensor_folder``           this rule (via :class:`~chemrefine.engines.pyscf.options.\
-PyscfOptions`) — reaches ``cp -r "…"``, and bash substitutes *inside* double quotes
+PyscfExtOptOptions`, the subclass that declares the field) — reaches ``cp -r "…"``, and \
+bash substitutes *inside* double quotes
     ``engine``                  safe by construction — must be a registry key
     ``step.name``               safe by construction — matched against :data:`_NAME_RE`
     ``step`` / ``cores``        safe by construction — integers

@@ -28,6 +28,17 @@ from chemrefine.state import Structure
 CHGNET = MlipLibrary(extra="mlip-chgnet", package="chgnet", import_name="chgnet")
 """The one declaration of what provides this library."""
 
+_EPOCH_DIR = "chgnet_epochs"
+"""Where the hook points CHGNet's per-epoch ``bestE_…``/``bestF_…`` saves, under the job's
+working directory.
+
+One constant consumed by both sides — the hook's ``save_dir=`` and the class's
+``output_dirs`` — because they are one promise: what the trainer writes there, the job's
+exit trap copies home. Spelled twice, the docstring on ``output_globs`` went on claiming
+the epoch history was "kept beside the product" for as long as the copy-back never
+reached it: the file half of the trap is non-recursive, and nothing declared the
+directory."""
+
 
 @CHGNET.calculator("chgnet")
 def _build_chgnet(spec: CalculatorSpec) -> Any:
@@ -95,8 +106,14 @@ class ChgnetTrainer(ApiTrainerBase):
 
     output_globs: ClassVar[tuple[str, ...]] = ("*.pth.tar",)
     """The driver runs in ``$WORK_DIR`` and its fixed-name final save lands there; this is
-    what carries it home. CHGNet's own per-epoch ``bestE_…``/``bestF_…`` checkpoints match
-    too — small, and the run's history is worth keeping beside the product."""
+    what carries it home. The per-epoch history lives one directory down and rides
+    :attr:`output_dirs` instead — the file half of the copy-back is non-recursive."""
+
+    output_dirs: ClassVar[tuple[str, ...]] = (_EPOCH_DIR,)
+    """CHGNet's own per-epoch ``bestE_…``/``bestF_…`` checkpoints, copied back whole —
+    small, and the run's history is worth keeping beside the product. The same constant
+    the hook's ``save_dir=`` writes into, so the writer and the copy-back cannot name
+    different directories again."""
 
     def write_split(self, plan: TrainingPlan, name: str, structures: tuple[Structure, ...]) -> Path:
         """The shared calculator-labelled extxyz — the same file SevenNet's trainer writes.
@@ -145,7 +162,7 @@ class ChgnetTrainer(ApiTrainerBase):
             _loader(str(config["train_set"]), batch_size),
             _loader(str(config["valid_set"]), batch_size),
             _loader(test_set, batch_size) if test_set else None,
-            save_dir="chgnet_epochs",
+            save_dir=_EPOCH_DIR,
         )
 
         best = getattr(trainer, "best_model", None) or trainer.model

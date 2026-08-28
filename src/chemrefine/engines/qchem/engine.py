@@ -221,7 +221,13 @@ class QchemEngine(JobEngine):
         return RunBlock(body="\n".join(lines), cleanup=cleanup)
 
     def extra_header_fields(self, ctx: StepContext) -> tuple[tuple[str, object], ...]:
-        """Record which qchem invocation ran in the runlog header, like ORCA does."""
+        """Record which qchem invocation ran in the runlog header.
+
+        The *invocation* — :meth:`_executable`'s shell-quoted spelling, ``"$QC/bin/qchem"``
+        included — rather than ORCA's raw-value convention: for Q-Chem the interesting fact
+        is often the ``$QC``-derived form, which only exists as the invocation. The header
+        is a heredoc, so the ``$QC`` inside it expands to the run's real root when set.
+        """
         return (("qchem_executable", self._executable(ctx)),)
 
     # -- parse -------------------------------------------------------------

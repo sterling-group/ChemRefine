@@ -301,7 +301,7 @@ def test_run_dft_uses_rks_for_closed_shell(monkeypatch):
         basis="def2-svp",
     )
     mol.spin = 0
-    energy, gradient, meta, _mf = _runtime.run_dft(mol, method="dft", xc="pbe")
+    energy, gradient, meta, _mf = _runtime.run_dft(mol, method="dft", xc="pbe", use_df=False)
     mocks["dft"].RKS.assert_called_once()
     mocks["dft"].UKS.assert_not_called()
     assert energy == -1.5
@@ -320,7 +320,7 @@ def test_run_dft_uses_uks_for_open_shell(monkeypatch):
         basis="def2-svp",
     )
     mol.spin = 2
-    _runtime.run_dft(mol, method="dft", xc="pbe")
+    _runtime.run_dft(mol, method="dft", xc="pbe", use_df=False)
     mocks["dft"].UKS.assert_called_once()
     mocks["dft"].RKS.assert_not_called()
 
@@ -335,7 +335,7 @@ def test_run_dft_uses_rhf_for_method_hf(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    _runtime.run_dft(mol, method="hf")
+    _runtime.run_dft(mol, method="hf", use_df=False)
     mocks["scf"].RHF.assert_called_once()
 
 
@@ -349,7 +349,7 @@ def test_run_dft_uses_uhf_for_method_hf_open_shell(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 1
-    _runtime.run_dft(mol, method="hf")
+    _runtime.run_dft(mol, method="hf", use_df=False)
     mocks["scf"].UHF.assert_called_once()
 
 
@@ -364,7 +364,7 @@ def test_run_dft_hf_warns_about_gpu(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    _, _, meta, _ = _runtime.run_dft(mol, method="hf", want_gpu=True)
+    _, _, meta, _ = _runtime.run_dft(mol, method="hf", use_df=False, want_gpu=True)
     assert "HF GPU path not enabled" in meta["gpu_msg"]
     assert meta["gpu_used"] is False
 
@@ -381,7 +381,7 @@ def test_run_dft_falls_back_to_cpu_when_gpu_import_fails(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    _, _, meta, _ = _runtime.run_dft(mol, want_gpu=True)
+    _, _, meta, _ = _runtime.run_dft(mol, use_df=False, want_gpu=True)
     assert meta["gpu_used"] is False
     assert "fell back to CPU" in meta["gpu_msg"]
 
@@ -438,7 +438,7 @@ def test_run_dft_no_gradient_when_dograd_false(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    _, gradient, meta, _ = _runtime.run_dft(mol, dograd=False)
+    _, gradient, meta, _ = _runtime.run_dft(mol, use_df=False, dograd=False)
     assert gradient == []
     assert meta["grad_norm"] == 0.0
 
@@ -468,7 +468,7 @@ def test_run_dft_uses_gpu_classes_when_available(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    energy, _, meta, _ = _runtime.run_dft(mol, want_gpu=True)
+    energy, _, meta, _ = _runtime.run_dft(mol, use_df=False, want_gpu=True)
     assert meta["gpu_used"] is True
     assert energy == -2.0
 
@@ -763,6 +763,20 @@ def test_a_bare_calculator_carries_the_models_own_defaults():
         if getattr(calc, name) != getattr(defaults, name)
     }
     assert mismatched == {}
+
+
+def test_run_dft_declares_no_df_default_of_its_own():
+    """``use_df`` is required at ``run_dft`` — the model is the only home of "unspecified".
+
+    The signature was the *fourth* spelling of this knob's default, sitting on the off
+    state after the model flipped on — the exact drift the lockstep test above recounts,
+    latent only because the one production caller passes explicitly. A knob with no
+    default here cannot drift, and this pin is what keeps one from growing back.
+    """
+    import inspect
+
+    parameter = inspect.signature(_runtime.run_dft).parameters["use_df"]
+    assert parameter.default is inspect.Parameter.empty
 
 
 def test_strict_scf_reaches_the_server_as_its_opt_out():

@@ -78,13 +78,18 @@ class PyscfOptions(EngineOptions):
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any] | None) -> Self:
-        """Validate a raw ``step.options`` dict from the YAML.
+        """Validate a raw ``step.options`` dict from the YAML — the strict read.
 
         ``basis`` must be named explicitly (no silent default), and ``xc`` must
-        be named when ``method`` is ``dft`` — a misconfigured PySCF step fails
-        fast rather than running with a surprise level of theory. (The model
-        fields keep values only so the server CLI / programmatic callers can
-        still construct an instance.)
+        be named when ``method`` is ``dft`` — a misconfigured step fails fast
+        rather than running with a surprise level of theory. **This is the
+        ExtOpt path's read**: only ``pyscf-extopt`` calls it (its options
+        configure a server, so strictness is right). The direct ``pyscf``
+        engine reads leniently by the script engines' documented design — its
+        ``step{N}.py`` template may carry knobs no model declares — so a direct
+        step that omits ``basis`` renders the model's default, which the knob
+        table in the docs states. (The model fields keep values only so the
+        server CLI / programmatic callers can still construct an instance.)
 
         Validation is delegated to the base rather than calling ``cls`` directly, so a
         pydantic error still becomes a :class:`~chemrefine.errors.ConfigError` and a typoed

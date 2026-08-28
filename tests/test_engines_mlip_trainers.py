@@ -732,7 +732,13 @@ def test_the_hook_feeds_chgnet_per_atom_energies_without_resplitting(tmp_path: P
     assert recorded["get_loader"].call_count == 2
     train_call = recorded["trainer"].train.call_args
     assert train_call.args[2] is None  # no test loader
-    assert train_call.kwargs["save_dir"] == "chgnet_epochs"
+    # The one constant both sides read: what the hook writes here, output_dirs copies
+    # home — asserted through the class so the writer and the copy-back cannot split.
+    from chemrefine.engines.mlip.backends import chgnet as chgnet_mod
+    from chemrefine.engines.mlip.backends.chgnet import ChgnetTrainer
+
+    assert train_call.kwargs["save_dir"] == chgnet_mod._EPOCH_DIR
+    assert ChgnetTrainer.output_dirs == (chgnet_mod._EPOCH_DIR,)
 
 
 def test_the_hook_saves_the_best_model_under_the_promised_name(tmp_path: Path, monkeypatch):
