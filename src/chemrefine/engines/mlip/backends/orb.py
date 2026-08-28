@@ -61,8 +61,20 @@ def _build_orb(spec: CalculatorSpec) -> Any:
                 f"weights_path, so model_path cannot be honoured; upgrade orb-models "
                 f"or drop model_path to run the named release"
             ) from e
-    orbff = loaded[0] if isinstance(loaded, tuple) else loaded
+    orbff, _adapter = _model_and_adapter(loaded)
     return ORBCalculator(orbff, device=spec.device)
+
+
+def _model_and_adapter(loaded: Any) -> tuple[Any, Any | None]:
+    """Both loader return shapes, one spelling: ``(model, atoms_adapter-or-None)``.
+
+    The pretrained loaders return a bare model or a ``(model, atoms_adapter)`` tuple
+    depending on the orb-models version. Normalized here for the builder *and* the
+    trainer, because two spellings of the shape is how the trainer came to unpack
+    unconditionally — a bare-model version crashed fine-tuning with a naked
+    ``TypeError: cannot unpack`` while the builder handled it a screen away.
+    """
+    return loaded if isinstance(loaded, tuple) else (loaded, None)
 
 
 # ---------------------------------------------------------------------------
@@ -81,16 +93,15 @@ class OrbTrainer(ApiTrainerBase):
     :mod:`~chemrefine.engines.mlip.train.driver` in the backend env — re-implementing the
     script's slim loop from the utilities that *are* packaged
     (``orb_models.common.dataset`` / ``common.training`` / ``forcefield.pretrained``,
-    the same import layout from the 0.6 floor through main). The schema:
+    the same import layout from the 0.6 floor through main). The schema — backend knobs
+    only; device, seed and the foundation weights are plan facts and arrive on the
+    driver's own command line, never through the template:
 
     .. code-block:: yaml
 
         train_set: $TRAIN_SET          # required — ASE sqlite db written by the trainer
         run_name:  $RUN_NAME           # required — names the fixed final checkpoint
         base_model: orb_v3_conservative_inf_omat   # the pretrained loader = architecture
-        start_from: $FOUNDATION_MODEL  # optional: a local checkpoint for the weights
-        device:    $DEVICE
-        seed:      $SEED
         epochs: 50
         learning_rate: 3e-4            # the script's own defaults
         batch_size: 100
@@ -99,10 +110,14 @@ class OrbTrainer(ApiTrainerBase):
 
     label = "ORB"
     driver_task = "orb"
-    required_config_keys = ("train_set", "run_name", "base_model")
+    required_config_keys = ("train_set", "run_name", "device", "seed")
+    """The base's set as is. ``base_model`` is deliberately not on it: the architecture
+    may arrive as the template's ``base_model`` *or* as the step's ``model_name`` (the
+    driver's ``foundation`` fact), and only the hook can weigh the pair — a flat
+    presence check would refuse a step that named the loader the second way."""
     missing_config_hint = (
-        "the template must reference $TRAIN_SET and $RUN_NAME, and name a base_model "
-        "(the pretrained loader)"
+        "the template must reference $TRAIN_SET and $RUN_NAME (device and seed arrive on "
+        "the driver's own command line)"
     )
     artifact_filename = "{run_name}.ckpt"
     """orb's own per-epoch names embed the epoch (``checkpoint_epoch{n}.ckpt``), which
@@ -148,7 +163,7 @@ class OrbTrainer(ApiTrainerBase):
 
         The published loop lives in an unpackaged script, so this is a re-implementation,
         deliberately slim and pinned line-for-line to that script's shape: the pretrained
-        loader with ``train=True`` (``weights_path`` when ``start_from`` names a local
+        loader with ``train=True`` (``weights_path`` when the step's ``model_path`` names a local
         checkpoint), ``build`` of the sqlite dataset with the adapter's own ``batch``
         collate, ``get_optim`` for optimizer + scheduler, and per-epoch
         ``checkpoint_epoch{n}.ckpt`` saves — plus the one thing the script never had, a
@@ -160,34 +175,64 @@ class OrbTrainer(ApiTrainerBase):
         from orb_models.common.dataset import property_definitions
         from orb_models.common.dataset.ase_sqlite_dataset import AseSqliteDataset
         from orb_models.common.dataset.loaders import worker_init_fn
-        from orb_models.common.training.util import get_optim, init_device
+        from orb_models.common.training.util import get_optim
         from orb_models.common.utils import seed_everything
         from orb_models.forcefield import pretrained
         from torch.utils.data import BatchSampler, DataLoader, RandomSampler
 
-        # The config's device wins over orb's own pick: `init_device()` takes `cuda:0`
-        # whenever torch sees a GPU, unconditionally — so a `device: cpu` step on a
-        # machine with CUDA torch would train on hardware the scheduler never booked
-        # (a CPU step is charged zero GPUs and gets no CUDA_VISIBLE_DEVICES pin), the
-        # silent wrong-hardware failure the preflight exists to prevent. A named
-        # `cuda` that is not there fails loudly in `.to` rather than quietly running
-        # on CPU for days against a GPU booking. The fallback keeps the old behaviour
-        # for a hand-written config that names no device.
-        cfg_device = str(config.get("device") or "")
-        device = torch.device(cfg_device) if cfg_device else init_device()
-        seed_everything(int(config.get("seed", 42)))
-        base_model = str(config["base_model"])
+        # The step's device, with no fallback: orb's own `init_device()` takes `cuda:0`
+        # whenever torch sees a GPU, unconditionally — the silent wrong-hardware failure
+        # the preflight exists to prevent. A named `cuda` that is not there fails loudly
+        # in `.to` rather than quietly running on CPU for days against a GPU booking.
+        # The driver overlaid the value, so absence here is a broken invocation, not a
+        # choice to fall back on.
+        device = torch.device(str(config["device"]))
+        seed_everything(int(config["seed"]))
+        # The architecture: the template's `base_model`, or the step's own `model_name`
+        # (the driver's `foundation` fact) — for orb the two words name the same thing, a
+        # pretrained loader. Silently preferring either is how a declared model_name went
+        # ignored while the sidecar recorded it, so a disagreement refuses by name.
+        base_model = str(config.get("base_model") or "")
+        foundation = str(config.get("foundation") or "")
+        if base_model and foundation and base_model != foundation:
+            raise SystemExit(
+                f"orb training: the template names base_model {base_model!r} but the "
+                f"step's model_name says {foundation!r} — keep one (the template row, or "
+                f"the option)"
+            )
+        base_model = base_model or foundation
+        if not base_model:
+            raise SystemExit(
+                "orb training: no architecture named — set base_model in the template "
+                "(a loader from orb_models.forcefield.pretrained) or model_name on the step"
+            )
         loader_fn = getattr(pretrained, base_model, None)
         if loader_fn is None:
             raise SystemExit(
                 f"orb training: unknown base_model {base_model!r}; pick a loader from "
                 f"orb_models.forcefield.pretrained"
             )
-        start_from = str(config.get("start_from") or "")
+        weights = str(config.get("weights_path") or "")
         loader_kwargs: dict[str, Any] = {"device": device, "train": True}
-        if start_from:
-            loader_kwargs["weights_path"] = start_from
-        model, atoms_adapter = loader_fn(**loader_kwargs)
+        if weights:
+            loader_kwargs["weights_path"] = weights
+        try:
+            loaded = loader_fn(**loader_kwargs)
+        except TypeError as e:
+            # The builder's guard, on the training side: an older loader without the
+            # keyword must say so, not die as a naked TypeError in a submitted job.
+            raise SystemExit(
+                f"orb training: this orb-models version's {base_model!r} loader takes no "
+                f"local weights_path, so model_path cannot be honoured; upgrade "
+                f"orb-models or drop model_path to fine-tune the named release"
+            ) from e
+        model, atoms_adapter = _model_and_adapter(loaded)
+        if atoms_adapter is None:
+            raise SystemExit(
+                f"orb training: {base_model!r} returned no atoms adapter on this "
+                f"orb-models version, and fine-tuning needs one to batch the dataset — "
+                f"upgrade orb-models"
+            )
 
         dataset = AseSqliteDataset(
             str(config["run_name"]),

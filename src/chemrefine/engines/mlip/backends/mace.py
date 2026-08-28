@@ -138,12 +138,20 @@ class MaceTrainer(TrainerBase):
     or an open-shell species is fitted as itself — no warning to raise."""
 
     required_placeholders: ClassVar[frozenset[str]] = frozenset(
-        {"TRAIN_SET", "RUN_NAME", "RUN_DIR"}
+        {"TRAIN_SET", "RUN_NAME", "RUN_DIR", "DEVICE", "SEED"}
     )
     """``$RUN_NAME`` and ``$RUN_DIR`` are required alongside the dataset because
     :meth:`artifact` is derived from them: MACE names the model ``{name}.model`` inside
     ``model_dir``, which defaults to ``work_dir``. A template that hardcoded either would
-    train perfectly well and then be reported as having produced nothing."""
+    train perfectly well and then be reported as having produced nothing.
+
+    ``$DEVICE`` and ``$SEED`` are required because they are **plan facts** and MACE reads
+    both from the config this template becomes (``device:`` falls back to ``cpu``,
+    ``seed:`` to MACE's own ``123``). For a CLI trainer the template is the only channel
+    the library's program reads, so the gate is the closure the driver-run trainers get
+    from their argv: a template that does not reference them would run a ``device: cuda``
+    step on CPU with the GPU booked, and seed torch differently from the ``seed`` the
+    step's cache fingerprint records."""
 
     output_globs: ClassVar[tuple[str, ...]] = ("*.model", "*.log")
     output_dirs: ClassVar[tuple[str, ...]] = ("logs", "checkpoints", "results")

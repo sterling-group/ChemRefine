@@ -173,12 +173,20 @@ class FairchemTrainer(TrainerBase):
     ion is fitted as itself — no warning to raise."""
 
     required_placeholders: ClassVar[frozenset[str]] = frozenset(
-        {"TRAIN_SET", "VAL_SET", "RUN_DIR", "RUN_NAME"}
+        {"TRAIN_SET", "VAL_SET", "RUN_DIR", "RUN_NAME", "DEVICE", "SEED"}
     )
     """``RUN_DIR`` and ``RUN_NAME`` join the datasets because :meth:`artifact` is derived from
     them: FAIRChem writes under ``run_dir/<timestamp_id>/checkpoints``, and the template is
     what pins ``timestamp_id``. Left to its default it is a fresh timestamp, and the step
-    would train correctly and then report having produced nothing."""
+    would train correctly and then report having produced nothing.
+
+    ``DEVICE`` and ``SEED`` are plan facts FAIRChem reads from this config
+    (``device_type`` — whose spelling :meth:`placeholders` specialises — and the ``seed``
+    keys the shipped example threads through ``job`` and the dataset stanzas). For a CLI
+    trainer the template is the only channel the library reads, so requiring the
+    placeholders is the closure the driver-run trainers get from their argv: unset, the
+    device falls to FAIRChem's own default and torch seeds diverge from the ``seed`` the
+    step's cache fingerprint records."""
 
     output_globs: ClassVar[tuple[str, ...]] = ("*.pt", "*.yaml", "*.log")
     output_dirs: ClassVar[tuple[str, ...]] = ()

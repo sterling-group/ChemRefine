@@ -35,6 +35,7 @@ train_file: $TRAIN_SET
 valid_file: $VALID_SET
 foundation_model: $FOUNDATION_MODEL
 device: $DEVICE
+seed: $SEED
 max_num_epochs: 2
 """
 
@@ -43,14 +44,15 @@ job:
   run_dir: $RUN_DIR
   timestamp_id: $RUN_NAME
   device_type: $DEVICE
+  seed: $SEED
 train_file: $TRAIN_SET
 valid_file: $VAL_SET
 """
 """FAIRChem's own placeholder names, which are not MACE's.
 
-Its required set is ``TRAIN_SET``/``VAL_SET``/``RUN_DIR``/``RUN_NAME`` — note ``VAL_SET``,
-where MACE writes ``VALID_SET``. A shared template would render for one trainer and be
-rejected by the other, which is the point: the placeholders belong to the library's config."""
+Its required set adds ``VAL_SET`` — note the spelling, where MACE writes ``VALID_SET``. A
+shared template would render for one trainer and be rejected by the other, which is the
+point: the placeholders belong to the library's config."""
 
 
 def _ctx(

@@ -85,9 +85,12 @@ class ChgnetTrainer(ApiTrainerBase):
     needs_validation = True
     validation_reason = "its Trainer.train takes a validation loader, with no train-only mode"
     driver_task = "chgnet"
-    required_config_keys = ("train_set", "valid_set", "run_name")
+    required_config_keys = ("train_set", "valid_set", "run_name", "device", "seed")
+    """The base's plan-fact keys plus ``valid_set`` — ``Trainer.train`` takes a validation
+    loader positionally, so a config without one cannot call it."""
     missing_config_hint = (
-        "the template must reference $TRAIN_SET, $VALID_SET and $RUN_NAME so the render fills them"
+        "the template must reference $TRAIN_SET, $VALID_SET and $RUN_NAME so the render fills "
+        "them (device and seed arrive on the driver's own command line)"
     )
     artifact_filename = "{run_name}.pth.tar"
     """CHGNet's own best checkpoints embed the epoch and the error in their names
@@ -136,16 +139,28 @@ class ChgnetTrainer(ApiTrainerBase):
         re-partition what :func:`~chemrefine.engines.mlip.train.base.split_structures`
         already decided; and the best model is re-saved under :meth:`artifact`'s fixed
         name — ``trainer.model`` standing in when no epoch ever improved the metric.
+
+        ``device`` and ``seed`` are read with no fallback: the driver overlaid the step's
+        own values, and a fallback here is how a ``device: cuda`` step trained on CPU for
+        days with the GPU booked. The weights dispatch mirrors the builder's three doors
+        — ``from_file`` is path-only, ``load(model_name=…)`` takes release names — where
+        the folded ``start_from`` string sent a release name through the path door.
         """
         import torch
         from chgnet.model import CHGNet
         from chgnet.trainer import Trainer
 
-        start_from = str(config.get("start_from") or "")
-        model = CHGNet.from_file(start_from) if start_from else CHGNet.load()
+        weights = str(config.get("weights_path") or "")
+        foundation = str(config.get("foundation") or "")
+        if weights:
+            model = CHGNet.from_file(weights)
+        elif foundation:
+            model = CHGNet.load(model_name=foundation)
+        else:
+            model = CHGNet.load()
 
         batch_size = int(config.get("batch_size", 8))
-        seed = int(config.get("seed", 42))
+        seed = int(config["seed"])
         trainer = Trainer(
             model=model,
             targets=str(config.get("targets", "ef")),
@@ -153,7 +168,7 @@ class ChgnetTrainer(ApiTrainerBase):
             criterion=str(config.get("criterion", "MSE")),
             epochs=int(config.get("epochs", 50)),
             learning_rate=float(config.get("learning_rate", 1e-3)),
-            use_device=str(config.get("device", "cpu")),
+            use_device=str(config["device"]),
             torch_seed=seed,
             data_seed=seed,
         )

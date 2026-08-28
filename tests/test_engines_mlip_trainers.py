@@ -118,7 +118,8 @@ def _plan(tmp_path: Path, **overrides: object) -> TrainingPlan:
         "seed": 42,
         "charge": 0,
         "multiplicity": 1,
-        "start_from": None,
+        "weights": None,
+        "foundation": None,
         "launcher": Path("/envs/mlip-mace/bin/python"),
     }
     base.update(overrides)
@@ -340,7 +341,8 @@ def _fc_plan(tmp_path: Path, **overrides: object) -> TrainingPlan:
         "seed": 42,
         "charge": 0,
         "multiplicity": 1,
-        "start_from": None,
+        "weights": None,
+        "foundation": None,
         "launcher": Path("/envs/mlip-fairchem/bin/python"),
     }
     base.update(overrides)
@@ -584,7 +586,37 @@ def test_chgnet_runs_the_shipped_driver_under_the_backends_interpreter(tmp_path:
     plan = _plan(tmp_path, launcher=Path("/envs/my chgnet/bin/python"))
     cmd = ChgnetTrainer().command(plan, tmp_path / "step3_train.yaml")
     quoted = shlex.quote("/envs/my chgnet/bin/python")
-    assert cmd == f"{quoted} -m chemrefine.engines.mlip.train.driver chgnet step3_train.yaml"
+    assert cmd == (
+        f"{quoted} -m chemrefine.engines.mlip.train.driver chgnet step3_train.yaml "
+        f"--device cpu --seed 42"
+    )
+
+
+def test_the_driver_command_carries_the_plan_facts_not_the_template(tmp_path: Path):
+    """Device, seed and the foundation weights ride the driver's own argv, quoted.
+
+    chemrefine owns both ends of this channel, so the step's options go straight across
+    as authoritative values — routed through the user's template as placeholders, each
+    was silently lost whenever the template did not reference it: a device: cuda step
+    trained on CPU with the GPU booked, a declared foundation trained from scratch while
+    the sidecar recorded it. The free-text values are shlex-quoted, the same protection
+    every engine-emitted command gives text it did not mint.
+    """
+    import shlex
+
+    from chemrefine.engines.mlip.backends.chgnet import ChgnetTrainer
+
+    plan = _plan(
+        tmp_path,
+        device="cuda",
+        seed=7,
+        weights=Path("/models/my prev.pth.tar"),
+        foundation="0.3.0",
+    )
+    cmd = ChgnetTrainer().command(plan, tmp_path / "step3_train.yaml")
+    assert "--device cuda --seed 7" in cmd
+    assert f"--weights-path {shlex.quote('/models/my prev.pth.tar')}" in cmd
+    assert "--foundation 0.3.0" in cmd
 
 
 def test_the_chgnet_product_is_the_fixed_named_save(tmp_path: Path):
@@ -693,9 +725,6 @@ def _driver_config(tmp_path: Path, **overrides) -> Path:
         "valid_set": str(files.valid),
         "test_set": "",
         "run_name": "train",
-        "device": "cpu",
-        "seed": 7,
-        "start_from": "",
         "epochs": 3,
         "learning_rate": 1e-3,
         "batch_size": 2,
@@ -721,7 +750,12 @@ def test_the_hook_feeds_chgnet_per_atom_energies_without_resplitting(tmp_path: P
 
     recorded = _install_fake_chgnet_stack(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    assert train_driver.main(["chgnet", str(_driver_config(tmp_path))]) == 0
+    assert (
+        train_driver.main(
+            ["chgnet", str(_driver_config(tmp_path)), "--device", "cpu", "--seed", "7"]
+        )
+        == 0
+    )
 
     train_ds, valid_ds = _FakeStructureData.instances
     assert len(train_ds.structures) == 2 and len(valid_ds.structures) == 1
@@ -747,7 +781,7 @@ def test_the_hook_saves_the_best_model_under_the_promised_name(tmp_path: Path, m
 
     recorded = _install_fake_chgnet_stack(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    train_driver.main(["chgnet", str(_driver_config(tmp_path))])
+    train_driver.main(["chgnet", str(_driver_config(tmp_path)), "--device", "cpu", "--seed", "7"])
     payload, path = recorded["saved"]
     assert path == "train.pth.tar"
     assert payload == {"model": {"state_dict": "BEST"}}
@@ -758,15 +792,73 @@ def test_the_hook_saves_the_best_model_under_the_promised_name(tmp_path: Path, m
     assert (trainer_kwargs["torch_seed"], trainer_kwargs["data_seed"]) == (7, 7)
 
 
-def test_the_hook_fine_tunes_from_a_named_checkpoint(tmp_path: Path, monkeypatch):
-    """``start_from`` routes through ``from_file`` — the released weights otherwise."""
+def test_the_hook_fine_tunes_from_a_local_checkpoint(tmp_path: Path, monkeypatch):
+    """A ``model_path`` rides ``--weights-path`` into ``from_file`` — the path-only door."""
     from chemrefine.engines.mlip.train import driver as train_driver
 
     recorded = _install_fake_chgnet_stack(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    train_driver.main(["chgnet", str(_driver_config(tmp_path, start_from="/m/prev.pth.tar"))])
+    facts = ["--device", "cpu", "--seed", "7", "--weights-path", "/m/prev.pth.tar"]
+    train_driver.main(["chgnet", str(_driver_config(tmp_path)), *facts])
     recorded["chgnet_cls"].from_file.assert_called_once_with("/m/prev.pth.tar")
     recorded["chgnet_cls"].load.assert_not_called()
+
+
+def test_the_hook_fine_tunes_from_a_release_name_through_loads_own_door(
+    tmp_path: Path, monkeypatch
+):
+    """A ``model_name`` rides ``--foundation`` into ``load(model_name=…)`` — never from_file.
+
+    The folded ``start_from`` string this replaces sent a release name through the
+    path-only ``from_file`` door, dying as a file error deep in the job — while the
+    builder twenty lines up dispatches the same two facts correctly. The plan now
+    carries them typed, mirroring CalculatorSpec.
+    """
+    from chemrefine.engines.mlip.train import driver as train_driver
+
+    recorded = _install_fake_chgnet_stack(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    facts = ["--device", "cpu", "--seed", "7", "--foundation", "0.3.0"]
+    train_driver.main(["chgnet", str(_driver_config(tmp_path)), *facts])
+    recorded["chgnet_cls"].load.assert_called_once_with(model_name="0.3.0")
+    recorded["chgnet_cls"].from_file.assert_not_called()
+
+
+def test_the_driver_refuses_a_template_that_contradicts_the_step(tmp_path: Path, monkeypatch):
+    """A hard-coded template value that disagrees with the step's options refuses by name.
+
+    The overlay makes the options authoritative; refusing a disagreement (rather than
+    silently outranking it) is the inversion guard — silent precedence in either
+    direction is how the plan facts were lost in the first place.
+    """
+    from chemrefine.engines.mlip.train import driver as train_driver
+
+    _install_fake_chgnet_stack(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    facts = ["--device", "cpu", "--seed", "7"]
+    with pytest.raises(SystemExit, match="authoritative"):
+        train_driver.main(["chgnet", str(_driver_config(tmp_path, device="cuda")), *facts])
+    with pytest.raises(SystemExit, match="start_from"):
+        train_driver.main(
+            ["chgnet", str(_driver_config(tmp_path, start_from="some_release")), *facts]
+        )
+
+
+def test_a_template_still_rendering_the_placeholders_keeps_working(tmp_path: Path, monkeypatch):
+    """`device: $DEVICE`-style templates render the argv's own values — no conflict.
+
+    Equality is judged as strings because the template channel only carries strings; a
+    pre-channel template that rendered the placeholders (or `start_from:
+    $FOUNDATION_MODEL`) holds exactly what argv carries and must not start refusing.
+    """
+    from chemrefine.engines.mlip.train import driver as train_driver
+
+    recorded = _install_fake_chgnet_stack(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    config = _driver_config(tmp_path, device="cpu", seed=7, start_from="/m/prev.pth.tar")
+    facts = ["--device", "cpu", "--seed", "7", "--weights-path", "/m/prev.pth.tar"]
+    assert train_driver.main(["chgnet", str(config), *facts]) == 0
+    recorded["chgnet_cls"].from_file.assert_called_once_with("/m/prev.pth.tar")
 
 
 def test_the_hook_falls_back_to_the_final_model_without_a_best(tmp_path: Path, monkeypatch):
@@ -784,6 +876,7 @@ def test_the_hook_falls_back_to_the_final_model_without_a_best(tmp_path: Path, m
     import yaml
 
     config = yaml.safe_load(_driver_config(tmp_path).read_text(encoding="utf-8"))
+    config.update({"device": "cpu", "seed": 7})  # by hand what the driver overlays
     assert ChgnetTrainer().run_training(config) == 0
     payload, _path = recorded["saved"]
     assert payload == {"model": {"state_dict": "FINAL"}}
@@ -809,18 +902,21 @@ def test_the_driver_dispatches_by_registry_and_refuses_the_wrong_kind(tmp_path: 
 
     from chemrefine.engines.mlip.train import driver as train_driver
 
-    with pytest.raises(SystemExit, match="usage"):
+    # argparse's own usage refusal — a missing config or plan fact exits 2 with usage.
+    with pytest.raises(SystemExit) as excinfo:
         train_driver.main(["chgnet"])
+    assert excinfo.value.code == 2
 
+    facts = ["--device", "cpu", "--seed", "1"]
     listing = tmp_path / "rendered.yaml"
     listing.write_text("- not\n- a\n- mapping\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="not a YAML mapping"):
-        train_driver.main(["chgnet", str(listing)])
+        train_driver.main(["chgnet", str(listing), *facts])
 
     mapping = tmp_path / "ok.yaml"
     mapping.write_text(yaml.safe_dump({"train_set": "x"}), encoding="utf-8")
     with pytest.raises(SystemExit, match="its library's own CLI"):
-        train_driver.main(["mace_off", str(mapping)])
+        train_driver.main(["mace_off", str(mapping), *facts])
 
 
 # ---------------------------------------------------------------------------
@@ -860,7 +956,10 @@ def test_orb_runs_the_shared_driver_under_the_backends_interpreter(tmp_path: Pat
     plan = _plan(tmp_path, launcher=Path("/envs/my orb/bin/python"))
     cmd = OrbTrainer().command(plan, tmp_path / "step3_train.yaml")
     quoted = shlex.quote("/envs/my orb/bin/python")
-    assert cmd == f"{quoted} -m chemrefine.engines.mlip.train.driver orb step3_train.yaml"
+    assert cmd == (
+        f"{quoted} -m chemrefine.engines.mlip.train.driver orb step3_train.yaml "
+        f"--device cpu --seed 42"
+    )
 
 
 def test_the_orb_product_is_the_fixed_named_checkpoint(tmp_path: Path):
@@ -1000,9 +1099,10 @@ def _orb_config(**overrides) -> dict:
         "train_set": "/data/train.db",
         "run_name": "train",
         "base_model": "orb_v3_conservative_inf_omat",
+        # The two plan facts, as the driver overlay guarantees them to a hook — the
+        # run_training tests below call the hook directly, so they supply them by hand.
         "device": "cpu",
         "seed": 11,
-        "start_from": "",
         "epochs": 2,
         "learning_rate": 1e-4,
         "batch_size": 4,
@@ -1048,22 +1148,79 @@ def test_the_orb_hook_rebuilds_the_scripts_loop(monkeypatch, tmp_path: Path):
 
 
 def test_the_orb_hook_fine_tunes_from_a_local_checkpoint(monkeypatch, tmp_path: Path):
-    """A ``start_from`` file rides the loaders' own ``weights_path`` door."""
+    """A ``weights_path`` (the step's ``model_path``) rides the loaders' own door."""
     from chemrefine.engines.mlip.backends.orb import OrbTrainer
 
     recorded = _install_fake_orb_stack(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    OrbTrainer().run_training(_orb_config(start_from="/models/prev.ckpt"))
+    OrbTrainer().run_training(_orb_config(weights_path="/models/prev.ckpt"))
     recorded["loader_fn"].assert_called_once_with(
         device="DEV:cpu", train=True, weights_path="/models/prev.ckpt"
     )
 
 
-def test_a_config_without_a_device_falls_back_to_orbs_own_pick(monkeypatch, tmp_path: Path):
-    """No ``device`` key: the pre-existing behaviour stands — orb's ``init_device``.
+def test_the_orb_hook_reports_a_loader_without_the_weights_door(monkeypatch, tmp_path: Path):
+    """An older loader without ``weights_path`` says so — the builder's guard, trainer side.
 
-    Only a hand-written config can reach this (the engine's render always fills
-    ``$DEVICE``); the fallback keeps such a config running rather than refusing it.
+    Left raw, the TypeError died as an unattributed traceback inside a submitted job;
+    the builder converts the identical fault into a named refusal a screen away.
+    """
+    from chemrefine.engines.mlip.backends.orb import OrbTrainer
+
+    recorded = _install_fake_orb_stack(monkeypatch)
+    recorded["loader_fn"].side_effect = TypeError("unexpected keyword argument 'weights_path'")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit, match="takes no local weights_path"):
+        OrbTrainer().run_training(_orb_config(weights_path="/models/prev.ckpt"))
+
+
+def test_the_orb_hook_reports_a_loader_without_an_adapter(monkeypatch, tmp_path: Path):
+    """A bare-model return shape refuses by name — never `cannot unpack`.
+
+    The module docstring says both shapes occur across orb-models versions and both are
+    handled; the trainer unpacked unconditionally, so the bare shape crashed fine-tuning
+    with a naked TypeError while the builder normalized it a screen away. One helper now
+    spells the shape for both.
+    """
+    from chemrefine.engines.mlip.backends.orb import OrbTrainer
+
+    recorded = _install_fake_orb_stack(monkeypatch)
+    recorded["loader_fn"].return_value = recorded["model"]  # bare model, no adapter
+    recorded["loader_fn"].side_effect = None
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit, match="no atoms adapter"):
+        OrbTrainer().run_training(_orb_config())
+
+
+def test_the_orb_hook_takes_the_architecture_from_the_foundation_fact(monkeypatch, tmp_path: Path):
+    """A step's ``model_name`` names the loader when the template carries no base_model.
+
+    This is the doc-following case that used to be silently ignored: for orb a foundation
+    release *is* a loader name, and a config without ``base_model`` trained the loader's
+    default while the sidecar recorded the declared model. A disagreement between the two
+    spellings refuses by name — silent precedence in either direction is the bug class.
+    """
+    from chemrefine.engines.mlip.backends.orb import OrbTrainer
+
+    recorded = _install_fake_orb_stack(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    config = _orb_config(foundation="orb_v3_conservative_inf_omat")
+    del config["base_model"]
+    assert OrbTrainer().run_training(config) == 0
+    recorded["loader_fn"].assert_called_once_with(device="DEV:cpu", train=True)
+
+    _install_fake_orb_stack(monkeypatch)
+    with pytest.raises(SystemExit, match="keep one"):
+        OrbTrainer().run_training(_orb_config(foundation="orb_v2"))
+
+
+def test_a_config_without_a_device_is_refused_not_guessed(monkeypatch, tmp_path: Path):
+    """No ``device`` key: a refusal naming it — never orb's own cuda-if-available pick.
+
+    The driver guarantees the key, so its absence is a broken invocation; the fallback
+    this replaces re-entered ``init_device()``, whose unconditional pick is the silent
+    wrong-hardware failure 9792f3e closed — reachable again through any config the
+    template channel produced without the placeholder.
     """
     from chemrefine.engines.mlip.backends.orb import OrbTrainer
 
@@ -1071,18 +1228,19 @@ def test_a_config_without_a_device_falls_back_to_orbs_own_pick(monkeypatch, tmp_
     monkeypatch.chdir(tmp_path)
     config = _orb_config(epochs=1)
     del config["device"]
-    assert OrbTrainer().run_training(config) == 0
-
-    recorded["init_device"].assert_called_once_with()
-    recorded["loader_fn"].assert_called_once_with(device="INIT_DEV", train=True)
+    with pytest.raises(SystemExit, match="device"):
+        OrbTrainer().run_training(config)
+    recorded["init_device"].assert_not_called()
 
 
 def test_the_orb_hook_refuses_what_it_cannot_invent(monkeypatch, tmp_path: Path):
     from chemrefine.engines.mlip.backends.orb import OrbTrainer
 
     _install_fake_orb_stack(monkeypatch)
-    with pytest.raises(SystemExit, match="base_model"):
-        OrbTrainer().run_training({"train_set": "/d/t.db", "run_name": "train"})
+    no_architecture = _orb_config()
+    del no_architecture["base_model"]
+    with pytest.raises(SystemExit, match="no architecture named"):
+        OrbTrainer().run_training(no_architecture)
     with pytest.raises(SystemExit, match="unknown base_model"):
         OrbTrainer().run_training(_orb_config(base_model="orb_not_a_loader"))
 

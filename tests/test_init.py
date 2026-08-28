@@ -72,7 +72,7 @@ def test_python_dash_m_translates_legacy_argv():
     [
         ("chemrefine.engines.orca.extopt.bridge", True),
         ("chemrefine.engines._backend_server.server", True),
-        ("chemrefine.engines.mlip.train.driver", False),
+        ("chemrefine.engines.mlip.train.driver", True),
     ],
 )
 def test_module_entrypoint_runs_main(module, argparse_help, monkeypatch):
@@ -81,11 +81,10 @@ def test_module_entrypoint_runs_main(module, argparse_help, monkeypatch):
     Driven via ``--help`` without binding a socket or contacting a backend. ``runpy``
     executes the module as ``__main__`` in-process so the guard line runs under coverage
     — a spawned subprocess isn't viable here (the server blocks; the bridge needs a live
-    backend). The bridge and the server carry argparse, so their ``--help`` exits code 0
-    like the CLI's; the train driver deliberately has no parser — its two-argument usage
-    refusal is the SystemExit, carrying the usage line as the code. A bare
-    ``raises(SystemExit)`` hid exactly that difference (and would equally have hidden a
-    broken argument table exiting 2).
+    backend). All three carry argparse — the train driver joined them when the plan
+    facts moved onto its command line — so ``--help`` exits code 0 like the CLI's. A
+    bare ``raises(SystemExit)`` would equally have hidden a broken argument table
+    exiting 2.
     """
     monkeypatch.setattr(sys, "argv", [module, "--help"])
     with pytest.raises(SystemExit) as excinfo:

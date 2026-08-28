@@ -74,12 +74,17 @@ class SevennTrainer(TrainerBase):
         "validation metric improves"
     )
 
-    required_placeholders: ClassVar[frozenset[str]] = frozenset({"TRAIN_SET"})
-    """Only the dataset: SevenNet writes into the working directory by its own rule, so
-    unlike MACE and FAIRChem there is no run-dir or run-name knob the template must pin
-    for :meth:`artifact` to hold — ``checkpoint_best.pth`` is a fixed name wherever the
-    run happened. ``$VALID_SET`` and ``$FOUNDATION_MODEL`` (→ ``train.continue.checkpoint``)
-    are supplied too; a template is free to use them."""
+    required_placeholders: ClassVar[frozenset[str]] = frozenset({"TRAIN_SET", "DEVICE"})
+    """The dataset, plus ``$DEVICE`` — a plan fact SevenNet reads from this config's own
+    ``device:`` key, **falling back to cuda-whenever-torch-sees-one** when the key is
+    absent (``sevenn.parse_input``). Unset, a ``device: cpu`` step on a CUDA node would
+    train on hardware the scheduler never booked — the silent wrong-hardware class the
+    driver-run trainers close over their argv; for a CLI trainer the template gate is
+    that closure. No run-dir or run-name knob, unlike MACE and FAIRChem:
+    ``checkpoint_best.pth`` is a fixed name wherever the run happened. ``$VALID_SET`` and
+    ``$FOUNDATION_MODEL`` (→ ``train.continue.checkpoint``) are supplied too; a template
+    is free to use them. No ``$SEED`` requirement — SevenNet's config declares a
+    ``random_seed`` key its trainer does not read, so there is no seed fact to lose."""
 
     output_globs: ClassVar[tuple[str, ...]] = ("checkpoint_*.pth", "log.sevenn", "*.csv")
     """The main path, not a safety net: SevenNet writes checkpoints and its log into the

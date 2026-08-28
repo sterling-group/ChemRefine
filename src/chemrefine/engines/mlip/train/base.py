@@ -161,8 +161,29 @@ class TrainingPlan:
     charge: int
     multiplicity: int
 
-    start_from: str | None
-    """The foundation model or checkpoint to fine-tune; ``None`` trains from scratch."""
+    weights: Path | None
+    """A local checkpoint to fine-tune from; ``None`` means no file was named.
+
+    Two typed fields rather than the folded ``start_from`` string they replace, mirroring
+    :class:`~chemrefine.engines.mlip.registry.CalculatorSpec` — the same subsystem's
+    statement that a name and a path are different facts a consumer must not have to
+    guess apart. Folded, CHGNet's hook sent a release *name* through ``from_file`` (a
+    path-only door) while its own builder twenty lines up dispatches the two correctly."""
+
+    foundation: str | None
+    """A released foundation model to start from, in the library's own spelling; ``None``
+    with :attr:`weights` also ``None`` means training from scratch."""
+
+    @property
+    def start_from(self) -> str | None:
+        """The one-string display of what training starts from; ``None`` = from scratch.
+
+        For the consumers that genuinely want one string — ``$FOUNDATION_MODEL`` for the
+        CLI-trainer templates (MACE and SevenNet take either spelling in the same config
+        key), and the runlog/sidecar rows. Never for dispatch: a hook that needs to *act*
+        on the value reads the typed fields.
+        """
+        return str(self.weights) if self.weights is not None else (self.foundation or None)
 
     launcher: Path
     """The interpreter of the backend's environment, from ``_provision.launcher_for``."""
@@ -358,8 +379,17 @@ class ApiTrainerBase(TrainerBase):
     driver_task: ClassVar[str]
     """The word the driver re-resolves in the backend env — the library's task key."""
 
-    required_config_keys: ClassVar[tuple[str, ...]] = ("train_set", "run_name")
-    """Rendered-config keys :meth:`run_training` refuses to proceed without."""
+    required_config_keys: ClassVar[tuple[str, ...]] = ("train_set", "run_name", "device", "seed")
+    """Config keys :meth:`run_training` refuses to proceed without (present and non-null).
+
+    ``device`` and ``seed`` are here because the driver **guarantees** them: they are plan
+    facts, and plan facts ride the driver's own command line rather than the user's
+    template (:meth:`command`). Read from the template with a silent per-backend fallback,
+    each one was lost whenever the template did not happen to reference its placeholder —
+    a ``device: cuda`` step trained on CPU with the GPU booked, a declared foundation
+    model trained from scratch while the sidecar recorded it, a ``seed`` reached the
+    split but not torch. The orchestrator charges, keys the cache and logs by the
+    declared values; the hook must run by the same ones."""
 
     missing_config_hint: ClassVar[str]
     """One sentence naming the fix when a required key is missing — which placeholders
@@ -376,22 +406,50 @@ class ApiTrainerBase(TrainerBase):
     def command(self, plan: TrainingPlan, config: Path) -> str:
         """The shared train driver, under the backend env's interpreter.
 
-        ``-m chemrefine.engines.mlip.train.driver <task> <config>`` — the driver is
-        chemrefine's, present in the managed env because the env is a
+        ``-m chemrefine.engines.mlip.train.driver <task> <config> --device … --seed …`` —
+        the driver is chemrefine's, present in the managed env because the env is a
         ``chemrefine[<extra>]`` install. The config rides by basename for the
         array-sentinel reason MACE's command spells out. Single-process on any device:
         DDP is not a mode these libraries' APIs document.
+
+        **The plan facts ride this argv, not the template.** chemrefine owns both ends of
+        this channel — this method writes the command, the driver parses it — so device,
+        seed and the foundation weights go straight across as authoritative values
+        (:func:`~chemrefine.engines.mlip.train.driver.main` overlays them onto the
+        rendered config and refuses a template value that disagrees). Routed through the
+        user's template as ``$DEVICE``-style placeholders, each fact was silently lost the
+        moment a template did not reference it, while the budget, the cache key and the
+        sidecar all asserted the declared value. A template channel is the CLI trainers'
+        necessity — their libraries read the config file themselves — not this route's.
+
+        ``shlex.quote`` on the two free-text values, the same protection every other
+        engine-emitted command applies to a value it did not mint (``orca_command``, the
+        ``console_script`` helper above): ``device`` is a validated Literal and ``seed``
+        an int, but a checkpoint path and a model name are the user's own text.
         """
         python = self.quoted_launcher(plan)
-        return f"{python} -m chemrefine.engines.mlip.train.driver {self.driver_task} {config.name}"
+        parts = [
+            f"{python} -m chemrefine.engines.mlip.train.driver {self.driver_task} {config.name}",
+            f"--device {plan.device} --seed {plan.seed}",
+        ]
+        if plan.weights is not None:
+            parts.append(f"--weights-path {shlex.quote(str(plan.weights))}")
+        if plan.foundation:
+            parts.append(f"--foundation {shlex.quote(plan.foundation)}")
+        return " ".join(parts)
 
     def artifact(self, run_dir: Path, run_name: str) -> Path:
         """:attr:`artifact_filename` under the run directory — derived, never restated."""
         return run_dir / self.artifact_filename.format(run_name=run_name)
 
     def run_training(self, config: dict[str, Any]) -> int:
-        """Check the declared keys, then hand the config to the library. The driver's hook."""
-        missing = [key for key in self.required_config_keys if not config.get(key)]
+        """Check the declared keys, then hand the config to the library. The driver's hook.
+
+        Present-and-non-null, not truthy: ``seed: 0`` is an ordinary value a truthiness
+        test would refuse as missing — the same required-means-non-null semantics the
+        script engines' output boundary holds.
+        """
+        missing = [key for key in self.required_config_keys if config.get(key) is None]
         if missing:
             raise SystemExit(
                 f"{self.driver_task} training config is missing {missing} — "

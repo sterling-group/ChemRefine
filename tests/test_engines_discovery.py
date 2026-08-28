@@ -82,7 +82,8 @@ def _dummy_plan(tmp_path: Path):
         seed=1,
         charge=0,
         multiplicity=1,
-        start_from=None,
+        weights=None,
+        foundation=None,
         launcher=Path("/envs/mlip-dummy/bin/python"),
     )
 
@@ -143,13 +144,18 @@ def test_a_dropped_in_library_module_registers_both_its_capabilities(monkeypatch
         assert spec.builder is not None and spec.builder(calc_spec) == "DUMMY"
         assert spec.trainer is not None and spec.trainer.__name__ == "DummyTrainer"
         trainer = spec.trainer()
-        assert trainer.command(_dummy_plan(tmp_path), Path("cfg.yaml")).endswith(
-            "train.driver dummy_head cfg.yaml"
-        ), "an ApiTrainerBase drop-in derives its driver line from its declarations"
+        assert "train.driver dummy_head cfg.yaml --device cpu --seed 1" in trainer.command(
+            _dummy_plan(tmp_path), Path("cfg.yaml")
+        ), "an ApiTrainerBase drop-in derives its driver line — plan facts included"
         assert trainer.write_split(_dummy_plan(tmp_path), "train", ()) == (
             tmp_path / "run" / "train.xyz"
         )
-        assert trainer.run_training({"train_set": "t.xyz", "run_name": "r"}) == 0
+        assert (
+            trainer.run_training(
+                {"train_set": "t.xyz", "run_name": "r", "device": "cpu", "seed": 1}
+            )
+            == 0
+        )
         assert "chemrefine.engines.mlip.backends._helper" not in sys.modules
     finally:
         _BACKENDS.pop("dummy_head", None)

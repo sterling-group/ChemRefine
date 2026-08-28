@@ -57,7 +57,8 @@ def _plan(tmp_path: Path, **overrides: object) -> TrainingPlan:
         "seed": 42,
         "charge": 0,
         "multiplicity": 1,
-        "start_from": None,
+        "weights": None,
+        "foundation": None,
         "launcher": Path("/envs/mlip-mace/bin/python"),
     }
     base.update(overrides)
@@ -208,14 +209,14 @@ def test_a_missing_template_reports_itself_as_a_config_error(tmp_path: Path):
 
 
 def test_the_shared_placeholders_describe_the_run(tmp_path: Path):
-    values = base_placeholders(_plan(tmp_path, gpus=2, start_from="medium"))
+    values = base_placeholders(_plan(tmp_path, gpus=2, foundation="medium"))
     assert values["RUN_DIR"] == str(tmp_path / "train")
     assert values["NGPUS"] == "2"
     assert values["FOUNDATION_MODEL"] == "medium"
 
 
 def test_training_from_scratch_renders_an_empty_foundation_model(tmp_path: Path):
-    assert base_placeholders(_plan(tmp_path, start_from=None))["FOUNDATION_MODEL"] == ""
+    assert base_placeholders(_plan(tmp_path))["FOUNDATION_MODEL"] == ""
 
 
 def test_a_trainer_can_specialise_a_shared_placeholder(tmp_path: Path):

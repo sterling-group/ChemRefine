@@ -120,6 +120,18 @@ patched: ChemRefine substitutes `$TRAIN_SET`, `$VALID_SET`, `$TEST_SET`, `$RUN_D
 interpolations — untouched. A template that never references the dataset placeholder its
 backend needs is rejected before anything is submitted.
 
+The device, the seed and the foundation weights are **plan facts**: the step's options
+are their source of truth — the scheduler charges by them and the cache fingerprint
+records them — and how they reach the training program depends only on what kind of
+program it is. A library trained through ChemRefine's shared driver (one with no
+training CLI of its own) receives them on the driver's **own command line**, so they
+hold whether or not the template references their placeholders, and a template value
+that *contradicts* the step's options is refused by name. A library run through its own
+CLI reads only the config the template becomes, so there each plan fact the library
+reads from its config is a **required placeholder** — a template that never references
+it is rejected before anything is submitted, instead of the library's own fallback
+quietly overriding the step.
+
 The trained model lands under `<step dir>/train/` at a name fixed per library — MACE's
 `train[_stagetwo].model`, FAIRChem's `train/checkpoints/final/inference_ckpt.pt`,
 SevenNet's `checkpoint_best.pth`, CHGNet's `train.pth.tar`, ORB's `train.ckpt` — beside a
@@ -150,25 +162,30 @@ The template is always the *trainer's* config; what that means differs per libra
 each trainer refuses a template missing its own required placeholders before anything
 submits:
 
-- **MACE** — MACE's own training YAML with `$TRAIN_SET`, `$RUN_NAME` and `$RUN_DIR` where
-  those values go; the dataset is written with MACE's own `REF_*` label keys, so no
-  `energy_key`/`forces_key` line is needed. The
+- **MACE** — MACE's own training YAML with `$TRAIN_SET`, `$RUN_NAME`, `$RUN_DIR`,
+  `device: $DEVICE` and `seed: $SEED` where those values go; the dataset is written with
+  MACE's own `REF_*` label keys, so no `energy_key`/`forces_key` line is needed. The
   [MLIP training tutorial](../tutorials/mlip_training.md) walks a complete one.
 - **FAIRChem** — fairchem's hydra config per the note above; requires `$TRAIN_SET`,
-  `$VAL_SET`, `$RUN_DIR` and `$RUN_NAME`.
+  `$VAL_SET`, `$RUN_DIR`, `$RUN_NAME`, `device_type: $DEVICE` and the `seed: $SEED`
+  keys the shipped example threads through `job` and the dataset stanzas.
 - **SevenNet** — SevenNet's own `input.yaml` (start from `sevenn preset fine_tune >
-  step{N}.yaml`), with `$TRAIN_SET` in `data.load_trainset_path` (and `$VALID_SET` /
-  `$FOUNDATION_MODEL` → `train.continue.checkpoint` as wanted). A validation split is
-  required: `checkpoint_best.pth`, the model the step adopts, is written when the
-  validation metric improves.
+  step{N}.yaml`), with `$TRAIN_SET` in `data.load_trainset_path` and `device: $DEVICE`
+  (absent, SevenNet takes cuda whenever torch sees one — the step's own device must win);
+  `$VALID_SET` / `$FOUNDATION_MODEL` → `train.continue.checkpoint` as wanted. A
+  validation split is required: `checkpoint_best.pth`, the model the step adopts, is
+  written when the validation metric improves.
 - **CHGNet** — chemrefine's own small schema (CHGNet has no config format): `train_set:
   $TRAIN_SET`, `valid_set: $VALID_SET`, `run_name: $RUN_NAME`, plus the `Trainer` knobs
   (`epochs`, `learning_rate`, `batch_size`, `targets`). The step runs chemrefine's shared
-  train driver inside the backend env.
+  train driver inside the backend env; the device, the seed and a `model_path`/
+  `model_name` to start from arrive on the driver's command line from the step's options
+  — never through the template.
 - **ORB** — the same driver route: `train_set: $TRAIN_SET`, `run_name: $RUN_NAME`, and a
-  `base_model:` naming the pretrained loader (the architecture); `start_from:
-  $FOUNDATION_MODEL` may point at a local checkpoint. No validation file — orb's
-  fine-tune loop is train-only.
+  `base_model:` naming the pretrained loader (the architecture — the step's `model_name`
+  serves when the template names none); a local checkpoint arrives as the step's
+  `model_path`, on the driver's command line. No validation file — orb's fine-tune loop
+  is train-only.
 
 Whatever trained, running the result is the same one line: `model_path:` pointing at the
 artifact, with the same `task_name`.

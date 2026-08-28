@@ -177,7 +177,11 @@ class MlipTrainEngine(MlipBackend):
             seed=opts.seed,
             charge=ctx.charge,
             multiplicity=ctx.multiplicity,
-            start_from=opts.model_path or opts.model_name or None,
+            # Two typed fields, never folded: a path and a release name are different
+            # facts, and the API-trainer hooks dispatch on which one was named — the
+            # CalculatorSpec shape, on the training side.
+            weights=Path(opts.model_path) if opts.model_path else None,
+            foundation=opts.model_name or None,
             launcher=Path(_provision.launcher_for(self, ctx.step_cfg.options)),
         )
 
