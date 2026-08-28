@@ -457,27 +457,53 @@ _ALLOWED_RAW_READS = {
     # Operates on `validated.model_dump()` (see extopt/engine.py), so this *is* the
     # model's output -- it just arrives as a dict because the server CLI is generic.
     "engines/_backend_server/base.py",
+    # `_resolve_step_option_paths` rewrites the path-valued knobs (`_STEP_OPTION_PATHS`)
+    # against the config file's directory -- before any engine model exists to read
+    # through, because resolution is the loader's job and the model cannot know the
+    # file's directory. The read is variable-keyed over that declared list, which is
+    # exactly the shape the matcher's dynamic-key marker exists to put on this record.
+    "config.py",
 }
+
+_DYNAMIC_KEY = "<dynamic key>"
+"""What :func:`_raw_option_reads` reports for a raw read whose key is not a literal.
+
+A variable-keyed ``options.get(key)`` can read any declared knob, so it cannot be
+cleared against the declared set -- it is an offender unless its module is on the
+allow-list with a reason. Without this marker the config loader's own such read sat
+outside the register the test's docstring promises, invisible."""
 
 
 def _raw_option_reads(source: str) -> list[str]:
-    """Every `<raw dict>.get("key")` literal key in ``source``.
+    """Every raw-dict ``.get(...)`` in ``source``: literal keys, else :data:`_DYNAMIC_KEY`.
 
     Parsed rather than grepped. A regex over the text also matches prose: the docstring on
     `gpus_from_options` quotes the very call it exists to replace, so a text scan flags the
     module that avoids it.
+
+    The receiver may be a bare name (``options.get``) or an attribute chain ending in one
+    (``ctx.step_cfg.options.get``) -- the chained spelling reads the same raw dict and
+    was invisible to the bare-``Name`` matcher this extends.
     """
+
+    def _is_raw_dict(node: ast.expr) -> bool:
+        return (isinstance(node, ast.Name) and node.id in _RAW_DICT_NAMES) or (
+            isinstance(node, ast.Attribute) and node.attr in _RAW_DICT_NAMES
+        )
+
     keys: list[str] = []
     for node in ast.walk(ast.parse(source)):
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             continue
-        if node.func.attr != "get" or not isinstance(node.func.value, ast.Name):
+        if node.func.attr != "get" or not _is_raw_dict(node.func.value):
             continue
-        if node.func.value.id not in _RAW_DICT_NAMES or not node.args:
+        if not node.args:
             continue
         first = node.args[0]
         if isinstance(first, ast.Constant) and isinstance(first.value, str):
             keys.append(first.value)
+        else:
+            keys.append(_DYNAMIC_KEY)
     return keys
 
 
@@ -506,7 +532,8 @@ def test_no_module_reads_a_declared_option_key_off_the_raw_dict():
         for path in sorted(src.rglob("*.py"))
         if (rel := path.relative_to(src).as_posix()) not in _ALLOWED_RAW_READS
         for key in _raw_option_reads(path.read_text(encoding="utf-8"))
-        if key in declared
+        # A dynamic key can read any declared knob, so it offends unless allow-listed.
+        if key in declared or key == _DYNAMIC_KEY
     ]
 
     assert offenders == [], "\n".join(offenders)

@@ -177,8 +177,17 @@ def test_example_docker_guest_ships(yml: Path) -> None:
         assert template is not None
         for match in re.finditer(r"GUEST\s+\"([^\"]+)\"", template.read_text(), re.IGNORECASE):
             guest = Path(match.group(1))
-            assert (cfg.template_dir / guest.name).is_file(), (
-                f"step {step.step}: %DOCKER guest {guest.name} not in {cfg.template_dir}"
+            # The runtime's own predicate, exactly: `_absolutize_template_paths` resolves
+            # the full quoted relative path against the template's directory and, when
+            # that names no file, silently leaves the relative path in place for ORCA to
+            # fail on from its scratch dir. A basename check under template_dir passed a
+            # broken `guests/cl.xyz` (basename shipped, path unresolvable) and failed a
+            # working `sub/g.xyz` — the gate must judge what the run judges.
+            resolved = (template.parent / guest).resolve()
+            assert resolved.is_file(), (
+                f"step {step.step}: %DOCKER guest {guest} does not resolve against "
+                f"{template.parent} — the rendered input would keep the unresolvable "
+                f"relative path and ORCA would fail to open it from the scratch dir"
             )
 
 

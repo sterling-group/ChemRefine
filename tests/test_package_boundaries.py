@@ -24,9 +24,22 @@ import chemrefine
 
 _PACKAGE_ROOT = Path(chemrefine.__file__).parent
 
-#: Crossings that have been argued for. Empty on purpose: the rule is the default, so an
-#: exception has to arrive as a diff that says why, next to the name it exempts.
+#: Crossings that have been argued for, as ``(package-relative path, name)`` pairs.
+#: Empty on purpose: the rule is the default, so an exception has to arrive as a diff
+#: that says why, next to the name it exempts.
 _ALLOWED: frozenset[tuple[str, str]] = frozenset()
+
+
+def _module_key(path: Path) -> str:
+    """One module's identity for the ownership map: its package-relative path.
+
+    The bare ``path.stem`` this replaces made every two same-named modules one owner —
+    and this package has 15 ``__init__.py``, 7 ``engine.py`` and doubled ``base.py`` /
+    ``registry.py`` / ``options.py`` / ``backend.py`` — so a private-name crossing
+    between, say, two ``engine.py`` files read as self-access and the gate could not see
+    that whole class of violation.
+    """
+    return path.relative_to(_PACKAGE_ROOT.parent).as_posix()
 
 
 def _is_submodule(dotted: str, name: str) -> bool:
@@ -68,7 +81,7 @@ def _crossings(path: Path, tree: ast.AST, owners: dict[str, set[str]]) -> list[s
     module also defines is its own. Only names some *chemrefine* module owns are
     considered, so ``namedtuple._asdict`` and numpy internals cannot register.
     """
-    module = path.stem
+    module = _module_key(path)
     out: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("chemrefine"):
@@ -108,13 +121,13 @@ def test_no_module_reaches_for_another_modules_private_name():
     owners: dict[str, set[str]] = {}
     for path, tree in trees.items():
         for name in _private_names(tree):
-            owners.setdefault(name, set()).add(path.stem)
+            owners.setdefault(name, set()).add(_module_key(path))
 
     offences = [
         f"{path.relative_to(_PACKAGE_ROOT.parent)}: {detail}"
         for path, tree in trees.items()
         for detail in _crossings(path, tree, owners)
-        if (path.stem, detail.split()[1]) not in _ALLOWED
+        if (_module_key(path), detail.split()[1]) not in _ALLOWED
     ]
     assert not offences, (
         "a module reached past another's leading underscore:\n  "

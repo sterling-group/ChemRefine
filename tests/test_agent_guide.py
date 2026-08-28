@@ -21,10 +21,15 @@ from chemrefine.state import FailureKind
 
 GUIDE = agent_tools.guide_text()
 
-_TOOL_SHAPED = re.compile(
-    r"\b(?:get|list|validate|save|read|write|scaffold|start|run|build|lookup|analyze)"
-    r"_[a-z_]+\b"
-)
+_TOOL_VERBS = sorted({tool.__name__.split("_")[0] for tool in agent_tools.TOOLS})
+"""Every registered tool's leading verb, derived from the roster rather than hand-listed.
+
+The hand list this replaces omitted ``summarize``, so ``summarize_config`` was the one
+tool of twenty whose guide mentions — current or drifted — were structurally invisible
+to the phantom scan below. Derived, a tool the roster gains (or renames) reshapes the
+scan in the same edit."""
+
+_TOOL_SHAPED = re.compile(r"\b(?:" + "|".join(_TOOL_VERBS) + r")_[a-z_]+\b")
 
 
 def test_every_operation_is_taught():
