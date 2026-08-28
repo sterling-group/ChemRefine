@@ -462,6 +462,38 @@ def test_translate_legacy_argv_passes_new_style_through(argv):
     assert _translate_legacy_argv(argv) == argv
 
 
+@pytest.mark.parametrize(
+    "legacy, expected",
+    [
+        # The one flag that promises "do not execute" must survive the translation:
+        # dropped, `c.yaml --dry-run` became the cache-invalidating `run c.yaml`.
+        (["c.yaml", "--dry-run"], ["run", "c.yaml", "--dry-run"]),
+        (["c.yaml", "--maxgpus", "2"], ["run", "c.yaml", "--maxgpus", "2"]),
+        (["c.yaml", "--skip", "--dry-run"], ["resume", "c.yaml", "--dry-run"]),
+    ],
+)
+def test_translate_legacy_argv_keeps_flags_it_does_not_recognise(legacy, expected):
+    """A current (or unknown) flag rides through for Typer to honour or refuse.
+
+    The translator rebuilds argv from the legacy fields it parsed, and anything it
+    dropped on the floor was silently gone — Typer never saw it, so `--dry-run` could
+    not refuse to execute and `--maxgpus` could not cap anything. Passed through, a
+    real flag keeps its meaning and an invented one gets the real grammar's refusal.
+    """
+    assert _translate_legacy_argv(legacy) == expected
+
+
+def test_legacy_dry_run_does_not_execute(tmp_path: Path, monkeypatch):
+    """End to end: `chemrefine CONFIG --dry-run` describes the run and dispatches nothing."""
+    from chemrefine import cli
+
+    config_path = _write_config(tmp_path)
+    monkeypatch.setattr(cli, "execute", lambda *a, **k: pytest.fail("--dry-run must not execute"))
+    monkeypatch.setattr("sys.argv", ["chemrefine", str(config_path), "--dry-run"])
+    with contextlib.suppress(SystemExit):  # typer.Exit at the end of app()
+        cli.main()
+
+
 def test_legacy_rerun_errors_flag_dispatches_via_main(tmp_path: Path, monkeypatch):
     """`chemrefine CONFIG --rerun_errors 1` (v1.3.1) reaches the rerun-errors action."""
     from chemrefine import cli
