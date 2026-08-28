@@ -25,6 +25,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _pytest.mark.structures import ParameterSet
 from ase import Atoms
 
 from chemrefine.config import StepConfig
@@ -960,7 +961,7 @@ def test_build_orb_success_path(monkeypatch):
 # --- orb older-layout fallback ----------------------------------------------
 
 
-def _runnable_libraries() -> list[pytest.param]:
+def _runnable_libraries() -> list[ParameterSet]:
     """One row per runnable library: its import name, package, extra, and every task.
 
     Derived from the registry so a new backend joins this gate by registering — these
