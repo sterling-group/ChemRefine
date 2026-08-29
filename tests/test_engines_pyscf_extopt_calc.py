@@ -495,40 +495,89 @@ def test_get_active_space_tensors_refuses_an_open_shell_system(monkeypatch):
         _runtime.get_active_space_tensors(mol, MagicMock())
 
 
-def test_get_active_space_tensors_returns_correct_shapes(monkeypatch):
-    _install_fake_pyscf(monkeypatch)
+def test_get_active_space_tensors_assembles_h1_in_the_mo_basis(monkeypatch):
+    """The one-electron Hamiltonian is C.T (T + V) C — pinned by value, not by shape.
+
+    The previous fixture — identity mo_coeff over two identical symmetric all-ones
+    integrals — was degenerate: dropping the AO→MO transform, transposing it,
+    subtracting the nuclear attraction, or using one integral alone all left the
+    shape-only assertions true. Distinct asymmetric integrals and a non-identity C
+    give every one of those mutations a different matrix than the hand-computed
+    expectation below.
+    """
+    mocks = _install_fake_pyscf(monkeypatch)
+    kin = np.array([[1.0, 2.0], [3.0, 4.0]])
+    nuc_attr = np.array([[10.0, 20.0], [30.0, 40.0]])
+    eri = np.arange(16, dtype=float).reshape(2, 2, 2, 2)
     mol = MagicMock()
     mol.spin = 0
     mol.energy_nuc.return_value = 1.234
-    mol.intor.side_effect = lambda label: (
-        np.ones((2, 2)) if "int1e" in label else np.ones((2, 2, 2, 2))
-    )
+    mol.intor.side_effect = lambda label: {
+        "int1e_kin": kin,
+        "int1e_nuc": nuc_attr,
+        "int2e": eri,
+    }[label]
     mf = MagicMock()
-    mf.mo_coeff = np.eye(2)
+    mf.mo_coeff = np.array([[1.0, 1.0], [0.0, 1.0]])
     mf.mo_occ = np.array([2.0, 0.0])
 
     nuc, h1, h2 = _runtime.get_active_space_tensors(mol, mf)
+
     assert nuc == 1.234
-    assert h1.shape == (2, 2)
+    # By hand: O = kin + nuc = [[11, 22], [33, 44]];
+    # C.T @ O = [[11, 22], [44, 66]]; (C.T @ O) @ C = [[11, 33], [44, 110]].
+    np.testing.assert_array_equal(h1, np.array([[11.0, 33.0], [44.0, 110.0]]))
+    # The two-electron transform is PySCF's own; ours to pin is what it was handed —
+    # the raw ERI and the same mo_final the one-electron transform used.
+    (got_eri, got_mo), _kwargs = mocks["ao2mo"].incore.full.call_args
+    np.testing.assert_array_equal(got_eri, eri)
+    np.testing.assert_array_equal(got_mo, mf.mo_coeff)
     assert h2.shape == (2, 2, 2, 2)
 
 
-def test_get_active_space_tensors_localized_invokes_boys(monkeypatch):
-    """The localized branch should hit ``pyscf.lo.Boys`` for occ + vir blocks."""
+def test_localized_tensors_localize_each_block_and_transform_with_the_stack(monkeypatch):
+    """``localized`` Boys-localizes occ and vir separately, then transforms with the stack.
+
+    Pinned three ways a bare call-count could not: the *slices* each Boys call received
+    (``mo_occ = [2, 0]`` → occupied is column 0, virtual column 1 — inverting ``nocc``
+    or swapping the blocks moves these), the localized stack reaching the two-electron
+    transform, and the one-electron values computed through that stack.
+    """
     mocks = _install_fake_pyscf(monkeypatch)
+    kin = np.array([[1.0, 2.0], [3.0, 4.0]])
+    nuc_attr = np.array([[10.0, 20.0], [30.0, 40.0]])
+    eri = np.arange(16, dtype=float).reshape(2, 2, 2, 2)
     mol = MagicMock()
     mol.spin = 0
     mol.energy_nuc.return_value = 1.234
-    mol.intor.side_effect = lambda label: (
-        np.ones((2, 2)) if "int1e" in label else np.ones((2, 2, 2, 2))
-    )
+    mol.intor.side_effect = lambda label: {
+        "int1e_kin": kin,
+        "int1e_nuc": nuc_attr,
+        "int2e": eri,
+    }[label]
     mf = MagicMock()
-    mf.mo_coeff = np.eye(2)
+    mf.mo_coeff = np.array([[1.0, 1.0], [0.0, 1.0]])
     mf.mo_occ = np.array([2.0, 0.0])
 
-    _runtime.get_active_space_tensors(mol, mf, localized=True)
-    # Boys is called once for occupied and once for virtual.
-    assert mocks["lo"].Boys.call_count == 2
+    seen: list[np.ndarray] = []
+
+    def fake_boys(_mol, block):
+        seen.append(np.array(block))
+        localizer = MagicMock()
+        localizer.kernel.return_value = np.asarray(block) * 10.0
+        return localizer
+
+    mocks["lo"].Boys.side_effect = fake_boys
+
+    _nuc, h1, _h2 = _runtime.get_active_space_tensors(mol, mf, localized=True)
+
+    assert [block.shape for block in seen] == [(2, 1), (2, 1)]
+    np.testing.assert_array_equal(seen[0], mf.mo_coeff[:, :1])  # occupied block first
+    np.testing.assert_array_equal(seen[1], mf.mo_coeff[:, 1:])
+    # mo_final = 10 * mo_coeff, so h1 scales by 100 against the plain expectation.
+    np.testing.assert_array_equal(h1, 100.0 * np.array([[11.0, 33.0], [44.0, 110.0]]))
+    (_got_eri, got_mo), _kwargs = mocks["ao2mo"].incore.full.call_args
+    np.testing.assert_array_equal(got_mo, 10.0 * mf.mo_coeff)
 
 
 # ---------------------------------------------------------------------------

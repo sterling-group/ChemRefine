@@ -321,17 +321,38 @@ def test_wait_for_completion_with_nothing_active_returns_empty():
 def test_timeout_bounds_the_stall_not_the_whole_drain():
     """`job_timeout_seconds` means "nothing has finished for this long", everywhere.
 
-    A batch that keeps draining is making progress however long the drain takes, so the
-    deadline is re-anchored on every completion. Bounding the *total* is what would make a
-    healthy multi-hour step trip a timeout set to catch a stuck one.
+    Both halves must be observable, on one clock cadence (4s per reading, a 5s bound).
+    A wait in which nothing completes trips it: the deadline check runs on every empty
+    poll and raises once the stall exceeds the bound. And a completion re-anchors it:
+    each call builds a fresh deadline, so 12s of total elapsed time never trips while
+    every stretch without progress stays under 5s — bounding the *total* is what would
+    make a healthy multi-hour step trip a timeout set to catch a stuck one. An earlier
+    version's `finished` returned a job on every poll, so `deadline.check` never
+    executed and the bound, the patch and the ticking clock were all inert.
     """
+    from chemrefine.errors import ThrottleTimeoutError
+
+    starved = Throttler(max_cores=8, poll_interval=0)
+    starved.register("a", 1)
+    ticking = (float(i) * 4.0 for i in range(1000))
+    with (
+        patch("time.monotonic", side_effect=lambda: next(ticking)),
+        pytest.raises(ThrottleTimeoutError, match="waiting for a job to finish"),
+    ):
+        starved.wait_for_completion(finished=lambda ids: set(), max_wait_seconds=5.0)
+
     t = Throttler(max_cores=8, poll_interval=0)
-    for jid in ("a", "b", "c"):
-        t.register(jid, 1)
-    # Clock advances 4s per reading — past a 5s bound in total, never within one stretch.
+    t.register("a", 1)
+    t.register("b", 1)
+    # Per call: one empty poll (the check runs, under the bound), then a completion.
+    answers = iter([set(), {"a"}, set(), {"b"}])
     ticking = (float(i) * 4.0 for i in range(1000))
     with patch("time.monotonic", side_effect=lambda: next(ticking)):
-        while t.active_jobs:
-            t.wait_for_completion(finished=lambda ids: {sorted(ids)[0]}, max_wait_seconds=5.0)
-
+        assert t.wait_for_completion(finished=lambda ids: next(answers), max_wait_seconds=5.0) == (
+            "a",
+        )
+        # 8s have elapsed — past the bound in total, and a fresh deadline says so is fine.
+        assert t.wait_for_completion(finished=lambda ids: next(answers), max_wait_seconds=5.0) == (
+            "b",
+        )
     assert t.active_jobs == ()
