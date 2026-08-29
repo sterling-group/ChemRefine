@@ -20,6 +20,9 @@ for the full map.
   which already raises), the `mlff*`/`dft` engine spellings, the `sample_type`
   block, and the flag-style CLI (`chemrefine CONFIG --rebuild_cache N`) — is
   scheduled for removal in **3.0.0**. It warns once per rewritten feature today.
+  Flags the translator does not map pass through to the subcommand CLI, so the
+  current flags work in the legacy spelling (`chemrefine cfg.yaml --dry-run`)
+  and a flag neither CLI knows is refused loudly rather than silently dropped.
   See [migrating from v1 to v2](https://sterling-group.github.io/ChemRefine/get-started/upgrading-from-v1/).
 
 ### Added
@@ -30,7 +33,15 @@ for the full map.
   warnings for the silent no-ops (undeclared option keys, `nms: true` on an engine
   that cannot NMS, step templates and SLURM headers that do not exist yet, resolved
   the way dispatch resolves them); warnings never block, an unrunnable config exits 2.
-  `scaffold` writes commented starter templates into every gap the config expects.
+  `validate` and `load_config` enforce the same refusals: a non-string top-level
+  key — an unquoted `on:`, `yes:` or `no:`, which YAML 1.1 parses as a boolean —
+  is the documented validation error, and `template_dir` / `output_dir` /
+  `scratch_dir` are refused when they contain a shell metacharacter (`"`, `$`, a
+  backtick, a backslash or a newline), checked on the **resolved** paths because
+  the generated scripts export them into bash.
+  `scaffold` writes commented starter templates into every gap the config expects;
+  two steps of different engines naming one template file are refused by name
+  rather than the second starter silently replacing the first.
   `schema` prints a machine-readable document generated from the validating models —
   the config schema, the NMS knobs, one descriptor per registered engine (declared
   options schema, capabilities, `operation:` vocabulary) — and `engines` lists the
@@ -44,9 +55,15 @@ for the full map.
   `get_failures`, and chemistry grounding — `build_structures` (SMILES/XYZ with
   charge-parity checks), `lookup_smiles` (PubChem), `get_frequencies`
   (minimum-vs-TS from cached imaginary modes) and `analyze_mode` (which atoms and
-  bonds a normal mode moves — reaction-coordinate validation). The packaged operating
-  guide ships as the `chemrefine://guide` resource, with its vocabulary pinned to the
-  code by tests.
+  bonds a normal mode moves — reaction-coordinate validation). Contracts the tools
+  pin down: `start_run` refuses a `target` carrying a `run`/`resume` subcommand,
+  `run_status(log_tail_lines=0)` returns an empty tail, a disk failure from
+  `save_config`/`write_template`/`scaffold_templates` surfaces as the documented
+  `ConfigError`, and a `build_structures` call owns its output directory's seed
+  set — earlier `structure_*.xyz` are cleared and a call that fails partway
+  leaves none behind, so `input:` directory-seeding reads exactly what the call
+  reported. The packaged operating guide ships as the `chemrefine://guide`
+  resource, with its vocabulary pinned to the code by tests.
 - **Workflow-builder GUI** (`chemrefine gui`, extra `chemrefine[gui]`): a local
   two-pane web app (127.0.0.1 behind a per-session token, on a stable per-user
   port by default so an SSH forwarding setup written once keeps working;
@@ -57,14 +74,18 @@ for the full map.
   confirmations, polling status, paginated `steps.csv` results); and, with the
   `[agent]` extra, an agent chat panel whose mutating tool calls arrive as allow/deny
   cards. A browserless session — an HPC login node — prints the SSH forwarding
-  recipe instead of hijacking the terminal with a text browser. The builder also
-  publishes on the docs site as the **Playground** (top navigation) in a
-  build-and-copy static mode.
+  recipe instead of hijacking the terminal with a text browser. Run without its
+  extra installed, `chemrefine gui` — like `chemrefine agent` — exits with a
+  message naming the extra to install. The builder also publishes on the docs
+  site as the **Playground** (top navigation) in a build-and-copy static mode.
 - **Embedded agent** (`chemrefine agent`, extra `chemrefine[agent]`): a terminal chat
   over the same tool surface, harnessed by PydanticAI — multi-provider (presets for
   local Ollama/vLLM, any OpenAI-compatible endpoint via `--base-url`, or native
   `provider:model` strings; configuration via `CHEMREFINE_LLM_*`). Every mutating tool
   sits behind a y/N confirmation whose refusal is reported to the model as an answer.
+  A base URL is accepted only with an `http(s)` scheme — provider resolution
+  refuses any other before the URL is paired with `CHEMREFINE_LLM_API_KEY`, on
+  every path (CLI flags, the `CHEMREFINE_LLM_*` variables, the GUI chat panel).
   `--check` verifies the configured endpoint and names the fix without downloading
   anything — model choice and site policy stay the user's (see the new
   platforms/model-policy docs page).
@@ -78,10 +99,16 @@ for the full map.
   own documented `QCAUX=$QC/qcaux` default, `qcaux` overrides it for sibling layouts —
   or from a `module load` in the SLURM header. `QCSCRATCH` is the per-job work dir; the
   job always runs with a savename so key scratch (MOs) survives, and `options.save`
-  copies it back to the structure dir. NMS-capable: `jobtype ts`/`freq` gate and target
-  the sampling, and the frequency parse maps Q-Chem's 3N−6 vibrational modes onto the
-  trivial-modes-first tensor the coordinator expects. The output reader is deliberately
-  minimal (final energy + last geometry) pending the full parser set.
+  copies it back to the structure dir. The `operation:` vocabulary is
+  `sp` / `opt_sp` / `freq` — the GUI dropdown and the schema document pick it up —
+  an unknown operation is refused at the run's preflight, and a step that omits
+  `operation:` has its run type inferred from the template's `JOBTYPE`. NMS-capable:
+  `jobtype ts`/`freq` gate and target the sampling, and the frequency parse maps
+  Q-Chem's 3N−6 vibrational modes onto the trivial-modes-first tensor the
+  coordinator expects. Geometry is exchanged in Ångström only — a template setting
+  `$rem input_bohr` is refused by name, since the writer emits Å and the reader
+  assumes it. The output reader is deliberately minimal (final energy + last
+  geometry) pending the full parser set.
 - **Memory-aware SLURM requests**: an input that declares its memory now shapes its
   allocation. ORCA's `%maxcore` requests `ceil(maxcore × pal ÷ 0.75)` (maxcore is a
   promise ORCA overshoots per process — the 75% rule); Q-Chem's `mem_total` requests its
@@ -102,13 +129,18 @@ for the full map.
   archiving and resubmitting the first one's in-flight work. A lock left by a
   driver that died on the same host is reclaimed automatically; one left on
   another host must be deleted by hand once that run is known dead (the error
-  says so).
+  says so). A `scancel`-ed (SIGTERM'd) driver exits in an orderly way (code
+  143), releasing the lock and terminating its local jobs — only a genuine
+  SIGKILL can strand a lock, and the same-host dead-pid reclaim covers that
+  case. `run_status`'s holder payload carries a three-valued `alive` field:
+  `true`/`false` for a same-host holder, `null` for a holder on a foreign host
+  no status read can probe.
 - Engine plugin system: a `CalculationEngine` protocol plus a registry, with
   four documented base shapes for new engines (`engines/api.py`). Plugins and
   MLIP backends are **auto-discovered** — a new engine package or backend
   module is dropped in and registers itself, with no central import list to
   edit. Bundled engines: `orca`, `mlip`, `mlip-extopt`, `mlip-train`,
-  `pyscf`, `pyscf-extopt`.
+  `pyscf`, `pyscf-extopt`, `qchem`.
 - Subcommand CLI — `run`, `resume`, `rerun [step]`, `rerun-errors [step]`,
   `rebuild-cache [step]`, `rebuild-nms [step]` — with documented process
   exit codes per failure class.
@@ -118,13 +150,62 @@ for the full map.
   calculations.
 - Per-step failure policy `on_failure: stop | skip | best` with a
   `failed_jobs.json` ledger; `resume` / `rerun-errors` re-attempt only the
-  still-failed structures of a `stop` step.
-- Two-round normal-mode sampling (`nms: true`) with target-aware
-  displacement (`minimum` / `ts` / `random`) and a reuse fingerprint that
-  re-attempts only unresolved parents when search parameters are tuned.
+  still-failed structures of a `stop` step. Changing a step's `on_failure` and
+  resuming takes effect even over a cached step: ledgered failures are
+  re-attempted and the step is re-finalized under the new policy, and successes
+  are never recomputed (`stop` ↔ `skip` edits are a free cache hit, since both
+  store the same results). Under `best`, a backfilled structure carries no
+  thermochemistry and is simply excluded from rankings on `gibbs`, `enthalpy`
+  or `electronic_zero_point`; only a step where *nothing* has the requested
+  energy is a config error.
+- Automatic convergence retries: a structure that fails to converge is
+  re-attempted, and the retry joins the step's own throttled queue the moment
+  a slot frees, overlapping the rest of the batch. Results return in manifest
+  order, so a step that retried changes `parents_digest` and re-runs its
+  downstream steps once, settling after one run. `job_timeout_seconds` is a
+  **stall deadline** — the longest a step may go with *nothing* finishing —
+  whose clock restarts on every completion (and follows the array's *tasks*
+  under `slurm_array: true`); a batch that keeps draining never trips it,
+  however long the step takes.
+- Two-round normal-mode sampling (`nms: true`) with target-aware displacement
+  (`minimum` / `ts` / `random`); tuning the search parameters re-attempts only
+  the unresolved parents. `random` draws displacement modes only from a
+  molecule's vibrational modes — translations and rotations are never
+  candidates, and a structure with none to draw from (a diatomic) simply
+  yields no displacements. A `ts_mode_index` that names no imaginary mode of
+  the structure is rejected up front, so the mode the setting exists to
+  preserve — the reaction coordinate — is never displaced. After sampling,
+  `stepN/<id>/` describes a single calculation: the round-1 frequency job is
+  archived in the same `attemptK/` as its displaced children, and the winning
+  child's geometry, output, orbitals and Hessian are promoted to the
+  structure's canonical path, so the files there all agree.
 - Shared ExtOpt HTTP server: ORCA optimises on gradients served by an MLIP
   or PySCF backend in the same SLURM job (kernel-assigned ports, health
-  probe, clean teardown).
+  probe, clean teardown). A single-environment ExtOpt step requires flask and
+  waitress at preflight — the run fails before submission with an error naming
+  both fixes (`pip install "chemrefine[server]"`, or
+  `chemrefine backends install <extra>`) — and a server that cannot start
+  logs one actionable line to its `--log-file`, the file the job's failure
+  path tails.
+- PySCF engines: `pyscf` runs each structure through the step's own rendered
+  Python script, and `pyscf-extopt` serves gradients to ORCA through the ExtOpt
+  server. `pyscf-extopt` validates its options strictly — an unrecognized or
+  misspelled option fails the step rather than silently running with defaults.
+  `strict_scf`
+  (default on) refuses to serve a gradient from an SCF that did not converge:
+  PySCF returns the last iterate rather than raising, and ORCA's `.out` records
+  only its own geometry convergence, so an unconverged result would otherwise
+  rank unmarked against converged siblings; set `strict_scf: false` to accept
+  such gradients knowingly. `save_tensors` is restricted-only — an open-shell
+  (UHF/UKS) step is refused at prepare, before anything submits, naming the
+  knob and the multiplicity. A `device: cuda` step requires the gpu4pyscf
+  stack: the preflight derives the requirement from the step's options and
+  fails by name, pointing at the `pyscf-gpu` extra, when the environment lacks
+  it. Step scripts (`mlip` and `pyscf` alike) return positions and gradients
+  as `(N, 3)` arrays — a flat `(3N,)` gradient is an ordinary `UNPARSEABLE`
+  ledger entry naming the atom count — and a required output field must be
+  present and non-null: a malformed output document is a ledgered per-structure
+  parse failure, never a crash.
 - Per-backend MLIP extras (`mlip-fairchem`, `mlip-mace`, `mlip-sevenn`,
   `mlip-orb`, `mlip-chgnet`) and a backend-agnostic calculator factory. Each
   backend installs into its own dedicated environment (their torch/e3nn trees
@@ -134,79 +215,74 @@ for the full map.
   provisions one env per backend (built with the same tool that created the
   current env — conda / uv / venv) and steps resolve them **by name**, so
   conflicting MLIP stacks (e.g. MACE + UMA) run side by side in one pipeline.
-  Every run validates its steps' backends before any job submits.
-- Each managed env is built on **the Python its backend supports**, not on the
-  orchestrator's. Every backend extra now states which Pythons it installs on
-  (`mlip-orb` 3.12 only — orb-models pins `dm-tree==0.1.8`, whose newest wheels
-  are cp312; `mlip-chgnet` up to 3.12; `mlip-mace` up to 3.13), and
-  `backends install` builds the env on the newest one it claims: conda and uv
-  produce that interpreter themselves, a plain venv takes `python3.12` from
-  `PATH` or a `uv` binary if there is one, and where there is neither it stops
-  with the ways out rather than starting a build that cannot finish. Provisioning
-  orb on a 3.13 machine used to end in a thousand lines of C++ from a vendored
-  abseil. `--python` (a version, a command name, or a path) overrides the choice;
-  an env built on a Python its backend excludes is refused rather than installed
-  into, because pip succeeds there having installed nothing.
+  Every run validates its steps' backends before any job submits. Each env is
+  built on **the Python its backend supports**, not the orchestrator's: every
+  backend extra states which Pythons it installs on (`mlip-orb` 3.12 only;
+  `mlip-chgnet` up to 3.12; `mlip-mace` up to 3.13), `backends install` builds
+  on the newest one it claims — stopping with the ways out when no such
+  interpreter is available — and `--python` (a version, a command name, or a
+  path) overrides the choice. An env built on a Python its backend excludes is
+  refused rather than installed into, because pip succeeds there having
+  installed nothing.
+- **Every shipped MLIP backend fine-tunes** — v1 trained MACE only.
+  `task_name: sevenn | chgnet | orb` join MACE and the FAIRChem heads as
+  `mlip-train` selections, so the family `[mlip]` installs by default trains
+  too; the `mlip-sevenn` floor is 0.11.1, the release with the unified
+  `sevenn train` CLI. Libraries without a charge/spin channel warn instead of
+  silently fitting an ion as neutral data, and running what you trained is the
+  same `model_path:` line for all five. FAIRChem's dataset is an ASE database
+  per split — labels on a `SinglePointCalculator`, `metadata.npz` beside each,
+  one directory per split because FAIRChem resolves a missing `metadata_path`
+  against the database's *parent*. **The shipped FAIRChem example config is
+  still outstanding**: no training config ships in the fairchem wheel to adapt,
+  and the UMA weights are behind a gated Hugging Face repo, so it could not be
+  proven by a real run.
 - SLURM-optional execution: the generated scripts run unchanged under
-  `bash` with the same core/GPU throttling, runlogs, and artifacts.
+  `bash` with the same core/GPU throttling, runlogs, and artifacts. Local GPU
+  jobs run inside the allocation the run inherited: `CUDA_VISIBLE_DEVICES` is
+  authoritative, and `max_gpus` may narrow it but never widen it. Device
+  tokens are carried verbatim into each job's pin, so GPU UUIDs and `MIG-…`
+  handles work as well as bare indices.
 - Opt-in job-array submission (`slurm_array: true`): each step goes out as
   one `sbatch --array` per ≤1000 structures, with the scheduler enforcing
   the `max_cores` budget via the array's `%limit` — large ensembles submit
   in seconds instead of one sbatch call per structure. Outputs, runlogs,
   recovery, `job_timeout_seconds` (measured per array *task*, so a draining
   array keeps resetting the clock) and the GPU-budget config checks behave
-  identically to the per-job path.
+  identically to the per-job path. A step large enough to split across several
+  arrays divides `max_cores` among the chunks, so together they never exceed
+  the budget; a share is not returned when a sibling chunk drains early, so
+  the tail of an N-chunk step runs at up to 1/N of the budget.
 - Seeding from a multi-frame `.xyz`, a directory of `.xyz` files (all
   frames), or a CSV of SMILES (deterministic 3D embedding).
-- Engineering gates: 100% line+branch test coverage, 100% docstring
-  coverage, ruff, mypy, CodeQL, weekly `pip-audit`, and an
-  mkdocstrings-rendered API reference.
 
 ### Changed
 
-
 - **The cache identity is per-structure, and `resume` is incremental.** A step's key is
-  now layered the way its work is: a **row key** per structure (engine, template bytes,
+  layered the way its work is: a **row key** per structure (engine, template bytes,
   effective charge/multiplicity, the options as the engine's declared model reads them,
   option-file digests, the parent's content), a **resolution key** for what NMS reads
-  (criterion and search, split as reuse always split them), and a step fingerprint
-  composed from the ordered rows. The manifest records that identity per row, and
-  `resume` adopts every row whose stored key matches — re-parsed from disk, never
-  resubmitted — computing only the rest. What that changes in practice: turning
-  `nms: true` on over a finished frequency step submits only the imaginary parents'
-  displacement children (round 1 and the clean minima are adopted, byte-identical);
-  follow-up steps recompute only rows whose parent actually changed; a search retune
-  re-reads round 1; a criterion change re-resolves and nothing more; an interrupted NMS
-  step adopts round 1 instead of the old full re-run; a typo'd option key nothing
-  declares no longer invalidates anything (`validate` already warns about it). A tree
-  from before these rules is adopted once, explicitly, by `rebuild-cache` — which
+  (criterion and search), and a step fingerprint composed from the ordered rows. The
+  manifest records that identity per row, and `resume` adopts every row whose stored
+  key matches — re-parsed from disk, never resubmitted — computing only the rest. What
+  that means in practice: turning `nms: true` on over a finished frequency step
+  submits only the imaginary parents' displacement children (round 1 and the clean
+  minima are adopted, byte-identical); follow-up steps recompute only rows whose
+  parent actually changed; a search retune re-reads round 1; a criterion change
+  re-resolves and nothing more; an interrupted NMS step adopts its finished round 1;
+  a typo'd option key nothing declares invalidates nothing (`validate` already warns
+  about it). Row keys hash the **effective** charge and multiplicity each job
+  renders — inherited workflow-level values included — so editing a workflow-level
+  `charge:`/`multiplicity:` invalidates every step that inherits it. A tree from
+  before these rules is adopted once, explicitly, by `rebuild-cache` — which
   re-parses under the current rules, submits nothing, and writes the provenance —
   and `resume` names exactly that command instead of silently archiving finished
-  work. The `reuse_fingerprint` shortcut and its stored field are gone; the verdict it
-  encoded is read off the rows and the criterion directly.
-- **FAIRChem is trainable.** `task_name: omol` (and every other head) now selects a trainer as
-  well as a calculator, so the family `[mlip]` installs by default is no longer
-  inference-only. Its dataset is an ASE database per split — labels on a
-  `SinglePointCalculator`, `metadata.npz` beside each, one directory per split because
-  FAIRChem resolves a missing `metadata_path` against the database's *parent*. Verified
-  against the real `AseDBDataset`. **The shipped example config is still outstanding**: no
-  training config ships in the fairchem wheel to adapt, and the UMA weights are behind a
-  gated Hugging Face repo (`403` on the file, model card readable), so it could not be proven
-  by a real run.
+  work.
 - **A `task_name` you state wins over the `model_path` shortcut.** A checkpoint with no
   library named still means MACE, as it always has; naming one loads the checkpoint with
   *that* library. The old rule sent any `model_path` to MACE, which was right while MACE was
   the only library that could produce one and would now silently load a FAIRChem model with
   the wrong loader.
-- **One MLIP registry, one module per library.** `task_name` selects a library, and that
-  library declares the environment it needs **once** — `engines/mlip/backends/<library>.py`
-  now holds its ASE calculators *and* its trainer, hanging both off a single `MlipLibrary`.
-  Previously inference and training kept parallel registries, so the pip extra, the
-  distribution, the import name, the task-key list and the dispatch rule were each spelled
-  twice per library with nothing comparing them — and that metadata is what resolves which
-  environment a step launches from. A trainable task is now a runnable task by construction,
-  and resolves the same environment in both directions. Adding a library, or making one
-  trainable, is still one dropped-in module.
 - **`mlip-train` is rebuilt.** It runs through the same scheduler and throttle as every
   other engine, so a training job is charged against `max_cores` / `max_gpus`, gets the
   device-aware SLURM header, the runlog, the scratch handling, local dispatch and
@@ -216,14 +292,35 @@ for the full map.
   dropped-in module under `engines/mlip/backends/`, beside the calculators for the same
   library — the environment it needs is then declared once for both.
 
-  The step's YAML changes: `task_name`, `model_name` and `device` are required (none has a
-  default worth guessing — `model_name` is the foundation model a fine-tune starts from),
-  `job_name` is gone (the job is named like every other), `valid_fraction` now means what
-  it says, and `test_fraction` is the separate held-out set it used to be confused with.
-  The template is the trainer's own config `stepN.yaml`, **rendered** through
-  `$PLACEHOLDERS` rather than patched — patching is what could not work across libraries,
-  since the keys the old code inserted are meaningful to MACE and rejected outright by
-  FAIRChem. `operation: mlip_train` is a legacy spelling and still translated.
+  The step's YAML changes: `task_name` and `device` are required (neither has a
+  default worth guessing); `model_name` is optional — the foundation model a
+  fine-tune starts from, and unset means training from scratch (`started_from:
+  scratch` in the runlog) rather than silently inheriting a FAIRChem checkpoint
+  name as everyone's foundation; `job_name` is gone (the job is named like every
+  other); `valid_fraction` now means what it says, and `test_fraction` is the
+  separate held-out set it used to be confused with. The template is the
+  trainer's own config `stepN.yaml`, **rendered** through `$PLACEHOLDERS` rather
+  than patched — patching is what could not work across libraries, since the
+  keys the old code inserted are meaningful to MACE and rejected outright by
+  FAIRChem. The step's own facts — `device`, `seed`, and the foundation
+  weights — are authoritative over the template: for the libraries trained
+  through a Python API (CHGNet, ORB) chemrefine delivers them to the training
+  process directly and refuses by name a template value that disagrees; for the
+  libraries that read their own config file (MACE, SevenNet, FAIRChem) the
+  template must reference the placeholders that carry them (`$DEVICE`, and
+  `$SEED` where the library reads one), so a `device: cuda` step cannot
+  silently train on CPU with the GPU booked. `operation: mlip_train` is a
+  legacy spelling and still translated.
+
+  A training step produces no structures of its own — the previous step's
+  ensemble passes through unchanged to the following step. Its success test is
+  the trained model's existence: `resume` retrains after a failed training, and
+  a training that completed before the driver died is adopted by
+  `rebuild-cache` without recomputing it. The step's fingerprint includes its
+  training-config template, so retuning epochs or learning rate and resuming
+  re-runs the training and replaces the model on disk. The preflight refuses a
+  training step whose backend can run but not train — before any step
+  submits — and names which backends can.
 
 - **`task_name` is now the only key that selects an MLIP backend.** `model_path` says where
   the named library's weights come from and selects nothing; every library's builder loads a
@@ -240,34 +337,30 @@ for the full map.
   ```
 
   `custom_mace` still resolves, as a MACE alias kept for v1 configs; it now needs a
-  `model_path`, since that is the only thing it can mean. The old rule was three-valued —
-  task stated, unstated-with-checkpoint, unstated — while every channel it travelled through
-  (`model_dump()`, a `$TASK_NAME` template placeholder, the ExtOpt server CLI) is two-valued,
-  so the third case was dropped silently at each crossing. It had already made the shipped
-  MLIP-training tutorial's last step fail, and could hand a FAIRChem checkpoint to a MACE
-  loader as soon as a second library could train one.
+  `model_path`, since that is the only thing it can mean. `model_name` names weights
+  *within* the selected library and is optional — unset means the library's own
+  default (FAIRChem's builder keeps `uma-s-1p2`; SevenNet loads its own default
+  release). In v1 the `model_name` prefix (`sevenn…`, `orb…`) doubled as the backend
+  selector; it no longer selects anything.
 
-- The scoped recovery actions now cover the steps around their target
-  deliberately rather than by accident:
-  - `rerun-errors N` continues the run after repairing step N. The steps after it
-    are exactly the ones the halt stopped from ever running, so holding them to
-    the cache they cannot have failed the command *after* it had done its work —
-    and told you to run `resume`, which is what you had just run.
+- The scoped recovery actions cover the steps around their target deliberately:
+  - `rerun-errors N` repairs step N and then continues the run — the steps after
+    it are exactly the ones the halt stopped from ever running.
   - `rebuild-cache N` rebuilds step N, then walks the steps after it read-only:
     each is served from its cache — a load, never a re-parse, and never a
     submission — and the first cache the current configuration cannot serve ends
     the run quietly, its message naming the cheapest repair (`rebuild-cache` for
     outputs that still match this configuration, `resume` when upstream results
-    changed). The walk exists because `steps.csv` is rewritten from step 1 on
-    every run: ending at the target silently dropped the later steps' rows even
-    when their caches were untouched and valid. The report now covers exactly
-    what the current configuration can vouch for.
+    changed). Re-deriving a cache from a finished run tree is read-only: it
+    modifies nothing else, including each structure's `.result.json` records.
   - `rebuild-nms [N]` re-resolves an NMS step from the outputs already on disk and
     submits nothing — the same rebuild `rebuild-cache` performs, aimed at the step
-    setting `nms: true` rather than the last one. It had become another spelling of
-    `rerun`, which discards the cache and recomputes round 1: the frequency
-    calculation is the expensive part of an NMS step, and it is already on disk.
-    `--rebuild_nms` from the v1 CLI maps here, and means again what it meant there.
+    setting `nms: true` rather than the last one. `--rebuild_nms` from the v1 CLI
+    maps here, and means what it meant there.
+  - `resume` and `rerun-errors` decide what is left to do by what actually
+    parsed, not by whether an output file exists — a structure whose output is
+    present but truncated or otherwise unusable is re-run rather than reported
+    failed.
 - v2 YAML schema: `engine:` + `operation:` replace `calculation_type`;
   `sample:` replaces `sample_type:`; `nms:` + `options:` replace
   `normal_mode_sampling*`; `executables:` replaces `orca_executable`;
@@ -276,96 +369,20 @@ for the full map.
   pointer to the migration guide.
 - `mlff` renamed to `mlip` everywhere (engines, extras, YAML); the old
   spellings remain as aliases.
-- The parsed-result field `terminated` is now `terminated_normally`, in the
-  cache document, the `*.result.json` records, and the API. `True` always meant
-  "the program exited cleanly" — a success marker — and the shorter name read as
-  its opposite. Renamed before 2.0.0 ships so no released cache carries the old
-  key; the format versions are deliberately unchanged, since there is no released
-  reader to protect.
-- `options.device` now defaults to `cpu` (was `cuda`). It is read by both the
-  rendered script and the scheduler, so the old default asked for a GPU the job
-  was never allocated; request one explicitly with `device: cuda`.
-- The version is single-sourced in `pyproject.toml`; releases are tag-driven
-  (a `vX.Y.Z` tag builds, creates the GitHub Release, and publishes to PyPI
-  after a tag↔version consistency check) — and now run the full CI matrix
-  first. `ci.yml` triggers on pushes to `main` and on pull requests, neither of
-  which a tag is, so the release path had been running metadata validation only.
-  The tested matrix covers Python 3.11 through 3.14.
-- The sdist carries the test suite **and** the shipped examples, and CI proves the
-  combination: the smoke-test job unpacks the built tarball and runs the suite
-  inside it, so "a distro packager can run the tests from the sdist" is a gated
-  promise rather than a comment. The repo-only guards (docs drift, the mutation
-  gate's self-tests) skip themselves there with named reasons; `docs/` stays out
-  of the tarball on size.
-- `pyscf` gains a `strict_scf` option (default on). Two new CI jobs cover what
-  the matrix could not reach: a mutation gate that breaks each critical predicate
-  and requires a red test, and a run of the suite with a managed backend
-  environment provisioned.
-- The live release tier (`scripts/release-check.sh`, tier-3) covers more and runs in
-  under half the time. New coverage: a UMA single point (`fairchem_sp` — the default
-  backend, previously never run by the gate), numerical frequencies computed through the
-  ExtOpt gradient server for both backends (a bare `FREQ` is silently dropped in ExtOpt
-  mode — the cases spell `NumFreq`), and `save_tensors` delivery through the
-  directory copy-back. The DFT-heavy cases moved to XTB2 where the parsing contract is
-  method-agnostic; `nms_minimum` stays PBE/def2-SVP as the one real-DFT parse.
-
-### Added (post-audit round)
-
-- **Q-Chem's output reader became a per-section package.** `engines/qchem/output/` is
-  now a read-once coordinator over per-section modules — geometry, energies,
-  frequencies, forces and run status each own their section's grammar, and the
-  coordinator threads every answer onto the parsed structure, so completing or changing
-  a section is confined to its own module. Along the way the engine declares its
-  `operation:` vocabulary (`sp` / `opt_sp` / `freq` — the GUI dropdown and the schema
-  document pick it up), refuses an unknown operation at the run's preflight, and infers
-  the run type from the template's `JOBTYPE` when a step omits `operation:`.
-- **Every shipped MLIP backend now fine-tunes** — `task_name: sevenn | chgnet | orb` join
-  MACE and the FAIRChem heads as `mlip-train` selections, each through its library's own
-  door: SevenNet via its unified CLI (`sevenn train`, the `mlip-sevenn` floor moves to
-  0.11.1 — the release that has it), CHGNet and ORB — whose training is a pure Python API
-  with no packaged CLI — via one shared backend-side driver
-  (`python -m chemrefine.engines.mlip.train.driver <task> <config>`) that resolves the
-  same registry over there and calls a `run_training` hook on the trainer class, so an
-  API-only library is still one dropped-in module. Libraries without a charge/spin
-  channel warn instead of silently fitting an ion as neutral data; datasets, split,
-  render and artifact rules are unchanged — and running what you trained is the same
-  `model_path:` line for all five.
-- **Training got one home**: `engines/mlip/train/` — `base` (the trainer contract and
-  the backend-agnostic machinery), `engine` (`mlip-train`), `driver` (the backend-side
-  shell) — the `_backend_server/` shape, replacing three same-prefix modules at the
-  package top level. And the trainer contract is now a parametrised test layer every
-  registered trainer inherits: dataset written with the orchestrator's own deps,
-  placeholders covering the declared requirements, a plan-free artifact, the
-  basename/no-trap command rules, and copy-back eligibility.
-- **The MLIP engine is contract-first** — a clean rewrite of the machinery, since v2 is
-  the moment it costs nothing. Inference: every builder is one function taking a frozen
-  `CalculatorSpec` the dispatch fills and vets once (checkpoint existence named by
-  `task_name`; optional `charge`/`multiplicity` as the door for charge-aware libraries
-  like AIMNet2) — no `**kwargs` catch-all for a knob to vanish into, and registration
-  proves the arity so a malformed drop-in fails at import, named. Training: the
-  `Trainer` Protocol is replaced by `TrainerBase`, an ABC that *is* the contract —
-  declarations up top (`label`, `needs_validation` + reason, `charge_spin_aware`,
-  placeholders, copy-back globs), three abstract hooks (`write_split`, `command`,
-  `artifact`), machinery concrete and written once (the validation refusal, the
-  charge/spin warning, the split loop, the one torchrun spelling) — and API-only
-  libraries subclass `ApiTrainerBase`, whose driver line, config-key check and artifact
-  path derive from declarations (`artifact_filename` is read by both `artifact()` and
-  the backend-side save, so they cannot drift). The `@trainer` decorator verifies the
-  declarations at discovery; the shared driver dispatches by `isinstance`, not
-  `getattr`. Derived, not hand-kept: `mlip-train`'s copy-back globs are now a property
-  over the registry, and the ExtOpt CLI table reads `MlipOptions`' own fields. Dropping
-  in a new backend — AIMNet2, ANI — is one module declaring its items; nothing
-  structural changes.
-- **`model_name` no longer defaults to `uma-s-1p2` for every backend.** The shared
-  default reached every non-FAIRChem step too — a FAIRChem checkpoint name handed to
-  MACE, SevenNet, CHGNet and ORB, surviving only where a builder ignored it. Unset now
-  means *the chosen library's own default* (FAIRChem's builder keeps `uma-s-1p2`;
-  SevenNet loads its own default release), and on an `mlip-train` step it means training
-  from scratch (`started_from: scratch` in the runlog) instead of silently naming a
-  FAIRChem checkpoint as everyone's foundation model.
+- `options.device` defaults to `cpu` on all four MLIP/PySCF engines (`mlip`,
+  `mlip-extopt`, `pyscf`, `pyscf-extopt`). It is read by both the rendered
+  script and the scheduler, so one setting drives the header and the run;
+  request a GPU explicitly with `device: cuda`.
+- Keeping scratch artifacts is engine-owned — an engine declares what it copies
+  back (`output_dirs`, or its run block's cleanup) — not a flag on the SLURM
+  script builders: v1's `save_scratch` has no v2 spelling, and
+  `chemrefine.slurm.build_script` takes no such parameter.
+- ChemRefine now publishes to PyPI — v1 installed from `git+https` only.
+  Supported Python is 3.11 through 3.14 (v1 declared 3.9–3.12). The sdist
+  carries the test suite and the shipped examples, so the suite can be run
+  from the unpacked tarball; `docs/` stays out of the tarball on size.
 
 ### Fixed
-
 
 - **A v1 `energy_window` value keeps its hartree meaning across migration.** v1 read
   `energy` as hartree unless `unit: kcal/mol` was explicit; the translation layer
@@ -374,149 +391,19 @@ for the full map.
   the deprecation warning ("use `window_kcalmol`") read as an endorsement of the value.
   The number now converts (mirroring v1's own rule: only an explicit `kcal/mol` crosses
   unchanged), and the warning names both values so the translation is checkable.
-- **`model_path` now reaches every MLIP builder — sevenn and orb silently dropped it.**
-  Both signatures swallowed the checkpoint into `**_` and loaded the *named release*
-  instead, with the fingerprint digesting the file so the run even looked pinned to the
-  weights it ignored; the other three builders honoured it all along, and the docs stated
-  the rule three times. SevenNet now takes the path through its own `model=` (typed
-  `str | Path`, filesystem checked before release names) and ORB through the loaders'
-  `weights_path=`, each behind the existence check MACE and FAIRChem already had; an
-  orb-models too old for the keyword is a named version limitation, not a `TypeError`.
-  CHGNet's builder turned out to be a third sibling by another route: `CHGNet.load(path)`
-  is keyword-only and resolves *release names*, so its checkpoint support was a
-  `TypeError` on every use — hidden by a mock that accepted any call. Local checkpoints
-  now load through `CHGNet.from_file`, whose `{"model": as_dict()}` shape is exactly what
-  the new trainer saves, and the fake's `load`/`from_file` carry the real signatures so a
-  stray positional fails in the test the way it fails in production.
-- **`model_name` now reaches CHGNet — its builder dropped that one too.** A YAML
-  `model_name: "0.3.0"` landed in the builder's `**_` catch-all and `CHGNet.load()` ran
-  bare, silently serving the latest release instead of the pinned one. A release name now
-  routes through `CHGNet.load(model_name=...)` — the bug class the `CalculatorSpec`
-  contract exists to end, and the last of the three builders caught swallowing a knob.
-- **The thread exports say the granted cores, not the asked-for pal.** The SLURM
-  directives and the throttler charge both derive from `slurm_layout`'s
-  `min(cores, max_cores)` clamp, but three run-block builders exported the raw `pal()`
-  into `OMP_NUM_THREADS`/`MKL_NUM_THREADS` — a step asking above the budget was charged
-  the clamp and threaded the ask, the exact oversubscription the export exists to prevent
-  (Q-Chem's block read the layout all along). The two tests that pinned the unclamped
-  numbers now pin the clamp.
-- **A flat 3N gradient is refused where a flat 3N position always was.** The script
-  engines' positions guard names `coords.ravel()` as "the natural mistake"; the gradient
-  half had no shape oracle, so the same mistake parsed as a valid `(3N,)` array and rode
-  `forces_ev_per_a` — which declares no shape — through the cache and into any downstream
-  `mlip-train` dataset. Now an ordinary `UNPARSEABLE` ledger entry naming the atom count.
-- **`save_tensors` on an open-shell step is refused where the user can act.** The tensor
-  transform is restricted-only; on a UHF/UKS run the SCF and gradient both succeeded and
-  the dump then died inside the server — a 500 whose actionable half landed in the server
-  log. `pyscf-extopt` now refuses at `prepare` (before anything submits) naming the knob
-  and the multiplicity, and the runtime states the same rule at its API boundary.
-- **A seed build owns its whole directory.** `build_structures` wrote SMILES files as it
-  went, so a bad entry partway left the earlier files behind — and a corrected, shorter
-  retry reported one file while `input:` directory-seeding read two, quietly computing on
-  a molecule the successful call never produced. The failure path now cleans up exactly
-  as the XYZ branch always did, and a new build clears the previous call's set.
-- **Four agent-tool contracts each got their missing site.** `start_run` refuses a
-  `target` with `run`/`resume` (the child exited 2 on "unexpected extra argument" *after*
-  a pid and log path were returned); `run_status(log_tail_lines=0)` is an empty tail, not
-  the whole multi-MB log (`[-0:]` slices everything); a disk refusal from
-  `save_config`/`write_template`/`scaffold_templates` is the documented `ConfigError`
-  (a GUI 400) rather than a raw `OSError` the error handler re-raised as a 500; and
-  `cli_legacy`'s worked example stops naming a `--resume` flag v1.3.1 never had — which
-  the translator mapped to the cache-invalidating `run`.
-- **The numeric seam of the PySCF runtime is checked, not merely executed.** The test
-  named for the Å→Bohr conversion asserted nothing about units (PySCF's default is
-  Ångström, so a dropped `mol.unit = "Bohr"` reads every geometry 1.889× too large,
-  silently); the shipped-default density-fitting path's only test made no assertions
-  (and the fake could not distinguish DF-applied from DF-skipped); `HARTREE_TO_EV` — the
-  factor labelling every MLIP training energy — was the one constant with no
-  independently-typed anchor. All three are pinned, and the first two joined
-  `scripts/mutation_gate.py` (19 mutations now).
-- **A `git mv` of a mutated source file makes the mutation gate report, not traceback** —
-  the same aggregate report line its anchor and test-path checks always produced — and
-  two suite-hygiene holes closed alongside: a registry cleanup outside `try/finally`
-  that would have amplified one guard regression across every wholesale `ENGINES` read,
-  and the `rerun-errors` log arms whose wording nothing asserted.
-- **A workflow-level `charge:`/`multiplicity:` edit now invalidates the steps that
-  inherit it.** The old fingerprint hashed the per-step *override* — `None` when
-  inherited — so editing the workflow value changed every job's physics while every
-  fingerprint stood still, and `resume` served the old answers (reproduced:
-  `charge: 0` and `charge: 2` keyed identically). Row keys hash the **effective**
-  values the jobs render.
-- **A Q-Chem comment that names a section no longer becomes the section.** The input
-  writer found `$molecule … $end` anywhere in the template, so a `$comment` whose prose
-  merely mentioned `$molecule` — as the scaffolded starter's did — swallowed the
-  generated geometry into the comment and left job 1 running the starter's placeholder
-  atom. Both section regexes (`$molecule` in the writer, `$rem` in the inspector) now
-  match markers on their own lines, the starter's comment stops spelling section names,
-  and the template-driven starters are rendered through their engines' real writers in a
-  test — the cross-module pairing that had never been checked. Also in qchem: a
-  `VIBRATIONAL ANALYSIS` section whose blocks never printed (a job killed mid-write;
-  Q-Chem exits 0 on plenty of internal errors) read back as `{}` — the "verified
-  minimum, zero imaginary modes" verdict `get_frequencies` serves — where nothing
-  parsed now honestly reads as no data.
-- **A non-string config key gets the documented refusal, not a TypeError.** YAML 1.1
-  parses an unquoted `on:`/`yes:`/`no:` key as a boolean, and `Config(**raw)` imposed a
-  str-keys rule pydantic never saw — a traceback from `load_config` and a 500 from
-  `validate_config_text`, whose whole contract is "never raises". Both loaders hand the
-  mapping to pydantic whole now and answer with their documented shapes.
-- **The boundaries answer instead of exiting.** `chemrefine agent`'s REPL ran the model
-  call bare, so a dead endpoint — the likeliest failure, the one `--check` preflights —
-  took the whole conversation down as a traceback; a failed turn now prints its reason
-  and the loop (history intact) continues, the posture the web harness already had. A
-  taken `--port` on `chemrefine gui` exits 1 naming `--port 0` instead of a waitress
-  traceback. In the GUI itself, browsing into an unreadable directory and saving into an
-  unwritable one are plain 400s instead of logged-traceback 500s; `scaffold` creates
-  parent directories for a `template: sub/custom.inp` override (a shape the field always
-  documented) instead of raising a raw `FileNotFoundError`; and Save… writes atomically
-  through the same writer `save_config` uses, so a kill mid-save cannot truncate the
-  config a run is pointed at.
-- **A base URL rides no key unless it is HTTP(S).** Provider resolution — the one
-  path the CLI flags, the `CHEMREFINE_LLM_*` variables and the GUI chat panel's
-  request all funnel through — refuses any other scheme before the resolved config
-  pairs the URL with `CHEMREFINE_LLM_API_KEY`; the `--check` preflight was the only
-  place that asked.
-- **The published playground no longer plays dead.** The page decided it was the
-  static docs copy only when its probe of `/api/bootstrap` *threw*, but the docs host
-  answers that probe — with a 404 — so the playground rendered the stale-token banner
-  and hid the builder. The boot dispatch now reads the status: 401 is a stale token
-  (or, said separately now, a URL that lost its `?token=…`), no answer at all is a
-  dead port with the fix named, and any other answer is the static copy.
-- **The playground's YAML reads like the served GUI's.** The static docs playground
-  dumped the config in click order — `steps:` first, settings trailing — because the
-  canonical reordering only ever lived server-side; its schema-driven twin now runs
-  client-side. And `run_status`'s holder payload carries the three-valued `alive`
-  (`true`/`false` for a same-host holder, `null` for a foreign one no status read can
-  probe), which the lock reader computed all along and only tests consumed.
-- `chemrefine.slurm.build_script` no longer takes `save_scratch`. It was a v1 concept
-  carried into the rewrite's signature and never wired — no config knob and no caller in
-  any commit of this line — and `build_array_script` never had it, so wiring it later would
-  have silently skipped every `slurm_array` step. Keeping artifacts is engine-owned and
-  already works on both paths (`output_dirs`, or `RunBlock.cleanup`). Noted because
-  `build_script` is public and rendered on the API page; the runlog's `scratch_kept` field
-  is unchanged.
-- **Two documentation claims that had stopped being true.** The security page's list of
-  hardened boundaries described only the ExtOpt gradient server, so a reader auditing what
-  ChemRefine exposes on a shared node never learned that `chemrefine gui` starts a second
-  socket — the more consequential one, since it can write files and launch runs. It now has
-  its own subsection (loopback-only bind, kernel-assigned port, the per-session token and
-  how it is compared, and why `/` is deliberately ungated). Separately, `job_log`'s module
-  docstring — published as an API page — still spelled the runlog basename the **v1.3.1**
-  way (`step{N}_structure_{ID}`, a convention 2.0 dropped from every artifact name) and gave
-  a grep pattern that matched nothing; it now names
-  the real per-structure path, including where an attempt's logs land, and a test derives
-  that path the way production does and requires the documented glob to match it.
-- **A directory name can no longer smuggle a shell metacharacter into a job script.**
-  `template_dir` / `output_dir` / `scratch_dir` are refused at load time when they contain
-  `"`, `$`, a backtick, a backslash or a newline, because the generated script exports them
-  into bash — but the check ran on the paths *as written*, and a relative path is anchored
-  to the config file's own directory afterwards, through `model_copy`, which runs no
-  validators. So a config containing nothing but `output_dir: ./outputs`, sitting in a
-  directory named `$(...)`, produced `export OUTPUT_DIR="…/$(...)/outputs"` — and bash
-  performs command substitution inside double quotes, so the directory name ran when the job
-  did. The rule is now re-asked on the resolved paths, by `load_config` (raises) and by the
-  validation report (a blocking issue, so `save_config` will not write such a config
-  either). Present since the paths became resolvable; found while fixing the whitespace
-  rule, which had the same shape.
+- **`model_path` reaches every MLIP builder — in v1, SevenNet and ORB silently ignored
+  it** and loaded the *named release* instead of the checkpoint. SevenNet now takes the
+  path through its own `model=` (typed `str | Path`, filesystem checked before release
+  names) and ORB through the loaders' `weights_path=`, each behind the existence check
+  MACE and FAIRChem already had; an orb-models too old for the keyword is a named
+  version limitation, not a `TypeError`. CHGNet's checkpoint support was broken by
+  another route — `CHGNet.load(path)` is keyword-only and resolves *release names* —
+  and local checkpoints now load through `CHGNet.from_file`, whose `{"model":
+  as_dict()}` shape is exactly what the new trainer saves.
+- **`model_name` reaches CHGNet.** In v1 the CHGNet branch never consumed it —
+  `CHGNet.load()` ran bare, so a pinned `model_name: "0.3.0"` silently served the
+  latest release instead. A release name now routes through
+  `CHGNet.load(model_name=...)`.
 - **An ORCA step under a path containing whitespace fails with its reason, not ORCA's.**
   ORCA reads each geometry through `* xyzfile <path>`, which is whitespace-delimited and not
   a quotable field — it truncates at the first space (`CANNOT OPEN FILE`, naming the prefix,
@@ -530,338 +417,77 @@ for the full map.
   Deliberately scoped to the engines that write paths into an ORCA input: `mlip`, `pyscf`
   and `qchem` steps run fine from such a tree (Q-Chem inlines the geometry, the script
   engines quote the path, the generated bash quotes everything it interpolates), and so do
-  `template_dir` and `scratch_dir`. Enforcing it at config load instead — the first shape of
-  this fix — made validity depend on where a project sits on disk: an mlip-only workflow
-  under `~/My Drive` was refused although it runs perfectly, and this repository's own
-  example suite went red from any checkout path containing a space.
+  `template_dir` and `scratch_dir`.
 - **A diverged calculation's geometry is refused instead of stored.** A non-finite
-  energy has been a parse failure for a while; the *coordinates* were not, and that
-  had two costs. Inline in a `.result.json` a `NaN` met the JSON writer's
-  `allow_nan=False` and raised a bare `ValueError` no handler caught, so one bad
-  structure ended the whole run in a traceback and the step's other successes were
-  never cached — and a resume read the same output and died the same way. Worse, on
-  the paths that write no record the coordinates go to the `arrays.npz` sidecar
-  instead, which has no such check: there a `NaN` was simply kept. It round-trips the
-  cache intact and the fingerprint over it is perfectly stable, so every later step
-  was computed from coordinates that are not numbers with nothing anywhere saying so.
-  Non-finite geometries are now refused where they enter — the ORCA, Q-Chem and script
-  parse boundaries raise the same error a `*****` overflow token already raises, and a
-  seed `.xyz` is refused by name — with the cache as a backstop that refuses to store
-  what did get through. The ensemble readers keep skipping rather than failing a whole
-  step for one bad conformer; `nan` now simply follows the rule `*****` always had.
+  energy has long been a parse failure; the *coordinates* were not — a `NaN`
+  geometry could be kept, carried through the cache with a perfectly stable
+  fingerprint, and every later step computed from coordinates that are not
+  numbers with nothing anywhere saying so. Non-finite geometries are now refused
+  where they enter — the ORCA, Q-Chem and script parse boundaries raise the same
+  error a `*****` overflow token already raises, and a seed `.xyz` is refused by
+  name — with the cache as a backstop that refuses to store what did get through.
+  The ensemble readers keep skipping rather than failing a whole step for one bad
+  conformer; `nan` now simply follows the rule `*****` always had.
 - **A non-ASCII token is a 401 from both token gates, not a 500.** The GUI's
-  `X-ChemRefine-Token` check and the gradient server's `Authorization` check had the same
-  flaw and were fixed a day apart: headers arrive latin-1-decoded and `compare_digest`
-  refuses a `str` holding a non-ASCII character, so any byte above 0x7F raised out of the
-  auth gate. Both are reachable by any user on the node, which makes those gates exactly
-  the place that has to answer plainly whatever it is handed.
+  `X-ChemRefine-Token` check and the gradient server's `Authorization` check answer a
+  token containing a byte above 0x7F like any other wrong token. Both gates are
+  reachable by any user on the node, which makes them exactly the place that has to
+  answer plainly whatever they are handed.
 - **A step naming a model file works where crypto policy restricts SHA-1.** ChemRefine
-  hashes file contents to decide what to re-run, and says so — every constructor-form
-  hash is marked `usedforsecurity=False`. The two *streamed* digests could not say it,
-  because `hashlib.file_digest` handed an algorithm name builds the hash with the flag
-  defaulted; on a host that permits SHA-1 only for fingerprinting they raised, and the
-  one that runs on every step's cache key would have ended the run in a traceback.
-  Cache keys are unchanged — the flag is a policy hint, not an input to the hash.
-- **A PySCF step that asks for a GPU no longer runs quietly on the CPU.** PySCF is one
-  library with two stacks, and the provisioner probed only for `pyscf` — so on an
-  environment carrying just the CPU stack a `device: cuda` step started anyway, fell back
-  to the CPU inside the job, and recorded the reason in the ExtOpt *server* log: a run that
-  succeeded on the wrong hardware and said so nowhere the user was looking. The requirement
-  is now derived from the step's own options and probes for `gpu4pyscf`, so such a step
-  fails at preflight, by name, pointing at the `pyscf-gpu` extra.
-- **A missing optional extra names itself instead of raising `ImportError` from inside.**
-  The GUI and the embedded agent guard their optional SDKs, but the imports sat where the
-  guard could not see them, so `chemrefine gui` without `chemrefine[gui]` — and
-  `chemrefine agent` without `chemrefine[agent]` — surfaced the raw import failure rather
-  than the line saying which extra to install.
-- **Reading the process umask no longer races other threads.** `os.umask` is the only
-  POSIX way to read it and it reads by *setting* it, which is process-global: in that
-  window anything another thread created was made with no mask at all, and the GUI serves
-  four waitress threads that both write files and `mkdir`. The value now comes from
-  `/proc/self/status`, which reading does not disturb.
-- **`chemrefine --help` stops swallowing the extra it names.** Rich reads square brackets
-  as style markup, so the `[agent]` / `[gui]` / `[mcp]` in each command's install hint was
-  consumed as a tag: the one line telling a user which extra to install rendered as a bare
-  `chemrefine`. The brackets are escaped now.
-- **`chemrefine agent --check` reports a misconfigured endpoint instead of a traceback.**
-  A base URL pointing at a web app or a proxy login page answers `200` with HTML, and some
-  gateways answer a bare list; every one of those raised out of the preflight, which is the
-  command that exists to diagnose exactly that mistake. They are findings now.
-- **Two agent-started runs in the same second no longer share a log file.** The run log was
-  named to one-second resolution, so two runs started close together opened the same path
-  and the second truncated the first while it was still being written — losing the log
-  `run_status` hands back when someone asks what went wrong.
-- **A failure payload advertising the whole taxonomy no longer leaves a class out.** It was
-  built from `ChemRefineError.__subclasses__()`, which is direct subclasses only, so the
-  indirect `OutputTerminationError` was missing from every payload that claimed to list
-  them all.
-- **The declared `pydantic` floor is one the package can actually resolve.** `[mcp]` and
-  `[agent]` both require `pydantic>=2.12`, so the old `2.5` floor was a minimum no
-  configuration could install.
-- **A write that cannot re-mode its temp file no longer strands it.** The atomic writer
-  set the file's mode before the guard that cleans up after it, so on a filesystem that
-  refuses `fchmod` — shared mounts do — the descriptor leaked and a `.tmp_*.part` was
-  left in the directory being written to. Both are now inside the guard.
-- **The `.err` tail a dead job's error quotes is decoded as UTF-8.** The tail was read
-  with the driver's locale encoding, so under `LANG=C` — a login-node default — every
-  non-ASCII byte in the one message that explains why a job died arrived as a
-  replacement character. It is now read as UTF-8 like every other text file the
-  package touches.
-- **A stale-lock reclaim that sweeps up a fresh lock it cannot put back now reports
-  it.** If a third driver's lock lands in the reclaim's rename→restore window, the
-  restore fails and the swept-up run is left running with no lock on the path — and
-  previously nothing said so. The reclaim now logs an error naming both drivers and
-  keeps its claim file as the only surviving copy of the swept-up lock record, instead
-  of deleting the evidence and passing silently.
-- **An ExtOpt step whose environment cannot host the gradient server fails before
-  submission, not inside the job.** The preflight accepted "the backend is importable
-  here" without checking the server half it implies — so a bare install beside a
-  hand-installed backend passed, and the job died hours later on `import waitress`
-  with the traceback stranded in a log nothing pointed at. The single-env case now
-  requires flask and waitress up front, with the error naming both fixes
-  (`chemrefine[server]`, or `chemrefine backends install <extra>`); and a server that
-  still cannot start logs one actionable line in its own `--log-file` — the file the
-  job's failure path tails — instead of crashing before that file exists.
-- **A `scancel`-ed (SIGTERM'd) driver releases the run lock and its local jobs.**
-  Python's default SIGTERM disposition terminates without unwinding, so the lock stayed
-  behind and a cross-host resume demanded a manual delete for a run that was genuinely
-  dead. The lock now scopes a handler that turns SIGTERM into an orderly exit (code
-  143); only a genuine SIGKILL can strand a lock, and the same-host dead-pid reclaim
-  remains the net for that.
+  hashes file contents only to decide what to re-run, and says so: every content hash
+  is declared `usedforsecurity=False`, so caching and resume work on hosts whose
+  crypto policy restricts SHA-1 to non-security use. Cache keys are unchanged — the
+  flag is a policy hint, not an input to the hash.
 - **`_cache/` documents are readable on a shared tree.** The atomic writer's temp file
   is created 0600 and the rename preserved it, so the cache, manifest and failure
   ledger were owner-only beside world-readable outputs; they now honour the umask like
   any other written file (the server's token sidecar stays 0600 on purpose).
-- **Editing `on_failure` over a cached step now takes effect.** The cache stores a step's
-  results after the policy is applied, and the fingerprint deliberately excludes
-  `on_failure` — so a step halted under `stop` and switched to `best` served the cached
-  successes-only set, `skip` semantics, with nothing said anywhere (and a step switched
-  away from `best` kept carrying its backfills). A policy edit across the `best` line
-  over a non-empty ledger now re-attempts the ledgered failures and re-finalizes under
-  the new policy; successes are never recomputed, and `stop` ↔ `skip` stays a free hit
-  because both store the same results. The cache document records the policy it was
-  finalized under (additive key — existing caches are read as before).
-- **Two drivers racing to reclaim the same stale lock can no longer both acquire.**
-  Reclaim deleted the dead holder's lock and re-created it, so two `resume`s arriving
-  together after a crash could interleave — one deleting the other's fresh lock — and
-  both drive the tree, the exact state the lock exists to prevent. Reclaim is now an
-  atomic rename that exactly one process can win, verified against the record that
-  justified it; and release only deletes the lock file while it still names the exiting
-  process, so a driver whose lock was removed out from under it cannot take the new
-  holder's with it on exit.
-- **A corrupt `failed_jobs.json` now fails like every other corrupt cache file.** Valid
-  JSON of the wrong shape escaped the ledger reader as a bare `TypeError` — a traceback
-  with the generic exit code naming neither the file nor the fix — where every sibling
-  `_cache/` reader raises `CacheError` (exit `7`) with the path. It now does the same.
-- **An ExtOpt gradient server now runs on the step's own core budget.** The server — the
+- **An ExtOpt gradient server runs on the step's own core budget.** The server — the
   compute half of an `mlip-extopt` / `pyscf-extopt` job — inherited an uncapped thread
-  environment, so torch/MKL took every core on the node while the scheduler charged the job
-  its `%pal`. Invisible under SLURM's cgroups; an oversubscription on every local run. The
-  job script now exports the pal thread count before launching the server, and `1` for ORCA
-  alone, which in ExtOpt mode is only the stepper.
-- **A training step no longer swallows the ensemble.** Its structures are the previous
-  step's, passed through — but `parse` was never called, because a step's structures came
-  from the per-structure ledger and a training step prepares no per-structure jobs. Ten
-  structures went in and zero came out, so the pipeline stopped with "produced no
-  survivors" at the step *after* training. No shipped workflow had ever got past it.
-- **A failed training is no longer cached as a success.** The old step waited for its job
-  to leave the scheduler's queue and cached the step either way; a job that exits non-zero
-  leaves the queue too. The trained model's existence is now the success test, and failing
-  it writes no cache — so `chemrefine resume` retrains rather than serving a model that was
-  never produced. A training that *succeeded* before the driver died is adopted by
-  `rebuild-cache` without recomputing it.
-- **A failed *re*-training no longer adopts the previous run's model.** The existence test
-  above cannot tell this run's product from the last one's, so a re-run whose job died
-  having written nothing found run 1's model, digested those bytes into the sidecar, and
-  cached them under the new fingerprint — a run that was internally consistent and described
-  a training that never happened, which the consuming step then cache-hit on too. An
-  artifact step now archives its run directory before preparing, as every per-structure step
-  already did.
-- **A training step under `slurm_array: true` trains on its input.** Both trainers quoted
-  the config basename, and the array path renders one run block against `$INP_NAME`
-  sentinels that each task assigns — single quotes suppress the expansion, so every task ran
-  against a file literally named `$INP_NAME`. Asserted now for every job-executable engine.
-- **A FAIRChem training job stops writing inside its own checkpoint directory.** The
-  scheduler takes a job's output directory from its output path's parent, which for a
-  trainer whose model is nested (`train/checkpoints/final/inference_ckpt.pt`) put the
-  runlog, the `.err` and — with no `scratch_dir` — the working directory three levels inside
-  the tree it was about to write its final checkpoint to. Its dataset splits moved under
-  `data/` for the same reason: the training split and FAIRChem's run id are both `train`.
-- **`mlip-train` copies back every pattern its trainers produce.** The engine's list had
-  drifted from the trainers': it was missing FAIRChem's `*.yaml` and carried a `*.txt` no
-  backend writes. A missing glob is a model left behind when the scratch is cleaned; a test
-  now holds the list to the union.
-- Model checkpoints are digested by streaming rather than read whole into the driver
-  process. This runs on every step's cache key, the files are 1–2 GB, and on a cluster the
-  driver is a login node.
-
-- **The training dataset is readable by the trainer.** ChemRefine wrote `DFT_energy` /
+  environment, so torch/MKL took every core the allocation allowed while the scheduler
+  charged the job its `%pal`. The job script now exports the pal thread count before
+  launching the server, and `1` for ORCA alone, which in ExtOpt mode is only the
+  stepper.
+- **The training dataset is readable by the trainer.** v1 wrote `DFT_energy` /
   `DFT_Forces` while MACE's defaults are `REF_energy` / `REF_forces`, and the shipped
-  template declared a third pair — MACE refuses a file in which it finds none of its keys,
-  so every training job died at data load.
+  template declared a third pair — MACE refuses a file in which it finds none of its
+  keys, so every training job died at data load. The dataset now speaks MACE's own
+  default keys, so a template needs no `energy_key`/`forces_key` line to be correct.
 - **Charge and multiplicity reach the training set.** MACE reads `total_charge` /
-  `total_spin` and silently defaults them to a neutral singlet, so a fine-tune on an ion or
-  an open-shell system was fitted against the wrong species with nothing said in any log.
-- **The training command resolves.** It emitted a bare `mace_run_train`, which is on
+  `total_spin` and silently defaults them to a neutral singlet, so a v1 fine-tune on an
+  ion or an open-shell system was fitted against the wrong species with nothing said in
+  any log.
+- **The training command resolves.** v1 emitted a bare `mace_run_train`, which is on
   nobody's `PATH` once MACE lives in its own environment — which it must, since its `e3nn`
   pin cannot share a prefix with FAIRChem's. `mlip-train` is now a provisionable engine:
   its backend is checked by the preflight and its job launches from the managed env.
 - **Retraining re-runs the steps that use the model.** A step naming a file in its options
   now has that file's contents in its cache key, so a step consuming a retrained model no
-  longer serves a result computed with the previous weights. A training step passes its
-  structures through unchanged, which is what left nothing else to move the key.
-- An interrupted step that prepared no jobs re-runs instead of "resuming" into nothing. A
-  zero-job manifest is a real value, not a missing one, and treating it as missing cached
-  an empty result the next run then served.
-- The documented default for `device` (`mlip`, `mlip-extopt`, `pyscf`, `pyscf-extopt`) said
-  `cuda`; the code says `cpu`. Following the docs got you a silent CPU run on a GPU cluster.
-- `mlip-train`'s options are documented at all, in the configuration reference.
-- A relative path in a step's `options` — `model_path` — resolves against the **config file's**
-  directory, like every other path a config names, instead of the process working directory.
-  It reaches a job that runs in a scratch directory, so an unresolved relative path was found
-  by nobody: naming the model a previous step produced worked only when you happened to
-  invoke `chemrefine` from the config's own directory.
-- A FAIRChem checkpoint can be loaded from a path. `get_predict_unit` resolves registry names
-  only and raises `KeyError` for a file, so a fine-tuned FAIRChem model could have been
-  trained and never run.
-- An unknown `task_name` raises `ConfigError` rather than a bare `ValueError`. It is reached
-  from the preflight, where only a `ChemRefineError` carries the exit code the CLI maps — a
-  `ValueError` there reached the user as a traceback instead of a status.
-- A training step that names a runnable-but-untrainable backend is refused by the preflight,
-  before any step submits, and told which it is — rather than after its upstream steps have
-  spent days computing a dataset.
-- A backend can no longer declare a pip extra that `pyproject.toml` does not: `pip install
-  "chemrefine[typo]"` warns and exits 0, so the mistake used to provision an empty
-  environment that satisfied the preflight and failed at the backend import.
-
-Hardening landed during the 2.0.0 stabilization:
-
-- A `slurm_array` step larger than one array no longer exceeds `max_cores`. Steps past the
-  per-array task cap are split into chunks, and every chunk carried the *whole*
-  `max_cores // PAL` as its own `%limit` — but they are all queued at once, so the budget
-  was granted once per chunk. A 2500-structure step at `pal: 8` ran 1536 cores against a
-  `max_cores: 512`. Each chunk now takes a share. The cost is that a share is not handed
-  back when a sibling drains early, so the tail of an N-chunk step runs at 1/N of the
-  budget.
-- `job_timeout_seconds` is reachable again on the `slurm_array` path when `squeue` is
-  intermittently failing. A failed poll reported the polled job ids back as though they
-  were queue rows; `squeue` prints an array's tasks as `12345_0` and never the bare parent,
-  so that set differed from the real rows on every alternation — and the wait, which
-  re-anchors its stall deadline when the rows move, saw movement on every tick and never
-  timed out. A poll that never reached the scheduler now says so, and the deadline treats
-  it as no progress.
-- Local GPU jobs are pinned to the devices the run was actually granted. The budget came
-  from `nvidia-smi -L` (the whole host) and the pin was the lowest free *index*, so on a
-  node that granted `CUDA_VISIBLE_DEVICES=2,3` the throttler admitted a job per host GPU
-  and pinned them to `0..N-1` — hardware the run did not own. An inherited allocation is
-  now authoritative: `max_gpus` may narrow it and never widen it. Device tokens are carried
-  verbatim, so GPU UUIDs and `MIG-…` handles work where a bare index could not name the
-  device at all.
-- An NMS `resolution.json` that parses but does not carry `resolved_from` now raises
-  `CacheError` (exit code 7) naming the file, instead of a bare `KeyError`.
-
-- A structure that fails to converge is re-run as soon as its own job frees a slot,
-  instead of after the entire step has drained. Jobs are now parsed as they finish and
-  a retry joins the same throttled queue, so it overlaps the rest of the batch. Before,
-  nothing was parsed until the last job returned — so no retry could exist yet, and every
-  slot freed after the final submission sat idle until then. On a 277-structure step at
-  `pal: 16` under `max_cores: 128`, two retries ran as a separate half-hour phase after
-  the batch rather than inside it.
-
-  Two consequences worth knowing:
-
-  - **A step that retried will re-run its downstream steps once.** Results now come back
-    in manifest order, with a retry's structures beside the ones from the job they
-    replace; previously retries were appended after every other structure. That ordering
-    feeds `parents_digest`, so the next step's cache fingerprint changes. It settles after
-    one run.
-  - `job_timeout_seconds` **is now a stall deadline** — the longest a step may go with
-    *nothing* finishing — and its clock restarts on every completion. It previously bounded
-    a whole drain on some paths and a single wait on others. A batch that keeps draining no
-    longer trips it however long the step takes, so a value chosen to catch a stuck queue
-    still works and no longer has to be re-tuned as a step grows. Under `slurm_array: true`
-    that clock follows the array's *tasks*: a whole step is one job id that does not finish
-    until its last task does, so anything coarser would have made the same number mean a
-    total-runtime bound there and a stall bound everywhere else.
-
-- NMS round 2 runs in the step's own queue instead of one batch per structure. A structure
-  needing displacement gets its `attemptK/` and its ± children submitted the moment its own
-  round-1 job finishes, alongside whatever is still running. Two things were serial before.
-  Children could not start until *every* round-1 job had drained, so the slots freed by the
-  early finishers idled until the last one landed; and each parent's children were their own
-  throttled batch, submitted and drained before the next parent's began — a step with 50
-  unresolved structures ran 50 sequential batches, each using one parent's worth of
-  `max_cores` and idling the rest. Raising `max_cores` could not help, because a batch was
-  one parent wide. Picking each winner still happens once, after the queue drains, so
-  survivors keep coming back in manifest order and downstream fingerprints do not move.
-
-- `resume` and `rerun-errors` re-run a structure whose output is present but unusable,
-  instead of reporting it as failed. They decided what was left to do by asking whether
-  the output *file existed*, which a truncated one does. Preparing a re-run archives the
-  previous attempt and writes a fresh input, so a run killed in between leaves exactly
-  that: a worthless output at the canonical path and the good geometry sitting in
-  `attemptK/`, unread. The structure then reached the failure policy having never used
-  its second attempt. Both paths now judge by what actually parsed. The window is not
-  new, but retries starting as slots free widened it from the tail of a step to nearly
-  all of it. Resume also stopped reading every output twice to do this.
-
-- Convergence retries go out as one batch instead of one at a time. Submission is
-  budgeted per batch by the throttler, which blocks until that batch's jobs finish,
-  so retrying structure by structure handed it a single job per call — the second
-  structure was not submitted until the first had *finished*. A step with two
-  unconverged structures at `pal: 16` under `max_cores: 128` therefore ran one
-  16-core job at a time, left the other 112 cores idle, and cost the sum of the
-  retries rather than the longest of them. Raising `max_cores` could not help,
-  because the batch size was one.
-
-- A step's cache refuses an `arrays.npz` that a different save wrote. The document
-  and its coordinate sidecar are separate atomic writes, so a save interrupted
-  between them — a walltime kill, a node failure, Ctrl-C, and `resume` re-saves a
-  step whenever it repairs one — left a new sidecar beside the previous document.
-  Nothing about that pair is malformed and no check above it could see the
-  difference: the records parse, and the fingerprint still matches because it
-  covers the step's *inputs*, not what is on disk. Read back, each structure kept
-  its own energy and adopted another structure's geometry, which `parents_digest`
-  then carried into every step computed from it. The document now names the digest
-  of the arrays it was written with, and a mismatch is a rebuild.
-
+  longer serves a result computed with the previous weights.
+- A relative path in a step's `options` — `model_path` — resolves against the
+  **config file's** directory, like every other path a config names, instead of the
+  process working directory. A v1 config that named a model relative to the run or
+  step directory (as the shipped MLIPTraining tutorial did with
+  `../step3/checkpoints_dir/...`) must be rewritten relative to the config file.
+- A FAIRChem model can be given as a checkpoint file path as well as a registry
+  name — which is how a fine-tuned FAIRChem checkpoint is run. v1 resolved
+  registry names only.
+- NMS round 2 runs in the step's own queue instead of after the whole step drains.
+  A structure needing displacement gets its `attemptK/` and its ± children
+  submitted the moment its own round-1 job finishes, alongside whatever is still
+  running — in v1 no child started until every round-1 job had drained, so the
+  slots freed by early finishers idled until the last one landed. Picking each
+  winner still happens once, after the queue drains, so survivors come back in
+  manifest order and downstream fingerprints do not move.
 - A calculation that diverges to a non-finite energy is refused at the parse
-  boundary and ledgered, instead of ranking as a real result. Nothing downstream
-  treated `nan` as a failure, and since every comparison against it is false it
-  sorted by list position — so a `min, count: 2` step could keep it over the
-  genuinely second-best conformer, which then went on to win the next step.
-  Gradients are held to the same rule, since a non-finite force is what an
-  `mlip-train` step would go on to fit.
-- Local dispatch stops the calculation, not just the `bash` wrapper in front of
-  it. Each job now runs in its own process group and is signalled as one; before,
-  the shell deferred its TERM trap while waiting on the calculation, so the grace
-  period expired, the shell was killed and the calculation kept running,
-  reparented to init — with no copy-back, no scratch teardown and no runlog
-  footer. A 64-job batch also took over five minutes to unwind, which on Ctrl-C
-  reads as a hang.
-- A structure retried after failing to converge keeps its lineage. The retry
-  rebuilt it without `parent_id`, so it came out of the step an orphan — and
-  `by_parent` filtering groups on `parent_id or id`, so it formed its own
-  singleton group and survived a filter that should have discarded it.
-- `pyscf-extopt` refuses to serve a gradient from an SCF that did not converge.
-  PySCF returns the last iterate rather than raising, and ORCA's `.out` records
-  only its own geometry convergence, so the result ranked against correctly
-  converged siblings unmarked. Set `strict_scf: false` to accept it knowingly.
-- An `nms` `ts_mode_index` that names no imaginary mode is rejected. The
-  exclusion was written as a filter, so an index matching nothing excluded
-  nothing and NMS displaced along every imaginary mode — including the reaction
-  coordinate the setting exists to preserve — then reported every structure
-  unresolved after paying for the whole round-2 batch.
-- Editing an `mlip-train` step's MACE config re-runs the training. Its cache key
-  omitted the template digest, so retuning epochs or learning rate and running
-  `resume` was a cache hit that left the previous model on disk.
-- `job_timeout_seconds` now applies to an `mlip-train` step. Its wait loop had no
-  deadline, so a training job stuck in `PD` blocked the pipeline indefinitely
-  instead of failing with exit code 8.
-- ORCA templates using `SloppyOpt` or `VeryTightOpt` are recognised as
-  optimisations; the keyword surface is now the one ORCA 6.1.1 actually accepts,
-  checked against the binary. A malformed gradient row is reported as a parse
-  error for that structure rather than escaping as a traceback that ends the run.
+  boundary and ledgered, instead of poisoning the step's energy ranking (every
+  comparison against `nan` is false). Gradients are held to the same rule, since
+  a non-finite force is what an `mlip-train` step would go on to fit.
+- A malformed gradient row in an ORCA output is reported as a parse error for
+  that structure instead of being silently mis-read — v1 skipped the row and
+  produced a wrong-shaped array. The opt-keyword surface ChemRefine recognises
+  is the one ORCA 6.1.1 actually accepts — `SloppyOpt` and `VeryTightOpt`
+  included — checked against the binary.
 - Frequencies are read from the **last** Hessian in an ORCA output, matching
   the energy, geometry and thermochemistry parsers. A TS search recomputes the
   Hessian as it goes and prints one table per recompute; v1.3.1 accumulated
@@ -875,54 +501,31 @@ Hardening landed during the 2.0.0 stabilization:
   `resolution.json` saying the same. A resolved parent keeps its own ID and the
   winning child's files are promoted to the parent's names, so nothing else
   recorded which of the ± children actually produced them.
-- A retried normal-mode-sampling child no longer carries its own discarded runs
-  into its parent's attempt directory when it wins.
-- `rebuild-cache` no longer rewrites the `.result.json` records of NMS round-2
-  children while re-reading them. Re-deriving a cache from a finished tree now
-  modifies nothing.
-- `random` normal-mode sampling no longer displaces along a translation or
-  rotation when a molecule has no vibrational modes left to draw from — a
-  diatomic could previously be handed a job that moved it and recomputed the
-  same energy.
-- An engine missing one of the four job primitives now fails when it is
-  constructed rather than after a step's jobs have been submitted.
 - The step cache is plain data instead of a pickle — loading it can never
   execute code from the file. It is two files: `_cache/step.json` for the
   metadata and `_cache/arrays.npz` for coordinates and forces, which at 10,000
   structures is 31 MB and 0.36 s to load against 69 MB and 1.73 s for a single
   JSON document. `step.json` is written without indentation — read it with `jq`
   or `json.load`; each structure also gets an indented `.result.json` beside its
-  output files. Caches from earlier dev builds rebuild automatically.
+  output files. The document records the digest of the `arrays.npz` it was saved
+  with, and a pair from different saves — a save interrupted by a walltime kill
+  or Ctrl-C — is refused on read-back and the step rebuilds, rather than
+  structures loading another structure's geometry.
 - ORCA's `.opt` restart file and `.property.txt` are copied back out of the
   scratch directory with the rest of the results. `.opt` is what lets a stalled
   optimisation resume where it stopped rather than start over.
-- Normal-mode sampling no longer overwrites the calculation it was launched
-  from. The round-1 job is archived into the same `attemptK/` its displaced
-  children ran in, and the winning child's artifacts are promoted to the
-  structure's canonical path — so `stepN/<id>/` describes one calculation, and
-  the geometry, output, orbitals and Hessian there all agree.
-
 - Cluster SLURM headers using `--ntasks-per-node` / `--ntasks-per-core` keep
   those directives in generated scripts.
 - An ORCA template requesting more `%pal` ranks than `max_cores` is clamped
   to the budget instead of oversubscribing its allocation.
-- A typoed `pyscf-extopt` option fails the step instead of silently running
-  with defaults.
 - Corrupt output files (overflowed coordinate tokens, malformed ensemble
   frames) land in the failed-jobs ledger instead of crashing the run.
-- The ExtOpt tensor-dump tag is sanitized before filename use.
 - The ExtOpt server requires a per-run bearer token on `/calculate` (written
   `0600` next to `server.url`), so other users on a shared compute node can
   no longer drive it.
-- `on_failure: best` no longer aborts the run when the step samples on `gibbs`,
-  `enthalpy`, or `electronic_zero_point`. A backfilled structure carries no
-  thermochemistry, and raising on it defeated the one policy meant to keep
-  going; it is now excluded from the ranking, and only a step where *nothing*
-  has the requested energy is a config error.
-- A step's GPU demand, its SLURM header, and the device rendered into its script
-  are all read from the engine's own options model, so they cannot disagree.
-- The ORCA executable and `$OUTPUT_DIR` are shell-quoted in the ExtOpt run block
-  too, not just the plain ORCA one — a path containing a space broke ExtOpt steps.
+- The ORCA executable and `$OUTPUT_DIR` are shell-quoted in the generated run
+  scripts — the plain ORCA and ExtOpt run blocks alike — so a path containing
+  a space no longer breaks either kind of step.
 - Normal-mode sampling seeds its RNG per structure, so `rebuild-cache` re-derives
   the same displaced children a run did even when it skips a structure the run
   visited (previously it reported resolved structures as unresolved).
@@ -930,8 +533,6 @@ Hardening landed during the 2.0.0 stabilization:
   code instead of an uncaught traceback.
 - A truncated `.extinp.tmp` is a classified job failure rather than an
   `IndexError` inside the ExtOpt wrapper.
-- `squeue` missing from `PATH` no longer raises on every poll; the cache is
-  `fsync`ed before its atomic rename.
 
 ## [1.3.1] and earlier
 
