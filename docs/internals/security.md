@@ -131,10 +131,10 @@ reaches bash by a new route inherits it automatically:
 | `options.tensor_folder` (pyscf) | reaches `cp -r "…"` — and bash substitutes *inside* double quotes, so the quoting there is not protection |
 
 Other values in those same lines are safe by construction and need no check:
-`engine` must be a registry key, `step.name` and the trainer's `job_name` are
-matched against a character allowlist, `step`/`cores` are integers,
-`structure_id` is minted by ChemRefine, and `output_globs` is an engine
-constant.
+`engine` must be a registry key, `step.name` is matched against a character
+allowlist, `step`/`cores` are integers, `structure_id` is minted by ChemRefine,
+a job's name is the stem of a path ChemRefine minted (or the allowlist-checked
+step label plus a literal suffix), and `output_globs` is an engine constant.
 
 Quoting alone is not the fix, and neither is quoting the heredoc: the expansion
 around those fields is load-bearing. Refusing the character at the boundary is.

@@ -386,7 +386,13 @@ bash substitutes *inside* double quotes
     ``structure_id``            safe by construction — minted by :mod:`chemrefine.ids`
     ``output_globs``            safe by construction — engine-declared constants (a \
 ``ClassVar``, or a property over trainer declarations); never config
-    ``job_name`` (trainer)      safe by construction — its own field ``pattern``
+    ``job_name`` (script)       safe by construction — the input path's stem (minted by
+                                :mod:`chemrefine.ids` under the validated ``output_dir``),
+                                or the ``_NAME_RE``-checked step label plus a literal
+                                ``_array`` suffix
+    ``template_path`` /         safe by construction — the header resolves under the
+    ``script_path`` (script)    validated ``template_dir``; the script is minted beside
+                                the validated input path
     ==========================  ===============================================================
 
     Public, not underscored, because the engine option models import it: a knob that reaches

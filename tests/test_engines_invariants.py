@@ -639,6 +639,19 @@ _BASH_PARAM_SAFETY: dict[str, str] = {
     "input_path": "minted by chemrefine.ids under output_dir",
     "globs_expr": "a join of output_globs — engine-declared constants, never config",
     "extra_fields": "engine-supplied runlog rows, not interpolated as code",
+    # --- the script builders' own surface ------------------------------------------------
+    "scratch_dir": VALIDATED,  # config.scratch_dir
+    "job_name": "the input path's stem (ids-minted under the validated output_dir), or "
+    "the _NAME_RE-checked step label plus a literal '_array' suffix",
+    "ntasks": "an integer",
+    "cpus_per_task": "an integer",
+    "memory_mb": "an integer or None",
+    "template_path": "a path that is read, never interpolated — its lines become the "
+    "cluster header the user already owns",
+    "script_path": "the write destination; never part of the script's text",
+    "output_globs": "engine-declared constants (a ClassVar, or a property over trainer "
+    "declarations); never config",
+    "extra_header_fields": "engine-supplied runlog rows, not interpolated as code",
     # --- bash this project wrote ---------------------------------------------------------
     "header": "the output of job_log.bash_header, itself covered by this table",
     "footer": "the output of job_log.bash_footer, itself covered by this table",
@@ -648,10 +661,24 @@ _BASH_PARAM_SAFETY: dict[str, str] = {
 
 
 def _bash_emitting_params() -> set[str]:
-    """Every parameter name of the three functions that turn values into generated bash."""
+    """Every parameter name of the functions that turn values into generated bash.
+
+    ``build_script`` and ``build_array_script`` are enumerated alongside the three
+    primitives they compose: they take values of their own (``job_name``, the header
+    template, the write destination) that never pass through ``_run_body_lines``, and
+    leaving them out is how a stale ``job_name`` row survived in
+    ``config.reject_shell_unsafe``'s table for a trainer field that no longer exists —
+    the enumeration answered for three of the five functions and claimed the whole.
+    """
     from chemrefine import job_log
 
-    functions = (job_log.bash_header, job_log.bash_footer, script._run_body_lines)
+    functions = (
+        job_log.bash_header,
+        job_log.bash_footer,
+        script._run_body_lines,
+        script.build_script,
+        script.build_array_script,
+    )
     return {
         name for func in functions for name in inspect.signature(func).parameters if name != "self"
     }
