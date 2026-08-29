@@ -203,8 +203,8 @@ rather than accepted and ignored.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `method` | `dft` | `dft` or `hf`. |
-| `xc` | — (**required** for `dft`) | Exchange-correlation functional. No silent default — name it explicitly. |
-| `basis` | — (**required**) | Orbital basis set. No silent default — name it explicitly. |
+| `xc` | `pbe` | Exchange-correlation functional. **Required on `pyscf-extopt`** for `method: dft` — no silent level of theory where a server is configured; the direct engine renders this default into `$XC` when unset. |
+| `basis` | `def2-svp` | Orbital basis set. **Required on `pyscf-extopt`** — no silent basis where a server is configured; the direct engine renders this default into `$BASIS` when unset. |
 | `df` | `True` | Density fitting / RI (defaults on — large speed-up, negligible cost). |
 | `strict_scf` *(ExtOpt only)* | `True` | Refuse to serve a gradient from an SCF that did not converge. PySCF returns the last iterate rather than raising, and ORCA's `.out` reports only *its own* geometry convergence — so a loose result would rank against converged siblings unmarked. Set `false` for a knowingly loose SCF. |
 | `device` | `cpu` | Compute device; drives `gpu` when `gpu` is unset (`cuda` ⇒ attempt GPU). |

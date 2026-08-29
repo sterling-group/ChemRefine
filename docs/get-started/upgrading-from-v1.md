@@ -138,7 +138,7 @@ A few defaults differ from earlier expectations (all overridable):
   than being silently dropped. Set `on_failure: skip` per step to restore the drop-and-continue behaviour.
 - **`max_cores` defaults to `4`** (a safe local default) — raise it in the YAML or with `--maxcores`.
 - **`--maxgpus`** is a new flag mirroring `--maxcores` (overrides `max_gpus`).
-- **PySCF**: `basis` is now required (and `xc` is required for `method: dft`) — no silent level of theory;
+- **PySCF**: on `pyscf-extopt`, `basis` is now required (and `xc` for `method: dft`) — no silent level of theory where a server is configured; the direct `pyscf` engine renders the model defaults into `$BASIS`/`$XC`;
   `df` defaults **on**; `gpu` is derived from a new `device` knob (`cuda` ⇒ attempt GPU, with CPU fallback).
 - **Direct `pyscf` templates** can now read `$METHOD` / `$XC` / `$BASIS` (parity with direct `mlip`).
 
