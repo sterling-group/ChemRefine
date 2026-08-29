@@ -50,6 +50,18 @@ def test_natural_key_handles_paths():
     assert natural_key("step1_structure_0.out") < natural_key("step1_structure_10.out")
 
 
+def test_natural_key_survives_a_superscript_digit():
+    """``"²".isdigit()`` is True and ``int("²")`` raises — the guard must be isdecimal.
+
+    The class was already fixed at ``StepConfig.matches`` and the GUI's step selector;
+    this was the third ``int(isdigit)`` site, reachable from a seed directory holding a
+    file with a superscript between decimal digits — which ended the run in a bare
+    ``ValueError`` from the sort instead of anything naming the file.
+    """
+    assert natural_key("v2²3.xyz") == ["v", 2, "²", 3, ".xyz"]
+    assert sorted(["v2²3.xyz", "v2²2.xyz"], key=natural_key) == ["v2²2.xyz", "v2²3.xyz"]
+
+
 def test_natural_key_orders_three_digit_ids_numerically():
     """>100 structures must not sort lexicographically.
 

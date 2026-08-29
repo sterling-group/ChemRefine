@@ -211,10 +211,16 @@ def start_run(
         raise ConfigError(f"no step matches target {target!r}")
     status = pipeline.lock_status(config.output_dir)
     if status.held:
-        raise RunLockError(
-            f"a driver already holds {config.output_dir} "
-            f"(pid {status.pid} on {status.host}, started {status.started})"
+        # A held lock with no holder fields is the unreadable-file case — refused with
+        # its remedy, exactly as `run_lock` would refuse it in the child; before
+        # `lock_status` reported that file "not held", this returned a pid and a log
+        # path for a detached child that immediately exited 10 into an unwatched log.
+        holder = (
+            f"pid {status.pid} on {status.host}, started {status.started}"
+            if status.host is not None
+            else "an unreadable lock file — delete it if that run is known dead"
         )
+        raise RunLockError(f"a driver already holds {config.output_dir} ({holder})")
     log_dir = config.output_dir / "agent_runs"
     log_dir.mkdir(parents=True, exist_ok=True)
     # Microseconds, not seconds: the lock check above is check-then-act — the *child*

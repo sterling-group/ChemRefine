@@ -199,12 +199,15 @@ def _pid_alive(pid: int) -> bool:
 class LockStatus:
     """One read of the run lock, for a *reporting* caller (status tools, the GUI).
 
-    ``held`` is what a would-be driver cares about: a lock file naming a holder this
-    read cannot prove dead. ``alive`` is three-valued — ``True`` / ``False`` only for a
-    same-host holder, ``None`` when the holder is on another host and liveness cannot be
-    probed from here (still ``held``: the reclaim machinery, not a status read, is the
-    only thing entitled to call a foreign lock stale). Reporting only — claiming the
-    lock remains :func:`run_lock`'s job, with its atomic-rename reclaim dance.
+    ``held`` is what a would-be driver cares about: a lock file this read cannot prove
+    safe to claim — one naming a holder not provably dead, or one that exists but is
+    unreadable (every holder field then ``None``: the claim path refuses that file too,
+    so held is the answer the two readers must share). ``alive`` is three-valued —
+    ``True`` / ``False`` only for a same-host holder, ``None`` when the holder is on
+    another host and liveness cannot be probed from here (still ``held``: the reclaim
+    machinery, not a status read, is the only thing entitled to call a foreign lock
+    stale). Reporting only — claiming the lock remains :func:`run_lock`'s job, with
+    its atomic-rename reclaim dance.
     """
 
     held: bool
@@ -221,10 +224,19 @@ def lock_status(output_dir: Path) -> LockStatus:
     agent tools and the GUI: *is a driver running this tree, and which one?* A lock
     naming a same-host dead pid reports ``held=False`` — that is exactly the stale case
     :func:`run_lock` would reclaim on the next claim.
+
+    A lock file that exists but names no holder reports ``held=True`` with every
+    holder field ``None`` — the same side of "held" :func:`run_lock` puts it on. That
+    file is what a driver killed between creating and writing the lock (or a partial
+    write) leaves behind, and the claim path refuses it until someone deletes a lock
+    they know is dead; reporting it "not held" here sent :func:`~chemrefine.
+    agent_tools.start_run` past its own gate into a child that exited into a log
+    nobody was watching yet.
     """
-    holder = _lock_holder(output_dir / RUN_LOCK_NAME)
+    lock = output_dir / RUN_LOCK_NAME
+    holder = _lock_holder(lock)
     if holder is None:
-        return LockStatus(held=False, host=None, pid=None, started=None, alive=None)
+        return LockStatus(held=lock.exists(), host=None, pid=None, started=None, alive=None)
     host, pid, started = holder
     alive = _pid_alive(pid) if host == socket.gethostname() else None
     return LockStatus(held=alive is not False, host=host, pid=pid, started=started, alive=alive)

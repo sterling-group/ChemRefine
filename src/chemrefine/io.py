@@ -80,8 +80,15 @@ def natural_key(name: str | Path) -> list[object]:
     """Return a list suitable for ``sorted(..., key=natural_key)`` natural ordering.
 
     ``"step10.out"`` sorts after ``"step2.out"`` instead of before it.
+
+    ``isdecimal``, not ``isdigit``, for the reason ``StepConfig.matches`` uses it: the
+    two disagree on the Unicode ``No`` category — ``"²".isdigit()`` is ``True`` and
+    ``int("²")`` raises — and this predicate exists only to guard that ``int``. A seed
+    directory holding a file like ``v2²3.xyz`` therefore ended the run in a bare
+    ``ValueError`` from the sort, outside the exit-code contract. Ordering is
+    unchanged: every chunk the ``\\d+`` capture isolates is decimal already.
     """
-    return [int(p) if p.isdigit() else p.lower() for p in _NATURAL_PART.split(str(name))]
+    return [int(p) if p.isdecimal() else p.lower() for p in _NATURAL_PART.split(str(name))]
 
 
 # ---------------------------------------------------------------------------

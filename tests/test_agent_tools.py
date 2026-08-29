@@ -315,6 +315,14 @@ def test_start_run_refuses_a_live_lock_but_ignores_a_dead_one(tmp_path: Path, re
         agent_tools.start_run(str(path))
     assert recorded_popen.calls == []
 
+    lock.write_text("", encoding="utf-8")
+    # A 0-byte lock — a driver killed between creating and writing it — is what
+    # `run_lock` refuses as unreadable, so launching a child would hand back a pid
+    # for a run that exits 10 before anyone watches its log.
+    with pytest.raises(RunLockError, match="unreadable lock file"):
+        agent_tools.start_run(str(path))
+    assert recorded_popen.calls == []
+
     lock.write_text(
         json.dumps({"host": socket.gethostname(), "pid": 2**22 + 1, "started": "then"}),
         encoding="utf-8",
@@ -333,7 +341,11 @@ def test_lock_status_reads_without_touching(tmp_path: Path):
 
     lock = tmp_path / pipeline.RUN_LOCK_NAME
     lock.write_text("not json", encoding="utf-8")
-    assert pipeline.lock_status(tmp_path).held is False  # unreadable = nobody provable
+    # Present but unreadable is HELD, with no holder to name — the side `run_lock`
+    # puts the same file on. Reported "not held", start_run sailed past its own gate
+    # and launched a child that immediately exited 10 into an unwatched log.
+    unreadable = pipeline.lock_status(tmp_path)
+    assert (unreadable.held, unreadable.host, unreadable.alive) == (True, None, None)
 
     lock.write_text(
         json.dumps({"host": socket.gethostname(), "pid": os.getpid(), "started": "now"}),
