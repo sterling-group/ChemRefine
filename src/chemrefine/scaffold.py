@@ -112,7 +112,7 @@ _STEP_STARTERS: dict[str, str] = {
         "# one is load-bearing; sevenn: `sevenn preset fine_tune` writes one), and\n"
         "# chemrefine's own small schema where none does (chgnet/orb). Start from the\n"
         "# worked examples instead:\n"
-        "#   examples/fairchem_finetune/templates/  (UMA fine-tune, commented line by line)\n"
+        "#   examples/tutorials/fairchem_finetune/templates/  (UMA fine-tune, commented)\n"
         "#   docs -> Engines -> MLIP training templates  (one per trainable backend)\n"
     ),
 }

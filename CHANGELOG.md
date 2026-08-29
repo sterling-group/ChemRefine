@@ -233,10 +233,11 @@ for the full map.
   same `model_path:` line for all five. FAIRChem's dataset is an ASE database
   per split — labels on a `SinglePointCalculator`, `metadata.npz` beside each,
   one directory per split because FAIRChem resolves a missing `metadata_path`
-  against the database's *parent*. **The shipped FAIRChem example config is
-  still outstanding**: no training config ships in the fairchem wheel to adapt,
-  and the UMA weights are behind a gated Hugging Face repo, so it could not be
-  proven by a real run.
+  against the database's *parent*. The worked example ships at
+  `examples/tutorials/fairchem_finetune` — label with UMA, fine-tune through
+  fairchem's own recipe collapsed into one commented config, run the produced
+  checkpoint (the UMA weights themselves stay behind a gated Hugging Face
+  repo).
 - SLURM-optional execution: the generated scripts run unchanged under
   `bash` with the same core/GPU throttling, runlogs, and artifacts. Local GPU
   jobs run inside the allocation the run inherited: `CUDA_VISIBLE_DEVICES` is

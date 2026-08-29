@@ -22,11 +22,12 @@ ChemRefine automates this multi-step process:
 4. **MLIP Training (`mlip-train`)**  
    Fine-tunes a potential on the generated DFT dataset. `task_name` picks which library
    trains — the same word that picks the one that runs — and `model_name` is the foundation
-   model it starts from; both, and `device`, are required. Which backends train is the
+   model it starts from (unset means training from scratch); `task_name` and `device` are
+   required. Which backends train is the
    [backends table](../engines/installing.md#available-backends)'s business — it is
    generated from the registry, so it cannot go stale the way a list here would. This
    tutorial trains MACE; see
-   [`examples/fairchem_finetune`](https://github.com/sterling-group/ChemRefine/tree/main/examples/fairchem_finetune)
+   [`examples/tutorials/fairchem_finetune`](https://github.com/sterling-group/ChemRefine/tree/main/examples/tutorials/fairchem_finetune)
    for the FAIRChem counterpart. Adding another library is one dropped-in module under
    `engines/mlip/backends/`, beside that library's calculator and sharing its one
    environment declaration.
