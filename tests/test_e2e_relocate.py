@@ -129,18 +129,28 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
 
     for rel, before in archived.items():
         after = json.loads((case.output_dir / rel).read_text())
-        assert [structure_record_keys(s) for s in after["structures"]] == [
-            structure_record_keys(s) for s in before["structures"]
-        ], f"{rel}: rebuilt records differ from the archive — regenerate the recording"
-
-
-def structure_record_keys(record: dict[str, object]) -> dict[str, object]:
-    """One cached structure record, minus the coordinates.
-
-    Geometry round-trips through JSON exactly, but it is bulky and its equality adds
-    nothing here: the fields that silently drift are the *status and energy* ones.
-    """
-    return {k: v for k, v in record.items() if k not in ("positions", "forces_ev_per_a")}
+        assert after["structures"] == before["structures"], (
+            f"{rel}: rebuilt records differ from the archive — regenerate the recording"
+        )
+        # The geometry half. Coordinates and forces are not in these records — the
+        # sidecar split moved them to arrays.npz before the document is written — so a
+        # record comparison alone left a coordinate or forces parse free to drift with
+        # no signal (an earlier version even filtered the two keys out of records that
+        # no longer carry them). The document's `arrays_digest` is a content hash over
+        # the sidecar's values, so one equality pins every coordinate and force byte
+        # without unpacking anything.
+        assert after["arrays_digest"] == before["arrays_digest"], (
+            f"{rel}: the rebuilt coordinate sidecar differs from the archive — a geometry "
+            f"or forces parse changed; regenerate the recording"
+        )
+        # The key half: a fingerprint that moves means the cache-key payload changed
+        # (an options default, a digest input), which strands every user's tree the
+        # same way it strands this archive — a fact to surface here, not discover in
+        # a user's resume.
+        assert after["fingerprint"] == before["fingerprint"], (
+            f"{rel}: the rebuilt fingerprint differs from the archive — the cache-key "
+            f"payload changed; note the migration in the changelog and regenerate"
+        )
 
 
 # ---------------------------------------------------------------------------
