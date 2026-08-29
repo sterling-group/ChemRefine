@@ -12,8 +12,9 @@ added afterwards; see [Installing engines & backends](../engines/installing.md).
 Which program each engine needs is in the [engine table](../engines/index.md), along with
 its options.
 
-The base install pulls `numpy`, `pyyaml`, `pandas`, `ase`, `rdkit`, `pydantic >= 2`, and
-`typer >= 0.12`.
+The base install pulls the scientific stack (`numpy`, `pandas`, `ase`, `rdkit`) plus
+`pyyaml`, `pydantic`, `typer` and `packaging` — the exact version floors live in
+`pyproject.toml`, held by CI's own floors job.
 
 ## Install ChemRefine
 
@@ -21,7 +22,7 @@ A dedicated environment is **recommended, not required**. Two reasons, both conc
 managed backend environment is built with the tool that created the environment you have
 **activated**, and the backends land beside that environment when it is writable — so
 deleting the environment removes them with it. On a system Python they land in
-`~/.chemrefine` instead and outlive any uninstall.
+`~/.chemrefine/<interpreter tag>` instead and outlive any uninstall.
 
 === "pip"
 

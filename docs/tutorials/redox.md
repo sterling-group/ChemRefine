@@ -30,7 +30,8 @@ ChemRefine automates redox workflows by allowing you to:
 
 ## Input Files
 
-We start with an initial structure located in the templates folder:
+We start with an initial structure located beside the config, at the example's root
+(`input: ./step1.xyz`):
 
 - 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/redox/dimethylaniline/input.yaml)  
 - 📄 [View Input XYZ](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/redox/dimethylaniline/step1.xyz)  

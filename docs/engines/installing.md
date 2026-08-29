@@ -70,8 +70,15 @@ extra installs on, and says which one it picked:
 ```console
 $ chemrefine backends install mlip-orb        # on a 3.13 orchestrator
 provisioning mlip-orb on Python 3.12 …
-mlip-orb: ~/.chemrefine/backends/mlip-orb/bin/python
+mlip-orb: ~/venvs/chemrefine/share/chemrefine/backends/mlip-orb/bin/python
 ```
+
+The path shown is the default for a writable (venv/conda) install — the envs live
+beside it. On a read-only or system Python they land under
+`~/.chemrefine/<interpreter tag>/backends/` instead (e.g. `~/.chemrefine/cpython-313/…`
+— tagged, because `$HOME` is routinely shared across clusters, and two machines on
+different Pythons must not resolve each other's envs). `$CHEMREFINE_HOME` overrides
+both.
 
 Nothing about your run changes: the environment is still resolved by name, and a step still
 launches `<env>/bin/python`. Where the interpreter comes from depends on the tool:

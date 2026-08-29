@@ -39,7 +39,9 @@ execute its `python` — but building one needs the internet, which compute node
 lack. Do it once on a login node.
 
 Environments live under `$CHEMREFINE_HOME` (default: alongside the install when writable,
-else `~/.chemrefine`). Point it at a project or shared filesystem to share provisioned
+else `~/.chemrefine/<interpreter tag>` — tagged because `$HOME` is routinely shared
+across clusters, and two machines on different Pythons must not resolve each other's
+envs). Point it at a project or shared filesystem to share provisioned
 backends across machines:
 
 ```bash

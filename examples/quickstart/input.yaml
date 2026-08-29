@@ -32,7 +32,7 @@ steps:
   # Step 1 — cheap screening relaxation with an MLIP surrogate.
   - step: 1
     name: screen               # optional label; the step dir becomes step1_screen/
-    engine: mlip               # orca | mlip | mlip-extopt | mlip-train | pyscf | pyscf-extopt
+    engine: mlip               # orca | qchem | mlip | mlip-extopt | mlip-train | pyscf | pyscf-extopt
     template: screen.py        # default would be step1.py for a script engine
     operation: opt_sp          # optional for orca (inferred from the template keywords)
     options:

@@ -82,7 +82,7 @@ part of a step's identity.
 ## Auto-retry on non-convergence
 
 Before the `on_failure` policy runs, a structure whose job **did not converge**
-(SCF / geometry MaxIter, only ORCA flags this) is retried **once per run** from its
+(SCF / geometry MaxIter, for engines whose output reports convergence) is retried **once per run** from its
 best geometry: the failed attempt's files are archived into a numbered
 `stepN/<id>/attemptK/` sub-dir, the input is re-prepared from the last good
 geometry, resubmitted, and re-parsed. A crashed or missing-output job is *not*

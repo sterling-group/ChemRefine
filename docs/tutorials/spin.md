@@ -29,7 +29,8 @@ ChemRefine automates spin exploration with the following workflow:
 
 ## Input Files
 
-We start with an initial structure located in the templates folder:
+We start with an initial structure located beside the config, at the example's root
+(`input: ./step1.xyz`):
 
 - 📄 [View input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/spin/heme_catalyst/input.yaml)  
 - 📄 [View step1.xyz](https://github.com/sterling-group/ChemRefine/blob/main/examples/tutorials/spin/heme_catalyst/step1.xyz)  

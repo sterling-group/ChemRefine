@@ -31,8 +31,11 @@ cached so unchanged steps skip automatically.
   total-core throttle so concurrent jobs never exceed `max_cores`; whole
   steps can also go out as job arrays.
 - **Resumable**: each step's parsed results are cached with a SHA-1
-  fingerprint of the step config + the parent structures (IDs and content).
-  A change anywhere in that surface invalidates the cache.
+  fingerprint of everything that can reach a job — engine, operation, template
+  bytes, effective charge/multiplicity, engine options — plus the parent
+  structures (IDs and content). Changing any of those re-runs the step;
+  `sample:` and `on_failure` are deliberately excluded, so tuning a filter
+  refilters the cached results instead of recomputing them.
 - **Hierarchical IDs**: every conformer carries its lineage
   (`0` → `0-1` → `0-1-2`) so survivors trace back to their root structure.
 
