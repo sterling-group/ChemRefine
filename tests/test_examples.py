@@ -108,10 +108,71 @@ def test_example_seed_exists_and_parses(yml: Path) -> None:
 
 @pytest.mark.parametrize("yml", EXAMPLES, ids=IDS)
 def test_example_step_templates_resolve(yml: Path) -> None:
-    """Every step's template (explicit or default stepN.*) must exist."""
+    """Every step's template (explicit or default stepN.*) must exist.
+
+    The existence is asserted here because `_resolved_template` deliberately cannot: it
+    mirrors `build_context`'s resolution, and `ids.step_template_path` is naming only —
+    the run's own missing-template error fires much later, at rendering. An earlier
+    version of this test called the helper and discarded the result, which guarded
+    nothing: deleting a shipped non-ORCA template (whose text no other gate reads) left
+    the suite green while the tutorial failed on a user's first run.
+    """
     cfg = load_config(yml)
     for step in cfg.steps:
-        _resolved_template(cfg, step)  # raises FileNotFoundError when missing
+        template = _resolved_template(cfg, step)
+        assert template is None or template.is_file(), (
+            f"step {step.step}: template {template} does not exist"
+        )
+
+
+_DFT_TEXT_OPERATIONS = frozenset({"opt_sp", "sp", "freq", "dft"})
+"""The operations the ORCA family parses from the ``.out`` text via one shared assembler.
+
+Mirrors ``coordinator._DFT_OPERATIONS`` plus the legacy ``dft`` spelling: within this
+set a declared/inferred mismatch still reads the same output the same way, so only a
+mismatch that crosses out of it selects the wrong parser."""
+
+
+def _parse_route(operation: str) -> str:
+    """Which parser an operation selects — the sidecar/scan ones by name, the text family as one."""
+    return "dft-text" if operation in _DFT_TEXT_OPERATIONS else operation
+
+
+@pytest.mark.parametrize("yml", EXAMPLES, ids=IDS)
+def test_example_operations_match_their_templates(yml: Path) -> None:
+    """An explicit ``operation:`` must select the parser the template's run type needs.
+
+    ``operation`` never changes the generated input — it only picks the parser — and an
+    explicit value beats template inspection. So ``opt_sp`` over a ``!GOAT`` template
+    runs the conformer search and then never reads its ensemble sidecar: the step yields
+    a single structure (or an UNPARSEABLE ledger row), and a filter built for an
+    ensemble has nothing to select from. Two shipped tutorials did exactly that, and
+    every schema gate passed them: ``opt_sp`` is inside the vocabulary, so only a
+    template-vs-operation comparison can see the mismatch.
+
+    The comparison is deliberately one-sided. The inspector reads only the ``!``
+    simple-keyword spelling (its documented scope), so a template driving DOCKER or
+    SOLVATOR through a ``%``-block infers as a plain run — there the explicit
+    ``operation`` is legitimately *correcting* inference's blind spot (host_guest does
+    this on purpose). Only when the ``!`` line itself names an ensemble or scan run is
+    the template unambiguous, and a declared operation that selects a different parser
+    is the defect this gate exists for.
+    """
+    cfg = load_config(yml)
+    for step in cfg.steps:
+        if step.operation is None or step.engine not in _ORCA_FAMILY:
+            continue
+        template = _resolved_template(cfg, step)
+        assert template is not None
+        inferred = inspect_template(template).operation
+        if inferred in _DFT_TEXT_OPERATIONS:
+            continue  # block-form ensembles infer as plain runs — the explicit value rules
+        declared = step.operation.lower().replace("+", "_")
+        assert _parse_route(declared) == _parse_route(inferred), (
+            f"step {step.step}: operation {step.operation!r} selects the "
+            f"{_parse_route(declared)!r} parser, but template {template.name} runs "
+            f"{inferred!r} — the step would never read the output its run produces"
+        )
 
 
 @pytest.mark.parametrize("yml", EXAMPLES, ids=IDS)

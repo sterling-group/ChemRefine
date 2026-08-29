@@ -14,7 +14,7 @@ steps:
   # Conformers per amine (the template runs XTB GOAT); keep up to 99 %
   # cumulative Boltzmann weight per molecule.
   - step: 1
-    operation: opt_sp
+    operation: goat
     engine: orca
     sample: { method: boltzmann, percent_cumulative: 99 }
 

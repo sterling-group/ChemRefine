@@ -15,7 +15,7 @@ steps:
   # within 10 kcal/mol of the minimum.
   - step: 1
     engine: orca
-    operation: opt_sp
+    operation: goat
     sample: { method: min, window_kcalmol: 10 }
 
   # Refine with an MLIP gradient server (ORCA-driven).
