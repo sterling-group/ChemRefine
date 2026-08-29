@@ -10,6 +10,7 @@ lifecycle end-to-end.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import shlex
 import sys
@@ -64,7 +65,9 @@ def _ctx(
         name="screen",
         engine="pyscf",
         operation="opt_sp",
-        options=overrides.pop("options", {}),
+        # The level of theory is required (check_step / prepare refuse without it), so
+        # the harness supplies a minimal one and each test's own knobs merge over it.
+        options={"method": "hf", "basis": "sto-3g", **overrides.pop("options", {})},
     )
     return StepContext(
         step_cfg=step_cfg,
@@ -123,6 +126,37 @@ def test_prepare_renders_one_py_and_xyz_per_structure(tmp_path: Path):
         assert f'with open(\'{output_json.name}\', "w", encoding="utf-8")' in rendered
 
 
+def test_prepare_refuses_a_step_with_no_level_of_theory(tmp_path: Path):
+    """The direct engine requires ``basis`` — no silent level of theory.
+
+    ORCA's level of theory lives in the template's ``!`` line and Q-Chem's in
+    ``$rem``; a direct pyscf step omitting ``basis`` used to render the model
+    default into ``$BASIS``, computing at a level the user never chose.
+    ``prepare`` repeats the preflight refusal so the recovery paths that skip
+    the t=0 walk get it too.
+    """
+    engine = get_engine("pyscf")
+    ctx = _ctx(tmp_path, structures=(_seed(),))
+    bare = dataclasses.replace(ctx, step_cfg=ctx.step_cfg.model_copy(update={"options": {}}))
+    with pytest.raises(ConfigError, match="'basis' is required"):
+        engine.prepare(bare)
+
+
+def test_check_step_requires_xc_exactly_when_dft_reads_it():
+    """``xc`` is demanded for ``method: dft`` and not for ``hf`` — the shared rule.
+
+    The refusal is `PyscfOptions.require_level_of_theory`, the same classmethod the
+    ExtOpt engine's strict read enforces, so the engines cannot disagree about
+    what a runnable step names.
+    """
+    engine = get_engine("pyscf")
+    dft = StepConfig(step=1, engine="pyscf", options={"method": "dft", "basis": "sto-3g"})
+    with pytest.raises(ConfigError, match="'xc' is required"):
+        engine.check_step(dft, charge=0, multiplicity=1)
+    hf = StepConfig(step=1, engine="pyscf", options={"method": "hf", "basis": "sto-3g"})
+    engine.check_step(hf, charge=0, multiplicity=1)  # no raise
+
+
 def test_prepare_missing_template_raises(tmp_path: Path):
     ctx = _ctx(tmp_path, structures=(_seed(),))
     (ctx.template_dir / "step1.py").unlink()
@@ -137,6 +171,7 @@ def test_prepare_uses_step_specific_template_when_given(tmp_path: Path):
         engine="pyscf",
         operation="opt_sp",
         template="custom.py",
+        options={"method": "hf", "basis": "sto-3g"},
     )
     _write_templates(tmp_path)
     (tmp_path / "custom.py").write_text(_FAKE_TEMPLATE, encoding="utf-8")

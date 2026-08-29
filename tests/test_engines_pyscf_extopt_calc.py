@@ -141,8 +141,10 @@ def _install_fake_pyscf(monkeypatch, *, mol_spin: int = 0) -> dict[str, MagicMoc
 def test_pyscf_options_defaults():
     opt = PyscfExtOptOptions()
     assert opt.method == "dft"
-    assert opt.xc == "pbe"
-    assert opt.basis == "def2-svp"
+    # No level-of-theory defaults: every engine makes the user name it, and a literal
+    # here was the silent def2-svp/pbe a bare pyscf step used to compute at.
+    assert opt.xc is None
+    assert opt.basis is None
     assert opt.df is True  # DF defaults on
     # CPU is the floor: this value is read by both the rendered script and the
     # scheduler, so an unrequested GPU would schedule a CPU job that then asks for
@@ -335,7 +337,7 @@ def test_run_dft_uses_rhf_for_method_hf(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    _runtime.run_dft(mol, method="hf", use_df=False)
+    _runtime.run_dft(mol, method="hf", xc=None, use_df=False)
     mocks["scf"].RHF.assert_called_once()
 
 
@@ -349,7 +351,7 @@ def test_run_dft_uses_uhf_for_method_hf_open_shell(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 1
-    _runtime.run_dft(mol, method="hf", use_df=False)
+    _runtime.run_dft(mol, method="hf", xc=None, use_df=False)
     mocks["scf"].UHF.assert_called_once()
 
 
@@ -364,7 +366,7 @@ def test_run_dft_hf_warns_about_gpu(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    _, _, meta, _ = _runtime.run_dft(mol, method="hf", use_df=False, want_gpu=True)
+    _, _, meta, _ = _runtime.run_dft(mol, method="hf", xc=None, use_df=False, want_gpu=True)
     assert "HF GPU path not enabled" in meta["gpu_msg"]
     assert meta["gpu_used"] is False
 
@@ -381,7 +383,7 @@ def test_run_dft_falls_back_to_cpu_when_gpu_import_fails(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    _, _, meta, _ = _runtime.run_dft(mol, use_df=False, want_gpu=True)
+    _, _, meta, _ = _runtime.run_dft(mol, xc="pbe", use_df=False, want_gpu=True)
     assert meta["gpu_used"] is False
     assert "fell back to CPU" in meta["gpu_msg"]
 
@@ -403,7 +405,7 @@ def test_run_dft_applies_density_fitting_on_the_default_path(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    energy, _, meta, mf = _runtime.run_dft(mol, use_df=True)
+    energy, _, meta, mf = _runtime.run_dft(mol, xc="pbe", use_df=True)
     assert energy == -1.75
     assert meta["converged"] is True
     assert mf is mocks["df_mf"]
@@ -422,7 +424,7 @@ def test_run_dft_density_fitting_continues_on_failure(monkeypatch, caplog):
     )
     mol.spin = 0
     with caplog.at_level("WARNING"):
-        energy, _, _meta, _ = _runtime.run_dft(mol, use_df=True)
+        energy, _, _meta, _ = _runtime.run_dft(mol, xc="pbe", use_df=True)
     assert energy == -1.5  # the un-decorated SCF's sentinel: the run went on without DF
     assert "density_fit() failed" in caplog.text
     assert "no DF for you" in caplog.text
@@ -438,7 +440,7 @@ def test_run_dft_no_gradient_when_dograd_false(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    _, gradient, meta, _ = _runtime.run_dft(mol, use_df=False, dograd=False)
+    _, gradient, meta, _ = _runtime.run_dft(mol, xc="pbe", use_df=False, dograd=False)
     assert gradient == []
     assert meta["grad_norm"] == 0.0
 
@@ -468,7 +470,7 @@ def test_run_dft_uses_gpu_classes_when_available(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    energy, _, meta, _ = _runtime.run_dft(mol, use_df=False, want_gpu=True)
+    energy, _, meta, _ = _runtime.run_dft(mol, xc="pbe", use_df=False, want_gpu=True)
     assert meta["gpu_used"] is True
     assert energy == -2.0
 
@@ -552,13 +554,13 @@ def test_save_tensors_writes_npz_with_expected_keys(tmp_path: Path):
 
 
 def test_extopt_calc_returns_energy_and_gradient(monkeypatch):
-    """A bare calculator solves the DF-decorated SCF — the model's own default shape.
+    """A calculator given only its level of theory solves the DF-decorated SCF.
 
     -1.75 is the fake's DF sentinel, distinct from the bare -1.5 precisely so this
     assertion can tell the shipped default really applied density fitting.
     """
     _install_fake_pyscf(monkeypatch)
-    calc = extopt_calc.PyscfExtOptCalculator()
+    calc = extopt_calc.PyscfExtOptCalculator(basis="def2-svp", xc="pbe")
     energy, gradient = calc.calc(_data())
     assert energy == -1.75
     assert len(gradient) == 2
@@ -567,7 +569,7 @@ def test_extopt_calc_returns_energy_and_gradient(monkeypatch):
 def test_extopt_calc_skips_tensor_extraction_by_default(monkeypatch):
     _install_fake_pyscf(monkeypatch)
     with patch.object(_runtime, "get_active_space_tensors") as mock_tensors:
-        extopt_calc.PyscfExtOptCalculator().calc(_data())
+        extopt_calc.PyscfExtOptCalculator(basis="def2-svp", xc="pbe").calc(_data())
     mock_tensors.assert_not_called()
 
 
@@ -577,7 +579,9 @@ def test_extopt_calc_extracts_tensors_when_constructed_with_save_tensors(
     """``save_tensors`` comes from server construction; only ``tag`` rides the call."""
     _install_fake_pyscf(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    extopt_calc.PyscfExtOptCalculator(save_tensors=True).calc(_data(tag="step3_structure_0"))
+    extopt_calc.PyscfExtOptCalculator(basis="def2-svp", xc="pbe", save_tensors=True).calc(
+        _data(tag="step3_structure_0")
+    )
     assert (tmp_path / "tensors" / "step3_structure_0.npz").is_file()
 
 
@@ -586,7 +590,9 @@ def test_extopt_calc_sanitizes_tag_before_filename_use(tmp_path: Path, monkeypat
     must never let a tensor dump escape ``tensor_folder``."""
     _install_fake_pyscf(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    extopt_calc.PyscfExtOptCalculator(save_tensors=True).calc(_data(tag="../../evil"))
+    extopt_calc.PyscfExtOptCalculator(basis="def2-svp", xc="pbe", save_tensors=True).calc(
+        _data(tag="../../evil")
+    )
     # Where the unsanitized path would actually land: tensors/../../evil.npz resolves
     # one level above tmp_path ("tensors/.." cancels the first ".."). The old assertion
     # probed tmp_path.parent.parent — a directory the traversal can never reach — so it
@@ -598,7 +604,7 @@ def test_extopt_calc_sanitizes_tag_before_filename_use(tmp_path: Path, monkeypat
 def test_extopt_calc_uses_server_construction_not_per_call_settings(monkeypatch):
     """Single channel: SCF knobs come from construction, not the per-call POST."""
     mocks = _install_fake_pyscf(monkeypatch)
-    extopt_calc.PyscfExtOptCalculator(method="dft", xc="pbe").calc(
+    extopt_calc.PyscfExtOptCalculator(method="dft", xc="pbe", basis="def2-svp").calc(
         _data(method="hf", xc="b3lyp")  # stale settings must be ignored
     )
     # Construction said dft → dft.RKS is used; the POST's ``method=hf`` is ignored.
@@ -609,7 +615,9 @@ def test_extopt_calc_uses_server_construction_not_per_call_settings(monkeypatch)
 def test_extopt_calc_localized_tensors(tmp_path: Path, monkeypatch):
     mocks = _install_fake_pyscf(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    extopt_calc.PyscfExtOptCalculator(save_tensors=True, localized=True).calc(_data(tag="s0"))
+    extopt_calc.PyscfExtOptCalculator(
+        basis="def2-svp", xc="pbe", save_tensors=True, localized=True
+    ).calc(_data(tag="s0"))
     assert mocks["lo"].Boys.call_count == 2
 
 
@@ -717,7 +725,7 @@ def test_an_unconverged_scf_is_refused(monkeypatch):
     mocks["df_mf"].converged = False
 
     with pytest.raises(JobFailureError, match="did not converge"):
-        extopt_calc.PyscfExtOptCalculator().calc(_data())
+        extopt_calc.PyscfExtOptCalculator(basis="def2-svp", xc="pbe").calc(_data())
 
 
 def test_an_unconverged_scf_is_served_when_the_step_opts_out(monkeypatch):
@@ -725,7 +733,9 @@ def test_an_unconverged_scf_is_served_when_the_step_opts_out(monkeypatch):
     mocks = _install_fake_pyscf(monkeypatch)
     mocks["df_mf"].converged = False
 
-    energy, gradient = extopt_calc.PyscfExtOptCalculator(strict_scf=False).calc(_data())
+    energy, gradient = extopt_calc.PyscfExtOptCalculator(
+        basis="def2-svp", xc="pbe", strict_scf=False
+    ).calc(_data())
 
     assert energy == -1.75
     assert len(gradient) == 2
@@ -734,7 +744,7 @@ def test_an_unconverged_scf_is_served_when_the_step_opts_out(monkeypatch):
 def test_a_converged_scf_is_unaffected_by_the_guard(monkeypatch):
     """The ordinary case must not change."""
     _install_fake_pyscf(monkeypatch)
-    energy, _gradient = extopt_calc.PyscfExtOptCalculator().calc(_data())
+    energy, _gradient = extopt_calc.PyscfExtOptCalculator(basis="def2-svp", xc="pbe").calc(_data())
     assert energy == -1.75
 
 
@@ -765,18 +775,21 @@ def test_a_bare_calculator_carries_the_models_own_defaults():
     assert mismatched == {}
 
 
-def test_run_dft_declares_no_df_default_of_its_own():
-    """``use_df`` is required at ``run_dft`` — the model is the only home of "unspecified".
+def test_run_dft_declares_no_scf_defaults_of_its_own():
+    """``use_df`` and ``xc`` are required at ``run_dft`` — the model owns "unspecified".
 
-    The signature was the *fourth* spelling of this knob's default, sitting on the off
+    ``use_df``'s signature was the *fourth* spelling of its default, sitting on the off
     state after the model flipped on — the exact drift the lockstep test above recounts,
-    latent only because the one production caller passes explicitly. A knob with no
-    default here cannot drift, and this pin is what keeps one from growing back.
+    latent only because the one production caller passes explicitly. ``xc``'s literal
+    ``"pbe"`` became the same shape the day the model stopped defaulting the level of
+    theory. Knobs with no default here cannot drift, and this pin keeps one from
+    growing back.
     """
     import inspect
 
-    parameter = inspect.signature(_runtime.run_dft).parameters["use_df"]
-    assert parameter.default is inspect.Parameter.empty
+    for name in ("use_df", "xc"):
+        parameter = inspect.signature(_runtime.run_dft).parameters[name]
+        assert parameter.default is inspect.Parameter.empty, name
 
 
 def test_strict_scf_reaches_the_server_as_its_opt_out():
@@ -799,3 +812,28 @@ def test_the_server_cli_round_trips_the_opt_out():
             extopt_calc.PyscfExtOptCalculator.from_args(parser.parse_args(tokens)).strict_scf
             is strict
         )
+
+
+def test_calc_refuses_a_calculator_with_no_level_of_theory(monkeypatch):
+    """The server-side half of the required level of theory.
+
+    The engine's strict read gates the generated command, but this class is
+    constructible bare (the lockstep test holds its defaults equal to the model's,
+    which are ``None``) and a hand-run server carries only what its argv said —
+    ``calc`` asks the options model's one rule, so the refusal and its wording
+    cannot fork from the YAML path's.
+    """
+    _install_fake_pyscf(monkeypatch)
+    with pytest.raises(ConfigError, match="'basis' is required"):
+        extopt_calc.PyscfExtOptCalculator().calc(_data())
+    with pytest.raises(ConfigError, match="'xc' is required"):
+        extopt_calc.PyscfExtOptCalculator(basis="def2-svp").calc(_data())
+
+
+def test_run_dft_refuses_dft_with_no_xc(monkeypatch):
+    """The API-boundary half: a direct ``run_dft`` call cannot reach a level nobody named."""
+    _install_fake_pyscf(monkeypatch)
+    mol = MagicMock()
+    mol.spin = 0
+    with pytest.raises(ConfigError, match="needs an xc functional"):
+        _runtime.run_dft(mol, method="dft", xc=None, use_df=False)

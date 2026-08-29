@@ -61,7 +61,7 @@ def build_mol(
 
 
 def _build_scf(
-    mol: Any, *, method: str, xc: str, want_gpu: bool, closed_shell: bool
+    mol: Any, *, method: str, xc: str | None, want_gpu: bool, closed_shell: bool
 ) -> tuple[Any, bool, str]:
     """Construct the (un-run) SCF object; return ``(mf, gpu_used, gpu_msg)``.
 
@@ -98,7 +98,7 @@ def run_dft(
     mol: Any,
     *,
     method: str = "dft",
-    xc: str = "pbe",
+    xc: str | None,
     use_df: bool,
     want_gpu: bool = False,
     nthreads: int = 1,
@@ -110,17 +110,28 @@ def run_dft(
     GPU path uses :mod:`gpu4pyscf.dft` when ``want_gpu`` is true and the
     import succeeds; otherwise the calculation runs on CPU.
 
-    ``use_df`` has **no default here on purpose** — the caller must say. What
-    "unspecified" means belongs to :class:`~chemrefine.engines.pyscf.options.PyscfOptions`
-    alone: this signature's old ``False`` was a fourth spelling of that decision, sitting
-    on the off state after the model flipped on — exactly the drift that shipped twice
-    (the model-vs-calculator split the comment in ``extopt_calc`` recounts), latent here
-    only because the one caller passes explicitly. A knob with no default cannot drift.
+    ``use_df`` and ``xc`` have **no default here on purpose** — the caller must say.
+    What "unspecified" means belongs to
+    :class:`~chemrefine.engines.pyscf.options.PyscfOptions` alone: ``use_df``'s old
+    ``False`` was a fourth spelling of that decision, sitting on the off state after
+    the model flipped on — exactly the drift that shipped twice (the
+    model-vs-calculator split the comment in ``extopt_calc`` recounts), latent only
+    because the one caller passes explicitly. ``xc``'s old ``"pbe"`` was the same
+    shape one release later: once the model stopped defaulting the level of theory,
+    a literal here would have been the last silent spelling of it. A ``dft`` call
+    with ``xc=None`` is refused by name — the API-boundary half of
+    ``PyscfOptions.require_level_of_theory``'s rule. Knobs with no default cannot
+    drift.
 
     ``gradient`` is returned as a list of ``[gx, gy, gz]`` rows when
     ``dograd`` is true, otherwise as an empty list. ``mf`` is returned
     so the caller can run downstream tensor extraction.
     """
+    if method == "dft" and not xc:
+        raise ConfigError(
+            "run_dft: method 'dft' needs an xc functional — pass the one the step's "
+            "options named (pyscf steps require it; see PyscfOptions.require_level_of_theory)"
+        )
     from pyscf import lib
 
     lib.num_threads(nthreads)

@@ -326,16 +326,28 @@ def test_the_preflight_capability_stays_a_claim_not_boilerplate():
     ``mlip-train`` (its refusals — no device, no task, a policy with nothing to act on
     — are decidable from the config, and the step usually sits after days of label
     computation), the ExtOpt family (their options configure a server, so the
-    strict read the run block makes is made up front too), and ``orca`` and ``qchem``
+    strict read the run block makes is made up front too), ``orca`` and ``qchem``
     (an explicit ``operation`` outside a family's parser dispatch would otherwise fail
-    only after the step's jobs had run). The direct script engines
-    stay out by documented design — lenient reads over templates that may carry knobs
-    of their own — and the fake engine is the minimal third-party shape. A new engine
-    that takes the hook extends this pin; one that grows a prepare-time refusal
-    without the hook is the Thursday failure coming back.
+    only after the step's jobs had run), and the direct ``pyscf`` (its level of theory
+    is required — every other engine makes the user name it, so a step omitting
+    ``basis``/``xc`` is refused up front rather than computing at a level nobody
+    chose). Its hook stays a *targeted* refusal, not a strict read: the script
+    engines' lenient reads over templates that may carry knobs of their own remain
+    the documented design, which is why ``mlip`` — whose model has honest defaults,
+    foundation models being the point — still stays out, as does the fake engine
+    (the minimal third-party shape). A new engine that takes the hook extends this
+    pin; one that grows a prepare-time refusal without the hook is the Thursday
+    failure coming back.
     """
     checking = {n for n in ENGINES if isinstance(get_engine(n), PreflightChecking)}
-    assert sorted(checking) == ["mlip-extopt", "mlip-train", "orca", "pyscf-extopt", "qchem"]
+    assert sorted(checking) == [
+        "mlip-extopt",
+        "mlip-train",
+        "orca",
+        "pyscf",
+        "pyscf-extopt",
+        "qchem",
+    ]
 
 
 def test_every_orca_family_engine_refuses_an_unknown_operation_up_front():

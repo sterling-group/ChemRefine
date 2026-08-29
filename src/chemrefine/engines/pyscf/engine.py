@@ -13,10 +13,12 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from chemrefine.config import StepConfig
 from chemrefine.engines._script import ScriptEngine
 from chemrefine.engines.api import register
 from chemrefine.engines.pyscf.backend import PyscfBackend
 from chemrefine.engines.pyscf.options import PyscfOptions
+from chemrefine.state import StepContext, StepInputs
 
 
 @register("pyscf")
@@ -27,12 +29,44 @@ class PyscfEngine(PyscfBackend, ScriptEngine[PyscfOptions]):
     label: ClassVar[str] = "PySCF"
     options_cls: ClassVar[type[PyscfOptions]] = PyscfOptions
 
+    def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
+        """Refuse a step that names no level of theory, before anything runs.
+
+        ORCA takes its level of theory from the template's ``!`` line and Q-Chem from
+        ``$rem``; a direct pyscf step that omitted ``basis`` (or ``xc`` under
+        ``method: dft``) silently rendered the model defaults into ``$BASIS``/``$XC``
+        — the one engine computing at a level the user never chose. The rule is
+        :meth:`~chemrefine.engines.pyscf.options.PyscfOptions.require_level_of_theory`,
+        shared with the ExtOpt engine's strict read; asked through the preflight hook
+        rather than a strict validation because the script engines read leniently by
+        documented design — a ``step{N}.py`` may carry knobs no model declares, and
+        rendering must not fail over them. ``charge`` / ``multiplicity`` are unread —
+        the signature is the capability's.
+        """
+        self.options_cls.require_level_of_theory(step_cfg.options)
+
+    def prepare(self, ctx: StepContext) -> StepInputs:
+        """Re-make the preflight refusal, then render the inputs.
+
+        :meth:`check_step` already ran at the run's preflight walk; repeating it here
+        covers the recovery paths that reach ``prepare`` without one — the same
+        discipline as the ExtOpt and training engines, for the same price.
+        """
+        self.check_step(ctx.step_cfg, charge=ctx.charge, multiplicity=ctx.multiplicity)
+        return super().prepare(ctx)
+
     def _vars_from(self, opts: PyscfOptions) -> dict[str, object]:
         """Expose the SCF knobs as template placeholders, for parity with direct MLIP.
 
         Lets a direct ``step{N}.py`` read ``$METHOD`` / ``$XC`` / ``$BASIS`` / ``$DF`` from the YAML
         ``step.options`` instead of hardcoding them. The base reads them leniently, so a
-        template's extra knobs never fail the render — the ``pyscf-extopt`` path is the one
-        that validates strictly, since it also has to require ``basis`` / ``xc`` explicitly.
+        template's extra knobs never fail the render; the level of theory is required all
+        the same, by :meth:`check_step` — so ``$BASIS`` is never the empty string a bare
+        read would render, and ``$XC`` is empty exactly when ``method: hf`` needs none.
         """
-        return {"METHOD": opts.method, "XC": opts.xc, "BASIS": opts.basis, "DF": opts.df}
+        return {
+            "METHOD": opts.method,
+            "XC": opts.xc or "",
+            "BASIS": opts.basis or "",
+            "DF": opts.df,
+        }

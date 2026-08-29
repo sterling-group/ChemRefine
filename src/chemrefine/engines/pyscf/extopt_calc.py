@@ -59,8 +59,8 @@ class PyscfExtOptCalculator(ComputeBackend):
         self,
         *,
         method: str = "dft",
-        xc: str = "pbe",
-        basis: str = "def2-svp",
+        xc: str | None = None,
+        basis: str | None = None,
         df: bool = True,
         gpu: bool = False,
         save_tensors: bool = False,
@@ -109,12 +109,12 @@ class PyscfExtOptCalculator(ComputeBackend):
         parser.add_argument(
             "--xc",
             default=defaults.xc,
-            help="DFT exchange-correlation functional",
+            help="DFT exchange-correlation functional (required for --method dft)",
         )
         parser.add_argument(
             "--basis",
             default=defaults.basis,
-            help="Orbital basis set",
+            help="Orbital basis set (required)",
         )
         parser.add_argument(
             "--df",
@@ -199,12 +199,23 @@ class PyscfExtOptCalculator(ComputeBackend):
         :class:`~chemrefine.errors.JobFailureError` client-side, and the detail lands in the
         ExtOpt server log beside the structure's other artifacts.
         """
+        # The level-of-theory rule, at the server's own boundary. The engine's strict read
+        # enforces it before any job is generated, but this class is constructible bare —
+        # the lockstep test holds its defaults equal to the model's, which are now None —
+        # and a hand-run server carries only what its argv said. Reconstructing the
+        # named-knobs view lets the options model's one rule (and wording) answer here too.
+        named: dict[str, Any] = {"method": self.method}
+        if self.basis is not None:
+            named["basis"] = self.basis
+        if self.xc is not None:
+            named["xc"] = self.xc
+        basis = PyscfExtOptOptions.require_level_of_theory(named)
         mol = _runtime.build_mol(
             symbols=data.symbols,
             positions_angstrom=data.positions_angstrom,
             charge=data.charge,
             multiplicity=data.multiplicity,
-            basis=self.basis,
+            basis=basis,
         )
         energy, gradient, meta, mf = _runtime.run_dft(
             mol,

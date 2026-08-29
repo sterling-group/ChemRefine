@@ -191,6 +191,14 @@ for the full map.
   Python script, and `pyscf-extopt` serves gradients to ORCA through the ExtOpt
   server. `pyscf-extopt` validates its options strictly — an unrecognized or
   misspelled option fails the step rather than silently running with defaults.
+  Both engines require the level of theory to be named — `basis`, and `xc`
+  for `method: dft` — the direct engine refusing at preflight: every other
+  engine makes the user say it (ORCA in the template's `!` line, Q-Chem in
+  `$rem`), and a silent default would compute at a level nobody chose. The
+  options model carries no `xc`/`basis` defaults anywhere any more, which
+  also re-keys the cache rows of pyscf steps recorded under the old implicit
+  `pbe` — `chemrefine rerun` such a step, or strip its manifest's row
+  provenance and `rebuild-cache` to adopt the outputs under the new keys.
   `strict_scf`
   (default on) refuses to serve a gradient from an SCF that did not converge:
   PySCF returns the last iterate rather than raising, and ORCA's `.out` records

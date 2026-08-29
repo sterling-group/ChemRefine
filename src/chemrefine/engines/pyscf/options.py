@@ -34,15 +34,14 @@ class PyscfOptions(EngineOptions):
     method: Literal["dft", "hf"] = "dft"
     """Electronic-structure method to run."""
 
-    xc: str = "pbe"
-    """Exchange-correlation functional. **Required (no silent default) when
-    ``method: dft``** — the YAML must name it (see :meth:`from_raw`)."""
+    xc: str | None = None
+    """Exchange-correlation functional — **required when ``method: dft``**, with no
+    silent default anywhere (see :meth:`require_level_of_theory`)."""
 
-    basis: str = Field("def2-svp", min_length=1)
-    """Orbital basis-set name (passed verbatim to :class:`pyscf.gto.Mole`).
-    **Required (no silent default)** — the YAML must name it (see
-    :meth:`from_raw`). The field keeps a value only so the server CLI and
-    programmatic callers can construct an instance."""
+    basis: str | None = Field(None, min_length=1)
+    """Orbital basis-set name (passed verbatim to :class:`pyscf.gto.Mole`) —
+    **required**, with no silent default anywhere: every engine makes the user name
+    the level of theory (see :meth:`require_level_of_theory`)."""
 
     df: bool = True
     """Enable density fitting / RI, on both engines. Defaults **on** — a large speed-up at
@@ -77,32 +76,54 @@ class PyscfOptions(EngineOptions):
         return data
 
     @classmethod
+    def require_level_of_theory(cls, raw: Mapping[str, Any] | None) -> str:
+        """Refuse options that name no explicit level of theory; return the named basis.
+
+        Returning the value the check proved is what lets a caller that computes with
+        it (the ExtOpt calculator's ``calc``) take it already narrowed to ``str`` —
+        the alternative was an ``assert`` re-stating what this just established.
+
+        ``basis`` must be named, and ``xc`` when ``method`` is ``dft`` — every other
+        engine makes the user say the level of theory (ORCA's lives in the template's
+        ``!`` line, Q-Chem's in ``$rem``), so a silent ``def2-svp``/``pbe`` would make
+        pyscf the one exception, and the wrong kind of exception: a level of theory the
+        user never chose. The fields default to ``None`` — a bare instance is
+        constructible (the server's CLI parser and the lockstep-held calculator build
+        one) but nothing runs without the values named: this rule, the strict read,
+        and the calculator's own ``calc`` all refuse.
+
+        One home, two callers, because each engine reaches the requirement through
+        different reads: :meth:`from_raw` (the ExtOpt server's strict read) enforces it
+        inside validation, while the direct engine's preflight
+        (:meth:`~chemrefine.engines.pyscf.engine.PyscfEngine.check_step`) reads leniently
+        — a ``step{N}.py`` template may carry knobs no model declares, so ``from_raw``'s
+        ``extra="forbid"`` cannot be its gate — and asks this instead. The whole check reads
+        through the lenient model — never off the raw dict — so ``basis: null`` and an
+        absent key are one fact, and the raw-read invariant holds.
+        """
+        opts = cls.from_raw_lenient(raw or {})
+        if opts.basis is None:
+            raise ConfigError("pyscf: 'basis' is required (name the basis set explicitly)")
+        if opts.method == "dft" and opts.xc is None:
+            raise ConfigError("pyscf: 'xc' is required when method is 'dft'")
+        return opts.basis
+
+    @classmethod
     def from_raw(cls, raw: Mapping[str, Any] | None) -> Self:
         """Validate a raw ``step.options`` dict from the YAML — the strict read.
 
-        ``basis`` must be named explicitly (no silent default), and ``xc`` must
-        be named when ``method`` is ``dft`` — a misconfigured step fails fast
-        rather than running with a surprise level of theory. **This is the
-        ExtOpt path's read**: only ``pyscf-extopt`` calls it (its options
-        configure a server, so strictness is right). The direct ``pyscf``
-        engine reads leniently by the script engines' documented design — its
-        ``step{N}.py`` template may carry knobs no model declares — so a direct
-        step that omits ``basis`` renders the model's default, which the knob
-        table in the docs states. (The model fields keep values only so the
-        server CLI / programmatic callers can still construct an instance.)
+        The level-of-theory requirement (:meth:`require_level_of_theory`) plus the base's
+        strict validation: ``pyscf-extopt`` calls this (its options configure a server),
+        and the direct engine makes the same refusal at preflight through the shared
+        classmethod, so the engines cannot disagree about what a runnable step names.
 
         Validation is delegated to the base rather than calling ``cls`` directly, so a
         pydantic error still becomes a :class:`~chemrefine.errors.ConfigError` and a typoed
-        knob stays inside the CLI's exit-code contract. The extra requirements below are the
-        only thing this override adds.
+        knob stays inside the CLI's exit-code contract.
         """
         raw = raw or {}
-        opts = super().from_raw(raw)
-        if "basis" not in raw:
-            raise ConfigError("pyscf: 'basis' is required (name the basis set explicitly)")
-        if opts.method == "dft" and "xc" not in raw:
-            raise ConfigError("pyscf: 'xc' is required when method is 'dft'")
-        return opts
+        cls.require_level_of_theory(raw)
+        return super().from_raw(raw)
 
 
 class PyscfExtOptOptions(PyscfOptions):
