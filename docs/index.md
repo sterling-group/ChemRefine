@@ -1,4 +1,5 @@
-![chemrefinelogo](https://github.com/user-attachments/assets/ae7b1ad5-0d90-445c-be83-ddcb76fa85c3)
+![ChemRefine](assets/logo-wordmark.svg#only-light){ width="480" }
+![ChemRefine](assets/logo-wordmark-dark.svg#only-dark){ width="480" }
 
 # ChemRefine
 
