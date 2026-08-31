@@ -74,6 +74,10 @@ def _declared(key: str) -> str:
 _SITE = _declared("site_url")
 _REPO = _declared("repo_url")
 
+#: The raw-file host for the same repository — the form the README uses for its logo images,
+#: because it is the PyPI long-description and relative paths break there.
+_RAW = _REPO.replace("https://github.com/", "https://raw.githubusercontent.com/")
+
 #: ``sterling-group``, ``ChemRefine`` — the pair a rename changes.
 _ORG, _PROJECT = _REPO.rsplit("/", 2)[-2:]
 
@@ -90,7 +94,9 @@ _OWNER_RE = re.compile(
 
 #: A URL pointing back at this project, trimmed of the punctuation that ends a sentence or
 #: closes a markdown link.
-_SELF_RE = re.compile(r"(?:" + re.escape(_SITE) + r"|" + re.escape(_REPO) + r")[^\s)>\"'\]]*")
+_SELF_RE = re.compile(
+    r"(?:" + "|".join(re.escape(u) for u in (_SITE, _REPO, _RAW)) + r")[^\s)>\"'\]]*"
+)
 
 #: ``blob``/``tree`` are the two repository-browsing routes that name a path; every other
 #: route on the repository host (``/issues``, ``/releases``, ``/security/advisories/new``,
@@ -140,6 +146,10 @@ def _candidates(url: str) -> list[Path] | None:
         if not page:
             return None  # the site root is the home page, not a path to resolve
         return [_DOCS / f"{page}.md", _DOCS / page / "index.md"]
+    if url.startswith(_RAW):
+        # raw.githubusercontent addresses ``<ref>/<path>`` directly — no blob/tree route
+        ref_and_path = url[len(_RAW) :].strip("/").split("/", 1)
+        return [_REPO_ROOT / ref_and_path[1]] if len(ref_and_path) == 2 else None
     m = _BLOB_RE.match(url[len(_REPO) :].lstrip("/"))
     return [_REPO_ROOT / m.group(1)] if m else None
 
