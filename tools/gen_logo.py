@@ -562,10 +562,14 @@ def text_to_path(src: Path, dst: Path):
         raise RuntimeError(f"inkscape produced no output: {dst}")
 
 
-def export_png(svg: Path, png: Path, size: int):
-    """Rasterize *svg* to a square *size*-pixel PNG via inkscape."""
+def export_png(svg: Path, png: Path, width: int, height: int | None = None):
+    """Rasterize *svg* to PNG via inkscape: square by default, else by width.
+
+    height=None keeps the SVG's own aspect (used for the lockup raster the
+    README serves to PyPI, where raw SVG does not render)."""
+    dims = ["-w", str(width)] + ([] if height is None else ["-h", str(height)])
     subprocess.run(  # noqa: S603 - fixed args over files this run created
-        ["inkscape", str(svg), "-w", str(size), "-h", str(size), "-o", str(png)],  # noqa: S607 - snap-managed, not on a fixed path
+        ["inkscape", str(svg), *dims, "-o", str(png)],  # noqa: S607 - snap-managed, not on a fixed path
         check=True,
         capture_output=True,
     )
@@ -621,6 +625,9 @@ def main() -> int:
         for name, px in sizes.items():
             export_png(wd / "favicon.svg", wd / name, px, px)
             shutil.copy2(wd / name, ASSETS / name)
+
+        export_png(wd / "logo-wordmark.svg", wd / "logo-wordmark-1200.png", 1200)
+        shutil.copy2(wd / "logo-wordmark-1200.png", ASSETS / "logo-wordmark-1200.png")
 
         try:
             from PIL import Image
