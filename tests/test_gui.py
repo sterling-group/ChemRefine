@@ -361,6 +361,8 @@ def test_dashboard_status_results_failures(client: Any, tmp_path: Path):
         ("/api/results", "limit", 2.5),
         ("/api/results", "offset", True),
         ("/api/results", "offset", {"n": 1}),
+        ("/api/run", "max_cores", "eight"),
+        ("/api/run", "max_gpus", 1.5),
     ],
 )
 def test_a_dashboard_count_that_is_not_a_number_is_a_400(
@@ -372,6 +374,13 @@ def test_a_dashboard_count_that_is_not_a_number_is_a_400(
     ``ValueError``/``TypeError`` into a 500, ``null`` (an explicit JSON null slips past
     ``payload.get``'s default) a ``TypeError``, while ``2.5`` and ``true`` were silently
     truncated to numbers nobody sent. All five are now the same refusal.
+
+    The two ``/api/run`` rows are the ones the helper's own commit missed while its
+    message said "every wire number". They are the worst of the set rather than the
+    least: these do not reach an ``int()`` here at all — they are rendered onto a
+    *detached child's* argv, so an unreadable one is exit 2 into a log nobody is
+    watching, arriving after this endpoint has already answered 200 with a pid. No
+    ``Popen`` is asserted against because a refused payload never reaches ``start_run``.
     """
     config = _reported_tree(tmp_path)
     response = _post(client, endpoint, {"config_path": str(config), field: value})
@@ -415,6 +424,44 @@ def test_dashboard_run_launches_detached(
     [call] = calls
     assert call["argv"][3] == "rerun-errors"
     assert call["start_new_session"] is True
+
+
+def test_the_run_budgets_reach_the_child_and_absence_stays_absent(
+    client: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The other half of the guard: it must pass a real budget through, and invent none.
+
+    ``_wire_int``'s docstring leaves absence to the caller, and here the callee's "unset"
+    is ``None`` — ``max_gpus`` then auto-resolves (unlimited under SLURM, the detected
+    device count locally). Reaching for ``payload.get(key, default)`` instead, the way the
+    two dashboard counts legitimately do, would put ``--maxgpus 0`` on the argv of every
+    run this page launches and serialise every CUDA step against a budget nobody set.
+
+    ``0`` is the value that makes this more than a smoke test: it is falsy and valid, so a
+    truthiness check in place of the ``(None, "")`` sentinel drops it silently.
+    """
+    import subprocess
+
+    argvs: list[list[str]] = []
+
+    class _Recorded:
+        def __init__(self, argv: list[str], **kwargs: Any) -> None:
+            self.pid = 4242
+            argvs.append(argv)
+
+    monkeypatch.setattr(subprocess, "Popen", _Recorded)
+    config = _reported_tree(tmp_path)
+
+    # A text box's string and a form pane's JSON int, the two spellings `_wire_int` exists
+    # to accept — then the same call with neither key.
+    _post(client, "/api/run", {"config_path": str(config), "max_cores": "8", "max_gpus": 0})
+    _post(client, "/api/run", {"config_path": str(config)})
+
+    budgeted, bare = argvs
+    assert budgeted[budgeted.index("--maxcores") + 1] == "8"
+    assert budgeted[budgeted.index("--maxgpus") + 1] == "0"
+    assert "--maxcores" not in bare
+    assert "--maxgpus" not in bare
 
 
 def test_dashboard_run_surfaces_a_held_lock_as_exit_code_10(client: Any, tmp_path: Path):

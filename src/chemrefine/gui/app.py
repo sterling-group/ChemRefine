@@ -568,15 +568,29 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         A held lock surfaces through the error handler as the documented
         ``{error, exit_code: 10}`` shape; the browser confirmed the action already,
         and the child outlives this server exactly as it outlives an agent session.
+
+        The two budgets are wire numbers and go through :func:`_wire_int` like the
+        rest of them.
         """
         payload = request.get_json(force=True)
+        # These are the two numbers that reach a *child process*: `start_run` renders
+        # them onto its argv, where one Typer cannot read is exit 2 into a log nobody is
+        # watching — after this call has already returned a pid and a log path. That is
+        # the failure `start_run`'s own docstring promises to refuse here rather than
+        # there, and the guard the rest of this app's numbers already have.
+        #
+        # The `not in (None, "")` sentinel rather than `payload.get(key, default)`: the
+        # callee's "unset" is `None` (auto-resolve), so absence has to stay absent — the
+        # same shape `/api/structure` uses for `mode_index`.
+        cores = payload.get("max_cores")
+        gpus = payload.get("max_gpus")
         return jsonify(
             agent_tools.start_run(
                 payload["config_path"],
                 action=payload.get("action", "run"),
                 target=payload.get("target"),
-                max_cores=payload.get("max_cores"),
-                max_gpus=payload.get("max_gpus"),
+                max_cores=_wire_int(cores, "max_cores") if cores not in (None, "") else None,
+                max_gpus=_wire_int(gpus, "max_gpus") if gpus not in (None, "") else None,
             )
         )
 
