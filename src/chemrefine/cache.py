@@ -1150,8 +1150,8 @@ def save_manifest(
         "search_key": search_key,
         "files": [
             {
-                "input": str(inp),
-                "output": str(out),
+                "input": _manifest_path_text(inp, step_dir),
+                "output": _manifest_path_text(out, step_dir),
                 "id": sid,
                 **(
                     {"row_key": provenance[sid][0], "parent_digest": provenance[sid][1]}
@@ -1164,6 +1164,20 @@ def save_manifest(
     }
     write_json(path, data)
     return path
+
+
+def _manifest_path_text(path: Path, step_dir: Path) -> str:
+    """How a manifest spells a file: relative to the step directory when it lives there.
+
+    Everything else about a tree is addressed relatively — ``Config.step_dir`` derives from
+    ``output_dir``, which resolves against the config file's own directory, and no key holds
+    a path — so a tree copied or moved keeps working everywhere. The manifest was the one
+    exception: spelled absolute, it named the machine the step ran on, and ``rebuild-cache``
+    and a ledgered ``rerun`` on the copy read paths that were not there. Every shipped engine
+    writes its jobs under the step directory, so the relative spelling is the normal one;
+    a file elsewhere stays absolute, and :func:`load_manifest` reads both.
+    """
+    return str(path.relative_to(step_dir)) if path.is_relative_to(step_dir) else str(path)
 
 
 @dataclass(frozen=True)
@@ -1216,6 +1230,12 @@ def load_manifest_provenance(step_dir: Path) -> ManifestProvenance:
 def load_manifest(step_dir: Path) -> StepInputs | None:
     """Rehydrate :class:`StepInputs` from the persisted manifest, or ``None``.
 
+    A relative entry is anchored to ``step_dir`` — the spelling :func:`save_manifest`
+    writes, which is what lets a moved tree find its own outputs; an absolute one is
+    taken verbatim, so every manifest written before that spelling, and every hand-written
+    v1 adoption manifest, reads exactly as it did. ``Path.is_absolute`` tells the two apart
+    without ambiguity.
+
     Raises :class:`CacheError` if the JSON is malformed or is missing the
     expected ``files`` field — callers should treat a corrupt manifest as fatal
     rather than silently re-parsing an empty batch.
@@ -1225,10 +1245,19 @@ def load_manifest(step_dir: Path) -> StepInputs | None:
     if data is None:
         return None
     try:
-        files = tuple((Path(rec["input"]), Path(rec["output"]), rec["id"]) for rec in data["files"])
+        files = tuple(
+            (_anchor(rec["input"], step_dir), _anchor(rec["output"], step_dir), rec["id"])
+            for rec in data["files"]
+        )
     except (KeyError, TypeError) as e:
         raise CacheError(f"corrupt manifest at {path}: {e}") from e
     return StepInputs(files=files)
+
+
+def _anchor(text: str, step_dir: Path) -> Path:
+    """A manifest entry as a path: relative ones live under ``step_dir``."""
+    path = Path(text)
+    return path if path.is_absolute() else step_dir / path
 
 
 # ---------------------------------------------------------------------------

@@ -16,6 +16,10 @@ two modes:
 
 ``@OUTPUT_DIR@`` tokens in the archived ``_cache`` documents are rewritten
 to the extraction-specific output dir, mirroring what :func:`pack_case` did.
+Manifests no longer need it — they spell their files relative to the step
+directory — but recordings packed before that spelling (``mlip_train``, whose
+parse-only re-pack is not possible) still carry the token, so the rewrite
+stays until every archive has been re-packed.
 """
 
 from __future__ import annotations

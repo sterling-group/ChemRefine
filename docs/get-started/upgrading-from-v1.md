@@ -198,7 +198,8 @@ mv 0/step1_0_opt.finalensemble.xyz 0/step1_0.finalensemble.xyz
 ```
 
 Then write the step's `_cache/manifest.json` — the record `rebuild-cache` requires, naming
-which input produced which output for which structure id (absolute paths):
+which input produced which output for which structure id. Paths are relative to the step
+directory, so the record moves with the tree (absolute paths are read too):
 
 ```json
 {
@@ -207,8 +208,8 @@ which input produced which output for which structure id (absolute paths):
   "fingerprint": "",
   "files": [
     {
-      "input": "/abs/path/outputs/<run>/step1/0/step1_0.inp",
-      "output": "/abs/path/outputs/<run>/step1/0/step1_0.out",
+      "input": "0/step1_0.inp",
+      "output": "0/step1_0.out",
       "id": "0"
     }
   ]

@@ -287,6 +287,11 @@ for the full map.
   re-parses under the current rules, submits nothing, and writes the provenance —
   and `resume` names exactly that command instead of silently archiving finished
   work.
+- **The manifest moves with the tree.** `_cache/manifest.json` spells its input and
+  output files relative to the step directory, so a copied or moved output tree can be
+  `rebuild-cache`d, `rerun` and inspected where it lands; it used to record the absolute
+  paths of the machine the step ran on. Manifests written before this — and hand-written
+  v1 adoption manifests — carry absolute paths and are read exactly as before.
 - **A `task_name` you state wins over the `model_path` shortcut.** A checkpoint with no
   library named still means MACE, as it always has; naming one loads the checkpoint with
   *that* library. The old rule sent any `model_path` to MACE, which was right while MACE was

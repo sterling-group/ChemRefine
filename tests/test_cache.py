@@ -245,6 +245,72 @@ def test_the_stamp_fills_every_provenance_slot_save_manifest_has():
     assert all(stamp.values()), "a stamped slot must never carry the default"
 
 
+def test_the_manifest_spells_its_files_relative_to_the_step_directory(tmp_path: Path):
+    """Everything about a tree is addressed relatively; the manifest was the one exception.
+
+    Spelled absolute it named the machine the step ran on, and a copied tree's
+    `rebuild-cache` / ledgered `rerun` read paths that were not there. A file outside the
+    step directory has no relative spelling and stays absolute — the writer is total.
+    """
+    step_dir = tmp_path / "outputs" / "step1"
+    elsewhere = tmp_path / "shared" / "seed.xyz"
+    inputs = StepInputs(
+        files=(
+            (step_dir / "0" / "step1_0.inp", step_dir / "0" / "step1_0.out", "0"),
+            (elsewhere, step_dir / "1" / "step1_1.out", "1"),
+        )
+    )
+    save_manifest(inputs, step_dir, operation="opt_sp", engine="fake")
+    records = json.loads(cache.manifest_path(step_dir).read_text(encoding="utf-8"))["files"]
+    assert [(r["input"], r["output"]) for r in records] == [
+        ("0/step1_0.inp", "0/step1_0.out"),
+        (str(elsewhere), "1/step1_1.out"),
+    ]
+    # Read back, every path is the one the caller wrote.
+    assert load_manifest(step_dir) == inputs
+
+
+def test_a_moved_tree_reads_its_own_manifest(tmp_path: Path):
+    """The point of the relative spelling: the manifest follows the tree it describes."""
+    import shutil
+
+    before = tmp_path / "here" / "step1"
+    inputs = StepInputs(files=((before / "0" / "a.inp", before / "0" / "a.out", "0"),))
+    save_manifest(inputs, before, operation="opt_sp", engine="fake")
+
+    after = tmp_path / "there" / "step1"
+    shutil.move(str(before.parent), str(after.parent))
+
+    assert load_manifest(after) == StepInputs(
+        files=((after / "0" / "a.inp", after / "0" / "a.out", "0"),)
+    )
+
+
+def test_a_manifest_with_absolute_paths_reads_them_verbatim(tmp_path: Path):
+    """Every manifest written before the relative spelling, and every hand-written v1
+    adoption manifest, names absolute paths — and reads exactly as it always did."""
+    from chemrefine.cache import manifest_path
+
+    step_dir = tmp_path / "step1"
+    manifest_path(step_dir).parent.mkdir(parents=True)
+    manifest_path(step_dir).write_text(
+        json.dumps(
+            {
+                "operation": "goat",
+                "engine": "orca",
+                "fingerprint": "",
+                "files": [
+                    {"input": "/abs/run/step1/0/s.inp", "output": "/abs/run/s.out", "id": "0"}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert load_manifest(step_dir) == StepInputs(
+        files=((Path("/abs/run/step1/0/s.inp"), Path("/abs/run/s.out"), "0"),)
+    )
+
+
 def test_a_bare_manifest_reads_as_unprovenanced(tmp_path: Path):
     """A manifest without row keys — every pre-provenance tree — is empty provenance."""
     from chemrefine.cache import load_manifest_provenance

@@ -925,16 +925,16 @@ def _mode_displacements(frame: ParsedResult, mode_index: int) -> NDArray[np.floa
 def _locate_output(step_dir: Path, structure_id: str, recorded: Path) -> Path | None:
     """Where a structure's output actually is now, or ``None`` if it is really gone.
 
-    The manifest records the path the file was *written* to, resolved absolute
-    (:func:`chemrefine.cache.save_manifest`). Everything else about a tree is addressed
-    relatively — ``Config.step_dir`` derives from ``output_dir``, which resolves against
-    the config file's own directory — so a tree that is copied or moved keeps working
-    everywhere except here, where the recorded path still names the machine it ran on.
-    That produced "rerun the step to regenerate it" about a file sitting in the copy.
+    A manifest spells its files relative to the step directory
+    (:func:`chemrefine.cache.save_manifest`), so on a copied or moved tree the recorded
+    path is the right one. The probes below are for what the recorded path cannot cover:
+    a manifest written before that spelling, which still names the machine it ran on, and
+    an output a retry or NMS left in an ``attemptN/`` sub-directory after the manifest
+    was written. Without them the answer was "rerun the step to regenerate it" about a
+    file sitting right there.
 
     Three probes, cheapest first: the recorded path; the same basename directly under this
-    tree's ``step_dir/structure_id``; and finally a search below that, which is what finds
-    an output written into an ``attemptN/`` sub-directory by a retry or by NMS.
+    tree's ``step_dir/structure_id``; and finally a search below that.
     """
     if recorded.is_file():
         return recorded

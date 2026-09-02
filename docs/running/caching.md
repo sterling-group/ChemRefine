@@ -99,8 +99,9 @@ support recovery:
 
 - **`manifest.json`** — the input → output → structure-ID file layout, so
   `rerun` / recovery can rehydrate which input produced which output after a restart.
+  Paths are spelled relative to the step directory, so the record moves with the tree.
   It also carries the step's **provenance** — the fingerprint, the resolution's
-  criterion, and each row's own key — written *before* any job is submitted. That is
+  criterion and search halves, and each row's own key — written *before* any job is submitted. That is
   what lets a later `resume` prove, structure by structure, that an output on disk is
   the one this configuration would compute: matching rows are **adopted** (re-parsed,
   never resubmitted) and only the rest run. A manifest *without* row provenance — an
