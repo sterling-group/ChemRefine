@@ -428,9 +428,12 @@ function builder() {
     withSteps(config) {
       // `steps:` written but empty parses as null, and a half-typed raw edit can leave
       // a scalar there; either one made every later cfg.steps.map/length throw and
-      // blanked the builder for good.
+      // blanked the builder for good. The *entries* get the same guard: a mid-edit
+      // `- ` parses as a null entry, whose card renders broken and whose renumber()
+      // (`null.step = i + 1`) then throws on every remove/move, desyncing the panes.
       const merged = { steps: [], ...config };
       if (!Array.isArray(merged.steps)) merged.steps = [];
+      merged.steps = merged.steps.filter((s) => s && typeof s === "object" && !Array.isArray(s));
       return merged;
     },
 

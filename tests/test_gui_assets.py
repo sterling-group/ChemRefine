@@ -3115,3 +3115,47 @@ def test_the_validation_base_is_a_directory_even_for_a_bare_filename():
                                   "input.yaml", "/input.yaml"].map(parentDir)));
     """)
     assert json.loads(out) == ["/home/u/proj", "sub", ".", "/"]
+
+
+def test_a_step_entry_that_is_not_a_mapping_cannot_reach_the_form():
+    """`withSteps` drops null and scalar entries, so `renumber()` cannot throw on them.
+
+    A mid-edit `- ` in the raw pane parses as a null *entry* inside a perfectly valid
+    list — the list-level guard passes it through — and the form then renders a broken
+    card whose first remove/move throws `TypeError` in `renumber()` (`null.step`),
+    desyncing the panes. Driven through adopt's real path: filter, then renumber over
+    what survived.
+    """
+    out = _run_component_in_node("""
+      const b = builder();
+      const raw = [{ step: 1, engine: "orca" }, null, "opt", ["x"], { step: 9 }];
+      b.cfg = b.withSteps({ steps: raw });
+      b.rekeySteps();
+      b.renumber();
+      console.log(JSON.stringify(b.cfg.steps));
+    """)
+    assert json.loads(out) == [{"step": 1, "engine": "orca"}, {"step": 2}]
+
+
+def test_the_run_summary_survives_an_unreadable_lock():
+    """The one `runStatus.holder` chain answers every documented status shape.
+
+    The expression guard above declares mid-chain members like `.holder` exactly what
+    it cannot check, and the backend documents `running: true, holder: null` for a
+    lock that exists but is unreadable — the killed-mid-write residue, precisely the
+    stuck state this summary exists to show. Evaluated as the page would, against all
+    four shapes, so a `null.pid` TypeError cannot come back on the 5 s poll.
+    """
+    html = INDEX.read_text(encoding="utf-8")
+    expressions = [e for e in _ALPINE_ATTR.findall(html) if "runStatus.holder" in e]
+    assert len(expressions) == 1, "the summary expression moved or forked; update this test"
+    out = _run_in_node(f"""
+      const summary = new Function("runStatus", "return (" + {json.dumps(expressions[0])} + ");");
+      console.log(JSON.stringify([
+        summary({{ running: true, holder: {{ pid: 42 }} }}),
+        summary({{ running: true, holder: null }}),
+        summary({{ running: false, holder: null }}),
+        summary(null),
+      ]));
+    """)
+    assert json.loads(out) == ["running (pid 42)", "running (unreadable lock)", "idle", ""]

@@ -578,8 +578,11 @@
     <details id="run" x-show="savedPath && !staticMode" style="display:none"
              @toggle="$event.target.open && refreshStatus()">
       <summary><b>Run</b>
+        <!-- `holder` is null for a lock that exists but is unreadable — the killed-mid-write
+             residue the backend documents as `running: true, holder: null` — which is exactly
+             the stuck-lock state this summary exists to show, so it must not TypeError on it. -->
         <span class="muted" x-show="runStatus"
-              x-text="runStatus ? (runStatus.running ? 'running (pid ' + runStatus.holder.pid + ')' : 'idle') : ''"></span>
+              x-text="runStatus ? (runStatus.running ? (runStatus.holder ? 'running (pid ' + runStatus.holder.pid + ')' : 'running (unreadable lock)') : 'idle') : ''"></span>
       </summary>
       <!-- The whole recovery vocabulary, not the half of it that was reachable: a tree
            whose cache predates a format, or whose NMS resolution needs redoing, was

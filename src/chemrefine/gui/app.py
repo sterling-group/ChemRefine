@@ -37,8 +37,34 @@ from werkzeug.exceptions import HTTPException
 
 from chemrefine import agent_tools, introspect
 from chemrefine.cache import atomic_write
-from chemrefine.errors import ChemRefineError
+from chemrefine.errors import ChemRefineError, ConfigError
 from chemrefine.gui import STATIC_DIR
+
+
+def _wire_int(value: Any, key: str) -> int:
+    """One whole number off the wire — a JSON int or a decimal string — or the 400.
+
+    The two frontends spell the same field differently: the form pane ships JSON
+    numbers, the free-text boxes ship strings, and both are legitimate — a guard that
+    took only one of them would break the other pane. A string gets one optional
+    leading minus and then ``isdecimal`` (``--5`` is not a number, and the
+    ``lstrip("-")`` trimming that admitted it is how a comment promising 400 sat on a
+    line that raised 500). Everything else — ``7a``, ``3.5``, ``null``, a JSON
+    boolean — raises :class:`ConfigError`, which :func:`surface` turns into the
+    documented ``{error, exit_code}`` 400 like every other unusable input to this app.
+    Absence is the caller's business, decided before the call the way ``_step_key``'s
+    callers decide it (``payload.get(key, default)``, or the ``not in (None, "")``
+    sentinel for a field whose callee wants ``None``).
+    """
+    # The bool test precedes the int test it would otherwise vanish under: bool is an
+    # int subclass, and a JSON `true` silently meaning 1 is not a contract anyone wrote.
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    text = str(value)
+    digits = text.removeprefix("-")
+    if isinstance(value, str) and digits and digits.isdecimal():
+        return int(text)
+    raise ConfigError(f"{key} {value!r} is not a whole number")
 
 
 def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
@@ -256,18 +282,12 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         """
         step = request.args.get("step")
         mode = request.args.get("mode_index")
-        if mode not in (None, "") and not mode.lstrip("-").isdecimal():
-            # The same guard `_step_key` gives the `step` argument on the line below, for
-            # the same reason: the mode box is free text, and a bare `int()` on `7a` is a
-            # ValueError that `surface` re-raises as a 500 with a traceback, where every
-            # other unusable input to this app is a plain 400.
-            return jsonify({"error": f"mode_index {mode!r} is not a whole number"}), 400
         return jsonify(
             agent_tools.get_structure(
                 request.args["config_path"],
                 _step_key(step) if step not in (None, "") else None,
                 structure_id=request.args.get("structure_id"),
-                mode_index=int(mode) if mode not in (None, "") else None,
+                mode_index=_wire_int(mode, "mode_index") if mode not in (None, "") else None,
             )
         )
 
@@ -324,7 +344,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         return jsonify(
             agent_tools.run_status(
                 payload["config_path"],
-                log_tail_lines=int(payload.get("log_tail_lines", 40)),
+                log_tail_lines=_wire_int(payload.get("log_tail_lines", 40), "log_tail_lines"),
             )
         )
 
@@ -336,8 +356,8 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
             agent_tools.get_results(
                 payload["config_path"],
                 step=payload.get("step"),
-                limit=int(payload.get("limit", 20)),
-                offset=int(payload.get("offset", 0)),
+                limit=_wire_int(payload.get("limit", 20), "limit"),
+                offset=_wire_int(payload.get("offset", 0), "offset"),
             )
         )
 
