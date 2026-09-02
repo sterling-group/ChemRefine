@@ -489,9 +489,23 @@ def build_structures(
     stale set is cleared before writing, and a SMILES list that fails partway is cleaned
     up exactly as the XYZ branch always was: the directory afterwards holds this call's
     structures, or none.
+
+    Which is why a source that names **no** structures is refused before anything is
+    deleted, on both branches. Owning the seed set means an empty call would empty the
+    directory and report ``written: []`` as a success — the caller's seeds gone, and the
+    payload saying the tool did its job. The XYZ branch has always refused its own
+    spelling of this (an ``xyz_text`` that parses to zero frames); an empty ``smiles``
+    list is the same claim and gets the same answer.
     """
     if (smiles is None) == (xyz_text is None):
         raise ConfigError("provide exactly one of smiles or xyz_text")
+    if smiles is not None and not smiles:
+        # Before `out.mkdir` and the clear below, which is the whole point: a refusal that
+        # ran after them would already have destroyed what it refused to replace.
+        raise ConfigError(
+            "smiles is empty — name at least one molecule to build "
+            "(this call would otherwise clear the seed set in out_dir and write nothing)"
+        )
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     for stale in out.glob("structure_*.xyz"):

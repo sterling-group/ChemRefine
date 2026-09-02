@@ -210,6 +210,31 @@ def test_build_structures_refuses_an_xyz_text_with_no_frames(tmp_path: Path, emp
     assert not (tmp_path / "seeds" / "structure_0.xyz").exists()
 
 
+def test_an_empty_smiles_list_is_refused_before_the_seed_set_is_cleared(tmp_path: Path):
+    """The sibling of the refusal above, on the branch that had none — and it is worse.
+
+    An empty list is neither ``None`` (so "exactly one source" passes) nor detectably
+    empty afterwards, so it reached the stale-set clear that "a call owns the whole seed
+    set" justifies: every ``structure_*.xyz`` unlinked, nothing written, and
+    ``{"written": [], "warnings": []}`` returned — a success payload for a call that
+    destroyed the caller's seeds. ``smiles: []`` is an ordinary tool-call slip, and the
+    human approval this tool sits behind is for "build structures", not for "empty this
+    directory".
+
+    The assertion that matters is the second one: the refusal has to land *before* the
+    clear, so it is the surviving files rather than the exception that is under test.
+    """
+    seeds = tmp_path / "seeds"
+    seeds.mkdir()
+    (seeds / "structure_0.xyz").write_text("1\nwater-ish\nH 0.0 0.0 0.0\n", encoding="utf-8")
+    (seeds / "structure_1.xyz").write_text("1\nanother\nH 0.0 0.0 1.0\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="at least one molecule"):
+        agent_tools.build_structures(str(seeds), smiles=[])
+
+    assert sorted(p.name for p in seeds.iterdir()) == ["structure_0.xyz", "structure_1.xyz"]
+
+
 def test_build_structures_parity_checks_each_xyz_frame(tmp_path: Path):
     result = agent_tools.build_structures(
         str(tmp_path / "seeds"), xyz_text="1\na lone hydrogen\nH 0.0 0.0 0.0\n"
