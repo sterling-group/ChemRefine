@@ -415,3 +415,21 @@ def test_the_report_serializes_whole(tmp_path: Path):
     assert wire["ok"] is False
     assert wire["issues"][0]["kind"] == "engine"
     assert wire["issues"][0]["loc"] == ["steps", 0, "engine"]
+
+
+def test_an_absent_executable_path_is_a_warning_row_not_only_a_log_line(tmp_path: Path):
+    """`chemrefine validate`, the GUI, and MCP clients read the report, not stderr.
+
+    The load-time check was logger-only, so every report reader was told `ok` with no
+    warnings while a typo'd `/opt/orca/orca` path waited to fail at submit time — the
+    same finding-only-for-stderr-watchers class the deprecation sink closed for legacy
+    spellings. A bare command name stays off the report: it resolves on the executing
+    host at submit time, exactly as the load-time warning's contract says.
+    """
+    report = _validate(tmp_path, executables={"orca": str(tmp_path / "no" / "orca")})
+    [row] = [w for w in report.warnings if w.kind == "executable"]
+    assert row.loc == ("executables", "orca")
+    assert "does not exist on this host" in row.message
+
+    bare = _validate(tmp_path, executables={"orca": "orca"})
+    assert [w for w in bare.warnings if w.kind == "executable"] == []

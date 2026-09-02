@@ -243,7 +243,7 @@ def test_start_run_launches_a_detached_chemrefine(tmp_path: Path, recorded_popen
     result = agent_tools.start_run(str(path), max_cores=2)
     [call] = recorded_popen.calls
     assert call["argv"][1:4] == ["-m", "chemrefine", "run"]
-    assert call["argv"][-2:] == ["--maxcores", "2"]
+    assert call["argv"][4:6] == ["--maxcores", "2"]
     assert call["start_new_session"] is True  # survives the agent session ending
     assert result["pid"] == 4242
     assert Path(result["log"]).parent.name == "agent_runs"
@@ -255,8 +255,21 @@ def test_start_run_passes_the_target_through(tmp_path: Path, recorded_popen):
     )
     agent_tools.start_run(str(path), action="rerun", target="screen", max_gpus=0)
     [call] = recorded_popen.calls
-    assert call["argv"][3:6] == ["rerun", str(path.resolve()), "screen"]
-    assert call["argv"][-2:] == ["--maxgpus", "0"]
+    assert call["argv"][4:6] == ["--maxgpus", "0"]
+    assert call["argv"][-3:] == ["--", str(path.resolve()), "screen"]
+
+
+def test_start_run_ends_option_parsing_before_the_positionals(tmp_path: Path, recorded_popen):
+    """``--`` stands between the flags and the positionals on the child's argv.
+
+    Belt and braces under the config model's leading-hyphen name refusal: whatever a
+    positional looks like, the child's parser can never read it as an option — the
+    failure mode was exit 2 into an unwatched log, after a pid was already returned.
+    """
+    path = _write_config(tmp_path)
+    agent_tools.start_run(str(path))
+    [call] = recorded_popen.calls
+    assert call["argv"][-2:] == ["--", str(path.resolve())]
 
 
 def test_two_runs_started_together_get_their_own_logs(tmp_path: Path, recorded_popen):

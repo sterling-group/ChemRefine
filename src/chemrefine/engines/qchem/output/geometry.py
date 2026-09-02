@@ -49,7 +49,7 @@ def parse_orientation_from_text(
     rows: list[list[float]] = []
     for line in text[start:].splitlines()[1:]:
         parts = line.split()
-        if len(parts) == 5 and parts[0].isdigit():
+        if len(parts) == 5 and parts[0].isdecimal():
             row = [float(parts[2]), float(parts[3]), float(parts[4])]
             # `float()` rejects a `*****` overflow but accepts `nan` / `inf`, and a
             # non-finite coordinate is the same unusable geometry by a quieter route.

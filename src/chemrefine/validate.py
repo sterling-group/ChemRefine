@@ -33,6 +33,7 @@ be a cycle.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import re
 from pathlib import Path
@@ -142,12 +143,17 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
         # every MCP client, and it was quietly telling them the file was clean. `normalize`
         # is idempotent and pure, so running it twice costs a dict copy and nothing else;
         # `report=` suppresses its logging so the pass below still speaks exactly once.
-        config_legacy.normalize(
-            raw,
-            report=lambda loc, message: deprecations.append(
-                ValidationIssue(loc=loc, kind="deprecated", message=message)
-            ),
-        )
+        # The suppress is for a refusal (`options: 3`), not a deprecation — and *here*
+        # only: `model_validate` below re-runs the same normalizer under pydantic, which
+        # wraps the identical ValueError into a proper ValidationError row, while from
+        # this bare call it would escape a function documented never to raise.
+        with contextlib.suppress(ValueError):
+            config_legacy.normalize(
+                raw,
+                report=lambda loc, message: deprecations.append(
+                    ValidationIssue(loc=loc, kind="deprecated", message=message)
+                ),
+            )
         # `model_validate`, not `Config(**raw)`: splatting imposes a str-keys rule pydantic
         # never sees, so a non-string key — YAML 1.1 reads an unquoted `on:` as a boolean —
         # raised a bare TypeError past both handlers below. pydantic's own answer is a
@@ -165,6 +171,21 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
     if base_dir is not None:
         config = resolve_relative_paths(config, base=base_dir.resolve())
     issues_list, warnings_list = _inspect_steps(config)
+    # A report row, not only the load-time log line: `chemrefine validate`, the GUI and
+    # every MCP client read this report and nothing else, and a log-only warning told
+    # them all `ok` — the same finding-only-for-stderr-watchers class the deprecation
+    # sink closed for legacy spellings.
+    warnings_list += [
+        ValidationIssue(
+            loc=("executables", tool),
+            kind="executable",
+            message=(
+                f"executable {value!r} for {tool!r} does not exist on this host; "
+                f"ignore if a module load provides it inside the job"
+            ),
+        )
+        for tool, value in config.missing_executable_paths()
+    ]
     # First in the list: a deprecation is about the vocabulary the file is written in, which
     # is the thing to fix before anything the filesystem checks below have to say.
     warnings_list = deprecations + warnings_list

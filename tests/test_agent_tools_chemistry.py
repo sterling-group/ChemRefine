@@ -197,6 +197,19 @@ def test_build_structures_rejects_malformed_xyz_and_cleans_up(tmp_path: Path):
     assert not (tmp_path / "seeds" / "structure_0.xyz").exists()
 
 
+@pytest.mark.parametrize("empty", ["", "\n\n"])
+def test_build_structures_refuses_an_xyz_text_with_no_frames(tmp_path: Path, empty: str):
+    """Zero frames is a failure here, not a zero-byte "seed set" reported as written.
+
+    An empty string parses without error, so the tool answered ``written:
+    [structure_0.xyz]`` (0 bytes) with no warnings — a success against its own
+    fails-here contract, deferring the failure to a step with nothing to compute.
+    """
+    with pytest.raises(ConfigError, match="no structures"):
+        agent_tools.build_structures(str(tmp_path / "seeds"), xyz_text=empty)
+    assert not (tmp_path / "seeds" / "structure_0.xyz").exists()
+
+
 def test_build_structures_parity_checks_each_xyz_frame(tmp_path: Path):
     result = agent_tools.build_structures(
         str(tmp_path / "seeds"), xyz_text="1\na lone hydrogen\nH 0.0 0.0 0.0\n"

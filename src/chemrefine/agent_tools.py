@@ -228,13 +228,18 @@ def start_run(
     # resolution they resolved to one filename, where `open("wb")` truncated the first
     # child's log out from under it while it was still writing.
     log_path = log_dir / f"{datetime.now(UTC):%Y%m%dT%H%M%S.%fZ}-{action}.log"
-    argv = [sys.executable, "-m", "chemrefine", action, str(path)]
-    if target is not None:
-        argv.append(target)
+    argv = [sys.executable, "-m", "chemrefine", action]
     if max_cores is not None:
         argv += ["--maxcores", str(max_cores)]
     if max_gpus is not None:
         argv += ["--maxgpus", str(max_gpus)]
+    # `--` ends option parsing, so the positionals after it can never be read as flags —
+    # belt and braces under the config model's own leading-hyphen refusal, for the argv
+    # a *child* process parses after this call has already returned a pid.
+    argv.append("--")
+    argv.append(str(path))
+    if target is not None:
+        argv.append(target)
     with log_path.open("wb") as log:
         # No shell, and nothing in `argv` is free text: the interpreter is `sys.executable`,
         # `action` was matched against `_ACTIONS` above, `path` is a resolved config file,
@@ -522,6 +527,12 @@ def build_structures(
         except (ValueError, IndexError, KeyError, OSError) as e:
             path.unlink(missing_ok=True)
             raise ConfigError(f"xyz_text is not valid XYZ: {e}") from e
+        if not frames:
+            # An empty string parses to zero frames without error, and a zero-byte
+            # "seed set" reported as written is a success this tool's contract says
+            # must fail here — not later, at a step that finds nothing to compute.
+            path.unlink(missing_ok=True)
+            raise ConfigError("xyz_text contains no structures")
         written.append(str(path))
         for i, atoms in enumerate(frames):
             parity = _parity_warning(tuple(atoms.get_chemical_symbols()), charge, multiplicity)

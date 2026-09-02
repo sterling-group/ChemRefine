@@ -119,13 +119,31 @@ def _move_engine_block(
     Mutates ``s`` (pops the block, merges its keys into ``options``) and returns the
     canonical engine that block implies, or ``None`` when no block is present.
     """
-    options = dict(s.get("options") or {})
+    raw_options = s.get("options") or {}
+    if not isinstance(raw_options, dict):
+        # ValueError, because pydantic wraps it: this runs inside `Config`'s
+        # before-validator, where a raw TypeError from `dict(3)` escaped *both*
+        # loaders — a traceback out of `load_config`'s exit-code contract, and a 500
+        # out of `validate_config_text`, whose documented contract is "never raises".
+        raise ValueError(
+            f"steps[{loc[1]}].options must be a mapping of option names to values, "
+            f"got {type(raw_options).__name__}: {raw_options!r}"
+        )
+    options = dict(raw_options)
     block_engine: str | None = None
     for block, engine_name in _LEGACY_BLOCKS.items():
         if isinstance(s.get(block), dict):
             sink((*loc, block), f"step-level `{block}:` block is deprecated; use `options:`")
             for k, v in s.pop(block).items():
-                if k not in _OBSOLETE_OPTION_KEYS:
+                if k in _OBSOLETE_OPTION_KEYS:
+                    # Announced, not silently swallowed: the migration doc promises one
+                    # deprecation per legacy feature, and a key that vanishes without a
+                    # row reads as either kept or mistyped.
+                    sink(
+                        (*loc, block, str(k)),
+                        f"`{block}.{k}` is auto-managed now and was dropped from the moved block",
+                    )
+                else:
                     options.setdefault(k, v)
             block_engine = engine_name
     if options or "options" in s:
@@ -187,13 +205,26 @@ def _normalize_step(step: Any, index: int, sink: DeprecationSink) -> Any:
         s["engine"] = block_engine
     elif isinstance(s.get("engine"), str):
         eng = s["engine"].lower()
-        s["engine"] = _ENGINE_RENAMES.get(eng, eng)
+        renamed = _ENGINE_RENAMES.get(eng, eng)
+        if renamed != eng:
+            # The most common legacy spelling of all — a config whose only legacy
+            # feature is `engine: mlff` must be named before 3.0 removes the map.
+            sink((*loc, "engine"), f"engine `{eng}` is deprecated; use `{renamed}`")
+        s["engine"] = renamed
 
     # Operation: ``OPT+SP`` → ``opt_sp``, ``GOAT`` → ``goat`` (engines lower/replace too).
     if isinstance(s.get("operation"), str):
         s["operation"] = s["operation"].lower().replace("+", "_")
         # ``MLFF_TRAIN`` was a training *operation* that implied the trainer engine.
         if s["operation"] in ("mlff_train", "mlip_train"):
+            if s["operation"] == "mlff_train" or s.get("engine") != "mlip-train":
+                # Warn only when something is actually rewritten: `engine: mlip-train`
+                # + `operation: mlip_train` is the current spelling passing through.
+                sink(
+                    (*loc, "operation"),
+                    f"operation `{s['operation']}` implying the trainer engine is "
+                    f"deprecated; write `engine: mlip-train` + `operation: mlip_train`",
+                )
             s["engine"] = "mlip-train"
             s["operation"] = "mlip_train"
 
@@ -226,6 +257,27 @@ def _flatten_sample_type(sample_type: Any) -> Any:
         if k not in ("method", "parameters"):
             flat.setdefault(k, v)
     return flat
+
+
+def _legacy_number(value: Any) -> float | None:
+    """The number a legacy scalar carries, however YAML spelled it — else ``None``.
+
+    Quoting is part of the legacy surface: ``energy: "0.005"`` is a string to YAML but
+    a number to v1, whose reader coerced it — so an ``isinstance(int, float)`` gate let
+    the quoted spelling skip the hartree conversion below and arrive ~627x smaller.
+    Booleans are not numbers here, and a string that does not parse is left for the
+    model's own coercion error.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
 
 
 def _normalize_sample_block(sample: Any, loc: tuple[str | int, ...], sink: DeprecationSink) -> Any:
@@ -263,13 +315,8 @@ def _normalize_sample_block(sample: Any, loc: tuple[str | int, ...], sink: Depre
             # dropped: v1 read it there and nowhere else, so it has no v2 key of its own.
             continue
         new_key = _SAMPLE_KEY_RENAMES.get(key, key)
-        if (
-            key == "energy"
-            and unit != "kcal/mol"
-            and isinstance(v, (int, float))
-            and not isinstance(v, bool)
-        ):
-            converted = v * HARTREE_TO_KCALMOL
+        if key == "energy" and unit != "kcal/mol" and (number := _legacy_number(v)) is not None:
+            converted = number * HARTREE_TO_KCALMOL
             sink(
                 (*loc, key),
                 f"sample key `energy` is deprecated; use `window_kcalmol` — and the unit "

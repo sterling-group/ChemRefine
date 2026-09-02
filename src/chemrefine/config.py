@@ -302,7 +302,12 @@ class StepConfig(BaseModel):
             raise ValueError(
                 "step name must contain only letters, digits, underscores, and hyphens"
             )
-        if v.isdigit():
+        if v.startswith("-"):
+            # Every step-targeted invocation puts the name on an argv — the CLI's and
+            # `start_run`'s — where a leading hyphen parses as an option: exit 2 into
+            # an unwatched log, after a pid was already returned.
+            raise ValueError("step name must not start with a hyphen (argv reads it as an option)")
+        if v.isdecimal():
             # `matches` resolves an all-digit CLI target as a step *number*,
             # so a digits-only name could never be addressed.
             raise ValueError("step name must not be all digits (ambiguous with a step number)")
@@ -626,26 +631,40 @@ class Config(BaseModel):
             raise ValueError("step names must be unique when provided")
         return self
 
+    def missing_executable_paths(self) -> list[tuple[str, str]]:
+        """``(tool, value)`` for every explicit ``executables`` path absent on this host.
+
+        The one home for the predicate, read by the load-time log below **and** by
+        :mod:`chemrefine.validate`'s warning row — the log-only version reached nobody
+        watching ``chemrefine validate``, the GUI, or an MCP client, which all read the
+        report and were told ``ok`` with no warning. A bare command name (no path
+        separator) is not on the list — it resolves on the executing host at submit
+        time.
+        """
+        return [
+            (tool, value)
+            for tool, value in self.executables.items()
+            if os.sep in value and not Path(value).exists()
+        ]
+
     @model_validator(mode="after")
     def _warn_missing_executable_paths(self) -> Config:
         """Warn (don't fail) when an ``executables`` entry is a path that's absent.
 
         Validation never hard-fails here: on HPC the binary is often provided by a
         ``module load`` *inside* the SLURM job, so the login node parsing the YAML
-        legitimately can't see it. A bare command name (no path separator) is left
-        alone — it is resolved on the executing host at submit time. Only an
-        explicit path that doesn't exist on this host earns a warning, since that
-        is almost always a typo.
+        legitimately can't see it. Only an explicit path that doesn't exist on this
+        host earns a warning (:meth:`missing_executable_paths`), since that is almost
+        always a typo.
         """
-        for tool, value in self.executables.items():
-            if os.sep in value and not Path(value).exists():
-                logger.warning(
-                    "executable %r for %r does not exist on this host (%s); "
-                    "ignore if a module load provides it inside the job",
-                    value,
-                    tool,
-                    value,
-                )
+        for tool, value in self.missing_executable_paths():
+            logger.warning(
+                "executable %r for %r does not exist on this host (%s); "
+                "ignore if a module load provides it inside the job",
+                value,
+                tool,
+                value,
+            )
         return self
 
     def step_dir(self, step_cfg: StepConfig) -> Path:

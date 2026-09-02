@@ -820,6 +820,104 @@ def test_legacy_energy_window_non_numeric_value_is_left_for_validation():
         )
 
 
+def test_a_quoted_legacy_energy_still_carries_its_hartree_meaning():
+    """``energy: "0.005"`` is a string to YAML but a number to v1 — it must convert.
+
+    The ``isinstance(int, float)`` gate let the quoted spelling skip the hartree
+    conversion, be renamed to ``window_kcalmol``, and be coerced by pydantic to
+    0.005 kcal/mol where v1 meant 0.005 Eh ≈ 3.14 kcal/mol — the exact silent ~627x
+    shrink the conversion was added to prevent, reachable through quoting.
+    """
+    quoted = _legacy_window_sample({"energy": "0.005"})
+    assert quoted.window_kcalmol == pytest.approx(3.137547, abs=1e-5)
+
+    # What the conversion cannot read as a number passes through untouched — a bool
+    # (YAML's `energy: true` is not a quantity) and a non-numeric string are both the
+    # model's coercion error to make, never this rewrite's arithmetic.
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    out = _normalize_legacy(
+        {
+            "steps": [
+                {"step": 1, "sample": {"method": "energy_window", "energy": True}},
+                {"step": 2, "sample": {"method": "energy_window", "energy": "abc"}},
+            ]
+        },
+        report=lambda loc, message: None,
+    )
+    assert out["steps"][0]["sample"]["window_kcalmol"] is True
+    assert out["steps"][1]["sample"]["window_kcalmol"] == "abc"
+
+
+def test_scalar_options_are_a_field_error_not_a_traceback():
+    """``options: 3`` must land as a pydantic row, from both loaders.
+
+    ``dict(3)`` raised a raw ``TypeError`` out of the legacy normalizer — a traceback
+    past ``load_config``'s exit-code contract, and a 500 out of
+    ``validate_config_text``, whose documented contract is "never raises". A
+    ``ValueError`` is what pydantic wraps.
+    """
+    from chemrefine.validate import validate_config_text
+
+    step = {"step": 1, "engine": "orca", "operation": "sp", "options": 3}
+    with pytest.raises(ValidationError, match="must be a mapping"):
+        Config(template_dir="./t", steps=[step])
+    report = validate_config_text("steps:\n  - step: 1\n    engine: orca\n    options: 3\n")
+    assert not report.ok
+    assert any("must be a mapping" in issue.message for issue in report.issues)
+
+
+def test_every_legacy_rewrite_announces_itself():
+    """The migration doc promises one deprecation per legacy feature — held to it.
+
+    The engine rename map, the ``MLFF_TRAIN`` operation rewrite, and the obsolete
+    sub-key drop all rewrote silently: a config whose only legacy feature is
+    ``engine: mlff`` was named nothing and breaks at 3.0 with no warning ever issued.
+    """
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    rows: list[tuple[tuple[str | int, ...], str]] = []
+    _normalize_legacy(
+        {
+            "steps": [
+                {"step": 1, "engine": "mlff", "operation": "sp"},
+                {"step": 2, "operation": "MLFF_TRAIN"},
+                {"step": 3, "engine": "orca", "mlff": {"model_name": "m", "bind": "x:1"}},
+            ]
+        },
+        report=lambda loc, message: rows.append((loc, message)),
+    )
+    by_loc = dict(rows)
+    assert "use `mlip`" in by_loc[("steps", 0, "engine")]
+    assert "mlip-train" in by_loc[("steps", 1, "operation")]
+    assert "dropped" in by_loc[("steps", 2, "mlff", "bind")]
+
+
+def test_the_current_trainer_spelling_passes_without_a_warning():
+    """``engine: mlip-train`` + ``operation: mlip_train`` is v2's own vocabulary."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    rows: list[str] = []
+    _normalize_legacy(
+        {"steps": [{"step": 1, "engine": "mlip-train", "operation": "mlip_train"}]},
+        report=lambda loc, message: rows.append(message),
+    )
+    assert rows == []
+
+
+def test_a_step_name_with_a_leading_hyphen_is_refused():
+    """``-foo`` is a legal name to the pattern but an option to every argv.
+
+    The CLI and ``start_run`` both put the name on a command line, where ``-foo``
+    parses as a flag: exit 2 into an unwatched log after a pid was already returned —
+    the exact class the run-target guard closed for unknown names.
+    """
+    with pytest.raises(ValidationError, match="hyphen"):
+        StepConfig(step=1, engine="orca", operation="sp", name="-foo")
+    # An interior hyphen stays legal — the refusal is about argv position, not the char.
+    assert StepConfig(step=1, engine="orca", operation="sp", name="pre-opt").name == "pre-opt"
+
+
 def test_legacy_normal_mode_sampling_renamed():
     cfg = Config(
         template_dir="./t",

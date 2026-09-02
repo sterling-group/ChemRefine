@@ -15,21 +15,30 @@ def test_version_falls_back_when_uninstalled():
     """``__version__`` is set to a sentinel when the package isn't installed."""
     import chemrefine
 
-    with patch("importlib.metadata.version", side_effect=PackageNotFoundError):
-        reloaded = importlib.reload(chemrefine)
-        assert reloaded.__version__ == "0.0.0+unknown"
-
-    # Restore the real metadata-driven version for any subsequent tests in
-    # the same process; otherwise the sentinel sticks around.
-    importlib.reload(chemrefine)
+    try:
+        with patch("importlib.metadata.version", side_effect=PackageNotFoundError):
+            reloaded = importlib.reload(chemrefine)
+            assert reloaded.__version__ == "0.0.0+unknown"
+    finally:
+        # In a `finally`: restore the real metadata-driven version even when the
+        # assertion above fails, or the sentinel sticks to the module object for
+        # every later test in the process.
+        importlib.reload(chemrefine)
 
 
 def test_version_reads_from_metadata_when_installed():
-    """The happy path: ``importlib.metadata.version`` returns a real string."""
+    """The happy path, held to the actual metadata.
+
+    ``isinstance(str) and truthy`` was satisfied by the *fallback sentinel* too, so
+    this test could not fail — the one answer it must give is "the installed
+    distribution's own version string, not the sentinel".
+    """
+    import importlib.metadata
+
     import chemrefine
 
-    assert isinstance(chemrefine.__version__, str)
-    assert chemrefine.__version__
+    assert chemrefine.__version__ == importlib.metadata.version("chemrefine")
+    assert chemrefine.__version__ != "0.0.0+unknown"
 
 
 def test_python_dash_m_runs_the_cli():

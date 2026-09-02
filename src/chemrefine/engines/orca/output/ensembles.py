@@ -88,7 +88,7 @@ def _parse_xyz_frame(
     match, a short/corrupt atom row (past the frame), or a truncated trailing frame.
     """
     line = lines[i].strip()
-    if not line.isdigit():
+    if not line.isdecimal():
         return None, i + 1
     n_atoms = int(line)
     if i + 1 + n_atoms >= len(lines):
