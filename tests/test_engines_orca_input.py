@@ -299,6 +299,50 @@ def test_build_input_leaves_absolute_and_unresolvable_paths_alone(tmp_path: Path
     assert '"not-a-file.xyz"' in text
 
 
+def test_referenced_aux_files_enumerates_what_the_rewriter_pins(tmp_path: Path):
+    """The cache-key enumeration answers by the rewriter's own rule, plus absolutes.
+
+    Keys are the references as the template writes them (the relocation-stable
+    spelling); values the files jobs read — relative references resolved, absolute ones
+    as written even though the rewriter leaves them alone, since ORCA reads them all
+    the same. Quoted strings naming no existing file contribute nothing.
+    """
+    from chemrefine.engines.orca.input import referenced_aux_files
+
+    templates = tmp_path / "templates"
+    templates.mkdir()
+    guest = templates / "cl.xyz"
+    guest.write_text("1\nchloride\nCl 0.0 0.0 0.0\n", encoding="utf-8")
+    charges = tmp_path / "field.pc"
+    charges.write_text("1\n0.1 0.0 0.0 0.0\n", encoding="utf-8")
+    template = templates / "step1.inp"
+    template.write_text(
+        "! XTB\n"
+        '%DOCKER\n\tGUEST "../templates/cl.xyz"\nEND\n'
+        f'%pointcharges "{charges}"\n'
+        '%foo BAR "not-a-file.xyz" end\n'
+        '%again GUEST "cl.xyz"\n',
+        encoding="utf-8",
+    )
+    assert referenced_aux_files(template) == {
+        "../templates/cl.xyz": guest.resolve(),
+        str(charges): charges,
+        "cl.xyz": guest.resolve(),
+    }
+
+
+def test_referenced_aux_files_of_an_unreadable_template_is_empty(tmp_path: Path):
+    """A missing template contributes no aux files — its error belongs to the renderer.
+
+    ``template_digest`` already turns the absence into a fingerprint change, and
+    ``require_template`` owns the actionable message; an exception from the
+    enumeration would front-run both from the wrong module.
+    """
+    from chemrefine.engines.orca.input import referenced_aux_files
+
+    assert referenced_aux_files(tmp_path / "never-written.inp") == {}
+
+
 def test_build_input_requests_orca_property_json(tmp_path: Path):
     """Generated inputs ask ORCA (>= 6) for its native property.json artifact."""
     template = _template(tmp_path, "! B3LYP def2-SVP\n")

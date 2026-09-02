@@ -63,6 +63,7 @@ def _key(
     multiplicity: int = 1,
     engine_options: dict | None = None,
     resolution: ResolutionSpec | None = None,
+    aux_files: dict[str, Path] | None = None,
 ) -> StepKey:
     """The key a step over these parents would be written under."""
     return StepKey.of(
@@ -73,6 +74,7 @@ def _key(
         multiplicity=multiplicity,
         engine_options=engine_options,
         resolution=resolution,
+        aux_files=aux_files,
     )
 
 
@@ -130,6 +132,43 @@ def test_a_declared_option_moves_the_row_key():
     b = _key("0", engine_options={"cores": 8})
     assert a.row_keys != b.row_keys
     assert a.fingerprint != b.fingerprint
+
+
+def test_a_template_referenced_aux_file_is_part_of_the_row_key(tmp_path: Path):
+    """Editing a file the template references must move the key — that is the re-run.
+
+    The template digest covers only the path *string*: a ``%DOCKER GUEST`` edit to the
+    guest geometry changed every docking result while every fingerprint stood still,
+    and ``resume`` served the stale answers. The same rationale that pinned
+    ``model_path`` bytes via ``option_file_digests``, applied to the enumeration the
+    engine hands over. And the change is scoped: a step whose template names no aux
+    files keys exactly as it did before the parameter existed.
+    """
+    guest = tmp_path / "cl.xyz"
+    guest.write_text("1\nchloride\nCl 0.0 0.0 0.0\n", encoding="utf-8")
+
+    before = _key("0", aux_files={"cl.xyz": guest})
+    assert before == _key("0", aux_files={"cl.xyz": guest})  # stable while the file stands
+
+    guest.write_text("1\nchloride moved\nCl 0.5 0.0 0.0\n", encoding="utf-8")
+    after = _key("0", aux_files={"cl.xyz": guest})
+    assert before.row_keys != after.row_keys
+    assert before.fingerprint != after.fingerprint
+
+    # The digest is keyed by the *written* reference, never the resolved path: a
+    # relocated tree re-derives the same key from the same bytes, which is the
+    # guarantee `rebuild-cache` on a moved project stands on.
+    elsewhere = tmp_path / "moved" / "cl.xyz"
+    elsewhere.parent.mkdir()
+    elsewhere.write_bytes(guest.read_bytes())
+    assert _key("0", aux_files={"cl.xyz": elsewhere}) == after
+
+    # Scoped-change regression: no aux files means the pre-parameter key, bit for bit —
+    # existing trees must not re-run over this feature's arrival.
+    assert _key("0", aux_files={}) == _key("0")
+    # A file that cannot be read contributes no entry (option_file_digests' escape):
+    # the key moves only when the file appears.
+    assert _key("0", aux_files={"missing.pc": tmp_path / "missing.pc"}) == _key("0")
 
 
 def test_the_nms_family_moves_only_the_resolution_key():

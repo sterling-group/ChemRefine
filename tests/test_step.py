@@ -1929,3 +1929,44 @@ def test_rebuild_cache_step_regenerates_the_ensemble_files(tmp_path: Path):
 
     assert len(io.read_xyz_frames(step_dir / "step1_ensemble.xyz")) == 2
     assert len(io.read_xyz_frames(step_dir / "step1_survivors.xyz")) == 2
+
+
+# ---------------------------------------------------------------------------
+# derive_step_key — template-referenced aux files reach the identity
+# ---------------------------------------------------------------------------
+
+
+def test_the_orca_engines_template_aux_files_reach_the_step_key(tmp_path: Path):
+    """Editing a file the template references moves the key — that is the resume re-run.
+
+    The whole chain with the real engine: ``OrcaEngine`` enumerates the quoted
+    reference (``AuxFileConsuming``), ``derive_step_key`` hands the files to
+    ``StepKey.of``, and an in-place edit to the guest moves fingerprint and row keys —
+    which is exactly what makes ``resume`` re-run the docking step instead of serving
+    results computed from the old geometry against a fingerprint that stood still.
+    """
+    from chemrefine import step
+
+    template_dir = tmp_path / "templates"
+    template_dir.mkdir()
+    guest = template_dir / "cl.xyz"
+    guest.write_text("1\nchloride\nCl 0.0 0.0 0.0\n", encoding="utf-8")
+    (template_dir / "step1.inp").write_text(
+        '! XTB\n%DOCKER\n\tGUEST "cl.xyz"\nEND\n', encoding="utf-8"
+    )
+    cfg = Config(
+        output_dir=tmp_path / "outputs",
+        template_dir=template_dir,
+        steps=[StepConfig(step=1, engine="orca", operation="opt_sp")],
+    )
+    engine = get_engine("orca")
+    seed = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
+    ctx = build_context(cfg, cfg.steps[0], PipelineState(structures=(seed,)), engine)
+
+    before = step.derive_step_key(ctx, cfg.steps[0], engine)
+    assert before == step.derive_step_key(ctx, cfg.steps[0], engine)
+
+    guest.write_text("1\nchloride moved\nCl 0.5 0.0 0.0\n", encoding="utf-8")
+    after = step.derive_step_key(ctx, cfg.steps[0], engine)
+    assert before.fingerprint != after.fingerprint
+    assert before.row_keys != after.row_keys

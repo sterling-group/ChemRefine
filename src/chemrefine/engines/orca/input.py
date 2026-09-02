@@ -39,6 +39,21 @@ A convenience artifact for users and tooling — chemrefine itself parses the
 template already sets ``JSONPropFile`` so a user override wins."""
 
 
+def _referenced_file(raw: str, template_dir: Path) -> Path | None:
+    """The existing file a quoted template string names, or ``None`` if it names none.
+
+    The single rule behind both consumers of a quoted reference — the rewriter that pins
+    it into the rendered input and the enumeration the cache key digests it through — so
+    a file cannot be pinned into a job yet missing from the step's identity, or the
+    reverse. Relative references resolve against the template's own directory (the
+    rewriter's contract); absolute ones stand as written; anything that is not an
+    existing file (a non-path string, a file created at run time) is not a reference.
+    """
+    candidate = Path(raw)
+    resolved = candidate if candidate.is_absolute() else (template_dir / candidate).resolve()
+    return resolved if resolved.is_file() else None
+
+
 def _absolutize_template_paths(text: str, template_dir: Path) -> str:
     """Rewrite quoted relative file references to absolute paths.
 
@@ -51,14 +66,51 @@ def _absolutize_template_paths(text: str, template_dir: Path) -> str:
     """
 
     def _sub(m: re.Match[str]) -> str:
-        candidate = Path(m.group(1))
-        if not candidate.is_absolute():
-            resolved = (template_dir / candidate).resolve()
-            if resolved.is_file():
-                return f'"{resolved}"'
-        return m.group(0)
+        if Path(m.group(1)).is_absolute():
+            return m.group(0)
+        resolved = _referenced_file(m.group(1), template_dir)
+        return m.group(0) if resolved is None else f'"{resolved}"'
 
     return _QUOTED_PATH_RE.sub(_sub, text)
+
+
+def referenced_aux_files(template_path: Path) -> dict[str, Path]:
+    """The files ``template_path`` names by quoted reference — as written → as read.
+
+    The cache-key half of :func:`_referenced_file`'s rule: every file this returns has
+    its bytes rewritten into the step's identity
+    (:meth:`chemrefine.cache.StepKey.of`), because a job's result depends on a guest
+    geometry or point-charge file exactly as it depends on the template text — the
+    template digests only the *path string*, and editing the referenced file in place
+    otherwise changed every job's answer while every fingerprint stood still. Absolute
+    references are included on the same grounds: the rewriter leaves them alone, but
+    ORCA reads them all the same. A quoted string that names no existing file
+    contributes nothing — like :func:`chemrefine.cache.option_file_digests`, "not a
+    path" and "missing" both mean no entry, and the key moves when the file appears.
+
+    Keyed by the reference **as the template writes it**, not by the resolved path:
+    the resolved path is absolute, and an absolute string in a key breaks the one
+    guarantee the cache must keep under a moved tree — a relocated project's
+    ``rebuild-cache`` re-derives the same keys from the same bytes. The written
+    reference travels with the template (it is already inside the template digest),
+    and it also tells two same-content files apart, which a bare set of digests
+    cannot.
+
+    An unreadable template answers ``{}`` rather than raising: the missing-template
+    story belongs to :func:`chemrefine.cache.template_digest` and
+    :func:`chemrefine.ids.require_template`, and this enumeration must not front-run
+    their error with its own.
+    """
+    try:
+        text = template_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return {}
+    references: dict[str, Path] = {}
+    for match in _QUOTED_PATH_RE.finditer(text):
+        resolved = _referenced_file(match.group(1), template_path.parent)
+        if resolved is not None:
+            references[match.group(1)] = resolved
+    return references
 
 
 WHITESPACE_PATH_REASON = (

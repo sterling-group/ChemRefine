@@ -242,6 +242,37 @@ def option_file_digests(options: Mapping[str, Any] | None) -> dict[str, str]:
     return digests
 
 
+def aux_file_digests(references: Mapping[str, Path]) -> dict[str, str]:
+    """Digest the files a step's template references, keyed by the *written* reference.
+
+    The third member of the file-pinning family, beside :func:`template_digest` and
+    :func:`option_file_digests`, with the latter's rationale applying verbatim: a
+    template that quotes a docking guest or point-charge file makes every job's result
+    depend on that file's bytes, while the template digest covers only the *path
+    string* — so editing the referenced file in place left every fingerprint standing
+    and ``resume`` served results computed from the old file. Which strings reference
+    which files is the engine's reading, not this module's
+    (:class:`chemrefine.engines.api.AuxFileConsuming`); this digests the enumeration it
+    is handed, streamed like :func:`option_file_digests` and with its same escape — a
+    file that cannot be read contributes no entry, and the key moves when it can be.
+
+    The key is the reference as the template writes it, **never** the resolved path:
+    resolved paths are absolute, and an absolute string inside a row key breaks the
+    guarantee a relocated tree depends on — ``rebuild-cache`` re-deriving the same keys
+    from the same bytes wherever the project now sits. The written spelling travels
+    with the template, and it also distinguishes two references whose files happen to
+    carry identical bytes today.
+    """
+    digests: dict[str, str] = {}
+    for written, path in sorted(references.items()):
+        try:
+            with path.open("rb") as handle:
+                digests[written] = hashlib.file_digest(handle, _fingerprint_sha1).hexdigest()[:16]
+        except OSError:
+            continue
+    return digests
+
+
 def _hash_payload(payload: dict[str, Any]) -> str:
     """A 16-char SHA-1 over a compact, key-sorted JSON encoding of ``payload``.
 
@@ -261,6 +292,7 @@ def row_key(
     multiplicity: int,
     engine_options: Mapping[str, Any],
     option_digests: Mapping[str, str],
+    aux_digests: Mapping[str, str],
     parent_digest: str,
 ) -> str:
     """One structure's job identity — everything that determines *this row's* result.
@@ -270,8 +302,11 @@ def row_key(
     ``charge``/``multiplicity`` are the **effective** (inheritance-resolved) physics
     inputs, ``engine_options`` is the options mapping *as the engine's own declared
     model reads it* (``{}`` for an engine that declares none — an undeclared key can
-    reach no job), ``option_digests`` pins the bytes of any file an option names, and
-    ``parent_digest`` (:func:`structure_digest`) is the geometry the job computes on.
+    reach no job), ``option_digests`` pins the bytes of any file an option names,
+    ``aux_digests`` (:func:`aux_file_digests`) the bytes of any file the template
+    references, and ``parent_digest`` (:func:`structure_digest`) is the geometry the
+    job computes on. The two digest families join the payload only when non-empty, so
+    a step naming no files keys exactly as it always has.
 
     Deliberately absent: the NMS family (post-round-1 resolution — the resolution key's
     business), the parent *set* (aggregation — the step fingerprint's business),
@@ -291,6 +326,8 @@ def row_key(
     }
     if option_digests:
         payload["option_digests"] = dict(option_digests)
+    if aux_digests:
+        payload["aux_digests"] = dict(aux_digests)
     return _hash_payload(payload)
 
 
@@ -876,6 +913,7 @@ class StepKey:
         multiplicity: int = 1,
         engine_options: Mapping[str, Any] | None = None,
         resolution: ResolutionSpec | None = None,
+        aux_files: Mapping[str, Path] | None = None,
     ) -> StepKey:
         """Derive the key for ``step_cfg`` run over ``parents`` with ``template``.
 
@@ -886,10 +924,14 @@ class StepKey:
         would. ``engine_options`` is the engine's declared model's resolved dump
         (``None``/``{}`` for a non-declaring engine — an undeclared key can reach no
         job); ``resolution`` is the validated NMS reading for a step that resolves,
-        else ``None``.
+        else ``None``; ``aux_files`` is the engine's enumeration of the files the
+        template references, written reference → file
+        (:class:`chemrefine.engines.api.AuxFileConsuming` — empty for an engine whose
+        templates name none), digested here beside the option files.
         """
         template_dig = template_digest(template)
         option_digs = option_file_digests(step_cfg.options)
+        aux_digs = aux_file_digests(aux_files or {})
         parent_ids = tuple(s.id for s in parents)
         parent_digs = tuple(structure_digest(s) for s in parents)
         rows = tuple(
@@ -901,6 +943,7 @@ class StepKey:
                 multiplicity=multiplicity,
                 engine_options=dict(engine_options or {}),
                 option_digests=option_digs,
+                aux_digests=aux_digs,
                 parent_digest=digest,
             )
             for digest in parent_digs

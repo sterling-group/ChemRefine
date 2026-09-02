@@ -74,6 +74,16 @@ class OrcaEngine(JobEngine):
 
     # -- input -------------------------------------------------------------
 
+    def template_aux_files(self, template: Path) -> dict[str, Path]:
+        """Satisfies :class:`~chemrefine.engines.api.AuxFileConsuming`.
+
+        The enumeration is :func:`chemrefine.engines.orca.input.referenced_aux_files` —
+        the same rule ``build_input``'s path rewriter pins references by, so what a job
+        reads and what the cache key digests cannot disagree. Inherited by the ExtOpt
+        engines, whose templates are the same grammar.
+        """
+        return orca_input.referenced_aux_files(template)
+
     def build_input(
         self,
         *,

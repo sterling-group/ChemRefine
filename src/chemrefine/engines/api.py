@@ -247,6 +247,35 @@ class WhitespacePathIntolerant(Protocol):
 
 
 @runtime_checkable
+class AuxFileConsuming(Protocol):
+    """An engine whose templates can name auxiliary input files the jobs then read.
+
+    An ORCA template can quote a file beside the method blocks — a docking guest
+    (``%DOCKER GUEST "../templates/cl.xyz"``), a point-charge file — and the job's
+    result then depends on that file's *bytes* exactly as it depends on the template
+    text. The template digest covers only the path string, so without this hook an
+    edit to the referenced file changed every job's answer while every fingerprint
+    stood still, and ``resume`` served results computed from the old file.
+
+    A capability rather than a rule in :mod:`chemrefine.cache` because only the engine
+    knows its template grammar: what counts as a reference in an ORCA ``.inp`` is not a
+    question a ``.py`` script template answers the same way, and the cache module keys
+    values it does not interpret. :func:`chemrefine.step.derive_step_key` asks with
+    ``isinstance``, the way it asks :class:`OptionsDeclaring` for the options reading,
+    and folds the named files' digests into :meth:`chemrefine.cache.StepKey.of`.
+    """
+
+    def template_aux_files(self, template: Path) -> Mapping[str, Path]:
+        """``template``'s references: as the template writes them → the file jobs read.
+
+        Keyed by the written reference rather than the resolved path so the cache key
+        derived from it survives a relocated tree — the resolved path is absolute and
+        moves; the written spelling travels with the template.
+        """
+        ...
+
+
+@runtime_checkable
 class OptionsDeclaring(Protocol):
     """An engine that declares the Pydantic model validating its ``step.options``.
 

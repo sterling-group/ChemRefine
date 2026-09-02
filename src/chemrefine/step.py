@@ -32,6 +32,7 @@ from chemrefine import attempts, cache, filtering, ids, io, lifecycle, nms
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.api import (
     ArtifactEngine,
+    AuxFileConsuming,
     CalculationEngine,
     NmsCapableEngine,
     OptionsDeclaring,
@@ -316,16 +317,21 @@ def derive_step_key(
     per-step override let a workflow-level edit change every job while every
     fingerprint stood still); the engine options are the engine's declared model's
     resolved reading (``{}`` for a non-declaring engine — an undeclared key can reach
-    no job); the resolution spec is :class:`~chemrefine.nms.NmsOptions`' validated
-    reading, split criterion/search, present exactly when this step resolves. Living
-    here rather than in :mod:`chemrefine.cache` keeps that module free of engine and
-    NMS knowledge — it keys values it does not interpret.
+    no job); the aux files are the engine's own enumeration of what its template
+    references (empty for an engine whose templates name none); the resolution spec is
+    :class:`~chemrefine.nms.NmsOptions`' validated reading, split criterion/search,
+    present exactly when this step resolves. Living here rather than in
+    :mod:`chemrefine.cache` keeps that module free of engine and NMS knowledge — it
+    keys values it does not interpret.
     """
     engine_options: Mapping[str, object] = {}
     if isinstance(engine, OptionsDeclaring):
         engine_options = engine.options_cls.from_raw_lenient(step_cfg.options).model_dump(
             mode="json"
         )
+    aux_files: Mapping[str, Path] = {}
+    if isinstance(engine, AuxFileConsuming) and ctx.template is not None:
+        aux_files = engine.template_aux_files(ctx.template)
     resolution = None
     if step_cfg.nms and isinstance(engine, NmsCapableEngine):
         try:
@@ -344,6 +350,7 @@ def derive_step_key(
         multiplicity=ctx.multiplicity,
         engine_options=engine_options,
         resolution=resolution,
+        aux_files=aux_files,
     )
 
 

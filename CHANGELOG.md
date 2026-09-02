@@ -473,6 +473,12 @@ for the full map.
 - **Retraining re-runs the steps that use the model.** A step naming a file in its options
   now has that file's contents in its cache key, so a step consuming a retrained model no
   longer serves a result computed with the previous weights.
+- **Editing a template-referenced file re-runs the steps that read it.** The same rule for
+  the files an ORCA template names by quoted reference — a `%DOCKER GUEST` geometry, a
+  `%pointcharges` file: their bytes are part of the step's cache key, so editing one in
+  place makes `resume` re-run the step instead of serving results computed from the old
+  file. One-time cost: a tree whose templates reference aux files re-runs those steps once
+  when first resumed under this version (steps naming none are keyed exactly as before).
 - A relative path in a step's `options` — `model_path` — resolves against the
   **config file's** directory, like every other path a config names, instead of the
   process working directory. A v1 config that named a model relative to the run or
