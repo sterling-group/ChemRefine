@@ -44,6 +44,19 @@ Inkscape 1.4.4), Pillow (favicon.ico) and real Arial Bold for the wordmark.
 Regenerated assets are byte-stable only on the authoring toolchain; CI never
 regenerates.
 
+Two output roots, one writer
+----------------------------
+The kit lands in docs/assets/ AND in the GUI package (GUI_BRAND below). The
+second root is not a convenience: the wheel ships src/chemrefine and nothing
+else, so docs/ is not on the served path, and the builder can only reach a
+brand file that lives inside the package. The GUI subset is GUI_SUBSET - the
+colored mark for its white header bar (the white mono line-art is for the
+docs' teal one) and the icon family, no dark variant because the GUI has no
+dark mode. Both roots are written from the same values in the same run, so
+they are byte-identical by construction and a test holds them that way. That
+is a different claim from "a rebuild reproduces the committed bytes", which
+is only true on the authoring toolchain and is why CI never rebuilds.
+
 Regenerating
 ------------
     python3 tools/check_logo.py   # audit the tables after ANY edit
@@ -59,7 +72,19 @@ import sys
 from itertools import pairwise
 from pathlib import Path
 
-ASSETS = Path(__file__).resolve().parent.parent / "docs" / "assets"
+_ROOT = Path(__file__).resolve().parent.parent
+ASSETS = _ROOT / "docs" / "assets"
+GUI_BRAND = _ROOT / "src" / "chemrefine" / "gui" / "static" / "brand"
+# What the builder page references. Beside the assets, not inside vendor/, which
+# means "third-party, byte-identical to upstream" and is excluded from formatting.
+GUI_SUBSET = (
+    "logo.svg",
+    "favicon.svg",
+    "favicon-32.png",
+    "apple-touch-icon.png",
+    "icon-192.png",
+    "icon-512.png",
+)
 REFERENCE_URL = "https://github.com/user-attachments/assets/ae7b1ad5-0d90-445c-be83-ddcb76fa85c3"
 
 # --------------------------------------------------------------- palette ----
@@ -590,12 +615,13 @@ def _require_font():
 
 
 def main() -> int:
-    """Regenerate the whole brand kit into docs/assets/."""
+    """Regenerate the whole brand kit into docs/assets/, mirroring GUI_SUBSET to the package."""
     if shutil.which("inkscape") is None:
         print("error: inkscape is required (text->path, PNG export)")
         return 1
     _require_font()
     ASSETS.mkdir(parents=True, exist_ok=True)
+    GUI_BRAND.mkdir(parents=True, exist_ok=True)
     wd = Path.home() / "chemrefine_logo_build"
     wd.mkdir(exist_ok=True)
     try:
@@ -637,9 +663,16 @@ def main() -> int:
             print("wrote favicon.ico (16/32/48)")
         except ImportError:
             print("Pillow not found - skipped favicon.ico")
+
+        # Last, from the files just written rather than from a second render: the two
+        # roots have to be the same bytes, and copying is the only way to say that
+        # without depending on the export being deterministic.
+        for name in GUI_SUBSET:
+            shutil.copy2(ASSETS / name, GUI_BRAND / name)
     finally:
         shutil.rmtree(wd, ignore_errors=True)
     print(f"brand kit written to {ASSETS}")
+    print(f"GUI subset mirrored to {GUI_BRAND} ({len(GUI_SUBSET)} files)")
     return 0
 
 
