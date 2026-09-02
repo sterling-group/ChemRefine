@@ -1168,10 +1168,11 @@ def test_execute_fences_live_jobs_before_the_handler_runs(
 ):
     """`execute` probes recorded job leases before its handler touches the tree.
 
-    The ordering is the point: `run`'s handler invalidates caches — deleting the very
-    `_cache/` ledgers the fence reads — so a fence that only ran inside `pipeline.run`
-    would be reading evidence the handler had already destroyed. A spy in the handler
-    table proves the refusal lands first.
+    The ordering is the point: `run`'s handler discards caches and manifests ahead of
+    `pipeline.run`, so a fence that only ran inside it would refuse a command that had
+    already destroyed state on the way to being refused — and would do so while a dead
+    driver's jobs were still writing into the tree. A spy in the handler table proves
+    the refusal lands first, with the tree exactly as found.
     """
     import json
     from unittest.mock import patch

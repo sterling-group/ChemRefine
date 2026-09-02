@@ -260,9 +260,15 @@ def execute(
     if handler is None:
         raise ChemRefineError(f"unknown action: {action!r}")
     with pipeline.run_lock(config.output_dir):
-        # Before the handler, not inside `pipeline.run`'s own (reentrant) turn: the
-        # invalidation above `run` deletes the very `_cache/` ledgers the fence reads,
-        # so probing must come first. The inner fence then finds them already cleaned.
+        # Before the handler, not inside `pipeline.run`'s own (reentrant) turn, for two
+        # reasons. A refusal must land before anything mutates: `run` and `rerun`
+        # discard caches and manifests ahead of `pipeline.run`, and a fence that fired
+        # only inside it would leave a refused command having destroyed state on the
+        # way to being refused — the tree must be exactly as found. And no mutation may
+        # happen while a dead driver's jobs still write into the tree, which is what the
+        # fence is asking. (The invalidation touches only step.json, step.pkl and the
+        # manifest; the lease ledgers survive it, so the inner fence re-reads the same
+        # evidence and finds it already swept.)
         pipeline.require_no_live_jobs(config)
         handler(config, target)
     return 0
