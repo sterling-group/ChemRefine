@@ -194,7 +194,11 @@ def resubmit_unusable(
     stale output can be perfectly usable and still be the wrong answer, which no parse can
     see — so whatever its first parse produced is discarded unread by the same
     :meth:`~_ResultLedger.restart` a resubmission always gets, and the row re-runs
-    unconditionally.
+    unconditionally. Condemned rows arrive **already archived by the caller** — moved
+    aside *before* the manifest was stamped with the keys that condemn them, which is the
+    ordering that closes the stamp-then-crash window (a manifest vouching for outputs
+    still at canonical). Archiving them again here would only seal the freshly rendered
+    input into an attempt of its own, so the archive below skips them.
     """
     condemned = frozenset(stale)
     ledger = _ResultLedger(inputs)
@@ -214,7 +218,7 @@ def resubmit_unusable(
     )
     for s in seeds:
         ledger.restart(s.id)
-    attempts.archive_previous(ctx.step_dir, (s.id for s in seeds))
+    attempts.archive_previous(ctx.step_dir, (s.id for s in seeds if s.id not in condemned))
     retry_ctx = replace(ctx, prev_state=PipelineState(structures=seeds))
     redone = engine.prepare(retry_ctx)
     engine.submit(redone, retry_ctx)

@@ -1157,6 +1157,121 @@ def test_rebuild_cache_step_nms_branch(tmp_path: Path):
     assert {s.id for s in outcome.state.structures} == {"0"}  # resolved, id kept
 
 
+def _nms_rebuild_tree(tmp_path: Path, **options) -> tuple[Config, Path, cache.StepKey]:
+    """The `test_rebuild_cache_step_nms_branch` tree, plus the step's derived key."""
+    from synthetic import synthetic_dft_output
+
+    from chemrefine import cache, step
+    from chemrefine.engines.api import get_engine
+    from chemrefine.ids import structure_artifact_path
+
+    template_dir = tmp_path / "templates"
+    template_dir.mkdir(parents=True, exist_ok=True)
+    cfg = Config(
+        output_dir=tmp_path / "outputs",
+        template_dir=template_dir,
+        steps=[
+            StepConfig(
+                step=1,
+                engine="orca",
+                operation="freq",
+                nms=True,
+                options={"target": "minimum", **options},
+            ),
+        ],
+    )
+    step_cfg = cfg.steps[0]
+    step_dir = (cfg.output_dir / step_cfg.dir_name()).resolve()
+    out = structure_artifact_path(step_dir, 1, "0", "out")
+    inp = structure_artifact_path(step_dir, 1, "0", "inp")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)])
+        + "VIBRATIONAL FREQUENCIES\n-----------------------\n     6:    100.00 cm**-1\n"
+        + "\n****ORCA TERMINATED NORMALLY****\n",
+        encoding="utf-8",
+    )
+    inp.write_text("! Opt Freq\n", encoding="utf-8")
+    (template_dir / "step1.inp").write_text("! Opt Freq\n", encoding="utf-8")
+    engine = get_engine("orca")
+    seed = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
+    ctx = step.build_context(cfg, step_cfg, PipelineState(structures=(seed,)), engine)
+    key = step.derive_step_key(ctx, step_cfg, engine)
+    cache.save_manifest(
+        StepInputs(files=((inp, out, "0"),)),
+        step_dir,
+        operation="freq",
+        engine="orca",
+        fingerprint=key.fingerprint,
+        resolution_key=key.resolution_key,
+        criterion_key=key.criterion_key,
+        search_key=key.search_key,
+        rows=key.manifest_rows(),
+    )
+    return cfg, step_dir, key
+
+
+def test_rebuild_refuses_an_attempt_from_another_search_specification(tmp_path: Path):
+    """A search retune must not adopt: same child ids, different displaced geometries.
+
+    Row keys exclude the NMS resolution by design, so the row check cannot see a retune —
+    and the re-derived children's ids coincide with the old attempt's, so a rebuild would
+    parse outputs answering displacements this configuration never asked for and cache
+    them under the new resolution's fingerprint. Resume already refuses to reuse such an
+    attempt; the explicit command must not adopt what resume refuses.
+    """
+    from chemrefine import step
+
+    cfg, _step_dir, _key = _nms_rebuild_tree(tmp_path, displacement_value=1.0)
+    retuned = Config(
+        output_dir=cfg.output_dir,
+        template_dir=cfg.template_dir,
+        steps=[
+            StepConfig(
+                step=1,
+                engine="orca",
+                operation="freq",
+                nms=True,
+                options={"target": "minimum", "displacement_value": 0.25},
+            ),
+        ],
+    )
+    seed = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
+    with pytest.raises(CacheError, match="different search settings"):
+        step.rebuild_cache_step(retuned, retuned.steps[0], PipelineState(structures=(seed,)))
+
+
+def test_rebuild_still_adopts_across_a_criterion_retune(tmp_path: Path):
+    """Re-reading an attempt under a new *target* is the very thing rebuild-nms offers.
+
+    A criterion retune never moves a child's geometry — the displacement depends on the
+    search knobs and the mode, not on what counts as resolved — so the attempt on disk
+    stays a sound answer and the adoption must keep working. Only the search half refuses.
+    """
+    from chemrefine import step
+
+    cfg, _step_dir, _key = _nms_rebuild_tree(tmp_path)
+    retuned = Config(
+        output_dir=cfg.output_dir,
+        template_dir=cfg.template_dir,
+        steps=[
+            StepConfig(
+                step=1,
+                engine="orca",
+                operation="freq",
+                nms=True,
+                options={"target": "ts", "ts_mode_index": 6},
+            ),
+        ],
+    )
+    seed = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
+    outcome = step.rebuild_cache_step(retuned, retuned.steps[0], PipelineState(structures=(seed,)))
+    # Under `ts` the structure (zero imaginary modes) is no longer at its target and its
+    # only children would need submitting — rebuild submits nothing, so it lands in the
+    # ledger as unresolved rather than being refused outright: the adoption path ran.
+    assert outcome.cache_hit is False
+
+
 # ---------------------------------------------------------------------------
 # Resuming a step the driver died in the middle of
 # ---------------------------------------------------------------------------
@@ -1289,6 +1404,78 @@ def test_a_partially_changed_parent_set_computes_exactly_the_changed_rows(tmp_pa
     outcome = run_step(cfg, cfg.steps[0], changed, mode=StepMode.RESUME, engine=engine)
 
     assert engine.submitted == [["2"]], "exactly the changed row computes"
+    assert [s.id for s in outcome.state.structures] == ["0", "1", "2"]
+
+
+def _partially_changed(tmp_path: Path) -> tuple[Config, PipelineState, Path]:
+    """The {A, B, C'} shape: a finished step, its cache gone, parent 2's geometry moved."""
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1", "2"])
+    run_step(cfg, cfg.steps[0], seeds, mode=StepMode.EXECUTE)
+    step_dir = step_dir_for(cfg, cfg.steps[0])
+    cache.invalidate(step_dir)
+    moved = Atoms("H")
+    moved.positions[0] = (0.0, 0.0, 0.5)
+    changed = PipelineState(
+        structures=(
+            seeds.structures[0],
+            seeds.structures[1],
+            Structure(id="2", atoms=moved),
+        )
+    )
+    return cfg, changed, step_dir
+
+
+def test_the_manifest_is_stamped_only_after_condemned_outputs_are_archived(tmp_path: Path):
+    """The ordering that closes the stamp-then-crash window, pinned at the stamp itself.
+
+    Stamped first, a driver killed during the resubmission pass left the new row
+    provenance vouching for the condemned row's old output still at canonical — and the
+    next resume computed `changed = {}` and adopted it: a parse-usable answer to the
+    *previous* parent's geometry, served as the new parent's result. So at the moment
+    `save_manifest` runs on the incremental path, the condemned output must already be
+    in an attempt directory, where a crash re-reads as MISSING_OUTPUT instead.
+    """
+    cfg, changed, step_dir = _partially_changed(tmp_path)
+    stale_out = step_dir / "2" / "step1_2.out"
+    assert stale_out.is_file(), "precondition: the old output sits at canonical"
+
+    at_stamp: dict[str, bool] = {}
+    real = cache.save_manifest
+
+    def _spying(inputs, sd, **kwargs):
+        if kwargs.get("rows"):  # the incremental stamp — finalize()'s cache write has none
+            at_stamp["canonical"] = stale_out.is_file()
+            at_stamp["archived"] = any((step_dir / "2").glob("attempt*/step1_2.out"))
+        return real(inputs, sd, **kwargs)
+
+    with patch.object(cache, "save_manifest", _spying):
+        run_step(cfg, cfg.steps[0], changed, mode=StepMode.RESUME)
+
+    assert at_stamp == {"canonical": False, "archived": True}
+
+
+def test_a_crash_after_the_stamp_still_recomputes_the_condemned_row(tmp_path: Path):
+    """The window itself, end to end: stamp → die → resume must resubmit, never adopt.
+
+    The first resume is killed right after the manifest carries the new row keys (the
+    resubmission pass never runs — a walltime kill lands exactly there on a large step,
+    since the pass opens with a parse of every output). The second resume then faces a
+    manifest whose rows all match its own; the proof that the condemned row was archived
+    rather than left for adoption is that it goes back to the scheduler.
+    """
+    cfg, changed, _step_dir = _partially_changed(tmp_path)
+
+    with (
+        patch("chemrefine.lifecycle.resubmit_unusable", side_effect=SystemExit(143)),
+        pytest.raises(SystemExit),
+    ):
+        run_step(cfg, cfg.steps[0], changed, mode=StepMode.RESUME)
+
+    engine = _CountingEngine()
+    outcome = run_step(cfg, cfg.steps[0], changed, mode=StepMode.RESUME, engine=engine)
+
+    assert engine.submitted == [["2"]], "the stale output must not be adopted"
     assert [s.id for s in outcome.state.structures] == ["0", "1", "2"]
 
 

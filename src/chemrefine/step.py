@@ -587,9 +587,18 @@ def _incremental_step_outcome(
         len(current) - len(changed),
         len(changed),
     )
+    # The condemned rows' canonical artifacts leave BEFORE the manifest is stamped with
+    # the keys that condemn them. Stamped first, a driver killed during the resubmission
+    # pass left the new row provenance vouching for the old outputs still at canonical —
+    # and the next resume computed `changed = {}`, adopting a stale output (parse-usable,
+    # answering the previous parent's geometry) as the changed parent's result: the
+    # internally-consistent wrong state this provenance exists to prevent. Archived away,
+    # the same crash re-reads as MISSING_OUTPUT and the row is resubmitted.
+    attempts.archive_previous(ctx.step_dir, changed)
     # Fresh inputs for the whole current set: an adopted row re-renders byte-identically,
-    # a changed row's stale artifacts are archived by the resubmission it is condemned
-    # to. Prepared before the manifest write so the manifest describes files that exist.
+    # a condemned row renders into the directory its stale artifacts just left (the
+    # resubmission knows they arrive pre-archived). Prepared before the manifest write so
+    # the manifest describes files that exist.
     inputs = engine.prepare(ctx)
     cache.save_manifest(
         inputs,
@@ -599,6 +608,7 @@ def _incremental_step_outcome(
         fingerprint=key.fingerprint,
         resolution_key=key.resolution_key,
         criterion_key=key.criterion_key,
+        search_key=key.search_key,
         rows=current,
     )
     successes, failures = lifecycle.resubmit_unusable(engine, ctx, inputs, stale=changed)
@@ -652,6 +662,7 @@ def _run_full_step(
         fingerprint=key.fingerprint,
         resolution_key=key.resolution_key,
         criterion_key=key.criterion_key,
+        search_key=key.search_key,
         rows=key.manifest_rows(),
     )
 
@@ -714,6 +725,7 @@ def _run_artifact_step(
         fingerprint=key.fingerprint,
         resolution_key=key.resolution_key,
         criterion_key=key.criterion_key,
+        search_key=key.search_key,
         rows=key.manifest_rows(),
     )
     engine.submit(inputs, ctx)
@@ -845,6 +857,33 @@ def rebuild_cache_step(
                 f"cache results this configuration never produced. "
                 f"Run `chemrefine rerun {step_cfg.step}` to recompute it."
             )
+    if (
+        step_cfg.nms
+        and isinstance(engine, NmsCapableEngine)
+        and provenance.search_key
+        and provenance.search_key != key.search_key
+    ):
+        # The resolution's own stamp, held to the artifact rule below: row keys exclude
+        # the NMS resolution by design, so the row check above cannot see a retune. The
+        # *search* half is the one an attempt cannot survive — a changed
+        # displacement_value/seed/num_random_displacements changes the displaced
+        # geometries while the child ids stay the same, so a rebuild would parse outputs
+        # answering displacements this configuration never asked for and cache them
+        # under the new resolution's fingerprint. Resume already refuses to reuse such
+        # an attempt ("displaced from a round this run never produced"); the explicit
+        # command must not adopt what resume refuses. A *criterion* retune stays
+        # adoptable on purpose — it never moves a child's geometry, and re-reading the
+        # attempt under a new target is the very thing `rebuild-nms` offers. An empty
+        # stored key stays adoptable too — unprovable, never proven wrong, the row
+        # doctrine.
+        raise CacheError(
+            f"step {step_cfg.step}: the NMS children on disk were displaced under "
+            f"different search settings (displacement_value / "
+            f"num_random_displacements / seed changed), so re-parsing them would cache "
+            f"an exploration this configuration never ran. `chemrefine resume` re-runs "
+            f"just the displaced children under the current settings; "
+            f"`chemrefine rerun {step_cfg.step}` redoes the whole step."
+        )
     if isinstance(engine, ArtifactEngine):
         # An artifact step has one whole-set product and no per-structure rows, so the
         # step stamp is the right grain for its provenance — the row doctrine above can
@@ -883,6 +922,7 @@ def rebuild_cache_step(
         fingerprint=key.fingerprint,
         resolution_key=key.resolution_key,
         criterion_key=key.criterion_key,
+        search_key=key.search_key,
         rows=key.manifest_rows(),
     )
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)

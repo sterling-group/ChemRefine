@@ -311,19 +311,29 @@ class ResolutionSpec:
     search: Mapping[str, Any]
 
 
-def resolution_keys(resolution: ResolutionSpec | None) -> tuple[str, str]:
-    """``(resolution_key, criterion_key)`` for a step — ``("", "")`` when nothing resolves.
+def resolution_keys(resolution: ResolutionSpec | None) -> tuple[str, str, str]:
+    """``(resolution_key, criterion_key, search_key)`` — all ``""`` when nothing resolves.
 
     The ``nms`` flag is expressed as this key's presence; it appears in no row key,
     because it is read only by the resolution machinery and can never change a job.
+
+    The two halves are keyed separately because they age differently on disk. A
+    *criterion* retune (``target`` / ``ts_mode_index``) changes which children are
+    selected and what counts as resolved, but never a child's geometry — so an
+    ``attemptK/`` on disk stays re-readable across it, which is ``rebuild-nms``'s
+    whole offer. A *search* retune (``displacement_value`` / ``num_random_displacements``
+    / ``seed``) changes the geometries themselves while the child ids stay the same,
+    so the same attempt answers a question this configuration never asked — the one
+    adoption ``rebuild-cache`` must refuse.
     """
     if resolution is None:
-        return "", ""
+        return "", "", ""
     criterion = _hash_payload({"criterion": dict(resolution.criterion)})
+    search = _hash_payload({"search": dict(resolution.search)})
     full = _hash_payload(
         {"criterion": dict(resolution.criterion), "search": dict(resolution.search)}
     )
-    return full, criterion
+    return full, criterion, search
 
 
 # ---------------------------------------------------------------------------
@@ -827,7 +837,7 @@ class StepKey:
     The identity is layered the way the domain is layered. ``row_keys`` (one per parent,
     aligned with ``parent_ids``/``parent_digests``) are the per-structure job identities
     (:func:`row_key`); ``resolution_key``/``criterion_key`` are the NMS resolution's
-    identity (:func:`resolution_keys`, both ``""`` for a step that resolves nothing); and
+    identity (:func:`resolution_keys`, all ``""`` for a step that resolves nothing); and
     ``fingerprint`` composes them with the step number — an exact hit means "the whole
     step, bit for bit", while every finer question is asked of the rows.
 
@@ -843,6 +853,7 @@ class StepKey:
     row_keys: tuple[str, ...] = ()
     resolution_key: str = ""
     criterion_key: str = ""
+    search_key: str = ""
     fingerprint: str = ""
 
     def manifest_rows(self) -> dict[str, tuple[str, str]]:
@@ -894,7 +905,7 @@ class StepKey:
             )
             for digest in parent_digs
         )
-        res_key, crit_key = resolution_keys(resolution)
+        res_key, crit_key, search_key = resolution_keys(resolution)
         step_fingerprint = _hash_payload(
             {
                 "format": CACHE_FORMAT_VERSION,
@@ -909,6 +920,7 @@ class StepKey:
             row_keys=rows,
             resolution_key=res_key,
             criterion_key=crit_key,
+            search_key=search_key,
             fingerprint=step_fingerprint,
         )
 
@@ -1024,6 +1036,7 @@ def save_manifest(
     fingerprint: str = "",
     resolution_key: str = "",
     criterion_key: str = "",
+    search_key: str = "",
     rows: Mapping[str, tuple[str, str]] | None = None,
 ) -> Path:
     """Persist ``inputs`` plus step metadata to ``manifest.json``; return the path.
@@ -1049,6 +1062,7 @@ def save_manifest(
         "fingerprint": fingerprint,
         "resolution_key": resolution_key,
         "criterion_key": criterion_key,
+        "search_key": search_key,
         "files": [
             {
                 "input": str(inp),
@@ -1081,8 +1095,14 @@ class ManifestProvenance:
     resolution_key: str
     criterion_key: str
     """The criterion half of the resolution the rows were resolved under — what decides
-    whether an ``attemptK/`` resolution (and its ``resolved_from`` label) may be trusted
-    across a search retune, and never across a criterion change."""
+    whether a passthrough's ``resolved_from`` label may be worn on *resume*, which fans
+    out fresh children (an attempt on disk predates its submission)."""
+    search_key: str
+    """The search half — what decides whether the ``attemptK/`` children themselves may
+    be re-read at all: a search retune changes the displaced geometries under unchanged
+    child ids, so an attempt from another search key answers a different question.
+    ``""`` for a manifest written before this key existed — unprovable, adoptable only
+    by the explicit ``rebuild-cache``, the row doctrine."""
     rows: dict[str, tuple[str, str]]
 
 
@@ -1094,7 +1114,9 @@ def load_manifest_provenance(step_dir: Path) -> ManifestProvenance:
     """
     data = read_json(manifest_path(step_dir), None, label="manifest")
     if not isinstance(data, dict):
-        return ManifestProvenance(fingerprint="", resolution_key="", criterion_key="", rows={})
+        return ManifestProvenance(
+            fingerprint="", resolution_key="", criterion_key="", search_key="", rows={}
+        )
     rows: dict[str, tuple[str, str]] = {}
     for rec in data.get("files") or []:
         if isinstance(rec, dict) and "row_key" in rec:
@@ -1103,6 +1125,7 @@ def load_manifest_provenance(step_dir: Path) -> ManifestProvenance:
         fingerprint=str(data.get("fingerprint", "")),
         resolution_key=str(data.get("resolution_key", "")),
         criterion_key=str(data.get("criterion_key", "")),
+        search_key=str(data.get("search_key", "")),
         rows=rows,
     )
 
