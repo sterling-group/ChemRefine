@@ -24,12 +24,17 @@ read it with ``jq`` or :func:`json.load`, not by eye. The per-structure
 ``.result.json`` records beside each output stay indented and keep their
 coordinates inline; those are the ones a person opens, and they are a
 few KB each.
-The cache is keyed by a SHA-1 *fingerprint* covering the step's config
-(engine, operation, options, charge, multiplicity, template, NMS flag)
-plus the parent structures that fed into the step — their IDs **and**
-their content (:func:`structure_digest`: symbols, coordinates, energy).
-If the YAML changes, or the seed file / any upstream result changes,
-the fingerprint changes and the next run re-executes the step. The
+The cache is keyed at the grain the work has (:class:`StepKey`). Each
+parent structure's job carries a *row key* (:func:`row_key`): everything
+that reaches that job — engine, operation, the options as the engine's
+declared model reads them, the effective charge and multiplicity, the
+template's and any named file's bytes — plus the parent's own content
+(:func:`structure_digest`: symbols, coordinates, energy). An NMS step
+adds a *resolution key* (:func:`resolution_keys`) that touches no row,
+and the step *fingerprint* composes the ordered rows with it. An exact
+fingerprint match serves the whole step; anything finer is asked of the
+rows, so a change to the YAML, the seed or an upstream result recomputes
+exactly the rows it reaches and adopts the rest from disk. The
 ``sample:`` filter is deliberately **excluded**: the cache stores the
 *pre-filter* results and filtering re-runs on every load, so tuning a
 filter must refilter the cached results, not redo the calculations
@@ -175,8 +180,8 @@ def structure_digest(s: Structure) -> str:
 def template_digest(path: Path | None) -> str:
     """Return a 16-char SHA-1 over a step template's bytes; ``""`` when there is none.
 
-    The ``template_digest`` half of :func:`fingerprint`, in the module that owns cache keys —
-    the same reason :func:`reuse_fingerprint` lives here. One reader for
+    The ``template_digest`` field of every :func:`row_key`, in the module that owns cache
+    keys — the same reason :meth:`StepKey.of` lives here. One reader for
     :attr:`~chemrefine.state.StepContext.template`, so the format cannot drift between
     engines: two of them hashing the same file to different keys is not a crash, it is a step
     that silently re-runs or silently does not.
@@ -199,8 +204,8 @@ def option_file_digests(options: Mapping[str, Any] | None) -> dict[str, str]:
 
     The counterpart to :func:`template_digest` for the *other* file a step can be pinned to.
     A step that names a model — ``model_path``, or a ``model_name`` that is a path — depends
-    on that file's contents exactly as it depends on its template, and the raw ``options``
-    dict in :func:`fingerprint` records only the *string*. Without these digests, retraining
+    on that file's contents exactly as it depends on its template, and the ``options``
+    payload of a :func:`row_key` records only the *string*. Without these digests, retraining
     a model in place would leave every consuming step's key unchanged and ``resume`` would
     serve results computed with the previous weights — and nothing else moves that key,
     because a training step passes its structures through untouched.
@@ -351,8 +356,11 @@ class ResolutionSpec:
 def resolution_keys(resolution: ResolutionSpec | None) -> tuple[str, str, str]:
     """``(resolution_key, criterion_key, search_key)`` — all ``""`` when nothing resolves.
 
-    The ``nms`` flag is expressed as this key's presence; it appears in no row key,
-    because it is read only by the resolution machinery and can never change a job.
+    The ``nms`` flag is expressed as this key's presence. It appears in no *row* key
+    because round-1 inputs are byte-identical with ``nms`` on or off — which is what
+    makes turning it on over a finished run cost only the displacement children. The
+    search half is what identifies those children: they have no row key of their own,
+    and their geometries follow the search knobs.
 
     The two halves are keyed separately because they age differently on disk. A
     *criterion* retune (``target`` / ``ts_mode_index``) changes which children are
