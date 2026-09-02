@@ -212,16 +212,7 @@ def test_manifest_provenance_round_trips(tmp_path: Path):
             (tmp_path / "1.inp", tmp_path / "1.out", "1"),
         )
     )
-    save_manifest(
-        inputs,
-        tmp_path,
-        operation="opt_sp",
-        engine="fake",
-        fingerprint=key.fingerprint,
-        criterion_key=key.criterion_key,
-        search_key=key.search_key,
-        rows=key.manifest_rows(),
-    )
+    save_manifest(inputs, tmp_path, operation="opt_sp", engine="fake", **key.manifest_stamp())
     provenance = load_manifest_provenance(tmp_path)
     assert provenance.fingerprint == key.fingerprint
     assert provenance.criterion_key == key.criterion_key
@@ -229,6 +220,29 @@ def test_manifest_provenance_round_trips(tmp_path: Path):
     assert provenance.rows == key.manifest_rows()
     # And the file layout is untouched by the extra keys.
     assert load_manifest(tmp_path) == inputs
+
+
+def test_the_stamp_fills_every_provenance_slot_save_manifest_has():
+    """The drift class, pinned in the direction it fired.
+
+    ``save_manifest`` defaults every stamp field to ``""`` — unprovable, adoptable — so a
+    slot added to it and not to :meth:`StepKey.manifest_stamp` (``search_key`` was, once,
+    at every call site at once) would silently disarm the refusals built on it. The
+    projection and the signature must name the same slots, and the projection must
+    fill them from the key rather than with the default.
+    """
+    import inspect
+
+    key = _key("0", "1", resolution=_resolution())
+    stamp = key.manifest_stamp()
+    slots = set(inspect.signature(save_manifest).parameters) - {
+        "inputs",
+        "step_dir",
+        "operation",
+        "engine",
+    }
+    assert set(stamp) == slots
+    assert all(stamp.values()), "a stamped slot must never carry the default"
 
 
 def test_a_bare_manifest_reads_as_unprovenanced(tmp_path: Path):

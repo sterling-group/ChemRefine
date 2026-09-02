@@ -861,6 +861,23 @@ def save(
     logger.info("saved step %d cache (fingerprint %s)", step_cfg.step, key.fingerprint)
 
 
+class ManifestStamp(TypedDict):
+    """What a manifest records of the :class:`StepKey` it was written under.
+
+    A shape rather than four loose keywords because :func:`save_manifest` defaults every
+    stamp field to ``""`` — the *unprovable, adoptable* value — so a field forgotten at one
+    of its call sites is not an error but a manifest that reads as "never proven wrong"
+    and silently disarms the refusals built on it. Handed to ``save_manifest`` whole
+    (``**key.manifest_stamp()``), the only way to forget is to forget the whole stamp,
+    which is a row-less manifest and fails loud at the next resume.
+    """
+
+    fingerprint: str
+    criterion_key: str
+    search_key: str
+    rows: dict[str, tuple[str, str]]
+
+
 @dataclass(frozen=True)
 class StepKey:
     """A step's cache identity — computed once per step, then passed around as a value.
@@ -901,6 +918,21 @@ class StepKey:
                 self.parent_ids, self.row_keys, self.parent_digests, strict=True
             )
         }
+
+    def manifest_stamp(self) -> ManifestStamp:
+        """The key's projection onto a manifest: ``save_manifest(..., **key.manifest_stamp())``.
+
+        The step stamp (``fingerprint``), the two resolution halves and the row
+        provenance, in one shape, so the four routes that write a manifest cannot each
+        copy the quintet by hand and drift — :func:`save` already takes the key whole,
+        and this is the manifest's equivalent.
+        """
+        return ManifestStamp(
+            fingerprint=self.fingerprint,
+            criterion_key=self.criterion_key,
+            search_key=self.search_key,
+            rows=self.manifest_rows(),
+        )
 
     @classmethod
     def of(
@@ -1086,9 +1118,10 @@ def save_manifest(
     is what ``rerun`` / recovery rehydrates via :func:`load_manifest` after a
     restart. Written atomically, like the cache document.
 
-    ``fingerprint`` is the step key :func:`save` would store, written **before** the
-    jobs go out; ``rows`` (``id -> (row_key, parent_digest)``, normally
-    :meth:`StepKey.manifest_rows`) is the same provenance at row grain; and
+    The stamp — ``fingerprint``, the two resolution halves and ``rows`` — arrives whole
+    as :meth:`StepKey.manifest_stamp` from every route that has a key. ``fingerprint``
+    is the step key :func:`save` would store, written **before** the jobs go out;
+    ``rows`` (``id -> (row_key, parent_digest)``) is the same provenance at row grain;
     ``criterion_key``/``search_key`` are the two halves of the NMS resolution's identity
     (:func:`resolution_keys`), stamped separately because ``resume`` and
     ``rebuild-cache`` each ask a different half — the composed key would answer
@@ -1096,7 +1129,8 @@ def save_manifest(
     structure, that an output on disk is the one this configuration would compute —
     the manifest with row provenance *is* the current-format marker
     (:func:`load_manifest_provenance`); one without is adoptable only by the explicit
-    ``rebuild-cache``, never silently.
+    ``rebuild-cache``, never silently. The ``""`` defaults exist for exactly that
+    manifest: the hand-written v1 adoption record, which has no key to stamp.
     """
     path = manifest_path(step_dir)
     provenance = rows or {}

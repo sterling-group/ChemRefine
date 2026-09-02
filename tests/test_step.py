@@ -1201,10 +1201,7 @@ def _nms_rebuild_tree(tmp_path: Path, **options) -> tuple[Config, Path, cache.St
         step_dir,
         operation="freq",
         engine="orca",
-        fingerprint=key.fingerprint,
-        criterion_key=key.criterion_key,
-        search_key=key.search_key,
-        rows=key.manifest_rows(),
+        **key.manifest_stamp(),
     )
     return cfg, step_dir, key
 

@@ -612,10 +612,7 @@ def _incremental_step_outcome(
         ctx.step_dir,
         operation=step_cfg.operation,
         engine=step_cfg.engine,
-        fingerprint=key.fingerprint,
-        criterion_key=key.criterion_key,
-        search_key=key.search_key,
-        rows=current,
+        **key.manifest_stamp(),
     )
     successes, failures = lifecycle.resubmit_unusable(engine, ctx, inputs, stale=changed)
     successes, failures = lifecycle.retry_unconverged(engine, ctx, successes, failures)
@@ -665,10 +662,7 @@ def _run_full_step(
         # Stamped before submission, so an interrupted run leaves proof of *what* these
         # outputs were computed for — see :func:`_incremental_step_outcome`. The per-row
         # provenance is the same proof at structure grain, for the incremental resume.
-        fingerprint=key.fingerprint,
-        criterion_key=key.criterion_key,
-        search_key=key.search_key,
-        rows=key.manifest_rows(),
+        **key.manifest_stamp(),
     )
 
     # Built before submission, so a `target` that cannot be resolved says so before the step
@@ -727,10 +721,7 @@ def _run_artifact_step(
         ctx.step_dir,
         operation=step_cfg.operation,
         engine=step_cfg.engine,
-        fingerprint=key.fingerprint,
-        criterion_key=key.criterion_key,
-        search_key=key.search_key,
-        rows=key.manifest_rows(),
+        **key.manifest_stamp(),
     )
     engine.submit(inputs, ctx)
     return _finish_artifact_step(ctx, step_cfg, key, engine)
@@ -923,10 +914,7 @@ def rebuild_cache_step(
         ctx.step_dir,
         operation=step_cfg.operation,
         engine=step_cfg.engine,
-        fingerprint=key.fingerprint,
-        criterion_key=key.criterion_key,
-        search_key=key.search_key,
-        rows=key.manifest_rows(),
+        **key.manifest_stamp(),
     )
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
