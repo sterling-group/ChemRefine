@@ -435,8 +435,13 @@ def run_step(
         # the cache document cannot serve it, so `rebuild-cache` re-adopts them without
         # recomputing — which for an NMS or artifact step is what `resume` cannot promise.
         # A mismatch means `rebuild-cache` would refuse by that same guard, so only the
-        # commands that recompute are honest advice.
-        if cache.load_manifest_fingerprint(ctx.step_dir) == key.fingerprint:
+        # commands that recompute are honest advice. The attempts are asked the same way:
+        # a resume killed before its resolution pass leaves a current fingerprint over a
+        # carried-forward search stamp, and `rebuild-cache` would refuse those attempts.
+        provenance = cache.load_manifest_provenance(ctx.step_dir)
+        if provenance.fingerprint == key.fingerprint and not _attempts_foreign(
+            step_cfg, engine, provenance, key
+        ):
             raise NoUsableCacheError(
                 f"step {step_cfg.step} has no cache this configuration can use, and "
                 f"`{mode.value}` does not submit work for a step it is not targeting. "
@@ -473,6 +478,35 @@ def _policy_conflict(stored: str, current: str) -> bool:
     if not stored:
         return False
     return (stored == "best") != (current == "best")
+
+
+def _attempts_foreign(
+    step_cfg: StepConfig,
+    engine: CalculationEngine,
+    provenance: cache.ManifestProvenance,
+    key: cache.StepKey,
+) -> bool:
+    """Whether the ``attemptK/`` children on disk were displaced under another search.
+
+    The resolution's own stamp, held to the artifact rule: row keys exclude the NMS
+    resolution by design, so no row check can see a retune. The *search* half is the one
+    an attempt cannot survive — a changed displacement_value/seed/num_random_displacements
+    changes the displaced geometries while the child ids stay the same, so re-parsing
+    such an attempt would cache an exploration this configuration never ran. A
+    *criterion* retune stays adoptable on purpose — it never moves a child's geometry,
+    and re-reading the attempt under a new target is the very thing ``rebuild-nms``
+    offers. An empty stored key is unprovable, never proven wrong — the row doctrine.
+
+    One predicate for the two places that answer it: :func:`rebuild_cache_step`'s
+    refusal, and :func:`run_step`'s advice on which command to run next, which must
+    never name a rebuild that this refusal would then turn away.
+    """
+    return (
+        step_cfg.nms
+        and isinstance(engine, NmsCapableEngine)
+        and bool(provenance.search_key)
+        and provenance.search_key != key.search_key
+    )
 
 
 def _cached_outcome(
@@ -607,12 +641,21 @@ def _incremental_step_outcome(
     # resubmission knows they arrive pre-archived). Prepared before the manifest write so
     # the manifest describes files that exist.
     inputs = engine.prepare(ctx)
+    # The same discipline for the resolution half of the stamp: it describes the
+    # `attemptK/` children on disk, and those are still the previous submission's until
+    # the resolution pass below replaces them. Stamped current here, a driver killed
+    # anywhere in the hours between this write and that pass left old-search attempts
+    # under a current-search stamp — adoptable by `rebuild-cache`, whose search guard
+    # reads exactly this stamp, and trusted by the next resume's label check. So the
+    # stored halves are carried forward, and the current ones are written only once
+    # the resolution they describe exists (after `finalize`, cache first, then
+    # provenance — `rebuild_cache_step`'s order). Rows and fingerprint stamp early as
+    # before: they describe round-1 outputs, which the archive above just made honest.
+    stamp = key.manifest_stamp()
+    stamp["criterion_key"] = provenance.criterion_key
+    stamp["search_key"] = provenance.search_key
     cache.save_manifest(
-        inputs,
-        ctx.step_dir,
-        operation=step_cfg.operation,
-        engine=step_cfg.engine,
-        **key.manifest_stamp(),
+        inputs, ctx.step_dir, operation=step_cfg.operation, engine=step_cfg.engine, **stamp
     )
     successes, failures = lifecycle.resubmit_unusable(engine, ctx, inputs, stale=changed)
     successes, failures = lifecycle.retry_unconverged(engine, ctx, successes, failures)
@@ -632,6 +675,13 @@ def _incremental_step_outcome(
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
     results = lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
+    cache.save_manifest(
+        inputs,
+        ctx.step_dir,
+        operation=step_cfg.operation,
+        engine=step_cfg.engine,
+        **key.manifest_stamp(),
+    )
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
 
@@ -852,25 +902,9 @@ def rebuild_cache_step(
                 f"cache results this configuration never produced. "
                 f"Run `chemrefine rerun {step_cfg.step}` to recompute it."
             )
-    if (
-        step_cfg.nms
-        and isinstance(engine, NmsCapableEngine)
-        and provenance.search_key
-        and provenance.search_key != key.search_key
-    ):
-        # The resolution's own stamp, held to the artifact rule below: row keys exclude
-        # the NMS resolution by design, so the row check above cannot see a retune. The
-        # *search* half is the one an attempt cannot survive — a changed
-        # displacement_value/seed/num_random_displacements changes the displaced
-        # geometries while the child ids stay the same, so a rebuild would parse outputs
-        # answering displacements this configuration never asked for and cache them
-        # under the new resolution's fingerprint. Resume already refuses to reuse such
-        # an attempt ("displaced from a round this run never produced"); the explicit
-        # command must not adopt what resume refuses. A *criterion* retune stays
-        # adoptable on purpose — it never moves a child's geometry, and re-reading the
-        # attempt under a new target is the very thing `rebuild-nms` offers. An empty
-        # stored key stays adoptable too — unprovable, never proven wrong, the row
-        # doctrine.
+    if _attempts_foreign(step_cfg, engine, provenance, key):
+        # Resume already refuses to reuse such an attempt ("displaced from a round this
+        # run never produced"); the explicit command must not adopt what resume refuses.
         raise CacheError(
             f"step {step_cfg.step}: the NMS children on disk were displaced under "
             f"different search settings (displacement_value / "

@@ -551,6 +551,20 @@ def _read_resolution(structure_dir: Path) -> str | None:
         ) from e
 
 
+def _disown_resolution(structure_dir: Path) -> None:
+    """Remove the label a structure's most recent attempt wears, if any.
+
+    The counterpart of :func:`_read_resolution` for a label that must not be worn again:
+    it was written under a criterion this configuration no longer runs. Clearing it only
+    in memory would leave the file to be re-read by the next resume — which, once the
+    manifest carries the current criterion, trusts what it finds. Deleting the file is the
+    same escape :func:`_read_resolution` names for a corrupt one.
+    """
+    attempt = latest_attempt_dir(structure_dir)
+    if attempt is not None:
+        (attempt / _RESOLUTION_FILE).unlink(missing_ok=True)
+
+
 def _select_survivors(
     resolved: list[Structure],
     round2: list[Structure],
@@ -697,12 +711,15 @@ def _resolve_all(
             # `read_resolutions=False` is the resume-over-adopted-rows case: any
             # `resolution.json` on disk was written under some earlier submission's
             # criterion, so its label must not be re-worn — the structure passes through
-            # with its provenance cleared rather than borrowed.
-            survivors.append(
-                _passthrough(s, ctx.step_dir)
-                if read_resolutions
-                else replace(s, converged=True, resolved_from=None)
-            )
+            # with its provenance cleared rather than borrowed. Cleared on disk too: the
+            # resume that disowns it goes on to stamp the manifest with the criterion it
+            # ran under, and the next resume would trust — and resurrect — a sidecar
+            # left behind.
+            if read_resolutions:
+                survivors.append(_passthrough(s, ctx.step_dir))
+            else:
+                _disown_resolution(ctx.step_dir / s.id)
+                survivors.append(replace(s, converged=True, resolved_from=None))
             continue
         children = _children_for(s, opts)
         attempt = mode.attempt_dir(s, ctx)
@@ -774,8 +791,10 @@ def resume_nms(
     configuration's *criterion* (the manifest's stored ``criterion_key`` against the
     current one). Trusted, a passthrough keeps its ``resolved_from`` exactly as a
     rebuild would; untrusted — the nms flip, a criterion change, a pre-provenance
-    tree — the label is cleared, because wearing another criterion's provenance is the
-    one lie a passthrough could tell. Either way a parent *not* at the target fans out
+    tree — the label is cleared and its sidecar removed, because wearing another
+    criterion's provenance is the one lie a passthrough could tell, and a sidecar left
+    behind would be re-read once the manifest carries the criterion this resume ran
+    under. Either way a parent *not* at the target fans out
     **fresh** children: an attempt on disk predates the submission this configuration
     would have made, and a child found there was displaced from a round this run never
     produced.

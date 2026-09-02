@@ -1267,6 +1267,127 @@ def test_rebuild_still_adopts_across_a_criterion_retune(tmp_path: Path):
     assert outcome.cache_hit is False
 
 
+def _retuned(cfg: Config, **options) -> Config:
+    """The `_nms_rebuild_tree` config with its NMS options replaced."""
+    return Config(
+        output_dir=cfg.output_dir,
+        template_dir=cfg.template_dir,
+        steps=[StepConfig(step=1, engine="orca", operation="freq", nms=True, options=options)],
+    )
+
+
+_H2_SEED = PipelineState(
+    structures=(Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])),)
+)
+
+
+def test_the_resolution_stamp_waits_for_the_resolution(tmp_path: Path):
+    """The resolution half of the stamp is written once the resolution it describes exists.
+
+    The row half already waits for the archive; this is the same discipline one grain
+    up. Stamped current before `resume_nms`, a driver killed in the hours that pass
+    would leave the previous search's attempts under the current search's stamp. So the
+    first stamp carries the stored halves forward and the current ones land after
+    finalize — completed runs end with exactly the manifest they always had.
+    """
+    from chemrefine import step
+
+    cfg, step_dir, stored = _nms_rebuild_tree(tmp_path, displacement_value=1.0)
+    retuned = _retuned(cfg, target="minimum", displacement_value=0.25)
+    stamps: list[dict[str, str]] = []
+    real = cache.save_manifest
+
+    def _spying(inputs, sd, **kwargs):
+        if kwargs.get("rows"):
+            stamps.append({k: kwargs[k] for k in ("criterion_key", "search_key")})
+        return real(inputs, sd, **kwargs)
+
+    with patch.object(cache, "save_manifest", _spying):
+        run_step(retuned, retuned.steps[0], _H2_SEED, mode=StepMode.RESUME)
+
+    current = step.derive_step_key(
+        step.build_context(retuned, retuned.steps[0], _H2_SEED, get_engine("orca")),
+        retuned.steps[0],
+        get_engine("orca"),
+    )
+    assert stored.search_key != current.search_key, "precondition: a search retune"
+    assert stamps[0] == {"criterion_key": stored.criterion_key, "search_key": stored.search_key}
+    provenance = cache.load_manifest_provenance(step_dir)
+    assert (provenance.criterion_key, provenance.search_key) == (
+        current.criterion_key,
+        current.search_key,
+    )
+
+
+def _crash_before_the_resolution(tmp_path: Path, **options) -> tuple[Config, Path, cache.StepKey]:
+    """A resume over `_nms_rebuild_tree` under new NMS options, killed at its resolution pass."""
+    cfg, step_dir, stored = _nms_rebuild_tree(tmp_path, displacement_value=1.0)
+    retuned = _retuned(cfg, **options)
+    with (
+        patch("chemrefine.nms.resume_nms", side_effect=SystemExit(143)),
+        pytest.raises(SystemExit),
+    ):
+        run_step(retuned, retuned.steps[0], _H2_SEED, mode=StepMode.RESUME)
+    return retuned, step_dir, stored
+
+
+def test_a_crash_before_the_resolution_leaves_the_old_search_key(tmp_path: Path):
+    """Killed between the stamp and the resolution, the tree still refuses the old attempts.
+
+    The attempts on disk were displaced under the previous search; the manifest must say
+    so until the new ones exist, so that `rebuild-cache` refuses them — the guard added
+    with the search key, in the very crash it exists for.
+    """
+    from chemrefine import step
+
+    retuned, step_dir, stored = _crash_before_the_resolution(
+        tmp_path, target="minimum", displacement_value=0.25
+    )
+    assert cache.load_manifest_provenance(step_dir).search_key == stored.search_key
+    with pytest.raises(CacheError, match="different search settings"):
+        step.rebuild_cache_step(retuned, retuned.steps[0], _H2_SEED)
+
+
+def test_a_crash_before_the_resolution_keeps_the_labels_untrusted(tmp_path: Path):
+    """After a criterion retune crashes mid-resume, the next resume still distrusts labels.
+
+    The stored criterion is the one the attempts' labels were written under; stamped
+    current before the resolution ran, the next resume would have worn them.
+    """
+    from chemrefine import nms
+
+    retuned, _step_dir, _stored = _crash_before_the_resolution(
+        tmp_path, target="ts", ts_mode_index=6
+    )
+    seen: list[bool] = []
+    real = nms.resume_nms
+
+    def _spying(*args, **kwargs):
+        seen.append(kwargs["trust_resolutions"])
+        return real(*args, **kwargs)
+
+    with patch("chemrefine.nms.resume_nms", _spying):
+        run_step(retuned, retuned.steps[0], _H2_SEED, mode=StepMode.RESUME)
+    assert seen == [False]
+
+
+def test_the_scoped_action_advice_never_names_a_rebuild_that_refuses(tmp_path: Path):
+    """In the crash window the fingerprint matches; the attempts do not. Advise honestly.
+
+    A scoped action reaching this step cannot submit and says which command can. The
+    fingerprint alone would name `rebuild-cache` — which then refuses the foreign
+    attempts — so the advice asks the rebuild guard's own question first.
+    """
+    from chemrefine.step import NoUsableCacheError
+
+    retuned, _step_dir, _stored = _crash_before_the_resolution(
+        tmp_path, target="minimum", displacement_value=0.25
+    )
+    with pytest.raises(NoUsableCacheError, match="chemrefine resume") as info:
+        run_step(retuned, retuned.steps[0], _H2_SEED, mode=StepMode.CACHE_ONLY)
+    assert "rebuild-cache" not in str(info.value)
+
+
 # ---------------------------------------------------------------------------
 # Resuming a step the driver died in the middle of
 # ---------------------------------------------------------------------------
@@ -1439,7 +1560,9 @@ def test_the_manifest_is_stamped_only_after_condemned_outputs_are_archived(tmp_p
     real = cache.save_manifest
 
     def _spying(inputs, sd, **kwargs):
-        if kwargs.get("rows"):  # the incremental stamp — finalize()'s cache write has none
+        # The first stamp is the one under test; the resolution stamp after finalize
+        # lands once the condemned row has been recomputed at canonical.
+        if kwargs.get("rows") and not at_stamp:
             at_stamp["canonical"] = stale_out.is_file()
             at_stamp["archived"] = any((step_dir / "2").glob("attempt*/step1_2.out"))
         return real(inputs, sd, **kwargs)

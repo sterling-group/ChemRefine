@@ -1049,3 +1049,31 @@ def test_an_attempt_that_resolved_nothing_has_no_sidecar_and_is_not_an_error(tmp
     (struct_dir / "attempt1").mkdir(parents=True)
 
     assert nms._read_resolution(struct_dir) is None
+
+
+def test_an_untrusted_passthrough_disowns_its_resolution_sidecar(tmp_path: Path):
+    """A label written under another criterion is cleared on disk, not only in memory.
+
+    The resume that distrusts it goes on to stamp the manifest with the criterion it ran
+    under, after which the next resume trusts what it finds — so a sidecar merely skipped
+    would be worn again one resume later. Trusted first, the same sidecar stays and is worn.
+    """
+    engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=None)})  # at target: passthrough
+    ctx = _ctx(tmp_path, (_h2("0"),))
+    round1 = _seed_round1(engine, ctx)
+    attempt = ctx.step_dir / "0" / "attempt1"
+    attempt.mkdir(parents=True)
+    nms._write_resolution(attempt, "0_m5_pos")
+
+    trusted = nms.resume_nms(engine, round1, [], ctx, trust_resolutions=True)
+    assert trusted.survivors[0].resolved_from == "0_m5_pos"
+    assert (attempt / "resolution.json").is_file()
+
+    disowned = nms.resume_nms(engine, round1, [], ctx, trust_resolutions=False)
+    assert disowned.survivors[0].resolved_from is None
+    assert not (attempt / "resolution.json").exists()
+    # No resurrection: the next trusting resume finds nothing to wear.
+    assert (
+        nms.resume_nms(engine, round1, [], ctx, trust_resolutions=True).survivors[0].resolved_from
+        is None
+    )

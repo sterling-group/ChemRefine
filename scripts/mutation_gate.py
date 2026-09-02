@@ -219,6 +219,16 @@ MUTATIONS = (
         "serves that instead of computing what was asked for",
     ),
     Mutation(
+        id="resume-resolution-stamp-waits",
+        path="src/chemrefine/step.py",
+        old='stamp["search_key"] = provenance.search_key',
+        new='stamp["search_key"] = key.search_key',
+        tests="tests/test_step.py",
+        breaks="the incremental resume stamps the current search key before the "
+        "resolution that earns it exists, so a driver killed mid-resume leaves the "
+        "previous search's attempts adoptable by `rebuild-cache`",
+    ),
+    Mutation(
         id="policy-change-over-cache",
         path="src/chemrefine/step.py",
         old='return (stored == "best") != (current == "best")',

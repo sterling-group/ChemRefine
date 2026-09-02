@@ -1186,7 +1186,9 @@ def load_manifest_provenance(step_dir: Path) -> ManifestProvenance:
     """The provenance recorded alongside a step's manifest; all-empty when there is none.
 
     Read separately from :func:`load_manifest` so callers that want only the file layout
-    are untouched, exactly as :func:`load_manifest_fingerprint` is.
+    are untouched. All-empty covers a missing manifest and one written before these keys
+    existed alike — neither can equal a real stamp, so every reader falls back to the
+    route that recomputes.
     """
     data = read_json(manifest_path(step_dir), None, label="manifest")
     if not isinstance(data, dict):
@@ -1201,18 +1203,6 @@ def load_manifest_provenance(step_dir: Path) -> ManifestProvenance:
         search_key=str(data.get("search_key", "")),
         rows=rows,
     )
-
-
-def load_manifest_fingerprint(step_dir: Path) -> str:
-    """The fingerprint recorded alongside a step's manifest, or ``""``.
-
-    ``""`` for a manifest written before this key existed, and for a missing manifest —
-    either way it can never equal a real fingerprint, so the caller falls back to the
-    full re-run. Read separately from :func:`load_manifest` so every existing caller,
-    which wants only the file layout, is untouched.
-    """
-    data = read_json(manifest_path(step_dir), None, label="manifest")
-    return str(data.get("fingerprint", "")) if isinstance(data, dict) else ""
 
 
 def load_manifest(step_dir: Path) -> StepInputs | None:
