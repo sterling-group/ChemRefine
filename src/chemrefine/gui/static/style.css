@@ -10,6 +10,10 @@
   --ok: #1e7d38;
   --warn: #9a6700;
   --err: #b33131;
+  /* The kit's own constant, from tools/gen_logo.py:68 (beside REFINE_TEAL #3f9b93,
+     which nothing here uses yet). --accent stays as it is: the title is the only
+     thing retinted, because it is the only thing sitting against the mark. */
+  --brand-navy: #25567d;
 }
 
 * {
@@ -36,10 +40,22 @@ header {
   top: 0;
   z-index: 5;
 }
+/* Mark and title are one lockup, so they get their own tighter gap than the
+   1rem the header spaces its regions with. */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+/* Sized in the markup too: the box is reserved before the SVG loads, so a sticky
+   header does not reflow the page under the cursor. */
+.brand img {
+  display: block;
+}
 header h1 {
   font-size: 1.05rem;
   margin: 0;
-  color: var(--accent);
+  color: var(--brand-navy);
 }
 header nav {
   margin-left: auto;

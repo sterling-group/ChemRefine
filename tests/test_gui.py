@@ -64,6 +64,26 @@ def test_the_page_is_open_but_the_api_is_gated(client: Any):
     assert _get(client, "/api/bootstrap").status_code == 200
 
 
+def test_the_brand_files_the_page_names_are_served_ungated(client: Any):
+    """The other half of the asset tests: those check the tree, this checks the server.
+
+    ``test_gui_assets`` proves the bytes are in the package and that the page's ``href``s
+    resolve to them on disk. Neither would notice if the static handler stopped answering
+    at the ``/static/brand/...`` path the page actually requests — the tab icon would go
+    blank with every test green. Ungated because they load before any token exists: the
+    ``before_request`` gate covers ``/api/`` only, which is what the page relies on.
+    """
+    for path in (
+        "/static/brand/logo.svg",
+        "/static/brand/favicon.svg",
+        "/static/brand/favicon-32.png",
+        "/static/brand/site.webmanifest",
+    ):
+        response = client.get(path)  # deliberately no token
+        assert response.status_code == 200, f"{path} answers {response.status_code}"
+        response.close()  # file-backed, like the page itself
+
+
 def test_every_route_is_behind_the_gate(client: Any):
     """Walk the route table: everything but the page and its assets answers 401 bare.
 

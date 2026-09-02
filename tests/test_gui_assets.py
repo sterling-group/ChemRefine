@@ -338,6 +338,82 @@ def test_every_vendored_bundle_is_found_and_licensed():
     assert orphans == [], f"licence files for bundles that are gone: {sorted(orphans)}"
 
 
+def test_the_guis_brand_files_are_the_kits_own_bytes():
+    """The GUI's copy of the brand kit must be the docs kit, not a lookalike.
+
+    The wheel ships ``src/chemrefine`` and nothing else, so ``docs/assets`` is not on the
+    served path and the page can only reference a brand file that lives in the package.
+    ``tools/gen_logo.py`` therefore writes both roots in one run and mirrors ``GUI_SUBSET``
+    across — which makes them identical by construction, and this the check that says so.
+
+    Byte-identity is the right assertion *here* and would be the wrong one against a fresh
+    build: ``c819ba2`` records that regeneration is byte-stable only on the authoring
+    toolchain, which is why CI never rebuilds the kit. Two copies of one run are a
+    different claim from two runs. What this catches is the ordinary accident — the kit
+    regenerated and only one root committed, or a brand file hand-edited in place.
+    """
+    brand = STATIC / "brand"
+    docs_assets = Path(__file__).resolve().parent.parent / "docs" / "assets"
+    # Everything the generator owns; site.webmanifest is page config, not a drawing, and
+    # has no counterpart there — it is covered by the two tests below instead.
+    mirrored = sorted(p for p in brand.iterdir() if p.suffix != ".webmanifest")
+    assert mirrored, f"no brand files in {brand} — has the directory moved?"
+    drifted = [
+        p.name
+        for p in mirrored
+        if not (docs_assets / p.name).is_file()
+        or (docs_assets / p.name).read_bytes() != p.read_bytes()
+    ]
+    assert drifted == [], (
+        f"brand files that differ from docs/assets or are not there at all: {drifted} — "
+        "rerun tools/gen_logo.py, which writes both roots"
+    )
+
+
+def test_every_brand_file_is_referenced_and_every_reference_resolves():
+    """Both directions: no dead bytes in the wheel, and no ``<link>`` that 404s.
+
+    One direction alone is worth little. Checking only that references resolve lets an
+    icon size the page stopped naming sit in the package forever; checking only that files
+    are referenced lets a typo'd ``href`` pass because some *other* tag names the file.
+
+    The manifest counts as a referrer, which is the whole reason the PWA icons are here —
+    they are named by it and by nothing in the markup. It is also itself referenced, by
+    the page's ``<link rel="manifest">``, so it needs no exemption from either direction.
+    """
+    brand = STATIC / "brand"
+    manifest = json.loads((brand / "site.webmanifest").read_text(encoding="utf-8"))
+    # The manifest's own srcs are relative to itself; the page's are relative to the page.
+    referenced = {icon["src"] for icon in manifest["icons"]}
+    referenced |= {
+        ref.removeprefix("static/brand/")
+        for ref in re.findall(r'(?:href|src)="(static/brand/[^"]+)"', INDEX.read_text("utf-8"))
+    }
+    missing = sorted(name for name in referenced if not (brand / name).is_file())
+    assert missing == [], f"referenced but not in the package: {missing}"
+    unreferenced = sorted(p.name for p in brand.iterdir() if p.name not in referenced)
+    assert unreferenced == [], (
+        f"brand files nothing names, shipping in the wheel for nothing: {unreferenced}"
+    )
+
+
+def test_the_manifest_starts_the_page_and_not_its_asset_directory():
+    """``start_url`` is relative on purpose, and an absolute ``/`` would break the docs site.
+
+    A manifest's relative ``start_url`` resolves against the *manifest's* URL, and the
+    manifest sits exactly two levels below the page in both deployments: ``/static/brand/``
+    under the Flask app, whose page is at ``/``, and ``/playground/static/brand/`` on the
+    docs site, whose page is at ``/playground/`` (``docs/hooks/playground.py`` copies the
+    static tree and lifts ``index.html`` above it). So ``../../`` is right in both, and
+    ``/`` would install the Playground pointing at the documentation home page.
+    """
+    manifest = json.loads((STATIC / "brand" / "site.webmanifest").read_text(encoding="utf-8"))
+    assert manifest["start_url"] == "../../", (
+        "start_url must stay two levels up so it resolves to the page under both the "
+        f"Flask app and the docs-site playground, not {manifest['start_url']!r}"
+    )
+
+
 def test_every_handler_the_page_calls_exists():
     """An ``@click`` naming a method that isn't there fails silently, at click time.
 

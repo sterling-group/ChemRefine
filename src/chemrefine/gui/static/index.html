@@ -3,7 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:,"><!-- no favicon request; keeps the server log quiet -->
+<!-- Declaring an icon is also what stops the browser probing /favicon.ico at the
+     root, which the server has no route for on purpose. These are served by the
+     static handler, so the log stays as quiet as the old data: no-op kept it. -->
+<link rel="icon" href="static/brand/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="static/brand/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="static/brand/apple-touch-icon.png">
+<link rel="manifest" href="static/brand/site.webmanifest">
+<meta name="theme-color" content="#25567d">
 <title>ChemRefine — workflow builder</title>
 <!-- Relative asset paths on purpose: the same page serves from the local Flask app
      (at /) and from the docs site's /playground/ copy. -->
@@ -16,7 +23,12 @@
 <body x-data="builder()" x-init="init()">
 
 <header>
-  <h1>ChemRefine</h1>
+  <!-- The mark carries no alt text: the h1 beside it already says the name, and a
+       described mark would make a screen reader say it twice. -->
+  <div class="brand">
+    <img src="static/brand/logo.svg" alt="" width="26" height="26">
+    <h1>ChemRefine</h1>
+  </div>
   <span class="muted" x-show="!staticMode"
         x-text="savedPath ? savedPath : 'unsaved workflow'"></span>
   <span class="muted" x-show="staticMode" style="display:none">
