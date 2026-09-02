@@ -149,3 +149,24 @@ def test_archive_previous_skips_a_structure_with_no_loose_files(tmp_path: Path):
     assert [p.parent.name for p in archived] == ["1"]
     assert not (step_dir / "0" / "attempt1").exists()
     assert (step_dir / "1" / "attempt1" / "step1_1.out").read_text() == "previous run"
+
+
+def test_archive_previous_archives_an_engine_directory_left_alone(tmp_path: Path):
+    """A canonical holding only an engine-written directory is prior work, not a first run.
+
+    A crash mid-seal moves the loose files and dies before the ``tensors/`` — the trigger
+    must see what ``seal`` moves, or the re-run's copy-back merges into the leftover and
+    the directory describes two calculations. Attempts alone still mean nothing to archive.
+    """
+    step_dir = tmp_path / "step1"
+    (step_dir / "0" / "tensors").mkdir(parents=True)
+    (step_dir / "0" / "tensors" / "hessian.npy").write_bytes(b"\x00")
+    (step_dir / "1" / "attempt1").mkdir(parents=True)
+    (step_dir / "1" / "attempt1" / "step1_1.out").write_text("sealed already")
+
+    archived = attempts.archive_previous(step_dir, ["0", "1"])
+
+    assert [p.parent.name for p in archived] == ["0"]
+    assert (step_dir / "0" / "attempt1" / "tensors" / "hessian.npy").is_file()
+    assert not (step_dir / "0" / "tensors").exists()
+    assert not (step_dir / "1" / "attempt2").exists()
