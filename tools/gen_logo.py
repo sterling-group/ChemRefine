@@ -38,9 +38,12 @@ A's apex (same point, both exactly 0 deg) and its last IS A's tail tip with
 the tied tangent - the strokes genuinely divide and remerge.
 
 One drawing, two optical sizes: favicon.svg boosts stroke widths for 16-48 px
-legibility only. logo-header.svg is the white mono line-art for the docs
-header bar. Requires inkscape (text->path + PNG export; authored with
-Inkscape 1.4.4), Pillow (favicon.ico) and real Arial Bold for the wordmark.
+legibility only, and only the 16/32/48 rasters come from it - the 180 px
+apple-touch icon and the 192/512 launcher tiles rasterize from the display
+mark, or they wear tab-sized stroke weights at tile size.
+logo-header.svg is the white mono line-art for the docs header bar.
+Requires inkscape (text->path + PNG export; authored with Inkscape 1.4.4),
+Pillow (favicon.ico) and real Arial Bold for the wordmark.
 Regenerated assets are byte-stable only on the authoring toolchain; CI never
 regenerates.
 
@@ -630,6 +633,7 @@ def main() -> int:
         (ASSETS / "favicon.svg").write_text(icon_svg(boost=True))
         (ASSETS / "logo-header.svg").write_text(header_svg())
         (wd / "favicon.svg").write_text(icon_svg(boost=True))
+        (wd / "logo.svg").write_text(icon_svg())
 
         fit = fit_wordmark(wd)
         (ASSETS / "logo-wordmark-src.svg").write_text(lockup_svg(fit))
@@ -640,16 +644,21 @@ def main() -> int:
         shutil.copy2(wd / "logo-wordmark.svg", ASSETS / "logo-wordmark.svg")
         shutil.copy2(wd / "logo-wordmark-dark.svg", ASSETS / "logo-wordmark-dark.svg")
 
+        # Two optical sizes, so two sources. The boost is a 16-48 px treatment and the
+        # docstring says so; rasterizing everything from it put stroke widths meant for a
+        # 16 px tab onto a 512 px launcher tile, where the drawing reads as a heavier mark
+        # than the one on every other surface. Above the boosted range the display mark is
+        # the source, which is what makes "for 16-48 px legibility only" true of the code.
         sizes = {
-            "favicon-16.png": 16,
-            "favicon-32.png": 32,
-            "favicon-48.png": 48,
-            "apple-touch-icon.png": 180,
-            "icon-192.png": 192,
-            "icon-512.png": 512,
+            "favicon-16.png": (16, "favicon.svg"),
+            "favicon-32.png": (32, "favicon.svg"),
+            "favicon-48.png": (48, "favicon.svg"),
+            "apple-touch-icon.png": (180, "logo.svg"),
+            "icon-192.png": (192, "logo.svg"),
+            "icon-512.png": (512, "logo.svg"),
         }
-        for name, px in sizes.items():
-            export_png(wd / "favicon.svg", wd / name, px, px)
+        for name, (px, source) in sizes.items():
+            export_png(wd / source, wd / name, px, px)
             shutil.copy2(wd / name, ASSETS / name)
 
         export_png(wd / "logo-wordmark.svg", wd / "logo-wordmark-1200.png", 1200)
