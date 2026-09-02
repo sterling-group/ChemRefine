@@ -335,13 +335,9 @@ def derive_step_key(
     resolution = None
     if step_cfg.nms and isinstance(engine, NmsCapableEngine):
         try:
-            dump = nms.NmsOptions.from_raw(step_cfg.options).model_dump(mode="json")
+            resolution = nms.NmsOptions.from_raw(step_cfg.options).resolution_spec()
         except ValidationError as e:
             raise ConfigError(f"step {step_cfg.step}: invalid NMS options:\n{e}") from e
-        resolution = cache.ResolutionSpec(
-            criterion={k: dump[k] for k in ("target", "ts_mode_index")},
-            search={k: dump[k] for k in ("displacement_value", "num_random_displacements", "seed")},
-        )
     return cache.StepKey.of(
         step_cfg,
         ctx.prev_state.structures,

@@ -81,6 +81,13 @@ they displace along the modes the parse flagged imaginary, whatever their index.
 # ---------------------------------------------------------------------------
 
 
+_CRITERION_FIELDS = ("target", "ts_mode_index")
+"""What decides whether a child counts as resolved — an ``attemptK/`` survives its retune."""
+
+_SEARCH_FIELDS = ("displacement_value", "num_random_displacements", "seed")
+"""What decides where the children are displaced to — an ``attemptK/`` does not survive it."""
+
+
 class NmsOptions(BaseModel):
     """Validated normal-mode-sampling knobs (from ``step.options``)."""
 
@@ -109,6 +116,21 @@ class NmsOptions(BaseModel):
         raw = raw or {}
         known = {k: raw[k] for k in cls.model_fields if k in raw}
         return cls(**known)
+
+    def resolution_spec(self) -> cache.ResolutionSpec:
+        """This reading split the way the cache keys it: criterion and search.
+
+        The split lives on the model that owns the fields, because every field here
+        must belong to exactly one half: one that joined neither would steer the
+        resolution at run time while moving no key — cache-invisible, the class of
+        drift :func:`chemrefine.cache.aux_file_digests` closed for template files.
+        ``tests/test_nms.py`` holds the two halves to partition ``model_fields``.
+        """
+        dump = self.model_dump(mode="json")
+        return cache.ResolutionSpec(
+            criterion={k: dump[k] for k in _CRITERION_FIELDS},
+            search={k: dump[k] for k in _SEARCH_FIELDS},
+        )
 
 
 def target_imaginary_count(opts: NmsOptions) -> int | None:

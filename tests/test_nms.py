@@ -338,11 +338,19 @@ def _structure(sid: str) -> Structure:
 
 def _resolution_of(cfg: StepConfig) -> cache.ResolutionSpec:
     """Split the step's NMS reading the way ``derive_step_key`` does."""
-    dump = nms.NmsOptions.from_raw(cfg.options).model_dump(mode="json")
-    return cache.ResolutionSpec(
-        criterion={k: dump[k] for k in ("target", "ts_mode_index")},
-        search={k: dump[k] for k in ("displacement_value", "num_random_displacements", "seed")},
-    )
+    return nms.NmsOptions.from_raw(cfg.options).resolution_spec()
+
+
+def test_the_resolution_split_partitions_every_nms_field():
+    """Every NMS knob belongs to exactly one half of the key.
+
+    A field in neither would steer the resolution at run time while moving no key — the
+    step would serve a cache computed under other settings. A field in both would move
+    the criterion on a search retune and forfeit the attempt reuse the split exists for.
+    """
+    spec = nms.NmsOptions().resolution_spec()
+    assert set(spec.criterion).isdisjoint(spec.search)
+    assert set(spec.criterion) | set(spec.search) == set(nms.NmsOptions.model_fields)
 
 
 def _key_of(cfg: StepConfig, parent: Structure) -> cache.StepKey:
