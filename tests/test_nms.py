@@ -370,7 +370,7 @@ def test_the_criterion_moves_its_key_and_nothing_of_round_1():
 
 def test_a_non_resolving_step_has_no_resolution_identity():
     key = _key_of(_cfg(nms=False), _structure("0"))
-    assert key.resolution_key == "" and key.criterion_key == ""
+    assert key.criterion_key == "" and key.search_key == ""
 
 
 # ---------------------------------------------------------------------------

@@ -613,7 +613,6 @@ def _incremental_step_outcome(
         operation=step_cfg.operation,
         engine=step_cfg.engine,
         fingerprint=key.fingerprint,
-        resolution_key=key.resolution_key,
         criterion_key=key.criterion_key,
         search_key=key.search_key,
         rows=current,
@@ -667,7 +666,6 @@ def _run_full_step(
         # outputs were computed for — see :func:`_incremental_step_outcome`. The per-row
         # provenance is the same proof at structure grain, for the incremental resume.
         fingerprint=key.fingerprint,
-        resolution_key=key.resolution_key,
         criterion_key=key.criterion_key,
         search_key=key.search_key,
         rows=key.manifest_rows(),
@@ -730,7 +728,6 @@ def _run_artifact_step(
         operation=step_cfg.operation,
         engine=step_cfg.engine,
         fingerprint=key.fingerprint,
-        resolution_key=key.resolution_key,
         criterion_key=key.criterion_key,
         search_key=key.search_key,
         rows=key.manifest_rows(),
@@ -927,7 +924,6 @@ def rebuild_cache_step(
         operation=step_cfg.operation,
         engine=step_cfg.engine,
         fingerprint=key.fingerprint,
-        resolution_key=key.resolution_key,
         criterion_key=key.criterion_key,
         search_key=key.search_key,
         rows=key.manifest_rows(),

@@ -873,8 +873,9 @@ class StepKey:
 
     The identity is layered the way the domain is layered. ``row_keys`` (one per parent,
     aligned with ``parent_ids``/``parent_digests``) are the per-structure job identities
-    (:func:`row_key`); ``resolution_key``/``criterion_key`` are the NMS resolution's
-    identity (:func:`resolution_keys`, all ``""`` for a step that resolves nothing); and
+    (:func:`row_key`); ``criterion_key``/``search_key`` are the NMS resolution's
+    identity, kept as two halves because they age differently on disk
+    (:func:`resolution_keys`, both ``""`` for a step that resolves nothing); and
     ``fingerprint`` composes them with the step number — an exact hit means "the whole
     step, bit for bit", while every finer question is asked of the rows.
 
@@ -888,7 +889,6 @@ class StepKey:
     parent_ids: tuple[str, ...] = ()
     parent_digests: tuple[str, ...] = ()
     row_keys: tuple[str, ...] = ()
-    resolution_key: str = ""
     criterion_key: str = ""
     search_key: str = ""
     fingerprint: str = ""
@@ -961,7 +961,6 @@ class StepKey:
             parent_ids=parent_ids,
             parent_digests=parent_digs,
             row_keys=rows,
-            resolution_key=res_key,
             criterion_key=crit_key,
             search_key=search_key,
             fingerprint=step_fingerprint,
@@ -1077,7 +1076,6 @@ def save_manifest(
     operation: str | None,
     engine: str,
     fingerprint: str = "",
-    resolution_key: str = "",
     criterion_key: str = "",
     search_key: str = "",
     rows: Mapping[str, tuple[str, str]] | None = None,
@@ -1090,8 +1088,11 @@ def save_manifest(
 
     ``fingerprint`` is the step key :func:`save` would store, written **before** the
     jobs go out; ``rows`` (``id -> (row_key, parent_digest)``, normally
-    :meth:`StepKey.manifest_rows`) and ``resolution_key`` are the per-row half of the
-    same provenance. Together they are what lets a later ``resume`` prove, structure by
+    :meth:`StepKey.manifest_rows`) is the same provenance at row grain; and
+    ``criterion_key``/``search_key`` are the two halves of the NMS resolution's identity
+    (:func:`resolution_keys`), stamped separately because ``resume`` and
+    ``rebuild-cache`` each ask a different half — the composed key would answer
+    neither. Together they are what lets a later ``resume`` prove, structure by
     structure, that an output on disk is the one this configuration would compute —
     the manifest with row provenance *is* the current-format marker
     (:func:`load_manifest_provenance`); one without is adoptable only by the explicit
@@ -1103,7 +1104,6 @@ def save_manifest(
         "operation": operation,
         "engine": engine,
         "fingerprint": fingerprint,
-        "resolution_key": resolution_key,
         "criterion_key": criterion_key,
         "search_key": search_key,
         "files": [
@@ -1135,7 +1135,6 @@ class ManifestProvenance:
     """
 
     fingerprint: str
-    resolution_key: str
     criterion_key: str
     """The criterion half of the resolution the rows were resolved under — what decides
     whether a passthrough's ``resolved_from`` label may be worn on *resume*, which fans
@@ -1157,16 +1156,13 @@ def load_manifest_provenance(step_dir: Path) -> ManifestProvenance:
     """
     data = read_json(manifest_path(step_dir), None, label="manifest")
     if not isinstance(data, dict):
-        return ManifestProvenance(
-            fingerprint="", resolution_key="", criterion_key="", search_key="", rows={}
-        )
+        return ManifestProvenance(fingerprint="", criterion_key="", search_key="", rows={})
     rows: dict[str, tuple[str, str]] = {}
     for rec in data.get("files") or []:
         if isinstance(rec, dict) and "row_key" in rec:
             rows[str(rec["id"])] = (str(rec["row_key"]), str(rec.get("parent_digest", "")))
     return ManifestProvenance(
         fingerprint=str(data.get("fingerprint", "")),
-        resolution_key=str(data.get("resolution_key", "")),
         criterion_key=str(data.get("criterion_key", "")),
         search_key=str(data.get("search_key", "")),
         rows=rows,

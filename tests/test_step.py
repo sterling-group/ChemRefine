@@ -1070,7 +1070,6 @@ def test_rebuild_adopts_an_unprovenanced_tree(tmp_path: Path):
     manifest_file = cache.manifest_path(step_dir)
     data = json.loads(manifest_file.read_text(encoding="utf-8"))
     data["fingerprint"] = "feedfacefeedface"
-    data.pop("resolution_key", None)
     for row in data["files"]:
         row.pop("row_key", None)
         row.pop("parent_digest", None)
@@ -1203,7 +1202,6 @@ def _nms_rebuild_tree(tmp_path: Path, **options) -> tuple[Config, Path, cache.St
         operation="freq",
         engine="orca",
         fingerprint=key.fingerprint,
-        resolution_key=key.resolution_key,
         criterion_key=key.criterion_key,
         search_key=key.search_key,
         rows=key.manifest_rows(),
@@ -1519,7 +1517,6 @@ def test_resume_refuses_an_unprovenanced_manifest_by_name(tmp_path: Path):
     manifest_file = cache.manifest_path(step_dir)
     data = json.loads(manifest_file.read_text(encoding="utf-8"))
     data["fingerprint"] = "feedfacefeedface"
-    data.pop("resolution_key", None)
     for row in data["files"]:
         row.pop("row_key", None)
         row.pop("parent_digest", None)

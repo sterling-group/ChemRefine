@@ -181,7 +181,8 @@ def test_the_nms_family_moves_only_the_resolution_key():
     resolving = _key("0", resolution=_resolution())
     assert plain.row_keys == resolving.row_keys
     assert plain.fingerprint != resolving.fingerprint
-    assert plain.resolution_key == "" and resolving.resolution_key != ""
+    assert plain.criterion_key == plain.search_key == ""
+    assert resolving.criterion_key != "" and resolving.search_key != ""
 
 
 def test_search_retunes_keep_the_criterion_key_criterion_changes_move_it():
@@ -217,14 +218,14 @@ def test_manifest_provenance_round_trips(tmp_path: Path):
         operation="opt_sp",
         engine="fake",
         fingerprint=key.fingerprint,
-        resolution_key=key.resolution_key,
         criterion_key=key.criterion_key,
+        search_key=key.search_key,
         rows=key.manifest_rows(),
     )
     provenance = load_manifest_provenance(tmp_path)
     assert provenance.fingerprint == key.fingerprint
-    assert provenance.resolution_key == key.resolution_key
     assert provenance.criterion_key == key.criterion_key
+    assert provenance.search_key == key.search_key
     assert provenance.rows == key.manifest_rows()
     # And the file layout is untouched by the extra keys.
     assert load_manifest(tmp_path) == inputs
@@ -260,8 +261,8 @@ def test_a_manifest_that_is_not_a_mapping_reads_as_unprovenanced(tmp_path: Path)
     manifest_path(tmp_path).write_text('["not", "a", "mapping"]', encoding="utf-8")
     provenance = load_manifest_provenance(tmp_path)
     assert provenance.fingerprint == ""
-    assert provenance.resolution_key == ""
     assert provenance.criterion_key == ""
+    assert provenance.search_key == ""
     assert provenance.rows == {}
 
 
