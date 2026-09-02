@@ -377,18 +377,22 @@ def test_every_brand_file_is_referenced_and_every_reference_resolves():
     icon size the page stopped naming sit in the package forever; checking only that files
     are referenced lets a typo'd ``href`` pass because some *other* tag names the file.
 
-    The manifest counts as a referrer, which is the whole reason the PWA icons are here —
-    they are named by it and by nothing in the markup. It is also itself referenced, by
-    the page's ``<link rel="manifest">``, so it needs no exemption from either direction.
+    All three referrers count, and each writes the path relative to *itself*: the page
+    from the directory above ``static/``, the stylesheet from inside it, the manifest from
+    inside ``brand/``. That is why the PWA icons are here at all — the manifest names them
+    and the markup does not — and why the manifest needs no exemption in either direction:
+    the page's ``<link rel="manifest">`` names it right back.
     """
     brand = STATIC / "brand"
     manifest = json.loads((brand / "site.webmanifest").read_text(encoding="utf-8"))
-    # The manifest's own srcs are relative to itself; the page's are relative to the page.
     referenced = {icon["src"] for icon in manifest["icons"]}
     referenced |= {
         ref.removeprefix("static/brand/")
         for ref in re.findall(r'(?:href|src)="(static/brand/[^"]+)"', INDEX.read_text("utf-8"))
     }
+    referenced |= set(
+        re.findall(r'url\("brand/([^"]+)"\)', (STATIC / "style.css").read_text("utf-8"))
+    )
     missing = sorted(name for name in referenced if not (brand / name).is_file())
     assert missing == [], f"referenced but not in the package: {missing}"
     unreferenced = sorted(p.name for p in brand.iterdir() if p.name not in referenced)

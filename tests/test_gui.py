@@ -77,6 +77,7 @@ def test_the_brand_files_the_page_names_are_served_ungated(client: Any):
         "/static/brand/logo.svg",
         "/static/brand/favicon.svg",
         "/static/brand/favicon-32.png",
+        "/static/brand/logo-wordmark.svg",  # requested by the stylesheet, not the markup
         "/static/brand/site.webmanifest",
     ):
         response = client.get(path)  # deliberately no token

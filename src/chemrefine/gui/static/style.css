@@ -67,6 +67,31 @@ header nav {
   font-size: 0.85rem;
 }
 
+/* The lockup washed over the page ground, page-filling and centred: `contain` is
+   the largest size that still shows the whole lockup, so it spans the viewport on
+   whichever axis runs out first. It is deliberately mostly hidden — the panels are
+   opaque and cover the middle — so what shows is the frame around them, the gutter
+   between them, and whatever is below the shorter column.
+
+   A fixed pseudo-element rather than main's background-image, for two reasons: a
+   background-image cannot be given an opacity of its own, and fixed keeps the mark
+   still while the panes scroll over it, which is what makes it read as ground rather
+   than as a very large watermark glued to the top of the document. */
+body::before {
+  content: "";
+  position: fixed;
+  /* Inset rather than a smaller background-size: `contain` then still fits the whole
+     lockup to whichever axis binds, just inside a slightly smaller box. */
+  inset: 7vh 7vw;
+  z-index: -1;
+  pointer-events: none;
+  background-image: url("brand/logo-wordmark.svg");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  opacity: 0.07;
+}
+
 main {
   display: flex;
   gap: 1rem;
