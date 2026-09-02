@@ -260,5 +260,9 @@ def execute(
     if handler is None:
         raise ChemRefineError(f"unknown action: {action!r}")
     with pipeline.run_lock(config.output_dir):
+        # Before the handler, not inside `pipeline.run`'s own (reentrant) turn: the
+        # invalidation above `run` deletes the very `_cache/` ledgers the fence reads,
+        # so probing must come first. The inner fence then finds them already cleaned.
+        pipeline.require_no_live_jobs(config)
         handler(config, target)
     return 0

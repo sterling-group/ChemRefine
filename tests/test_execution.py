@@ -304,14 +304,44 @@ def test_run_batch_terminates_local_jobs_when_a_submission_fails(tmp_path: Path)
 
     assert terminated, "the cleanup never ran — local jobs would be orphaned"
     assert "local-1" in terminated[0], "the already-submitted job must be swept up"
+    # The killed local job's lease goes with it; nothing else was submitted, so the
+    # ledger must be gone rather than left as an empty file.
+    assert not slurm.lease_path(ctx.step_dir).exists()
 
 
-def test_run_batch_cleanup_runs_on_the_happy_path_too(tmp_path: Path):
-    """The sweep is unconditional; with everything reaped it has nothing to do.
+def test_an_unwinding_batch_keeps_its_slurm_leases(tmp_path: Path):
+    """The unwind kills local jobs but not SLURM ones — and the ledger says exactly that.
 
-    It is asked to terminate exactly the jobs still active, which on a clean drain is none —
-    and `terminate_local_jobs` reads that empty collection as empty rather than as its
-    no-argument "sweep everything" form, so the ordinary end of a batch touches nothing.
+    A driver that dies mid-batch leaves its SLURM jobs running by design; their recorded
+    leases are the only evidence the resume fence has, so the exception path must keep
+    them while dropping the leases of the local jobs it just terminated.
+    """
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path, ids=("0", "1", "2"))
+    inputs = engine.prepare(ctx)
+
+    with (
+        patch.object(
+            slurm,
+            "submit",
+            side_effect=["12345", "local-1", JobSubmissionError("sbatch refused the job")],
+        ),
+        patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set()),
+        patch.object(slurm, "terminate_local_jobs"),
+        pytest.raises(JobSubmissionError),
+    ):
+        _execution.run_batch(engine, inputs, ctx)
+
+    assert [lease.id for lease in slurm.load_leases(ctx.step_dir)] == ["12345"]
+
+
+def test_run_batch_touches_nothing_on_the_happy_path(tmp_path: Path):
+    """A clean drain sweeps no jobs and leaves no leases behind.
+
+    The termination sweep lives on the unwind path only — it exists to reap local jobs
+    an exception would orphan, and after an ordinary drain the queue has already reaped
+    everything. What the clean path *does* do is release the batch's job leases: with
+    every job finished there is nothing left for the resume fence to check.
     """
     engine = _FakeJobEngine()
     ctx = _ctx(tmp_path, ids=("0",))
@@ -327,7 +357,8 @@ def test_run_batch_cleanup_runs_on_the_happy_path_too(tmp_path: Path):
     ):
         _execution.run_batch(engine, inputs, ctx)
 
-    assert seen == [()]  # the queue reaped everything; nothing left to terminate
+    assert seen == []  # the queue reaped everything; the sweep is for unwinds only
+    assert not slurm.lease_path(ctx.step_dir).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +517,48 @@ def test_multi_chunk_arrays_share_one_core_budget(_submit, _finished, tmp_path: 
     # inequality while a 2500-structure step silently runs at a fraction of max_cores.
     assert limits == [4, 4, 4]
     assert sum(limits) * engine.pal(ctx) <= ctx.max_cores  # and the shares fit the budget
+
+
+def test_an_array_batch_is_leased_before_the_wait_and_released_after(tmp_path: Path):
+    """The parent id is on record while the wait runs, and gone once it drains.
+
+    Recording after the wait would be recording nothing: the wait is where a driver
+    dies, and the lease exists precisely so that death leaves evidence behind.
+    """
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path, ids=("0", "1"), slurm_array=True, dispatch="slurm")
+    inputs = engine.prepare(ctx)
+    at_wait_time: list[str] = []
+
+    def observing_wait(ids, **_):
+        at_wait_time.extend(lease.id for lease in slurm.load_leases(ctx.step_dir))
+
+    with (
+        patch.object(dispatch, "sbatch_available", return_value=True),
+        patch.object(slurm, "submit_array", return_value="900"),
+        patch.object(slurm, "wait_for_jobs", side_effect=observing_wait),
+    ):
+        _execution.run_batch(engine, inputs, ctx)
+
+    assert at_wait_time == ["900"]
+    assert not slurm.lease_path(ctx.step_dir).exists()
+
+
+def test_an_interrupted_array_wait_keeps_the_lease(tmp_path: Path):
+    """A wait that dies leaves the parent id on record — array jobs are all SLURM's."""
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path, ids=("0",), slurm_array=True, dispatch="slurm")
+    inputs = engine.prepare(ctx)
+
+    with (
+        patch.object(dispatch, "sbatch_available", return_value=True),
+        patch.object(slurm, "submit_array", return_value="901"),
+        patch.object(slurm, "wait_for_jobs", side_effect=ThrottleTimeoutError("stalled")),
+        pytest.raises(ThrottleTimeoutError),
+    ):
+        _execution.run_batch(engine, inputs, ctx)
+
+    assert [lease.id for lease in slurm.load_leases(ctx.step_dir)] == ["901"]
 
 
 @patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))

@@ -94,6 +94,23 @@ rm outputs/.chemrefine.lock
 chemrefine resume input.yaml
 ```
 
+## A previous run's jobs are still queued or running
+
+A dead driver is not the whole story: the SLURM jobs it submitted keep running
+after it is gone (that is the scheduler's job), and so do locally dispatched
+jobs after a `kill -9`. Every submission is therefore recorded in the step's
+`_cache/active_jobs.json`, and a new run checks those records — with the same
+exit code `10` — before touching the tree, because those jobs' exit traps still
+copy results into it.
+
+- **SLURM ids**: the run asks `squeue` once. Wait for the jobs to drain (or
+  `scancel` them), then re-run. On a host with no `squeue` the ids cannot be
+  checked; the run warns and proceeds, so a tree copied off-cluster stays
+  usable.
+- **Local jobs**: probed by pid on the host that submitted them. From any other
+  host they cannot be probed — once you know that run's jobs are dead, delete
+  the named `active_jobs.json` and re-run.
+
 ## A structure keeps failing to converge
 
 An unconverged structure is retried once per run from the best geometry it

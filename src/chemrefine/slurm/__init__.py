@@ -23,14 +23,21 @@ keeps working; a caller has no reason to know which half something came from.
 from __future__ import annotations
 
 from chemrefine.slurm.dispatch import (
+    ACTIVE_JOBS_NAME,
+    JobLease,
     QueueState,
     dispatch_locally,
     finished_jobs,
     header_name_for_device,
     is_finished,
+    lease_path,
+    load_leases,
     poll_jobs,
+    record_lease,
+    release_leases,
     resolve_gpu_budget,
     sbatch_available,
+    scheduler_reachable,
     submit,
     submit_array,
     terminate_local_jobs,
@@ -43,6 +50,8 @@ from chemrefine.slurm.script import (
 )
 
 __all__ = [
+    "ACTIVE_JOBS_NAME",
+    "JobLease",
     "QueueState",
     "build_array_script",
     "build_script",
@@ -50,9 +59,14 @@ __all__ = [
     "finished_jobs",
     "header_name_for_device",
     "is_finished",
+    "lease_path",
+    "load_leases",
     "poll_jobs",
+    "record_lease",
+    "release_leases",
     "resolve_gpu_budget",
     "sbatch_available",
+    "scheduler_reachable",
     "submit",
     "submit_array",
     "terminate_local_jobs",

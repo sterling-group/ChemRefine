@@ -17,19 +17,22 @@ import contextlib
 import functools
 import getpass
 import itertools
+import json
 import logging
 import os
 import re
 import shutil
 import signal
+import socket
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from chemrefine.errors import ConfigError, JobSubmissionError
+from chemrefine.errors import CacheError, ConfigError, JobSubmissionError
 from chemrefine.throttle import GpuBudget, StallDeadline
 
 logger = logging.getLogger(__name__)
@@ -390,6 +393,133 @@ def _signal_group(pgid: int, sig: signal.Signals) -> None:
 
 
 atexit.register(terminate_local_jobs)
+
+
+# ---------------------------------------------------------------------------
+# Job leases — what a driver has in flight, persisted for the resume fence
+# ---------------------------------------------------------------------------
+
+ACTIVE_JOBS_NAME = "active_jobs.json"
+"""Filename of the per-directory lease ledger, under a step's (or attempt's) ``_cache/``.
+
+The run lock proves at most one *driver* per tree, but a driver's release does not
+outlive its jobs: a SIGTERM unwind deliberately leaves SLURM jobs running, and a SIGKILL
+leaves the local ones too (they run in sessions of their own). A prompt ``resume`` then
+passes the lock, sees a matching manifest, and archives directories the old jobs' exit
+traps are still copying into — the very overlap the lock exists to prevent, reopened
+through its own release. The lease is the record that closes it: every submission writes
+one, a cleanly drained batch releases its own, and
+:func:`chemrefine.pipeline.require_no_live_jobs` refuses a new driver while any recorded
+job is still alive.
+
+Written beside the manifest under ``_cache/`` but owned *here*, not by
+:mod:`chemrefine.cache`: the engines' scheduler records leases at submission time, and
+the engine subsystem must not import the cache (the boundary
+:meth:`chemrefine.cache.StepKey.of` documents) — submission mechanics are this module's
+domain, exactly as the local-process registry above is."""
+
+
+@dataclass(frozen=True)
+class JobLease:
+    """One submitted job a driver had in flight when the lease was last written.
+
+    ``pid`` is the local job's session leader (probe-able with ``os.kill(pid, 0)`` on
+    ``host``); ``None`` for a SLURM job, whose liveness is the queue's to answer.
+    """
+
+    id: str
+    host: str
+    pid: int | None = None
+
+    @property
+    def local(self) -> bool:
+        """Whether this is a background local job rather than a SLURM one."""
+        return self.id.startswith(_LOCAL_JOB_PREFIX)
+
+
+def lease_path(step_dir: Path) -> Path:
+    """Where ``step_dir``'s lease ledger lives."""
+    return step_dir / "_cache" / ACTIVE_JOBS_NAME
+
+
+def load_leases(step_dir: Path) -> list[JobLease]:
+    """The leases recorded under ``step_dir`` (``[]`` when none were).
+
+    A present-but-unreadable ledger is a :class:`~chemrefine.errors.CacheError` like
+    every other corrupt ``_cache/`` file — the fence cannot prove such jobs dead, and
+    silently reading "no leases" would wave a new driver into the overlap the record
+    exists to prevent. The message names the deletion escape, like the lock's.
+    """
+    path = lease_path(step_dir)
+    if not path.is_file():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return [JobLease(str(r["id"]), str(r["host"]), r.get("pid")) for r in raw]
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
+        raise CacheError(
+            f"corrupt job lease at {path}: {e!r} — delete it if the run that wrote it is known dead"
+        ) from e
+
+
+def _write_leases(path: Path, leases: list[JobLease]) -> None:
+    """Atomic tempfile + rename, spelled locally on purpose.
+
+    Not :func:`chemrefine.cache.atomic_write`: this bottom-layer module must not import
+    upward (the architecture's spine), so the three lines are re-spelled here the way
+    :func:`chemrefine.engines.mlip.train.base._fingerprint_sha1` re-spells its concept
+    across the same kind of boundary.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp_lease_")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump([{"id": j.id, "host": j.host, "pid": j.pid} for j in leases], fh)
+    Path(tmp).replace(path)
+
+
+def record_lease(step_dir: Path, job_id: str) -> None:
+    """Append one submitted job to ``step_dir``'s ledger, before anyone waits on it.
+
+    Recorded at submission so the lease survives the one thing it exists for — a driver
+    that dies without unwinding. A local job carries its session leader's pid (the
+    process :func:`terminate_local_jobs` signals); a SLURM id carries none.
+    """
+    entry = _LOCAL_PROCS.get(job_id)
+    lease = JobLease(
+        id=job_id,
+        host=socket.gethostname(),
+        pid=entry[0].pid if entry is not None else None,
+    )
+    _write_leases(lease_path(step_dir), [*load_leases(step_dir), lease])
+
+
+def release_leases(step_dir: Path, *, keep_slurm: bool = False) -> None:
+    """Drop ``step_dir``'s leases — all of them, or everything but the SLURM ids.
+
+    A cleanly drained batch releases everything. An unwinding one keeps the SLURM
+    entries: :func:`terminate_local_jobs` has just killed the local jobs, but the
+    scheduler's jobs run on by design, and their leases are what the resume fence
+    reads once the lock is gone.
+    """
+    path = lease_path(step_dir)
+    if not keep_slurm:
+        path.unlink(missing_ok=True)
+        return
+    kept = [j for j in load_leases(step_dir) if not j.local]
+    if kept:
+        _write_leases(path, kept)
+    else:
+        path.unlink(missing_ok=True)
+
+
+def scheduler_reachable() -> bool:
+    """Whether this host can ask the queue about a SLURM id at all (``squeue`` on PATH).
+
+    The fence's discriminator between "verify" and "cannot verify here": a laptop
+    holding a copied tree has no scheduler, and refusing forever over ids only the
+    cluster could answer would fence the copy harder than the original.
+    """
+    return shutil.which("squeue") is not None
 
 
 def submit(

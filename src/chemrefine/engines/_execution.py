@@ -179,7 +179,7 @@ def run_batch(
     )
     try:
         jobs = _run_queue(engine, plan, ctx, throttler, inputs, sink)
-    finally:
+    except BaseException:
         # Any job still active here means the stack is unwinding on an exception — a
         # ThrottleTimeoutError, a mid-batch JobSubmissionError, a KeyboardInterrupt.
         # Local jobs are real background processes owned by this interpreter, so
@@ -187,6 +187,12 @@ def run_batch(
         # cores of whatever the user runs next. (SLURM jobs are the scheduler's;
         # cancelling them here would be presumptuous.)
         slurm.terminate_local_jobs(throttler.active_jobs)
+        # The local jobs just died with their leases' reason; the SLURM ones run on,
+        # so their leases stay — they are what the resume fence reads once this
+        # process, and the run lock it held, are gone.
+        slurm.release_leases(ctx.step_dir, keep_slurm=True)
+        raise
+    slurm.release_leases(ctx.step_dir)
     return JobBatch(jobs=jobs)
 
 
@@ -230,6 +236,9 @@ def _submit_one(
         extra_header_fields=engine.extra_header_fields(ctx),
     )
     job_id = slurm.submit(script_path, env=env, dispatch=ctx.dispatch)
+    # Leased before anyone waits on it, so the record survives a driver that dies
+    # without unwinding — the case the resume fence exists for.
+    slurm.record_lease(ctx.step_dir, job_id)
     throttler.register(job_id, plan.pal, gpus=plan.gpus, device=device)
     logger.info("submitted %s as job %s (pal=%d, gpus=%d)", inp.name, job_id, plan.pal, plan.gpus)
     return job_id
@@ -364,6 +373,7 @@ def _run_array(
         parent_id = slurm.submit_array(
             script_path, n_tasks=len(chunk), max_concurrent=max_concurrent, manifest=manifest
         )
+        slurm.record_lease(output_dir, parent_id)
         for inp, _out, _sid in chunk:
             jobs[inp] = parent_id
         logger.info(
@@ -381,4 +391,7 @@ def _run_array(
         poll=slurm.poll_jobs,
         max_wait_seconds=ctx.job_timeout_seconds,
     )
+    # A drained array's leases are spent; an *interrupted* wait skips this on purpose —
+    # array jobs are all SLURM's, and their leases are the resume fence's evidence.
+    slurm.release_leases(output_dir)
     return JobBatch(jobs=jobs)

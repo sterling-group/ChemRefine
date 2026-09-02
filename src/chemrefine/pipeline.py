@@ -363,6 +363,12 @@ def run_lock(output_dir: Path) -> Generator[None]:
     :func:`run` starts — and :func:`run` takes it again for callers that drive the
     pipeline directly. The inner acquisition sees its own pid in the record and yields
     without ownership, so the one release still happens at the outermost exit.
+
+    **The lock fences drivers, not their jobs.** A dead holder's SLURM jobs run on
+    after its lock is reclaimed (and a SIGKILLed holder's local ones too); the leases
+    every submission records are the fence for that window — see
+    :func:`require_no_live_jobs`, which both takers of this lock call before touching
+    the tree.
     """
     with _sigterm_unwinds():
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -420,6 +426,88 @@ def run_lock(output_dir: Path) -> Generator[None]:
                 lock.unlink(missing_ok=True)
 
 
+def require_no_live_jobs(config: Config) -> None:
+    """Refuse to drive a tree while a dead driver's recorded jobs are still running.
+
+    The lock above fences *drivers*, and its release does not outlive their **jobs**: a
+    SIGTERM unwind deliberately leaves SLURM jobs running, a SIGKILL leaves the local
+    ones too, and the reclaim machinery then hands the lock to the next driver — which
+    would archive and re-parse directories the old jobs' exit traps are still copying
+    into, the very overlap the lock exists to prevent, reopened through its own release.
+    Every submission therefore records a lease
+    (:func:`chemrefine.slurm.dispatch.record_lease`, released when its batch drains),
+    and this fence — called with the lock already held, before anything mutates the
+    tree — walks every step's ledger and answers each lease by kind:
+
+    * a **SLURM id** is put to the queue, all ids in one probe. A host with no
+      ``squeue`` cannot verify them, and a tree copied to a laptop must not be fenced
+      harder than the original — so that case warns and proceeds instead of refusing
+      on evidence no one there can produce.
+    * a **local job** is probed by pid on its own host; recorded on another host it
+      cannot be probed from here, and the fence refuses until someone who knows that
+      run is dead deletes the record — the lock's own escape, worded the same way.
+
+    Leases every probe proves dead are garbage from a run that never unwound; the fence
+    deletes them (it holds the lock, so they are its to clean), which is also what keeps
+    a long-lived tree from re-probing long-drained ids on every resume.
+    """
+    hostname = socket.gethostname()
+    visited: list[tuple[Path, bool]] = []  # (step_dir, ledger holds SLURM ids)
+    slurm_ids: dict[str, Path] = {}
+    for step_cfg in config.steps:
+        step_dir = config.step_dir(step_cfg)
+        leases = slurm.load_leases(step_dir)
+        if not leases:
+            continue
+        ledger = slurm.lease_path(step_dir)
+        for lease in leases:
+            if not lease.local:
+                slurm_ids[lease.id] = ledger
+            elif lease.host != hostname:
+                raise RunLockError(
+                    f"a previous run left local job {lease.id} recorded on {lease.host} "
+                    f"({ledger}), and its liveness cannot be probed from {hostname}. Two "
+                    f"drivers on one tree archive and resubmit each other's work, so this "
+                    f"run stops here. If that run is known dead, delete the record and retry."
+                )
+            elif lease.pid is None or _pid_alive(lease.pid):
+                state = (
+                    f"(pid {lease.pid}) is still running" if lease.pid else "is not provably dead"
+                )
+                raise RunLockError(
+                    f"a previous run's local job {lease.id} {state} on this host "
+                    f"({ledger} records it), and its exit trap will still write into "
+                    f"this tree, so this run stops here. Wait for it to finish — or "
+                    f"kill it, delete the record, and retry."
+                )
+        visited.append((step_dir, any(not lease.local for lease in leases)))
+    if slurm_ids:
+        if not slurm.scheduler_reachable():
+            logger.warning(
+                "cannot verify %d recorded SLURM job(s) from this host (no squeue); "
+                "proceeding — if the run that submitted them is still live on the "
+                "cluster, stop this one now",
+                len(slurm_ids),
+            )
+            # Only the all-local ledgers were actually proven dead here.
+            for step_dir, has_slurm in visited:
+                if not has_slurm:
+                    slurm.release_leases(step_dir)
+            return
+        live = sorted(set(slurm_ids) - slurm.finished_jobs(tuple(slurm_ids)))
+        if live:
+            ledgers = ", ".join(sorted({str(slurm_ids[jid]) for jid in live}))
+            raise RunLockError(
+                f"a previous run's SLURM job(s) {', '.join(live)} are still queued or "
+                f"running (recorded in {ledgers}), and their exit traps still write into "
+                f"this tree, so this run stops here. Wait for them to drain or scancel "
+                f"them — or, if the record is known stale (a transient squeue failure "
+                f"reports every job live), delete it and retry."
+            )
+    for step_dir, _ in visited:
+        slurm.release_leases(step_dir)
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -469,6 +557,9 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
     """
     plan = plan if plan is not None else RunPlan()
     with run_lock(config.output_dir):
+        # Lock first, fence second: the lock answers for live *drivers*, the fence for a
+        # dead driver's live *jobs* — and it must run before anything mutates the tree.
+        require_no_live_jobs(config)
         logger.info(
             "config: max_cores=%d, max_gpus=%s, output_dir=%s",
             config.max_cores,

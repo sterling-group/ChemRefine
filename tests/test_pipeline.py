@@ -1037,3 +1037,189 @@ def test_a_sigtermed_driver_process_releases_the_lock_on_disk(tmp_path: Path):
         finally:
             if proc.poll() is None:
                 proc.kill()
+
+
+# ---------------------------------------------------------------------------
+# job-lease fence — a dead driver's jobs still hold the tree
+# ---------------------------------------------------------------------------
+
+
+def _plant_leases(step_dir: Path, *leases: dict) -> Path:
+    """Write a lease ledger as a dead driver would have left it.
+
+    By hand rather than through :func:`chemrefine.slurm.record_lease`: the on-disk JSON
+    is the contract between the run that recorded and the run that fences, and these
+    tests hold the reading side to it independently of the writing side.
+    """
+    import json
+
+    from chemrefine import slurm
+
+    path = slurm.lease_path(step_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(list(leases)), encoding="utf-8")
+    return path
+
+
+def test_the_fence_refuses_while_a_recorded_slurm_job_is_still_queued(tmp_path: Path):
+    """A queued job from a dead driver stops a new run before it touches anything.
+
+    The config here has no seed input at all — a run that got past the fence would
+    raise `ConfigError` from bootstrap, so the `RunLockError` doubles as proof the
+    refusal fires before any tree mutation. The evidence is left in place: a refused
+    run must still be refusable tomorrow.
+    """
+    from unittest.mock import patch
+
+    from chemrefine import slurm
+    from chemrefine.errors import RunLockError
+
+    cfg = _config(tmp_path, input=None)
+    step_dir = cfg.step_dir(cfg.steps[0])
+    _plant_leases(step_dir, {"id": "424242", "host": "cluster-login", "pid": None})
+
+    with (
+        patch.object(slurm, "scheduler_reachable", return_value=True),
+        patch.object(slurm, "finished_jobs", return_value=set()),
+        pytest.raises(RunLockError, match="424242"),
+    ):
+        pipeline.run(cfg)
+
+    assert slurm.load_leases(step_dir), "the refusal must not consume its own evidence"
+    assert not (cfg.output_dir / pipeline.RUN_LOCK_NAME).exists()
+
+
+def test_a_drained_slurm_jobs_lease_is_swept_and_the_run_proceeds(tmp_path: Path):
+    """Once the queue says the recorded jobs are gone, the stale ledger is garbage."""
+    from unittest.mock import patch
+
+    from chemrefine import slurm
+
+    seed = tmp_path / "step0_seed.xyz"
+    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    cfg = _config(tmp_path, input=seed)
+    step_dir = cfg.step_dir(cfg.steps[0])
+    _plant_leases(step_dir, {"id": "424242", "host": "cluster-login", "pid": None})
+
+    with (
+        patch.object(slurm, "scheduler_reachable", return_value=True),
+        patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids)),
+    ):
+        outcomes = pipeline.run(cfg)
+
+    assert outcomes, "a provably-drained ledger must not block the run"
+    assert not slurm.lease_path(step_dir).exists()
+
+
+def test_without_squeue_recorded_slurm_jobs_warn_and_the_run_proceeds(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """A tree copied to a laptop must not be fenced harder than the original.
+
+    The SLURM ids cannot be verified without a scheduler, so the fence warns and keeps
+    their ledger (still unverified — the next cluster-side run must re-check it), while
+    a ledger it *could* verify — a same-host local job with a dead pid — is swept.
+    """
+    from unittest.mock import patch
+
+    from chemrefine import slurm
+
+    seed = tmp_path / "step0_seed.xyz"
+    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    cfg = _config(
+        tmp_path,
+        input=seed,
+        steps=[
+            StepConfig(step=1, engine="fake", operation="opt_sp"),
+            StepConfig(step=2, engine="fake", operation="opt_sp"),
+        ],
+    )
+    import socket
+
+    slurm_ledger = _plant_leases(
+        cfg.step_dir(cfg.steps[0]), {"id": "424242", "host": "cluster-login", "pid": None}
+    )
+    local_ledger = _plant_leases(
+        cfg.step_dir(cfg.steps[1]),
+        {"id": "local-2", "host": socket.gethostname(), "pid": _dead_pid()},
+    )
+
+    with (
+        patch.object(slurm, "scheduler_reachable", return_value=False),
+        caplog.at_level("WARNING"),
+    ):
+        outcomes = pipeline.run(cfg)
+
+    assert len(outcomes) == 2
+    assert "cannot verify" in caplog.text
+    assert not local_ledger.exists(), "the provably-dead local lease is the fence's to sweep"
+    assert slurm_ledger.exists(), "unverified SLURM ids must stay on record for the cluster side"
+
+
+def test_the_fence_refuses_a_dead_drivers_live_local_job(tmp_path: Path):
+    """A SIGKILLed driver's local jobs run on in their own sessions; their pids fence."""
+    import socket
+    import subprocess
+    from unittest.mock import patch
+
+    from chemrefine import slurm
+    from chemrefine.errors import RunLockError
+
+    cfg = _config(tmp_path, input=None)
+    step_dir = cfg.step_dir(cfg.steps[0])
+    child = subprocess.Popen(["sleep", "30"])
+    try:
+        _plant_leases(step_dir, {"id": "local-1", "host": socket.gethostname(), "pid": child.pid})
+        with (
+            patch.object(slurm, "scheduler_reachable", return_value=True),
+            pytest.raises(RunLockError, match="still running"),
+        ):
+            pipeline.run(cfg)
+    finally:
+        child.kill()
+        child.wait()
+    assert slurm.load_leases(step_dir)
+
+
+def test_the_fence_refuses_a_foreign_hosts_local_job(tmp_path: Path):
+    """A local job recorded on another host cannot be probed from here — refuse, don't guess."""
+    from chemrefine.errors import RunLockError
+
+    cfg = _config(tmp_path, input=None)
+    _plant_leases(
+        cfg.step_dir(cfg.steps[0]), {"id": "local-1", "host": "some-other-node", "pid": 12345}
+    )
+    with pytest.raises(RunLockError, match="cannot be probed"):
+        pipeline.run(cfg)
+
+
+def test_the_fence_refuses_a_local_lease_with_no_pid(tmp_path: Path):
+    """A local lease that lost its pid cannot be proven dead; the fence must not guess."""
+    import socket
+
+    from chemrefine.errors import RunLockError
+
+    cfg = _config(tmp_path, input=None)
+    _plant_leases(
+        cfg.step_dir(cfg.steps[0]), {"id": "local-1", "host": socket.gethostname(), "pid": None}
+    )
+    with pytest.raises(RunLockError, match="not provably dead"):
+        pipeline.run(cfg)
+
+
+def test_a_dead_local_lease_alone_is_swept_without_asking_the_queue(tmp_path: Path):
+    """All-local, all-dead: nothing to ask squeue about, the ledger goes, the run runs."""
+    import socket
+
+    from chemrefine import slurm
+
+    seed = tmp_path / "step0_seed.xyz"
+    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    cfg = _config(tmp_path, input=seed)
+    step_dir = cfg.step_dir(cfg.steps[0])
+    _plant_leases(step_dir, {"id": "local-1", "host": socket.gethostname(), "pid": _dead_pid()})
+
+    outcomes = pipeline.run(cfg)
+
+    assert outcomes
+    assert not slurm.lease_path(step_dir).exists()

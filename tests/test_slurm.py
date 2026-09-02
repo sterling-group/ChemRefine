@@ -1438,3 +1438,67 @@ def _stuck_at(*ids: str) -> Callable[[Collection[str]], slurm.QueueState]:
 def _never_called(_ids: object) -> slurm.QueueState:
     """A `poll` callable that fails the test if the loop polls when it should not."""
     raise AssertionError("wait_for_jobs polled with an empty job set")
+
+
+# ---------------------------------------------------------------------------
+# job leases — the record the resume fence reads
+# ---------------------------------------------------------------------------
+
+
+def test_leases_round_trip_and_an_absent_ledger_reads_empty(tmp_path: Path):
+    """Recorded leases come back whole: a SLURM id bare, a local id with its pid.
+
+    The pid is what makes a local lease *probe-able* after the driver that owned the
+    process object is gone — it must be captured at recording time, from the live
+    registry, because there is nowhere to get it later.
+    """
+    assert slurm.load_leases(tmp_path) == []
+
+    proc = subprocess.Popen(["sleep", "5"])
+    try:
+        with patch.dict(dispatch._LOCAL_PROCS, {"local-7": (proc, None, None)}):
+            slurm.record_lease(tmp_path, "12345")
+            slurm.record_lease(tmp_path, "local-7")
+    finally:
+        proc.kill()
+        proc.wait()
+
+    by_id = {lease.id: lease for lease in slurm.load_leases(tmp_path)}
+    assert by_id["12345"].pid is None and not by_id["12345"].local
+    assert by_id["local-7"].pid == proc.pid and by_id["local-7"].local
+    assert all(lease.host for lease in by_id.values())
+
+
+def test_an_unwinding_release_keeps_the_slurm_leases_only(tmp_path: Path):
+    """`keep_slurm` is the unwind's shape: local jobs were just killed, SLURM jobs run on."""
+    slurm.record_lease(tmp_path, "12345")
+    slurm.record_lease(tmp_path, "local-3")  # no registry entry: pid stays None
+
+    slurm.release_leases(tmp_path, keep_slurm=True)
+    assert [lease.id for lease in slurm.load_leases(tmp_path)] == ["12345"]
+
+    # A second unwind with nothing but local leases must not leave an empty ledger
+    # behind — an existing-but-empty file and no file must mean the same thing.
+    slurm.release_leases(tmp_path)
+    slurm.record_lease(tmp_path, "local-4")
+    slurm.release_leases(tmp_path, keep_slurm=True)
+    assert not slurm.lease_path(tmp_path).exists()
+
+
+def test_a_corrupt_lease_ledger_is_refused_not_read_as_empty(tmp_path: Path):
+    """Unreadable leases cannot prove their jobs dead; silence would wave a driver in."""
+    from chemrefine.errors import CacheError
+
+    path = slurm.lease_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text("not json", encoding="utf-8")
+    with pytest.raises(CacheError, match="delete it"):
+        slurm.load_leases(tmp_path)
+
+
+def test_scheduler_reachable_answers_for_squeue_on_path():
+    """The fence's verify-vs-warn discriminator is squeue's presence, nothing subtler."""
+    with patch.object(dispatch.shutil, "which", return_value="/usr/bin/squeue"):
+        assert slurm.scheduler_reachable()
+    with patch.object(dispatch.shutil, "which", return_value=None):
+        assert not slurm.scheduler_reachable()
