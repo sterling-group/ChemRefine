@@ -25,7 +25,6 @@ import shutil
 import signal
 import socket
 import subprocess
-import tempfile
 import time
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
@@ -456,7 +455,9 @@ def load_leases(step_dir: Path) -> list[JobLease]:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
         return [JobLease(str(r["id"]), str(r["host"]), r.get("pid")) for r in raw]
-    except (ValueError, KeyError, TypeError, AttributeError) as e:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        # ``OSError`` is the unreadable half of "present-but-unreadable": a ledger another
+        # user's driver wrote, or one that vanished between the check above and the read.
         raise CacheError(
             f"corrupt job lease at {path}: {e!r} — delete it if the run that wrote it is known dead"
         ) from e
@@ -466,15 +467,28 @@ def _write_leases(path: Path, leases: list[JobLease]) -> None:
     """Atomic tempfile + rename, spelled locally on purpose.
 
     Not :func:`chemrefine.cache.atomic_write`: this bottom-layer module must not import
-    upward (the architecture's spine), so the three lines are re-spelled here the way
+    upward (the architecture's spine), so the dance is re-spelled here the way
     :func:`chemrefine.engines.mlip.train.base._fingerprint_sha1` re-spells its concept
-    across the same kind of boundary.
+    across the same kind of boundary. Two things are deliberately different. The temp
+    file is created by an exclusive plain ``open`` rather than ``mkstemp``, so it lands
+    with the mode a plain write would give (``0666`` under the umask) and the rename
+    keeps it — ``mkstemp``'s ``0600`` made every ledger owner-only, and the resume fence
+    reads this file from whichever account next drives the tree, which the docs direct
+    to inspect it; the cache writer reaches the same mode with a ``fchmod`` this module
+    would have to re-spell. And there is no ``fsync``: a ledger truncated by a machine
+    crash is a :class:`~chemrefine.errors.CacheError` at the next read, which fails
+    closed, so durability buys nothing here. The driver is the tree's sole writer under
+    the run lock, so a pid-suffixed name is unique.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp_lease_")
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump([{"id": j.id, "host": j.host, "pid": j.pid} for j in leases], fh)
-    Path(tmp).replace(path)
+    tmp = path.with_name(f".tmp_lease_{os.getpid()}")
+    tmp.unlink(missing_ok=True)
+    try:
+        with tmp.open("x", encoding="utf-8") as fh:
+            json.dump([{"id": j.id, "host": j.host, "pid": j.pid} for j in leases], fh)
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def record_lease(step_dir: Path, job_id: str) -> None:

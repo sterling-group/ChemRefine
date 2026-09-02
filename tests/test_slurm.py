@@ -1503,6 +1503,53 @@ def test_a_corrupt_lease_ledger_is_refused_not_read_as_empty(tmp_path: Path):
         slurm.load_leases(tmp_path)
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_an_unreadable_lease_ledger_is_the_same_worded_refusal(tmp_path: Path):
+    """Present but unreadable is what the docstring promises to refuse — not a traceback.
+
+    Another account's driver, or a ledger the user is told to inspect from another host:
+    the fence cannot prove those jobs dead either, and the message that names the escape
+    is the same one a corrupt file gets.
+    """
+    from chemrefine.errors import CacheError
+
+    slurm.record_lease(tmp_path, "local-1")
+    path = slurm.lease_path(tmp_path)
+    path.chmod(0)
+    try:
+        with pytest.raises(CacheError, match="delete it"):
+            slurm.load_leases(tmp_path)
+    finally:
+        path.chmod(0o644)
+
+
+def test_the_lease_ledger_is_written_readable_for_the_next_driver(tmp_path: Path):
+    """The ledger lands with the mode a plain write gives, not the temp file's 0600.
+
+    The resume fence reads it from whichever account next drives the tree, and the
+    docs direct a user on another host to inspect it; an owner-only ledger would
+    manufacture the very refusal above for everyone but its author.
+    """
+    import stat
+
+    slurm.record_lease(tmp_path, "local-1")
+    mode = stat.S_IMODE(slurm.lease_path(tmp_path).stat().st_mode)
+    umask = os.umask(0)
+    os.umask(umask)
+    assert mode == 0o666 & ~umask
+
+
+def test_a_failed_lease_write_leaves_no_temp_file_behind(tmp_path: Path):
+    """The temp file is the writer's, and it is gone whether or not the rename happened."""
+    with (
+        patch.object(dispatch.json, "dump", side_effect=OSError("disk full")),
+        pytest.raises(OSError, match="disk full"),
+    ):
+        slurm.record_lease(tmp_path, "local-1")
+    assert not list(slurm.lease_path(tmp_path).parent.glob(".tmp_lease_*"))
+    assert not slurm.lease_path(tmp_path).exists()
+
+
 def test_scheduler_reachable_answers_for_squeue_on_path():
     """The fence's verify-vs-warn discriminator is squeue's presence, nothing subtler."""
     with patch.object(dispatch.shutil, "which", return_value="/usr/bin/squeue"):
