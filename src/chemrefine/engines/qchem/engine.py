@@ -221,14 +221,24 @@ class QchemEngine(JobEngine):
         return RunBlock(body="\n".join(lines), cleanup=cleanup)
 
     def extra_header_fields(self, ctx: StepContext) -> tuple[tuple[str, object], ...]:
-        """Record which qchem invocation ran in the runlog header.
+        """Record which qchem binary ran in the runlog header — as raw text, never ``$QC``.
 
-        The *invocation* — :meth:`_executable`'s shell-quoted spelling, ``"$QC/bin/qchem"``
-        included — rather than ORCA's raw-value convention: for Q-Chem the interesting fact
-        is often the ``$QC``-derived form, which only exists as the invocation. The header
-        is a heredoc, so the ``$QC`` inside it expands to the run's real root when set.
+        ORCA's raw-value convention, deliberately not :meth:`_executable`'s quoted
+        invocation. This used to record ``"$QC/bin/qchem"`` on the belief that the header
+        heredoc would expand ``$QC`` "to the run's real root when set" — but the header
+        executes *before* the run block that exports ``QC``, under the script's
+        ``set -euo pipefail``, where an unset ``$QC`` in a heredoc is fatal. Every job
+        configured the documented way (``executables: {qc: …}``, no explicit ``qchem``)
+        died at its own header, before the trap was armed: no footer, no copy-back, the
+        whole step ledgered ``output missing``. The recorded value is now the configured
+        path text itself, derived by the same precedence :meth:`_executable` uses —
+        and :func:`chemrefine.job_log.bash_header` refuses any ``$``-carrying field
+        value outright, so this cannot quietly regress.
         """
-        return (("qchem_executable", self._executable(ctx)),)
+        explicit = ctx.executables.get("qchem")
+        qc = ctx.executables.get("qc")
+        recorded = explicit or (f"{qc}/bin/qchem" if qc else "qchem")
+        return (("qchem_executable", recorded),)
 
     # -- parse -------------------------------------------------------------
 

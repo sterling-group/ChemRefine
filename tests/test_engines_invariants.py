@@ -650,7 +650,10 @@ _BASH_PARAM_SAFETY: dict[str, str] = {
     "step_dir": "output_dir (validated) joined with step_label",
     "input_path": "minted by chemrefine.ids under output_dir",
     "globs_expr": "a join of output_globs — engine-declared constants, never config",
-    "extra_fields": "engine-supplied runlog rows, not interpolated as code",
+    # These rows land in the runlog heredoc, where bash DOES interpolate a value as code —
+    # a `$(…)` in one executed on the compute node, exempted here under the wrong claim
+    # that they were "not interpolated". job_log.bash_header now refuses every value.
+    "extra_fields": VALIDATED,  # per value, at emission in job_log.bash_header
     # --- the script builders' own surface ------------------------------------------------
     "scratch_dir": VALIDATED,  # config.scratch_dir
     "job_name": "the input path's stem (ids-minted under the validated output_dir), or "
@@ -663,7 +666,7 @@ _BASH_PARAM_SAFETY: dict[str, str] = {
     "script_path": "the write destination; never part of the script's text",
     "output_globs": "engine-declared constants (a ClassVar, or a property over trainer "
     "declarations); never config",
-    "extra_header_fields": "engine-supplied runlog rows, not interpolated as code",
+    "extra_header_fields": VALIDATED,  # same rows, one signature up — same emission check
     # --- bash this project wrote ---------------------------------------------------------
     "header": "the output of job_log.bash_header, itself covered by this table",
     "footer": "the output of job_log.bash_footer, itself covered by this table",
@@ -721,14 +724,16 @@ def test_every_value_reaching_generated_bash_is_classified():
     assert stale == set(), f"_BASH_PARAM_SAFETY classifies values that no longer exist: {stale}"
 
 
-@pytest.mark.parametrize("hostile", ['"', "$", "`", "\\", "\n", "\t"])
+@pytest.mark.parametrize("hostile", ['"', "$", "`", "\\", "\n", "\t", ","])
 def test_the_rule_rejects_every_character_it_claims_to(hostile: str):
     """The classification above is only worth anything if `VALIDATED` actually bites.
 
     Each of these ends a quoted string, starts a substitution, or breaks the line -- the
-    ways a value interpolated into the generated script stops being a value. The tab is
-    the odd one out: it breaks no quoting, but the array manifest is tab-delimited, so a
-    tab in a path shifts every field after it.
+    ways a value interpolated into the generated script stops being a value. The tab and
+    the comma are the odd ones out: neither breaks quoting, but the array manifest is
+    tab-delimited (a tab in a path shifts every field after it) and the manifest's path
+    rides `sbatch --export=ALL,CR_MANIFEST=…`, which sbatch splits on commas (a comma
+    truncates it, and every task of the array reads a manifest that does not exist).
     """
     with pytest.raises(ValueError, match="cannot be safely embedded"):
         reject_shell_unsafe(f"/tmp/x{hostile}y", what="path", fix="rename it")

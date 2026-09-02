@@ -27,10 +27,18 @@ from chemrefine.state import JobTriple, RunBlock
 
 logger = logging.getLogger(__name__)
 
-# The lookahead requires `=`, whitespace, or end-of-line after the flag name so
-# only the exact directives we re-add are dropped — `--ntasks` must not swallow
-# a cluster header's `--ntasks-per-node` / `--ntasks-per-core`.
-_SBATCH_OVERRIDE_RE = re.compile(r"--(?:ntasks|cpus-per-task|job-name|output|error)(?=[=\s]|$)")
+# The five directives this builder re-adds, matched WITH their value, so an owned option
+# is stripped out of a header line without taking its neighbours: sbatch accepts several
+# options per `#SBATCH` line, and dropping the whole line silently discarded whatever
+# shared it (`#SBATCH --time=… --output=…` lost its `--time`). The value alternatives
+# cover `=v`, `="a b"`, and the space-separated `--flag v` / `--flag "a b"` forms; the
+# trailing lookahead is the prefix guard, so `--ntasks-per-node` / `--ntasks-per-core`
+# never match — after `--ntasks` the empty value alternative still demands whitespace or
+# end-of-line, which a `-` is not.
+_SBATCH_OWNED_OPTION_RE = re.compile(
+    r"[ \t]*--(?:ntasks|cpus-per-task|job-name|output|error)"
+    r'(?:=(?:"[^"]*"|\S*)|[ \t]+(?:"[^"]*"|(?!--)\S+))?(?=\s|$)'
+)
 
 
 def _compute_work_dir_expr(output_dir: Path | str, scratch_dir: Path | None) -> str:
@@ -50,10 +58,16 @@ def _compute_work_dir_expr(output_dir: Path | str, scratch_dir: Path | None) -> 
 def _read_header(template_path: Path) -> tuple[list[str], list[str]]:
     """Split a SLURM header template into ``(#SBATCH lines we keep, body lines)``.
 
-    Drops any ``#SBATCH`` directive we override later (``--ntasks`` /
+    Drops any ``#SBATCH`` *option* we override later (``--ntasks`` /
     ``--cpus-per-task`` / ``--job-name`` / ``--output`` / ``--error``) so PAL and
     log paths stay consistent regardless of what the cluster header declares.
     Longer flags that merely share a prefix (``--ntasks-per-node``) are kept.
+
+    The option, not its line: sbatch accepts several options on one ``#SBATCH`` line,
+    and dropping the whole line whenever one of ours appeared on it silently discarded
+    the co-resident directives — a ``#SBATCH --time=24:00:00 --output=x.log`` lost its
+    time limit with nothing said. Owned options are stripped in place and the line kept
+    whenever any other directive survives on it.
     """
     if not template_path.is_file():
         raise ConfigError(f"SLURM header template {template_path} not found")
@@ -62,8 +76,9 @@ def _read_header(template_path: Path) -> tuple[list[str], list[str]]:
     for raw in template_path.read_text(encoding="utf-8").splitlines():
         stripped = raw.strip()
         if stripped.startswith("#SBATCH"):
-            if not _SBATCH_OVERRIDE_RE.search(stripped):
-                sbatch_lines.append(raw.rstrip())
+            kept = _SBATCH_OWNED_OPTION_RE.sub("", raw.rstrip())
+            if kept.strip() != "#SBATCH":
+                sbatch_lines.append(kept)
         else:
             body_lines.append(raw.rstrip())
     return sbatch_lines, body_lines
@@ -89,6 +104,11 @@ reports truthfully, and changing that format is a decision of its own."""
 # match: after ``--mem`` the optional group rejects ``-per-gpu`` and the mandatory ``[=\s]``
 # rejects the ``-`` that follows, so a GPU memory directive is neither read nor stripped.
 _MEM_DIRECTIVE_RE = re.compile(r"--mem(?:-per-cpu)?[=\s]+(\d+)([KkMmGgTt]?)")
+
+# The same directive with its leading whitespace, for stripping it out of a shared line
+# without taking its neighbours — the `_SBATCH_OWNED_OPTION_RE` rule, applied to the one
+# directive `_apply_memory` replaces.
+_MEM_STRIP_RE = re.compile(r"[ \t]*--mem(?:-per-cpu)?[=\s]+\d+[KkMmGgTt]?(?=\s|$)")
 
 
 def _directive_mb(value: int, unit: str) -> int:
@@ -158,7 +178,17 @@ def _apply_memory(
         f"{granted} MB" if granted is not None else "no memory",
         per_cpu,
     )
-    kept = [line for line in sbatch_lines if not _MEM_DIRECTIVE_RE.search(line)]
+    # Strip the memory directive, not its line: a directive sharing a line with others
+    # (`#SBATCH --mem=2G --time=…`) must lose only the memory half — the `_read_header`
+    # rule, applied to the one directive this function replaces.
+    kept = []
+    for line in sbatch_lines:
+        if not _MEM_DIRECTIVE_RE.search(line):
+            kept.append(line)
+            continue
+        remainder = _MEM_STRIP_RE.sub("", line)
+        if remainder.strip() != "#SBATCH":
+            kept.append(remainder)
     return [*kept, f"#SBATCH --mem-per-cpu={per_cpu}"]
 
 

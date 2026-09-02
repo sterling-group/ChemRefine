@@ -241,6 +241,67 @@ def test_a_qchem_step_runs_end_to_end_through_local_dispatch(tmp_path: Path):
     assert rerun[0].cache_hit
 
 
+def test_the_header_records_the_binary_as_text_never_as_a_shell_reference(tmp_path: Path):
+    """The runlog row is raw path text, derived by `_executable`'s precedence — no `$QC`.
+
+    The row used to be the quoted invocation, `"$QC/bin/qchem"` included, on the belief
+    that the heredoc would expand `$QC` "when set" — but the header runs *before* the run
+    block that exports it, under `set -euo pipefail`, where an unset `$QC` in a heredoc
+    is fatal. Recording text keeps the fact and drops the expansion; the emission check
+    in `job_log.bash_header` refuses any `$`-carrying value, so this cannot regress.
+    """
+    engine = get_engine("qchem")
+    qc_only = _ctx(tmp_path, executables={"qc": "/opt/qchem700"})
+    assert engine.extra_header_fields(qc_only) == (("qchem_executable", "/opt/qchem700/bin/qchem"),)
+    explicit_wins = _ctx(tmp_path, executables={"qchem": "/mods/qchem", "qc": "/opt/qchem700"})
+    assert engine.extra_header_fields(explicit_wins) == (("qchem_executable", "/mods/qchem"),)
+    bare = _ctx(tmp_path)
+    assert engine.extra_header_fields(bare) == (("qchem_executable", "qchem"),)
+
+
+def test_a_qc_configured_step_survives_its_own_runlog_header(tmp_path: Path):
+    """Regression: every ``executables.qc`` job died at its header, before the trap armed.
+
+    The docs' primary Q-Chem configuration sets the install root (`qc`) and no explicit
+    `qchem` — and that exact shape put a bare `$QC` into the runlog heredoc, which runs
+    before the run block's `export QC=…`, so `set -u` killed the script with
+    "QC: unbound variable": no footer, no copy-back, the step ledgered `output missing`.
+    The e2e sibling above never saw it because its stub rides `executables.qchem`. This
+    one drives the whole pipeline with the stub at `<qc>/bin/qchem` and requires the
+    runlog to carry the recorded path — proof the header rendered and the job ran.
+    """
+    qc_root = tmp_path / "qchem700"
+    stub = qc_root / "bin" / "qchem"
+    stub.parent.mkdir(parents=True)
+    stub.write_text(
+        f'#!/bin/bash\ncp "{DATA / "sp" / "step1_0.out"}" "$4"\n',
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    template_dir = tmp_path / "templates"
+    template_dir.mkdir()
+    (template_dir / "step1.in").write_text(_SP_TEMPLATE, encoding="utf-8")
+    (template_dir / "cpu.slurm.header").write_text("#!/bin/bash\n", encoding="utf-8")
+    seed = write_single_xyz([("H", 0.0, 0.0, 0.0), ("H", 0.0, 0.0, 0.74)], tmp_path / "input.xyz")
+    config = Config(
+        template_dir=template_dir,
+        output_dir=tmp_path / "outputs",
+        input=seed,
+        max_cores=2,
+        dispatch="local",
+        executables={"qc": str(qc_root)},
+        steps=[StepConfig(step=1, engine="qchem", options={"cores": 1})],
+    )
+
+    outcomes = pipeline.run(config)
+
+    survivors = outcomes[0].state.structures
+    assert [s.id for s in survivors] == ["0"]
+    runlog = (config.output_dir / "step1" / "0" / "step1_0.runlog").read_text(encoding="utf-8")
+    assert f"qchem_executable={qc_root}/bin/qchem" in runlog
+    assert "finished" in runlog, "the footer must have fired — the trap outlived the header"
+
+
 # ---------------------------------------------------------------------------
 # The operation vocabulary — declared, refused up front, resolved before parsing
 # ---------------------------------------------------------------------------

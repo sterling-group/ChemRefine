@@ -43,6 +43,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
+from chemrefine.config import reject_shell_unsafe
+from chemrefine.errors import ConfigError
+
 _HEADER_KEYS = (
     "host",
     "job_id",
@@ -92,7 +95,29 @@ def bash_header(
     can compute the elapsed seconds. Engines can append their own
     ``(key, value)`` rows via ``extra_fields`` — they render after the
     fixed runlog skeleton.
+
+    **Every ``extra_fields`` value is held to** :func:`~chemrefine.config.
+    reject_shell_unsafe` **here, at emission.** The header is an unquoted heredoc, so a
+    value is interpolated as bash — a ``$(...)`` in one executes when the job runs, and a
+    bare ``$NAME`` is a nounset abort under the script's ``set -u`` when nothing has
+    exported it yet (the header runs *before* the engine's run block). Checked at the
+    point the value becomes bash rather than per engine, so a row added by any engine is
+    covered by existing — the same property-keyed placement as the rule itself. The
+    *fixed* skeleton values above are exempt on purpose: ``$(hostname)`` and
+    ``${SLURM_JOB_ID:-$$}`` are this module's own deliberate expansions.
+
+    A refused value is a :class:`~chemrefine.errors.ConfigError` naming the field: the
+    text originates in the user's YAML (an engine's option, an ``executables`` entry),
+    and a bare ``ValueError`` from inside script assembly would leave the exit-code
+    contract as a traceback.
     """
+    for key, value in extra_fields:
+        try:
+            reject_shell_unsafe(
+                str(value), what=f"runlog field {key!r}", fix="remove the character"
+            )
+        except ValueError as e:
+            raise ConfigError(str(e)) from e
     values = {
         "host": "$(hostname)",
         "job_id": "${SLURM_JOB_ID:-$$}",

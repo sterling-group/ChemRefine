@@ -306,6 +306,22 @@ def test_mlip_options_aliases_resolve_to_canonical():
     assert dumped["model_name"] == "medium" and dumped["task_name"] == "mace_off"
 
 
+@pytest.mark.parametrize("knob", ["model_name", "model_path"])
+def test_a_model_selection_that_would_run_as_bash_is_refused(knob: str):
+    """The selection strings reach the runlog heredoc, so they obey the shell rule.
+
+    ``mlip-train`` records ``model_path or model_name`` as its ``started_from`` row —
+    the unquoted heredoc channel through which ``model_name: 'x$(…)'`` executed on the
+    compute node. Refused at the model, with the knob named, like ``executables`` and
+    ``operation`` before it; real model names and checkpoint paths carry none of these
+    characters, so the vocabulary is untouched (the alias test above still passes).
+    """
+    from chemrefine.engines.mlip.options import MlipOptions
+
+    with pytest.raises(ConfigError, match="MLIP model selection"):
+        MlipOptions.from_raw({"task_name": "mace_off", knob: "x$(touch pwned)"})
+
+
 # ---------------------------------------------------------------------------
 # MlipExtOptEngine — ORCA-driven mode (ExtOpt server lifecycle)
 # ---------------------------------------------------------------------------

@@ -107,9 +107,17 @@ access control.
 ### Generated job scripts
 
 **Every config value that reaches the generated SLURM script is refused at
-config-load time if it contains `"`, `$`, a backtick, a backslash, or a
-newline.** Those would terminate a quoted string or introduce a command
-substitution the job would then run.
+config-load time if it contains `"`, `$`, a backtick, a backslash, a newline,
+a tab, or a comma.** The first five would terminate a quoted string or
+introduce a command substitution the job would then run; the last two break
+delimited formats the values ride — the job-array manifest is tab-separated,
+and the manifest's own path travels `sbatch --export=ALL,CR_MANIFEST=…`,
+which sbatch splits on commas.
+
+The engine-supplied runlog rows are held to the same rule a second time at
+the moment they become bash: `job_log.bash_header` refuses any extra-field
+value carrying those characters, so a row added by a future engine cannot
+reopen the heredoc as a code path.
 
 The rule is asked **twice**: once on the values as written, and again on the
 paths after they are resolved. The second pass is not belt-and-braces — a

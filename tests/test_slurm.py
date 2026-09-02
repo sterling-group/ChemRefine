@@ -92,6 +92,53 @@ def test_build_script_overrides_ntasks_and_writes_script(tmp_path: Path):
     assert "module load orca/6.0" in text
 
 
+def test_a_shared_sbatch_line_keeps_its_unowned_directives(tmp_path: Path):
+    """Stripping an owned option must not take its line-mates with it.
+
+    sbatch accepts several options per ``#SBATCH`` line, and dropping the whole line
+    whenever one of ours appeared on it silently discarded the co-resident directives —
+    a header's ``--time`` vanished because ``--output`` shared its line. The owned
+    option goes; whatever else the line declares stays; a line that held only owned
+    options disappears entirely, as it always did.
+    """
+    header = tmp_path / "multi.slurm.header"  # not the name _build_kwargs re-writes
+    header.write_text(
+        "#!/bin/bash\n"
+        "#SBATCH --time=24:00:00 --output=old.log\n"
+        "#SBATCH --qos=high --ntasks 4 --partition=normal\n"
+        "#SBATCH --ntasks=1 --cpus-per-task=4\n",  # only owned options — the line goes
+        encoding="utf-8",
+    )
+    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, ntasks=2))
+    text = script.read_text()
+    assert "--time=24:00:00" in text
+    assert "--output=old.log" not in text
+    assert "--qos=high" in text and "--partition=normal" in text
+    assert "--ntasks 4" not in text
+    # `--ntasks-per-node` and friends must still pass whole — the prefix guard holds
+    # in the stripping regex exactly as it did in the old whole-line test below.
+    assert "#SBATCH --ntasks=1 --cpus-per-task=4" not in text
+    assert "#SBATCH --ntasks=2" in text
+
+
+def test_a_shared_mem_line_keeps_its_unowned_directives(tmp_path: Path):
+    """The memory replacement obeys the same rule as the header strip.
+
+    `_apply_memory` replaces a too-small grant; a `--mem` sharing a line with another
+    directive must lose only the memory half.
+    """
+    header = tmp_path / "shared-mem.slurm.header"  # not the name _build_kwargs re-writes
+    header.write_text(
+        "#!/bin/bash\n#SBATCH --mem=1 --qos=high\n",
+        encoding="utf-8",
+    )
+    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, memory_mb=4000))
+    text = script.read_text()
+    assert "--qos=high" in text
+    assert "--mem=1" not in text
+    assert "#SBATCH --mem-per-cpu=4000" in text
+
+
 def test_build_script_spells_a_threads_layout(tmp_path: Path):
     """``cpus_per_task`` reaches the SBATCH pair, and the runlog reports the product.
 

@@ -5,7 +5,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from chemrefine import ids, job_log, slurm
+from chemrefine.errors import ConfigError
 from chemrefine.state import RunBlock
 
 # ---------------------------------------------------------------------------
@@ -84,6 +87,53 @@ def test_bash_header_inlines_values_not_shell_refs():
 
 def test_format_field_indents_two_spaces():
     assert job_log._format_field("k", "v") == "  k=v"
+
+
+def test_a_field_value_that_would_run_as_bash_is_refused_naming_the_field():
+    """The header is an unquoted heredoc: an extra-field value IS interpolated as bash.
+
+    A ``$(...)`` in one executed on the compute node when the job ran — proven with a
+    script assembled by the real builder — and the shell-safety table exempted these rows
+    under the wrong claim that they were "not interpolated as code". The check lives at
+    emission, so a row added by any engine is covered by existing; the refusal is a
+    ConfigError because the text originates in the user's YAML.
+    """
+    with pytest.raises(ConfigError, match="runlog field 'started_from'"):
+        job_log.bash_header(
+            engine="mlip-train",
+            operation="",
+            step=1,
+            structure_id="train",
+            step_label="step1",
+            step_dir=Path("/abs/outputs/step1"),
+            cores=4,
+            extra_fields=(("started_from", "x$(touch pwned)"),),
+        )
+
+
+def test_field_values_every_engine_actually_emits_still_pass():
+    """The emission check must not refuse what the engines legitimately record.
+
+    The rows in circulation: ORCA's validated executable path, Q-Chem's raw recorded
+    path, mlip-train's registry key / int / model name — plain text with spaces at most,
+    which the rule deliberately allows.
+    """
+    snippet = job_log.bash_header(
+        engine="mlip-train",
+        operation="",
+        step=1,
+        structure_id="train",
+        step_label="step1",
+        step_dir=Path("/abs/outputs/step1"),
+        cores=4,
+        extra_fields=(
+            ("trainer", "mace_off"),
+            ("gpus", 2),
+            ("started_from", "/opt/my models/uma-s-1p2"),
+        ),
+    )
+    assert "  gpus=2" in snippet
+    assert "  started_from=/opt/my models/uma-s-1p2" in snippet
 
 
 # ---------------------------------------------------------------------------

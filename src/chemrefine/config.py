@@ -407,6 +407,14 @@ bash substitutes *inside* double quotes
     # after it, and each task silently reads the wrong input or writes the wrong place.
     if "\t" in text:
         bad.add("tab")
+    # A comma is the tab rule's sibling, one delimiter over: the array path hands each
+    # chunk its manifest through `sbatch --export=ALL,CR_MANIFEST=<path>`, and sbatch
+    # splits `--export` on commas — so a comma in the path truncates `CR_MANIFEST` and
+    # every task of the array reads a manifest that does not exist. Refused here, like
+    # the tab, rather than special-cased at the one call site that breaks today: these
+    # values reach bash by more routes than any list of call sites stays honest about.
+    if "," in text:
+        bad.add("comma")
     if bad:
         raise ValueError(
             f"{what} {text!r} contains {sorted(bad)}, which cannot be safely embedded "

@@ -10,8 +10,9 @@ reading the raw YAML dict.
 
 from __future__ import annotations
 
-from pydantic import AliasChoices, ConfigDict, Field
+from pydantic import AliasChoices, ConfigDict, Field, field_validator
 
+from chemrefine.config import reject_shell_unsafe
 from chemrefine.engines._options import EngineOptions
 
 
@@ -73,6 +74,34 @@ class MlipOptions(EngineOptions):
     names. It has to happen there rather than here: a field validator sees only the process
     working directory, which is not where the config sits — and the value reaches a job that
     runs in a scratch directory, so an unresolved relative path is found by nobody."""
+
+    @field_validator("model_name", "model_path")
+    @classmethod
+    def _shell_safe(cls, v: str | None) -> str | None:
+        """Hold both selection strings to the shell rule the other bash-bound values obey.
+
+        ``mlip-train`` records ``model_path or model_name`` as the runlog's
+        ``started_from`` row, which lands in the unquoted header heredoc — the same
+        channel ``operation`` and ``executables`` are refused metacharacters for, and
+        the one through which ``model_name: 'x$(…)'`` executed on the compute node.
+        :func:`chemrefine.job_log.bash_header` refuses the value again at emission;
+        this is the boundary half of the same rule, so the mistake is named at config
+        load with the knob that carries it. Real model names and checkpoint paths never
+        carry these characters, so nothing legitimate is narrowed.
+
+        Per knob, deliberately — not a blanket check on
+        :class:`~chemrefine.engines._options.EngineOptions`. The rule is keyed to
+        *reaching generated bash*, and most option values never do: the ExtOpt server
+        CLI is ``shlex.quote``-d, script placeholders land in Python source, and
+        ``task_name`` is registry-gated before any script exists. A base-wide check
+        would refuse values the property does not cover — PySCF's compound-functional
+        ``xc: "b88,lyp"`` carries the comma the rule now rejects, legitimately. The
+        general net for future rows is the emission check, which guards the channel
+        itself rather than a roster of knobs.
+        """
+        if v:
+            reject_shell_unsafe(v, what="the MLIP model selection", fix="rename it")
+        return v
 
 
 CALCULATOR_KNOBS: tuple[str, ...] = ("model_name", "task_name", "device", "model_path")
