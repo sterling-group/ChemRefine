@@ -442,17 +442,19 @@ def require_no_live_jobs(config: Config) -> None:
     * a **SLURM id** is put to the queue, all ids in one probe. A host with no
       ``squeue`` cannot verify them, and a tree copied to a laptop must not be fenced
       harder than the original — so that case warns and proceeds instead of refusing
-      on evidence no one there can produce.
+      on evidence no one there can produce, keeping those ids on record for the next
+      run that can ask.
     * a **local job** is probed by pid on its own host; recorded on another host it
       cannot be probed from here, and the fence refuses until someone who knows that
       run is dead deletes the record — the lock's own escape, worded the same way.
 
     Leases every probe proves dead are garbage from a run that never unwound; the fence
     deletes them (it holds the lock, so they are its to clean), which is also what keeps
-    a long-lived tree from re-probing long-drained ids on every resume.
+    a long-lived tree from re-probing long-drained ids on every resume — and, once the
+    kernel recycles a dead pid, from refusing a run over a process that was never ours.
     """
     hostname = socket.gethostname()
-    visited: list[tuple[Path, bool]] = []  # (step_dir, ledger holds SLURM ids)
+    visited: list[Path] = []
     slurm_ids: dict[str, Path] = {}
     for step_cfg in config.steps:
         step_dir = config.step_dir(step_cfg)
@@ -480,7 +482,7 @@ def require_no_live_jobs(config: Config) -> None:
                     f"this tree, so this run stops here. Wait for it to finish — or "
                     f"kill it, delete the record, and retry."
                 )
-        visited.append((step_dir, any(not lease.local for lease in leases)))
+        visited.append(step_dir)
     if slurm_ids:
         if not slurm.scheduler_reachable():
             logger.warning(
@@ -489,10 +491,13 @@ def require_no_live_jobs(config: Config) -> None:
                 "cluster, stop this one now",
                 len(slurm_ids),
             )
-            # Only the all-local ledgers were actually proven dead here.
-            for step_dir, has_slurm in visited:
-                if not has_slurm:
-                    slurm.release_leases(step_dir)
+            # Every local lease above was proven dead (any other kind raised) and only
+            # the SLURM ids are unverified — so shed exactly the former and keep exactly
+            # the latter, whether or not they share a ledger. A dead pid left beside a
+            # SLURM id would be re-probed by every later resume and, once recycled,
+            # refuse a run whose only escape deletes the SLURM evidence with it.
+            for step_dir in visited:
+                slurm.release_leases(step_dir, keep_slurm=True)
             return
         live = sorted(set(slurm_ids) - slurm.finished_jobs(tuple(slurm_ids)))
         if live:
@@ -504,7 +509,7 @@ def require_no_live_jobs(config: Config) -> None:
                 f"them — or, if the record is known stale (a transient squeue failure "
                 f"reports every job live), delete it and retry."
             )
-    for step_dir, _ in visited:
+    for step_dir in visited:
         slurm.release_leases(step_dir)
 
 

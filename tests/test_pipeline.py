@@ -1214,6 +1214,38 @@ def test_without_squeue_recorded_slurm_jobs_warn_and_the_run_proceeds(
     assert slurm_ledger.exists(), "unverified SLURM ids must stay on record for the cluster side"
 
 
+def test_without_squeue_a_mixed_ledger_sheds_its_dead_local_lease_and_keeps_the_slurm_id(
+    tmp_path: Path,
+):
+    """One ledger, two kinds: the dead local pid goes, the unverifiable SLURM id stays.
+
+    Left in place, the dead pid is re-probed by every later resume and, once the kernel
+    recycles the number, refuses a run over a process that was never ours — with no
+    escape but deleting the SLURM evidence beside it.
+    """
+    import json
+    import socket
+    from unittest.mock import patch
+
+    from chemrefine import slurm
+
+    seed = tmp_path / "step0_seed.xyz"
+    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    cfg = _config(
+        tmp_path, input=seed, steps=[StepConfig(step=1, engine="fake", operation="opt_sp")]
+    )
+    ledger = _plant_leases(
+        cfg.step_dir(cfg.steps[0]),
+        {"id": "424242", "host": "cluster-login", "pid": None},
+        {"id": "local-2", "host": socket.gethostname(), "pid": _dead_pid()},
+    )
+
+    with patch.object(slurm, "scheduler_reachable", return_value=False):
+        pipeline.run(cfg)
+
+    assert [r["id"] for r in json.loads(ledger.read_text(encoding="utf-8"))] == ["424242"]
+
+
 def test_the_fence_refuses_a_dead_drivers_live_local_job(tmp_path: Path):
     """A SIGKILLed driver's local jobs run on in their own sessions; their pids fence."""
     import socket

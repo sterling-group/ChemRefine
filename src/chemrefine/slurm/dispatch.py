@@ -510,10 +510,11 @@ def record_lease(step_dir: Path, job_id: str) -> None:
 def release_leases(step_dir: Path, *, keep_slurm: bool = False) -> None:
     """Drop ``step_dir``'s leases — all of them, or everything but the SLURM ids.
 
-    A cleanly drained batch releases everything. An unwinding one keeps the SLURM
-    entries: :func:`terminate_local_jobs` has just killed the local jobs, but the
-    scheduler's jobs run on by design, and their leases are what the resume fence
-    reads once the lock is gone.
+    A cleanly drained batch releases everything. Two callers keep the SLURM entries: an
+    unwinding batch — :func:`terminate_local_jobs` has just killed the local jobs, but
+    the scheduler's jobs run on by design, and their leases are what the resume fence
+    reads once the lock is gone — and that fence itself on a host with no ``squeue``,
+    where the local leases are proven dead and the SLURM ids cannot be asked.
     """
     path = lease_path(step_dir)
     if not keep_slurm:
