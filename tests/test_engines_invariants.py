@@ -122,10 +122,8 @@ def _alias_capable() -> list[str]:
     ]
 
 
-def _assemble(
-    engine_name: str, tmp_path: Path, *, array: bool = False
-) -> tuple[Path, dict[str, str]]:
-    """Build a real SLURM script for ``engine_name``; return ``(script, output_dir)``.
+def _assemble(engine_name: str, tmp_path: Path, *, array: bool = False) -> tuple[Path, list[str]]:
+    """Build a real SLURM script for ``engine_name``; return ``(script, its arguments)``.
 
     The whole point is to exercise the *composed* script -- header + job_log + scratch trap +
     the engine's own run block -- rather than the run block on its own.
@@ -162,12 +160,12 @@ def _assemble(
             run_block=engine.run_block(ctx, Path("$INP_NAME"), Path("$OUT_NAME")),
             **common,
         )
-        # The array task resolves its own row from $CR_MANIFEST, which sbatch normally
-        # exports via --export=ALL,CR_MANIFEST=...; supply it here.
+        # The array task resolves its own row from the manifest sbatch hands the script
+        # as its first argument (`submit_array`); supply it the same way here.
         manifest = slurm.write_array_manifests(
             [(inp, out_dir / "step1_0.out", "0")], out_dir, step_label="step1"
         )[0][0]
-        return script, {"CR_MANIFEST": str(manifest)}
+        return script, [str(manifest)]
 
     script = slurm.build_script(
         job_name="step1_0",
@@ -178,10 +176,10 @@ def _assemble(
         run_block=engine.run_block(ctx, inp, out_dir / "step1_0.out"),
         **common,
     )
-    return script, {}
+    return script, []
 
 
-def _run_script(script: Path, extra_env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run_script(script: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     """Run an assembled script for real; it is expected to fail, and to clean up anyway.
 
     The shell and coreutils stay on PATH (the script needs them); what is missing is the
@@ -190,9 +188,9 @@ def _run_script(script: Path, extra_env: dict[str, str]) -> subprocess.Completed
     Every one of those unwinds the script, which is precisely the path the EXIT trap must
     survive.
     """
-    env = {**os.environ, "SLURM_ARRAY_TASK_ID": "0", **extra_env}
+    env = {**os.environ, "SLURM_ARRAY_TASK_ID": "0"}
     return subprocess.run(
-        ["bash", str(script)], capture_output=True, text=True, env=env, timeout=180
+        ["bash", str(script), *args], capture_output=True, text=True, env=env, timeout=180
     )
 
 
@@ -209,9 +207,9 @@ def test_the_assembled_script_still_runs_its_exit_handler(engine_name: str, tmp_
 
     `bash -n` on the run block alone cannot see this; only the composed script can.
     """
-    script, extra_env = _assemble(engine_name, tmp_path)
+    script, args = _assemble(engine_name, tmp_path)
 
-    result = _run_script(script, extra_env)
+    result = _run_script(script, args)
 
     assert "files_copied=" in result.stdout, (
         f"{engine_name}: the outer _on_exit never fired -- the run block replaced the EXIT trap.\n"
@@ -233,9 +231,9 @@ def test_the_assembled_array_script_still_runs_its_exit_handler(
     The array task ``exec``-redirects itself to the canonical per-structure runlog, so unlike
     the per-job case the footer lands in that file rather than on stdout.
     """
-    script, extra_env = _assemble(engine_name, tmp_path, array=True)
+    script, args = _assemble(engine_name, tmp_path, array=True)
 
-    _run_script(script, extra_env)
+    _run_script(script, args)
 
     runlog = tmp_path / "out" / "step1_0.runlog"
     assert runlog.is_file(), f"{engine_name}: the array task wrote no runlog"
@@ -724,19 +722,35 @@ def test_every_value_reaching_generated_bash_is_classified():
     assert stale == set(), f"_BASH_PARAM_SAFETY classifies values that no longer exist: {stale}"
 
 
-@pytest.mark.parametrize("hostile", ['"', "$", "`", "\\", "\n", "\t", ","])
+@pytest.mark.parametrize("hostile", ['"', "$", "`", "\\", "\n", "\t"])
 def test_the_rule_rejects_every_character_it_claims_to(hostile: str):
     """The classification above is only worth anything if `VALIDATED` actually bites.
 
     Each of these ends a quoted string, starts a substitution, or breaks the line -- the
-    ways a value interpolated into the generated script stops being a value. The tab and
-    the comma are the odd ones out: neither breaks quoting, but the array manifest is
-    tab-delimited (a tab in a path shifts every field after it) and the manifest's path
-    rides `sbatch --export=ALL,CR_MANIFEST=…`, which sbatch splits on commas (a comma
-    truncates it, and every task of the array reads a manifest that does not exist).
+    ways a value interpolated into the generated script stops being a value. The tab is
+    the odd one out: it breaks no quoting, but the array manifest is tab-delimited, so a
+    tab in a path shifts every field after it. A comma is not here: the one channel it
+    broke -- the manifest's path riding `--export`, which sbatch splits on commas -- is
+    gone, the path travels as the array script's argument instead.
     """
     with pytest.raises(ValueError, match="cannot be safely embedded"):
         reject_shell_unsafe(f"/tmp/x{hostile}y", what="path", fix="rename it")
+
+
+def test_an_array_script_without_its_manifest_argument_dies_at_once(tmp_path: Path):
+    """The manifest is `$1`, and a missing one is the loud failure `${1:?}` promises.
+
+    The capture sits above the template body, so nothing the header can `set` or `shift`
+    reaches it first; and it must not fall through to the resolution block, where an empty
+    path would read as a manifest with no lines and the task would run against nothing.
+    """
+    script, _args = _assemble("orca", tmp_path, array=True)
+
+    result = _run_script(script, [])
+
+    assert result.returncode != 0
+    assert "array manifest path missing" in result.stderr
+    assert not (tmp_path / "out" / "step1_0.runlog").exists(), "nothing past the capture ran"
 
 
 def test_every_engine_with_the_nms_hook_satisfies_the_nms_protocol():

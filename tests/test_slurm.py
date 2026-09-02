@@ -867,6 +867,10 @@ def test_build_array_script_resolves_task_from_manifest(tmp_path: Path):
         output_globs=("*.out", "*.xyz"),
     )
     text = script.read_text()
+    # The manifest is the script's first argument, captured before the template body
+    # (`module load …`) can touch the positional parameters, and loud when missing.
+    capture = 'CR_MANIFEST="${1:?array manifest path missing}"'
+    assert text.index("#SBATCH") < text.index(capture) < text.index("module load orca/6.0")
     assert 'line=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$CR_MANIFEST")' in text
     assert "IFS=$'\\t' read -r INP OUT SID <<< \"$line\"" in text
     assert 'INP_NAME=$(basename "$INP")' in text
@@ -901,20 +905,25 @@ def test_write_array_manifests_chunks_at_max_array_size(tmp_path: Path):
     assert line0_chunk1.endswith("\t1000")
 
 
-def test_submit_array_passes_array_and_export_flags(tmp_path: Path):
+def test_submit_array_passes_the_manifest_as_the_script_argument(tmp_path: Path):
+    """The manifest follows the script in argv — sbatch forwards it as ``$1``.
+
+    Not ``--export=ALL,CR_MANIFEST=…``: sbatch splits ``--export`` on commas, so a comma
+    in the output path truncated the variable and every task read a manifest that did not
+    exist. The argument channel reserves no character, commas in the path included.
+    """
     fake = MagicMock(returncode=0, stdout="Submitted batch job 777\n", stderr="")
+    manifest = tmp_path / "out,puts" / "m.0"
     with patch.object(subprocess, "run", return_value=fake) as run:
         job_id = slurm.submit_array(
-            tmp_path / "a.slurm",
-            n_tasks=10,
-            max_concurrent=4,
-            manifest=tmp_path / "m.0",
+            tmp_path / "a.slurm", n_tasks=10, max_concurrent=4, manifest=manifest
         )
     assert job_id == "777"
     argv = run.call_args[0][0]
     assert "--parsable" in argv
-    assert f"--export=ALL,CR_MANIFEST={tmp_path / 'm.0'}" in argv
+    assert "--export=ALL" in argv
     assert "--array=0-9%4" in argv
+    assert argv[-2:] == [str(tmp_path / "a.slurm"), str(manifest)]
 
 
 def test_submit_array_raises_on_sbatch_failure(tmp_path: Path):

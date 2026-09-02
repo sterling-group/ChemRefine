@@ -538,18 +538,16 @@ def test_operation_accepts_every_real_spelling(tmp_path: Path, ok: str):
     assert load_config(_write_yaml(tmp_path, data)).steps[0].operation is not None
 
 
-def test_directory_paths_with_a_comma_rejected(tmp_path: Path):
-    """A comma is the tab rule's sibling: sbatch splits ``--export`` on it.
+def test_directory_paths_with_a_comma_are_legal(tmp_path: Path):
+    """A comma breaks no channel a directory rides, so it is a directory name like any.
 
-    The array path hands each chunk its manifest through
-    ``--export=ALL,CR_MANIFEST=<path>``, so a comma anywhere in the path truncates the
-    variable and every task reads a manifest that does not exist — a whole step ledgered
-    ``output missing`` for a legal directory name. Refused at the boundary like the tab.
+    It was refused once, for the array manifest's path travelling ``--export``, which
+    sbatch splits on commas; the manifest now rides as the script's argument, and a
+    rule that is untrue of every other site these values reach went with the channel.
     """
     data = _minimal_config()
     data["output_dir"] = "./out,puts"
-    with pytest.raises(ConfigError, match="comma"):
-        load_config(_write_yaml(tmp_path, data))
+    assert load_config(_write_yaml(tmp_path, data)).output_dir.name == "out,puts"
 
 
 @pytest.mark.parametrize("ok", ["/opt/my orca/orca", "/opt/orca/orca", "orca"])

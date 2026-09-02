@@ -108,11 +108,12 @@ access control.
 
 **Every config value that reaches the generated SLURM script is refused at
 config-load time if it contains `"`, `$`, a backtick, a backslash, a newline,
-a tab, or a comma.** The first five would terminate a quoted string or
-introduce a command substitution the job would then run; the last two break
-delimited formats the values ride — the job-array manifest is tab-separated,
-and the manifest's own path travels `sbatch --export=ALL,CR_MANIFEST=…`,
-which sbatch splits on commas.
+or a tab.** The first five would terminate a quoted string or introduce a
+command substitution the job would then run; the tab breaks the one delimited
+format the values ride — the job-array manifest is tab-separated. The
+manifest's own path is handed to the array script as its first argument
+(`sbatch … script.slurm <manifest>`), a channel that reserves no character,
+rather than through `--export`, which sbatch splits on commas.
 
 The engine-supplied runlog rows are held to the same rule a second time at
 the moment they become bash: `job_log.bash_header` refuses any extra-field

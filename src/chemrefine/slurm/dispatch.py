@@ -759,8 +759,12 @@ def submit_array(
 ) -> str:
     """Submit one array chunk; return the parent job ID.
 
-    ``--export=ALL,CR_MANIFEST=...`` points the shared script at this chunk's
-    manifest; ``%max_concurrent`` is the scheduler-enforced concurrency cap
+    The chunk's manifest rides as the script's first argument — sbatch forwards
+    everything after the script path to it — which the generated script captures
+    into ``$CR_MANIFEST`` before anything else runs. Not through ``--export``:
+    sbatch splits that on commas, so a comma in the output path truncated the
+    variable and every task read a manifest that did not exist; the argument
+    channel reserves no character. ``%max_concurrent`` is the scheduler-enforced concurrency cap
     (the caller computes this chunk's *share* of ``max_cores // PAL``, so all
     of a step's arrays together respect the same core budget the per-job
     throttler enforces — a per-array limit alone would grant it once per
@@ -774,9 +778,10 @@ def submit_array(
             [
                 sbatch_cmd,
                 "--parsable",
-                f"--export=ALL,CR_MANIFEST={manifest}",
+                "--export=ALL",
                 f"--array=0-{n_tasks - 1}%{max_concurrent}",
                 str(script_path),
+                str(manifest),
             ],
             capture_output=True,
             text=True,

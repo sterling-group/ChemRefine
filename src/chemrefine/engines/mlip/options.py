@@ -94,10 +94,10 @@ class MlipOptions(EngineOptions):
         *reaching generated bash*, and most option values never do: the ExtOpt server
         CLI is ``shlex.quote``-d, script placeholders land in Python source, and
         ``task_name`` is registry-gated before any script exists. A base-wide check
-        would refuse values the property does not cover — PySCF's compound-functional
-        ``xc: "b88,lyp"`` carries the comma the rule now rejects, legitimately. The
-        general net for future rows is the emission check, which guards the channel
-        itself rather than a roster of knobs.
+        would refuse values the property does not cover — a quoting character in a
+        knob that lands in Python source is a legitimate value there. The general net
+        for future rows is the emission check, which guards the channel itself rather
+        than a roster of knobs.
         """
         if v:
             reject_shell_unsafe(v, what="the MLIP model selection", fix="rename it")
