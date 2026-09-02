@@ -807,6 +807,44 @@ def test_a_half_built_env_is_not_left_behind(monkeypatch, tmp_path: Path):
     assert not env_path.exists()
 
 
+def test_an_interrupted_fresh_build_is_also_swept(monkeypatch, tmp_path: Path):
+    """Ctrl-C during the install — the common interruption — must not look provisioned.
+
+    ``KeyboardInterrupt`` slips past any ``(OSError, CalledProcessError)`` net, and a
+    ``<env>/bin/python`` left behind is accepted by name on every later run, failing
+    inside the job instead. The sweep is a ``finally`` with a success flag, so *any*
+    non-success exit of a fresh build cleans up — while an interrupted install into an
+    **existing** env is never torn down, since that env is work the user already has.
+    """
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    monkeypatch.setattr(provision, "_direct_url", lambda: None)
+    env_path = provision.backend_env_path("mlip-mace")
+
+    def _create_then_interrupt(argv, **_k):
+        if argv[1:3] != ["-m", "venv"]:
+            raise KeyboardInterrupt
+        (env_path / "bin").mkdir(parents=True)
+        (env_path / "bin" / "python").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(provision.subprocess, "run", _create_then_interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        provision.build_backend_env("mlip-mace", tool="venv")
+    assert not env_path.exists()
+
+    # The existing-env half: an interrupt mid-install leaves the env standing.
+    (env_path / "bin").mkdir(parents=True)
+    (env_path / "bin" / "python").write_text("", encoding="utf-8")
+    (env_path / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
+
+    def _interrupt(argv, **_k):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(provision.subprocess, "run", _interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        provision.build_backend_env("mlip-mace", tool="venv")
+    assert (env_path / "bin" / "python").is_file()
+
+
 # ---------------------------------------------------------------------------
 # _install_target — PEP 610 source-matching
 # ---------------------------------------------------------------------------
@@ -830,6 +868,22 @@ def test_install_target_missing_source_dir_raises(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(provision, "_direct_url", lambda: direct)
     with pytest.raises(ConfigError, match="no longer exists"):
         provision._install_target("mlip-mace")
+
+
+def test_install_target_keeps_the_subdirectory_of_a_non_vcs_install(monkeypatch, tmp_path: Path):
+    """PEP 610 records ``subdirectory`` beside every direct URL, not only VCS ones.
+
+    A ``file://…#subdirectory=…`` install rebuilt the managed env from the repository
+    *root* when only the VCS branch re-appended the fragment — a wrong-source env that
+    then fails on the backend import, or worse, quietly installs a different package.
+    """
+    url = tmp_path.as_uri()
+    direct = {"url": url, "dir_info": {}, "subdirectory": "python"}
+    monkeypatch.setattr(provision, "_direct_url", lambda: direct)
+    assert (
+        provision._install_target("mlip-mace")
+        == f"chemrefine[mlip-mace] @ {url}#subdirectory=python"
+    )
 
 
 def test_install_target_git_install_pins_commit(monkeypatch):

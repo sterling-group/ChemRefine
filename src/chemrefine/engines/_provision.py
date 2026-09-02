@@ -633,7 +633,13 @@ def _install_target(extra: str) -> str:
                 f"managed env for '{extra}' must be built from the same source. "
                 f"Reinstall ChemRefine, then re-run `chemrefine backends install {extra}`."
             )
-    return f"chemrefine[{extra}] @ {url}"
+    spec = url
+    if direct.get("subdirectory"):
+        # PEP 610 records `subdirectory` beside the URL for *every* direct install, not
+        # only VCS ones — a `file://…#subdirectory=…` install rebuilt the managed env
+        # from the repository root when only the VCS branch re-appended it.
+        spec += f"#subdirectory={direct['subdirectory']}"
+    return f"chemrefine[{extra}] @ {spec}"
 
 
 def _build_commands(base: BasePython, path: Path, extra: str) -> tuple[list[str], list[str]]:
@@ -738,16 +744,26 @@ def build_backend_env(
         base = BasePython(this_python(), _existing_env_tool(env_path, detected))
     create, install = _build_commands(base, env_path, extra)
     env_path.parent.mkdir(parents=True, exist_ok=True)
-    for argv in [create, install] if fresh else [install]:
-        try:
-            # this install's own metadata; no shell, no user-supplied string.
-            subprocess.run(argv, check=True)  # noqa: S603
-        except (OSError, subprocess.CalledProcessError) as e:
-            if fresh:
-                shutil.rmtree(env_path, ignore_errors=True)
-            raise BackendProvisionError(
-                f"could not build the managed env for {extra!r}: `{shlex.join(argv)}` "
-                f"failed ({e}). Re-run `chemrefine backends install {extra}` once the "
-                f"cause is fixed, or install `chemrefine[{extra}]` into this environment."
-            ) from e
+    # try/finally with a success flag, not an except-clause: Ctrl-C during a multi-GB
+    # torch install is the *common* interruption, and KeyboardInterrupt/SystemExit slip
+    # past any (OSError, CalledProcessError) net — leaving `<env>/bin/python` present
+    # with the install half-done, which `require_backend` then accepts by name on every
+    # later run. Exactly the state the docstring above says must not exist, reachable
+    # only through the exceptions the old net did not catch.
+    built = False
+    try:
+        for argv in [create, install] if fresh else [install]:
+            try:
+                # this install's own metadata; no shell, no user-supplied string.
+                subprocess.run(argv, check=True)  # noqa: S603
+            except (OSError, subprocess.CalledProcessError) as e:
+                raise BackendProvisionError(
+                    f"could not build the managed env for {extra!r}: `{shlex.join(argv)}` "
+                    f"failed ({e}). Re-run `chemrefine backends install {extra}` once the "
+                    f"cause is fixed, or install `chemrefine[{extra}]` into this environment."
+                ) from e
+        built = True
+    finally:
+        if fresh and not built:
+            shutil.rmtree(env_path, ignore_errors=True)
     return env_python

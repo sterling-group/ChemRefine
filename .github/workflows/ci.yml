@@ -162,14 +162,17 @@ jobs:
       # nothing is named here. A backend added or re-capped later is covered on the commit
       # that changes the marker, with no matching edit to this file.
       #
-      # `--only-binary=:all:` over what the marker excludes, not over the whole extra: mace's
-      # `python-hostlist` and chgnet's `nvidia-ml-py3` are sdist-only pure-Python packages
-      # that build in a second on any machine, so a wheels-only resolution of a whole backend
-      # stack fails everywhere and says nothing. It is the *native* build this catches —
-      # dm-tree compiling a vendored abseil for an hour, or torch from source — and the
-      # step above cannot: `--dry-run` prepares metadata, and an sdist yields metadata
-      # without compiling anything, which is how `[mlip-orb]` stayed green here for a Python
-      # `backends install` could never finish on.
+      # `--only-binary` names the held-back packages, never `:all:`: resolution is
+      # transitive, and a wheels-only rule over the whole tree failed on mace's
+      # `python-hostlist` and chgnet's `nvidia-ml-py3` — sdist-only pure-Python
+      # packages that build in a second anywhere — *regardless* of whether the capped
+      # package gained wheels, so the reminder could never fire for those two extras.
+      # Scoped to the names, the sdist-only bystanders resolve as themselves while the
+      # capped package still has to answer with a wheel. It is the *native* build this
+      # catches — dm-tree compiling a vendored abseil for an hour, or torch from
+      # source — and the step above cannot: `--dry-run` prepares metadata, and an sdist
+      # yields metadata without compiling anything, which is how `[mlip-orb]` stayed
+      # green here for a Python `backends install` could never finish on.
       #
       # Ceilings only. A floor is policy rather than a wheel fact — orb-models resolves fine
       # below its floor, to a release from two years ago, which is what the floor refuses —
@@ -219,10 +222,11 @@ jobs:
                   for r in applicable(extra, claimed[-1])
                   if r.name not in named[here]
               ]
+              wheels_only = ",".join(Requirement(spec).name for spec in held_back)
               print(f"::group::[{extra}] claims {claimed}; on {here} it holds back {held_back}")
               done = subprocess.run(
                   [sys.executable, "-m", "pip", "install", "--dry-run",
-                   "--only-binary=:all:", *held_back],
+                   "--only-binary", wheels_only, *held_back],
                   capture_output=True, text=True,
               )
               print(done.stdout or done.stderr)
