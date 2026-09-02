@@ -256,7 +256,14 @@ def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
         archive = dest_dir / f"{name}.tar.xz"
         with tarfile.open(archive, "w:xz") as tar:
             for path in sorted(staging.rglob("*")):
-                tar.add(path, arcname=str(path.relative_to(staging)))
+                # `recursive=False` because `rglob` already yields every descendant:
+                # left at its default, `add` walked each directory's whole subtree, so a
+                # file was archived once per ancestor directory as well as for itself —
+                # six copies of a round-2 output. Extraction hid it (each copy overwrote
+                # the last with identical bytes) and `xz` squeezed the repeats to a couple
+                # of percent, so what it really cost was the archive's honesty: its own
+                # member list said a recording held three times what it holds.
+                tar.add(path, arcname=str(path.relative_to(staging)), recursive=False)
 
     size = archive.stat().st_size
     assert size <= MAX_ARCHIVE_BYTES, f"{archive} exceeds {MAX_ARCHIVE_BYTES} bytes — trim the case"

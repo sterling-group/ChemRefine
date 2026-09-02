@@ -360,3 +360,32 @@ def test_mlip_train_second_run_hits_cache(tmp_path: Path, monkeypatch: pytest.Mo
     assert all(outcome.cache_hit for outcome in second)
     assert len(submitter.calls) == calls_after_first, "a cache hit submits nothing"
     assert [s.id for s in second[-1].state.structures] == [s.id for s in first[-1].state.structures]
+
+
+# ---------------------------------------------------------------------------
+# The archives themselves
+# ---------------------------------------------------------------------------
+
+
+def test_every_recording_holds_each_file_once() -> None:
+    """A recording is a set of files, and a tar can hold the same name many times.
+
+    ``pack_case`` walks the staged tree with ``rglob`` and adds each entry, and
+    ``TarFile.add`` recurses by default — so every file was archived once per ancestor
+    directory as well as for itself, six copies deep under an ``attemptK/``. Nothing
+    failed: extraction overwrote each copy with identical bytes and ``xz`` squeezed the
+    repeats to a couple of percent. What it cost is the property asserted here — that
+    the archive's own member list describes the tree it captured, which is what anyone
+    reads it with, and what the next packer change would be checked against.
+    """
+    from collections import Counter
+    from tarfile import open as tar_open
+
+    from replay import DATA_DIR
+
+    archives = sorted(DATA_DIR.glob("*.tar.xz"))
+    assert archives, "no recordings to check"
+    for archive in archives:
+        with tar_open(archive) as tar:
+            repeated = [name for name, n in Counter(tar.getnames()).items() if n > 1]
+        assert not repeated, f"{archive.name} archives {len(repeated)} name(s) more than once"
