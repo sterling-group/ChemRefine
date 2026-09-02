@@ -14,12 +14,13 @@ two modes:
   run with :func:`forbid_run_batch`, asserting the cache fingerprints (and
   the ``rebuild-cache`` path) survive a move to a different machine/path.
 
-``@OUTPUT_DIR@`` tokens in the archived ``_cache`` documents are rewritten
-to the extraction-specific output dir, mirroring what :func:`pack_case` did.
-Manifests no longer need it — they spell their files relative to the step
-directory — but recordings packed before that spelling (``mlip_train``, whose
-parse-only re-pack is not possible) still carry the token, so the rewrite
-stays until every archive has been re-packed.
+An archive extracts and runs wherever it lands: nothing under ``_cache/``
+names an absolute path any more, manifests included (they spell their files
+relative to the step directory). Recordings packed before that spelling
+carried an ``@OUTPUT_DIR@`` token that :func:`extract_case` re-anchored on the
+way out; every shipped archive has since been re-packed, so the fixtures
+relocate by the same rule a user's tree does rather than by a rewrite only
+this harness knows about.
 """
 
 from __future__ import annotations
@@ -35,7 +36,6 @@ from chemrefine.engines.api import CompletionSink
 from chemrefine.state import JobBatch, StepContext, StepInputs
 
 DATA_DIR = Path(__file__).resolve().parent / "data" / "e2e" / "recordings"
-OUTPUT_DIR_TOKEN = "@OUTPUT_DIR@"
 
 
 @dataclass(frozen=True)
@@ -63,10 +63,7 @@ def extract_case(name: str, dest: Path) -> ReplayCase:
     """Extract ``tests/data/e2e/recordings/<name>.tar.xz`` into ``dest``."""
     with tarfile.open(DATA_DIR / f"{name}.tar.xz") as tar:
         tar.extractall(dest, filter="data")
-    case = ReplayCase(root=dest, captured=dest / "captured_outputs")
-    for doc in case.captured.rglob("_cache/*.json"):
-        doc.write_text(doc.read_text().replace(OUTPUT_DIR_TOKEN, str(case.output_dir)))
-    return case
+    return ReplayCase(root=dest, captured=dest / "captured_outputs")
 
 
 @dataclass
@@ -235,14 +232,26 @@ def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
                 continue
             target = captured / path.relative_to(outputs)
             target.parent.mkdir(parents=True, exist_ok=True)
-            if path.parent.name == "_cache" and path.suffix == ".json":
-                target.write_text(path.read_text().replace(str(outputs), OUTPUT_DIR_TOKEN))
-            else:
-                # The `.npz` sidecar holds no paths to tokenize, and is binary — running the
-                # text substitution over it would fail to decode.
-                shutil.copy2(path, target)
+            shutil.copy2(path, target)
             kept += 1
         assert kept, f"nothing matched the keep patterns under {outputs}"
+
+        # The cache documents are what the harness *resolves*, so they are the ones that
+        # must name no machine. They used to, and extraction rewrote a token back into an
+        # absolute path; manifests are relative now, so the token is gone and this asserts
+        # the property it was compensating for — loudly, at record time, rather than as a
+        # relocated replay reading paths that are not there. Captured engine output is
+        # exempt on purpose: an ORCA log names the scratch dir it really ran in, and that
+        # is a record of the run, not an address anything follows.
+        machine_bound = sorted(
+            str(doc.relative_to(captured))
+            for doc in captured.rglob("_cache/*.json")
+            if str(outputs) in doc.read_text()
+        )
+        assert not machine_bound, (
+            f"{machine_bound} name absolute paths under {outputs} — a recording that "
+            f"carries the machine it was made on cannot replay anywhere else"
+        )
 
         # Restore the pre-promotion view (see the module comment above): round 1's own
         # outputs back at the canonical paths, so a replayed round-1 submission returns the
