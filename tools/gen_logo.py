@@ -53,12 +53,14 @@ The kit lands in docs/assets/ AND in the GUI package (GUI_BRAND below). The
 second root is not a convenience: the wheel ships src/chemrefine and nothing
 else, so docs/ is not on the served path, and the builder can only reach a
 brand file that lives inside the package. The GUI subset is GUI_SUBSET - the
-colored mark for its white header bar (the white mono line-art is for the
-docs' teal one) and the icon family, no dark variant because the GUI has no
-dark mode. Both roots are written from the same values in the same run, so
-they are byte-identical by construction and a test holds them that way. That
-is a different claim from "a rebuild reproduces the committed bytes", which
-is only true on the authoring toolchain and is why CI never rebuilds.
+colored mark for its white header bar (the white mono line-art is the same
+framing for the docs' teal one), the lockup its stylesheet washes over the
+page ground, and
+the icon family. No dark variant: the GUI has no dark mode. Both roots are
+written from the same values in the same run, so they are byte-identical by
+construction and a test holds them that way. That is a different claim from
+"a rebuild reproduces the committed bytes", which is only true on the
+authoring toolchain and is why CI never rebuilds.
 
 Regenerating
 ------------
@@ -78,10 +80,12 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 ASSETS = _ROOT / "docs" / "assets"
 GUI_BRAND = _ROOT / "src" / "chemrefine" / "gui" / "static" / "brand"
-# What the builder page references. Beside the assets, not inside vendor/, which
-# means "third-party, byte-identical to upstream" and is excluded from formatting.
+# What the builder page and its stylesheet reference. Beside the assets, not inside
+# vendor/, which means "third-party, byte-identical to upstream" and is excluded
+# from formatting.
 GUI_SUBSET = (
     "logo.svg",
+    "logo-wordmark.svg",
     "favicon.svg",
     "favicon-32.png",
     "apple-touch-icon.png",
@@ -497,16 +501,32 @@ def icon_svg(dark=False, boost=False, pad=20):
     )
 
 
-def header_svg(pad=8):
-    """White mono boosted line-art in a tight wide viewBox for the header bar."""
-    x0, y0, x1, y1 = mark_extents(SW_OUTLINE_BOOST)
+def _wide_svg(sw, group, pad):
+    """The mark in its own box: viewBox is the ink extents plus pad, nothing else.
+
+    The counterpart to icon_svg's square canvas. An icon has to be square, so that one
+    centres a 2.5:1 drawing in a 512 box and leaves ~32% of the height empty above and
+    below. Set inline in a layout at a given height, that box renders the mark at about
+    a third of the size the height implies, so anything that is not an icon takes this.
+    """
+    x0, y0, x1, y1 = mark_extents(sw)
     w = math.ceil(x1 - x0 + 2 * pad)
     h = math.ceil(y1 - y0 + 2 * pad)
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" '
         f'width="{w}" height="{h}">\n<g transform="translate({pad - x0:.2f},{pad - y0:.2f})">\n'
-        f"{mark_group(mono=True, boost=True)}\n</g>\n</svg>"
+        f"{group}\n</g>\n</svg>"
     )
+
+
+def header_svg(pad=8):
+    """White mono boosted line-art in a tight wide viewBox for the docs header bar."""
+    return _wide_svg(SW_OUTLINE_BOOST, mark_group(mono=True, boost=True), pad)
+
+
+def mark_svg(dark=False, pad=8):
+    """The colored mark in the same tight box: logo.svg and logo-dark.svg."""
+    return _wide_svg(SW_OUTLINE, mark_group(dark=dark), pad)
 
 
 # -------------------------------------------------------------- documents ---
@@ -628,12 +648,15 @@ def main() -> int:
     wd = Path.home() / "chemrefine_logo_build"
     wd.mkdir(exist_ok=True)
     try:
-        (ASSETS / "logo.svg").write_text(icon_svg())
-        (ASSETS / "logo-dark.svg").write_text(icon_svg(dark=True))
+        (ASSETS / "logo.svg").write_text(mark_svg())
+        (ASSETS / "logo-dark.svg").write_text(mark_svg(dark=True))
         (ASSETS / "favicon.svg").write_text(icon_svg(boost=True))
         (ASSETS / "logo-header.svg").write_text(header_svg())
         (wd / "favicon.svg").write_text(icon_svg(boost=True))
-        (wd / "logo.svg").write_text(icon_svg())
+        # The square display canvas is a raster source and nothing else - no page or
+        # stylesheet ever wanted a mark with a third of its height empty - so it lives
+        # here for the export and is not part of the kit.
+        (wd / "icon.svg").write_text(icon_svg())
 
         fit = fit_wordmark(wd)
         (ASSETS / "logo-wordmark-src.svg").write_text(lockup_svg(fit))
@@ -653,9 +676,9 @@ def main() -> int:
             "favicon-16.png": (16, "favicon.svg"),
             "favicon-32.png": (32, "favicon.svg"),
             "favicon-48.png": (48, "favicon.svg"),
-            "apple-touch-icon.png": (180, "logo.svg"),
-            "icon-192.png": (192, "logo.svg"),
-            "icon-512.png": (512, "logo.svg"),
+            "apple-touch-icon.png": (180, "icon.svg"),
+            "icon-192.png": (192, "icon.svg"),
+            "icon-512.png": (512, "icon.svg"),
         }
         for name, (px, source) in sizes.items():
             export_png(wd / source, wd / name, px, px)
