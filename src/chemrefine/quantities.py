@@ -58,7 +58,7 @@ BOHR_TO_ANGSTROM: Final[float] = 0.529177210903
 
 HARTREE_TO_KJ: Final[float] = HARTREE_TO_J * 1.0e-3
 HARTREE_TO_KJMOL: Final[float] = HARTREE_TO_KJ * AVOGADRO
-"""1 Hartree in kJ/mol (≈ 2625.5311584660003)."""
+"""1 Hartree in kJ/mol (≈ 2625.499639479163)."""
 
 KJMOL_TO_KCALMOL: Final[float] = 1.0 / 4.184
 """Thermochemical-calorie conversion (IUPAC ``cal_th = 4.184 J``)."""

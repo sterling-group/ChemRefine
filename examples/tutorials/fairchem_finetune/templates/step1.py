@@ -1,4 +1,4 @@
-# Label each seed frame with a MACE single point: energy AND gradient.
+# Label each seed frame with a FAIRChem/UMA single point: energy AND gradient.
 import numpy as np
 from ase.io import read
 

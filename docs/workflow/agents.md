@@ -91,7 +91,7 @@ loop, conformer-funnel and transition-state recipes, hard rules).
 | Execution | `start_run`, `run_status` |
 | Results | `get_results` (paginated `steps.csv`), `get_failures` (ledger + suggested recovery) |
 | Frequency analysis | `get_frequencies` (imaginary-mode counts, thermochemistry), `analyze_mode` (mode composition: which atoms and bonds move) |
-| Geometry | `get_structure` (extended XYZ, with a mode's displacement columns when asked), `list_structures` (which ids a step holds, and each one's modes with frequencies) |
+| Geometry | `get_structure` (extended XYZ, with a mode's displacement columns when asked), `list_structures` (which ids a step holds, and each one's modes with frequencies), `read_structure_file` (one structure file on its own — no workflow, no run tree) |
 
 ## A session, end to end
 

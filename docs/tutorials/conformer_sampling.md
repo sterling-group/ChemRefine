@@ -17,7 +17,7 @@ The workflow:
 2. **Ensemble Generation:**  
    Collects the lowest-energy structures into an ensemble for downstream calculations (e.g., DFT, MLIP).
 3. **Level of theory benchmarking:**   
-   We're going to refine the level of theory starting from simple GFN2-xTB, UMA-S-1, PBE-D4, ωB97X-D4, B2PLYP 
+   We're going to refine the level of theory starting from simple GFN2-xTB, UMA-S-1, PBE, ωB97X-D4, B2PLYP 
 
 ---
 

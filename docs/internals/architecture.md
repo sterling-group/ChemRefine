@@ -31,8 +31,8 @@ cli → recovery → pipeline → step → {cache, filtering}
 ```
 
 `config` and `state` sit under everything and are drawn nowhere above because nearly
-everything reads them: `state` is the vocabulary every layer passes (17 importers, engines
-included) and `config` the one it is specified in. Neither imports anything above itself,
+everything reads them: `state` is the vocabulary every layer passes (most modules in the
+package import it, engines included) and `config` the one it is specified in. Neither imports anything above itself,
 which is what makes the direction hold.
 
 The spine is one-directional but not a strict ladder — three edges skip a rung, each

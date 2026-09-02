@@ -442,3 +442,22 @@ def test_examples_cover_required_variants() -> None:
     assert seed_suffixes >= {".xyz", ".csv"}
     assert devices >= {"cuda", "cpu"}
     assert step_overrides == {"charge", "multiplicity"}
+
+
+def test_the_mlip_training_tutorials_labels_compute_forces():
+    """The DFT-label step ahead of ``mlip-train`` must ask ORCA for gradients.
+
+    step3.inp shipped as a bare single point — no ``EnGrad``, no ``Opt`` — so ORCA
+    printed no ``CARTESIAN GRADIENT``, every parsed structure carried no forces, and
+    the tutorial's own step 4 refused with "structure X has no forces" after paying
+    for steps 1-3 (the yaml's comment promises "energies + forces" throughout). One
+    keyword closes it; this holds the frozen artifact to that keyword.
+    """
+    template = REPO / "examples" / "tutorials" / "mlip_training" / "templates" / "step3.inp"
+    keyword_lines = [
+        line.lower() for line in template.read_text().splitlines() if line.startswith("!")
+    ]
+    assert any("engrad" in line for line in keyword_lines), (
+        "the label step computes no gradients — the shipped mlip-train step will refuse "
+        "every structure"
+    )
