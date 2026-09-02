@@ -1338,6 +1338,10 @@ def test_wait_for_jobs_deadline_bounds_the_stall_not_the_whole_drain():
         slurm.wait_for_jobs(
             ["1", "2", "3", "4"], poll_interval=0, poll=one_at_a_time, max_wait_seconds=0.05
         )
+    # The drain actually drained: an early return that declares victory while jobs
+    # still run leaves entries here — a mutant doing exactly that survived the whole
+    # suite while this test held no assertion at all.
+    assert remaining == []
 
 
 def test_wait_for_jobs_re_anchors_on_array_tasks_not_on_the_array():
@@ -1365,6 +1369,9 @@ def test_wait_for_jobs_re_anchors_on_array_tasks_not_on_the_array():
         slurm.wait_for_jobs(
             ["12345"], poll_interval=0, poll=one_task_at_a_time, max_wait_seconds=0.05
         )
+    # Every task was seen to exit before the wait returned — the sibling test's
+    # full-drain assertion, on the path where only the task rows move.
+    assert tasks == []
 
 
 def test_wait_for_jobs_times_out_on_an_array_whose_tasks_are_all_stuck():

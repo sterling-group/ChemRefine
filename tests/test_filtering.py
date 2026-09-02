@@ -166,6 +166,28 @@ def test_boltzmann_keeps_more_when_threshold_high():
     assert len(state.structures) >= 4
 
 
+def test_the_boltzmann_filter_answers_at_the_configured_temperature():
+    """``temperature_k`` must reach the weights — nothing else in the suite checked it.
+
+    Hardwiring 298.15 in place of ``sample.temperature_k`` passed the entire suite
+    (proven by a full-run mutant), which means a ``temperature_k: 77`` step silently
+    filtered at room temperature — the wrong-scientific-answer class the mutation gate
+    exists for. The fixture splits the two: a 2 kcal/mol gap at 99 % cumulative gives
+    the ground structure >99.99 % of the weight at 77 K (it stands alone) but only
+    ~96.7 % at 298.15 K (the higher one must survive too), so the mutant now fails in
+    either direction.
+    """
+    r = _results(("low", -1.0), ("high", -1.0 + 2.0 / HARTREE_TO_KCALMOL))
+    cold = apply(
+        r, BoltzmannSample(method="boltzmann", percent_cumulative=99.0, temperature_k=77.0)
+    )
+    room = apply(
+        r, BoltzmannSample(method="boltzmann", percent_cumulative=99.0, temperature_k=298.15)
+    )
+    assert [s.id for s in cold.structures] == ["low"]
+    assert [s.id for s in room.structures] == ["low", "high"]
+
+
 # ---------------------------------------------------------------------------
 # max — count
 # ---------------------------------------------------------------------------

@@ -277,6 +277,37 @@ MUTATIONS = (
         "RI approximation the user configured, priced, and did not get, with a different "
         "energy and a much longer runtime",
     ),
+    Mutation(
+        id="boltzmann-temperature",
+        path="src/chemrefine/filtering.py",
+        old="sorted_structures, sample.percent_cumulative, sample.temperature_k, energy_attr",
+        new="sorted_structures, sample.percent_cumulative, 298.15, energy_attr",
+        tests="tests/test_filtering.py",
+        breaks="a `temperature_k: 77` step filters at room temperature — a different "
+        "survivor set at every non-default temperature, with nothing anywhere saying so "
+        "(this exact mutant survived the full suite before the temperature test existed)",
+    ),
+    Mutation(
+        id="report-temperature",
+        path="src/chemrefine/pipeline.py",
+        old="temperature_k = sample.temperature_k if sample is not None else DEFAULT_TEMPERATURE_K",
+        new="temperature_k = DEFAULT_TEMPERATURE_K",
+        tests="tests/test_pipeline.py",
+        breaks="steps.csv's Boltzmann columns are computed at the default temperature "
+        "whatever the step configured — a report that silently contradicts the survivor "
+        "set the filter produced (this exact mutant survived the full suite)",
+    ),
+    Mutation(
+        id="wait-for-jobs-full-drain",
+        path="src/chemrefine/slurm/dispatch.py",
+        old="remaining = pending - state.finished",
+        new="remaining = set()",
+        tests="tests/test_slurm.py",
+        breaks="the array-path wait declares victory after its first poll while every "
+        "task still runs — outputs are parsed mid-write and structures ledgered "
+        "MISSING_OUTPUT while the jobs finish into an archived tree (this exact mutant "
+        "survived while the partial-drain tests held no assertions)",
+    ),
 )
 
 

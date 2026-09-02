@@ -472,6 +472,64 @@ def test_steps_csv_defaults_to_electronic_without_a_sample(tmp_path: Path):
     assert set(df["Energy type"]) == {"electronic"}
 
 
+def test_steps_csv_is_summarised_at_the_steps_own_temperature(tmp_path: Path):
+    """``_write_step_csv``'s stated contract — 'at that step's own ``temperature_k``'.
+
+    Nothing asserted it: replacing the threaded value with the default passed the
+    entire suite (proven by a full-run mutant), so a 77 K step's report carried
+    room-temperature Boltzmann columns that silently contradict the survivor set the
+    filter produced. Asserted against the io writer's own output at both temperatures,
+    so the test fails if the threading breaks in either direction.
+    """
+    import pandas as pd
+    from ase import Atoms
+
+    from chemrefine.config import BoltzmannSample
+    from chemrefine.state import PipelineState, Structure
+
+    cfg = _config(
+        tmp_path,
+        steps=[
+            StepConfig(
+                step=1,
+                engine="fake",
+                operation="opt_sp",
+                sample=BoltzmannSample(
+                    method="boltzmann", percent_cumulative=99.0, temperature_k=77.0
+                ),
+            )
+        ],
+    )
+    state = PipelineState(
+        structures=tuple(
+            Structure(id=str(i), atoms=Atoms("H"), energy_hartree=e)
+            for i, e in enumerate([-1.0, -0.997])
+        )
+    )
+    pipeline._write_step_csv(cfg, cfg.steps[0], state)
+
+    energies = [s.energy_hartree for s in state.structures]
+    ids = [s.id for s in state.structures]
+    io.save_step_csv(
+        energies_hartree=energies,
+        structure_ids=ids,
+        step_number=1,
+        output_dir=tmp_path / "at77",
+        temperature_k=77.0,
+    )
+    io.save_step_csv(
+        energies_hartree=energies,
+        structure_ids=ids,
+        step_number=1,
+        output_dir=tmp_path / "at_room",
+    )
+    written = pd.read_csv(cfg.output_dir / "steps.csv")
+    cold = pd.read_csv(tmp_path / "at77" / "steps.csv")
+    room = pd.read_csv(tmp_path / "at_room" / "steps.csv")
+    assert list(written["% Total"]) == list(cold["% Total"])
+    assert list(written["% Total"]) != list(room["% Total"])
+
+
 def _preflighted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plan: RunPlan) -> list[list[str]]:
     """Run a two-step pipeline under ``plan`` and return what `preflight_backends` was handed."""
     calls: list[list[str]] = []

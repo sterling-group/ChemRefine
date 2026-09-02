@@ -233,12 +233,29 @@ class OrbTrainer(ApiTrainerBase):
                 f"orb-models version, and fine-tuning needs one to batch the dataset — "
                 f"upgrade orb-models"
             )
+        if getattr(model, "has_stress", False) or "stress" in getattr(model, "heads", {}):
+            # orb's loss reads `batch.system_targets["stress"]` unconditionally on a
+            # stress-carrying model, and ChemRefine's labels are molecular — energy and
+            # forces off a DFT single point, no cell, no stress. Refused by name here
+            # rather than left to the KeyError inside the first loss call.
+            raise SystemExit(
+                f"orb training: {base_model!r} carries a stress head, and ChemRefine's "
+                f"training labels have no stress (molecular energy + forces) — pick a "
+                f"stress-free loader (orb's omol family) or fine-tune with orb's own "
+                f"tooling on data that carries stress"
+            )
 
+        # The targets the reference script trains on, by their orb spellings: energy is
+        # a graph property, forces a node one. `instantiate_property_config(None)` is
+        # the *feature* default (no targets at all), and a dataset built with it yields
+        # batches whose first `model.loss` call dies on `system_targets["energy"]`.
         dataset = AseSqliteDataset(
             str(config["run_name"]),
             str(config["train_set"]),
             atoms_adapter=atoms_adapter,
-            target_config=property_definitions.instantiate_property_config(None),
+            target_config=property_definitions.instantiate_property_config(
+                {"graph": ["energy"], "node": ["forces"]}
+            ),
             augmentations=[],
         )
         batch_size = int(config.get("batch_size", 100))

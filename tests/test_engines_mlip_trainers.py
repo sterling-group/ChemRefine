@@ -668,10 +668,13 @@ def _install_fake_chgnet_stack(monkeypatch) -> dict:
     data_mod = types.ModuleType("chgnet.data")
     data_mod.dataset = dataset_mod
 
-    best = MagicMock()
-    best.as_dict.return_value = {"state_dict": "BEST"}
     trainer_instance = MagicMock()
-    trainer_instance.best_model = best
+    trainer_instance.model.as_dict.return_value = {"state_dict": "FINAL"}
+    # chgnet's Trainer assigns `self.best_model = self.model` — an alias of the object
+    # training keeps mutating, never a snapshot. The fake preserves that trap on
+    # purpose: a hook that regresses to reading `best_model` saves final-epoch weights
+    # under a "best" name and fails the bestE assertions below.
+    trainer_instance.best_model = trainer_instance.model
     trainer_cls = MagicMock(return_value=trainer_instance)
     trainer_mod = types.ModuleType("chgnet.trainer")
     trainer_mod.Trainer = trainer_cls
@@ -708,7 +711,6 @@ def _install_fake_chgnet_stack(monkeypatch) -> dict:
         trainer=trainer_instance,
         chgnet_cls=chgnet_cls,
         get_loader=dataset_mod.get_loader,
-        best=best,
     )
     return recorded
 
@@ -775,13 +777,36 @@ def test_the_hook_feeds_chgnet_per_atom_energies_without_resplitting(tmp_path: P
     assert ChgnetTrainer.output_dirs == (chgnet_mod._EPOCH_DIR,)
 
 
-def test_the_hook_saves_the_best_model_under_the_promised_name(tmp_path: Path, monkeypatch):
-    """``{run_name}.pth.tar`` holding ``{"model": as_dict()}`` — what from_file reads."""
+def test_the_hook_saves_the_best_checkpoint_under_the_promised_name(tmp_path: Path, monkeypatch):
+    """``{run_name}.pth.tar`` holds the ``bestE_*`` checkpoint, not final-epoch weights.
+
+    chgnet's ``trainer.best_model`` is an alias of the still-training model (verified in
+    the provisioned env's trainer.py: ``self.best_model = self.model``), so reading it
+    back is the final epoch wearing a "best" name. The genuine best is the ``bestE_*``
+    file ``save_checkpoint`` copies into the epoch dir — the same file chgnet's own test
+    pass reloads — and the hook must round-trip it through ``from_file``.
+    """
+    from unittest.mock import MagicMock
+
+    from chemrefine.engines.mlip.backends import chgnet as chgnet_mod
     from chemrefine.engines.mlip.train import driver as train_driver
 
     recorded = _install_fake_chgnet_stack(monkeypatch)
     monkeypatch.chdir(tmp_path)
+    best_file = Path(chgnet_mod._EPOCH_DIR) / "bestE_epoch1_e12_fNA_sNA_mNA.pth.tar"
+
+    def train_writes_best(*args, **kwargs):
+        best_file.parent.mkdir(exist_ok=True)
+        best_file.write_bytes(b"ckpt")
+
+    recorded["trainer"].train.side_effect = train_writes_best
+    best_model = MagicMock()
+    best_model.as_dict.return_value = {"state_dict": "BEST"}
+    recorded["chgnet_cls"].from_file.return_value = best_model
+
     train_driver.main(["chgnet", str(_driver_config(tmp_path)), "--device", "cpu", "--seed", "7"])
+
+    recorded["chgnet_cls"].from_file.assert_called_once_with(str(best_file))
     payload, path = recorded["saved"]
     assert path == "train.pth.tar"
     assert payload == {"model": {"state_dict": "BEST"}}
@@ -790,6 +815,20 @@ def test_the_hook_saves_the_best_model_under_the_promised_name(tmp_path: Path, m
     assert trainer_kwargs["use_device"] == "cpu"
     assert trainer_kwargs["epochs"] == 3
     assert (trainer_kwargs["torch_seed"], trainer_kwargs["data_seed"]) == (7, 7)
+
+
+def test_without_a_best_checkpoint_the_final_model_stands_in(tmp_path: Path, monkeypatch):
+    """No epoch ever improved the validation energy — no ``bestE_*`` on disk, so the
+    final model is saved rather than nothing (and never through ``from_file``)."""
+    from chemrefine.engines.mlip.train import driver as train_driver
+
+    recorded = _install_fake_chgnet_stack(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    train_driver.main(["chgnet", str(_driver_config(tmp_path)), "--device", "cpu", "--seed", "7"])
+    payload, path = recorded["saved"]
+    assert path == "train.pth.tar"
+    assert payload == {"model": {"state_dict": "FINAL"}}
+    recorded["chgnet_cls"].from_file.assert_not_called()
 
 
 def test_the_hook_fine_tunes_from_a_local_checkpoint(tmp_path: Path, monkeypatch):
@@ -1003,6 +1042,10 @@ def _install_fake_orb_stack(monkeypatch) -> dict:
     loss_out = types.SimpleNamespace(loss=MagicMock())
     model.loss.return_value = loss_out
     model.state_dict.return_value = {"w": 1}
+    # A stress-free molecular model — the shape the hook accepts. On a bare MagicMock
+    # both probes come back truthy and the stress refusal fires on every test.
+    model.has_stress = False
+    model.heads = {}
     adapter = MagicMock()
     loader_fn = MagicMock(return_value=(model, adapter))
 
@@ -1090,6 +1133,7 @@ def _install_fake_orb_stack(monkeypatch) -> dict:
         seed=utils_mod.seed_everything,
         clip=nn_utils.clip_grad_norm_,
         dataset_cls=ase_ds_mod.AseSqliteDataset,
+        prop_config=prop_defs.instantiate_property_config,
     )
     return recorded
 
@@ -1145,6 +1189,30 @@ def test_the_orb_hook_rebuilds_the_scripts_loop(monkeypatch, tmp_path: Path):
         "checkpoint_epoch1.ckpt",
         "train.ckpt",
     ]
+    # The dataset is built with the *training targets* — energy on the graph, forces on
+    # the nodes, orb's own spellings. `instantiate_property_config(None)` is the feature
+    # default (no targets at all): a dataset built with it yields batches whose first
+    # `model.loss` call dies on `system_targets["energy"]`, proven live against
+    # orb-models 0.7.0 in the provisioned env.
+    recorded["prop_config"].assert_called_once_with({"graph": ["energy"], "node": ["forces"]})
+    assert recorded["dataset_cls"].call_args.kwargs["target_config"] == "TARGETS"
+
+
+def test_the_orb_hook_refuses_a_stress_carrying_model(monkeypatch, tmp_path: Path):
+    """A model with a stress head is refused by name, not left to a KeyError.
+
+    orb's conservative loss reads ``batch.system_targets["stress"]`` whenever the model
+    carries the head, and ChemRefine's labels are molecular — energy and forces, no
+    cell. The refusal lands at load time with the fix in it (pick a stress-free
+    loader), instead of a KeyError from inside the first loss call of a submitted job.
+    """
+    from chemrefine.engines.mlip.backends.orb import OrbTrainer
+
+    recorded = _install_fake_orb_stack(monkeypatch)
+    recorded["model"].has_stress = True
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit, match="stress head"):
+        OrbTrainer().run_training(_orb_config())
 
 
 def test_the_orb_hook_fine_tunes_from_a_local_checkpoint(monkeypatch, tmp_path: Path):

@@ -137,8 +137,10 @@ class ChgnetTrainer(ApiTrainerBase):
         energies (eV/atom — its own fine-tuning example's convention); each split becomes
         its own ``get_loader`` dataset, because CHGNet's splitting loader would
         re-partition what :func:`~chemrefine.engines.mlip.train.base.split_structures`
-        already decided; and the best model is re-saved under :meth:`artifact`'s fixed
-        name — ``trainer.model`` standing in when no epoch ever improved the metric.
+        already decided; and the best checkpoint — the ``bestE_*`` file in the epoch
+        dir, **not** ``trainer.best_model``, which is an alias of the still-training
+        model — is re-saved under :meth:`artifact`'s fixed name, ``trainer.model``
+        standing in when no epoch ever improved the metric.
 
         ``device`` and ``seed`` are read with no fallback: the driver overlaid the step's
         own values, and a fallback here is how a ``device: cuda`` step trained on CPU for
@@ -180,7 +182,15 @@ class ChgnetTrainer(ApiTrainerBase):
             save_dir=_EPOCH_DIR,
         )
 
-        best = getattr(trainer, "best_model", None) or trainer.model
+        # Not `trainer.best_model`: chgnet assigns `self.best_model = self.model` — an
+        # alias, not a copy — and keeps training the same object, so reading it back
+        # yields final-epoch weights under a "best" name. The genuine best is the
+        # `bestE_epoch{n}_…` checkpoint its `save_checkpoint` copies into the epoch dir
+        # (at most one; superseded ones are deleted), the same file chgnet's own test
+        # pass reloads. `trainer.model` stands in only when no epoch ever improved the
+        # validation energy and no bestE exists.
+        best_files = sorted(Path(_EPOCH_DIR).glob("bestE_*.pth.tar"))
+        best = CHGNet.from_file(str(best_files[-1])) if best_files else trainer.model
         target = Path(self.artifact_filename.format(run_name=config["run_name"]))
         torch.save({"model": best.as_dict()}, target)
         print(f"chgnet training: saved {target}")
