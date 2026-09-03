@@ -83,6 +83,9 @@ _STEP_STARTERS: dict[str, str] = {
         "\n"
         "energy_hartree = atoms.get_potential_energy() / Hartree\n"
         "positions_angstrom = atoms.get_positions()\n"
+        "# The optimiser's verdict: False when it ran out of steps before reaching fmax, which\n"
+        "# ChemRefine ledgers as a convergence failure and retries from this geometry.\n"
+        "converged = mlip.last_converged\n"
     ),
     "pyscf": (
         "# PySCF starter. Rendered per structure: $XYZ_PATH / $CHARGE / $MULTIPLICITY come\n"
@@ -105,6 +108,9 @@ _STEP_STARTERS: dict[str, str] = {
         "    mf = mf.density_fit()\n"
         "\n"
         "energy_hartree = mf.kernel()\n"
+        "# PySCF returns the last iterate rather than raising, so the verdict is reported here:\n"
+        "# False is ledgered as a convergence failure instead of ranking as a result.\n"
+        "converged = bool(mf.converged)\n"
     ),
     "mlip-train": (
         "# mlip-train starter — NOT runnable as written. A trainer template is the\n"

@@ -123,7 +123,9 @@ def test_each_bundled_engine_gets_its_own_starter(tmp_path: Path):
     assert "%pal" in read("step1.inp")
     assert "$molecule" in read("step2.in")
     assert "MlipCalculator" in read("step3.py")
+    assert "converged = mlip.last_converged" in read("step3.py")
     assert "pyscf" in read("step4.py")
+    assert "converged = bool(mf.converged)" in read("step4.py")
     assert "NOT runnable" in read("step5.yaml")
 
 

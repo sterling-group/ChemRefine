@@ -248,6 +248,16 @@ MUTATIONS = (
         "parser for a cluster or input problem",
     ),
     Mutation(
+        id="mlip-optimize-verdict",
+        path="src/chemrefine/engines/mlip/calculator.py",
+        old="converged = bool(LBFGS(atoms, logfile=os.devnull).run(fmax=fmax, steps=steps))",
+        new="converged = bool(LBFGS(atoms, logfile=os.devnull).run(fmax=fmax, steps=steps))"
+        " or True",
+        tests="tests/test_engines_mlip_calculator.py",
+        breaks="an optimiser that ran out of steps reports its last geometry as converged, and "
+        "a non-stationary point ranks as a survivor against converged siblings",
+    ),
+    Mutation(
         id="finite-energy-guard",
         path="src/chemrefine/engines/_script/output.py",
         old="if not np.isfinite(number):",

@@ -461,8 +461,10 @@ def test_the_direct_engine_declares_only_knobs_it_can_honour():
     ``accepted_names()`` reports them as declared, ``chemrefine validate`` cannot warn either,
     so naming one is silence in both directions.
 
-    ``strict_scf`` is the one that matters: the ExtOpt path refuses a non-converged SCF, and
-    the direct path has no way to, because a script reports what its output contract declares.
+    ``strict_scf`` is the one that matters: the ExtOpt path refuses a non-converged SCF *for*
+    the user, while the direct path reports one through the shared ``converged`` output field
+    — the starter assigns ``converged = bool(mf.converged)`` — so the verdict is the
+    template's to report and the knob has nothing to decide there.
     """
     from chemrefine.engines.api import get_engine
     from chemrefine.engines.pyscf.options import PyscfExtOptOptions, PyscfOptions

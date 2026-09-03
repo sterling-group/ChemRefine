@@ -541,3 +541,36 @@ def test_optimize_invokes_lbfgs_with_fmax_and_steps(monkeypatch):
     lbfgs_instance.run.assert_called_once_with(fmax=0.05, steps=10)
     assert result is atoms
     assert atoms.calc is calc.calculator
+
+
+def test_optimize_keeps_the_optimisers_verdict(monkeypatch, caplog):
+    """An optimiser that ran out of steps says so; the helper no longer discards it.
+
+    ``LBFGS.run`` returns whether ``fmax`` was reached within ``steps``. With that boolean
+    dropped, an exhausted optimisation was indistinguishable from a converged one: the
+    template wrote the last geometry's energy, the parser read no verdict, and the structure
+    ranked as a survivor. The verdict now lands on the atoms and on the wrapper, so a
+    template assigns ``converged = mlip.last_converged`` and the output contract carries it.
+    """
+    calc = _calc_with_fake(monkeypatch)
+    lbfgs_instance = MagicMock()
+    lbfgs_instance.run.return_value = False
+    monkeypatch.setitem(
+        sys.modules,
+        "ase.optimize",
+        _fake_module("ase.optimize", LBFGS=MagicMock(return_value=lbfgs_instance)),
+    )
+    atoms = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    assert calc.last_converged is None, "no verdict before the first optimisation"
+
+    with caplog.at_level("WARNING", logger="chemrefine.engines.mlip.calculator"):
+        calc.optimize(atoms, fmax=0.05, steps=10)
+
+    assert calc.last_converged is False
+    assert atoms.info["converged"] is False
+    assert "10 steps" in caplog.text and "0.05" in caplog.text
+
+    lbfgs_instance.run.return_value = True
+    calc.optimize(atoms, fmax=0.05, steps=10)
+    assert calc.last_converged is True
+    assert atoms.info["converged"] is True

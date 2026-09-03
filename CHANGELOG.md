@@ -398,6 +398,16 @@ for the full map.
 
 ### Fixed
 
+- **An MLIP optimisation that runs out of steps is a failure, not a survivor.**
+  `MlipCalculator.optimize` discarded the verdict ase's `LBFGS.run` returns, and the
+  script output contract had no field to carry one, so the last geometry of an
+  unconverged relaxation parsed as a result: ranked against converged siblings, cached,
+  and handed to the next step with nothing ledgered. The shared contract now carries
+  `converged` (a flag, exempt from the finiteness sweep; a template that never assigns
+  it still reports nothing), the helper keeps the verdict on `atoms.info["converged"]`
+  and `last_converged`, and the `mlip`/`pyscf` starters and the quickstart template
+  assign it — so an exhausted optimiser or a loose SCF is ledgered as a convergence
+  failure and retried once from its best geometry, as the retry docs already describe.
 - **A v1 `energy_window` value keeps its hartree meaning across migration.** v1 read
   `energy` as hartree unless `unit: kcal/mol` was explicit; the translation layer
   carried the bare number into `window_kcalmol` — kcal/mol by definition — so a config

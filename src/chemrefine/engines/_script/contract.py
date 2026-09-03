@@ -137,5 +137,12 @@ SCRIPT_OUTPUT: tuple[OutputField, ...] = (
     OutputField("energy_hartree", "energy_hartree", required=True, convert=_as_float),
     OutputField("positions_angstrom", "positions", convert=positions_from),
     OutputField("gradient_hartree_per_bohr", "forces_ev_per_a", convert=forces_from_gradient),
+    # A flag, so the finiteness question does not apply. Optional because a single point has
+    # nothing to converge; a template that ran an optimiser or an SCF assigns it, and `False`
+    # is what makes an exhausted run a NOT_CONVERGED failure — ledgered, and retried from its
+    # best geometry by `lifecycle.retry_unconverged` — instead of a survivor ranked against
+    # converged siblings. Never assigned, it stays `None`, which `lifecycle.succeeded` reads
+    # as "not reported": the shape every non-reporting engine has always had.
+    OutputField("converged", "converged", finite=False),
 )
 """The quantities every script engine shares, whatever its backend."""

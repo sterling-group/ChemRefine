@@ -160,6 +160,11 @@ class MlipCalculator:
         self.model_path = Path(model_path) if model_path else None
         self.charge = charge
         self.multiplicity = multiplicity
+        self.last_converged: bool | None = None
+        """The verdict of the most recent :meth:`optimize`; ``None`` before the first.
+
+        What a ``step{N}.py`` assigns to ``converged`` so the output contract carries it —
+        the shipped starters do (``converged = mlip.last_converged``)."""
         self.calculator = build_calculator(
             task_name=task_name,
             model_name=model_name,
@@ -204,7 +209,16 @@ class MlipCalculator:
         return energy, gradient
 
     def optimize(self, atoms: Atoms, *, fmax: float = 0.03, steps: int = 200) -> Atoms:
-        """In-process LBFGS optimisation; returns the relaxed ``atoms``."""
+        """In-process LBFGS optimisation; returns the relaxed ``atoms``.
+
+        ase's ``run`` answers whether ``fmax`` was reached within ``steps``, and that answer
+        is kept — on ``atoms.info["converged"]`` and on :attr:`last_converged` — rather than
+        dropped. Dropped, an optimiser that ran out of steps was indistinguishable from one
+        that converged: the template wrote the last geometry's energy, the parser read no
+        verdict, and a non-stationary point ranked as a survivor against converged siblings.
+        Reported, it is what turns that run into a ``NOT_CONVERGED`` failure, ledgered and
+        retried once from this geometry (:func:`chemrefine.lifecycle.retry_unconverged`).
+        """
         from ase.optimize import LBFGS
 
         self._stamp_species(atoms)
@@ -212,5 +226,14 @@ class MlipCalculator:
         # Named rather than passed as `None`: ase's own `IOContext.openfile` turns `None`
         # into `open(os.devnull)`, so this is the same file by the shorter route — and it
         # is the `str` the signature asks for.
-        LBFGS(atoms, logfile=os.devnull).run(fmax=fmax, steps=steps)
+        converged = bool(LBFGS(atoms, logfile=os.devnull).run(fmax=fmax, steps=steps))
+        if not converged:
+            logger.warning(
+                "LBFGS stopped after %d steps without reaching fmax=%g eV/Å; the geometry "
+                "is not a stationary point",
+                steps,
+                fmax,
+            )
+        atoms.info["converged"] = converged
+        self.last_converged = converged
         return atoms

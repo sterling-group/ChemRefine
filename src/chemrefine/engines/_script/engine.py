@@ -56,7 +56,7 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
     choice for the return trip, and the two are the whole of what a script engine varies. A
     subclass reporting more than the shared set extends the tuple in its own module::
 
-        output_fields = (*SCRIPT_OUTPUT, OutputField("converged", "converged", finite=False))
+        output_fields = (*SCRIPT_OUTPUT, OutputField("gibbs_hartree", "gibbs_hartree"))
 
     and the generated footer, the finiteness sweep, the JSON mapping and the scaffold's
     starter comment all follow from it — no building block edited, which is what

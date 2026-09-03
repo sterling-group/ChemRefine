@@ -28,7 +28,7 @@ from chemrefine.engines._script.contract import (
 from chemrefine.engines._script.engine import ScriptEngine
 from chemrefine.engines._script.output import _load_output_json, parse_output
 from chemrefine.errors import ChemRefineError, ConfigError, OutputParseError
-from chemrefine.state import PipelineState, StepContext
+from chemrefine.state import PipelineState, StepContext, Structure
 
 
 def test_base_template_vars_default_is_empty():
@@ -438,16 +438,16 @@ def test_an_engine_can_extend_the_output_contract_without_touching_a_building_bl
 ):
     """The promise the declaration exists for, exercised end to end.
 
-    A script engine that needs to report something beyond energy / geometry / gradient used
-    to have no way to say so: the harvested names lived in a string literal inside
-    ``_script/render.py`` and the mapping in ``_script/output.py``, so a fourth quantity meant
-    editing two building blocks that ``docs/developer/adding-an-engine.md`` says are never
-    edited to add an engine. Here the whole extension is one ClassVar on the engine, and the
-    footer, the JSON mapping and the ``ParsedResult`` follow from it.
+    A script engine that needs to report something beyond the shared set used to have no way
+    to say so: the harvested names lived in a string literal inside ``_script/render.py`` and
+    the mapping in ``_script/output.py``, so an extra quantity meant editing two building
+    blocks that ``docs/developer/adding-an-engine.md`` says are never edited to add an engine.
+    Here the whole extension is one ClassVar on the engine, and the footer, the JSON mapping
+    and the ``ParsedResult`` follow from it.
 
-    ``converged`` is the case that matters most, because it is the one a *shipped* engine
-    already needs: ``pyscf-extopt`` refuses a non-converged SCF, and direct ``pyscf`` could
-    not, having no channel to report one.
+    Thermochemistry is the example because the shared set does not carry it. ``converged``,
+    once the motivating case, ships in :data:`SCRIPT_OUTPUT` now: the starters assign it, and
+    an exhausted optimiser is a failure rather than a survivor.
     """
 
     class _Extended(ScriptEngine[EngineOptions]):
@@ -455,8 +455,8 @@ def test_an_engine_can_extend_the_output_contract_without_touching_a_building_bl
         label = "Extended"
         output_fields = (
             *SCRIPT_OUTPUT,
-            OutputField("converged", "converged", finite=False),
             OutputField("gibbs_hartree", "gibbs_hartree"),
+            OutputField("enthalpy_hartree", "enthalpy_hartree"),
         )
 
     engine = _Extended()
@@ -473,18 +473,18 @@ def test_an_engine_can_extend_the_output_contract_without_touching_a_building_bl
         ctx=_ctx(tmp_path),
     )
     footer = rendered.read_text(encoding="utf-8")
-    assert '"converged"' in footer and '"gibbs_hartree"' in footer
+    assert '"gibbs_hartree"' in footer and '"enthalpy_hartree"' in footer
 
     # ...and the reader lands them on the ParsedResult, with no edit to _script/.
     seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
     parsed = _parse(
-        {"energy_hartree": -1.0, "converged": False, "gibbs_hartree": -0.9},
+        {"energy_hartree": -1.0, "gibbs_hartree": -0.9, "enthalpy_hartree": -0.95},
         seed,
         fields=_Extended.output_fields,
         tmp=tmp_path,
     )
-    assert parsed.converged is False
     assert parsed.gibbs_hartree == -0.9
+    assert parsed.enthalpy_hartree == -0.95
 
 
 def test_an_extended_field_is_swept_for_finiteness_like_every_other(tmp_path: Path):
@@ -501,12 +501,76 @@ def test_an_extended_field_is_swept_for_finiteness_like_every_other(tmp_path: Pa
 
 
 def test_a_flag_field_is_exempt_from_the_finiteness_sweep():
-    """``finite=False`` is for a value the question does not apply to."""
-    fields = (*SCRIPT_OUTPUT, OutputField("converged", "converged", finite=False))
+    """``finite=False`` is for a value the question does not apply to.
+
+    ``converged`` in the shared contract is that value: ``True``/``False`` land as written, and
+    a template that never assigns it leaves ``None`` — "not reported", the shape every engine
+    that sets no flag has always had — rather than a failure.
+    """
     seed = Atoms("H", positions=[[0, 0, 0]])
-    assert (
-        _parse({"energy_hartree": -1.0, "converged": True}, seed, fields=fields).converged is True
+    assert _parse({"energy_hartree": -1.0, "converged": True}, seed).converged is True
+    assert _parse({"energy_hartree": -1.0, "converged": False}, seed).converged is False
+    assert _parse({"energy_hartree": -1.0}, seed).converged is None
+
+
+def test_an_unconverged_script_is_a_convergence_failure_with_a_geometry_to_retry_from(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The shared contract's ``converged`` reaches the lifecycle's verdict, end to end.
+
+    The path a shipped starter takes: the template assigns ``converged = False`` (what
+    ``MlipCalculator.optimize`` reports when it runs out of steps), the generated footer
+    harvests it, the parser lands it, and ``lifecycle`` classifies the structure as
+    ``NOT_CONVERGED`` with the last geometry as the one to retry from — instead of the
+    survivor it used to be when nothing carried the verdict.
+    """
+    from chemrefine import lifecycle
+    from chemrefine.state import FailureKind, StepInputs
+
+    template = tmp_path / "step1.py"
+    template.write_text(
+        "energy_hartree = -1.0\npositions_angstrom = [[0.0, 0.0, 0.1]]\nconverged = False\n",
+        encoding="utf-8",
     )
+    rendered = tmp_path / "step1_0.py"
+    output = tmp_path / "step1_0.json"
+
+    class _Probe(ScriptEngine[EngineOptions]):
+        name = "verdict-probe"
+        label = "Probe"
+
+    engine = _Probe()
+    engine.build_input(
+        xyz_path=tmp_path / "step1_0_inp.xyz",
+        template_path=template,
+        input_path=rendered,
+        output_path=output,
+        ctx=_ctx(tmp_path),
+    )
+    monkeypatch.chdir(tmp_path)  # the footer writes its basename into the cwd
+    exec(compile(rendered.read_text(encoding="utf-8"), str(rendered), "exec"), {})
+
+    seed = Structure(id="0", atoms=Atoms("H", positions=[[0, 0, 0]]))
+    ctx = StepContext(
+        step_cfg=StepConfig(step=1, engine="pyscf"),
+        step_dir=tmp_path,
+        template_dir=tmp_path,
+        template=template,
+        scratch_dir=None,
+        prev_state=PipelineState(structures=(seed,)),
+        charge=0,
+        multiplicity=1,
+        max_cores=1,
+        slurm_template="cpu.slurm.header",
+    )
+    inputs = StepInputs(files=((rendered, output, "0"),))
+    successes, failures = lifecycle.parse_with_failures(engine, inputs, ctx)
+
+    assert successes == []
+    assert [f.kind for f in failures] == [FailureKind.NOT_CONVERGED]
+    best = lifecycle.retryable_best(failures[0])
+    assert best is not None and best.converged is False
+    assert best.atoms.get_positions().tolist() == [[0.0, 0.0, 0.1]]
 
 
 def test_the_scaffold_starter_names_the_engines_own_contract():
@@ -515,7 +579,7 @@ def test_the_scaffold_starter_names_the_engines_own_contract():
     from chemrefine.scaffold import _output_contract_comment
 
     comment = _output_contract_comment(get_engine("mlip"))
-    for name in ("energy_hartree", "positions_angstrom", "gradient_hartree_per_bohr"):
+    for name in ("energy_hartree", "positions_angstrom", "gradient_hartree_per_bohr", "converged"):
         assert name in comment
     assert _output_contract_comment(get_engine("orca")) == "", (
         "a non-script engine has no such contract"
@@ -526,7 +590,9 @@ def test_the_scaffold_starter_names_the_engines_own_contract():
     ("fields", "expected_tuple"),
     [
         pytest.param(
-            SCRIPT_OUTPUT, '("positions_angstrom", "gradient_hartree_per_bohr")', id="two"
+            SCRIPT_OUTPUT,
+            '("positions_angstrom", "gradient_hartree_per_bohr", "converged")',
+            id="three",
         ),
         pytest.param(SCRIPT_OUTPUT[:2], '("positions_angstrom",)', id="one"),
         pytest.param(SCRIPT_OUTPUT[:1], "()", id="none"),
