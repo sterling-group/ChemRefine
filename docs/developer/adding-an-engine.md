@@ -349,9 +349,7 @@ and hangs its capabilities off it:
 ```python
 from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
 
-MY_MLIP = MlipLibrary(
-    extra="mlip-my_mlip", package="my-mlip-lib", import_name="my_mlip_library"
-)
+MY_MLIP = MlipLibrary(extra="mlip-my_mlip", package="my-mlip-lib", import_name="my_mlip_library")
 
 
 @MY_MLIP.calculator("my_task")

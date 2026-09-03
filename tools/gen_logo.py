@@ -553,7 +553,8 @@ def fit_wordmark(wd: Path):
     probe.write_text(
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2000 600">'
         + _wordmark_text(0, 300, 100)
-        + "</svg>"
+        + "</svg>",
+        encoding="utf-8",
     )
     out = subprocess.run(  # noqa: S603 - fixed args, probe file we just wrote
         ["inkscape", str(probe), "--query-all"],  # noqa: S607 - snap-managed, not on a fixed path
@@ -648,20 +649,20 @@ def main() -> int:
     wd = Path.home() / "chemrefine_logo_build"
     wd.mkdir(exist_ok=True)
     try:
-        (ASSETS / "logo.svg").write_text(mark_svg())
-        (ASSETS / "logo-dark.svg").write_text(mark_svg(dark=True))
-        (ASSETS / "favicon.svg").write_text(icon_svg(boost=True))
-        (ASSETS / "logo-header.svg").write_text(header_svg())
-        (wd / "favicon.svg").write_text(icon_svg(boost=True))
+        (ASSETS / "logo.svg").write_text(mark_svg(), encoding="utf-8")
+        (ASSETS / "logo-dark.svg").write_text(mark_svg(dark=True), encoding="utf-8")
+        (ASSETS / "favicon.svg").write_text(icon_svg(boost=True), encoding="utf-8")
+        (ASSETS / "logo-header.svg").write_text(header_svg(), encoding="utf-8")
+        (wd / "favicon.svg").write_text(icon_svg(boost=True), encoding="utf-8")
         # The square display canvas is a raster source and nothing else - no page or
         # stylesheet ever wanted a mark with a third of its height empty - so it lives
         # here for the export and is not part of the kit.
-        (wd / "icon.svg").write_text(icon_svg())
+        (wd / "icon.svg").write_text(icon_svg(), encoding="utf-8")
 
         fit = fit_wordmark(wd)
-        (ASSETS / "logo-wordmark-src.svg").write_text(lockup_svg(fit))
-        (wd / "light.svg").write_text(lockup_svg(fit))
-        (wd / "dark.svg").write_text(lockup_svg(fit, dark=True))
+        (ASSETS / "logo-wordmark-src.svg").write_text(lockup_svg(fit), encoding="utf-8")
+        (wd / "light.svg").write_text(lockup_svg(fit), encoding="utf-8")
+        (wd / "dark.svg").write_text(lockup_svg(fit, dark=True), encoding="utf-8")
         text_to_path(wd / "light.svg", wd / "logo-wordmark.svg")
         text_to_path(wd / "dark.svg", wd / "logo-wordmark-dark.svg")
         shutil.copy2(wd / "logo-wordmark.svg", ASSETS / "logo-wordmark.svg")

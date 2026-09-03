@@ -399,7 +399,7 @@ atexit.register(terminate_local_jobs)
 # ---------------------------------------------------------------------------
 
 ACTIVE_JOBS_NAME = "active_jobs.json"
-"""Filename of the per-directory lease ledger, under a step's (or attempt's) ``_cache/``.
+"""Filename of the per-directory lease ledger, under a step's ``_cache/``.
 
 The run lock proves at most one *driver* per tree, but a driver's release does not
 outlive its jobs: a SIGTERM unwind deliberately leaves SLURM jobs running, and a SIGKILL
