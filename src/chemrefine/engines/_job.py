@@ -80,7 +80,7 @@ def build_structures(
     produced it; a 1:1 child inherits the input's own ``parent_id``. Engine-independent — the
     one home for a step's fan-out + ID lineage.
     """
-    prev_by_id = {s.id: s for s in prev_state.structures}
+    prev_by_id = prev_state.by_id
     parents = [sid for sid, _ in parsed_per_input]
     fanouts = [len(parsed) for _, parsed in parsed_per_input]
     child_ids = iter(allocate_child_ids(parents, fanouts))

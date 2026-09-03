@@ -417,6 +417,12 @@ for the full map.
   same sentence at its start (a warning, not a refusal: the lenient script-engine read
   is the documented design), and the sentence names the readers instead of hedging on a
   placeholder path that never existed.
+- **Parsing a step is linear in its parent count.** The driver parses one job at a time,
+  and every parse rebuilt the parent index from the whole previous state — the assembler
+  once per job, a script engine once per structure — so a step over eight thousand
+  parents spent seconds indexing per parse and a three-step `rebuild-cache` of such a
+  tree tens of seconds on nothing. The state now indexes its structures once
+  (`PipelineState.by_id`) and every reader shares it.
 - **A v1 `energy_window` value keeps its hartree meaning across migration.** v1 read
   `energy` as hartree unless `unit: kcal/mol` was explicit; the translation layer
   carried the bare number into `window_kcalmol` — kcal/mol by definition — so a config

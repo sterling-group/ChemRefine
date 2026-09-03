@@ -83,7 +83,7 @@ class FakeEngine:
 
     def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
         """Read each output file's energy and return reconstructed structures."""
-        seeds = {s.id: s for s in ctx.prev_state.structures}
+        seeds = ctx.prev_state.by_id
         out_structures: list[Structure] = []
         for _inp, out, sid in inputs.files:
             text = out.read_text()

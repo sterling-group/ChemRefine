@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import cached_property
 from pathlib import Path
 
 import numpy as np
@@ -148,6 +149,18 @@ class PipelineState:
 
     def __len__(self) -> int:
         return len(self.structures)
+
+    @cached_property
+    def by_id(self) -> dict[str, Structure]:
+        """The structures indexed by id, built once per state however many readers ask.
+
+        Every per-job reader — the assembler's parent lookup, a script engine's seed lookup,
+        the ``on_failure: best`` backfill — asked the tuple the same question and each built
+        the map again, so parsing a step was quadratic in its parent count: the driver parses
+        one job at a time, and every parse rebuilt the index. Cached on the instance because
+        the state is frozen — its structures never change, so the index cannot go stale.
+        """
+        return {s.id: s for s in self.structures}
 
 
 @dataclass(frozen=True)

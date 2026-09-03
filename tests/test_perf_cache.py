@@ -3,8 +3,10 @@
 Three properties of the design invite the question "does this scale": the step cache is
 rewritten in full on every save, :meth:`~chemrefine.cache.StepKey.of` re-hashes every
 parent's coordinates and derives a row key from each of them once per step, and the
-per-step CSV round-trips through pandas. Whether any is a *problem* is a question about
-numbers, so this produces them.
+per-step CSV round-trips through pandas. A fourth is the parse: the driver parses one job
+at a time against the whole previous state, so anything a parse does per parent is paid
+once per job. Whether any is a *problem* is a question about numbers, so this produces
+them.
 
 So this measures rather than asserts. It prints a table and checks only that the work
 stays roughly linear in the structure count — the shape that would make a 10⁴-structure
@@ -41,8 +43,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 from ase import Atoms
+from fake_engine import FakeEngine
 
-from chemrefine import cache, io
+from chemrefine import cache, io, lifecycle
 from chemrefine.config import StepConfig
 from chemrefine.state import PipelineState, StepContext, StepResults, Structure
 
@@ -116,8 +119,8 @@ class _timed:
 
 
 def test_per_step_bookkeeping_scales_linearly(tmp_path: Path, capsys) -> None:
-    """Time key / save / load / CSV across the sizes and report the shape."""
-    rows: list[tuple[int, float, float, float, float, float, float]] = []
+    """Time key / save / load / CSV / parse across the sizes and report the shape."""
+    rows: list[tuple[int, float, float, float, float, float, float, float]] = []
 
     # `io.save_step_csv` imports pandas lazily, so the first call anywhere pays the import —
     # a fifth of a second, charged entirely to whichever size runs first. Left alone the CSV
@@ -154,6 +157,14 @@ def test_per_step_bookkeeping_scales_linearly(tmp_path: Path, capsys) -> None:
                 output_dir=step_dir,
             )
         size_mb = sum(p.stat().st_size for p in (step_dir / "_cache").iterdir()) / 1e6
+        # The parse the driver performs: one job at a time, each against the whole previous
+        # state (`lifecycle._parse_job`). The fake engine's output is a one-line file, so
+        # what this times is the per-job bookkeeping — the parent index above all.
+        engine = FakeEngine()
+        inputs = engine.prepare(ctx)
+        engine.submit(inputs, ctx)
+        with _timed() as parse:
+            lifecycle.parse_with_failures(engine, inputs, ctx)
         rows.append(
             (
                 n,
@@ -161,6 +172,7 @@ def test_per_step_bookkeeping_scales_linearly(tmp_path: Path, capsys) -> None:
                 save.seconds,
                 load.seconds,
                 csv.seconds,
+                parse.seconds,
                 size_mb,
                 _residency_mb(n),
             )
@@ -169,12 +181,12 @@ def test_per_step_bookkeeping_scales_linearly(tmp_path: Path, capsys) -> None:
     with capsys.disabled():
         print(f"\n  {N_ATOMS} atoms per structure\n")
         print(
-            f"  {'n':>7}  {'step key':>8}  {'save':>8}  {'load':>8}  {'csv':>8}"
+            f"  {'n':>7}  {'step key':>8}  {'save':>8}  {'load':>8}  {'csv':>8}  {'parse':>8}"
             f"  {'_cache':>9}  {'residency':>10}"
         )
-        for n, d, s, ld, c, mb, res in rows:
+        for n, d, s, ld, c, p, mb, res in rows:
             print(
-                f"  {n:>7}  {d:>7.3f}s  {s:>7.3f}s  {ld:>7.3f}s  {c:>7.3f}s"
+                f"  {n:>7}  {d:>7.3f}s  {s:>7.3f}s  {ld:>7.3f}s  {c:>7.3f}s  {p:>7.3f}s"
                 f"  {mb:>8.1f}MB  {res:>9.1f}MB"
             )
         print()
@@ -187,7 +199,14 @@ def test_per_step_bookkeeping_scales_linearly(tmp_path: Path, capsys) -> None:
     # The CSV column is in the loop, not merely printed: the module docstring names the
     # pandas round-trip as one of the scaling questions this test exists to check, and a
     # measured-but-unasserted column is a regression that is reported and never failed.
-    for idx, label in ((1, "StepKey.of"), (2, "cache.save"), (3, "cache.load"), (4, "steps.csv")):
+    columns = (
+        (1, "StepKey.of"),
+        (2, "cache.save"),
+        (3, "cache.load"),
+        (4, "steps.csv"),
+        (5, "parse"),
+    )
+    for idx, label in columns:
         if small[idx] < 1e-4:  # too fast to time meaningfully at the small end
             continue
         growth = large[idx] / small[idx]

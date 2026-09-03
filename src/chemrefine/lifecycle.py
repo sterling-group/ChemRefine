@@ -798,7 +798,7 @@ def apply_failure_policy(
     # Unmatched here, the implicit `None` contradicts the return type and mypy says so.
     match step_cfg.on_failure:
         case "best":
-            prev_by_id = {s.id: s for s in ctx.prev_state.structures}
+            prev_by_id = ctx.prev_state.by_id
             # Build a new list rather than appending into the caller's: every other value
             # crossing this module is frozen, and a policy function quietly rewriting its
             # argument is the one aliasing bug this file would not survive.

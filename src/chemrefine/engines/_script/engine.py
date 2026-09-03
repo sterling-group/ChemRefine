@@ -161,7 +161,7 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
         footer from — so what the script was told it could write and what the driver reads
         back cannot come apart.
         """
-        seed = next((s for s in ctx.prev_state.structures if s.id == structure_id), None)
+        seed = ctx.prev_state.by_id.get(structure_id)
         return script_output.parse_output(
             output_path,
             label=self.label,
