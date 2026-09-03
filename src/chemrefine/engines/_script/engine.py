@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import ClassVar, Generic, TypeVar, cast
 
 from chemrefine.engines import _provision
-from chemrefine.engines._job import JobEngine, gpus_from_options
-from chemrefine.engines._options import EngineOptions
+from chemrefine.engines._job import JobEngine
+from chemrefine.engines._options import EngineOptions, gpus_from_options
 from chemrefine.engines._script import output as script_output
 from chemrefine.engines._script import render as script_render
 from chemrefine.engines._script.contract import SCRIPT_OUTPUT, OutputField

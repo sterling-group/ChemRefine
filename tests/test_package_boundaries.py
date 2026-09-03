@@ -159,3 +159,55 @@ def test_no_module_reaches_for_another_modules_private_name():
         + "\n\nMake the helper public and say in its docstring who imports it and why — "
         "the form config.reject_shell_unsafe uses — or keep it private and stop crossing."
     )
+
+
+def _underscored_engine_imports(tree: ast.AST) -> list[str]:
+    """Every import of an underscored ``chemrefine.engines`` module in ``tree``, dotted."""
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            parts = (node.module or "").split(".")
+            if parts[:2] == ["chemrefine", "engines"]:
+                if len(parts) > 2 and parts[2].startswith("_"):
+                    found.append(node.module or "")
+                elif len(parts) == 2:
+                    found += [
+                        f"{node.module}.{a.name}" for a in node.names if a.name.startswith("_")
+                    ]
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                parts = alias.name.split(".")
+                if (
+                    parts[:2] == ["chemrefine", "engines"]
+                    and len(parts) > 2
+                    and parts[2].startswith("_")
+                ):
+                    found.append(alias.name)
+    return found
+
+
+def test_the_flat_pipeline_imports_the_engine_subsystem_through_its_public_face():
+    """Outside ``engines/``, an underscored engine module is nobody's to import.
+
+    ``engines/api.py`` opens by calling itself "the one module the flat pipeline imports
+    from the engine subsystem", and ``engines/__init__.py`` explains the underscore: the
+    underscored packages are the building blocks an *engine* is assembled from. The first
+    test in this file exempts imports of those modules because building an engine is
+    exactly what they are for — which left the other half of the claim unchecked, and
+    ``validate`` imported the GPU-demand helper from ``_job`` for as long as nothing looked.
+    Held here: a helper the orchestrator needs is promoted onto the public face, as
+    ``gpus_from_options`` now is, rather than reached for where it happens to live.
+    """
+    engines_root = _PACKAGE_ROOT / "engines"
+    offences = [
+        f"{path.relative_to(_PACKAGE_ROOT.parent)}: imports {dotted}"
+        for path in sorted(_PACKAGE_ROOT.rglob("*.py"))
+        if engines_root not in path.parents
+        for dotted in _underscored_engine_imports(ast.parse(path.read_text(encoding="utf-8")))
+    ]
+    assert not offences, (
+        "the flat pipeline reached into an engine building block:\n  "
+        + "\n  ".join(offences)
+        + "\n\nRe-export what it needs from chemrefine.engines.api (or chemrefine.engines) "
+        "and import it from there."
+    )

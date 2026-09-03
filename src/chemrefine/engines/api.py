@@ -63,6 +63,7 @@ from numpy.typing import NDArray
 
 from chemrefine.config import StepConfig
 from chemrefine.engines._options import EngineOptions
+from chemrefine.engines._options import gpus_from_options as gpus_from_options
 from chemrefine.errors import EngineNotFoundError
 from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
 
@@ -283,7 +284,7 @@ class OptionsDeclaring(Protocol):
     :class:`~chemrefine.engines._options.EngineOptions` subclass the engine itself reads
     its knobs through. A *second* reader of those knobs — provisioning's
     ``backend_python`` (:func:`chemrefine.engines._provision._backend_python`), the GPU
-    demand helper (:func:`chemrefine.engines._job.gpus_from_options`), schema
+    demand helper (:func:`chemrefine.engines.api.gpus_from_options`), schema
     introspection — resolves aliases and defaults through the same model the engine
     will, so two readers of one knob cannot disagree.
 

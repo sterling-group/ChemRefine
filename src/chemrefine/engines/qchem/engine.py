@@ -36,7 +36,8 @@ from pathlib import Path
 from typing import ClassVar
 
 from chemrefine.config import StepConfig
-from chemrefine.engines._job import JobEngine, gpus_from_options
+from chemrefine.engines._job import JobEngine
+from chemrefine.engines._options import gpus_from_options
 from chemrefine.engines.api import NmsInputInfo, ParsedResult, RunBlock, register
 from chemrefine.engines.qchem import input as qchem_input
 from chemrefine.engines.qchem import inspect, output

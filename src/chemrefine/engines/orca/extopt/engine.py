@@ -20,8 +20,7 @@ from typing import ClassVar
 from chemrefine.config import StepConfig
 from chemrefine.engines import _provision
 from chemrefine.engines._backend_server.base import SERVER_URL_FILENAME, ComputeBackend
-from chemrefine.engines._job import gpus_from_options
-from chemrefine.engines._options import EngineOptions
+from chemrefine.engines._options import EngineOptions, gpus_from_options
 from chemrefine.engines.orca import input as orca_input
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.engines.orca.extopt import protocol, run_block

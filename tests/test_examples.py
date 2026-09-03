@@ -25,9 +25,8 @@ from chemrefine.config import (
     StepConfig,
     load_config,
 )
-from chemrefine.engines._job import gpus_from_options
 from chemrefine.engines._options import EngineOptions
-from chemrefine.engines.api import ENGINES, OptionsDeclaring, get_engine
+from chemrefine.engines.api import ENGINES, OptionsDeclaring, get_engine, gpus_from_options
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.engines.orca.inspect import inspect_template
 from chemrefine.io import read_xyz_frames

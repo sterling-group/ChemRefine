@@ -26,7 +26,6 @@ from typing import ClassVar
 from ase import Atoms
 
 from chemrefine.engines import _execution
-from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import CompletionSink, ParsedResult, RunBlock
 from chemrefine.ids import (
     allocate_child_ids,
@@ -44,29 +43,6 @@ from chemrefine.state import (
     StepResults,
     Structure,
 )
-
-
-def gpus_from_options(
-    options: dict[str, object] | None,
-    options_cls: type[EngineOptions] = EngineOptions,
-) -> int:
-    """1 if the step's **validated** options request a GPU, else 0.
-
-    Reads through ``options_cls`` rather than off the raw dict, because the raw dict and
-    the model disagree about what "unset" means: ``options.get("device", "")`` yielded no
-    GPU while ``EngineOptions.device`` defaulted to ``cuda``, so a step that named no
-    device rendered ``$DEVICE=cuda`` into its script while being scheduled as a CPU job on
-    the CPU header — and it bypassed both the GPU budget and
-    :meth:`~chemrefine.throttle.Throttler.assign_device`, so concurrent local steps piled
-    onto device 0. One reader, one default.
-
-    ``options_cls`` is the engine's own model, so a backend that expresses the request
-    differently is honoured without this helper knowing about it: PySCF's ``gpu`` (try
-    gpu4pyscf) is a :class:`~chemrefine.engines.pyscf.options.PyscfOptions` field derived
-    from ``device``, and ``getattr`` picks it up for engines that declare it.
-    """
-    opts = options_cls.from_raw_lenient(options)
-    return 1 if opts.device == "cuda" or bool(getattr(opts, "gpu", False)) else 0
 
 
 def build_structures(
