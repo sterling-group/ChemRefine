@@ -273,6 +273,34 @@ def test_undeclared_option_keys_warn_but_do_not_block(tmp_path: Path):
     assert "typoed" in warning.message
 
 
+def test_undeclared_keys_are_judged_against_every_declared_reader():
+    """One rule for the report and the run: a key the engine's model or NMS declares is read.
+
+    Everything else changes nothing — there is no placeholder path that could read it, so the
+    sentence no longer hedges on one — and the readers are named so a misspelt NMS knob on an
+    ORCA step (whose only options reader *is* NMS) is described as exactly that.
+    """
+    from chemrefine.config import StepConfig
+    from chemrefine.validate import undeclared_options
+
+    assert undeclared_options(StepConfig(step=1, engine="mlip", options={"device": "cpu"})) is None
+    assert (
+        undeclared_options(StepConfig(step=1, engine="orca", nms=True, options={"target": "ts"}))
+        is None
+    )
+    assert undeclared_options(StepConfig(step=1, engine="orca")) is None
+
+    nms_typo = undeclared_options(
+        StepConfig(step=1, engine="orca", nms=True, options={"targt": "ts"})
+    )
+    assert nms_typo is not None
+    assert "['targt']" in nms_typo and "read by NMS" in nms_typo and "typo" in nms_typo
+    assert "placeholder" not in nms_typo
+
+    unread = undeclared_options(StepConfig(step=1, engine="orca", options={"maxiter": 3}))
+    assert unread is not None and "declares no options" in unread
+
+
 def test_nms_on_an_incapable_engine_warns(tmp_path: Path):
     """The run silently skips NMS for an incapable engine — the report must not."""
     report = _validate(tmp_path, steps=[{"step": 1, "engine": "fake", "nms": True}])

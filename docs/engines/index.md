@@ -20,8 +20,9 @@ behind the code. Reading it:
   are programs you install yourself and name in `executables:`.
 
 `options:` is a free per-engine dict and each engine validates its own keys — an
-undeclared key is reported by `chemrefine validate` as a silent no-op rather than
-ignored. The sections below are those keys, one engine family at a time.
+undeclared key is reported by `chemrefine validate`, and logged when a run starts, as a
+silent no-op rather than ignored. The sections below are those keys, one engine family at
+a time.
 
 ## ORCA (`orca`)
 

@@ -408,6 +408,15 @@ for the full map.
   and `last_converged`, and the `mlip`/`pyscf` starters and the quickstart template
   assign it — so an exhausted optimiser or a loose SCF is ledgered as a convergence
   failure and retried once from its best geometry, as the retry docs already describe.
+- **A run warns about option keys nothing reads, not only `chemrefine validate`.**
+  The undeclared-key rule — a key outside the engine's declared model (and NMS's, on an
+  `nms: true` step) changes nothing, and a typo of a real knob looks exactly the same —
+  was computed by the validate report alone, which a `resume` after an edit, the GUI's
+  Run button and an agent's `start_run` never pass through; `target: ts` misspelt on an
+  NMS step ran a minimum search in silence. The run's own preflight walk now logs the
+  same sentence at its start (a warning, not a refusal: the lenient script-engine read
+  is the documented design), and the sentence names the readers instead of hedging on a
+  placeholder path that never existed.
 - **A v1 `energy_window` value keeps its hartree meaning across migration.** v1 read
   `energy` as hartree unless `unit: kcal/mol` was explicit; the translation layer
   carried the bare number into `window_kcalmol` — kcal/mol by definition — so a config

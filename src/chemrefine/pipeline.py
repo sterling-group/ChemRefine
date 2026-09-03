@@ -53,6 +53,7 @@ from chemrefine.step import (
     rebuild_cache_step,
     run_step,
 )
+from chemrefine.validate import undeclared_options
 
 logger = logging.getLogger(__name__)
 
@@ -592,6 +593,15 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
         submittable = [cfg for cfg in config.steps if plan.for_step(cfg.step).may_submit()]
         preflight_backends(submittable)
         preflight_steps(submittable, charge=config.charge, multiplicity=config.multiplicity)
+        # The one config-decidable rule the walk lacked: a key no reader declares changes
+        # nothing, and `chemrefine validate` was the only place that said so — which a
+        # `resume` after an edit, the GUI's Run button and an agent's `start_run` never
+        # pass through. A warning rather than a refusal, for the report's own reason: the
+        # lenient script-engine read is the documented design, and on an ORCA or Q-Chem
+        # step the NMS knobs share this dict with the engine's.
+        for step_cfg in submittable:
+            if (silent := undeclared_options(step_cfg)) is not None:
+                logger.warning("step %d: %s", step_cfg.step, silent)
         slurm.dispatch_locally(config.dispatch)
         state = bootstrap(config)
         logger.info("bootstrapped pipeline with %d seed structure(s)", len(state.structures))

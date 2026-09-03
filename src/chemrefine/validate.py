@@ -19,8 +19,9 @@ become issues or warnings up front:
   without the cluster's environments,
 * invalid NMS knobs on an ``nms: true`` step — and ``nms: true`` on an engine that
   cannot NMS, which the run would silently skip (warning),
-* option keys no reader of this step declares (warning — a script-engine template may
-  read them as placeholders, but a typo looks exactly the same),
+* option keys no reader of this step declares (warning — nothing reads them, so a typo
+  of a real knob looks exactly the same; the run logs the same sentence at its start,
+  through :func:`undeclared_options`),
 * step templates and SLURM headers that do not exist yet (warnings —
   ``chemrefine scaffold`` creates starters; the header is resolved the way dispatch
   resolves it, per-step override first, cuda header when the step's validated options
@@ -213,6 +214,46 @@ def validate_config_file(path: Path) -> ValidationReport:
     return validate_config_text(text, base_dir=path.parent)
 
 
+def undeclared_options(step: StepConfig) -> str | None:
+    """The warning for keys in ``step.options`` that no reader declares; ``None`` if all are read.
+
+    Every reader of a step's options is a declared model — the engine's, when it is
+    :class:`~chemrefine.engines.api.OptionsDeclaring`, and :class:`~chemrefine.nms.NmsOptions`
+    when ``nms: true`` — and each reads only its own fields: a strict model refuses a stranger, a
+    lenient one ignores it, and a template placeholder is only ever filled from a field the
+    engine's model declares. So a key outside every declared set changes nothing, and a typo of
+    a real knob looks exactly like one. The sentence is shared by :func:`validate_config_text`'s
+    report and the run's own preflight walk (:func:`chemrefine.pipeline.run`), so the two cannot
+    describe the same mistake differently — or one of them fail to mention it, which is what a
+    ``resume`` after an edit used to get.
+
+    The engine is resolved here rather than passed in because both callers have already
+    established it resolves: the report skips an unregistered engine before this point and the
+    run's ``preflight_backends`` has refused it.
+    """
+    engine = get_engine(step.engine)
+    declared: set[str] = set()
+    readers: list[str] = []
+    if isinstance(engine, OptionsDeclaring):
+        declared |= engine.options_cls.accepted_names()
+        readers.append(f"engine {step.engine!r}")
+    if step.nms:
+        declared |= set(NmsOptions.model_fields)
+        readers.append("NMS")
+    undeclared = sorted(set(step.options or {}) - declared)
+    if not undeclared:
+        return None
+    read_by = (
+        f"read by {' and '.join(readers)}"
+        if readers
+        else f"engine {step.engine!r} declares no options and nothing else reads them"
+    )
+    return (
+        f"keys {undeclared} are not declared by any reader of this step's options ({read_by}), "
+        "so they change nothing — and a typo of a real knob looks exactly the same"
+    )
+
+
 def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[ValidationIssue]]:
     """The registry-aware per-step checks; returns ``(issues, warnings)``."""
     issues: list[ValidationIssue] = []
@@ -233,10 +274,8 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
             )
             continue
         engine = get_engine(step.engine)
-        declared: set[str] = set()
         options_ok = True
         if isinstance(engine, OptionsDeclaring):
-            declared |= engine.options_cls.accepted_names()
             try:
                 engine.options_cls.from_raw_lenient(step.options)
             except ConfigError as e:
@@ -277,7 +316,6 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                     ValidationIssue(loc=("steps", index, "options"), kind="backend", message=str(e))
                 )
         if step.nms:
-            declared |= set(NmsOptions.model_fields)
             try:
                 NmsOptions.from_raw(step.options)
             except ValidationError as e:
@@ -297,18 +335,9 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                         ),
                     )
                 )
-        undeclared = sorted(set(step.options or {}) - declared)
-        if undeclared:
+        if (silent := undeclared_options(step)) is not None:
             warnings.append(
-                ValidationIssue(
-                    loc=("steps", index, "options"),
-                    kind="options",
-                    message=(
-                        f"keys {undeclared} are not declared by any reader of this step's "
-                        "options; a script template may read them as placeholders, but a "
-                        "typo looks exactly the same"
-                    ),
-                )
+                ValidationIssue(loc=("steps", index, "options"), kind="options", message=silent)
             )
         if isinstance(engine, TemplateDriven):
             template = step_template_path(

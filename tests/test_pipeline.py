@@ -578,6 +578,28 @@ def test_the_run_walks_every_submittable_steps_own_preflight(
     assert calls == [(["fake"], 0, 1)]
 
 
+def test_the_run_logs_the_keys_no_reader_declares(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The undeclared-key rule rides the t=0 walk, as a warning, in ``validate``'s words.
+
+    ``chemrefine validate`` was the only place that named a key nothing reads — and a
+    ``resume`` after an edit, the GUI's Run button and an agent's ``start_run`` never pass
+    through it, so ``target: ts`` misspelt on an NMS step ran a *minimum* search in silence.
+    The run now says the same sentence at its start: a warning, not a refusal, because the
+    lenient script-engine read is the documented design.
+    """
+    cfg = Config(
+        template_dir=tmp_path / "templates",
+        output_dir=tmp_path / "outputs",
+        steps=[StepConfig(step=1, engine="fake", operation="opt_sp", options={"targt": "ts"})],
+    )
+    with caplog.at_level("WARNING", logger="chemrefine.pipeline"), pytest.raises(ChemRefineError):
+        pipeline.run(cfg)
+    assert "step 1: keys ['targt']" in caplog.text
+    assert "typo" in caplog.text
+
+
 def test_rebuild_cache_requires_no_backend_from_any_of_its_steps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
