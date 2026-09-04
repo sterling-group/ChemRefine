@@ -366,7 +366,7 @@ class MyTrainer(TrainerBase): ...  # or ApiTrainerBase, for API-driven libraries
 Two obligations live outside the module, both enforced by the suite:
 
 - **The pyproject extra.** Declare `mlip-my_mlip` under `[project.optional-dependencies]` —
-  `test_every_registered_extra_is_declared_in_pyproject` fails until you do, because an extra
+  `test_every_backend_extra_is_declared_in_pyproject` fails until you do, because an extra
   nothing installs provisions an empty environment that then dies on the backend import. If
   the library supports only some Python versions, put a `python_version` marker on every
   requirement of the extra and record the supported versions in `test_provision.py`'s

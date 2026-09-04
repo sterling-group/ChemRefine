@@ -398,24 +398,6 @@ def test_a_task_that_cannot_train_is_refused_by_the_preflight():
             requirement_from_options({"task_name": "untrainable"}, require_trainer=True)
 
 
-def test_every_registered_extra_is_declared_in_pyproject():
-    """A backend naming an extra that does not exist provisions an empty environment.
-
-    `pip install "chemrefine[typo]"` warns and exits 0, so `chemrefine backends install`
-    succeeds, `<env>/bin/python` exists, the preflight is satisfied — and the step then dies
-    on the backend import. Nothing tied the code's extras to the metadata that declares them.
-    """
-    import tomllib
-
-    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
-    declared = set(tomllib.loads(pyproject.read_text())["project"]["optional-dependencies"])
-
-    assert registered_extras() <= declared, (
-        f"extras declared by a backend but not by pyproject: "
-        f"{sorted(registered_extras() - declared)}"
-    )
-
-
 def test_every_backend_module_imports_with_no_mlip_library_installed():
     """The registry is built at import time, so every library module must import cheaply.
 

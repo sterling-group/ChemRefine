@@ -434,6 +434,31 @@ def test_every_backend_extra_claims_the_pythons_it_can_install_on():
         assert provision._supported_from(requirements, extra, candidates) == expected, extra
 
 
+def test_every_backend_extra_is_declared_in_pyproject():
+    """A backend extra no pyproject entry installs provisions an empty environment.
+
+    ``pip install "chemrefine[typo]"`` warns and exits 0, so ``chemrefine backends install``
+    succeeds, ``<env>/bin/python`` exists, the preflight is satisfied — and the step then dies
+    on the backend import. The assertion used to read the MLIP library registry alone, so a
+    non-MLIP engine could declare an extra pyproject lacked and every gate stayed green; the
+    Python-cap check above even read the absence as "installs on every Python", having no
+    requirement to cap. ``known_backend_extras`` is the union every provisionable engine
+    contributes to — the set ``chemrefine backends`` validates names against — so it is the
+    set pyproject has to declare.
+    """
+    from chemrefine.engines import known_backend_extras
+
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    declared = set(
+        tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["optional-dependencies"]
+    )
+
+    assert known_backend_extras() <= declared, (
+        f"extras declared by an engine but not by pyproject: "
+        f"{sorted(known_backend_extras() - declared)}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # detect_env_tool
 # ---------------------------------------------------------------------------
