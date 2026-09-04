@@ -56,6 +56,10 @@ class PyscfEngine(PyscfBackend, ScriptEngine[PyscfOptions]):
     """What ``chemrefine scaffold`` writes for a missing ``stepN.py`` — see
     :class:`~chemrefine.engines.api.StarterProviding`; ``$OUTPUT_CONTRACT`` becomes the
     comment naming this engine's output fields."""
+    preflight_refuses: ClassVar[str] = (
+        "a step naming no level of theory (`basis`, and `xc` under `method: dft`), the one "
+        "engine that would otherwise compute at defaults nobody chose"
+    )
 
     def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
         """Refuse a step that names no level of theory, before anything runs.

@@ -81,6 +81,10 @@ class MlipTrainEngine(MlipBackend):
     FAIRChem's hydra config), and the template *is* that file with placeholders in it."""
 
     options_cls: ClassVar[type[MlipTrainOptions]] = MlipTrainOptions
+    preflight_refuses: ClassVar[str] = (
+        "a training step with no device, no task, or a policy with nothing to act on: "
+        "decidable from the config, and usually sitting after days of label computation"
+    )
     template_starter: ClassVar[str] = (
         "# mlip-train starter — NOT runnable as written. A trainer template is the\n"
         "# backend's own config where one exists (mace/fairchem: every part of a working\n"

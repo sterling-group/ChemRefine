@@ -76,6 +76,10 @@ class QchemEngine(JobEngine):
     )
     """What ``chemrefine scaffold`` writes for a missing ``stepN.in`` — see
     :class:`~chemrefine.engines.api.StarterProviding`."""
+    preflight_refuses: ClassVar[str] = (
+        "an `operation:` the Q-Chem parser dispatch does not know, refused before a job runs "
+        "rather than after every output is ledgered UNPARSEABLE"
+    )
     operations: ClassVar[tuple[str, ...]] = tuple(sorted(output.known_operations()))
     """The ``operation:`` vocabulary this engine interprets — the parser dispatch's own
     set (see :class:`~chemrefine.engines.api.OperationsDeclaring`), derived rather than

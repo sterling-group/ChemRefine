@@ -319,33 +319,31 @@ def test_options_capability_matches_the_getattr_consumers():
 
 
 def test_the_preflight_capability_stays_a_claim_not_boilerplate():
-    """Exactly the engines that own a fail-fast refusal declare ``check_step``.
+    """Every engine that takes ``check_step`` says, in its own words, what it refuses.
 
-    ``mlip-train`` (its refusals — no device, no task, a policy with nothing to act on
-    — are decidable from the config, and the step usually sits after days of label
-    computation), the ExtOpt family (their options configure a server, so the
-    strict read the run block makes is made up front too), ``orca`` and ``qchem``
-    (an explicit ``operation`` outside a family's parser dispatch would otherwise fail
-    only after the step's jobs had run), and the direct ``pyscf`` (its level of theory
-    is required — every other engine makes the user name it, so a step omitting
-    ``basis``/``xc`` is refused up front rather than computing at a level nobody
-    chose). Its hook stays a *targeted* refusal, not a strict read: the script
-    engines' lenient reads over templates that may carry knobs of their own remain
-    the documented design, which is why ``mlip`` — whose model has honest defaults,
-    foundation models being the point — still stays out, as does the fake engine
-    (the minimal third-party shape). A new engine that takes the hook extends this
-    pin; one that grows a prepare-time refusal without the hook is the Thursday
-    failure coming back.
+    The hook is a *targeted* refusal, not a strict read: the script engines' lenient reads
+    over templates that may carry knobs of their own remain the documented design, which is
+    why ``mlip`` — whose model has honest defaults, foundation models being the point —
+    stays out, as does the fake engine (the minimal third-party shape). A pinned list of
+    engine names used to hold that line, and every new hook had to extend it. The claim now
+    travels with the engine as ``preflight_refuses``: the registration gate demands it the
+    moment a class defines ``check_step``, so an engine cannot take the hook without saying
+    why, and this holds each sentence non-empty and unrepeated — a sentence copied from a
+    sibling is the boilerplate the hook must never become. The ExtOpt base states the strict
+    server-knob read once; ``pyscf-extopt`` adds its own refusal and says so in its own
+    words, while ``mlip-extopt`` inherits the base's.
     """
-    checking = {n for n in ENGINES if isinstance(get_engine(n), PreflightChecking)}
-    assert sorted(checking) == [
-        "mlip-extopt",
-        "mlip-train",
-        "orca",
-        "pyscf",
-        "pyscf-extopt",
-        "qchem",
-    ]
+    claims = {
+        name: engine.preflight_refuses
+        for name in sorted(ENGINES)
+        if isinstance(engine := get_engine(name), PreflightChecking)
+    }
+    assert {"mlip-train", "orca", "pyscf", "qchem"} <= set(claims)
+    assert {"mlip", "fake"}.isdisjoint(claims), "a lenient script engine took the hook"
+    for name, sentence in claims.items():
+        assert sentence.strip(), f"{name} defines check_step but says nothing about what it refuses"
+    repeated = sorted({s for s in claims.values() if list(claims.values()).count(s) > 1})
+    assert not repeated, f"engines share a preflight sentence verbatim — a copied hook: {repeated}"
 
 
 def test_every_orca_family_engine_refuses_an_unknown_operation_up_front():

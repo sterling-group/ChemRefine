@@ -33,6 +33,11 @@ class PyscfExtOptEngine(PyscfBackend, ExtOptOrcaEngine):
     wrapper_filename: ClassVar[str] = "pyscf_extopt.sh"
     options_cls: ClassVar[type[PyscfExtOptOptions]] = PyscfExtOptOptions
     calculator_cls: ClassVar[type[ComputeBackend]] = PyscfExtOptCalculator
+    preflight_refuses: ClassVar[str] = (
+        "`save_tensors` on an open-shell step (the tensor transform is restricted-only and "
+        "would fail inside the server after the SCF and gradient succeeded), on top of the "
+        "strict server-knob read every ExtOpt engine makes"
+    )
 
     def _opts(self, ctx: StepContext) -> PyscfExtOptOptions:
         """This step's validated options, read through the model this engine declares.

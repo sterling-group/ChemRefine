@@ -631,6 +631,17 @@ class PreflightChecking(Protocol):
     fail-fast refusal declares the hook.
     """
 
+    preflight_refuses: ClassVar[str]
+    """One sentence naming the config-decidable mistake ``check_step`` refuses.
+
+    The claim that the hook is a *targeted* refusal and not boilerplate, carried by the
+    engine itself — in the declarations-only style of :class:`WhitespacePathIntolerant` —
+    rather than by a list of engine names pinned in a test. :func:`register` refuses a class
+    that defines ``check_step`` without it, because a Protocol member left unset would not
+    fail loudly: ``isinstance`` would answer no and the engine would silently leave the
+    preflight walk. The invariants hold it non-empty and unrepeated across engines, and
+    :func:`chemrefine.introspect.describe_engines` exposes it."""
+
     def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
         """Raise :class:`~chemrefine.errors.ConfigError` if this step cannot run as configured.
 
@@ -676,7 +687,7 @@ def register(name: str) -> Callable[[type[CalculationEngine]], type[CalculationE
     over: a class that cannot serve as an engine is refused *here*, at its own decorator line
     during discovery, naming what is missing — rather than at the first step that submits, by
     which time ``run_step`` has built a context, derived a cache key and created a directory.
-    Three ways a class can fail to qualify, each with its own reason:
+    Four ways a class can fail to qualify, each with its own reason:
 
     * **It does not satisfy the contract.** ``ENGINES`` is annotated
       ``dict[str, type[CalculationEngine]]`` and :func:`get_engine` hands what it holds to the
@@ -696,6 +707,11 @@ def register(name: str) -> Callable[[type[CalculationEngine]], type[CalculationE
       surfaces as a bare ``AttributeError`` inside ``prepare``, and ``template_suffix`` is
       worse: the engine simply stops satisfying :class:`TemplateDriven`, and the user is told
       their template does not exist while it sits on disk.
+    * **It takes the preflight hook without saying why.** ``check_step`` claims the engine owns
+      a fail-fast refusal, and :class:`PreflightChecking` asks for that claim in one sentence
+      (``preflight_refuses``). Left unset, the omission would not fail: a Protocol member
+      that is missing makes ``isinstance`` answer no, and the engine would silently drop out
+      of the preflight walk it meant to join.
 
     The check runs on the class, never on an instance: constructing one to interrogate it would
     make an engine's ``__init__`` run at import of the package that defines it.
@@ -726,6 +742,12 @@ def register(name: str) -> Callable[[type[CalculationEngine]], type[CalculationE
             raise TypeError(
                 f"engine {name!r}: {cls.__name__} is missing declaration(s) {undeclared} — "
                 f"the machinery reads them; see the base it inherits from."
+            )
+        if hasattr(cls, "check_step") and not hasattr(cls, "preflight_refuses"):
+            raise TypeError(
+                f"engine {name!r}: {cls.__name__} defines check_step without preflight_refuses "
+                f"— a preflight hook says in one sentence what it refuses (see "
+                f"PreflightChecking); without the declaration the capability is not detected."
             )
         ENGINES[name] = cls
         return cls

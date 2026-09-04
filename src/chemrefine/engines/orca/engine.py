@@ -47,6 +47,10 @@ class OrcaEngine(JobEngine):
     """What ``chemrefine scaffold`` writes for a missing ``stepN.inp`` — see
     :class:`~chemrefine.engines.api.StarterProviding`. The ExtOpt engines inherit it: they
     are ORCA-driven and read the same input."""
+    preflight_refuses: ClassVar[str] = (
+        "an `operation:` outside the parser dispatch's vocabulary, which would otherwise fail "
+        "only after every job had run and each output was ledgered UNPARSEABLE"
+    )
     operations: ClassVar[tuple[str, ...]] = tuple(sorted(output.known_operations()))
     """The ``operation:`` vocabulary this family interprets — the parser dispatch's own
     set (see :class:`~chemrefine.engines.api.OperationsDeclaring`), inherited by the

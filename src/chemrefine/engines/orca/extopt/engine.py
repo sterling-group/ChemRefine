@@ -46,6 +46,10 @@ class ExtOptOrcaEngine(OrcaEngine):
     wrapper_filename: ClassVar[str]
     options_cls: ClassVar[type[EngineOptions]]
     calculator_cls: ClassVar[type[ComputeBackend]]
+    preflight_refuses: ClassVar[str] = (
+        "a typoed or missing server knob: these options configure a gradient server, so the "
+        "strict read the run block makes is made up front, before earlier steps are paid for"
+    )
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """Refuse a subclass whose ``calculator_cls`` cannot serve.

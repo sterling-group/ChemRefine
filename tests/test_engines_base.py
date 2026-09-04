@@ -92,6 +92,7 @@ def test_preflight_steps_asks_only_the_engines_that_declare_the_capability():
 
     class _Checked:
         name = "preflight-probe"
+        preflight_refuses = "a probe step; the sentence the registration gate asks of any hook"
 
         def prepare(self, ctx: object) -> None: ...
 
@@ -220,6 +221,29 @@ def test_register_refuses_a_class_that_does_not_satisfy_the_contract():
     """
     with pytest.raises(TypeError, match=r"does not satisfy CalculationEngine — missing"):
         register("gate-probe")(type("Bare", (), {"name": "gate-probe"}))
+    assert "gate-probe" not in ENGINES
+
+
+def test_register_refuses_a_preflight_hook_without_its_claim():
+    """``check_step`` without ``preflight_refuses`` would silently leave the preflight walk.
+
+    A Protocol member left unset makes ``isinstance(engine, PreflightChecking)`` answer no,
+    so the omission would not fail — the hook would simply never be called. Refused at the
+    decorator line instead, naming the sentence the engine owes.
+    """
+    hooked = type(
+        "Hooked",
+        (),
+        {
+            "name": "gate-probe",
+            "prepare": lambda self, ctx: None,
+            "submit": lambda self, inputs, ctx: None,
+            "parse": lambda self, inputs, ctx: None,
+            "check_step": lambda self, step_cfg, *, charge, multiplicity: None,
+        },
+    )
+    with pytest.raises(TypeError, match="check_step without preflight_refuses"):
+        register("gate-probe")(hooked)
     assert "gate-probe" not in ENGINES
 
 

@@ -32,6 +32,7 @@ from chemrefine.engines.api import (
     NmsCapableEngine,
     OperationsDeclaring,
     OptionsDeclaring,
+    PreflightChecking,
     ProvisionableEngine,
     StreamingSubmit,
     TemplateDriven,
@@ -73,6 +74,10 @@ class EngineDescriptor:
     treats the field as a label (see
     :class:`~chemrefine.engines.api.OperationsDeclaring`); the GUI's dropdown offers
     exactly this."""
+    preflight_refuses: str | None
+    """What the engine's preflight refuses before a run starts, in its own words (see
+    :class:`~chemrefine.engines.api.PreflightChecking`); ``None`` for an engine without
+    the hook."""
 
 
 def _describe(name: str, engine: CalculationEngine) -> EngineDescriptor:
@@ -109,6 +114,9 @@ def _describe(name: str, engine: CalculationEngine) -> EngineDescriptor:
         ),
         operations=(
             tuple(sorted(engine.operations)) if isinstance(engine, OperationsDeclaring) else ()
+        ),
+        preflight_refuses=(
+            engine.preflight_refuses if isinstance(engine, PreflightChecking) else None
         ),
     )
 
