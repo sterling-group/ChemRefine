@@ -14,6 +14,7 @@ commit that moves the code.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -57,6 +58,30 @@ def test_every_mutation_anchor_matches_the_source_exactly_once():
     """A moved line must fail here, not partway into a CI job that stops early."""
     gate = _load_gate()
     assert gate.stale_anchors(REPO, gate.MUTATIONS) == []
+
+
+def test_an_engine_files_its_own_mutations_beside_its_fixture(tmp_path: Path):
+    """``tests/data/engines/<name>/mutations.json`` joins the gate with no edit to the script.
+
+    The bundled list is one more central roster an engine would otherwise have to be added
+    to; read from the fixture folder, an engine's guards travel with the engine, and the
+    anchor check above covers them like any other entry.
+    """
+    gate = _load_gate()
+    folder = tmp_path / "tests" / "data" / "engines" / "probe"
+    folder.mkdir(parents=True)
+    entry = {
+        "id": "probe-guard",
+        "path": "src/chemrefine/probe.py",
+        "old": "if converged:",
+        "new": "if True:",
+        "tests": "tests/test_engines_probe.py",
+        "breaks": "an unconverged probe run ranks as a result",
+    }
+    (folder / gate.ENGINE_MUTATIONS_NAME).write_text(json.dumps([entry]), encoding="utf-8")
+
+    assert gate.engine_mutations(tmp_path) == (gate.Mutation(**entry),)
+    assert gate.engine_mutations(tmp_path / "nowhere") == ()
 
 
 def test_a_moved_anchor_is_reported_by_id():

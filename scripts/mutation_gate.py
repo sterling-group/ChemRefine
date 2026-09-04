@@ -41,6 +41,7 @@ test costs 73s, because ``-x`` otherwise walks every alphabetically-earlier file
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -79,7 +80,7 @@ class Mutation:
     """What a user would get if this shipped — the reason the entry is on the list."""
 
 
-MUTATIONS = (
+_BUNDLED: tuple[Mutation, ...] = (
     Mutation(
         id="nms-is-resolved",
         path="src/chemrefine/nms.py",
@@ -329,6 +330,25 @@ MUTATIONS = (
         "survived while the partial-drain tests held no assertions)",
     ),
 )
+
+#: What an engine files beside its contract fixture — ``tests/data/engines/<name>/`` — to
+#: put its own guards on the list: a JSON array of objects with :class:`Mutation`'s fields.
+#: Read here so an engine ships its mutations without an edit to this script.
+ENGINE_MUTATIONS_NAME = "mutations.json"
+
+
+def engine_mutations(root: Path) -> tuple[Mutation, ...]:
+    """Every mutation an engine files beside its fixture under ``root``, in path order."""
+    found: list[Mutation] = []
+    fixtures = root / "tests" / "data" / "engines"
+    for path in sorted(fixtures.glob(f"*/{ENGINE_MUTATIONS_NAME}")):
+        entries = json.loads(path.read_text(encoding="utf-8"))
+        found.extend(Mutation(**entry) for entry in entries)
+    return tuple(found)
+
+
+MUTATIONS: tuple[Mutation, ...] = (*_BUNDLED, *engine_mutations(REPO))
+"""Every mutation the gate runs: the bundled ones above, then each engine's own."""
 
 
 #: Everything a pytest run reads. ``examples`` belongs here because the shipped tutorials
