@@ -60,7 +60,9 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
 
     and the generated footer, the finiteness sweep, the JSON mapping and the scaffold's
     starter comment all follow from it — no building block edited, which is what
-    ``docs/developer/adding-an-engine.md`` promises for every engine kind.
+    ``docs/developer/adding-an-engine.md`` promises for every engine kind. A quantity the
+    record has no home for — diagnostics an engine wants kept beside the result — is
+    declared with ``field=None`` and stays in the raw JSON sidecar, read by nothing.
 
     Declared here rather than passed per call because it is a property of the engine, not of
     a step: the writer and the reader are two processes on two machines, and they have to

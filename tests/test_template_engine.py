@@ -513,6 +513,65 @@ def test_a_flag_field_is_exempt_from_the_finiteness_sweep():
     assert _parse({"energy_hartree": -1.0}, seed).converged is None
 
 
+def test_a_sidecar_field_is_harvested_but_lands_on_no_result_field(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """``OutputField(field=None)`` is harvested into the raw JSON and read onto nothing.
+
+    Diagnostics an engine wants kept — a solver's iteration history, the components a run
+    resolved — have no ``ParsedResult`` home and should not grow one: the record is the
+    canonical chemistry, the raw ``stepN_<id>.json`` is the engine's own. Declared with
+    ``field=None`` the footer harvests the name, the finiteness rule still applies as
+    declared, and the reader skips it — so the declaration stays on the engine, and the
+    footer hard-codes nothing.
+    """
+    import json
+
+    class _Sidecar(ScriptEngine[EngineOptions]):
+        name = "sidecar-probe"
+        label = "Sidecar"
+        output_fields = (
+            *SCRIPT_OUTPUT,
+            OutputField("engine_metadata", None, finite=False),
+            OutputField("residual", None),
+        )
+
+    engine = _Sidecar()
+    template = tmp_path / "step1.py"
+    template.write_text(
+        'energy_hartree = -1.0\nengine_metadata = {"evaluations": 3}\nresidual = 1e-9\n',
+        encoding="utf-8",
+    )
+    rendered = tmp_path / "step1_0.py"
+    output = tmp_path / "step1_0.json"
+    engine.build_input(
+        xyz_path=tmp_path / "step1_0_inp.xyz",
+        template_path=template,
+        input_path=rendered,
+        output_path=output,
+        ctx=_ctx(tmp_path),
+    )
+    assert '"engine_metadata"' in rendered.read_text(encoding="utf-8")
+    monkeypatch.chdir(tmp_path)  # the footer writes its basename into the cwd
+    exec(compile(rendered.read_text(encoding="utf-8"), str(rendered), "exec"), {})
+    document = json.loads(output.read_text(encoding="utf-8"))
+    assert document["engine_metadata"] == {"evaluations": 3}
+    assert document["residual"] == 1e-9
+
+    seed = Atoms("H", positions=[[0, 0, 0]])
+    parsed = parse_output(output, label="Sidecar", fallback=seed, fields=_Sidecar.output_fields)[0]
+    assert parsed.energy_hartree == -1.0
+    assert not hasattr(parsed, "engine_metadata")
+
+    # The finiteness rule follows the declaration even for a field nothing reads back.
+    with pytest.raises(OutputParseError, match="non-finite 'residual'"):
+        _parse(
+            {"energy_hartree": -1.0, "residual": float("nan")},
+            seed,
+            fields=_Sidecar.output_fields,
+        )
+
+
 def test_an_unconverged_script_is_a_convergence_failure_with_a_geometry_to_retry_from(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

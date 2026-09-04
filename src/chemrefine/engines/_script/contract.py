@@ -46,8 +46,13 @@ class OutputField:
     name: str
     """The template-local name the footer harvests, and the JSON key it writes."""
 
-    field: str
-    """The :class:`~chemrefine.engines.api.ParsedResult` field it lands in."""
+    field: str | None
+    """The :class:`~chemrefine.engines.api.ParsedResult` field it lands in.
+
+    ``None`` for a quantity the record has no home for and should not grow one — a solver's
+    iteration history, the components a run resolved. Such a field is harvested into the raw
+    ``stepN_<id>.json`` (the engine's own sidecar), held to ``finite`` as declared, and read
+    onto nothing: the declaration stays on the engine, and the footer hard-codes no name."""
 
     required: bool = False
     """Whether a script that never assigns it has failed.

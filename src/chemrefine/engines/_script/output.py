@@ -56,8 +56,8 @@ def parse_output(
     values: dict[str, Any] = {"forces_ev_per_a": None}
     for spec in fields:
         raw = data.get(spec.name)
-        if raw is None:
-            continue
+        if raw is None or spec.field is None:
+            continue  # absent, or a sidecar-only quantity the record has no home for
         values[spec.field] = spec.convert(raw, seed) if spec.convert else raw
     positions = values.pop("positions", None)
     if positions is None:
