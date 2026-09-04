@@ -19,12 +19,33 @@ from chemrefine.engines.api import ENGINES, get_engine
 from chemrefine.engines.mlip import backends as backends_pkg
 from chemrefine.engines.mlip.registry import _BACKENDS, CalculatorSpec
 
-_BUNDLED = {"orca", "mlip", "mlip-extopt", "mlip-train", "pyscf", "pyscf-extopt", "qchem"}
+
+def _bundled_packages() -> set[str]:
+    """Every bare-named subpackage under ``engines/`` — the rule ``_load_plugins`` applies."""
+    root = Path(engines_pkg.__file__).parent
+    return {
+        p.name
+        for p in root.iterdir()
+        if p.is_dir() and not p.name.startswith("_") and (p / "__init__.py").is_file()
+    }
 
 
 def test_every_bundled_plugin_is_discovered():
-    """Importing chemrefine.engines registers every bundled engine — no import list."""
-    assert set(ENGINES) >= _BUNDLED
+    """Importing chemrefine.engines registers every bundled engine — no import list.
+
+    Derived from the package tree rather than spelled as a roster: a hand-written set
+    here was one more list an engine had to be added to, and one that could not notice a
+    package that registered nothing. Each bare-named package must have registered at least
+    one engine implemented inside it.
+    """
+    packages = _bundled_packages()
+    assert {"orca", "mlip", "pyscf", "qchem"} <= packages, "the sweep must actually sweep"
+    for package in sorted(packages):
+        prefix = f"{engines_pkg.__name__}.{package}."
+        registered = [
+            name for name in ENGINES if type(get_engine(name)).__module__.startswith(prefix)
+        ]
+        assert registered, f"engines/{package}/ is a bare-named package that registered no engine"
 
 
 def test_every_bundled_backend_is_discovered():
