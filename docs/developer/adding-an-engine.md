@@ -13,10 +13,15 @@ place:
 - **the plugins** — one bare-named package each, auto-discovered; the
   [engine table](../engines/index.md) lists what that currently is.
 
-Adding an engine touches exactly **one** thing: a new bare-named `engines/<name>/` package.
-Plugins are auto-discovered — every bare-named subpackage is imported when
-`chemrefine.engines` loads, so the addition is fully self-contained. You never edit a building
-block (or any central list) to make a new engine exist.
+Adding an engine is **the engine's own files and nothing central**: a new bare-named
+`engines/<name>/` package (auto-discovered — every bare-named subpackage is imported when
+`chemrefine.engines` loads), its tests (`tests/test_engines_<name>*.py` and the fixture folder
+`tests/data/engines/<name>/`), and its docs (a page under `docs/engines/` with its nav line, a
+CHANGELOG bullet). You never edit a building block or a central list to make a new engine
+exist, scaffold, document itself, or join the gates: every roster is derived from the registry,
+and every per-engine verdict is read from the engine's own folder. The one file outside those
+an engine may touch is `pyproject.toml`, and only when it needs a pip extra
+([Resources](#resources)).
 
 ## The steps
 
@@ -35,7 +40,8 @@ strings them into one engine you can read top to bottom:
    package itself is auto-discovered.
 5. **Wire resources** — a binary path or an optional `pip` extra ([Resources](#resources)).
 6. **Support NMS** only if the engine computes frequencies ([Supporting NMS](#supporting-nms)).
-7. **Add tests and a contract fixture** ([Tests](#tests)).
+7. **Add tests, a contract fixture and the knob verdict** ([Tests](#tests)).
+8. **Document it on a page of its own** ([Documentation](#documentation)).
 
 The sections that follow are those steps in detail.
 
@@ -46,7 +52,7 @@ Decorate the class with `@register("<name>")` and choose the **kind** that match
 | Kind | Base | You provide |
 |------|------|-------------|
 | Per-structure program (own input format) | [`JobEngine`](../api/engines_job.md) | `build_input`, `run_block`, `parse_one`, `pal`, `gpus` + the ClassVars (`label` / `template_suffix` / `output_suffix` / `output_globs`) |
-| User Python script | [`ScriptEngine`](../api/engines_job.md) (a `JobEngine`) | `_vars_from` (inject `$VAR`s from `step.options`), and `output_fields` when the template reports more than energy / geometry / gradient |
+| User Python script | [`ScriptEngine`](../api/engines_job.md) (a `JobEngine`) | `_vars_from` (inject `$VAR`s from `step.options`), and `output_fields` when the template reports more than the shared set (energy / geometry / gradient / `converged`); a field declared with `field=None` is kept in the raw JSON sidecar only |
 | ORCA optimises using *this* engine's gradients | `ExtOptOrcaEngine` | the ClassVars `backend` / `wrapper_filename` / `options_cls` / `calculator_cls`, plus a `ComputeBackend` in `extopt_calc.py` |
 | Not a per-structure job (e.g. a training step) | `CalculationEngine` directly | `prepare` / `submit` / `parse`, plus `artifact` + `run_dir` for `ArtifactEngine`, and the `JobExecutable` members to run through the scheduler |
 
@@ -60,8 +66,14 @@ step, not an engine-specific feature.
 ## Declare the metadata ClassVars
 
 `name`, plus the base-required ClassVars (`label`, `template_suffix`, `output_suffix`,
-`output_globs`), as `ClassVar[...]` annotations matching the other engines. There is no
-`supports_nms` flag — NMS is a *capability* (below), detected via `isinstance`.
+`output_globs`), as `ClassVar[...]` annotations matching the other engines. Two more travel
+with the engine rather than with any central list: `template_starter`, the text
+`chemrefine scaffold` writes for a missing template ([`StarterProviding`](../api/engines_api.md);
+an engine that declares none gets a suffix-shaped fallback), and — only if the engine takes the
+`check_step` hook — `preflight_refuses`, one sentence naming what the hook refuses
+([`PreflightChecking`](../api/engines_api.md); `register` refuses a hook without it, and the
+invariants hold the sentence unrepeated across engines). There is no `supports_nms` flag — NMS
+is a *capability* (below), detected via `isinstance`.
 
 ## Validate the YAML knobs
 
@@ -108,6 +120,15 @@ that needs it) so the package imports cleanly when the optional dependency is ab
 the extra + pip package + import name at registration so a missing library reports the extra to
 install (see `mlip.registry.MlipLibrary` — one declaration per library, shared by its
 calculator and its trainer).
+
+The extra is the one thing an engine declares outside its own files. Add it under
+`[project.optional-dependencies]` in `pyproject.toml` — `test_every_backend_extra_is_declared_in_pyproject`
+fails until you do, because an extra nothing installs provisions an empty environment that then
+dies on the backend import. If the library supports only some Python versions, put a
+`python_version` marker on every requirement of the extra and record the supported versions in
+`test_provision.py`'s `capped` table; if its modules ship no type stubs, list them under mypy's
+`ignore_missing_imports` overrides in the same file. The install page's extras table and the
+backends table are generated from what you declared.
 
 ## The lifecycle
 
@@ -215,6 +236,21 @@ Beside the cases, an engine that declares an options model files its **knob verd
 knobs a shipped example must demonstrate, `"tests_only"` the rest (a `"note"` may say why).
 Every field of the model belongs to exactly one list — `test_knob_universe_is_fully_filed`
 fails until it does — and engines sharing a model (`mlip` / `mlip-extopt`) file it once.
+
+Guards for the mutation gate go beside them too, optionally:
+`tests/data/engines/<name>/mutations.json` is a JSON array of entries with the fields of
+`scripts/mutation_gate.py`'s `Mutation` (`id`, `path`, `old`, `new`, `tests`, `breaks`), run
+after the bundled list and checked for stale anchors like any other entry.
+
+## Documentation
+
+An engine documents itself on a page of its own, `docs/engines/<name>.md`, and adds its nav
+line to `mkdocs.yml` (a page without one fails `mkdocs build --strict`). The drift guard
+(`test_docs_drift`) looks for that page before the shared engines page, so every field of the
+options model must be named on it, and the generated engine table links the engine's row to
+the page the moment the file exists. The engine, backend and extras tables are generated from
+the registry and `pyproject.toml` — nothing to type. What is still yours to write: the page,
+a CHANGELOG bullet, and a row in `examples/README.md` if an example ships.
 
 ## Worked example: a minimal engine
 
