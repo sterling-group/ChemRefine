@@ -81,6 +81,19 @@ class MlipTrainEngine(MlipBackend):
     FAIRChem's hydra config), and the template *is* that file with placeholders in it."""
 
     options_cls: ClassVar[type[MlipTrainOptions]] = MlipTrainOptions
+    template_starter: ClassVar[str] = (
+        "# mlip-train starter — NOT runnable as written. A trainer template is the\n"
+        "# backend's own config where one exists (mace/fairchem: every part of a working\n"
+        "# one is load-bearing; sevenn: `sevenn preset fine_tune` writes one), and\n"
+        "# chemrefine's own small schema where none does (chgnet/orb). Start from the\n"
+        "# worked examples instead:\n"
+        "#   examples/tutorials/fairchem_finetune/templates/  (UMA fine-tune, commented)\n"
+        "#   docs -> Engines -> MLIP training templates  (one per trainable backend)\n"
+    )
+    """What ``chemrefine scaffold`` writes for a missing ``stepN.yaml`` — honest about its
+    limits: a real trainer template is load-bearing in ways a stub cannot be, so it points at
+    the worked example rather than pretending. See
+    :class:`~chemrefine.engines.api.StarterProviding`."""
 
     # -- the backend this step needs ---------------------------------------
 

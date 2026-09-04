@@ -28,6 +28,34 @@ class PyscfEngine(PyscfBackend, ScriptEngine[PyscfOptions]):
     name: ClassVar[str] = "pyscf"
     label: ClassVar[str] = "PySCF"
     options_cls: ClassVar[type[PyscfOptions]] = PyscfOptions
+    template_starter: ClassVar[str] = (
+        "# PySCF starter. Rendered per structure: $XYZ_PATH / $CHARGE / $MULTIPLICITY come\n"
+        "# from the pipeline, $METHOD / $XC / $BASIS / $DF from the step options.\n"
+        "$OUTPUT_CONTRACT"
+        "from pyscf import dft, gto, scf\n"
+        "\n"
+        "mol = gto.M(\n"
+        '    atom="$XYZ_PATH",\n'
+        '    basis="$BASIS",\n'
+        "    charge=$CHARGE,\n"
+        "    spin=$MULTIPLICITY - 1,\n"
+        ")\n"
+        "\n"
+        'if "$METHOD" == "hf":\n'
+        "    mf = scf.HF(mol)\n"
+        "else:\n"
+        '    mf = dft.KS(mol, xc="$XC")\n'
+        "if $DF:\n"
+        "    mf = mf.density_fit()\n"
+        "\n"
+        "energy_hartree = mf.kernel()\n"
+        "# PySCF returns the last iterate rather than raising, so the verdict is reported here:\n"
+        "# False is ledgered as a convergence failure instead of ranking as a result.\n"
+        "converged = bool(mf.converged)\n"
+    )
+    """What ``chemrefine scaffold`` writes for a missing ``stepN.py`` — see
+    :class:`~chemrefine.engines.api.StarterProviding`; ``$OUTPUT_CONTRACT`` becomes the
+    comment naming this engine's output fields."""
 
     def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
         """Refuse a step that names no level of theory, before anything runs.

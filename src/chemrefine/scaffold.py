@@ -10,10 +10,12 @@ template chips and an agent's next-action decision render from — and
 working file instead of authoring one from a blank page.
 
 Starters are deliberately minimal echoes of the shipped examples (``examples/quickstart``
-et al.), keyed by engine name with a suffix-shaped fallback, so a drop-in engine still
-scaffolds something useful. The trainer's starter is honest about its limits: a real
-``mlip-train`` template is load-bearing in ways a stub cannot be, so it points at the
-worked example rather than pretending.
+et al.). Each engine declares its own (:class:`~chemrefine.engines.api.StarterProviding`),
+so the text travels with the engine and adding one edits nothing here; an engine that
+declares none gets a suffix-shaped fallback, so a drop-in still scaffolds something
+useful. The trainer's starter is honest about its limits: a real ``mlip-train`` template is
+load-bearing in ways a stub cannot be, so it points at the worked example rather than
+pretending.
 
 Which header a step needs is :func:`chemrefine.validate.effective_header`'s answer —
 the same resolution dispatch uses — so the plan and the run cannot disagree about the
@@ -29,110 +31,17 @@ from pathlib import Path
 from typing import Literal
 
 from chemrefine.config import Config
-from chemrefine.engines.api import JobExecutable, TemplateDriven, get_engine
+from chemrefine.engines.api import JobExecutable, StarterProviding, TemplateDriven, get_engine
 from chemrefine.errors import ConfigError, EngineNotFoundError
 from chemrefine.ids import step_template_path
 from chemrefine.validate import effective_header
 
-_STEP_STARTERS: dict[str, str] = {
-    "orca": (
-        "# ORCA starter — edit the keywords; ChemRefine appends each structure's geometry.\n"
-        "! B3LYP D4 def2-SVP Opt\n"
-        "%pal nprocs 4 end\n"
-        "%maxcore 2000\n"
-    ),
-    "qchem": (
-        # The comment deliberately never spells a section name: the input writer's block
-        # regexes are line-anchored, but a starter that does not mention them is one whose
-        # rendering can never depend on that anchoring.
-        "$comment\n"
-        "Q-Chem starter — ChemRefine swaps each structure's geometry into the first\n"
-        "coordinate block below.\n"
-        "$end\n"
-        "\n"
-        "$molecule\n"
-        "0 1\n"
-        "H 0.0 0.0 0.0\n"
-        "$end\n"
-        "\n"
-        "$rem\n"
-        "  jobtype     opt\n"
-        "  method      b3lyp\n"
-        "  basis       def2-svp\n"
-        "$end\n"
-    ),
-    "mlip": (
-        "# MLIP starter. Rendered per structure: $XYZ_PATH / $CHARGE / $MULTIPLICITY come\n"
-        "# from the pipeline, $MODEL_NAME / $TASK_NAME / $DEVICE from the step options.\n"
-        "$OUTPUT_CONTRACT"
-        "from ase.io import read\n"
-        "from ase.units import Hartree\n"
-        "\n"
-        "from chemrefine.engines.mlip.calculator import MlipCalculator\n"
-        "\n"
-        "mlip = MlipCalculator(\n"
-        '    model_name="$MODEL_NAME",\n'
-        '    task_name="$TASK_NAME",\n'
-        '    device="$DEVICE",\n'
-        "    # Charge-aware backends (FAIRChem omol, mace_omol) silently assume a neutral\n"
-        "    # singlet without these; the wrapper passes them where those libraries read.\n"
-        "    charge=$CHARGE,\n"
-        "    multiplicity=$MULTIPLICITY,\n"
-        ")\n"
-        'atoms = mlip.optimize(read("$XYZ_PATH"), fmax=0.03)\n'
-        "\n"
-        "energy_hartree = atoms.get_potential_energy() / Hartree\n"
-        "positions_angstrom = atoms.get_positions()\n"
-        "# The optimiser's verdict: False when it ran out of steps before reaching fmax, which\n"
-        "# ChemRefine ledgers as a convergence failure and retries from this geometry.\n"
-        "converged = mlip.last_converged\n"
-    ),
-    "pyscf": (
-        "# PySCF starter. Rendered per structure: $XYZ_PATH / $CHARGE / $MULTIPLICITY come\n"
-        "# from the pipeline, $METHOD / $XC / $BASIS / $DF from the step options.\n"
-        "$OUTPUT_CONTRACT"
-        "from pyscf import dft, gto, scf\n"
-        "\n"
-        "mol = gto.M(\n"
-        '    atom="$XYZ_PATH",\n'
-        '    basis="$BASIS",\n'
-        "    charge=$CHARGE,\n"
-        "    spin=$MULTIPLICITY - 1,\n"
-        ")\n"
-        "\n"
-        'if "$METHOD" == "hf":\n'
-        "    mf = scf.HF(mol)\n"
-        "else:\n"
-        '    mf = dft.KS(mol, xc="$XC")\n'
-        "if $DF:\n"
-        "    mf = mf.density_fit()\n"
-        "\n"
-        "energy_hartree = mf.kernel()\n"
-        "# PySCF returns the last iterate rather than raising, so the verdict is reported here:\n"
-        "# False is ledgered as a convergence failure instead of ranking as a result.\n"
-        "converged = bool(mf.converged)\n"
-    ),
-    "mlip-train": (
-        "# mlip-train starter — NOT runnable as written. A trainer template is the\n"
-        "# backend's own config where one exists (mace/fairchem: every part of a working\n"
-        "# one is load-bearing; sevenn: `sevenn preset fine_tune` writes one), and\n"
-        "# chemrefine's own small schema where none does (chgnet/orb). Start from the\n"
-        "# worked examples instead:\n"
-        "#   examples/tutorials/fairchem_finetune/templates/  (UMA fine-tune, commented)\n"
-        "#   docs -> Engines -> MLIP training templates  (one per trainable backend)\n"
-    ),
-}
-_STEP_STARTERS["mlip-extopt"] = _STEP_STARTERS["orca"]
-_STEP_STARTERS["pyscf-extopt"] = _STEP_STARTERS["orca"]
-
-_SUFFIX_FALLBACKS: dict[str, str] = {
-    "inp": _STEP_STARTERS["orca"],
-    "py": (
-        "# Script starter. Rendered per structure: $XYZ_PATH / $CHARGE / $MULTIPLICITY\n"
-        "# come from the pipeline; step options render as $UPPERCASE placeholders.\n"
-        "$OUTPUT_CONTRACT"
-    ),
-}
+_SCRIPT_FALLBACK = (
+    "# Script starter. Rendered per structure: $XYZ_PATH / $CHARGE / $MULTIPLICITY\n"
+    "# come from the pipeline; step options render as $UPPERCASE placeholders.\n"
+    "$OUTPUT_CONTRACT"
+)
+"""The starter for a ``.py`` template of an engine that declares none of its own."""
 _GENERIC_STARTER = "# ChemRefine step template — this engine documents its own format.\n"
 
 _HEADER_STARTERS: dict[str, str] = {
@@ -244,23 +153,42 @@ def _output_contract_comment(engine: object) -> str:
 
 
 def _starter_for(plan: TemplatePlan) -> str:
-    """The starter body for one planned file — engine-keyed, suffix fallback, generic."""
+    """The starter body for one planned file — the engine's own, else the suffix fallback."""
     if plan.kind == "slurm-header":
         return _HEADER_STARTERS.get(plan.path.name, _HEADER_DEFAULT)
-    starter = _STEP_STARTERS.get(plan.engine) if plan.engine is not None else None
-    if starter is None:
-        suffix = plan.path.suffix.lstrip(".")
-        starter = _SUFFIX_FALLBACKS.get(suffix, _GENERIC_STARTER)
     # `plan_templates` resolves every engine before any starter is chosen, so a name that
     # does not resolve reaches here only from a direct caller — and an engine nobody can look
-    # up has no contract to describe, which is what a non-script engine answers too.
+    # up has no starter and no contract to describe, which is what a non-script engine
+    # without a starter answers too.
     engine: object = None
     if plan.engine is not None:
         with suppress(EngineNotFoundError):
             engine = get_engine(plan.engine)
+    starter = (
+        engine.template_starter
+        if isinstance(engine, StarterProviding)
+        else _fallback_starter(plan.path.suffix.lstrip("."))
+    )
     # Only this one placeholder is filled: a starter is a *template*, and its `$XYZ_PATH`,
     # `$CHARGE` and option placeholders belong to the renderer that runs per structure.
     return starter.replace("$OUTPUT_CONTRACT", _output_contract_comment(engine))
+
+
+def _fallback_starter(suffix: str) -> str:
+    """A starter for an engine that declares none, from the suffix alone.
+
+    ``.py`` gets the neutral script starter — MLIP's and PySCF's bodies are their own, so
+    neither would serve a stranger. ``.inp`` is ORCA-shaped, the one input format other
+    programs mimic, so ORCA's own starter serves a third-party ``.inp`` engine. Anything else
+    gets a comment saying the engine documents its own format.
+    """
+    if suffix == "py":
+        return _SCRIPT_FALLBACK
+    if suffix == "inp":
+        orca = get_engine("orca")
+        if isinstance(orca, StarterProviding):  # it is; the check is for the type checker
+            return orca.template_starter
+    return _GENERIC_STARTER
 
 
 def scaffold_templates(config: Config, *, overwrite: bool = False) -> tuple[Path, ...]:

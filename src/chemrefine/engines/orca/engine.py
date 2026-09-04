@@ -38,6 +38,15 @@ class OrcaEngine(JobEngine):
     label: ClassVar[str] = "ORCA"
     template_suffix: ClassVar[str] = "inp"
     output_suffix: ClassVar[str] = "out"
+    template_starter: ClassVar[str] = (
+        "# ORCA starter — edit the keywords; ChemRefine appends each structure's geometry.\n"
+        "! B3LYP D4 def2-SVP Opt\n"
+        "%pal nprocs 4 end\n"
+        "%maxcore 2000\n"
+    )
+    """What ``chemrefine scaffold`` writes for a missing ``stepN.inp`` — see
+    :class:`~chemrefine.engines.api.StarterProviding`. The ExtOpt engines inherit it: they
+    are ORCA-driven and read the same input."""
     operations: ClassVar[tuple[str, ...]] = tuple(sorted(output.known_operations()))
     """The ``operation:`` vocabulary this family interprets — the parser dispatch's own
     set (see :class:`~chemrefine.engines.api.OperationsDeclaring`), inherited by the

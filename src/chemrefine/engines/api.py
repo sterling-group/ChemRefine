@@ -216,6 +216,24 @@ class TemplateDriven(CalculationEngine, Protocol):
 
 
 @runtime_checkable
+class StarterProviding(Protocol):
+    """An engine that ships the starter ``chemrefine scaffold`` writes for its template.
+
+    **Declarations only**, like :class:`TemplateDriven`: one ClassVar holding the text a
+    first ``templates/stepN.<suffix>`` should contain — a minimal echo of the engine's
+    shipped example, with ``$OUTPUT_CONTRACT`` where a script engine's harvest comment goes
+    (:mod:`chemrefine.scaffold` fills it from the engine's own output contract). Declared on
+    the engine rather than keyed by name in the scaffold module, so the starter travels with
+    the engine and no central list is edited to add one; an engine that declares none gets
+    the scaffold's suffix-shaped fallback, and the ExtOpt engines get ORCA's by inheriting
+    ORCA.
+    """
+
+    template_starter: ClassVar[str]
+    """The starter text; ``$OUTPUT_CONTRACT`` is replaced by the engine's contract comment."""
+
+
+@runtime_checkable
 class WhitespacePathIntolerant(Protocol):
     """An engine whose generated input cannot express a path containing whitespace.
 

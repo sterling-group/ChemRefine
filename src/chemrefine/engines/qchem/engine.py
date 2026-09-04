@@ -54,6 +54,28 @@ class QchemEngine(JobEngine):
     label: ClassVar[str] = "Q-Chem"
     template_suffix: ClassVar[str] = "in"
     output_suffix: ClassVar[str] = "out"
+    # The comment deliberately never spells a section name: the input writer's block regexes
+    # are line-anchored, but a starter that does not mention them is one whose rendering can
+    # never depend on that anchoring.
+    template_starter: ClassVar[str] = (
+        "$comment\n"
+        "Q-Chem starter — ChemRefine swaps each structure's geometry into the first\n"
+        "coordinate block below.\n"
+        "$end\n"
+        "\n"
+        "$molecule\n"
+        "0 1\n"
+        "H 0.0 0.0 0.0\n"
+        "$end\n"
+        "\n"
+        "$rem\n"
+        "  jobtype     opt\n"
+        "  method      b3lyp\n"
+        "  basis       def2-svp\n"
+        "$end\n"
+    )
+    """What ``chemrefine scaffold`` writes for a missing ``stepN.in`` — see
+    :class:`~chemrefine.engines.api.StarterProviding`."""
     operations: ClassVar[tuple[str, ...]] = tuple(sorted(output.known_operations()))
     """The ``operation:`` vocabulary this engine interprets — the parser dispatch's own
     set (see :class:`~chemrefine.engines.api.OperationsDeclaring`), derived rather than

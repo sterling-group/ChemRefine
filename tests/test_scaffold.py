@@ -153,6 +153,41 @@ def test_unknown_engines_fall_back_by_suffix_then_generically():
     assert "ChemRefine step template" in _starter_for(_plan("step1.toml", None))
 
 
+def test_a_drop_in_engine_declares_its_own_starter():
+    """``template_starter`` on the engine is what ``chemrefine scaffold`` writes for it.
+
+    Keyed by name in ``scaffold.py``, a starter was one more central list an engine had to
+    be added to — and a drop-in got the suffix fallback however good its own example was.
+    Declared on the class it travels with the engine (the ExtOpt engines inherit ORCA's by
+    inheriting ORCA); the fallback stays for an engine that declares none, and the contract
+    comment is still filled in here, so a script engine's starter names its own fields.
+    """
+    from chemrefine.engines.api import ENGINES, register
+
+    @register("starter-probe")
+    class _Probe:
+        name = "starter-probe"
+        label = "Probe"
+        template_suffix = "toml"
+        template_starter = "# probe starter\n$OUTPUT_CONTRACT[probe]\n"
+
+        def prepare(self, ctx):
+            """Unused: the probe exists to be looked up, not run."""
+
+        def submit(self, inputs, ctx):
+            """Unused: see ``prepare``."""
+
+        def parse(self, inputs, ctx):
+            """Unused: see ``prepare``."""
+
+    try:
+        starter = _starter_for(_plan("step1.toml", "starter-probe"))
+    finally:
+        ENGINES.pop("starter-probe", None)
+
+    assert starter == "# probe starter\n[probe]\n"
+
+
 def test_header_starters_cover_cuda_and_everything_else():
     cuda = _starter_for(_plan("cuda.slurm.header", None, kind="slurm-header"))
     assert "--gres=gpu:1" in cuda
@@ -176,16 +211,17 @@ def test_the_template_driven_starters_render_the_real_geometry(tmp_path: Path):
     writer pins the pair: the seed's coordinates must land, and the placeholder must go.
     """
     from chemrefine.engines.orca import input as orca_input
+    from chemrefine.engines.orca.engine import OrcaEngine
     from chemrefine.engines.qchem import input as qchem_input
+    from chemrefine.engines.qchem.engine import QchemEngine
     from chemrefine.io import write_single_xyz
-    from chemrefine.scaffold import _STEP_STARTERS
 
     xyz = write_single_xyz(
         [("O", 0.0, 0.0, 0.0), ("H", 0.0, 0.0, 0.96)], tmp_path / "step1_0_inp.xyz"
     )
 
     qchem_tpl = tmp_path / "step1.in"
-    qchem_tpl.write_text(_STEP_STARTERS["qchem"], encoding="utf-8")
+    qchem_tpl.write_text(QchemEngine.template_starter, encoding="utf-8")
     rendered = qchem_input.build_input(
         xyz_path=xyz,
         template_path=qchem_tpl,
@@ -198,7 +234,7 @@ def test_the_template_driven_starters_render_the_real_geometry(tmp_path: Path):
     assert "H 0.0 0.0 0.0" not in rendered  # the starter's placeholder atom is gone
 
     orca_tpl = tmp_path / "step1.inp"
-    orca_tpl.write_text(_STEP_STARTERS["orca"], encoding="utf-8")
+    orca_tpl.write_text(OrcaEngine.template_starter, encoding="utf-8")
     rendered = orca_input.build_input(
         xyz_path=xyz,
         template_path=orca_tpl,
