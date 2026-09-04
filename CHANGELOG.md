@@ -27,6 +27,14 @@ for the full map.
 
 ### Added
 
+- **Every declared knob is a script placeholder, and the whole model is `$OPTIONS_JSON`.**
+  A `stepN.py` for `mlip` or `pyscf` reads any field of its engine's options model as
+  `$UPPERCASE` (`$MODEL_NAME`, `$BASIS`, `$GPU`, `$CORES`, …; an unset knob renders
+  empty) where each engine used to list a few names by hand, and
+  `options = json.loads("$OPTIONS_JSON")` takes the validated options whole — escaped
+  so quotes, backslashes, newlines and `$` in a value survive the literal. Only declared
+  knobs are placeholders: any other `$WORD` stays as written, and a key the model does
+  not declare never reaches the script.
 - **Config tooling** (`chemrefine validate | scaffold | schema | engines`):
   `validate` reports every finding at once — pydantic errors with field locations,
   unknown engines, bad values for declared option knobs, invalid NMS knobs — plus

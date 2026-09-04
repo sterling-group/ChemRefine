@@ -86,19 +86,3 @@ class PyscfEngine(PyscfBackend, ScriptEngine[PyscfOptions]):
         """
         self.check_step(ctx.step_cfg, charge=ctx.charge, multiplicity=ctx.multiplicity)
         return super().prepare(ctx)
-
-    def _vars_from(self, opts: PyscfOptions) -> dict[str, object]:
-        """Expose the SCF knobs as template placeholders, for parity with direct MLIP.
-
-        Lets a direct ``step{N}.py`` read ``$METHOD`` / ``$XC`` / ``$BASIS`` / ``$DF`` from the YAML
-        ``step.options`` instead of hardcoding them. The base reads them leniently, so a
-        template's extra knobs never fail the render; the level of theory is required all
-        the same, by :meth:`check_step` — so ``$BASIS`` is never the empty string a bare
-        read would render, and ``$XC`` is empty exactly when ``method: hf`` needs none.
-        """
-        return {
-            "METHOD": opts.method,
-            "XC": opts.xc or "",
-            "BASIS": opts.basis or "",
-            "DF": opts.df,
-        }

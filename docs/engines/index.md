@@ -92,6 +92,10 @@ steps:
 
 ## Machine-learned potentials (`mlip`, `mlip-extopt`)
 
+A direct `stepN.py` reads every knob below as a `$UPPERCASE` placeholder (`$MODEL_NAME`,
+`$TASK_NAME`, `$DEVICE`, `$MODEL_PATH`, `$CORES`; an unset knob renders empty) and the whole
+validated model as `$OPTIONS_JSON`, for `options = json.loads("$OPTIONS_JSON")`.
+
 | Key | Default | Description |
 |-----|---------|-------------|
 | `model_name` (aliases `model`, `size`) | `""` (the library's own default) | Model weights, in whatever spelling the library `task_name` selected uses — a size for MACE, a checkpoint name for FAIRChem (its default is `uma-s-1p2`), an id for the others. Unset means the chosen library picks its own default — one spelling could not be right for every library at once. |
@@ -195,8 +199,12 @@ artifact, with the same `task_name`.
 
 ## PySCF (`pyscf`, `pyscf-extopt`)
 
-Both engines read the SCF selection — `pyscf` renders your `stepN.py` with `$METHOD` /
-`$XC` / `$BASIS` / `$DF`, `pyscf-extopt` builds a gradient server from the same values. The
+Both engines read the SCF selection — `pyscf` renders every knob below into your `stepN.py`
+as a `$UPPERCASE` placeholder (`$METHOD` / `$XC` / `$BASIS` / `$DF` / `$GPU` / `$CORES`; an
+unset knob renders empty) and the whole validated model as `$OPTIONS_JSON`, for
+`options = json.loads("$OPTIONS_JSON")`; `pyscf-extopt` builds a gradient server from the
+same values. Only declared knobs are placeholders — any other `$WORD` in a template is left
+as it is, and a key the model does not declare never reaches the script. The
 **ExtOpt only** rows are the ones a server has to do *for* you: on the ExtOpt path ORCA drives
 and there is no `stepN.py`, so anything after the SCF has nowhere else to live. In a direct
 step that work is yours to call — `chemrefine.engines.pyscf._runtime` exports

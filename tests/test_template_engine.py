@@ -31,13 +31,67 @@ from chemrefine.errors import ChemRefineError, ConfigError, OutputParseError
 from chemrefine.state import PipelineState, StepContext, Structure
 
 
-def test_base_template_vars_default_is_empty():
-    """The base exposes no placeholders; subclasses (mlip/pyscf) override ``_vars_from``.
+def test_every_declared_knob_is_a_placeholder_and_the_model_travels_as_json(tmp_path: Path):
+    """Declaring a knob on the options model is declaring a placeholder.
 
-    ``_template_vars`` itself is not overridden by anyone — reading the options through
-    ``options_cls``, leniently, is the part that must not vary between engines.
+    ``_vars_from`` is for a derived name and the base adds none; ``_template_vars`` — not
+    overridden by anyone, because reading the options leniently through ``options_cls`` is
+    the part that must not vary — turns every declared field into ``$UPPERCASE``, renders an
+    unset one empty, and carries the whole validated model as ``$OPTIONS_JSON``. PySCF's
+    ``gpu`` and ``cores`` are placeholders by that rule alone, where a hand-kept list once
+    offered four names and nothing else.
     """
+    import ast
+    import json
+
+    from chemrefine.engines.pyscf.options import PyscfOptions
+
     assert ScriptEngine()._vars_from(EngineOptions()) == {}
+    placeholders = ScriptEngine()._template_vars(_ctx(tmp_path))
+    assert placeholders["DEVICE"] == "cpu"
+    assert placeholders["CORES"] == 1
+    assert placeholders["BACKEND_PYTHON"] == ""
+    payload = json.loads(ast.literal_eval(f'"{placeholders["OPTIONS_JSON"]}"'))
+    assert payload == {"device": "cpu", "cores": 1, "backend_python": None}
+
+    pyscf = _template_render.model_placeholders(PyscfOptions(basis="def2-svp", method="hf"))
+    assert pyscf["BASIS"] == "def2-svp" and pyscf["METHOD"] == "hf"
+    assert pyscf["XC"] == "", "an unset knob renders empty, so a template can test it"
+    assert pyscf["DF"] is True and pyscf["GPU"] is False and pyscf["CORES"] == 1
+
+
+def test_the_json_placeholder_survives_anything_a_value_can_hold(tmp_path: Path):
+    """Quotes, backslashes, newlines and ``$`` in a value round-trip through the literal.
+
+    The placeholder sits inside a double-quoted Python string, so the JSON text is escaped
+    as one; and because ``safe_substitute`` never rescans what it substituted, a ``$NAME``
+    inside a value stays literal rather than becoming a second substitution.
+    """
+    import json
+
+    from chemrefine.engines.pyscf.options import PyscfOptions
+
+    hostile = 'sto-"3g"\\path\nline $XYZ_PATH ${CHARGE} ü'
+    opts = PyscfOptions(basis=hostile, xc="pbe")
+    template = tmp_path / "step1.py"
+    template.write_text(
+        'import json\noptions = json.loads("$OPTIONS_JSON")\nenergy_hartree = -1.0\n',
+        encoding="utf-8",
+    )
+    rendered = tmp_path / "step1_0.py"
+    _template_render.build_input(
+        xyz_path=tmp_path / "frame.xyz",
+        template_path=template,
+        output_path=rendered,
+        output_json_path=tmp_path / "step1_0.json",
+        charge=0,
+        multiplicity=1,
+        extra_vars=_template_render.model_placeholders(opts),
+    )
+    namespace: dict[str, object] = {}
+    exec(compile(rendered.read_text(encoding="utf-8"), str(rendered), "exec"), namespace)
+    assert namespace["options"] == json.loads(json.dumps(opts.model_dump(mode="json")))
+    assert namespace["options"]["basis"] == hostile  # type: ignore[index]
 
 
 def test_the_options_model_answers_the_gpu_question():

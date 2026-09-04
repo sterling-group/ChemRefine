@@ -13,9 +13,11 @@ syntax — collision-free with Python's ``{`` / ``}`` brackets):
 * ``$XYZ_PATH`` — absolute path to the per-structure ``.xyz`` file.
 * ``$CHARGE`` — integer total charge (from ``ctx.charge``).
 * ``$MULTIPLICITY`` — integer spin multiplicity (``= 2S + 1``).
-* engine ``extra_vars`` — per-engine option placeholders so the YAML can drive
-  the template. The MLIP engine passes ``$MODEL_NAME`` / ``$TASK_NAME`` /
-  ``$DEVICE`` from ``step.options`` (see :meth:`ScriptEngine._vars_from`).
+* one ``$UPPERCASE`` placeholder per knob the engine's options model declares, and
+  ``$OPTIONS_JSON`` carrying the whole validated model — :func:`model_placeholders`, which
+  :meth:`ScriptEngine._template_vars` passes as ``extra_vars``; an engine adds a *derived*
+  name through :meth:`ScriptEngine._vars_from`. Nothing else reaches a template: a key the
+  model does not declare is not a placeholder, so a typo cannot render as one.
 
 Output contract: **not stated here.** The names the appended footer harvests are
 :data:`chemrefine.engines._script.contract.SCRIPT_OUTPUT`, which the engine may extend
@@ -32,12 +34,49 @@ copies it back to step_dir at exit.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from pathlib import Path
 from string import Template
 
+from chemrefine.engines._options import EngineOptions
 from chemrefine.engines._script.contract import SCRIPT_OUTPUT, OutputField
 from chemrefine.errors import ConfigError
+
+
+def json_placeholder(payload: object) -> str:
+    """``payload`` as JSON, escaped to sit inside a double-quoted Python string literal.
+
+    The JSON text is encoded as a JSON string and its outer quotes removed, which leaves a
+    body whose escapes (``\\"``, ``\\\\``, ``\\n``, ``\\uXXXX``) are also Python's — so
+    a template writes ``json.loads("$OPTIONS_JSON")`` and gets the payload back whatever the
+    values held: quotes, backslashes, newlines and ``$`` included. ``safe_substitute`` runs
+    once over the template and never rescans what it substituted, so a ``$NAME`` inside a
+    value stays literal.
+    """
+    text = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    return json.dumps(text)[1:-1]
+
+
+def model_placeholders(opts: EngineOptions) -> dict[str, object]:
+    """Every declared knob as ``$UPPERCASE``, plus ``$OPTIONS_JSON`` — the whole model.
+
+    Declaring a knob on the options model is declaring a placeholder: the names come from
+    the model's fields, so an engine lists nothing by hand and a knob added to the model
+    reaches the template the same day. An unset knob (``None``) renders as the empty string,
+    so a template that never uses it renders unchanged and one that does can test it —
+    ``$MODEL_PATH`` for a step that selected no checkpoint, ``$XC`` under ``method: hf``.
+    Everything else renders through ``str``: ``$DF`` is ``True``/``False``, a mapping is a
+    Python dict literal. ``$OPTIONS_JSON`` is the validated model dumped ``mode="json"`` and
+    escaped by :func:`json_placeholder`, for a template that would rather take the options
+    whole: ``options = json.loads("$OPTIONS_JSON")``.
+    """
+    fields = type(opts).model_fields
+    placeholders: dict[str, object] = {
+        name.upper(): ("" if (value := getattr(opts, name)) is None else value) for name in fields
+    }
+    placeholders["OPTIONS_JSON"] = json_placeholder(opts.model_dump(mode="json"))
+    return placeholders
 
 
 def _build_output_footer(output_basename: str, fields: Sequence[OutputField]) -> str:
@@ -104,8 +143,9 @@ def build_input(
 ) -> Path:
     """Render ``template_path`` into ``output_path`` and return the rendered path.
 
-    ``$XYZ_PATH`` / ``$CHARGE`` / ``$MULTIPLICITY`` (plus any engine-supplied
-    ``extra_vars`` such as ``$MODEL_NAME`` / ``$TASK_NAME`` / ``$DEVICE``) are
+    ``$XYZ_PATH`` / ``$CHARGE`` / ``$MULTIPLICITY`` (plus the engine's ``extra_vars`` —
+    every declared knob as ``$UPPERCASE`` and ``$OPTIONS_JSON``, see
+    :func:`model_placeholders`) are
     substituted via :class:`string.Template.safe_substitute` so unknown
     ``$NAME`` references in the template are left alone — users can keep
     shell-style ``$VAR`` lookups inside their script without collision.

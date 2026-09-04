@@ -105,12 +105,15 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
         # narrowed here — once, in the one place that reads it — rather than by each
         # subclass asserting its way back to the type it already declared.
         opts = cast(OptsT, self.options_cls.from_raw_lenient(ctx.step_cfg.options))
-        return self._vars_from(opts)
+        return {**script_render.model_placeholders(opts), **self._vars_from(opts)}
 
     def _vars_from(self, opts: OptsT) -> dict[str, object]:
-        """Which placeholders this engine exposes, from its validated options (default: none).
+        """The *derived* placeholders this engine adds beyond its declared knobs (default: none).
 
-        Subclasses read ``opts``' fields by name; the reading of them is the base's job.
+        Every field of :attr:`options_cls` is a placeholder already, by the read above
+        (:func:`~chemrefine.engines._script.render.model_placeholders`); this is for a name
+        the model does not hold as a field. Subclasses read ``opts`` by attribute; the
+        reading of the options is the base's job.
         """
         return {}
 
