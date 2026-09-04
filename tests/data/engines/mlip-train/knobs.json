@@ -1,7 +1,11 @@
 {
   "model": "MlipTrainOptions",
   "note": "A training step must name all three: which library trains, what it starts from, and where it runs. None of them has a default, so an example that omitted one would not run.",
-  "examples": ["task_name", "model_name", "device"],
+  "examples": [
+    "task_name",
+    "model_name",
+    "device"
+  ],
   "tests_only": [
     "valid_fraction",
     "test_fraction",
@@ -9,6 +13,7 @@
     "gpus",
     "cores",
     "model_path",
-    "backend_python"
+    "backend_python",
+    "extra"
   ]
 }

@@ -34,7 +34,10 @@ for the full map.
   `options = json.loads("$OPTIONS_JSON")` takes the validated options whole — escaped
   so quotes, backslashes, newlines and `$` in a value survive the literal. Only declared
   knobs are placeholders: any other `$WORD` stays as written, and a key the model does
-  not declare never reaches the script.
+  not declare never reaches the script. For a template's own settings, `mlip` and
+  `pyscf` steps take an `extra:` mapping — rendered as `$EXTRA` (a Python dict literal)
+  and inside `$OPTIONS_JSON` — so a key you invent is deliberate and a typo of a real
+  knob still warns; the engines that render no template refuse it.
 - **Config tooling** (`chemrefine validate | scaffold | schema | engines`):
   `validate` reports every finding at once — pydantic errors with field locations,
   unknown engines, bad values for declared option knobs, invalid NMS knobs — plus

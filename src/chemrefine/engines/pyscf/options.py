@@ -59,6 +59,14 @@ class PyscfOptions(EngineOptions):
     ``device`` (``cuda`` ⇒ ``True``); set it explicitly to override. The SCF
     falls back to CPU if gpu4pyscf can't initialise."""
 
+    extra: dict[str, Any] = Field(default_factory=dict)
+    """Free knobs for your own ``step{N}.py``, as a mapping.
+
+    The declared bag for a template's own settings: validated only as a mapping, rendered
+    as ``$EXTRA`` (a Python dict literal) and inside ``$OPTIONS_JSON``. Declared rather than
+    read off undeclared keys so a key you invent is deliberate and a typo of a real knob
+    still warns; ``pyscf-extopt`` renders no template and refuses it."""
+
     @model_validator(mode="before")
     @classmethod
     def _derive_gpu_from_device(cls, data: Any) -> Any:
@@ -145,6 +153,18 @@ class PyscfExtOptOptions(PyscfOptions):
     refused on the ExtOpt path for the reason its own docstring gives, and the direct path has
     no channel to refuse it with — a script reports what its output contract declares.
     """
+
+    @model_validator(mode="after")
+    def _no_template_knobs(self) -> Self:
+        """Refuse ``extra``: this engine renders no ``step{N}.py`` for it to reach.
+
+        Inherited from the direct model, where it is the declared bag for a template's own
+        knobs. Here nothing reads it, and a knob nothing reads is the silent no-op the
+        declared-key rule exists to catch — so it is refused rather than accepted and ignored.
+        """
+        if self.extra:
+            raise ValueError("`extra` is for a stepN.py template; this engine renders none")
+        return self
 
     strict_scf: bool = True
     """Refuse to serve a gradient from an SCF that did not converge.

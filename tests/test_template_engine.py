@@ -94,6 +94,46 @@ def test_the_json_placeholder_survives_anything_a_value_can_hold(tmp_path: Path)
     assert namespace["options"]["basis"] == hostile  # type: ignore[index]
 
 
+def test_a_templates_own_knobs_travel_through_extra():
+    """``extra:`` is the declared bag for settings only a template reads.
+
+    Rendered as ``$EXTRA`` (a Python dict literal) and inside ``$OPTIONS_JSON``. Declared, so
+    a key you invent is deliberate while a typo of a real knob is still the undeclared key
+    the run warns about; refused by the engines that render no template, where an accepted
+    bag nothing reads would be the silent no-op the declared-key rule exists to catch.
+    """
+    import ast
+    import json
+
+    from chemrefine.engines.mlip.options import MlipTrainOptions
+    from chemrefine.engines.pyscf.options import PyscfExtOptOptions, PyscfOptions
+    from chemrefine.validate import undeclared_options
+
+    knobs = {"conv_tol": 1e-9, "verbose": 4, "label": "it's"}
+    opts = PyscfOptions.from_raw({"basis": "sto-3g", "xc": "pbe", "extra": knobs})
+    placeholders = _template_render.model_placeholders(opts)
+    assert placeholders["EXTRA"] == knobs
+    assert ast.literal_eval(str(placeholders["EXTRA"])) == knobs, "a Python dict literal"
+    payload = json.loads(ast.literal_eval(f'"{placeholders["OPTIONS_JSON"]}"'))
+    assert payload["extra"] == knobs
+
+    typo = undeclared_options(
+        StepConfig(
+            step=1,
+            engine="pyscf",
+            options={"basis": "sto-3g", "xc": "pbe", "extra": knobs, "conv_tol": 1e-9},
+        )
+    )
+    assert typo is not None and "['conv_tol']" in typo
+
+    with pytest.raises(ConfigError, match="renders none"):
+        PyscfExtOptOptions.from_raw({"basis": "sto-3g", "xc": "pbe", "extra": {"k": 1}})
+    with pytest.raises(ConfigError, match="renders none"):
+        MlipTrainOptions.from_raw(
+            {"task_name": "mace_off", "model_name": "small", "device": "cpu", "extra": {"k": 1}}
+        )
+
+
 def test_the_options_model_answers_the_gpu_question():
     """``gpu_demand`` is the model's own answer; a model with another way to ask overrides it.
 

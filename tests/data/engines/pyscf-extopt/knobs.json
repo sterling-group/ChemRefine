@@ -14,6 +14,7 @@
     "tensor_folder",
     "device",
     "cores",
-    "backend_python"
+    "backend_python",
+    "extra"
   ]
 }

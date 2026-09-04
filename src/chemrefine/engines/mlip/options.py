@@ -10,7 +10,9 @@ reading the raw YAML dict.
 
 from __future__ import annotations
 
-from pydantic import AliasChoices, ConfigDict, Field, field_validator
+from typing import Any, Self
+
+from pydantic import AliasChoices, ConfigDict, Field, field_validator, model_validator
 
 from chemrefine.config import reject_shell_unsafe
 from chemrefine.engines._options import EngineOptions
@@ -103,6 +105,15 @@ class MlipOptions(EngineOptions):
             reject_shell_unsafe(v, what="the MLIP model selection", fix="rename it")
         return v
 
+    extra: dict[str, Any] = Field(default_factory=dict)
+    """Free knobs for your own ``step{N}.py``, as a mapping.
+
+    The declared bag for a template's own settings: validated only as a mapping, rendered
+    as ``$EXTRA`` (a Python dict literal) and inside ``$OPTIONS_JSON``. Declared rather than
+    read off undeclared keys so a key you invent is deliberate and a typo of a real knob
+    still warns; the engines that render no template (``mlip-extopt``, ``mlip-train``)
+    refuse it."""
+
 
 CALCULATOR_KNOBS: tuple[str, ...] = ("model_name", "task_name", "device", "model_path")
 """The four fields that select and place a calculator — the one list consumers iterate.
@@ -131,6 +142,18 @@ class MlipTrainOptions(MlipOptions):
     :class:`~chemrefine.engines.mlip.train.engine.MlipTrainEngine` asks that instead and the
     inherited types stay honest.
     """
+
+    @model_validator(mode="after")
+    def _no_template_knobs(self) -> Self:
+        """Refuse ``extra``: this engine renders no ``step{N}.py`` for it to reach.
+
+        Inherited from the direct model, where it is the declared bag for a template's own
+        knobs. Here nothing reads it, and a knob nothing reads is the silent no-op the
+        declared-key rule exists to catch — so it is refused rather than accepted and ignored.
+        """
+        if self.extra:
+            raise ValueError("`extra` is for a stepN.py template; this engine renders none")
+        return self
 
     gpus: int = Field(1, ge=1)
     """GPUs this training job needs — the data-parallel width, not an allocation.
