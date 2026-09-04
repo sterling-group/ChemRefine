@@ -60,7 +60,9 @@ def test_every_declared_knob_is_a_placeholder_and_the_model_travels_as_json(tmp_
     assert pyscf["DF"] is True and pyscf["GPU"] is False and pyscf["CORES"] == 1
 
 
-def test_the_json_placeholder_survives_anything_a_value_can_hold(tmp_path: Path):
+def test_the_json_placeholder_survives_anything_a_value_can_hold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """Quotes, backslashes, newlines and ``$`` in a value round-trip through the literal.
 
     The placeholder sits inside a double-quoted Python string, so the JSON text is escaped
@@ -89,6 +91,7 @@ def test_the_json_placeholder_survives_anything_a_value_can_hold(tmp_path: Path)
         extra_vars=_template_render.model_placeholders(opts),
     )
     namespace: dict[str, object] = {}
+    monkeypatch.chdir(tmp_path)  # the footer writes its basename into the cwd
     exec(compile(rendered.read_text(encoding="utf-8"), str(rendered), "exec"), namespace)
     assert namespace["options"] == json.loads(json.dumps(opts.model_dump(mode="json")))
     assert namespace["options"]["basis"] == hostile  # type: ignore[index]
