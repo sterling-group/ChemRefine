@@ -172,7 +172,7 @@ def _backend_python(engine: CalculationEngine, options: dict[str, Any]) -> str |
     is read through the model that declares it rather than off the raw dict: a second reader
     of a declared knob is free to disagree with the first about defaults and aliases. The
     engine's ``options_cls`` is used when it declares one, exactly as
-    :func:`chemrefine.engines.api.gpus_from_options` does.
+    :meth:`chemrefine.engines._job.JobEngine.gpus` does.
 
     Detected with :class:`~chemrefine.engines.api.OptionsDeclaring`, like every other
     capability in ``engines/``: a ``getattr`` probe puts the answer beyond the type checker,

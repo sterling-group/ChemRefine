@@ -40,6 +40,22 @@ def test_base_template_vars_default_is_empty():
     assert ScriptEngine()._vars_from(EngineOptions()) == {}
 
 
+def test_the_options_model_answers_the_gpu_question():
+    """``gpu_demand`` is the model's own answer; a model with another way to ask overrides it.
+
+    Once a free helper that peeked at a subclass field by name, and every engine imported it
+    to write the same line. The base asks ``device``; PySCF's ``gpu`` says yes on its own,
+    and ``JobEngine.gpus`` asks whichever model the engine declares.
+    """
+    from chemrefine.engines.pyscf.options import PyscfOptions
+
+    assert EngineOptions().gpu_demand == 0
+    assert EngineOptions(device="cuda").gpu_demand == 1
+    assert PyscfOptions(basis="sto-3g", xc="pbe").gpu_demand == 0
+    assert PyscfOptions(basis="sto-3g", xc="pbe", gpu=True).gpu_demand == 1
+    assert PyscfOptions(basis="sto-3g", xc="pbe", device="cuda", gpu=False).gpu_demand == 1
+
+
 # ---------------------------------------------------------------------------
 # _template_render.build_input — renderer
 # ---------------------------------------------------------------------------

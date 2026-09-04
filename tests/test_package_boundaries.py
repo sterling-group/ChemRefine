@@ -195,8 +195,9 @@ def test_the_flat_pipeline_imports_the_engine_subsystem_through_its_public_face(
     test in this file exempts imports of those modules because building an engine is
     exactly what they are for — which left the other half of the claim unchecked, and
     ``validate`` imported the GPU-demand helper from ``_job`` for as long as nothing looked.
-    Held here: a helper the orchestrator needs is promoted onto the public face, as
-    ``gpus_from_options`` now is, rather than reached for where it happens to live.
+    Held here: what the orchestrator needs is answered on the public face — the GPU demand,
+    once reached for in ``_job``, is the option model's own ``gpu_demand`` — rather than
+    reached for where it happens to live.
     """
     engines_root = _PACKAGE_ROOT / "engines"
     offences = [

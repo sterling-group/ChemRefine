@@ -37,7 +37,6 @@ from typing import ClassVar
 
 from chemrefine.config import StepConfig
 from chemrefine.engines._job import JobEngine
-from chemrefine.engines._options import gpus_from_options
 from chemrefine.engines.api import NmsInputInfo, ParsedResult, RunBlock, register
 from chemrefine.engines.qchem import input as qchem_input
 from chemrefine.engines.qchem import inspect, output
@@ -135,10 +134,6 @@ class QchemEngine(JobEngine):
         if opts.nprocs is None:
             return (1, min(opts.cores, ctx.max_cores))
         return (opts.nprocs, opts.cores)
-
-    def gpus(self, ctx: StepContext) -> int:
-        """A GPU when the validated options request one; else CPU (BrianQC is future work)."""
-        return gpus_from_options(ctx.step_cfg.options, self.options_cls)
 
     def memory_mb(self, ctx: StepContext) -> int | None:
         """The peak ``mem_total`` the template declares — Q-Chem's ``%maxcore`` counterpart.

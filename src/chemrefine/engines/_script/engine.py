@@ -20,7 +20,7 @@ from typing import ClassVar, Generic, TypeVar, cast
 
 from chemrefine.engines import _provision
 from chemrefine.engines._job import JobEngine
-from chemrefine.engines._options import EngineOptions, gpus_from_options
+from chemrefine.engines._options import EngineOptions
 from chemrefine.engines._script import output as script_output
 from chemrefine.engines._script import render as script_render
 from chemrefine.engines._script.contract import SCRIPT_OUTPUT, OutputField
@@ -123,10 +123,6 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
         field, rather than off the raw dict.
         """
         return self.options_cls.from_raw_lenient(ctx.step_cfg.options).cores
-
-    def gpus(self, ctx: StepContext) -> int:
-        """A GPU if this engine's validated options request one; else CPU."""
-        return gpus_from_options(ctx.step_cfg.options, self.options_cls)
 
     def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> RunBlock:
         """Run the rendered Python script inside ``$WORK_DIR``, capped to its core budget.

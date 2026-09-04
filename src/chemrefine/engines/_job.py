@@ -26,7 +26,7 @@ from typing import ClassVar
 from ase import Atoms
 
 from chemrefine.engines import _execution
-from chemrefine.engines.api import CompletionSink, ParsedResult, RunBlock
+from chemrefine.engines.api import CompletionSink, OptionsDeclaring, ParsedResult, RunBlock
 from chemrefine.ids import (
     allocate_child_ids,
     input_geometry_path,
@@ -230,7 +230,17 @@ class JobEngine(abc.ABC):
         return (min(self.pal(ctx), ctx.max_cores), 1)
 
     def gpus(self, ctx: StepContext) -> int:
-        """GPUs this job needs (default ``0`` = CPU); GPU engines override."""
+        """GPUs one job needs: what the step's validated options ask for, ``0`` otherwise.
+
+        The question is the model's — :attr:`~chemrefine.engines._options.EngineOptions.
+        gpu_demand` — asked here once for every job engine that declares a model, through
+        :attr:`options_cls`: the same model the engine renders its template from and the
+        ExtOpt server validates against, so the step's GPU demand, its SLURM header and its
+        script can never disagree about what ``device`` was asked for. An engine configured
+        through its template alone (ORCA) declares no model and asks for none.
+        """
+        if isinstance(self, OptionsDeclaring):
+            return self.options_cls.from_raw_lenient(ctx.step_cfg.options).gpu_demand
         return 0
 
     def memory_mb(self, ctx: StepContext) -> int | None:

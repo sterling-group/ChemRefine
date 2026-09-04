@@ -28,7 +28,7 @@ class EngineOptions(BaseModel):
     Defaults to ``cpu`` because this value is read by two layers that must agree: the
     engine renders it into the step's script (``$DEVICE``), and the scheduler derives
     the step's GPU demand and SLURM header from it
-    (:func:`gpus_from_options`, below). ``cpu`` is the floor that
+    (:attr:`gpu_demand`, below). ``cpu`` is the floor that
     always runs; requesting a GPU is one line of YAML, whereas a wrong ``cuda``
     default schedules a CPU job whose script then asks for a device it wasn't given.
     """
@@ -43,6 +43,24 @@ class EngineOptions(BaseModel):
     cores: int = Field(1, ge=1)
     """Per-structure core budget. Lives here because it is what the scheduler asks
     every job engine for (``JobEngine.pal``), not something one backend invented."""
+
+    @property
+    def gpu_demand(self) -> int:
+        """GPUs this step's options ask the scheduler for: one for ``device: cuda``, else none.
+
+        The scheduler's read of ``device`` — the header it picks, the budget it charges, the
+        device it assigns — belongs to the model beside the field, not to a helper that peeks
+        at subclass fields by name: a model with another way to ask overrides this (PySCF's
+        ``gpu``), and :meth:`chemrefine.engines._job.JobEngine.gpus` asks every declaring
+        engine's model the same question. Read through the model rather than off the raw
+        dict because the two disagree about what "unset" means: ``options.get("device", "")``
+        yielded no GPU while the field default once said ``cuda``, so a step that named no
+        device rendered ``$DEVICE=cuda`` into its script while being scheduled as a CPU job
+        on the CPU header — bypassing the GPU budget and
+        :meth:`~chemrefine.throttle.Throttler.assign_device`, so concurrent local steps piled
+        onto device 0. One reader, one default.
+        """
+        return 1 if self.device == "cuda" else 0
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any] | None) -> Self:
@@ -132,31 +150,3 @@ class EngineOptions(BaseModel):
             raise ConfigError(
                 f"invalid {cls.__name__.removesuffix('Options').lower()} options:\n{e}"
             ) from e
-
-
-def gpus_from_options(
-    options: dict[str, object] | None,
-    options_cls: type[EngineOptions] = EngineOptions,
-) -> int:
-    """1 if the step's **validated** options request a GPU, else 0.
-
-    Reads through ``options_cls`` rather than off the raw dict, because the raw dict and
-    the model disagree about what "unset" means: ``options.get("device", "")`` yielded no
-    GPU while ``EngineOptions.device`` defaulted to ``cuda``, so a step that named no
-    device rendered ``$DEVICE=cuda`` into its script while being scheduled as a CPU job on
-    the CPU header — and it bypassed both the GPU budget and
-    :meth:`~chemrefine.throttle.Throttler.assign_device`, so concurrent local steps piled
-    onto device 0. One reader, one default.
-
-    ``options_cls`` is the engine's own model, so a backend that expresses the request
-    differently is honoured without this helper knowing about it: PySCF's ``gpu`` (try
-    gpu4pyscf) is a :class:`~chemrefine.engines.pyscf.options.PyscfOptions` field derived
-    from ``device``, and ``getattr`` picks it up for engines that declare it.
-
-    Lives beside the ``device`` field it reads, and is re-exported by
-    :mod:`chemrefine.engines.api` for the orchestrator: ``validate`` and the scaffold's
-    header choice read the GPU demand too, and the public face is the one module the flat
-    pipeline imports from this subsystem.
-    """
-    opts = options_cls.from_raw_lenient(options)
-    return 1 if opts.device == "cuda" or bool(getattr(opts, "gpu", False)) else 0

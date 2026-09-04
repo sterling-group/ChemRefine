@@ -27,7 +27,7 @@ from chemrefine.config import (
     load_config,
 )
 from chemrefine.engines._options import EngineOptions
-from chemrefine.engines.api import ENGINES, OptionsDeclaring, get_engine, gpus_from_options
+from chemrefine.engines.api import ENGINES, OptionsDeclaring, get_engine
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.engines.orca.inspect import inspect_template
 from chemrefine.io import read_xyz_frames
@@ -53,12 +53,12 @@ def _seed_path(cfg: Config) -> Path:
 def _requests_gpu(step: StepConfig) -> bool:
     """Whether a step asks for a GPU, read through the engine's own options model.
 
-    Goes through the same single reader the scheduler uses (`gpus_from_options` +
-    the engine's `options_cls`) rather than re-deriving it from the raw dict here —
-    re-deriving is what let this check drift from `_execution._header_name`.
+    Goes through the same single reader the scheduler uses (`JobEngine.gpus` asking the
+    engine's `options_cls` for its `gpu_demand`) rather than re-deriving it from the raw
+    dict here — re-deriving is what let this check drift from `_execution._header_name`.
     """
     options_cls = getattr(get_engine(step.engine), "options_cls", EngineOptions)
-    return bool(gpus_from_options(step.options, options_cls))
+    return options_cls.from_raw_lenient(step.options).gpu_demand > 0
 
 
 def _resolved_template(cfg: Config, step: StepConfig) -> Path | None:

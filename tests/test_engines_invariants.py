@@ -303,7 +303,7 @@ def test_unset_device_never_silently_requests_a_gpu(engine_name: str, tmp_path: 
 def test_options_capability_matches_the_getattr_consumers():
     """The Protocol and the ``getattr`` readers must partition the registry identically.
 
-    ``_provision._backend_python`` and ``gpus_from_options`` read ``options_cls`` via
+    ``_provision._backend_python`` and ``JobEngine.gpus`` read ``options_cls`` via
     ``getattr`` with a fallback; :class:`OptionsDeclaring` formalizes the same seam for
     ``isinstance`` consumers (schema introspection). Two detection idioms for one
     capability may not disagree about a single engine — or the fallback reader and the
@@ -489,7 +489,7 @@ def _raw_option_reads(source: str) -> list[str]:
     """Every raw-dict ``.get(...)`` in ``source``: literal keys, else :data:`_DYNAMIC_KEY`.
 
     Parsed rather than grepped. A regex over the text also matches prose: the docstring on
-    `gpus_from_options` quotes the very call it exists to replace, so a text scan flags the
+    `EngineOptions.gpu_demand` quotes the very call it exists to replace, so a text scan flags the
     module that avoids it.
 
     The receiver may be a bare name (``options.get``) or an attribute chain ending in one

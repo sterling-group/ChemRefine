@@ -75,6 +75,16 @@ class PyscfOptions(EngineOptions):
             data = {**data, "gpu": device == "cuda"}
         return data
 
+    @property
+    def gpu_demand(self) -> int:
+        """One GPU when ``gpu`` is set, else the shared ``device`` rule.
+
+        ``gpu`` is this model's own way to ask (derived from ``device`` unless given), so the
+        scheduler honours it here, by override, rather than by a base helper knowing the
+        field's name.
+        """
+        return 1 if self.gpu else super().gpu_demand
+
     @classmethod
     def require_level_of_theory(cls, raw: Mapping[str, Any] | None) -> str:
         """Refuse options that name no explicit level of theory; return the named basis.

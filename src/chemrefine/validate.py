@@ -61,7 +61,6 @@ from chemrefine.engines.api import (
     TemplateDriven,
     WhitespacePathIntolerant,
     get_engine,
-    gpus_from_options,
 )
 from chemrefine.errors import ConfigError
 from chemrefine.ids import step_template_path
@@ -403,7 +402,7 @@ def effective_header(config: Config, step: StepConfig, engine: CalculationEngine
 
     Mirrors ``_execution._header_name`` without needing a :class:`StepContext`: the GPU
     demand is read through the engine's declared options model via
-    :func:`~chemrefine.engines.api.gpus_from_options`, the same read the scheduler
+    :attr:`~chemrefine.engines._options.EngineOptions.gpu_demand`, the same read the scheduler
     performs. Options too broken to read fall back to the global header — the breakage
     is the validation report's own row, and a second exception here would bury it.
     Shared with :mod:`chemrefine.scaffold`, so the plan and the run cannot disagree
@@ -413,7 +412,7 @@ def effective_header(config: Config, step: StepConfig, engine: CalculationEngine
         return step.slurm_template
     if isinstance(engine, OptionsDeclaring):
         try:
-            demands_gpu = gpus_from_options(step.options, engine.options_cls) > 0
+            demands_gpu = engine.options_cls.from_raw_lenient(step.options).gpu_demand > 0
         except ConfigError:
             demands_gpu = False
         if demands_gpu:
