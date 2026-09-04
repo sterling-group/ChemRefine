@@ -1,0 +1,6 @@
+{
+  "model": "QchemOptions",
+  "note": "No shipped example runs qchem (the tutorials are frozen paper artifacts), so every knob is tests-only until one ships.",
+  "examples": [],
+  "tests_only": ["nprocs", "save", "device", "cores", "backend_python"]
+}

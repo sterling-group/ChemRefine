@@ -1,0 +1,6 @@
+{
+  "model": "MlipOptions",
+  "note": "Shared by mlip and mlip-extopt: one verdict per model, filed once.",
+  "examples": ["model_name", "task_name", "device", "cores"],
+  "tests_only": ["model_path", "backend_python"]
+}

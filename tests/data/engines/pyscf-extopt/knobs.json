@@ -1,0 +1,19 @@
+{
+  "model": "PyscfExtOptOptions",
+  "note": "No shipped example runs pyscf-extopt (the tutorials are frozen paper artifacts), so every knob is tests-only until one ships. strict_scf in particular is an opt-out: it defaults on, and a tutorial would have no reason to turn a correctness guard off.",
+  "examples": [],
+  "tests_only": [
+    "method",
+    "xc",
+    "basis",
+    "df",
+    "gpu",
+    "strict_scf",
+    "save_tensors",
+    "localized",
+    "tensor_folder",
+    "device",
+    "cores",
+    "backend_python"
+  ]
+}

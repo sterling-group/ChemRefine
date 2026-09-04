@@ -10,6 +10,7 @@ options the examples demonstrate and the options covered by tests only.
 from __future__ import annotations
 
 import csv
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -260,6 +261,11 @@ def test_example_docker_guest_ships(yml: Path) -> None:
 # or exercised by the test suite only (TESTS_ONLY — behavioural knobs that would
 # distort the paper tutorials). A new schema field fails the universe test until
 # it is filed into one of the sets, so no knob can silently join neither.
+#
+# The config's own sections are filed here. An engine's options model is filed beside the
+# engine's contract fixture instead — `tests/data/engines/<name>/knobs.json`, one file per
+# model, read by `_engine_verdicts` — so adding an engine files its verdict in its own
+# folder and edits nothing here.
 
 REQUIRED = {
     "config": {
@@ -288,11 +294,6 @@ REQUIRED = {
     },
     "sample": {"method", "percent_cumulative", "count", "window_kcalmol"},
     "nms": {"target", "displacement_value", "num_random_displacements"},
-    "MlipOptions": {"model_name", "task_name", "device", "cores"},
-    "PyscfOptions": {"method", "xc", "basis", "device", "cores"},
-    # A training step must name all three: which library trains, what it starts from, and
-    # where it runs. None of them has a default, so an example that omitted one would not run.
-    "MlipTrainOptions": {"task_name", "model_name", "device"},
 }
 
 TESTS_ONLY = {
@@ -300,36 +301,6 @@ TESTS_ONLY = {
     "step": {"slurm_template", "on_failure"},
     "sample": {"by_parent", "temperature_k", "energy_type"},
     "nms": {"ts_mode_index", "seed"},
-    "MlipOptions": {"model_path", "backend_python"},
-    "PyscfOptions": {"df", "gpu", "backend_python"},
-    # Whole models filed here: no shipped example runs `pyscf-extopt` or `qchem` — the
-    # examples are frozen paper artifacts — so every knob is tests-only until a tutorial
-    # demonstrating the engine ships. `strict_scf` in particular is an opt-*out*: it
-    # defaults on, and a tutorial would have no reason to turn a correctness guard off.
-    "PyscfExtOptOptions": {
-        "method",
-        "xc",
-        "basis",
-        "df",
-        "gpu",
-        "strict_scf",
-        "save_tensors",
-        "localized",
-        "tensor_folder",
-        "device",
-        "cores",
-        "backend_python",
-    },
-    "QchemOptions": {"nprocs", "save", "device", "cores", "backend_python"},
-    "MlipTrainOptions": {
-        "valid_fraction",
-        "test_fraction",
-        "seed",
-        "gpus",
-        "cores",
-        "model_path",
-        "backend_python",
-    },
 }
 
 _SAMPLE_FIELDS = (
@@ -339,8 +310,8 @@ _SAMPLE_FIELDS = (
 # The engine half of the universe is derived: one section per OptionsDeclaring engine's
 # model, keyed by the model's name, with the full field set (inherited included — the
 # shared base knobs get a deliberate verdict per model). A new engine's model joins the
-# universe by registering, and fails test_knob_universe_is_fully_filed until its knobs
-# are filed above.
+# universe by registering, and fails test_knob_universe_is_fully_filed until its
+# `knobs.json` sits beside its contract fixture.
 _ENGINE_MODELS = {
     engine.options_cls
     for engine in (get_engine(name) for name in ENGINES)
@@ -355,20 +326,71 @@ _UNIVERSE = {
     **{model.__name__: set(model.model_fields) for model in _ENGINE_MODELS},
 }
 
+_ENGINE_FIXTURES = REPO / "tests" / "data" / "engines"
+
+
+def _engine_verdicts() -> dict[str, tuple[set[str], set[str], Path]]:
+    """Each engine model's verdict — ``(examples, tests_only, file)`` — from its fixture folder.
+
+    ``tests/data/engines/<name>/knobs.json`` is the engine's own filing: ``model`` names the
+    options model it judges (engines sharing a model, like ``mlip`` and ``mlip-extopt``, file
+    it once), ``examples`` the knobs a shipped example must demonstrate, ``tests_only`` the
+    rest. Two files claiming one model is a contradiction, refused here rather than resolved
+    by whichever sorted first.
+    """
+    verdicts: dict[str, tuple[set[str], set[str], Path]] = {}
+    for path in sorted(_ENGINE_FIXTURES.glob("*/knobs.json")):
+        filed = json.loads(path.read_text(encoding="utf-8"))
+        model = filed["model"]
+        assert model not in verdicts, (
+            f"{path} and {verdicts[model][2]} both file a verdict for {model}; file it once"
+        )
+        verdicts[model] = (set(filed["examples"]), set(filed["tests_only"]), path)
+    return verdicts
+
+
+def _filed(section: str) -> tuple[set[str], set[str]]:
+    """The ``(required, tests_only)`` verdict for one universe section, wherever it is filed."""
+    if section in REQUIRED or section in TESTS_ONLY:
+        return REQUIRED.get(section, set()), TESTS_ONLY.get(section, set())
+    verdict = _engine_verdicts().get(section)
+    if verdict is None:
+        return set(), set()
+    return verdict[0], verdict[1]
+
 
 def _raw_examples() -> list[dict[str, Any]]:
     return [yaml.safe_load(p.read_text()) for p in EXAMPLES]
 
 
 def test_knob_universe_is_fully_filed() -> None:
-    """Every schema field is deliberately REQUIRED or TESTS_ONLY — never neither."""
-    assert set(REQUIRED) | set(TESTS_ONLY) <= set(_UNIVERSE), (
+    """Every schema field is deliberately REQUIRED or TESTS_ONLY — never neither.
+
+    The config's own sections are filed in this module; an engine's model in its own
+    ``knobs.json``. A model with no file, a file naming no registered model, and a knob in
+    neither or both sets all fail here, so a new engine's knobs cannot join silently.
+    """
+    filed_here = set(REQUIRED) | set(TESTS_ONLY)
+    assert filed_here <= set(_UNIVERSE), (
         "a filed section matches no universe section — its verdicts would go unchecked: "
-        f"{sorted((set(REQUIRED) | set(TESTS_ONLY)) - set(_UNIVERSE))}"
+        f"{sorted(filed_here - set(_UNIVERSE))}"
+    )
+    engine_models = {model.__name__ for model in _ENGINE_MODELS}
+    assert filed_here.isdisjoint(engine_models), (
+        "engine models are filed beside their fixtures, not here: "
+        f"{sorted(filed_here & engine_models)}"
+    )
+    verdicts = _engine_verdicts()
+    assert set(verdicts) <= engine_models, (
+        f"knobs.json files for models no registered engine declares: "
+        f"{sorted(set(verdicts) - engine_models)}"
+    )
+    assert engine_models <= set(verdicts), (
+        f"engine models with no knobs.json beside their fixture: "
+        f"{sorted(engine_models - set(verdicts))}"
     )
     for section, universe in _UNIVERSE.items():
-        required = REQUIRED.get(section, set())
-        tests_only = TESTS_ONLY.get(section, set())
+        required, tests_only = _filed(section)
         assert required.isdisjoint(tests_only), f"{section}: knob filed in both sets"
         assert required | tests_only == universe, (
             f"{section}: unfiled or stale knobs: {sorted(universe ^ (required | tests_only))}"
@@ -394,7 +416,8 @@ def test_examples_cover_required_knobs() -> None:
             engine_obj = get_engine(engine) if engine else None
             if isinstance(engine_obj, OptionsDeclaring):
                 used[engine_obj.options_cls.__name__] |= options
-    for section, required in REQUIRED.items():
+    for section in _UNIVERSE:
+        required, _tests_only = _filed(section)
         missing = required - used[section]
         assert not missing, f"{section}: no example uses {sorted(missing)}"
 

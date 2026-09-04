@@ -210,6 +210,12 @@ pytest tests/test_engines_contract.py --update-goldens
 and review the diff. The suite fails until every registered engine ships a case
 (`test_every_registered_engine_ships_a_contract_case`).
 
+Beside the cases, an engine that declares an options model files its **knob verdict** as
+`tests/data/engines/<name>/knobs.json`: `"model"` names the options class, `"examples"` the
+knobs a shipped example must demonstrate, `"tests_only"` the rest (a `"note"` may say why).
+Every field of the model belongs to exactly one list — `test_knob_universe_is_fully_filed`
+fails until it does — and engines sharing a model (`mlip` / `mlip-extopt`) file it once.
+
 ## Worked example: a minimal engine
 
 To see the steps as one unit, here is a complete *illustrative* engine — `demoqm`, a fictional
