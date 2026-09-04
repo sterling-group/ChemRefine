@@ -80,6 +80,25 @@ def test_every_registered_engine_is_in_the_engine_table():
     assert len(_rows(table)) == len(ENGINES)
 
 
+def test_an_engine_with_its_own_page_is_linked_from_the_engine_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """``docs/engines/<name>.md`` is an engine's to add, and its row points at it unasked.
+
+    The index needs no hand edit for a new engine's page to be reachable: the generated
+    table links the name the moment the page exists — which is what lets the engine own its
+    option table there (``test_docs_drift`` looks for the page before the index).
+    """
+    hook = _hook()
+    monkeypatch.setattr(hook, "_ENGINE_PAGES", tmp_path)
+    (tmp_path / "orca.md").write_text("# ORCA\n", encoding="utf-8")
+
+    table = str(hook.on_page_markdown("<!-- chemrefine:engines -->"))
+
+    assert "| [`orca`](orca.md) |" in table
+    assert "| `qchem` |" in table, "an engine without a page keeps its plain name"
+
+
 def test_every_backend_extra_and_task_name_is_in_the_backend_table():
     """``chemrefine backends install`` accepts exactly these; the page must say so."""
     table = _render("backends")

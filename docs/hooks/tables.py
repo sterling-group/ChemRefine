@@ -28,6 +28,10 @@ from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
+#: Where an engine's own page lives, if it has one: ``docs/engines/<name>.md``. The engine
+#: table links a row to it the moment the file exists, so a new engine's page is reachable
+#: without a hand edit to the index — the roster stays generated, links included.
+_ENGINE_PAGES = _REPO_ROOT / "docs" / "engines"
 
 #: ``<!-- chemrefine:name -->`` alone on a line. Anchored so prose *about* a directive
 #: (this module's own docs, for one) is never mistaken for a directive.
@@ -63,9 +67,10 @@ def _engines_table() -> str:
     rows: list[tuple[str, ...]] = []
     for d in describe_engines():
         template = f"`step{{N}}.{d.template_suffix}` ({d.label})" if d.template_driven else "none"
+        page = _ENGINE_PAGES / f"{d.name}.md"
         rows.append(
             (
-                f"`{d.name}`",
+                f"[`{d.name}`]({page.name})" if page.is_file() else f"`{d.name}`",
                 template,
                 # Empty is not "no operations": OperationsDeclaring is opt-in, and an
                 # engine that does not declare one treats `operation:` as a free label.

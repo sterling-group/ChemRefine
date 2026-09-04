@@ -1,8 +1,9 @@
 """Drift guard: the hand-written configuration reference must name every schema field.
 
 Two pages duplicate the Pydantic models in prose tables — ``docs/workflow/configuration.md``
-for the config's own keys and ``docs/engines/index.md`` for each engine's ``options`` — and
-they are the places in the docs that can silently rot as fields are added. This guard makes
+for the config's own keys and ``docs/engines/index.md`` for each engine's ``options`` (or
+``docs/engines/<name>.md``, when an engine has a page of its own) — and they are the places in
+the docs that can silently rot as fields are added. This guard makes
 that drift loud: every field of every model that
 :func:`chemrefine.introspect.schema_document` exposes must appear (as a whole word) on the
 page that owns it. The reverse direction — a page naming a field the schema lost — is
@@ -32,7 +33,8 @@ from chemrefine.nms import NmsOptions
 
 _DOCS = Path(__file__).resolve().parent.parent / "docs"
 _CONFIG_PAGE = _DOCS / "workflow" / "configuration.md"
-_ENGINES_PAGE = _DOCS / "engines" / "index.md"
+_ENGINE_PAGES = _DOCS / "engines"
+_ENGINES_PAGE = _ENGINE_PAGES / "index.md"
 
 # A guard on the repository's prose, not on the package: the sdist ships the suite so a
 # distro packager can run it, but `docs/` (14 MB of site assets) deliberately does not
@@ -44,13 +46,27 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def _engine_page(name: str) -> Path:
+    """The page that owns an engine's option table: its own if it has one, else the index.
+
+    ``docs/engines/<name>.md`` is an engine's to write — an engine whose component tables
+    run to a thousand lines should not pour them into the shared page — and the generated
+    engine table links to it the moment it exists (``docs/hooks/tables.py``), so the index
+    needs no hand edit for a new engine's page to be reachable. A family sharing one model
+    documents on one page, as PySCF does on the index.
+    """
+    own = _ENGINE_PAGES / f"{name}.md"
+    return own if own.is_file() else _ENGINES_PAGE
+
+
 def _documented_universe() -> dict[str, tuple[Path, set[str]]]:
     """Every field name the docs must mention, with the page that owns it.
 
     The config's own models are documented on the configuration page; an engine's
-    ``options`` model on the engines page, beside the generated table and that engine's
-    own rules. Splitting the target rather than searching both keeps the guard specific:
-    a knob documented on the wrong page is still a knob a reader will not find.
+    ``options`` model on the engines page — beside the generated table and that engine's
+    own rules — or on the engine's own page when it has one. Naming one target rather than
+    searching every page keeps the guard specific: a knob documented on the wrong page is
+    still a knob a reader will not find.
     """
     universe: dict[str, tuple[Path, set[str]]] = {
         "Config": (_CONFIG_PAGE, set(Config.model_fields)),
@@ -63,7 +79,10 @@ def _documented_universe() -> dict[str, tuple[Path, set[str]]]:
     for name in sorted(ENGINES):
         engine = get_engine(name)
         if isinstance(engine, OptionsDeclaring):
-            universe[f"options[{name}]"] = (_ENGINES_PAGE, set(engine.options_cls.model_fields))
+            universe[f"options[{name}]"] = (
+                _engine_page(name),
+                set(engine.options_cls.model_fields),
+            )
     return universe
 
 

@@ -19,10 +19,12 @@ behind the code. Reading it:
   [`chemrefine backends install`](installing.md) takes. ORCA and Q-Chem need none: they
   are programs you install yourself and name in `executables:`.
 
+An engine that documents itself on a page of its own is linked from its row in the table.
+
 `options:` is a free per-engine dict and each engine validates its own keys — an
 undeclared key is reported by `chemrefine validate`, and logged when a run starts, as a
 silent no-op rather than ignored. The sections below are those keys, one engine family at
-a time.
+a time, for the engines documented on this page.
 
 ## ORCA (`orca`)
 
