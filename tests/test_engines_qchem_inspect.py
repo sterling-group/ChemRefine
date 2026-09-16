@@ -103,6 +103,45 @@ def test_run_type_inference_is_opt_sp_or_sp(tmp_path: Path):
     assert inspect_template(_write(tmp_path, chain)).operation == "opt_sp"
 
 
+def test_every_jobtype_in_the_chain_is_reported_lower_cased(tmp_path: Path):
+    """The raw vocabulary travels on the info, so a refusal can say what inferred what."""
+    chain = "$rem\n  JOBTYPE = OPT\n$end\n\n@@@\n\n$rem\n  jobtype Freq\n$end\n"
+    assert inspect_template(_write(tmp_path, chain)).jobtypes == frozenset({"opt", "freq"})
+
+
+@pytest.mark.parametrize(
+    ("jobtype", "operation"),
+    [
+        ("PES_SCAN", "pes"),  # ORCA's `%geom Scan` — the same relaxed scan, the same word
+        ("rpath", "irc"),  # Fukui's intrinsic reaction coordinate — ORCA's `! IRC`
+        ("aimd", "md"),  # a trajectory — ORCA's `%md`
+        ("fsm", "fsm"),  # string methods keep their name; ORCA's counterpart is NEB-TS
+        ("gsm", "gsm"),
+        ("pimd", "pimd"),
+        ("pimc", "pimc"),
+        ("bh", "bh"),  # basin hopping keeps its name; ORCA's nearest is GOAT
+    ],
+)
+def test_a_multi_geometry_jobtype_infers_the_word_orca_uses_for_the_same_run(
+    tmp_path: Path, jobtype: str, operation: str
+):
+    """Never ``sp``: a scan, path, string or trajectory names its operation.
+
+    Inferring ``sp`` for them filed the last frame as the structure's result. Naming the
+    operation hands the decision to the parser dispatch — refused while unknown, fanned
+    out once the parser exists — and sharing ORCA's word where ORCA runs the same kind of
+    job means one config reads the same on either engine.
+    """
+    info = inspect_template(_write(tmp_path, f"$rem\n  jobtype {jobtype}\n$end\n"))
+    assert info.operation == operation and info.jobtypes == frozenset({jobtype.lower()})
+
+
+def test_a_scan_after_an_optimisation_is_still_a_scan(tmp_path: Path):
+    """The output's shape is the multi-geometry job's, wherever it sits in the chain."""
+    chain = "$rem\n  jobtype opt\n$end\n\n@@@\n\n$rem\n  jobtype pes_scan\n$end\n"
+    assert inspect_template(_write(tmp_path, chain)).operation == "pes"
+
+
 def test_a_comment_block_naming_rem_facts_declares_nothing(tmp_path: Path):
     """``$rem`` and ``jobtype ts`` in a ``$comment``'s prose are words, not directives.
 

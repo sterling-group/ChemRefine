@@ -114,7 +114,12 @@ for the full map.
   copies it back to the structure dir. The `operation:` vocabulary is
   `sp` / `opt_sp` / `freq` — the GUI dropdown and the schema document pick it up —
   an unknown operation is refused at the run's preflight, and a step that omits
-  `operation:` has its run type inferred from the template's `JOBTYPE`. NMS-capable:
+  `operation:` has its run type inferred from the template's `JOBTYPE` — `pes_scan`
+  infers `pes`, `rpath` infers `irc` and `aimd` infers `md`, the words ORCA's scan, IRC
+  and MD answer to, while the string methods and the path-integral and basin-hopping
+  kinds infer operations of their own name — so a multi-geometry job is never filed as
+  its last frame: the parser dispatch has to know the operation before the step runs.
+  NMS-capable:
   `jobtype ts` targets the sampling and a frequency job — `jobtype freq` in an `@@@`
   chain, or `final_vibrational_analysis true` in the optimisation's own `$geom_opt`
   block — gates it; the frequency parse maps Q-Chem's 3N−6 vibrational modes onto the

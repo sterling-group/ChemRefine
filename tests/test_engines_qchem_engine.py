@@ -191,6 +191,52 @@ def test_the_engine_is_nms_capable(tmp_path: Path):
     assert engine.nms_input_info(one_job).computes_frequencies
 
 
+def test_a_scan_waits_for_its_parser_and_runs_the_moment_the_dispatch_knows_pes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """``jobtype pes_scan`` infers ``pes``; the dispatch's vocabulary decides the rest.
+
+    The inferred operation used to fall through to ``sp`` for any job type the inspector
+    did not know, so a scan ran at full cost and its many geometries were filed as one
+    structure per input — whatever frame a parser took. Now the scan names its operation,
+    ``prepare`` refuses it while the dispatch does not know the word, and the moment the
+    dispatch learns it — the parser landing beside the others — the step runs with no
+    edit to the engine. That last half is what parity with ORCA's ``pes`` rests on.
+    """
+    from chemrefine.engines.qchem.output import coordinator
+
+    engine = get_engine("qchem")
+    ctx = _ctx(tmp_path, template="$rem\n  jobtype pes_scan\n$end\n")
+    with pytest.raises(ConfigError, match="pes_scan") as excinfo:
+        engine.prepare(ctx)
+    assert "'pes'" in str(excinfo.value) and "does not know yet" in str(excinfo.value)
+    monkeypatch.setattr(coordinator, "_QCHEM_OPERATIONS", coordinator._QCHEM_OPERATIONS | {"pes"})
+    assert len(engine.prepare(ctx).files) == 1
+    assert engine._resolve_operation(ctx) == "pes"
+
+
+@pytest.mark.parametrize(
+    ("jobtype", "operation"), [("RPATH", "irc"), ("aimd", "md"), ("fsm", "fsm"), ("bh", "bh")]
+)
+def test_the_other_multi_geometry_jobtypes_are_refused_by_the_word_they_infer(
+    tmp_path: Path, jobtype: str, operation: str
+):
+    """A path, trajectory, string or global search is never run as ``sp``."""
+    engine = get_engine("qchem")
+    with pytest.raises(ConfigError, match=f"'{operation}'") as excinfo:
+        engine.prepare(_ctx(tmp_path, template=f"$rem\n  jobtype {jobtype}\n$end\n"))
+    assert jobtype.lower() in str(excinfo.value)
+
+
+@pytest.mark.parametrize("jobtype", ["sp", "force", "opt", "ts", "freq", "nmr"])
+def test_a_single_structure_jobtype_prepares(tmp_path: Path, jobtype: str):
+    """Every job type whose output is one structure keeps running as before."""
+    inputs = get_engine("qchem").prepare(
+        _ctx(tmp_path, template=f"$rem\n  jobtype {jobtype}\n$end\n")
+    )
+    assert len(inputs.files) == 1
+
+
 # ---------------------------------------------------------------------------
 # The submission proof: the whole pipeline, a stub binary, no licence
 # ---------------------------------------------------------------------------

@@ -106,7 +106,25 @@ class QchemEngine(JobEngine):
         output_path: Path,
         ctx: StepContext,
     ) -> None:
-        """Write one Q-Chem ``.in`` — the geometry into job 1's ``$molecule`` block."""
+        """Write one Q-Chem ``.in`` — the geometry into job 1's ``$molecule`` block.
+
+        A step whose operation the parser dispatch does not know is refused here, by name,
+        before anything is written. :meth:`check_step` already refuses an explicit
+        ``operation:``; this is the same refusal for an *inferred* one — a ``jobtype
+        pes_scan`` infers ``pes`` before its parser exists — made in ``prepare``, the path
+        every recovery command shares, so it reaches a ``rerun`` or ``resume`` that skips
+        the preflight walk. Derived from the dispatch's own vocabulary, so the step runs
+        the moment the parser lands, with no edit here.
+        """
+        operation = self._resolve_operation(ctx)
+        if operation.lower().replace("+", "_") not in output.known_operations():
+            jobtypes = ", ".join(sorted(inspect.inspect_template(template_path).jobtypes))
+            raise ConfigError(
+                f"Q-Chem template {template_path} (JOBTYPE {jobtypes}) needs operation "
+                f"{operation!r}, which the parser dispatch does not know yet — it parses "
+                f"{sorted(output.known_operations())}. The step cannot run until that "
+                f"parser exists in chemrefine.engines.qchem.output."
+            )
         qchem_input.build_input(
             xyz_path=xyz_path,
             template_path=template_path,
