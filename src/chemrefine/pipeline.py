@@ -75,19 +75,38 @@ def bootstrap(config: Config) -> PipelineState:
     2. ``config.input`` is None → fall back to
        ``templates/step1.xyz`` (the conventional default).
 
-    Raises :class:`ConfigError` if no seed source can be located.
+    Raises :class:`ConfigError` if no seed source can be located — or can be located but
+    not used. The readers raise their own exceptions for a file that is missing, malformed
+    or not text (ASE's ``XYZError`` and ``FileNotFoundError``, a ``ValueError`` for a
+    coordinate that is not a number, a ``UnicodeDecodeError``, pandas' own for a CSV), and
+    left to escape they reached the user as a traceback with exit 1 — outside the exit-code
+    contract the template and header checks honour — while ``chemrefine validate`` said OK.
+    The net is the one :func:`chemrefine.agent_tools.build_structures` puts around the same
+    read. A seed that parses to no structure at all is refused for the same reason: a
+    zero-byte ``.xyz`` reads as zero frames, and a run over zero seeds exited 0 having
+    computed nothing.
     """
     path = config.input
     if path is None:
         default = config.template_dir / "step1.xyz"
         if not default.is_file():
             raise ConfigError(f"no 'input' declared and default {default} does not exist")
-        return _seed_from_xyz(default)
+        path = default
+    try:
+        state = _seed(path, config.output_dir / "_seed")
+    except (OSError, ValueError, IndexError, KeyError) as e:
+        raise ConfigError(f"cannot seed from {path}: {e}") from e
+    if not state.structures:
+        raise ConfigError(f"{path} holds no structures")
+    return state
 
+
+def _seed(path: Path, smiles_out_dir: Path) -> PipelineState:
+    """Dispatch on what ``path`` is — a directory, a SMILES CSV or an XYZ file."""
     if path.is_dir():
         return _seed_from_directory(path)
     if path.suffix.lower() == ".csv":
-        return _seed_from_smiles_csv(path, config.output_dir / "_seed")
+        return _seed_from_smiles_csv(path, smiles_out_dir)
     if path.suffix.lower() == ".xyz":
         return _seed_from_xyz(path)
     raise ConfigError(f"unsupported input format: {path}")

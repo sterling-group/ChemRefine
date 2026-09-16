@@ -475,3 +475,20 @@ def test_an_absent_executable_path_is_a_warning_row_not_only_a_log_line(tmp_path
 
     bare = _validate(tmp_path, executables={"orca": "orca"})
     assert [w for w in bare.warnings if w.kind == "executable"] == []
+
+
+def test_a_seed_that_does_not_exist_yet_is_a_warning(tmp_path: Path):
+    """``input:`` pointing at nothing was ``ok`` with no row here, and a traceback at the run.
+
+    A warning like the template's, not an issue: the file may be written later or exist
+    only on the cluster the config is for, and ``save_config`` must still write the config.
+    """
+    report = _validate(tmp_path, input="./seeds.xyz")
+    assert report.ok
+    [warning] = [w for w in report.warnings if w.kind == "input"]
+    assert warning.loc == ("input",)
+    assert "seeds.xyz" in warning.message
+
+    (tmp_path / "seeds.xyz").write_text("1\n\nH 0 0 0\n", encoding="utf-8")
+    present = _validate(tmp_path, input="./seeds.xyz")
+    assert not any(w.kind == "input" for w in present.warnings)

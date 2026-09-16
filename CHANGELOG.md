@@ -45,8 +45,9 @@ for the full map.
   `validate` reports every finding at once — pydantic errors with field locations,
   unknown engines, bad values for declared option knobs, invalid NMS knobs — plus
   warnings for the silent no-ops (undeclared option keys, `nms: true` on an engine
-  that cannot NMS, step templates and SLURM headers that do not exist yet, resolved
-  the way dispatch resolves them); warnings never block, an unrunnable config exits 2.
+  that cannot NMS, a seed `input:`, step templates and SLURM headers that do not exist
+  yet, resolved the way dispatch resolves them); warnings never block, an unrunnable
+  config exits 2.
   `validate` and `load_config` enforce the same refusals: a non-string top-level
   key — an unquoted `on:`, `yes:` or `no:`, which YAML 1.1 parses as a boolean —
   is the documented validation error, and `template_dir` / `output_dir` /
@@ -420,6 +421,15 @@ for the full map.
 
 ### Fixed
 
+- **A seed the run cannot use is a config error, not a traceback — and never a run that
+  computes nothing.** `input:` pointing at a file that is missing, malformed (a frame
+  short of its atom count, a coordinate that is not a number, bytes that are not text),
+  a CSV without a `smiles` column, or a `.xyz` holding no structure reached the user as
+  ASE's or pandas' own exception with exit 1 — outside the exit-code contract the
+  template and header checks honour — while an empty file read as zero frames and the
+  run exited 0 having computed nothing. All of them are now a `ConfigError` naming the
+  seed (exit 2; a 400 from the GUI and the MCP tools), and `chemrefine validate` warns
+  about an `input:` that does not exist yet, as it does about a template.
 - **NMS knobs on an ExtOpt step are the sampler's, not strangers to the server model.**
   `mlip-extopt` and `pyscf-extopt` read their `options:` strictly — a typoed server knob
   must fail before anything is paid for — but the NMS knobs live in the same mapping, so

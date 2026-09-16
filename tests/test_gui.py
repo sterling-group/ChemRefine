@@ -869,6 +869,23 @@ def test_a_mode_number_that_is_not_one_is_a_400(client: Any, tmp_path: Path, mod
     assert negative.status_code == 400
 
 
+def test_a_seed_the_config_names_but_that_is_missing_is_a_400(client: Any, tmp_path: Path):
+    """The seed route reads ``input:`` through the pipeline's own bootstrap.
+
+    A missing seed raised ASE's ``FileNotFoundError`` there — neither a ``ChemRefineError``
+    nor an HTTP error — so the re-raising handler made it a logged-traceback 500.
+    """
+    config = tmp_path / "input.yaml"
+    config.write_text(
+        yaml.safe_dump({"input": "./missing.xyz", "steps": [{"step": 1, "engine": "fake"}]}),
+        "utf-8",
+    )
+    response = _get(client, f"/api/structure?config_path={config}")
+    assert response.status_code == 400
+    assert response.get_json()["exit_code"] == 2
+    assert "missing.xyz" in response.get_json()["error"]
+
+
 def test_load_refuses_a_home_it_cannot_resolve(client: Any):
     """``~nosuchuser/x`` raises ``RuntimeError`` — neither OSError nor UnicodeDecodeError.
 

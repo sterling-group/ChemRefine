@@ -897,9 +897,10 @@ def _seed_structure(
 
     Reuses the real seeder rather than re-reading ``input:`` here, so the ids the viewer
     shows are the ids the run will use — a seed the user inspects as ``2`` is the ``2``
-    that appears in ``steps.csv`` afterwards. It also inherits the seeder's own guards,
-    including the non-finite-coordinate check that exists because a seed is the one
-    geometry no parse boundary ever sees.
+    that appears in ``steps.csv`` afterwards. It also inherits the seeder's own guards:
+    the non-finite-coordinate check that exists because a seed is the one geometry no
+    parse boundary ever sees, and the refusal of a seed that is missing, malformed or
+    holds no structure — so what comes back here is never empty.
 
     The SMILES-CSV form of ``input:`` is refused rather than served — see
     :func:`_seeds_for_reading`.
@@ -911,8 +912,6 @@ def _seed_structure(
         structures = tuple(s for s in structures if s.id == structure_id)
         if not structures:
             raise ConfigError(f"no seed structure {structure_id!r} in {config.input}")
-    if not structures:
-        raise ConfigError(f"{config.input} holds no structures")
     chosen = structures[0]
     return {
         "step": None,

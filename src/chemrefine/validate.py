@@ -75,8 +75,8 @@ class ValidationIssue:
     (``("steps", 1, "options")``) — so a GUI walks it to the field to highlight and an
     agent quotes it verbatim. ``kind`` is a short machine-checkable class of finding
     (``yaml`` / ``legacy`` / a pydantic error type / ``engine`` / ``options`` /
-    ``backend`` / ``preflight`` / ``nms`` / ``template`` / ``slurm-header``); the
-    message alone is for humans.
+    ``backend`` / ``preflight`` / ``nms`` / ``template`` / ``slurm-header`` /
+    ``input``); the message alone is for humans.
     """
 
     loc: tuple[str | int, ...]
@@ -186,6 +186,21 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
         )
         for tool, value in config.missing_executable_paths()
     ]
+    # The seed is the first file every run reads and the one file the per-step checks never
+    # look at: `input:` pointing at nothing was `ok` here with no row, and ASE's traceback at
+    # the run. A warning like the template's, not an issue — the file may be written later
+    # (`build_structures`) or exist only on the cluster the config is for, and `save_config`
+    # must still be able to write the config.
+    if config.input is not None and not config.input.exists():
+        warnings_list.append(
+            ValidationIssue(
+                loc=("input",),
+                kind="input",
+                message=(
+                    f"input {config.input} does not exist yet; a run refuses to start without it"
+                ),
+            )
+        )
     # First in the list: a deprecation is about the vocabulary the file is written in, which
     # is the thing to fix before anything the filesystem checks below have to say.
     warnings_list = deprecations + warnings_list

@@ -569,6 +569,30 @@ def test_malformed_config_exits_with_the_config_error_code(tmp_path: Path):
     assert result.exit_code == ConfigError.exit_code
 
 
+@pytest.mark.parametrize("seed_text", [None, ""])
+def test_an_unusable_seed_exits_with_the_config_error_code(tmp_path: Path, seed_text: str | None):
+    """A missing or empty seed is a config error — not a traceback, and not exit 0.
+
+    The likeliest first-run mistake after the template: ASE's ``FileNotFoundError`` escaped
+    the handler that maps a ``ChemRefineError`` to its exit code, so the user saw a
+    traceback and exit 1 where the docs promise 2 — and a zero-byte seed read as zero
+    frames, ran step 1 over nothing and exited 0.
+    """
+    if seed_text is not None:
+        (tmp_path / "seed.xyz").write_text(seed_text, encoding="utf-8")
+    config = tmp_path / "input.yaml"
+    config.write_text(
+        "input: ./seed.xyz\noutput_dir: ./out\ndispatch: local\n"
+        "steps:\n  - step: 1\n    engine: fake\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["run", str(config)])
+
+    assert result.exit_code == ConfigError.exit_code
+    assert not isinstance(result.exception, FileNotFoundError)
+
+
 # --- cli: malformed legacy argv passes through ------------------------------
 
 

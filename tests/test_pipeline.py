@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -131,6 +132,47 @@ def test_bootstrap_unsupported_format_raises(tmp_path: Path):
     cfg = _config(tmp_path, input=bad)
     with pytest.raises(ConfigError):
         pipeline.bootstrap(cfg)
+
+
+@pytest.mark.parametrize(
+    ("name", "body"),
+    [
+        ("missing.xyz", None),
+        ("short.xyz", "3\n\nH 0 0 0\nH 0.7 0 0\n"),
+        ("header.xyz", "abc\n\nH 0 0 0\n"),
+        ("words.xyz", "1\n\nH x y z\n"),
+        ("binary.xyz", b"\xff\xfe\x00garbage\n"),
+        ("empty.xyz", ""),
+        ("blank.xyz", "\n\n\n"),
+        ("missing.csv", None),
+        ("nocolumn.csv", "name\nwater\n"),
+    ],
+)
+def test_bootstrap_refuses_a_seed_it_cannot_use_by_name(
+    tmp_path: Path, name: str, body: str | bytes | None
+):
+    """A missing, malformed or empty seed is a ``ConfigError`` naming the file, not a traceback.
+
+    ASE and pandas raise their own ``OSError``s and ``ValueError``s for these, and left to
+    escape they reached the user as a traceback with exit 1 — outside the exit-code
+    contract the template and header checks honour — while an empty file read as zero
+    frames and the run exited 0 having computed nothing. The same net
+    ``build_structures`` puts around its own read of an ``xyz_text``.
+    """
+    seed = tmp_path / name
+    if body is not None:
+        seed.write_bytes(body if isinstance(body, bytes) else body.encode("utf-8"))
+    with pytest.raises(ConfigError, match=re.escape(name)):
+        pipeline.bootstrap(_config(tmp_path, input=seed))
+
+
+def test_bootstrap_refuses_a_seed_directory_whose_files_hold_no_frames(tmp_path: Path):
+    """The emptiness guard is on the result, so a directory of empty files is refused too."""
+    seeds = tmp_path / "seeds"
+    seeds.mkdir()
+    (seeds / "a.xyz").write_text("", encoding="utf-8")
+    with pytest.raises(ConfigError, match="holds no structures"):
+        pipeline.bootstrap(_config(tmp_path, input=seeds))
 
 
 @pytest.mark.parametrize("literal", ["nan", "inf", "-inf"])

@@ -409,10 +409,12 @@ def test_the_input_seeds_are_viewable_before_anything_has_run(tmp_path: Path):
 
 
 def test_a_seed_directory_that_yields_no_frames(tmp_path: Path):
-    """A file is present, so bootstrap does not refuse — but it holds no structures.
+    """A directory holding a frameless ``.xyz`` seeds nothing, and the viewer says so.
 
-    ``_seed_from_directory`` refuses an *empty* directory; a directory holding a frameless
-    ``.xyz`` passes that check and seeds nothing, which is a different sentence to say.
+    ``_seed_from_directory`` refuses an *empty* directory; a frameless file passes that
+    check. The refusal is the seeder's own (``bootstrap`` refuses any seed that yields
+    no structure, for the run and the viewer alike), so the viewer inherits it rather
+    than repeating it.
     """
     seeds = tmp_path / "seeds"
     seeds.mkdir()
