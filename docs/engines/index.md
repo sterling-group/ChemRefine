@@ -12,8 +12,9 @@ behind the code. Reading it:
 - **Step template** — the file the engine reads for each step, `templates/stepN.<suffix>`,
   and the format it is written in. This is where a QM engine's real settings live.
 - **`operation:`** — the vocabulary that engine interprets. An engine listing *any* treats
-  the field as a free label; ORCA additionally infers the run type from its template when
-  `operation:` is omitted.
+  the field as a free label; an engine whose template inspection can decide the run type
+  infers it when `operation:` is omitted, and an explicit value always wins — each
+  engine's section below says what it reads.
 - **NMS** — whether `nms: true` is honoured. Detected by `isinstance`, never a flag.
 - **Backend env** — the Python stack the engine needs, if any, and the name
   [`chemrefine backends install`](installing.md) takes. ORCA and Q-Chem need none: they
@@ -63,7 +64,9 @@ Q-Chem's own documented default, just spelled visibly. A cluster whose header ca
 **Memory**: declare `mem_total` in the template's `$rem` block (Q-Chem's counterpart of
 ORCA's `%maxcore`) and the SLURM request follows it — a header whose own
 `--mem`/`--mem-per-cpu` already covers the declaration stands untouched; a short or
-absent one is extended to fit. No declaration → the header's memory policy stands.
+absent one is extended to fit. No declaration → the header's memory policy stands — and
+Q-Chem then runs at its own built-in default of 2000 MB however large the allocation, so
+declare `mem_total` for any job meant to use its share (the scaffolded starter does).
 
 **Header rule**: a threaded Q-Chem job cannot span nodes — carry `#SBATCH --nodes=1` in
 the header your qchem steps use. `QCSCRATCH` needs no line anywhere: ChemRefine points

@@ -132,7 +132,8 @@ for the full map.
 - **Memory-aware SLURM requests**: an input that declares its memory now shapes its
   allocation. ORCA's `%maxcore` requests `ceil(maxcore × pal ÷ 0.75)` (maxcore is a
   promise ORCA overshoots per process — the 75% rule); Q-Chem's `mem_total` requests its
-  declared peak. A header whose own `--mem`/`--mem-per-cpu` already covers the
+  declared peak (the scaffolded Q-Chem starter declares one: without it Q-Chem runs at
+  its own 2000 MB default, however much SLURM grants). A header whose own `--mem`/`--mem-per-cpu` already covers the
   requirement stands untouched; a short or absent one is extended to `--mem-per-cpu`,
   with the override logged. Inputs that declare nothing keep the header's policy,
   exactly as before.

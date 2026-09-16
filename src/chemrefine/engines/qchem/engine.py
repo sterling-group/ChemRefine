@@ -72,6 +72,8 @@ class QchemEngine(JobEngine):
         "  jobtype     opt\n"
         "  method      b3lyp\n"
         "  basis       def2-svp\n"
+        "  ! Q-Chem runs at 2000 MB without the next line, however much SLURM grants\n"
+        "  mem_total   4000\n"
         "$end\n"
     )
     """What ``chemrefine scaffold`` writes for a missing ``stepN.in`` — see
