@@ -28,7 +28,7 @@ import dataclasses
 import textwrap
 from contextlib import suppress
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from chemrefine.config import Config
 from chemrefine.engines.api import JobExecutable, StarterProviding, TemplateDriven, get_engine
@@ -185,9 +185,9 @@ def _fallback_starter(suffix: str) -> str:
     if suffix == "py":
         return _SCRIPT_FALLBACK
     if suffix == "inp":
-        orca = get_engine("orca")
-        if isinstance(orca, StarterProviding):  # it is; the check is for the type checker
-            return orca.template_starter
+        # ORCA declares a starter — `test_each_bundled_engine_gets_its_own_starter` holds it
+        # to that — so the narrowing is for the type checker alone, with no arm to cover.
+        return cast(StarterProviding, get_engine("orca")).template_starter
     return _GENERIC_STARTER
 
 
