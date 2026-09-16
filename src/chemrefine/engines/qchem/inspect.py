@@ -11,6 +11,11 @@ scan would refuse NMS to exactly the template shape NMS needs. ``!`` comments ar
 per line first, so a commented-out ``! jobtype freq`` is never mistaken for a directive —
 the same discipline as ORCA's inspector.
 
+Frequencies can also be asked for without a second job: Q-Chem 6 runs them after an
+optimisation when a ``$geom_opt`` block sets ``final_vibrational_analysis true`` — the
+one-job idiom that has replaced the ``@@@`` chain in recent inputs — so that block is read
+too, and ``has_freq`` answers for either spelling.
+
 ``mem_total`` follows qqchem's grammar (``mem_total`` with an optional ``=``, MB). The jobs
 of an ``@@@`` chain run one after another, so the **max** across blocks is the run's peak
 requirement — the number the SLURM request has to cover.
@@ -29,7 +34,13 @@ from pathlib import Path
 _REM_BLOCK_RE = re.compile(
     r"^[ \t]*\$rem\b(.*?)^[ \t]*\$end[ \t]*$", re.IGNORECASE | re.DOTALL | re.MULTILINE
 )
+# The optimiser's own block (Q-Chem 6, libopt3), scanned for the one setting that makes an
+# ``opt`` job a frequency job as well. Anchored like ``$rem`` for the same reason.
+_GEOM_OPT_BLOCK_RE = re.compile(
+    r"^[ \t]*\$geom_opt\b(.*?)^[ \t]*\$end[ \t]*$", re.IGNORECASE | re.DOTALL | re.MULTILINE
+)
 _JOBTYPE_RE = re.compile(r"\bjobtype\s*=?\s*(\S+)", re.IGNORECASE)
+_FINAL_VIB_RE = re.compile(r"\bfinal_vibrational_analysis\s*=?\s*(?:true|1)\b", re.IGNORECASE)
 # qqchem's grammar, which submits real inputs with it: optional ``=``, value in MB.
 _MEM_TOTAL_RE = re.compile(r"\bmem_total\s*=?\s*(\d+)", re.IGNORECASE)
 
@@ -43,7 +54,8 @@ class QchemInputInfo:
     because frequencies are parsed off the output unconditionally and ``has_freq``
     carries that fact on its own. ``is_ts``
     marks a ``jobtype ts`` (drives the NMS ``ts`` target); ``has_freq`` marks a
-    ``jobtype freq`` anywhere in the chain (gates NMS); ``mem_total_mb`` is the largest
+    ``jobtype freq`` anywhere in the chain or a ``$geom_opt`` block asking for
+    ``final_vibrational_analysis`` (gates NMS); ``mem_total_mb`` is the largest
     declared ``mem_total`` (``None`` if none is declared — absence means the header's
     memory policy stands, so it is not defaulted).
     """
@@ -73,6 +85,7 @@ def inspect_template(template_path: str | Path) -> QchemInputInfo:
         for block in _REM_BLOCK_RE.findall(text)
         for m in _MEM_TOTAL_RE.finditer(block)
     ]
+    final_vib = any(_FINAL_VIB_RE.search(block) for block in _GEOM_OPT_BLOCK_RE.findall(text))
     return QchemInputInfo(
         # An opt or ts job anywhere in the chain makes the run an optimisation — the
         # last geometry is a stationary point, which is what `opt_sp` promises the
@@ -80,6 +93,6 @@ def inspect_template(template_path: str | Path) -> QchemInputInfo:
         # not an operation: frequencies are parsed off the output unconditionally.
         operation="opt_sp" if jobtypes & {"opt", "ts"} else "sp",
         is_ts="ts" in jobtypes,
-        has_freq="freq" in jobtypes,
+        has_freq="freq" in jobtypes or final_vib,
         mem_total_mb=max(mem_totals) if mem_totals else None,
     )

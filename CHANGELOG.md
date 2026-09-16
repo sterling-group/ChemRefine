@@ -114,9 +114,10 @@ for the full map.
   `sp` / `opt_sp` / `freq` — the GUI dropdown and the schema document pick it up —
   an unknown operation is refused at the run's preflight, and a step that omits
   `operation:` has its run type inferred from the template's `JOBTYPE`. NMS-capable:
-  `jobtype ts`/`freq` gate and target the sampling, and the frequency parse maps
-  Q-Chem's 3N−6 vibrational modes onto the trivial-modes-first tensor the
-  coordinator expects. Geometry is exchanged in Ångström only — a template setting
+  `jobtype ts` targets the sampling and a frequency job — `jobtype freq` in an `@@@`
+  chain, or `final_vibrational_analysis true` in the optimisation's own `$geom_opt`
+  block — gates it; the frequency parse maps Q-Chem's 3N−6 vibrational modes onto the
+  trivial-modes-first tensor the coordinator expects. Geometry is exchanged in Ångström only — a template setting
   `$rem input_bohr` is refused by name, since the writer emits Å and the reader
   assumes it. The output reader is deliberately minimal (final energy + last
   geometry) pending the full parser set.

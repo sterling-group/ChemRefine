@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from chemrefine.engines.qchem.inspect import inspect_template
 
 
@@ -33,6 +35,39 @@ def test_a_ts_search_is_flagged(tmp_path: Path):
 def test_a_commented_jobtype_declares_nothing(tmp_path: Path):
     """``!`` comments are stripped first — a commented-out freq must not gate NMS open."""
     info = inspect_template(_write(tmp_path, "$rem\n  ! jobtype freq\n  jobtype sp\n$end\n"))
+    assert not info.has_freq
+
+
+def test_a_final_vibrational_analysis_in_geom_opt_computes_frequencies(tmp_path: Path):
+    """Q-Chem 6's one-job opt→freq: ``$geom_opt final_vibrational_analysis true``.
+
+    Recent real inputs spell the workflow this way rather than as an ``@@@`` chain, and
+    the output then carries the full VIBRATIONAL ANALYSIS — so the NMS gate has to open
+    for it exactly as it does for ``jobtype freq``.
+    """
+    info = inspect_template(
+        _write(
+            tmp_path,
+            "$rem\n  JOBTYPE  opt\n  METHOD   wB97M-V\n$end\n\n"
+            "$geom_opt\n  INITIAL_HESSIAN  exact\n  FINAL_VIBRATIONAL_ANALYSIS  true\n$end\n",
+        )
+    )
+    assert info.has_freq and info.operation == "opt_sp" and not info.is_ts
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        "$geom_opt\n  final_vibrational_analysis = false\n$end\n",
+        "$geom_opt\n  ! final_vibrational_analysis true\n$end\n",
+        "$comment\nthe $geom_opt block's final_vibrational_analysis true is the idiom\n$end\n",
+    ],
+)
+def test_a_final_vibrational_analysis_off_commented_or_in_prose_declares_nothing(
+    tmp_path: Path, block: str
+):
+    """``false``, a ``!`` comment and a ``$comment`` mention all leave the gate shut."""
+    info = inspect_template(_write(tmp_path, "$rem\n  jobtype opt\n$end\n\n" + block))
     assert not info.has_freq
 
 

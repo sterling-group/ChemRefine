@@ -184,6 +184,11 @@ def test_the_engine_is_nms_capable(tmp_path: Path):
     assert info.computes_frequencies and not info.is_transition_state
     ts = engine.nms_input_info(_ctx(tmp_path, template="$rem\n  jobtype ts\n$end\n"))
     assert ts.is_transition_state
+    one_job = _ctx(
+        tmp_path,
+        template="$rem\n  jobtype opt\n$end\n$geom_opt\n  final_vibrational_analysis true\n$end\n",
+    )
+    assert engine.nms_input_info(one_job).computes_frequencies
 
 
 # ---------------------------------------------------------------------------
