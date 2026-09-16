@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 import replay
-from replay import extract_case, forbid_run_batch, relocate, replay_run_batch
+from replay import extract_case, forbid_run_batch, forget_provenance, relocate, replay_run_batch
 
 from chemrefine import pipeline
 from chemrefine.config import Config, MinSample, load_config
@@ -117,9 +117,15 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
     }
     assert archived, "the recording carries no cache documents to compare against"
 
+    update = request.config.getoption("--update-recordings")
+    if update:
+        # An archive whose keys moved is the thing being regenerated, and the rebuild refuses
+        # rows keyed under another configuration — so the archived provenance is dropped
+        # first (unprovable rather than wrong) and written back under today's key.
+        forget_provenance(case)
     pipeline.run(load_config(case.config_path), RunPlan(default=StepMode.REBUILD))
 
-    if request.config.getoption("--update-recordings"):
+    if update:
         # The rebuild above rewrote every cache in `case.output_dir` from the archived native
         # outputs, with `forbid_run_batch` proving nothing was submitted. That tree is exactly
         # what `pack_case` trims and re-archives, so regenerating is a re-pack — no ORCA, no

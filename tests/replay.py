@@ -26,11 +26,13 @@ this harness knows about.
 from __future__ import annotations
 
 import fnmatch
+import json
 import shutil
 import tarfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from chemrefine import cache
 from chemrefine.engines import api
 from chemrefine.engines.api import CompletionSink
 from chemrefine.state import JobBatch, StepContext, StepInputs
@@ -144,6 +146,30 @@ def forbid_run_batch(engine: object, inputs: StepInputs, ctx: StepContext) -> Jo
 def relocate(case: ReplayCase) -> None:
     """Stage the captured output tree as the config's live output dir."""
     shutil.copytree(case.captured, case.output_dir)
+
+
+def forget_provenance(case: ReplayCase) -> None:
+    """Strip the cache-key provenance from every manifest in the staged output dir.
+
+    The one legitimate use is regenerating a recording after a deliberate key move — an
+    options default, a digest input — which is what ``--update-recordings`` is for. A
+    rebuild refuses rows keyed under a different configuration, and an archive whose keys
+    moved is exactly that; without its provenance the same manifest is *unprovable rather
+    than wrong* (``rebuild_cache_step``'s own distinction), so the rebuild proceeds and
+    writes the provenance back under the current key. The re-packed archive then carries
+    the keys today's code derives, with every archived output untouched.
+    """
+    for step_dir in sorted(p for p in case.output_dir.iterdir() if p.is_dir()):
+        manifest = cache.manifest_path(step_dir)
+        if not manifest.is_file():
+            continue
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        for key in ("fingerprint", "criterion_key", "search_key"):
+            data.pop(key, None)
+        for record in data.get("files") or []:
+            for key in ("row_key", "parent_digest"):
+                record.pop(key, None)
+        manifest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

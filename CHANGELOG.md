@@ -37,7 +37,10 @@ for the full map.
   not declare never reaches the script. For a template's own settings, `mlip` and
   `pyscf` steps take an `extra:` mapping — rendered as `$EXTRA` (a Python dict literal)
   and inside `$OPTIONS_JSON` — so a key you invent is deliberate and a typo of a real
-  knob still warns; the engines that render no template refuse it.
+  knob still warns; the engines that render no template refuse it. The cache key of
+  every `mlip`/`pyscf` step moves with the new knob — the options payload it digests
+  gained `extra` — so a tree cached before it recomputes those steps on `resume`, and
+  `rebuild-cache` refuses such a tree as foreign: `rerun N` is the migration.
 - **Config tooling** (`chemrefine validate | scaffold | schema | engines`):
   `validate` reports every finding at once — pydantic errors with field locations,
   unknown engines, bad values for declared option knobs, invalid NMS knobs — plus
