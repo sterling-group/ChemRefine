@@ -59,29 +59,48 @@ def _engine_page(name: str) -> Path:
     return own if own.is_file() else _ENGINES_PAGE
 
 
-def _documented_universe() -> dict[str, tuple[Path, set[str]]]:
-    """Every field name the docs must mention, with the page that owns it.
+def _engine_section(name: str, text: str) -> str:
+    """The engine's own ``## … (`name`)`` section of a shared page, heading to next ``## ``.
+
+    A shared page names every engine's knobs, so searching the whole of it lets one
+    engine's row document another engine's field: ``backend_python`` was accepted on a
+    ``qchem`` step and absent from the Q-Chem table, and the guard passed on the MLIP and
+    PySCF rows. A family documenting several engines under one heading (``pyscf``,
+    ``pyscf-extopt``) names each in the heading's backticks, which is what this keys on.
+    """
+    heading = re.search(rf"^## .*`{re.escape(name)}`.*$", text, re.MULTILINE)
+    assert heading, f"{_ENGINES_PAGE.name} has no `## … (`{name}`)` section to document it in"
+    rest = text[heading.end() :]
+    following = re.search(r"^## ", rest, re.MULTILINE)
+    return rest[: following.start()] if following else rest
+
+
+def _documented_universe() -> dict[str, tuple[Path, set[str], str | None]]:
+    """Every field name the docs must mention, with the page (and section) that owns it.
 
     The config's own models are documented on the configuration page; an engine's
-    ``options`` model on the engines page — beside the generated table and that engine's
-    own rules — or on the engine's own page when it has one. Naming one target rather than
-    searching every page keeps the guard specific: a knob documented on the wrong page is
-    still a knob a reader will not find.
+    ``options`` model on the engines page — inside that engine's own section, beside the
+    generated table and its rules — or on the engine's own page when it has one. Naming
+    one target rather than searching every page keeps the guard specific: a knob
+    documented on the wrong page, or in another engine's section, is still a knob a
+    reader will not find.
     """
-    universe: dict[str, tuple[Path, set[str]]] = {
-        "Config": (_CONFIG_PAGE, set(Config.model_fields)),
-        "StepConfig": (_CONFIG_PAGE, set(StepConfig.model_fields)),
-        "BoltzmannSample": (_CONFIG_PAGE, set(BoltzmannSample.model_fields)),
-        "MinSample": (_CONFIG_PAGE, set(MinSample.model_fields)),
-        "MaxSample": (_CONFIG_PAGE, set(MaxSample.model_fields)),
-        "NmsOptions": (_CONFIG_PAGE, set(NmsOptions.model_fields)),
+    universe: dict[str, tuple[Path, set[str], str | None]] = {
+        "Config": (_CONFIG_PAGE, set(Config.model_fields), None),
+        "StepConfig": (_CONFIG_PAGE, set(StepConfig.model_fields), None),
+        "BoltzmannSample": (_CONFIG_PAGE, set(BoltzmannSample.model_fields), None),
+        "MinSample": (_CONFIG_PAGE, set(MinSample.model_fields), None),
+        "MaxSample": (_CONFIG_PAGE, set(MaxSample.model_fields), None),
+        "NmsOptions": (_CONFIG_PAGE, set(NmsOptions.model_fields), None),
     }
     for name in sorted(ENGINES):
         engine = get_engine(name)
         if isinstance(engine, OptionsDeclaring):
+            page = _engine_page(name)
             universe[f"options[{name}]"] = (
-                _engine_page(name),
+                page,
                 set(engine.options_cls.model_fields),
+                name if page == _ENGINES_PAGE else None,
             )
     return universe
 
@@ -92,10 +111,12 @@ def _documented_universe() -> dict[str, tuple[Path, set[str]]]:
     ids=lambda part: part if isinstance(part, str) else "",
 )
 def test_every_schema_field_is_named_in_the_configuration_page(
-    model: str, target: tuple[Path, set[str]]
+    model: str, target: tuple[Path, set[str], str | None]
 ):
-    _DOC, fields = target
+    _DOC, fields, section = target
     text = _DOC.read_text(encoding="utf-8")
+    if section is not None:
+        text = _engine_section(section, text)
     missing = sorted(field for field in fields if not re.search(rf"\b{re.escape(field)}\b", text))
     assert not missing, (
         f"{model} field(s) {missing} are not mentioned in {_DOC.name}; the schema moved "

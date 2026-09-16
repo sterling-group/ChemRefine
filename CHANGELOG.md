@@ -109,7 +109,9 @@ for the full map.
   allocated `P×N` — partial method support, so never a default). The install environment
   comes from `executables: {qchem, qc, qcaux}` — `qc` exports `QC`/`PATH` and Q-Chem's
   own documented `QCAUX=$QC/qcaux` default, `qcaux` overrides it for sibling layouts —
-  or from a `module load` in the SLURM header. `QCSCRATCH` is the per-job work dir; the
+  or from a `module load` in the SLURM header; `device: cuda` and `backend_python`,
+  inherited knobs nothing here reads, are refused at preflight. `QCSCRATCH` is the
+  per-job work dir; the
   job always runs with a savename so key scratch (MOs) survives, and `options.save`
   copies it back to the structure dir. The `operation:` vocabulary is
   `sp` / `opt_sp` / `freq` — the GUI dropdown and the schema document pick it up —

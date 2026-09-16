@@ -49,7 +49,8 @@ ORCA's own MPI launcher to work.
 | `cores` | `1` | OpenMP threads, rendered as `-nt N` (with `OMP_NUM_THREADS` and `QC_THREADS` exported beside it) and allocated as `--ntasks=1 --cpus-per-task=N`. Q-Chem takes its parallelism **on the command line**, never in the input file — so the number lives here, where ORCA's lives in the template's `%pal` (the rule is: the number lives where the program natively reads it). |
 | `nprocs` | `None` | **Opt-in MPI**: `-mpi -np P` (plus `-nt N` when `cores` > 1), allocated as `--ntasks=P --cpus-per-task=N` and charged as `P×N` cores (over `max_cores` is refused, not clamped). Q-Chem's MPI covers only some methods — leave this unset unless you know your method and build support it. The MPI install facts (`QCRSH`/`QCMPI` exports, MPI module loads) belong in the SLURM header. |
 | `save` | `False` | Copy the key scratch files (MO coefficients — the `.gbw`-analogue) back to the structure's dir (`outputs/stepN/<id>/<stem>/`). The job always runs with a savename so Q-Chem keeps them in scratch; this decides whether they come home. |
-| `device` | `cpu` | Inherited, and the Q-Chem engine never reads it: the job is launched the same way either way. The *pipeline* still acts on it — `cuda` charges a GPU against `max_gpus` and auto-picks `cuda.slurm.header` — so leave it at `cpu` for Q-Chem steps, or they queue for a device nothing will use. |
+| `device` | `cpu` | Inherited from the shared options and **refused at preflight when set to `cuda`**: the Q-Chem engine launches the same command whatever the device, so the knob would only charge a GPU against `max_gpus` and pick `cuda.slurm.header` for a job that uses neither. (Q-Chem's own GPU path — the wrapper's `-gpu` flag — is not wired.) |
+| `backend_python` | `None` | Inherited and **refused when set**: Q-Chem is a program named in `executables`, not a Python backend, so nothing here reads it. |
 
 **Install environment** (`executables`, config-level — machine facts, like the `orca`
 binary): `qchem` names the wrapper explicitly; `qc` names the install root and makes the
@@ -138,6 +139,7 @@ validated model as `$OPTIONS_JSON`, for `options = json.loads("$OPTIONS_JSON")`.
 | `test_fraction` | `0.0` | Share held out for a final evaluation the training never sees. Distinct from `valid_fraction`, and off by default — on a small dataset a test set is a luxury the training set cannot afford. |
 | `seed` | `42` | Seed for the split, so a re-run partitions identically. |
 | `backend_python` | `None` | Explicit interpreter for the trainer (escape hatch). Normally unset: the managed env is resolved by name. |
+| `extra` | — (refused) | Inherited from the direct engine's model and refused by name here: a training step renders no `stepN.py` for free knobs to reach. |
 
 The step's template is the **trainer's own config** (`stepN.yaml`), rendered rather than
 patched: ChemRefine substitutes `$TRAIN_SET`, `$VALID_SET`, `$TEST_SET`, `$RUN_DIR`,

@@ -370,6 +370,36 @@ def test_an_unknown_operation_is_refused_up_front():
         engine.check_step(bad, charge=0, multiplicity=1)
 
 
+@pytest.mark.parametrize(
+    ("options", "knob"),
+    [({"device": "cuda"}, "device"), ({"backend_python": "/env/bin/python"}, "backend_python")],
+)
+def test_an_inherited_knob_the_engine_never_reads_is_refused_up_front(
+    options: dict[str, object], knob: str
+):
+    """``device: cuda`` and ``backend_python`` are accepted by the shared model, read by nothing.
+
+    Left alone, ``device: cuda`` charged a GPU against ``max_gpus`` and picked the cuda
+    header for a job that launches the same command either way — a footgun the docs
+    could only warn about — and ``backend_python`` was silently ignored. Both are
+    decidable from the config alone, so the preflight hook refuses them by name.
+    """
+    engine = get_engine("qchem")
+    with pytest.raises(ConfigError, match=knob):
+        engine.check_step(
+            StepConfig(step=1, engine="qchem", options=options), charge=0, multiplicity=1
+        )
+
+
+def test_the_knobs_the_engine_does_read_pass_preflight():
+    """``cpu`` (explicit or the default) and the engine's own knobs are not refused."""
+    engine = get_engine("qchem")
+    for options in ({}, {"device": "cpu"}, {"cores": 4, "nprocs": 2, "save": True}):
+        engine.check_step(
+            StepConfig(step=1, engine="qchem", options=options), charge=0, multiplicity=1
+        )
+
+
 def test_known_and_absent_operations_pass_preflight():
     """Every declared spelling — either case, ``+`` or ``_`` — and ``None`` pass."""
     engine = get_engine("qchem")

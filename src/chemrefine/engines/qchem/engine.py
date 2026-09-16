@@ -77,8 +77,10 @@ class QchemEngine(JobEngine):
     """What ``chemrefine scaffold`` writes for a missing ``stepN.in`` — see
     :class:`~chemrefine.engines.api.StarterProviding`."""
     preflight_refuses: ClassVar[str] = (
-        "an `operation:` the Q-Chem parser dispatch does not know, refused before a job runs "
-        "rather than after every output is ledgered UNPARSEABLE"
+        "an `operation:` the Q-Chem parser dispatch does not know, and a `device: cuda` or "
+        "`backend_python` the shared options accept but nothing here reads — each refused "
+        "before a job runs rather than after every output is ledgered UNPARSEABLE or a GPU "
+        "has been charged for a job that launches the same command either way"
     )
     operations: ClassVar[tuple[str, ...]] = tuple(sorted(output.known_operations()))
     """The ``operation:`` vocabulary this engine interprets — the parser dispatch's own
@@ -136,15 +138,34 @@ class QchemEngine(JobEngine):
     # -- preflight ---------------------------------------------------------
 
     def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
-        """Refuse an ``operation`` the parser dispatch does not know, before any job runs.
+        """Refuse what is decidable from the config alone, before any job runs.
 
-        ``operation`` never changes the generated input — it only picks the parser — so
-        a value outside the vocabulary cannot fail until every job has run at full cost
-        and each output is ledgered ``UNPARSEABLE``. Decidable from the config alone,
-        so it fires at the run's t=0 walk and in ``chemrefine validate``. ``None`` is
-        untouched: the template inspection decides. ``charge`` / ``multiplicity`` are
-        unread — the signature is the capability's.
+        Two things. An ``operation`` outside the parser dispatch's vocabulary: it never
+        changes the generated input — it only picks the parser — so left to run it fails
+        after every job has run at full cost, each output ledgered ``UNPARSEABLE``.
+        And the two knobs the shared options model accepts that nothing here reads:
+        ``device: cuda`` would charge a GPU against ``max_gpus`` and pick the cuda header
+        (:func:`chemrefine.engines._execution._header_name`) for a job that launches the
+        same command whatever the device — Q-Chem's own GPU path, the wrapper's ``-gpu``
+        flag, is not wired — and ``backend_python`` names an interpreter for a program that
+        is not a Python backend. Both fire at the run's t=0 walk and in ``chemrefine
+        validate``. ``None`` for ``operation`` is untouched: the template inspection
+        decides. ``charge`` / ``multiplicity`` are unread — the signature is the
+        capability's.
         """
+        opts = self.options_cls.from_raw_lenient(step_cfg.options)
+        if opts.device != "cpu":
+            raise ConfigError(
+                f"step {step_cfg.step}: `device: {opts.device}` on a Q-Chem step — the engine "
+                f"launches the same command whatever the device and reads no GPU, so the knob "
+                f"would only charge a GPU against max_gpus and pick the cuda header for a job "
+                f"that uses neither. Leave it unset."
+            )
+        if opts.backend_python is not None:
+            raise ConfigError(
+                f"step {step_cfg.step}: `backend_python` on a Q-Chem step — Q-Chem is a program "
+                f"named in `executables`, not a Python backend, so nothing reads it. Remove it."
+            )
         if step_cfg.operation is None:
             return
         normalized = step_cfg.operation.lower().replace("+", "_")
