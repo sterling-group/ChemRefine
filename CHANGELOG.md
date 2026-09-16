@@ -420,6 +420,14 @@ for the full map.
 
 ### Fixed
 
+- **NMS knobs on an ExtOpt step are the sampler's, not strangers to the server model.**
+  `mlip-extopt` and `pyscf-extopt` read their `options:` strictly — a typoed server knob
+  must fail before anything is paid for — but the NMS knobs live in the same mapping, so
+  `nms: true` with `target: ts` (or any other knob) was refused at preflight and by
+  `chemrefine validate` as "Extra inputs are not permitted": an engine the table marks
+  NMS-capable could sample only with every knob at its default. Every strict read now
+  takes the engine's share of the options (`StepConfig.engine_options`), and a key
+  neither reader declares is still refused.
 - **An MLIP optimisation that runs out of steps is a failure, not a survivor.**
   `MlipCalculator.optimize` discarded the verdict ase's `LBFGS.run` returns, and the
   script output contract had no field to carry one, so the last geometry of an

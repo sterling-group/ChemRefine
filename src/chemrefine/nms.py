@@ -34,15 +34,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Protocol
 
 import numpy as np
 from ase import Atoms
 from numpy.typing import NDArray
-from pydantic import BaseModel, ConfigDict, Field
 
 from chemrefine import attempts, cache, filtering, io, lifecycle
-from chemrefine.config import StepConfig
+from chemrefine.config import NmsKnobs, StepConfig
 from chemrefine.engines.api import NmsCapableEngine
 from chemrefine.errors import CacheError, ConfigError
 from chemrefine.ids import (
@@ -88,34 +87,13 @@ _SEARCH_FIELDS = ("displacement_value", "num_random_displacements", "seed")
 """What decides where the children are displaced to — an ``attemptK/`` does not survive it."""
 
 
-class NmsOptions(BaseModel):
-    """Validated normal-mode-sampling knobs (from ``step.options``)."""
+class NmsOptions(NmsKnobs):
+    """The NMS knobs with their behaviour: how a validated reading splits into the cache key.
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    target: Literal["minimum", "ts", "random"] = "minimum"
-    """``minimum`` removes all imaginary modes; ``ts`` keeps the reaction coordinate
-    and removes the rest; ``random`` displaces along random modes (exploration)."""
-
-    displacement_value: float = 1.0
-    """Magnitude (Å) of the ± displacement along each selected mode."""
-
-    num_random_displacements: int = Field(1, ge=1)
-    """``random`` only: how many modes to draw."""
-
-    ts_mode_index: int | None = None
-    """``ts`` only: explicit reaction-coordinate mode index. ``None`` ⇒ the
-    largest-magnitude imaginary mode."""
-
-    seed: int = 42
-    """Deterministic seed for ``random`` mode selection."""
-
-    @classmethod
-    def from_raw(cls, raw: dict[str, Any] | None) -> NmsOptions:
-        """Validate the NMS subset of a ``step.options`` dict (ignoring other keys)."""
-        raw = raw or {}
-        known = {k: raw[k] for k in cls.model_fields if k in raw}
-        return cls(**known)
+    The fields are :class:`chemrefine.config.NmsKnobs`' — the schema, kept where the config
+    can partition a step's ``options`` between its two readers; this subclass adds what only
+    the coordinator knows.
+    """
 
     def resolution_spec(self) -> cache.ResolutionSpec:
         """This reading split the way the cache keys it: criterion and search.

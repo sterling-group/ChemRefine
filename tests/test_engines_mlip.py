@@ -475,6 +475,37 @@ def test_mlip_extopt_run_block_starts_shared_extopt_server(tmp_path: Path):
     assert ctx.executables.get("orca", "orca") in run_block
 
 
+def test_mlip_extopt_nms_knobs_share_the_options_with_the_strict_server_read(tmp_path: Path):
+    """With ``nms: true`` the NMS knobs are the sampler's, not strangers to the server model.
+
+    The strict read (``extra="forbid"``) is right for a server knob — a typo must fail —
+    but the NMS knobs live in the same ``options`` mapping, and reading the whole of it
+    refused ``target: ts`` on every ExtOpt step as "Extra inputs are not permitted": an
+    engine the table marks NMS-capable could sample only with every knob at its default.
+    Both readers now take their own share, at the preflight and when the job script is
+    built; a key neither reader declares is still the strict read's to refuse.
+    """
+    engine = get_engine("mlip-extopt")
+    ctx = _mlip_extopt_ctx(tmp_path, target="ts", seed=7, ts_mode_index=0)
+    sampled = replace(ctx, step_cfg=ctx.step_cfg.model_copy(update={"nms": True}))
+
+    engine.check_step(sampled.step_cfg, charge=0, multiplicity=1)  # no raise
+    body = engine.run_block(
+        sampled,
+        inp_path=sampled.step_dir / "step1_structure_0.inp",
+        out_path=sampled.step_dir / "step1_structure_0.out",
+    ).body
+    assert "--backend mlip" in body
+
+    with pytest.raises(ConfigError, match="target"):  # nms off: the knob is a stranger
+        engine.check_step(ctx.step_cfg, charge=0, multiplicity=1)
+    typo = sampled.step_cfg.model_copy(
+        update={"options": {**sampled.step_cfg.options, "targt": "x"}}
+    )
+    with pytest.raises(ConfigError, match="targt"):
+        engine.check_step(typo, charge=0, multiplicity=1)
+
+
 def test_mlip_extopt_run_block_has_a_readiness_loop_and_a_cleanup_hook(tmp_path: Path):
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path)

@@ -268,6 +268,9 @@ The trade is worth making in both directions:
 - **The backend gets ORCA's machinery.** Its optimiser, its coordinate system, its
   numerical Hessian — so an MLIP can locate a transition state and produce a real
   frequency table, which is what makes `nms: true` meaningful for a potential at all.
+  The NMS knobs share the step's `options:` with the server knobs: with `nms: true` set,
+  the strict server-knob read leaves them to the sampler, and a key neither reads is
+  still refused.
 - **ORCA gets the backend's speed.** The expensive part of each geometry step is the
   energy and gradient, and that is exactly the part the potential replaces.
 

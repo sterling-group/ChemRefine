@@ -9,6 +9,7 @@ call). The template-driven direct engine has its own test file
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -354,3 +355,27 @@ def test_tensor_folder_allows_ordinary_names():
         {"basis": "def2-svp", "xc": "pbe", "tensor_folder": "run1/tensors"}
     )
     assert opts.tensor_folder == "run1/tensors"
+
+
+def test_pyscf_extopt_nms_knobs_share_the_options_with_the_strict_server_read(tmp_path: Path):
+    """The PySCF ExtOpt engine's own strict reads take the engine's share too.
+
+    It reads its options strictly four times — the base's preflight and server command,
+    its own ``save_tensors`` refusal and ``output_dirs`` — so the partition between the
+    engine's knobs and the NMS knobs has to be the config's, not one call site's.
+    """
+    engine = get_engine("pyscf-extopt")
+    ctx = _pyscf_ctx(tmp_path, target="ts", displacement_value=0.5, save_tensors=True)
+    sampled = replace(ctx, step_cfg=ctx.step_cfg.model_copy(update={"nms": True}))
+
+    engine.check_step(sampled.step_cfg, charge=0, multiplicity=1)  # no raise
+    assert engine.output_dirs(sampled) == ("tensors",)
+    body = engine.run_block(
+        sampled,
+        inp_path=sampled.step_dir / "step1_structure_0.inp",
+        out_path=sampled.step_dir / "step1_structure_0.out",
+    ).body
+    assert "--backend pyscf" in body
+
+    with pytest.raises(ConfigError, match="target"):  # nms off: the knob is a stranger
+        engine.check_step(ctx.step_cfg, charge=0, multiplicity=1)

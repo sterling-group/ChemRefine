@@ -44,9 +44,11 @@ class PyscfExtOptEngine(PyscfBackend, ExtOptOrcaEngine):
 
         Through :attr:`options_cls` rather than by naming the model again: two readers of one
         knob is what the ClassVar exists to prevent. The ClassVar is narrowed to this engine's
-        own model, so the read is typed without a cast or a narrowing assertion.
+        own model, so the read is typed without a cast or a narrowing assertion. The
+        engine's share of the options, like every strict read in this family: with
+        ``nms: true`` the NMS knobs share the mapping and are the sampler's to read.
         """
-        return self.options_cls.from_raw(ctx.step_cfg.options)
+        return self.options_cls.from_raw(ctx.step_cfg.engine_options())
 
     def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
         """Refuse ``save_tensors`` on an open-shell step, on top of the base's strict read.
@@ -60,7 +62,7 @@ class PyscfExtOptEngine(PyscfBackend, ExtOptOrcaEngine):
         and :meth:`prepare` repeats it for the paths that skip the preflight.
         """
         super().check_step(step_cfg, charge=charge, multiplicity=multiplicity)
-        opts = self.options_cls.from_raw(step_cfg.options)
+        opts = self.options_cls.from_raw(step_cfg.engine_options())
         if opts.save_tensors and multiplicity != 1:
             raise ConfigError(
                 f"step {step_cfg.step}: save_tensors supports closed-shell systems "

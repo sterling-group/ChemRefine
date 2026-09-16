@@ -13,6 +13,7 @@ from chemrefine.config import (
     Config,
     MaxSample,
     MinSample,
+    NmsKnobs,
     StepConfig,
     load_config,
 )
@@ -190,6 +191,31 @@ def test_step_options_accept_nested_json_values():
         options={"model": "uma-s-1p2", "windows": [0.5, 1.0], "flags": {"gpu": True}},
     )
     assert sc.options["windows"] == [0.5, 1.0]
+
+
+def test_engine_options_is_the_engines_share_of_the_mapping():
+    """With ``nms: true`` the NMS knobs leave the engine's share; without it nothing does.
+
+    Two declared readers share one ``options`` mapping, and a strict engine model handed
+    the whole of it refused every NMS knob as a stranger. A key neither reader declares
+    stays in the engine's share, so a typo of an NMS knob is still the strict read's to
+    refuse — and the share is a copy, so a reader cannot edit the step's own mapping.
+    """
+    options = {"task_name": "omol", "target": "ts", "seed": 7, "targt": "ts"}
+    plain = StepConfig(step=1, engine="mlip-extopt", options=options)
+    sampled = StepConfig(step=1, engine="mlip-extopt", nms=True, options=options)
+
+    assert plain.engine_options() == options
+    assert plain.engine_options() is not plain.options
+    assert sampled.engine_options() == {"task_name": "omol", "targt": "ts"}
+
+
+def test_nms_knobs_read_their_subset_and_default_the_rest():
+    """``NmsKnobs.from_raw`` keeps its own keys, ignores the rest, and takes ``None`` as empty."""
+    knobs = NmsKnobs.from_raw({"target": "ts", "task_name": "omol"})
+    assert knobs.target == "ts"
+    assert knobs.seed == 42
+    assert NmsKnobs.from_raw(None) == NmsKnobs()
 
 
 def test_empty_steps_list_rejected(tmp_path: Path):

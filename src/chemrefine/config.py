@@ -159,6 +159,50 @@ SampleConfig: TypeAlias = Annotated[
 
 
 # ---------------------------------------------------------------------------
+# Normal-mode-sampling knobs
+# ---------------------------------------------------------------------------
+
+
+class NmsKnobs(BaseModel):
+    """The normal-mode-sampling knobs a step's ``options`` may carry — the schema half.
+
+    Declared here rather than in :mod:`chemrefine.nms` because two readers share one
+    ``options`` mapping when ``nms: true``: the engine's own options model and the NMS
+    coordinator. The config is the one place that knows both, so it is where a step can be
+    asked for the engine's share (:meth:`StepConfig.engine_options`) — and it cannot import
+    the coordinator, which imports the engine subsystem. :class:`chemrefine.nms.NmsOptions`
+    extends this with the behaviour (how a reading splits into the cache key), so every
+    reader of the knobs still reads one model.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    target: Literal["minimum", "ts", "random"] = "minimum"
+    """``minimum`` removes all imaginary modes; ``ts`` keeps the reaction coordinate
+    and removes the rest; ``random`` displaces along random modes (exploration)."""
+
+    displacement_value: float = 1.0
+    """Magnitude (Å) of the ± displacement along each selected mode."""
+
+    num_random_displacements: int = Field(1, ge=1)
+    """``random`` only: how many modes to draw."""
+
+    ts_mode_index: int | None = None
+    """``ts`` only: explicit reaction-coordinate mode index. ``None`` ⇒ the
+    largest-magnitude imaginary mode."""
+
+    seed: int = 42
+    """Deterministic seed for ``random`` mode selection."""
+
+    @classmethod
+    def from_raw(cls, raw: dict[str, Any] | None) -> Self:
+        """Validate the NMS subset of a ``step.options`` dict (ignoring other keys)."""
+        raw = raw or {}
+        known = {k: raw[k] for k in cls.model_fields if k in raw}
+        return cls(**known)
+
+
+# ---------------------------------------------------------------------------
 # Per-step configuration
 # ---------------------------------------------------------------------------
 
@@ -331,6 +375,23 @@ class StepConfig(BaseModel):
     def effective_multiplicity(self, default: int) -> int:
         """This step's multiplicity: its own override, else the config-wide ``default``."""
         return self.multiplicity if self.multiplicity is not None else default
+
+    def engine_options(self) -> dict[str, Any]:
+        """``options`` minus the NMS knobs when ``nms`` is on — the engine's own share.
+
+        Two declared readers share the one mapping: the engine's options model and, with
+        ``nms: true``, :class:`NmsKnobs`. A strict engine model (``extra="forbid"``) handed
+        the whole dict refused every NMS knob as a stranger — ``target: ts`` on an ExtOpt
+        step was "Extra inputs are not permitted" — while a lenient model ignored them and
+        ORCA declares none, so only the strict engines could not sample with a knob set.
+        The partition is made here because the config is the one place that knows both
+        readers; :func:`chemrefine.validate.undeclared_options` draws the same line for its
+        warning. A key that is neither reader's stays in the engine's share, so a typo of an
+        NMS knob is still refused by a strict engine and still warned about by ``validate``.
+        """
+        if not self.nms:
+            return dict(self.options)
+        return {k: v for k, v in self.options.items() if k not in NmsKnobs.model_fields}
 
     def matches(self, key: str | int) -> bool:
         """Return True if ``key`` (a CLI argument) targets this step.

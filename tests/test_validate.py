@@ -260,6 +260,20 @@ def test_bad_nms_knobs_are_an_error(tmp_path: Path):
     assert "nms" in _kinds(report)
 
 
+def test_nms_knobs_on_an_extopt_step_are_not_a_preflight_issue(tmp_path: Path):
+    """``nms: true`` makes the NMS knobs a second reader's, so the strict engine read leaves them.
+
+    Without it they are strangers to the server model, and the preflight issue stands.
+    """
+    step = {
+        "step": 1,
+        "engine": "pyscf-extopt",
+        "options": {"basis": "def2-svp", "xc": "pbe", "target": "ts"},
+    }
+    assert _kinds(_validate(tmp_path, steps=[{**step, "nms": True}])) == []
+    assert _kinds(_validate(tmp_path, steps=[step])) == ["preflight"]
+
+
 # ---------------------------------------------------------------------------
 # Silent no-ops → warnings (the config still runs)
 # ---------------------------------------------------------------------------

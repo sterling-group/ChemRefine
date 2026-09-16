@@ -9,7 +9,10 @@ the ``_server_cmd`` template) and a concrete subclass declares just four ClassVa
 
 ExtOpt engines are **NMS-capable**: they inherit ORCA's ``nms_input_info`` hook and its
 frequency-carrying parse, because ORCA computes the Hessian numerically over the backend's
-gradients — so a ``Freq`` template yields real frequencies on each parsed structure.
+gradients — so a ``Freq`` template yields real frequencies on each parsed structure. It is
+also why every strict read here takes :meth:`~chemrefine.config.StepConfig.engine_options`
+rather than the raw ``options``: with ``nms: true`` the NMS knobs share that mapping, and a
+model with ``extra="forbid"`` handed the whole of it refused them as strangers.
 """
 
 from __future__ import annotations
@@ -101,9 +104,14 @@ class ExtOptOrcaEngine(OrcaEngine):
         operation-vocabulary refusal, which these engines inherit because they parse the
         same outputs — held family-wide by
         ``test_every_orca_family_engine_refuses_an_unknown_operation_up_front``.
+
+        Read over the engine's share of the options, not the whole mapping: with
+        ``nms: true`` the NMS knobs live in the same dict, and the strict read refused
+        every one of them — an engine the table marks NMS-capable could sample only with
+        each knob at its default. A key neither reader declares is still refused here.
         """
         super().check_step(step_cfg, charge=charge, multiplicity=multiplicity)
-        self.options_cls.from_raw(step_cfg.options)
+        self.options_cls.from_raw(step_cfg.engine_options())
 
     def _extra_blocks(self, ctx: StepContext) -> str:
         """Emit the ``%method ProgExt "<wrapper>"`` block tying ORCA to this step's wrapper.
@@ -121,14 +129,15 @@ class ExtOptOrcaEngine(OrcaEngine):
     def _server_cmd(self, ctx: StepContext) -> str:
         """Build the ``<python> -m ..._backend_server.server --backend <name> …`` command.
 
-        Validates ``ctx.step_cfg.options`` through ``options_cls`` (so the step fails fast on a
-        typoed/unknown YAML knob), then asks ``calculator_cls`` to turn the validated options
+        Validates the engine's share of ``ctx.step_cfg.options`` through ``options_cls`` (so
+        the step fails fast on a typoed/unknown YAML knob; the NMS knobs are the sampler's,
+        see :meth:`check_step`), then asks ``calculator_cls`` to turn the validated options
         into the matching server CLI tokens — the single source of truth for the backend's
         configuration. The wrapper and per-call POST carry nothing (single-channel). The
         server's interpreter comes from the provisioner (managed backend env when one exists),
         so conflicting backends can serve side by side in one run.
         """
-        validated = self.options_cls.from_raw(ctx.step_cfg.options)
+        validated = self.options_cls.from_raw(ctx.step_cfg.engine_options())
         tokens = self.calculator_cls.server_cli_from_options(validated.model_dump())
         interpreter = _provision.launcher_for(self, ctx.step_cfg.options)
         return run_block.server_command(
