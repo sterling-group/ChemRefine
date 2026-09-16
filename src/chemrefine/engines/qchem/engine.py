@@ -213,7 +213,12 @@ class QchemEngine(JobEngine):
         return "qchem"
 
     def _parallel_flags(self, ctx: StepContext) -> str:
-        """qqchem's exact emission: ``-nt N`` for threads; ``-mpi -np P [-nt N]`` for MPI."""
+        """qqchem's exact emission: ``-nt N`` for threads; ``-mpi -np P [-nt N]`` for MPI.
+
+        ``-mpi`` selects Q-Chem's MPI build and its own ``mpirun_qchem``; without it ``-np``
+        is ignored and the serial binary runs threaded, which is why the two flags travel
+        together.
+        """
         ntasks, threads = self.slurm_layout(ctx)
         if self._opts(ctx).nprocs is None:
             return f"-nt {threads}"
