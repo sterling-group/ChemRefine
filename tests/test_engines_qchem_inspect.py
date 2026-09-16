@@ -112,25 +112,23 @@ def test_every_jobtype_in_the_chain_is_reported_lower_cased(tmp_path: Path):
 @pytest.mark.parametrize(
     ("jobtype", "operation"),
     [
-        ("PES_SCAN", "pes"),  # ORCA's `%geom Scan` — the same relaxed scan, the same word
-        ("rpath", "irc"),  # Fukui's intrinsic reaction coordinate — ORCA's `! IRC`
-        ("aimd", "md"),  # a trajectory — ORCA's `%md`
-        ("fsm", "fsm"),  # string methods keep their name; ORCA's counterpart is NEB-TS
+        ("PES_SCAN", "pes"),  # a relaxed surface scan, in ChemRefine's own word
+        ("rpath", "irc"),  # an intrinsic reaction coordinate
+        ("aimd", "md"),  # a trajectory
+        ("fsm", "fsm"),  # the string methods keep their names
         ("gsm", "gsm"),
-        ("pimd", "pimd"),
-        ("pimc", "pimc"),
-        ("bh", "bh"),  # basin hopping keeps its name; ORCA's nearest is GOAT
+        ("pimc", "sp"),  # unlisted: runs as a single point, never refused
     ],
 )
-def test_a_multi_geometry_jobtype_infers_the_word_orca_uses_for_the_same_run(
+def test_a_multi_geometry_jobtype_infers_an_engine_neutral_operation(
     tmp_path: Path, jobtype: str, operation: str
 ):
-    """Never ``sp``: a scan, path, string or trajectory names its operation.
+    """A scan, path, string or trajectory names its run kind in ChemRefine's own words.
 
-    Inferring ``sp`` for them filed the last frame as the structure's result. Naming the
-    operation hands the decision to the parser dispatch — refused while unknown, fanned
-    out once the parser exists — and sharing ORCA's word where ORCA runs the same kind of
-    job means one config reads the same on either engine.
+    Inferring ``sp`` for them filed the last frame as the structure's result with nothing
+    said; naming the operation lets the output fan out into its geometries once the
+    dispatch has a reader for the word. A job type not listed still infers ``sp`` and
+    runs — the inspector never refuses a template for naming a feature the program has.
     """
     info = inspect_template(_write(tmp_path, f"$rem\n  jobtype {jobtype}\n$end\n"))
     assert info.operation == operation and info.jobtypes == frozenset({jobtype.lower()})

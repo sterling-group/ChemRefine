@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import shutil
 from pathlib import Path
 
 import pytest
@@ -191,41 +193,34 @@ def test_the_engine_is_nms_capable(tmp_path: Path):
     assert engine.nms_input_info(one_job).computes_frequencies
 
 
-def test_a_scan_waits_for_its_parser_and_runs_the_moment_the_dispatch_knows_pes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_an_inferred_operation_without_a_reader_still_runs_and_reads_the_final_structure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ):
-    """``jobtype pes_scan`` infers ``pes``; the dispatch's vocabulary decides the rest.
+    """A scan runs today, read as its final structure with a warning; it fans out once
+    the dispatch has a reader for ``pes`` — with no edit to the engine.
 
-    The inferred operation used to fall through to ``sp`` for any job type the inspector
-    did not know, so a scan ran at full cost and its many geometries were filed as one
-    structure per input — whatever frame a parser took. Now the scan names its operation,
-    ``prepare`` refuses it while the dispatch does not know the word, and the moment the
-    dispatch learns it — the parser landing beside the others — the step runs with no
-    edit to the engine. That last half is what parity with ORCA's ``pes`` rests on.
+    A job type is never refused for want of a reader: the template names a feature the
+    program has, and the step has to run. The inferred ``operation`` used to fall through
+    to ``sp`` for any job type the inspector did not know, so nothing said the output was
+    a scan; now the word is inferred, the log says the final structure is all that was
+    read, and the same step fans out the day the reader joins the dispatch.
     """
     from chemrefine.engines.qchem.output import coordinator
 
     engine = get_engine("qchem")
     ctx = _ctx(tmp_path, template="$rem\n  jobtype pes_scan\n$end\n")
-    with pytest.raises(ConfigError, match="pes_scan") as excinfo:
-        engine.prepare(ctx)
-    assert "'pes'" in str(excinfo.value) and "does not know yet" in str(excinfo.value)
+    assert len(engine.prepare(ctx).files) == 1  # not refused
+    out = tmp_path / "step1_0.out"
+    shutil.copy(DATA / "sp" / "step1_0.out", out)
+    with caplog.at_level(logging.WARNING, logger="chemrefine.engines.qchem.engine"):
+        parsed = engine.parse_one(out, "0", ctx)
+    assert len(parsed) == 1 and parsed[0].energy_hartree == -721.7792413729
+    assert "pes_scan" in caplog.text and "'pes'" in caplog.text and "final structure" in caplog.text
+    caplog.clear()
     monkeypatch.setattr(coordinator, "_QCHEM_OPERATIONS", coordinator._QCHEM_OPERATIONS | {"pes"})
-    assert len(engine.prepare(ctx).files) == 1
-    assert engine._resolve_operation(ctx) == "pes"
-
-
-@pytest.mark.parametrize(
-    ("jobtype", "operation"), [("RPATH", "irc"), ("aimd", "md"), ("fsm", "fsm"), ("bh", "bh")]
-)
-def test_the_other_multi_geometry_jobtypes_are_refused_by_the_word_they_infer(
-    tmp_path: Path, jobtype: str, operation: str
-):
-    """A path, trajectory, string or global search is never run as ``sp``."""
-    engine = get_engine("qchem")
-    with pytest.raises(ConfigError, match=f"'{operation}'") as excinfo:
-        engine.prepare(_ctx(tmp_path, template=f"$rem\n  jobtype {jobtype}\n$end\n"))
-    assert jobtype.lower() in str(excinfo.value)
+    with caplog.at_level(logging.WARNING, logger="chemrefine.engines.qchem.engine"):
+        assert len(engine.parse_one(out, "0", ctx)) == 1
+    assert "final structure" not in caplog.text
 
 
 @pytest.mark.parametrize("jobtype", ["sp", "force", "opt", "ts", "freq", "nmr"])

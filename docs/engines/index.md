@@ -72,23 +72,21 @@ declare `mem_total` for any job meant to use its share (the scaffolded starter d
 the header your qchem steps use. `QCSCRATCH` needs no line anywhere: ChemRefine points
 it at the per-job work dir, and `scratch_dir` relocates that to fast local disk.
 
-**Job types and `operation:`**: the key is optional here too — `JOBTYPE` infers it, and
-where ORCA runs the same kind of job the word is the same, so a config means one thing on
-either engine:
+**Job types and `operation:`**: the key is optional here too — `JOBTYPE` infers it, in
+the same engine-neutral words every engine uses, so a config means the same thing
+whichever engine runs it:
 
-| `JOBTYPE` | infers `operation:` | the same run in ORCA |
-|-----------|---------------------|----------------------|
-| `sp`, `force`, `freq`, `nmr`, … (one geometry) | `sp` | `! SP`, `! Freq` |
-| `opt` | `opt_sp` | `! Opt` |
-| `ts` | `opt_sp`, and NMS targets `ts` | `! OptTS` |
-| `pes_scan` | `pes` — one structure per scan point, so `sample: {method: max, count: 1}` keeps the barrier top | a `%geom Scan` block |
-| `rpath` | `irc` — the intrinsic reaction coordinate | `! IRC` |
-| `aimd` | `md` — a trajectory | a `%md` block |
-| `fsm`, `gsm` | `fsm`, `gsm` — a string of nodes whose highest is the TS guess | `! NEB-TS` (a different algorithm, the same purpose) |
-| `pimd`, `pimc`, `bh` | their own name | `! GOAT` is the nearest to basin hopping |
+| `JOBTYPE` | infers `operation:` |
+|-----------|---------------------|
+| `sp`, `force`, `freq`, `nmr`, … (one geometry) | `sp` |
+| `opt` | `opt_sp` |
+| `ts` | `opt_sp`, and NMS targets `ts` |
+| `pes_scan` | `pes` — one structure per scan point, so `sample: {method: max, count: 1}` keeps the barrier top |
+| `rpath` | `irc` — the intrinsic reaction coordinate |
+| `aimd` | `md` — a trajectory |
+| `fsm`, `gsm` | `fsm`, `gsm` — a string of nodes whose highest is the TS guess |
 
-An explicit `operation:` always wins. A step whose operation the parser dispatch cannot
-read yet is refused by name before anything runs, never filed as its last frame.
+An explicit `operation:` always wins, and a job type not listed runs as `sp`.
 
 Migrating a qcsetup-style environment file: `module load …`, compiler
 `LD_LIBRARY_PATH` exports and hostname conditionals go into the SLURM header body

@@ -21,13 +21,12 @@ of an ``@@@`` chain run one after another, so the **max** across blocks is the r
 requirement — the number the SLURM request has to cover.
 
 A job type whose output is many geometries — a relaxed surface scan, a reaction path, a
-string, a trajectory — infers an ``operation`` of its own (:data:`_MULTI_GEOMETRY_OPERATIONS`)
-rather than ``sp``: ``sp`` would file a scan's last frame as the structure's result, while a
-named operation lets the parser dispatch decide — refusing the step while it does not know
-the word, fanning the output out into its geometries once the parser exists, exactly as
-ORCA's ``pes`` does. Where ORCA runs the same kind of job the word is shared, so a config
-means one thing on either engine. Every ``jobtype`` the chain names is reported too, for
-the refusal's message.
+string, a trajectory — infers ChemRefine's engine-neutral word for that kind of run
+(:data:`_MULTI_GEOMETRY_OPERATIONS`) rather than ``sp``, so a config means the same thing
+whichever engine runs it, and the output fans out into its geometries once the parser
+dispatch has a reader for the word. A job type not listed there infers ``sp`` and runs:
+nothing here refuses a template for naming a feature the program has. Every ``jobtype``
+the chain names is reported too, for the log line that says which one inferred the word.
 """
 
 from __future__ import annotations
@@ -59,28 +58,18 @@ _MULTI_GEOMETRY_OPERATIONS = {
     "aimd": "md",
     "fsm": "fsm",
     "gsm": "gsm",
-    "pimd": "pimd",
-    "pimc": "pimc",
-    "bh": "bh",
 }
 """Job types whose output is many geometries, and the ``operation`` each infers.
 
-The word is shared with ORCA wherever ORCA runs the same kind of job, so one config means
-one thing on either engine: ``pes_scan`` is the relaxed surface scan (``$scan`` — a sequence
-of constrained optimisations, one frame per point) that ORCA's ``%geom Scan`` already
-answers to as ``pes``; ``rpath`` is the intrinsic reaction coordinate (Fukui's IRC, from a
-TS and its Hessian) that ORCA spells ``! IRC``, so ``irc``; ``aimd`` is a trajectory like
-ORCA's ``%md``, so ``md``. The string methods (``fsm``, ``gsm`` — a chain of nodes whose
-highest is the TS guess; ORCA's counterpart is ``NEB-TS``, a different algorithm) and the
-path-integral and basin-hopping kinds (``pimd``, ``pimc``, ``bh`` — a global search, ORCA's
-nearest being ``GOAT``) keep their own names. Dict order is precedence when a chain names
-more than one.
-
-The engine refuses a step whose operation the parser dispatch
-(:func:`~chemrefine.engines.qchem.output.known_operations`) does not know, and runs it the
-moment the dispatch learns the word — with no edit here. Note for the ``md`` parser to come:
-Q-Chem writes the trajectory to the ``AIMD/`` directory under the job's scratch, which only
-``save: true`` brings home."""
+The words are ChemRefine's, not Q-Chem's: a relaxed surface scan (``$scan`` — a sequence
+of constrained optimisations, one frame per point) is ``pes``, an intrinsic reaction
+coordinate (from a TS and its Hessian) is ``irc``, a trajectory is ``md``, whichever
+engine ran it; the string methods (a chain of nodes whose highest is the TS guess) keep
+their names. Dict order is precedence when a chain names more than one. A kind not listed
+infers ``sp`` and runs — an entry is added only when the output is many geometries and a
+reader for the word is worth having, never to refuse a job type. Note for the ``md`` reader
+to come: Q-Chem writes the trajectory to the ``AIMD/`` directory under the job's scratch,
+which only ``save: true`` brings home."""
 
 
 @dataclass(frozen=True)
@@ -97,7 +86,7 @@ class QchemInputInfo:
     ``final_vibrational_analysis`` (gates NMS); ``mem_total_mb`` is the largest
     declared ``mem_total`` (``None`` if none is declared — absence means the header's
     memory policy stands, so it is not defaulted); ``jobtypes`` is every ``jobtype`` the
-    chain names, lower-cased, so a refusal can say which one inferred the operation.
+    chain names, lower-cased, for the log line that says which one inferred the operation.
     """
 
     operation: str

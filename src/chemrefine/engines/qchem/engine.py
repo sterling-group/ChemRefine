@@ -31,6 +31,7 @@ contract).
 
 from __future__ import annotations
 
+import logging
 import shlex
 from pathlib import Path
 from typing import ClassVar
@@ -44,6 +45,8 @@ from chemrefine.engines.qchem.options import QchemOptions
 from chemrefine.errors import ConfigError
 from chemrefine.ids import require_template
 from chemrefine.state import StepContext
+
+logger = logging.getLogger(__name__)
 
 
 @register("qchem")
@@ -110,25 +113,7 @@ class QchemEngine(JobEngine):
         output_path: Path,
         ctx: StepContext,
     ) -> None:
-        """Write one Q-Chem ``.in`` — the geometry into job 1's ``$molecule`` block.
-
-        A step whose operation the parser dispatch does not know is refused here, by name,
-        before anything is written. :meth:`check_step` already refuses an explicit
-        ``operation:``; this is the same refusal for an *inferred* one — a ``jobtype
-        pes_scan`` infers ``pes`` before its parser exists — made in ``prepare``, the path
-        every recovery command shares, so it reaches a ``rerun`` or ``resume`` that skips
-        the preflight walk. Derived from the dispatch's own vocabulary, so the step runs
-        the moment the parser lands, with no edit here.
-        """
-        operation = self._resolve_operation(ctx)
-        if operation.lower().replace("+", "_") not in output.known_operations():
-            jobtypes = ", ".join(sorted(inspect.inspect_template(template_path).jobtypes))
-            raise ConfigError(
-                f"Q-Chem template {template_path} (JOBTYPE {jobtypes}) needs operation "
-                f"{operation!r}, which the parser dispatch does not know yet — it parses "
-                f"{sorted(output.known_operations())}. The step cannot run until that "
-                f"parser exists in chemrefine.engines.qchem.output."
-            )
+        """Write one Q-Chem ``.in`` — the geometry into job 1's ``$molecule`` block."""
         qchem_input.build_input(
             xyz_path=xyz_path,
             template_path=template_path,
@@ -318,8 +303,29 @@ class QchemEngine(JobEngine):
     def parse_one(
         self, output_path: Path, structure_id: str, ctx: StepContext
     ) -> list[ParsedResult]:
-        """Parse one Q-Chem output — energy, final geometry, and the NMS frequency feed."""
-        return output.parse_output(output_path, self._resolve_operation(ctx))
+        """Parse one Q-Chem output — energy, final geometry, and the NMS frequency feed.
+
+        An *inferred* operation the parser dispatch has no reader for yet — a scan's
+        ``pes``, a reaction path's ``irc``, a trajectory's ``md`` — is read as its final
+        structure, and the log says so: a job type runs and yields something usable the
+        day it appears in a template, and fans out into its geometries the day its reader
+        joins the dispatch, with no edit here. An explicit ``operation:`` is held to the
+        vocabulary by :meth:`check_step`, so only an inferred one takes this path.
+        """
+        operation = self._resolve_operation(ctx)
+        inferred = ctx.step_cfg.operation is None
+        if inferred and operation.lower().replace("+", "_") not in output.known_operations():
+            template = require_template(ctx.template, label=self.label)
+            jobtypes = ", ".join(sorted(inspect.inspect_template(template).jobtypes))
+            logger.warning(
+                "%s: JOBTYPE %s infers operation %r, which has no reader of its own yet — "
+                "reading the final structure only",
+                output_path.name,
+                jobtypes,
+                operation,
+            )
+            return output.parse_qchem(output_path)
+        return output.parse_output(output_path, operation)
 
     # -- nms hook (the only engine-specific half of chemrefine.nms) --------
 
