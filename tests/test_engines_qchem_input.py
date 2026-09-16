@@ -70,6 +70,37 @@ def test_a_job1_read_is_overwritten(tmp_path: Path):
     assert "read" not in text.split("$rem")[0]
 
 
+def test_a_chain_whose_first_job_has_no_block_gets_one_in_job_1(tmp_path: Path):
+    """The generated block belongs to job 1 even when only a later job names one.
+
+    The first ``$molecule`` in the *file* used to be the target, so a chain that left
+    job 1's block to ChemRefine had the geometry spliced over job 2's ``read`` — and job 1
+    ran with no molecule at all.
+    """
+    text = _render(
+        tmp_path,
+        "$rem\n  jobtype opt\n$end\n\n@@@\n\n$molecule\nread\n$end\n$rem\n  jobtype freq\n$end\n",
+    )
+    job1, _, job2 = text.partition("@@@")
+    assert job1.startswith("$molecule\n0 1\nH  0.000000 0.000000 0.000000\n")
+    assert "$molecule\nread\n$end" in job2 and "0.740000" not in job2
+
+
+def test_a_fragment_partitioned_block_is_refused_by_name(tmp_path: Path):
+    """``--`` fragment separators (EDA / SCFMI) cannot survive a regenerated block.
+
+    The writer builds the block from one whole-molecule geometry and cannot assign the
+    new atoms to fragments, so a flattened block would run a different calculation than
+    the template describes — refused up front, like ``input_bohr``.
+    """
+    with pytest.raises(ConfigError, match="fragments"):
+        _render(
+            tmp_path,
+            "$molecule\n0 1\n--\n0 1\nHe 0.0 0.0 0.0\n--\n0 1\nNe 3.0 0.0 0.0\n$end\n"
+            "$rem\n  jobtype sp\n  frgm_method stoll\n$end\n",
+        )
+
+
 def test_charge_and_multiplicity_render_into_the_block(tmp_path: Path):
     """The pipeline's charge/multiplicity land on the block's first line."""
     text = _render(tmp_path, "$rem\n  jobtype sp\n$end\n", charge=-1, multiplicity=3)

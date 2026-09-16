@@ -7,11 +7,16 @@ file wherever the directive sits — Q-Chem takes its geometry **inline**, in th
 ``$molecule`` block, and a multi-job ``@@@`` template's later jobs read it back with
 ``$molecule read $end``. So the generated block must land in job 1 and nowhere else:
 
-* a template with a ``$molecule`` block gets its **first** one replaced in place — first
-  whatever its body, because a job-1 ``read`` has nothing to read from in the fresh scratch
-  each per-structure job runs in, while every *later* block (the ``read`` idiom) survives
-  untouched;
-* a template with none gets the generated block prepended, which is job 1 by construction.
+* the template is split at its first ``@@@`` and only job 1 is edited — its ``$molecule``
+  block, if it has one, is replaced in place whatever its body (a job-1 ``read`` has nothing
+  to read from in the fresh scratch each per-structure job runs in), and a job 1 without one
+  gets the block prepended; every later job passes through byte-for-byte, the ``read`` idiom
+  included. Splitting first is what keeps a chain whose job 1 leaves the block to ChemRefine
+  from having the geometry spliced over job 2's ``read`` while job 1 runs with no molecule;
+* a job-1 block partitioned into fragments (``--`` separators — the EDA / SCFMI idiom) is
+  refused by name: the block is regenerated from one whole-molecule geometry, and nothing
+  can say which of the new atoms belong to which fragment, so a flattened block would run a
+  different calculation than the template describes.
 
 Q-Chem reads its sections in any order within a job, so the replacement never has to move a
 block — position is preserved, and the diff between template and rendered input is exactly
@@ -41,6 +46,11 @@ _MOLECULE_BLOCK_RE = re.compile(
 # rem cannot trip it.
 _INPUT_BOHR_RE = re.compile(r"^[ \t]*input_bohr[ \t=]+(?:true|1)\b", re.IGNORECASE | re.MULTILINE)
 
+# The multi-job separator and a fragment separator, each on a line of its own — where
+# Q-Chem reads them.
+_JOB_SEPARATOR_RE = re.compile(r"^[ \t]*@@@[ \t]*$", re.MULTILINE)
+_FRAGMENT_SEPARATOR_RE = re.compile(r"^[ \t]*--[ \t]*$", re.MULTILINE)
+
 
 def _molecule_block(xyz_path: Path, charge: int, multiplicity: int) -> str:
     """Render the ``$molecule`` block for one structure's ``_inp.xyz`` geometry.
@@ -69,10 +79,11 @@ def build_input(
 ) -> Path:
     """Write a Q-Chem input to ``output_path``; return that path.
 
-    The geometry replaces the template's first ``$molecule … $end`` block in place, or is
-    prepended when the template declares none — see the module docstring for why job 1 and
-    only job 1. Everything else in the template, including any later ``$molecule read $end``
-    of a ``@@@`` chain, passes through byte-for-byte.
+    The geometry replaces job 1's ``$molecule … $end`` block in place, or is prepended to
+    job 1 when it declares none — see the module docstring for why job 1 and only job 1.
+    Everything else in the template, every later job of a ``@@@`` chain and its
+    ``$molecule read $end`` included, passes through byte-for-byte. A job-1 block split
+    into fragments is refused by name.
     """
     if not template_path.is_file():
         raise ConfigError(f"Q-Chem template not found: {template_path}")
@@ -90,9 +101,25 @@ def build_input(
             f"1/0.529. Remove the rem; coordinates are supplied in Å."
         )
     block = _molecule_block(xyz_path, charge, multiplicity)
-    rendered, replaced = _MOLECULE_BLOCK_RE.subn(lambda _m: block, template, count=1)
-    if not replaced:
-        rendered = f"{block}\n\n{template.lstrip()}"
+    separator = _JOB_SEPARATOR_RE.search(template)
+    job1, later_jobs = (
+        (template[: separator.start()], template[separator.start() :])
+        if separator
+        else (template, "")
+    )
+    existing = _MOLECULE_BLOCK_RE.search(job1)
+    if existing and _FRAGMENT_SEPARATOR_RE.search(existing.group(0)):
+        raise ConfigError(
+            f"Q-Chem template {template_path} partitions its $molecule block into fragments "
+            f"(`--`), which ChemRefine cannot preserve: the block is regenerated per structure "
+            f"from one whole-molecule geometry, and nothing can say which of its atoms belong "
+            f"to which fragment. Drop the fragment lines (and the fragment rems) for this step."
+        )
+    if existing:
+        rendered_job1 = job1[: existing.start()] + block + job1[existing.end() :]
+    else:
+        rendered_job1 = f"{block}\n\n{job1.lstrip()}"
+    rendered = rendered_job1 + later_jobs
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(rendered.rstrip() + "\n", encoding="utf-8")
     return output_path

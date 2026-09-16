@@ -101,8 +101,9 @@ for the full map.
   anything — model choice and site policy stay the user's (see the new
   platforms/model-policy docs page).
 - **Q-Chem engine** (`engine: qchem`): per-structure Q-Chem jobs from a `stepN.in`
-  template, with the geometry generated into job 1's `$molecule` block (a multi-job
-  `@@@` chain's later `$molecule read $end` survives untouched). Parallelism is
+  template, with the geometry generated into job 1's `$molecule` block (only job 1 of a
+  multi-job `@@@` chain is edited — a later `$molecule read $end` survives untouched —
+  and a block partitioned into fragments is refused by name). Parallelism is
   CLI-side, as Q-Chem wants it: `options.cores` renders `-nt N` and is allocated as
   `--ntasks=1 --cpus-per-task=N`; `options.nprocs` opts into MPI (`-mpi -np P [-nt N]`,
   allocated `P×N` — partial method support, so never a default). The install environment
