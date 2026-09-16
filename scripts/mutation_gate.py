@@ -53,9 +53,14 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-#: How long one mutated run may take before it is assumed hung. A mutation that turns a
-#: budget comparison into a strictly-smaller one makes a wait loop spin forever rather than
-#: fail, so a timeout counts as *caught*: the suite did not complete, which is a red build.
+#: How long one run may take before it is assumed hung. A mutation that turns a budget
+#: comparison into a strictly-smaller one makes a wait loop spin forever rather than fail,
+#: so a timeout on the *named test file* counts as caught: that file did not complete,
+#: which is a red build. The whole-suite fallback is a different case — it runs only after
+#: the named file stayed green, and its timeout is as likely the suite outgrowing this
+#: budget on a slow runner as a hang. Reported as caught, that was a false green from the
+#: one gate whose job is to refuse them; it is reported as *inconclusive* instead, and
+#: fails the gate (see :class:`Verdict`).
 TIMEOUT_SECONDS = 300
 
 
@@ -414,10 +419,10 @@ def _assert_baseline_is_green(work: Path, env: dict[str, str]) -> None:
     suite" and the gate reports all-caught while testing nothing. A gate whose failure mode
     is a false green has to prove it can be green for the right reason first.
     """
-    caught, why = _run_suite(work, env)
-    if caught:
+    verdict = _run_suite(work, env)
+    if verdict.caught or verdict.inconclusive:
         raise SystemExit(
-            f"mutation gate baseline is not green: {why}\n"
+            f"mutation gate baseline is not green: {verdict.why}\n"
             f"The unmutated copy at {work} already fails, so every mutation would look\n"
             f"'caught' regardless. Fix the copy (see _INPUTS) before trusting a verdict."
         )
@@ -474,8 +479,23 @@ def _apply(work: Path, mutation: Mutation) -> None:
     target.write_text(text.replace(mutation.old, mutation.new), encoding="utf-8")
 
 
-def _run_suite(work: Path, env: dict[str, str], target: str | None = None) -> tuple[bool, str]:
-    """Return ``(caught, why)`` for the suite — or for one file of it — as it stands in ``work``.
+@dataclass(frozen=True)
+class Verdict:
+    """What one run of the suite said about a mutation.
+
+    ``caught`` is the suite going red. ``inconclusive`` is the suite not finishing at all
+    on a run whose timeout cannot be read as a catch — the whole-suite fallback, see
+    :data:`TIMEOUT_SECONDS` — so nothing is proven either way; it never comes with
+    ``caught``. Neither set is a survivor: the suite finished green with the mutation in.
+    """
+
+    caught: bool
+    why: str
+    inconclusive: bool = False
+
+
+def _run_suite(work: Path, env: dict[str, str], target: str | None = None) -> Verdict:
+    """The :class:`Verdict` of the suite — or of one file of it — as it stands in ``work``.
 
     ``-x`` so a caught mutation stops at the first red test. ``target`` narrows the run to
     the file a mutation names: a red file is a red suite, so the verdict is the one the
@@ -497,14 +517,21 @@ def _run_suite(work: Path, env: dict[str, str], target: str | None = None) -> tu
             timeout=TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
-        return True, f"suite hung (>{TIMEOUT_SECONDS}s) — a red build either way"
+        if target is not None:
+            return Verdict(True, f"{target} hung (>{TIMEOUT_SECONDS}s) — a red build either way")
+        return Verdict(
+            False,
+            f"the whole suite did not finish within {TIMEOUT_SECONDS}s — a hang or a slow "
+            "runner, and the gate cannot tell which",
+            inconclusive=True,
+        )
     if completed.returncode != 0:
         first = next(
             (ln for ln in completed.stdout.splitlines() if ln.startswith("FAILED")),
             "suite failed",
         )
-        return True, first
-    return False, "suite passed unchanged"
+        return Verdict(True, first)
+    return Verdict(False, "suite passed unchanged")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -529,6 +556,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("\n".join([*stale, "The code moved; update the mutation(s)."]))
 
     survivors: list[Mutation] = []
+    inconclusive: list[tuple[Mutation, str]] = []
     with tempfile.TemporaryDirectory(prefix="chemrefine-mutation-") as tmp:
         work = Path(tmp)
         _copy_tree(work)
@@ -541,23 +569,38 @@ def main(argv: list[str] | None = None) -> int:
             pristine = (work / mutation.path).read_text(encoding="utf-8")
             _apply(work, mutation)
             try:
-                caught, why = _run_suite(work, env, mutation.tests)
-                if not caught:
+                verdict = _run_suite(work, env, mutation.tests)
+                if not verdict.caught:
                     # The named file missed it. Before calling anything a survivor, ask the
                     # whole suite — the entry may simply name the wrong file, and `why` then
                     # reports the test that did catch it.
-                    caught, why = _run_suite(work, env)
+                    verdict = _run_suite(work, env)
             finally:
                 (work / mutation.path).write_text(pristine, encoding="utf-8")
-            print(f"{'caught ' if caught else 'SURVIVED'}  {mutation.id:32} {why}", flush=True)
-            if not caught:
+            if verdict.inconclusive:
+                label = "INCONCLUSIVE"
+                inconclusive.append((mutation, verdict.why))
+            elif verdict.caught:
+                label = "caught"
+            else:
+                label = "SURVIVED"
                 survivors.append(mutation)
+            print(f"{label:12} {mutation.id:32} {verdict.why}", flush=True)
 
+    if inconclusive:
+        print(
+            f"\n{len(inconclusive)} mutation(s) inconclusive — the suite did not finish, so "
+            "nothing is proven about these:"
+        )
+        for mutation, why in inconclusive:
+            print(f"  {mutation.id} ({mutation.path})\n    {why}")
     if survivors:
         print(f"\n{len(survivors)} mutation(s) survived — the suite does not check these:")
         for mutation in survivors:
             print(f"  {mutation.id} ({mutation.path})\n    if it shipped: {mutation.breaks}")
         return 1
+    if inconclusive:
+        return 2
     print(f"\nall {len(selected)} mutation(s) caught")
     return 0
 

@@ -150,3 +150,60 @@ def test_a_renamed_source_file_is_reported_by_id():
     assert "[vanished]" in report[0]
     assert "src/chemrefine/a_file_that_was_renamed.py" in report[0]
     assert "the code moved" in report[0]
+
+
+def test_a_timeout_is_a_catch_for_the_named_file_and_inconclusive_for_the_whole_suite(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The two timeouts mean different things, and only one of them is a red build.
+
+    A mutation that makes a wait loop spin forever hangs the file that drives it — caught.
+    The whole-suite fallback runs only after that file stayed green, so its timeout is as
+    likely the suite outgrowing the budget on a slow runner as a hang; reported as caught,
+    that was a false green from the one gate whose job is to refuse them.
+    """
+    gate = _load_gate()
+
+    def hang(argv: list[str], **_: object) -> None:
+        raise gate.subprocess.TimeoutExpired(argv, gate.TIMEOUT_SECONDS)
+
+    monkeypatch.setattr(gate.subprocess, "run", hang)
+    named = gate._run_suite(REPO, {}, "tests/test_throttle.py")
+    assert named.caught and not named.inconclusive
+    whole = gate._run_suite(REPO, {})
+    assert whole.inconclusive and not whole.caught
+    assert str(gate.TIMEOUT_SECONDS) in whole.why
+
+
+def test_an_inconclusive_mutation_fails_the_gate_without_being_called_a_survivor(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    """``main`` exits 2 for an inconclusive run and says so, apart from a survivor's 1.
+
+    The tree copy, the isolation and baseline checks and the suite itself are stood in
+    for: this is about the verdict's bookkeeping, not about running pytest twice more.
+    """
+    gate = _load_gate()
+    # The longest id cannot be a substring of another, so `-k` selects exactly it.
+    mutation = max(gate.MUTATIONS, key=lambda m: len(m.id))
+
+    def copy_one(dest: Path) -> None:
+        target = dest / mutation.path
+        target.parent.mkdir(parents=True)
+        target.write_text((REPO / mutation.path).read_text(encoding="utf-8"), encoding="utf-8")
+
+    def verdicts(work: Path, env: dict[str, str], target: str | None = None) -> object:
+        if target is not None:
+            return gate.Verdict(False, "suite passed unchanged")
+        return gate.Verdict(False, "did not finish", inconclusive=True)
+
+    monkeypatch.setattr(gate, "_copy_tree", copy_one)
+    monkeypatch.setattr(gate, "_assert_isolated", lambda work, env: None)
+    monkeypatch.setattr(gate, "_assert_baseline_is_green", lambda work, env: None)
+    monkeypatch.setattr(gate, "_run_suite", verdicts)
+
+    assert gate.main(["-k", mutation.id]) == 2
+    out = capsys.readouterr().out
+    assert "INCONCLUSIVE" in out
+    assert "did not finish" in out
+    assert "SURVIVED" not in out and "survived" not in out
