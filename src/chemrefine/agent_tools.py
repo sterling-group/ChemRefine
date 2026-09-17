@@ -747,6 +747,23 @@ def list_structures(config_path: str, step: int | str | None = None) -> dict[str
     }
 
 
+def expand_user_path(raw: str) -> Path:
+    """``Path(raw).expanduser()`` with a ``~name`` the host cannot resolve refused by contract.
+
+    ``expanduser`` raises ``RuntimeError`` for an account the host does not know — neither
+    an ``OSError`` nor a ``ChemRefineError``, so it passed every guard: the GUI's re-raising
+    handler made it a logged-traceback 500 and the MCP wrapper the generic crash text. The
+    fix landed once, inline at the GUI's ``/api/load``, while four more entry points took
+    the same user-typed path unguarded. This is the one spelling they all take now, so the
+    GUI answers its documented 400 and an MCP client a typed refusal, with no code at the
+    site.
+    """
+    try:
+        return Path(raw).expanduser()
+    except RuntimeError as e:
+        raise ConfigError(f"cannot resolve {raw!r}: {e}") from e
+
+
 _MAX_STRUCTURE_BYTES = 8 * 1024 * 1024
 """Ceiling on a structure file read for the viewer — a picture, not a trajectory.
 
@@ -775,7 +792,7 @@ def read_structure_file(path: str) -> dict[str, Any]:
     energy, the geometry, the frequency table all take the last match): a trajectory's last
     frame is its result.
     """
-    target = Path(path).expanduser()
+    target = expand_user_path(path)
     if not target.is_file():
         raise ConfigError(f"not a file: {target}")
     size = target.stat().st_size
@@ -1142,7 +1159,7 @@ def save_config(path: str, yaml_text: str) -> dict[str, Any]:
     relative paths inside the text are judged against the file's own directory, the way
     :func:`~chemrefine.config.load_config` will resolve them later.
     """
-    destination = Path(path).expanduser().resolve()
+    destination = expand_user_path(path).resolve()
     report = validate_config_text(yaml_text, base_dir=destination.parent)
     payload: dict[str, Any] = {"path": str(destination), "written": False, **report.to_json()}
     if not report.ok:

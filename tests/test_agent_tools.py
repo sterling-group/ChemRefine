@@ -156,6 +156,19 @@ def test_save_config_answers_an_unwritable_destination_with_the_contract(tmp_pat
         fortress.chmod(0o755)
 
 
+def test_a_home_the_host_cannot_resolve_is_the_contracts_refusal():
+    """``~nosuchuser/x`` raises ``RuntimeError`` from ``expanduser`` — outside the taxonomy.
+
+    Neither an ``OSError`` nor a ``ChemRefineError``, it passed every guard on the two
+    tools that take a user-typed path and reached an MCP client as the generic crash text.
+    ``expand_user_path`` is the one spelling both take now.
+    """
+    with pytest.raises(ConfigError, match="cannot resolve"):
+        agent_tools.read_structure_file("~nosuchuser1234/x.xyz")
+    with pytest.raises(ConfigError, match="cannot resolve"):
+        agent_tools.save_config("~nosuchuser1234/input.yaml", "steps: []\n")
+
+
 def test_write_template_answers_an_unwritable_destination_with_the_contract(tmp_path: Path):
     """The same rule for the inline template editor's write."""
     fortress = _fortress(tmp_path)

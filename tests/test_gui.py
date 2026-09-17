@@ -897,6 +897,22 @@ def test_load_refuses_a_home_it_cannot_resolve(client: Any):
     assert "cannot resolve" in response.get_json()["error"]
 
 
+def test_every_path_a_user_types_refuses_a_home_it_cannot_resolve(client: Any):
+    """The ``/api/load`` guard landed on one of three GUI sites; the other two were 500s.
+
+    The browse box and the save box take the same user-typed path, and ``RuntimeError``
+    from ``expanduser`` passed their ``OSError`` guards into the re-raising handler. One
+    helper (``agent_tools.expand_user_path``) now answers for all of them.
+    """
+    browse = _get(client, "/api/browse?path=~nosuchuser1234/x")
+    assert browse.status_code == 400
+    assert "cannot resolve" in browse.get_json()["error"]
+
+    save = _post(client, "/api/save", {"path": "~nosuchuser1234/x.yaml", "yaml_text": "a: 1\n"})
+    assert save.status_code == 400
+    assert "cannot resolve" in save.get_json()["error"]
+
+
 def test_a_model_with_nowhere_to_go_does_not_pass_the_preflight(
     client: Any, monkeypatch: pytest.MonkeyPatch
 ):

@@ -153,14 +153,12 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         A directory or an unreadable file is a plain 400 like every other bad input here.
         ``UnicodeDecodeError`` is caught with it on purpose: it is a ``ValueError``, not an
         ``OSError``, so a binary file picked by mistake would otherwise reach
-        :func:`surface` and become a 500 with a traceback.
+        :func:`surface` and become a 500 with a traceback. A ``~name`` the host cannot
+        resolve is :func:`chemrefine.agent_tools.expand_user_path`'s refusal, which
+        :func:`surface` answers with the same 400 — every path a user types here goes
+        through it.
         """
-        try:
-            path = Path(request.args["path"]).expanduser()
-        except RuntimeError as e:
-            # `~nosuchuser/x` raises RuntimeError, which is neither OSError nor
-            # UnicodeDecodeError — so it sailed past the guard below into a 500.
-            return jsonify({"error": f"cannot resolve {request.args['path']!r}: {e}"}), 400
+        path = agent_tools.expand_user_path(request.args["path"])
         if not path.is_file():
             return jsonify({"error": f"not a file: {path}"}), 400
         try:
@@ -205,7 +203,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     def browse() -> Any:
         """One directory level for the path pickers (local machine, local user)."""
         requested = request.args.get("path") or str(Path.home())
-        path = Path(requested).expanduser().resolve()
+        path = agent_tools.expand_user_path(requested).resolve()
         if not path.is_dir():
             return jsonify({"error": f"not a directory: {path}"}), 400
         try:
@@ -234,7 +232,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         unwritable destination is a plain 400, like every other bad input here.
         """
         payload = request.get_json(force=True)
-        destination = Path(payload["path"]).expanduser()
+        destination = agent_tools.expand_user_path(payload["path"])
         try:
             atomic_write(destination, payload["yaml_text"].encode("utf-8"))
         except OSError as e:
