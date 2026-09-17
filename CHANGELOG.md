@@ -436,6 +436,15 @@ for the full map.
 
 ### Fixed
 
+- **`rerun-errors` on an NMS step re-runs every round-1 job that left no usable result.**
+  The NMS re-attempt resubmitted only the parents with *no* output and re-parsed
+  everyone else's round-1 file, so a parent whose output a walltime kill had truncated,
+  or whose program had died, failed the same way on every `resume` and `rerun-errors` —
+  the command the exit-6 advice names as the repair. It now applies the rule the non-NMS
+  resume applies: missing, unreadable and not-terminated round-1 jobs are sealed into
+  `attemptK/` and re-run from a regenerated input, unconverged ones are still retried
+  from their best geometry, and unresolved parents still keep their round-1 frequency
+  output and re-run only round 2.
 - **`mlip-extopt` refuses `extra`, as documented.** The engine read the direct `mlip`
   model, whose `extra` mapping is legitimate, and its server command emits only the flags
   it knows — so an `extra:` on an `mlip-extopt` step was accepted and read by nothing,

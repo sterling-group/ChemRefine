@@ -828,24 +828,33 @@ def reattempt_nms(
     cached: cache.StepCache,
     key: cache.StepKey,
 ) -> StepResults:
-    """Re-attempt only the ledgered-unresolved NMS parents, reusing round-1.
+    """Re-attempt only the ledgered-failed NMS parents, reusing round-1 wherever it can.
 
     The still-valid resolved survivors from the old cache are kept; the failed parents'
-    round-1 outputs are re-parsed (missing ones resubmitted, unconverged ones retried),
-    NMS round-2 is re-run for them, and the merged result is re-cached.
+    round-1 outputs are re-parsed once, and what that parse cannot stand behind is re-run
+    by the rule the non-NMS resume applies (:func:`chemrefine.lifecycle.resubmit_unusable`):
+    a parent with no output, an unreadable one, or one whose engine says the program did
+    not terminate is archived and resubmitted from a regenerated input; an unconverged one
+    is retried from its best geometry; an unresolved parent — whose round-1 frequency
+    output is the expensive artifact this path exists to keep — is not resubmitted at all.
+    NMS round-2 is then re-run for them and the merged result is re-cached.
 
-    **Why it archives and regenerates nothing on entry**, where
-    :func:`chemrefine.step._resubmit_failed` does both before resubmitting. Reusing round 1 is
-    the point of this path, and archiving it up front would defeat that. Two facts make the
-    omission safe rather than lucky:
+    Resubmitting only the ``MISSING_OUTPUT`` parents and re-parsing everyone else's round-1
+    file left a truncated or crashed round 1 failing the same way on every ``resume`` —
+    the one outcome ``rerun-errors`` is documented to repair.
 
-    * Only ``MISSING_OUTPUT`` ids are resubmitted. Archiving exists to stop a re-executed job
-      re-reading the previous run's output as if it were its own, and a structure with no
-      output has nothing to re-read.
+    **Why only the re-run parents are archived**, where
+    :func:`chemrefine.step._resubmit_failed` archives everything it re-runs. Reusing round 1
+    is the point of this path, and archiving a parent whose output parsed would defeat it.
+    Archiving the re-run ones is what stops a resubmitted job that dies before writing from
+    re-reading the truncated output it is replacing. Two facts keep the reused ones safe:
+
+    * A reused round-1 output is read, never re-executed, so nothing can mistake it for a
+      fresh result.
     * This path is gated on an exact step-fingerprint match (:func:`chemrefine.step.run_step`'s
       cached route), and the fingerprint is composed from row keys that cover the template
       digest — so an edited template changes the key and a stale input can never be
-      resubmitted from the manifest.
+      reused from the manifest.
 
     Round 1 *is* archived later, for a resolved parent, by
     :func:`_install_winner` sealing it into the attempt its children ran in. That is the
@@ -855,23 +864,10 @@ def reattempt_nms(
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
         raise CacheError(f"step {step_cfg.step}: cannot re-attempt NMS — no manifest on disk")
-    failed = cache.load_failure_records(ctx.step_dir)
-    failed_ids = {f.structure_id for f in failed}
-    missing_ids = {f.structure_id for f in failed if f.kind is FailureKind.MISSING_OUTPUT}
-
+    failed_ids = {f.structure_id for f in cache.load_failure_records(ctx.step_dir)}
     failed_manifest = StepInputs(files=tuple(f for f in manifest.files if f[2] in failed_ids))
-    missing_inputs = StepInputs(
-        files=tuple(f for f in failed_manifest.files if f[2] in missing_ids)
-    )
-    if missing_inputs.files:
-        logger.info(
-            "step %d: NMS re-attempt resubmitting %d missing round-1 job(s)",
-            step_cfg.step,
-            len(missing_inputs.files),
-        )
-        engine.submit(missing_inputs, ctx)
 
-    r1_succ, r1_fail = lifecycle.parse_and_record(engine, failed_manifest, ctx)
+    r1_succ, r1_fail = lifecycle.resubmit_unusable(engine, ctx, failed_manifest)
     r1_succ, r1_fail = lifecycle.retry_unconverged(engine, ctx, r1_succ, r1_fail)
     reattempt = run_nms(engine, StepResults(structures=tuple(r1_succ)), r1_fail, ctx)
     kept = tuple(

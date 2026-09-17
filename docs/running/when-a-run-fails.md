@@ -253,7 +253,8 @@ applies wins, and `EXECUTE` skips straight to the full run:
 1. **Valid cache** — the on-disk fingerprint matches this config and these parents. With
    a pending `on_failure: stop` ledger and a mode that may submit, only the still-failed
    structures are re-attempted (an NMS step goes through `reattempt_nms`, which reuses
-   round 1); otherwise it is a plain hit and only the `sample:` filter re-runs.
+   every round-1 output it can still read and re-runs the rest); otherwise it is a plain
+   hit and only the `sample:` filter re-runs.
 2. **Row provenance** — no cache this key can serve, but the manifest carries each
    row's own key. Rows whose stored key matches are **adopted** (re-parsed from disk);
    the rest — changed or new parents, jobs a config edit actually reaches, jobs with no

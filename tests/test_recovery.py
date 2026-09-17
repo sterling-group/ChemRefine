@@ -389,8 +389,9 @@ def _register_fake_nms():
     """A two-round NMS fake driven through the engine hook (``nms_input_info``) + the
     frequency values its ``parse`` attaches to each structure; the generic coordinator does
     the displacement. ``resolved`` controls which parents' displaced children resolve;
-    ``fail_round1`` produce no round-1 output; ``submitted`` logs round-1 (parent) submissions
-    and ``nms_seen`` the parents that reached the NMS stage."""
+    ``fail_round1`` produce no round-1 output; ``crash_round1`` produce one that says the
+    program died; ``submitted`` logs round-1 (parent) submissions and ``nms_seen`` the
+    parents that reached the NMS stage."""
     from typing import ClassVar
 
     import numpy as np
@@ -406,6 +407,7 @@ def _register_fake_nms():
         resolved: ClassVar[set[str]] = set()
         clean: ClassVar[set[str]] = set()
         fail_round1: ClassVar[set[str]] = set()
+        crash_round1: ClassVar[set[str]] = set()
         submitted: ClassVar[list[str]] = []
         children_submitted: ClassVar[list[str]] = []
         nms_seen: ClassVar[list[str]] = []
@@ -430,6 +432,8 @@ def _register_fake_nms():
                 if "_m" not in sid:  # a round-1 (parent) submission, not a displaced child
                     _FakeNms2.submitted.append(sid)
                     marker = "CLEAN\n" if sid in _FakeNms2.clean else ""
+                    if sid in _FakeNms2.crash_round1:
+                        marker += "CRASHED\n"
                 else:
                     _FakeNms2.children_submitted.append(sid)
                     parent = sid.split("_m")[0]
@@ -466,7 +470,7 @@ def _register_fake_nms():
                         id=sid,
                         atoms=seed.atoms if seed else Atoms("H"),
                         energy_hartree=-1.0,
-                        terminated_normally=True,
+                        terminated_normally="CRASHED" not in text,
                         converged=True,
                         imaginary_freqs=imaginary,
                         normal_modes=modes,
@@ -712,7 +716,12 @@ def test_resume_after_tuning_reattempts_only_unresolved(tmp_path: Path):
 
 def test_reattempt_resubmits_missing_round1(tmp_path: Path):
     """A parent whose round-1 output is missing gets its round-1 resubmitted on
-    the next resume (NMS-unresolved parents do not)."""
+    the next resume (NMS-unresolved parents do not).
+
+    Resubmitted the way every re-run is: the dead attempt's files are sealed into
+    ``attempt1/`` and the input is regenerated, so the re-run's own output is the only
+    one at the canonical path.
+    """
     from chemrefine import cache
     from chemrefine.engines.api import ENGINES
     from chemrefine.errors import ChemRefineError
@@ -733,6 +742,7 @@ def test_reattempt_resubmits_missing_round1(tmp_path: Path):
         eng.submitted = []
         execute(cfg, Action.RESUME)  # same config → full-valid + ledger → reattempt_nms
         assert eng.submitted == ["1"]  # round-1 resubmitted only for the missing one
+        assert (step_dir / "1" / "attempt1" / "step1_1.inp").is_file(), "dead attempt sealed"
         assert cache.load_failure_records(step_dir) == []
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
     finally:
@@ -741,12 +751,57 @@ def test_reattempt_resubmits_missing_round1(tmp_path: Path):
         ENGINES.pop("fake-nms2", None)
 
 
+def test_reattempt_resubmits_a_crashed_round1_from_a_fresh_input(tmp_path: Path):
+    """A parent whose round-1 output says the program died is archived and re-run.
+
+    The rule is :func:`chemrefine.lifecycle.resubmit_unusable`'s — the one the non-NMS
+    resume already applies: no output, an unreadable one and one the engine marks as not
+    terminated are all re-run from a regenerated input, and only a *convergence* failure
+    is retried from its best geometry instead. The re-attempt used to resubmit the
+    ``MISSING_OUTPUT`` ids alone and re-parse the crashed parent's own file, so
+    ``rerun-errors`` on an NMS step failed the same structure the same way on every call
+    — while the docs' exit-6 row named that command as the repair.
+
+    The previous output is sealed into ``attempt1/`` before the re-run, so a re-run that
+    dies before writing cannot re-read it as its own.
+    """
+    from chemrefine import cache
+    from chemrefine.engines.api import ENGINES
+    from chemrefine.errors import ChemRefineError
+
+    eng = _register_fake_nms()
+    try:
+        eng.resolved = {"0", "1"}
+        eng.crash_round1 = {"1"}  # "1"'s round-1 output says the program died
+        cfg = _seeded_config(tmp_path, [_nms_step(1.0, on_failure="stop")])
+        step_dir = (cfg.output_dir / "step1_s").resolve()
+        with pytest.raises(ChemRefineError):  # stop halts on the crashed round-1
+            execute(cfg, Action.RESUME)
+        assert [(r.structure_id, r.kind) for r in cache.load_failure_records(step_dir)] == [
+            ("1", FailureKind.NOT_TERMINATED_NORMALLY)
+        ]
+
+        eng.crash_round1 = set()  # the node is back
+        eng.submitted = []
+        execute(cfg, Action.RESUME)  # same config → full-valid + ledger → reattempt_nms
+        assert eng.submitted == ["1"]  # the crashed parent ran again, and only it
+        assert "CRASHED" in (step_dir / "1" / "attempt1" / "step1_1.out").read_text()
+        assert cache.load_failure_records(step_dir) == []
+        assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.crash_round1 = set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
 def test_reattempt_with_nothing_missing_submits_no_round1(tmp_path: Path):
     """An unresolved-only ledger re-attempts NMS without resubmitting any round-1 job.
 
-    The mirror of the test above: ``reattempt_nms`` resubmits exactly the
-    ``MISSING_OUTPUT`` ids, and a ledger holding only ``UNRESOLVED_NMS`` parents has none —
-    their round-1 frequency outputs are the expensive artifact the reuse exists to keep.
+    The mirror of the two tests above: ``reattempt_nms`` resubmits exactly the parents
+    whose round 1 left no usable result, and a ledger holding only ``UNRESOLVED_NMS``
+    parents has none — their round-1 frequency outputs parsed, and they are the expensive
+    artifact the reuse exists to keep.
     """
     from chemrefine import cache
     from chemrefine.engines.api import ENGINES
