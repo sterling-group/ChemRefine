@@ -36,12 +36,15 @@ def client(tmp_path: Path):
     return create_app(token=TOKEN).test_client()
 
 
+_HEADERS = {"X-ChemRefine-Token": TOKEN}
+
+
 def _get(client: Any, path: str, **kwargs: Any) -> Any:
-    return client.get(path, headers={"X-ChemRefine-Token": TOKEN}, **kwargs)
+    return client.get(path, headers=_HEADERS, **kwargs)
 
 
 def _post(client: Any, path: str, payload: dict[str, Any]) -> Any:
-    return client.post(path, json=payload, headers={"X-ChemRefine-Token": TOKEN})
+    return client.post(path, json=payload, headers=_HEADERS)
 
 
 # ---------------------------------------------------------------------------
@@ -1217,10 +1220,46 @@ def test_overlapping_chat_turns_contend_on_a_lock_not_on_the_state(
     assert _post(client, "/api/agent/chat", {"message": "three"}).status_code == 200
 
 
-def test_non_chemrefine_errors_are_not_swallowed(client: Any):
-    """Only ChemRefineError gets the JSON shape; a genuine bug must stay a loud bug."""
-    with pytest.raises(KeyError):
-        _post(client, "/api/validate", {})  # missing yaml_text → KeyError, not a 400
+def test_a_missing_request_field_is_a_400_that_names_it(client: Any):
+    """A body without a key the endpoint needs is malformed input, not a server bug.
+
+    Every ``payload["…"]`` read raised ``KeyError``, which ``surface`` re-raised as a
+    logged-traceback 500 — and the test this replaces pinned that as "a genuine bug must
+    stay a loud bug", while the newer endpoints on the same app answered the same class
+    of input with the documented 400: ``/api/structure-file`` with ``{}`` above, and the
+    wire-number guard. One rule now, through ``_field``: the missing key is named and
+    the shape is ``{error, exit_code}``, at every endpoint alike.
+    """
+    for endpoint, body, key in (
+        ("/api/validate", {}, "yaml_text"),
+        ("/api/save", {"yaml_text": "steps: []\n"}, "path"),
+        ("/api/results", {}, "config_path"),
+        ("/api/template", {"config_path": "/p/input.yaml", "step": 1}, "text"),
+    ):
+        response = _post(client, endpoint, body)
+        assert response.status_code == 400, endpoint
+        assert key in response.get_json()["error"], endpoint
+    # A body that is not a JSON object at all is the same refusal, not a TypeError.
+    bare = client.post("/api/validate", json=["not", "an", "object"], headers=_HEADERS)
+    assert bare.status_code == 400
+    assert "yaml_text" in bare.get_json()["error"]
+
+
+def test_non_chemrefine_errors_are_not_swallowed(client: Any, monkeypatch: pytest.MonkeyPatch):
+    """Only ChemRefineError gets the JSON shape; a genuine bug must stay a loud bug.
+
+    Driven by a tool raising something outside the taxonomy — the shape a real bug has —
+    rather than by a missing request field, which is the client's mistake and answers
+    400 above.
+    """
+    from chemrefine import agent_tools
+
+    def boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("a genuine bug")
+
+    monkeypatch.setattr(agent_tools, "validate_config", boom)
+    with pytest.raises(RuntimeError, match="a genuine bug"):
+        _post(client, "/api/validate", {"yaml_text": "steps: []\n"})
 
 
 def test_routine_http_errors_stay_routine(client: Any):

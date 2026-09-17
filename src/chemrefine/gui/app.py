@@ -67,6 +67,25 @@ def _wire_int(value: Any, key: str) -> int:
     raise ConfigError(f"{key} {value!r} is not a whole number")
 
 
+def _field(payload: Any, key: str) -> Any:
+    """One field a JSON body must carry, or the 400 that names it.
+
+    The page's own JavaScript sends every key its endpoint reads, so a body without one
+    is a hand-made request — and it used to be a ``KeyError`` that :func:`surface`
+    re-raised as a logged-traceback 500, pinned by a test as "a genuine bug must stay a
+    loud bug". The newer endpoints on this app took the other side for the same class of
+    input: ``/api/structure-file`` answers ``{}`` with a 400 that says what to send, and
+    :func:`_wire_int` refuses a malformed count the same way. One rule now: a missing
+    field is the client's mistake, refused as a :class:`ConfigError` in the documented
+    ``{error, exit_code}`` shape. A body that is not a JSON object at all — ``force=True``
+    parses a bare list or string — is refused the same way rather than as a
+    ``TypeError`` from ``.get``.
+    """
+    if not isinstance(payload, dict) or key not in payload:
+        raise ConfigError(f"request body is missing {key!r}")
+    return payload[key]
+
+
 def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     """Build the GUI app.
 
@@ -170,7 +189,9 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     def validate() -> Any:
         """The structured validation report for the current editor text."""
         payload = request.get_json(force=True)
-        return jsonify(agent_tools.validate_config(payload["yaml_text"], payload.get("base_dir")))
+        return jsonify(
+            agent_tools.validate_config(_field(payload, "yaml_text"), payload.get("base_dir"))
+        )
 
     @app.post("/api/yaml")
     def to_yaml() -> Any:
@@ -183,7 +204,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         """
         payload = request.get_json(force=True)
         text = yaml.safe_dump(
-            _canonical_order(payload["config"]), sort_keys=False, allow_unicode=True
+            _canonical_order(_field(payload, "config")), sort_keys=False, allow_unicode=True
         )
         return jsonify({"yaml_text": text})
 
@@ -192,7 +213,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         """YAML text → the raw mapping the form edits (or the reason it cannot)."""
         payload = request.get_json(force=True)
         try:
-            raw = yaml.safe_load(payload["yaml_text"])
+            raw = yaml.safe_load(_field(payload, "yaml_text"))
         except yaml.YAMLError as e:
             return jsonify({"error": f"malformed YAML: {e}"}), 400
         if not isinstance(raw, dict):
@@ -232,9 +253,9 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         unwritable destination is a plain 400, like every other bad input here.
         """
         payload = request.get_json(force=True)
-        destination = agent_tools.expand_user_path(payload["path"])
+        destination = agent_tools.expand_user_path(_field(payload, "path"))
         try:
-            atomic_write(destination, payload["yaml_text"].encode("utf-8"))
+            atomic_write(destination, _field(payload, "yaml_text").encode("utf-8"))
         except OSError as e:
             return jsonify({"error": f"cannot write {destination}: {e}"}), 400
         return jsonify({"path": str(destination)})
@@ -245,7 +266,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         payload = request.get_json(force=True)
         return jsonify(
             agent_tools.scaffold_templates(
-                payload["config_path"], overwrite=bool(payload.get("overwrite", False))
+                _field(payload, "config_path"), overwrite=bool(payload.get("overwrite", False))
             )
         )
 
@@ -262,7 +283,9 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         payload = request.get_json(force=True)
         return jsonify(
             agent_tools.write_template(
-                payload["config_path"], _step_key(payload["step"]), payload["text"]
+                _field(payload, "config_path"),
+                _step_key(_field(payload, "step")),
+                _field(payload, "text"),
             )
         )
 
@@ -326,14 +349,16 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         if "text" not in payload:
             return jsonify({"error": "send either a path, or a name and text"}), 400
         return jsonify(
-            agent_tools.read_structure_text(payload.get("name") or "structure", payload["text"])
+            agent_tools.read_structure_text(
+                payload.get("name") or "structure", _field(payload, "text")
+            )
         )
 
     @app.post("/api/summary")
     def summary() -> Any:
         """The dry-run-style execution summary for a saved config."""
         payload = request.get_json(force=True)
-        return jsonify(agent_tools.summarize_config(payload["config_path"]))
+        return jsonify(agent_tools.summarize_config(_field(payload, "config_path")))
 
     @app.post("/api/status")
     def status() -> Any:
@@ -341,7 +366,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         payload = request.get_json(force=True)
         return jsonify(
             agent_tools.run_status(
-                payload["config_path"],
+                _field(payload, "config_path"),
                 log_tail_lines=_wire_int(payload.get("log_tail_lines", 40), "log_tail_lines"),
             )
         )
@@ -352,7 +377,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         payload = request.get_json(force=True)
         return jsonify(
             agent_tools.get_results(
-                payload["config_path"],
+                _field(payload, "config_path"),
                 step=payload.get("step"),
                 limit=_wire_int(payload.get("limit", 20), "limit"),
                 offset=_wire_int(payload.get("offset", 0), "offset"),
@@ -363,7 +388,9 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     def failures() -> Any:
         """The failure ledger plus the suggested recovery action."""
         payload = request.get_json(force=True)
-        return jsonify(agent_tools.get_failures(payload["config_path"], step=payload.get("step")))
+        return jsonify(
+            agent_tools.get_failures(_field(payload, "config_path"), step=payload.get("step"))
+        )
 
     # One user, one browser, one conversation: the chat state lives on the app instance
     # (history = PydanticAI's own message list; pending = the suspended run awaiting the
@@ -528,11 +555,13 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
                 result = agent.run_sync(
                     message_history=pending,
                     deferred_tool_results=DeferredToolResults(
-                        approvals={k: bool(v) for k, v in payload["approvals"].items()}
+                        approvals={k: bool(v) for k, v in _field(payload, "approvals").items()}
                     ),
                 )
             else:
-                result = agent.run_sync(payload["message"], message_history=chat_state["history"])
+                result = agent.run_sync(
+                    _field(payload, "message"), message_history=chat_state["history"]
+                )
         except ChemRefineError:
             # A tool's own failure keeps its documented {error, exit_code} shape.
             raise
@@ -584,7 +613,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         gpus = payload.get("max_gpus")
         return jsonify(
             agent_tools.start_run(
-                payload["config_path"],
+                _field(payload, "config_path"),
                 action=payload.get("action", "run"),
                 target=payload.get("target"),
                 max_cores=_wire_int(cores, "max_cores") if cores not in (None, "") else None,

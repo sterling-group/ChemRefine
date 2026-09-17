@@ -436,6 +436,13 @@ for the full map.
 
 ### Fixed
 
+- **A GUI request missing a field it needs is a 400 that names the field.** Every
+  `payload["…"]` read in the web app raised `KeyError`, re-raised as a logged-traceback
+  500 — a rule one test pinned as deliberate while the newer endpoints on the same app
+  answered the same class of input with the documented 400 (`/api/structure-file` with an
+  empty body, the wire-number guard). One helper now serves every endpoint: a missing key,
+  or a body that is not a JSON object at all, is refused as `{error, exit_code}`; a
+  genuine bug inside a tool still surfaces as itself.
 - **A step selector that is neither a number nor a name is refused, not crashed on.**
   `/api/results`, `/api/failures` and the agent's `get_results`/`get_failures` handed
   their `step` straight to the lookup, so a JSON float, list or mapping raised a bare
