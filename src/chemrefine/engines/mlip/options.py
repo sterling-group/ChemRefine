@@ -15,7 +15,7 @@ from typing import Any, Self
 from pydantic import AliasChoices, ConfigDict, Field, field_validator, model_validator
 
 from chemrefine.config import reject_shell_unsafe
-from chemrefine.engines._options import EngineOptions
+from chemrefine.engines._options import EngineOptions, refuse_template_knobs
 
 
 class MlipOptions(EngineOptions):
@@ -124,6 +124,24 @@ the source of names, defaults and YAML aliases. The sweep that motivated this co
 tuple hand-enumerated at ten sites."""
 
 
+class MlipExtOptOptions(MlipOptions):
+    """The MLIP knobs as the ``mlip-extopt`` engine reads them: the same fields, no template.
+
+    A subclass rather than the direct model itself because the direct engine and this one
+    read ``extra`` differently: ``mlip`` renders it into the user's ``step{N}.py``, and this
+    engine renders no template at all — the server is built from the validated knobs alone
+    — so a key placed there would be accepted and read by nothing. The refusal lives on the
+    model the engine declares, where the preflight, the server command and the docs all
+    read it.
+    """
+
+    @model_validator(mode="after")
+    def _no_template_knobs(self) -> Self:
+        """Refuse ``extra``: this engine renders no ``step{N}.py`` for it to reach."""
+        refuse_template_knobs(self.extra)
+        return self
+
+
 class MlipTrainOptions(MlipOptions):
     """Validated knobs for the ``mlip-train`` step.
 
@@ -145,14 +163,8 @@ class MlipTrainOptions(MlipOptions):
 
     @model_validator(mode="after")
     def _no_template_knobs(self) -> Self:
-        """Refuse ``extra``: this engine renders no ``step{N}.py`` for it to reach.
-
-        Inherited from the direct model, where it is the declared bag for a template's own
-        knobs. Here nothing reads it, and a knob nothing reads is the silent no-op the
-        declared-key rule exists to catch — so it is refused rather than accepted and ignored.
-        """
-        if self.extra:
-            raise ValueError("`extra` is for a stepN.py template; this engine renders none")
+        """Refuse ``extra``: this engine renders no ``step{N}.py`` for it to reach."""
+        refuse_template_knobs(self.extra)
         return self
 
     gpus: int = Field(1, ge=1)

@@ -17,6 +17,20 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 from chemrefine.errors import ConfigError
 
 
+def refuse_template_knobs(extra: Mapping[str, Any]) -> None:
+    """Refuse ``extra`` on an engine that renders no ``step{N}.py`` for it to reach.
+
+    The direct script engines declare ``extra`` as the bag for a template's own knobs. An
+    engine that renders no template reads nothing from it, and a knob nothing reads is the
+    silent no-op the declared-key rule exists to catch — so the models of those engines
+    refuse it, through this one rule, rather than accept and ignore it. Raised as a
+    ``ValueError`` because it runs inside a pydantic validator, which reports it as the
+    model's own validation error.
+    """
+    if extra:
+        raise ValueError("`extra` is for a stepN.py template; this engine renders none")
+
+
 class EngineOptions(BaseModel):
     """Base for an engine's validated ``step.options`` model."""
 

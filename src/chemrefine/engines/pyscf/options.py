@@ -24,7 +24,7 @@ from typing import Any, Literal, Self
 from pydantic import Field, field_validator, model_validator
 
 from chemrefine.config import reject_shell_unsafe
-from chemrefine.engines._options import EngineOptions
+from chemrefine.engines._options import EngineOptions, refuse_template_knobs
 from chemrefine.errors import ConfigError
 
 
@@ -156,14 +156,8 @@ class PyscfExtOptOptions(PyscfOptions):
 
     @model_validator(mode="after")
     def _no_template_knobs(self) -> Self:
-        """Refuse ``extra``: this engine renders no ``step{N}.py`` for it to reach.
-
-        Inherited from the direct model, where it is the declared bag for a template's own
-        knobs. Here nothing reads it, and a knob nothing reads is the silent no-op the
-        declared-key rule exists to catch — so it is refused rather than accepted and ignored.
-        """
-        if self.extra:
-            raise ValueError("`extra` is for a stepN.py template; this engine renders none")
+        """Refuse ``extra``: this engine renders no ``step{N}.py`` for it to reach."""
+        refuse_template_knobs(self.extra)
         return self
 
     strict_scf: bool = True

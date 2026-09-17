@@ -421,6 +421,11 @@ for the full map.
 
 ### Fixed
 
+- **`mlip-extopt` refuses `extra`, as documented.** The engine read the direct `mlip`
+  model, whose `extra` mapping is legitimate, and its server command emits only the flags
+  it knows — so an `extra:` on an `mlip-extopt` step was accepted and read by nothing,
+  the silent no-op the declared-key rule exists to catch. It now reads its own model,
+  which refuses the mapping the way `mlip-train` and `pyscf-extopt` already do.
 - **A `~name` the host cannot resolve is a refusal at every path a user types.**
   `expanduser` raises `RuntimeError` for an unknown account — neither an `OSError` nor a
   ChemRefine error — and the guard for it had landed on one GUI endpoint of five sites:

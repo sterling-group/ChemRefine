@@ -410,8 +410,8 @@ def test_examples_cover_required_knobs() -> None:
             if step.get("nms"):
                 used["nms"] |= options
             # Filed under the model the engine itself declares, so a knob counts as
-            # demonstrated only for the model that can take it: mlip-extopt shares
-            # MlipOptions with mlip, mlip-train's different model files apart with no
+            # demonstrated only for the model that can take it: mlip-extopt and mlip-train
+            # each read their own subclass of the direct model and file apart with no
             # special case, and a future OptionsDeclaring engine joins with no edit here.
             engine_obj = get_engine(engine) if engine else None
             if isinstance(engine_obj, OptionsDeclaring):

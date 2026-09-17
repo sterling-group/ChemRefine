@@ -506,6 +506,22 @@ def test_mlip_extopt_nms_knobs_share_the_options_with_the_strict_server_read(tmp
         engine.check_step(typo, charge=0, multiplicity=1)
 
 
+def test_mlip_extopt_refuses_extra_like_every_engine_that_renders_no_template():
+    """``extra`` is for a ``step{N}.py``; an engine that renders none must not swallow it.
+
+    The docs and the field's own docstring said ``mlip-extopt`` refuses it, but the engine
+    read the direct model, whose ``extra`` is legitimate, and the server command emits
+    only the flags it knows — so the mapping was accepted and read by nothing, the silent
+    no-op the declared-key rule exists to catch. The direct engine keeps accepting it.
+    """
+    knobs = {"task_name": "mace_off", "extra": {"my_knob": 1}}
+    with pytest.raises(ConfigError, match="renders none"):
+        get_engine("mlip-extopt").check_step(
+            StepConfig(step=1, engine="mlip-extopt", options=knobs), charge=0, multiplicity=1
+        )
+    assert get_engine("mlip").options_cls.from_raw(knobs).extra == {"my_knob": 1}
+
+
 def test_mlip_extopt_run_block_has_a_readiness_loop_and_a_cleanup_hook(tmp_path: Path):
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path)
