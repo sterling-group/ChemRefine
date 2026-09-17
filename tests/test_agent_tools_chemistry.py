@@ -11,6 +11,7 @@ asserted here are the numbers an agent would reason over.
 
 from __future__ import annotations
 
+import os
 import shutil
 import time
 import urllib.request
@@ -867,8 +868,10 @@ def test_a_relocated_tree_with_a_legacy_manifest_still_finds_its_outputs(tmp_pat
 def test_an_output_a_retry_moved_into_an_attempt_dir_is_found(tmp_path: Path):
     """Retries and NMS write into ``attemptN/``, so the search has to go below the id dir.
 
-    The newest wins: a retried structure has the same basename in several attempt
-    directories, and the latest is the one the manifest would have been rewritten to name.
+    The newest attempt wins — by its **number**, the order ``ids.next_attempt_dir`` mints,
+    never by modification time. A tree copied off a cluster without timestamps carries
+    copy-order mtimes, so the test gives the *older* attempt the *newer* mtime: a pick by
+    clock would answer ``attempt1`` and animate the superseded Hessian.
     """
     tree = _freq_tree(tmp_path)
     config = load_config(tree)
@@ -877,8 +880,11 @@ def test_an_output_a_retry_moved_into_an_attempt_dir_is_found(tmp_path: Path):
     for attempt in ("attempt1", "attempt2"):
         (home / attempt).mkdir()
         shutil.copy(recorded, home / attempt / "step1_0.out")
-        time.sleep(0.01)  # attempt2 is the newer one
+    (home / "attempt3").mkdir()  # sealed without this output: walked past, not chosen
     recorded.unlink()  # the retry left nothing at the recorded path
+    now = time.time()
+    os.utime(home / "attempt2" / "step1_0.out", (now - 3600, now - 3600))
+    os.utime(home / "attempt1" / "step1_0.out", (now, now))  # copied last, so newest
 
     found = agent_tools._locate_output(config.step_dir(config.steps[0]), "0", recorded)
     assert found is not None

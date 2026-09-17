@@ -37,7 +37,7 @@ from typing import Any, cast
 import numpy as np
 from numpy.typing import NDArray
 
-from chemrefine import cache, introspect, io, pipeline, scaffold
+from chemrefine import cache, ids, introspect, io, pipeline, scaffold
 from chemrefine.cache import load_failure_records
 from chemrefine.config import Config, StepConfig, load_config
 from chemrefine.engines.api import FrequencyOutputParsing, ParsedResult, get_engine
@@ -970,7 +970,15 @@ def _locate_output(step_dir: Path, structure_id: str, recorded: Path) -> Path | 
     file sitting right there.
 
     Three probes, cheapest first: the recorded path; the same basename directly under this
-    tree's ``step_dir/structure_id``; and finally a search below that.
+    tree's ``step_dir/structure_id``; and finally the structure's ``attemptK/`` directories,
+    **newest attempt first** (:func:`chemrefine.ids.attempt_dirs_newest_first`) — a retried
+    structure has the same basename in several of them, and the latest attempt is the one
+    the manifest would have been rewritten to name.
+
+    By attempt number, never by modification time. Sorted by mtime, the pick was copy
+    order on a tree copied without timestamps — the "copied or moved" case above — and
+    the mode viewer then animated the superseded attempt's Hessian while
+    :func:`chemrefine.ids.latest_attempt_dir`, one function over, named the right one.
     """
     if recorded.is_file():
         return recorded
@@ -978,10 +986,11 @@ def _locate_output(step_dir: Path, structure_id: str, recorded: Path) -> Path | 
     direct = home / recorded.name
     if direct.is_file():
         return direct
-    # Newest wins: a retried structure has the same basename in several attempt dirs, and
-    # the latest attempt is the one the manifest would have been rewritten to name.
-    candidates = sorted(home.rglob(recorded.name), key=lambda p: p.stat().st_mtime)
-    return candidates[-1] if candidates else None
+    for attempt in ids.attempt_dirs_newest_first(home):
+        found = attempt / recorded.name
+        if found.is_file():
+            return found
+    return None
 
 
 def _mode_frame(config: Config, step_cfg: StepConfig, structure_id: str) -> ParsedResult:
