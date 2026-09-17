@@ -347,7 +347,11 @@ exclude = ["tests", "examples", "build", "dist"]
 # syntax or API in any line fails there. Raise this only when the floor of what the deps
 # allow rises again.
 python_version = "3.12"
-files = ["src/chemrefine", "tests"]
+# Every directory ruff lints is type-checked too. `tools/`, `scripts/` and `docs/hooks/`
+# are not the package and get the relaxed settings below, but they are Python that runs —
+# and `tools/` sat outside this list long enough to collect three real type confusions
+# (a list rebound to a tuple, a float to a list) that `mypy .` reported and `mypy` did not.
+files = ["src/chemrefine", "tests", "scripts", "tools", "docs/hooks"]
 # Step templates are `string.Template` sources, not modules: they carry bare
 # `$PLACEHOLDER` tokens and are rendered before anything executes them. Excluded for
 # the same reason ruff excludes them — and because several cases naming their template

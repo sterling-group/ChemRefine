@@ -306,8 +306,8 @@ def main() -> int:
         (sx, _sy), (ex, _ey) = g.MESH[name][0][0], g.MESH[name][-1][3]
         so, eo = (sx - x_lo) / (x_hi - x_lo), (ex - x_lo) / (x_hi - x_lo)
         s_host, e_host = HOST_STOPS.get(name, (g.OUTLINE_A_STOPS, g.OUTLINE_B_STOPS))
-        ends = (g.MESH_STOPS[name][0][1], g.MESH_STOPS[name][-1][1])
-        for stops, off, have in ((s_host, so, ends[0]), (e_host, eo, ends[1])):
+        inks = (g.MESH_STOPS[name][0][1], g.MESH_STOPS[name][-1][1])
+        for stops, off, have in ((s_host, so, inks[0]), (e_host, eo, inks[1])):
             expect = grad_color(stops, off)
             dc = max(abs(int(expect[i : i + 2], 16) - int(have[i : i + 2], 16)) for i in (1, 3, 5))
             worst_dc = max(worst_dc, dc)
@@ -383,16 +383,16 @@ def main() -> int:
     # degenerate loop or control-point blowup - a visible "bounce"
     chains = {"A": g.A_SEGS, "B": g.B_SEGS, "GROUND": g.GROUND_SEGS}
     chains.update({n: g.MESH[n] for n in g.MESH_ORDER})
-    worst = [
+    wobbles = [
         f"{name} seg{si}:{seg_flips(seg)}"
         for name, segs in chains.items()
         for si, seg in enumerate(segs)
         if seg_flips(seg) > 1
     ]
-    if not worst:
+    if not wobbles:
         bad += ok("no curve bounces: every segment holds one inflection at most")
     else:
-        bad += fail(f"segment wobbles detected: {', '.join(worst)}")
+        bad += fail(f"segment wobbles detected: {', '.join(wobbles)}")
 
     # joint-level wobble: the heading along B's dive may only turn one way
     cp = g.sample_chain(g.B_SEGS[:1], 80)
@@ -532,15 +532,16 @@ def main() -> int:
                         max(0, int(p[1]) - 7) : int(p[1]) + 7, max(0, int(p[0]) - 7) : int(p[0]) + 7
                     ].reshape(-1, 3)
                     core = np.median(win[np.argsort(win.sum(1))[: max(6, len(win) // 3)]], 0)
+                    ramp: tuple[tuple[float, str], ...]
                     if name in ("A", "B"):
                         off = (p[0] - g.LTIP[0]) / (g.RTIP[0] - g.LTIP[0])
-                        stops = g.OUTLINE_A_STOPS if name == "A" else g.OUTLINE_B_STOPS
+                        ramp = g.OUTLINE_A_STOPS if name == "A" else g.OUTLINE_B_STOPS
                     else:
                         P0, P1 = arr[0], arr[-1]
                         d_ = P1 - P0
                         off = float(np.clip((p - P0) @ d_ / (d_ @ d_), 0, 1))
-                        stops = g.MESH_STOPS[name]
-                    have = hex_rgb(grad_color(stops, off))
+                        ramp = g.MESH_STOPS[name]
+                    have = hex_rgb(grad_color(ramp, off))
                     des.append(float(np.linalg.norm(lab(core) - lab(have))))
                 med = float(np.median(des)) if des else 0.0
                 if med > worst_med:
