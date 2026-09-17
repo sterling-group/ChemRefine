@@ -1,0 +1,17 @@
+# input.yaml — a few conformers in, the best ones out: an xTB screen, then DFT.
+input: ./step1.xyz                        # one conformer per frame
+executables: { orca: /path/to/orca }      # the full path to your ORCA binary
+max_cores: 4                              # four serial jobs at a time on a laptop
+
+steps:
+  - step: 1
+    name: screen
+    engine: orca
+    template: screen.inp                  # ! XTB2 Opt — GFN2-xTB ships with ORCA
+    sample: { method: boltzmann, percent_cumulative: 99 }
+
+  - step: 2
+    name: refine
+    engine: orca
+    template: dft_opt.inp                 # ! PBE def2-SVP Opt
+    sample: { method: min, window_kcalmol: 3.0 }

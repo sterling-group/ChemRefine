@@ -65,7 +65,7 @@ steps:
 | `template_dir` | path | `./templates` | Directory holding the per-step engine templates and SLURM headers. |
 | `scratch_dir` | path | `None` | Fast node-local working directory base. Unset ⇒ a per-calc `_work_…` dir is derived under `output_dir`; on HPC point it at node scratch (e.g. `/scratch/$USER`). Must differ from `output_dir`. |
 | `output_dir` | path | `./outputs` | Where per-step results, caches, and `steps.csv` are written. ORCA-family steps additionally require it to resolve to a path without whitespace — see the warning above. |
-| `input` | path | `None` | Seed structures: an `.xyz` (one structure per frame), a directory of `.xyz`, or a `.csv` of SMILES (column `smiles`). Unset falls back to `templates/step1.xyz`. |
+| `input` | path | `None` | Seed structures: an `.xyz` (one structure per frame), a directory of `.xyz`, or a `.csv` of SMILES (column `smiles`). Unset falls back to `<template_dir>/step1.xyz`. |
 | `charge` | int | `0` | Global molecular charge (per-step `charge` overrides). |
 | `multiplicity` | int ≥ 1 | `1` | Global spin multiplicity `2S+1` (per-step `multiplicity` overrides). |
 | `max_cores` | int ≥ 1 | `4` | Total CPU budget the throttler enforces across concurrent jobs. The `--maxcores` flag overrides this. |

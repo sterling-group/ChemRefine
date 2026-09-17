@@ -2,11 +2,31 @@
 
 A ChemRefine project is a YAML file, a directory of templates, and a seed structure. This
 page walks one from nothing to results. It needs only ORCA and a base
-[install](install.md) — no backend environment.
+[install](install.md) — no backend environment, no GPU: step 1 is ORCA's bundled
+GFN2-xTB, step 2 a small DFT optimisation, and the whole thing takes under a minute on a
+laptop.
 
 ## 1. Describe the pipeline
 
+The project is four small files. Copy
+[`examples/first_run/`](https://github.com/sterling-group/ChemRefine/tree/main/examples/first_run)
+from the repository, or paste them:
+
+```
+first_run/
+├── input.yaml
+├── step1.xyz                a few conformers, one per frame
+└── templates/
+    ├── screen.inp           ! XTB2 Opt
+    └── dft_opt.inp          ! PBE def2-SVP Opt
+```
+
 --8<-- "README.md:quickstart"
+
+`executables:` wants the full path to the ORCA binary — ORCA finds its own helpers
+beside it. `max_cores: 4` is the whole budget: with no `%pal` line in the templates, four
+serial jobs run at once. On a cluster, add `%pal nprocs N end` to the templates and the
+`#SBATCH` lines to `templates/cpu.slurm.header`; nothing else changes.
 
 Every key is in the [configuration reference](../workflow/configuration.md); the engines
 you can name are in the [engine table](../engines/index.md).
@@ -39,7 +59,8 @@ chemrefine run input.yaml --dry-run
 ## 3. Run it
 
 ```bash
-chemrefine run input.yaml
+chemrefine run input.yaml                # the YAML's max_cores: 4
+chemrefine run input.yaml --maxcores 8   # or override the budget
 ```
 
 The run submits through `sbatch` if it is on `PATH` and with `bash` otherwise; nothing in

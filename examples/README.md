@@ -11,7 +11,8 @@ cd <example> && chemrefine run input.yaml
 
 | Example | Molecule | Demonstrates |
 | --- | --- | --- |
-| [quickstart](quickstart/) | N,N-dimethylaniline | The annotated tour of the config schema: MLIP screen → DFT refine → high-level DFT with normal-mode sampling. |
+| [first_run](first_run/) | ethylene glycol | The README quickstart: an xTB screen (ORCA's bundled GFN2-xTB) and a DFT refinement — runs on a base install plus ORCA, in minutes. |
+| [schema_tour](schema_tour/) | N,N-dimethylaniline | The annotated tour of the config schema: MLIP screen → DFT refine → high-level DFT with normal-mode sampling. |
 | [tutorials/conformational_sampling](tutorials/conformational_sampling/) | Pd(PPh₃)₄ | GOAT conformer ensemble, MLIP refinement, DFT level-of-theory ladder. |
 | [tutorials/transition_state](tutorials/transition_state/) | C₁₃H₁₅N₃ | Relaxed PES scan, `max` sampling, OptTS, TS-targeted normal-mode sampling. |
 | [tutorials/host_guest](tutorials/host_guest/) | macrocycle + Cl⁻ | DOCKER guest docking, per-step charge override, SOLVATOR microsolvation. |

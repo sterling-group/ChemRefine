@@ -54,39 +54,48 @@ lists every engine, backend and extra, and covers GPU setup.
 
 ## Run
 
-ChemRefine is driven by a single YAML config. A minimal two-step
-workflow (MLIP screen → DFT refine):
+ChemRefine is driven by a single YAML config. The smallest useful pipeline
+(xTB screen → DFT refine) is the YAML, two one-line ORCA templates and a
+seed — nothing to install beyond ORCA. It ships as
+[`examples/first_run/`](examples/first_run/), or paste it:
 
 <!-- --8<-- [start:quickstart] -->
 ```yaml
-template_dir: ./templates
-scratch_dir:  ./scratch
-output_dir:   ./outputs
-input:        ./step1.xyz
-charge: 0
-multiplicity: 1
-max_cores: 64
-slurm_template: cpu.slurm.header
-executables: { orca: orca }
+# input.yaml — a few conformers in, the best ones out: an xTB screen, then DFT.
+input: ./step1.xyz                        # one conformer per frame
+executables: { orca: /path/to/orca }      # the full path to your ORCA binary
+max_cores: 4                              # four serial jobs at a time on a laptop
 
 steps:
   - step: 1
     name: screen
-    engine: mlip
-    operation: opt_sp
-    options: { model_name: medium, task_name: mace_off, device: cuda }
+    engine: orca
+    template: screen.inp                  # ! XTB2 Opt — GFN2-xTB ships with ORCA
     sample: { method: boltzmann, percent_cumulative: 99 }
 
   - step: 2
     name: refine
     engine: orca
-    operation: opt_sp
-    template: dft_opt.inp
+    template: dft_opt.inp                 # ! PBE def2-SVP Opt
     sample: { method: min, window_kcalmol: 3.0 }
 ```
 
+```
+# templates/screen.inp — GFN2-xTB, bundled with ORCA: no extra install
+! XTB2 Opt
+```
+
+```
+# templates/dft_opt.inp — a small DFT optimisation of what the screen kept
+! PBE def2-SVP Opt
+```
+
+Put a few conformers in `step1.xyz` (one per frame — the example ships three of
+ethylene glycol), point `executables:` at your ORCA, then:
+
 ```bash
-chemrefine run input.yaml                  # full pipeline from step 1
+chemrefine validate input.yaml             # every problem at once, before anything runs
+chemrefine run input.yaml                  # under a minute on a laptop
 chemrefine resume input.yaml               # honor cache where valid
 chemrefine rebuild-cache input.yaml refine # re-parse one step's outputs from disk
 chemrefine --help                          # full subcommand list

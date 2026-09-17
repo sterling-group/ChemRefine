@@ -66,6 +66,30 @@ def test_the_documented_config_validates(block: str):
 
 
 # ---------------------------------------------------------------------------
+# The README quickstart is the shipped example, verbatim
+# ---------------------------------------------------------------------------
+
+_FIRST_RUN = _REPO_ROOT / "examples" / "first_run"
+
+
+@pytest.mark.parametrize(
+    ("relative", "lang"),
+    [("input.yaml", "yaml"), ("templates/screen.inp", ""), ("templates/dft_opt.inp", "")],
+)
+def test_the_readme_quickstart_is_the_shipped_example(relative: str, lang: str):
+    """The README's quickstart fences and ``examples/first_run/`` are one text, not two.
+
+    The README teaches the pipeline and the example directory runs it (``test_examples``
+    sweeps the directory: seed, templates, header, the operation the templates infer). A
+    reader who pastes the README and one who copies the directory must get the same run —
+    the schema test above validates the fence, but only this holds it to the files.
+    """
+    text = (_FIRST_RUN / relative).read_text(encoding="utf-8")
+    readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    assert f"```{lang}\n{text}```" in readme, f"{relative} is not a README quickstart fence"
+
+
+# ---------------------------------------------------------------------------
 # The engine guide's Python — the one artefact a new engine author copies
 # ---------------------------------------------------------------------------
 

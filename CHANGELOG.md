@@ -298,6 +298,12 @@ for the full map.
 
 ### Changed
 
+- **The quickstart runs on a base install and ORCA.** `examples/first_run/` is the
+  README's two-step pipeline — an xTB screen (ORCA's bundled GFN2-xTB) and a DFT
+  refinement of three ethylene-glycol conformers, under a minute on a laptop, nothing
+  to install beyond ORCA — and the README, the docs index and *Your first run* show
+  those files verbatim (a test holds them together). The annotated tour of the config
+  schema that sat at `examples/quickstart/` is `examples/schema_tour/`.
 - **An ORCA template that walks a reaction path, a band or a trajectory is named for what
   it is.** `! IRC`, the `NEB` family and a `%md` block infer `operation: irc`, `neb` and
   `md` where they used to fall through to `sp`, so the run log and the step's records say

@@ -38,10 +38,10 @@ chemrefine run input.yaml --dry-run          # validate + describe; submit nothi
 A first run usually goes: `chemrefine validate input.yaml` → `chemrefine scaffold
 input.yaml` → edit the starters → `chemrefine run input.yaml`.
 
-Two more entry points build on the same tooling: [`chemrefine gui`](../workflow/builder.md) (the
+Three more entry points build on the same tooling: [`chemrefine gui`](../workflow/builder.md) (the
 click-through workflow builder — [from a cluster](../workflow/builder.md#from-a-cluster) it prints
-its own SSH forwarding recipe) and [`chemrefine mcp`](../workflow/agents.md) (the tool server for AI
-agents).
+its own SSH forwarding recipe), [`chemrefine mcp`](../workflow/agents.md) (the tool server for AI
+agents) and [`chemrefine agent`](../workflow/agents.md) (a terminal chat over the same tools).
 
 ## Backend environments (`chemrefine backends`)
 

@@ -9,7 +9,7 @@ template chips and an agent's next-action decision render from — and
 :func:`scaffold_templates` writes a commented starter into each gap so the user edits a
 working file instead of authoring one from a blank page.
 
-Starters are deliberately minimal echoes of the shipped examples (``examples/quickstart``
+Starters are deliberately minimal echoes of the shipped examples (``examples/first_run``
 et al.). Each engine declares its own (:class:`~chemrefine.engines.api.StarterProviding`),
 so the text travels with the engine and adding one edits nothing here; an engine that
 declares none gets a suffix-shaped fallback, so a drop-in still scaffolds something

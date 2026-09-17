@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are applied to the latest released `2.0.x` line.
+Security fixes are applied to the `2.0.x` line — the current release line.
 
 | Version | Supported |
 | ------- | --------- |

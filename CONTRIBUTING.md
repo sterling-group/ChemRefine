@@ -226,12 +226,15 @@ cannot do that last part — GitHub-hosted runners have no ORCA, and
 automating it would mean a self-hosted runner, which is unsafe on a public
 repository: a pull request from a fork can execute arbitrary code on it.
 
-Four CI jobs are deliberately **not** replicated locally, because doing so
+Five CI jobs are deliberately **not** replicated locally, because doing so
 would cost more than it covers: the dependency-floors job and the 3.11–3.14
 matrix both need interpreters most machines lack, and CodeQL, Scorecard and
-dependency-review are GitHub-hosted analyses with no local equivalent. All
-four run on the tag anyway — `publish.yml` calls `ci.yml`, so nothing
-reaches PyPI without the full matrix having passed.
+dependency-review are GitHub-hosted analyses with no local equivalent. The
+first two run on the tag anyway — `publish.yml` calls `ci.yml`, so nothing
+reaches PyPI without the full matrix having passed. The three analyses never
+run on a tag: CodeQL and dependency-review run on every pull request, and
+CodeQL and Scorecard on every push to `main`, so a tagged commit has been
+through them as the pull request that landed it.
 
 Nothing machine-specific is baked into the script: it gates with whichever
 venv or conda env is active. Put per-machine paths (`PY`, `LIVE_PY`, `ORCA`)
