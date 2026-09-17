@@ -552,16 +552,27 @@ def test_operation_with_shell_metacharacters_rejected(tmp_path: Path, bad: str):
         load_config(_write_yaml(tmp_path, data))
 
 
-@pytest.mark.parametrize("ok", ["opt_sp", "OPT+SP", "sp", "mlip_train", "goat"])
-def test_operation_accepts_every_real_spelling(tmp_path: Path, ok: str):
+@pytest.mark.parametrize(
+    ("ok", "expected"),
+    [
+        ("opt_sp", "opt_sp"),
+        ("OPT+SP", "opt_sp"),
+        ("sp", "sp"),
+        ("mlip_train", "mlip_train"),
+        ("goat", "goat"),
+    ],
+)
+def test_operation_accepts_every_real_spelling(tmp_path: Path, ok: str, expected: str):
     """The rule blocks shell metacharacters only — not the vocabulary engines actually use.
 
     `OPT+SP` matters: it is the legacy spelling, normalised to `opt_sp` before this
     validator sees it, and a stricter allowlist would have rejected it for no security gain.
+    The value is asserted, not just its presence: ``is not None`` was true of a normaliser
+    that handed the raw ``OPT+SP`` through.
     """
     data = _minimal_config()
     data["steps"][0]["operation"] = ok
-    assert load_config(_write_yaml(tmp_path, data)).steps[0].operation is not None
+    assert load_config(_write_yaml(tmp_path, data)).steps[0].operation == expected
 
 
 def test_directory_paths_with_a_comma_are_legal(tmp_path: Path):

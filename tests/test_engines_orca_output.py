@@ -289,12 +289,18 @@ def test_parse_dft_symbols_are_strings():
     assert {"C", "N"} <= set(parsed[0].symbols)
 
 
-def test_parse_dft_forces_optional_for_opt_outputs():
-    """The fixture is a geometry-opt converged run; gradient may or may not be present."""
+def test_parse_dft_forces_are_read_from_the_opt_outputs_gradient_block():
+    """The fixture's final gradient block is read and lands per atom beside the coordinates.
+
+    This used to guard its one assertion with ``if forces is not None``, so dropping the
+    gradient parse from ``parse_dft_from_text`` left it green; the fixture does carry a
+    gradient block, and the reader must find it.
+    """
     parsed = parse_dft(FIXTURE)
-    # Force shape, if present, matches the coord block.
-    if parsed[0].forces_ev_per_a is not None:
-        assert parsed[0].forces_ev_per_a.shape == parsed[0].positions.shape
+    forces = parsed[0].forces_ev_per_a
+    assert forces is not None
+    assert forces.shape == parsed[0].positions.shape == (77, 3)
+    assert np.isfinite(forces).all()
 
 
 # ---------------------------------------------------------------------------

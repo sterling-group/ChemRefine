@@ -1245,7 +1245,7 @@ def test_rebuild_still_adopts_across_a_criterion_retune(tmp_path: Path):
     """
     from chemrefine import step
 
-    cfg, _step_dir, _key = _nms_rebuild_tree(tmp_path)
+    cfg, step_dir, _key = _nms_rebuild_tree(tmp_path)
     retuned = Config(
         output_dir=cfg.output_dir,
         template_dir=cfg.template_dir,
@@ -1264,7 +1264,12 @@ def test_rebuild_still_adopts_across_a_criterion_retune(tmp_path: Path):
     # Under `ts` the structure (zero imaginary modes) is no longer at its target and its
     # only children would need submitting — rebuild submits nothing, so it lands in the
     # ledger as unresolved rather than being refused outright: the adoption path ran.
+    # `cache_hit is False` alone was true of the refusal too; the ledger row is the proof.
     assert outcome.cache_hit is False
+    assert outcome.state.structures == ()
+    assert [(r.structure_id, r.kind) for r in cache.load_failure_records(step_dir)] == [
+        ("0", FailureKind.UNRESOLVED_NMS)
+    ]
 
 
 def _retuned(cfg: Config, **options) -> Config:

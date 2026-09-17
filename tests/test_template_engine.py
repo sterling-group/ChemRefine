@@ -300,20 +300,23 @@ def _ctx(tmp: Path) -> StepContext:
     )
 
 
-def _parse(document: dict, seed: Atoms, *, fields=SCRIPT_OUTPUT, tmp: Path | None = None):
-    """Round-trip one output document through ``parse_output`` and return its ParsedResult."""
-    import json
-    import tempfile
+def _parse(document: dict, seed: Atoms, tmp_path: Path, *, fields=SCRIPT_OUTPUT):
+    """Round-trip one output document through ``parse_output`` and return its ParsedResult.
 
-    out = Path(tmp or tempfile.mkdtemp()) / "step1_0.json"
+    ``tmp_path`` is required: the previous ``tempfile.mkdtemp()`` fallback left one
+    directory behind per call, outside pytest's own cleanup.
+    """
+    import json
+
+    out = tmp_path / "step1_0.json"
     out.write_text(json.dumps(document), encoding="utf-8")
     return parse_output(out, label="MLIP", fallback=seed, fields=fields)[0]
 
 
-def test_a_script_that_reports_no_geometry_keeps_the_seeds():
+def test_a_script_that_reports_no_geometry_keeps_the_seeds(tmp_path: Path):
     """An absent optional field leaves the ParsedResult with the seed's own positions."""
     seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
-    parsed = _parse({"energy_hartree": -1.0}, seed)
+    parsed = _parse({"energy_hartree": -1.0}, seed, tmp_path)
     np.testing.assert_allclose(parsed.positions, seed.get_positions())
 
 
@@ -593,8 +596,8 @@ def test_an_engine_can_extend_the_output_contract_without_touching_a_building_bl
     parsed = _parse(
         {"energy_hartree": -1.0, "gibbs_hartree": -0.9, "enthalpy_hartree": -0.95},
         seed,
+        tmp_path,
         fields=_Extended.output_fields,
-        tmp=tmp_path,
     )
     assert parsed.gibbs_hartree == -0.9
     assert parsed.enthalpy_hartree == -0.95
@@ -610,10 +613,12 @@ def test_an_extended_field_is_swept_for_finiteness_like_every_other(tmp_path: Pa
     fields = (*SCRIPT_OUTPUT, OutputField("gibbs_hartree", "gibbs_hartree"))
     seed = Atoms("H", positions=[[0, 0, 0]])
     with pytest.raises(OutputParseError, match="non-finite 'gibbs_hartree'"):
-        _parse({"energy_hartree": -1.0, "gibbs_hartree": float("nan")}, seed, fields=fields)
+        _parse(
+            {"energy_hartree": -1.0, "gibbs_hartree": float("nan")}, seed, tmp_path, fields=fields
+        )
 
 
-def test_a_flag_field_is_exempt_from_the_finiteness_sweep():
+def test_a_flag_field_is_exempt_from_the_finiteness_sweep(tmp_path: Path):
     """``finite=False`` is for a value the question does not apply to.
 
     ``converged`` in the shared contract is that value: ``True``/``False`` land as written, and
@@ -621,9 +626,9 @@ def test_a_flag_field_is_exempt_from_the_finiteness_sweep():
     that sets no flag has always had — rather than a failure.
     """
     seed = Atoms("H", positions=[[0, 0, 0]])
-    assert _parse({"energy_hartree": -1.0, "converged": True}, seed).converged is True
-    assert _parse({"energy_hartree": -1.0, "converged": False}, seed).converged is False
-    assert _parse({"energy_hartree": -1.0}, seed).converged is None
+    assert _parse({"energy_hartree": -1.0, "converged": True}, seed, tmp_path).converged is True
+    assert _parse({"energy_hartree": -1.0, "converged": False}, seed, tmp_path).converged is False
+    assert _parse({"energy_hartree": -1.0}, seed, tmp_path).converged is None
 
 
 def test_a_sidecar_field_is_harvested_but_lands_on_no_result_field(
@@ -681,6 +686,7 @@ def test_a_sidecar_field_is_harvested_but_lands_on_no_result_field(
         _parse(
             {"energy_hartree": -1.0, "residual": float("nan")},
             seed,
+            tmp_path,
             fields=_Sidecar.output_fields,
         )
 

@@ -82,11 +82,38 @@ def test_execute_run_invalidates_and_re_executes(tmp_path: Path):
     assert (step1_dir / "_cache" / "step.json").is_file()
 
 
+def _stamp(path: Path) -> tuple[int, int]:
+    """A file's identity for "was it rewritten": inode and mtime.
+
+    The cache's atomic writes replace the inode, so a re-saved document differs on the first
+    field however fine the clock; the fake engine rewrites an output in place, which the
+    second field catches.
+    """
+    st = path.stat()
+    return st.st_ino, st.st_mtime_ns
+
+
 def test_execute_resume_keeps_caches(tmp_path: Path):
+    """A second resume serves both steps from their caches: nothing is re-run or re-saved.
+
+    ``== 0`` alone was true of a resume that recomputed everything; the cache documents
+    and the outputs are what a cache hit leaves untouched.
+    """
     cfg = _two_step_config(tmp_path)
     execute(cfg, Action.RESUME)
-    # Caches now exist; calling resume again should hit them.
+    outputs = cfg.output_dir.resolve()
+    watched = [
+        outputs / "step1_screen" / "_cache" / "step.json",
+        outputs / "step2_refine" / "_cache" / "step.json",
+        outputs / "step1_screen" / "0" / "step1_0.out",
+        outputs / "step2_refine" / "0" / "step2_0.out",
+    ]
+    before = [_stamp(p) for p in watched]
+
     assert execute(cfg, Action.RESUME) == 0
+
+    assert [_stamp(p) for p in watched] == before
+    assert not (outputs / "step1_screen" / "0" / "attempt1").exists()
 
 
 def test_execute_rebuild_cache_invalidates_only_target(tmp_path: Path):
@@ -105,16 +132,37 @@ def test_execute_rebuild_cache_invalidates_only_target(tmp_path: Path):
 
 
 def test_execute_rerun_target_by_name(tmp_path: Path):
+    """``rerun screen`` redoes step 1 — outputs archived and rewritten — and leaves step 2 alone."""
     cfg = _two_step_config(tmp_path)
     execute(cfg, Action.RESUME)
-    # rerun by name should also be accepted.
+    outputs = cfg.output_dir.resolve()
+    step1_out = outputs / "step1_screen" / "0" / "step1_0.out"
+    step2_out = outputs / "step2_refine" / "0" / "step2_0.out"
+    before = (_stamp(step1_out), _stamp(step2_out))
+
     assert execute(cfg, Action.RERUN, target="screen") == 0
+
+    assert (outputs / "step1_screen" / "0" / "attempt1" / "step1_0.out").is_file()
+    assert _stamp(step1_out) != before[0]  # recomputed
+    assert _stamp(step2_out) == before[1]  # not the target, and its parents did not move
+    assert not (outputs / "step2_refine" / "0" / "attempt1").exists()
 
 
 def test_execute_rebuild_cache_no_target_uses_last_step(tmp_path: Path):
+    """With no target, ``rebuild-cache`` re-parses the last step and re-saves only its cache."""
     cfg = _two_step_config(tmp_path)
     execute(cfg, Action.RESUME)
+    outputs = cfg.output_dir.resolve()
+    step1_doc = outputs / "step1_screen" / "_cache" / "step.json"
+    step2_doc = outputs / "step2_refine" / "_cache" / "step.json"
+    step2_out = outputs / "step2_refine" / "0" / "step2_0.out"
+    before = (_stamp(step1_doc), _stamp(step2_doc), _stamp(step2_out))
+
     assert execute(cfg, Action.REBUILD_CACHE) == 0
+
+    assert _stamp(step1_doc) == before[0]
+    assert _stamp(step2_doc) != before[1]  # re-parsed and re-saved
+    assert _stamp(step2_out) == before[2]  # from the outputs on disk; nothing re-run
 
 
 def test_invalidate_step_removes_cache(tmp_path: Path):
