@@ -815,6 +815,44 @@ def apply_failure_policy(
             return StepResults(structures=tuple(successes))
 
 
+def _in_parent_order(structures: list[Structure], parents: PipelineState) -> list[Structure]:
+    """``structures`` in the order of the parents they came from — the order a cache holds.
+
+    The next step's key is composed from the row keys *in order*
+    (:meth:`chemrefine.cache.StepKey.of`), so the order a step stores its survivors in is
+    part of every downstream fingerprint. :meth:`_ResultLedger.emit` answers in manifest
+    order for a batch, but the recovery paths — :func:`retry_unconverged` under ``resume``
+    or ``rerun-errors``, :func:`chemrefine.nms.reattempt_nms` — merge what they re-ran
+    *after* the ledger, and a batch's own retried fan-out frame lands after its siblings
+    within its origin. Sorted here, at the one point every path ends, the order is a
+    function of the parent order alone: whether a structure converged first time, was
+    retried mid-queue or was retried by a later command cannot move it, and a
+    ``rebuild-cache`` (manifest order) cannot re-key a tail that nothing changed.
+
+    A structure's origin is the parent it was computed for. A 1:1 result keeps the input's
+    id, a fan-out frame is ``{input}-{i}`` with ``parent_id`` the input
+    (:func:`chemrefine.ids.allocate_child_ids`), an NMS child carries its parent's id and a
+    promoted winner *is* its parent's id — so ``id if id in parents else parent_id`` names
+    the origin for every shape. Within an origin only fan-out frames are ordered, by their
+    ``-{i}``; every other child keeps the order it arrived in, which is what leaves a
+    ``random`` NMS step's displaced children — and every existing tree's fingerprints —
+    where they are. An origin the parents do not contain sorts last, in arrival order,
+    rather than raising: no path mints one today, and the cache has to be written whatever
+    produced it.
+    """
+    index = {s.id: i for i, s in enumerate(parents.structures)}
+
+    def rank(structure: Structure) -> tuple[int, int]:
+        sid = structure.id
+        origin = sid if sid in index else structure.parent_id
+        if origin is None:
+            return (len(index), -1)
+        frame = sid[len(origin) + 1 :] if sid.startswith(f"{origin}-") else ""
+        return (index.get(origin, len(index)), int(frame) if frame.isdecimal() else -1)
+
+    return sorted(structures, key=rank)
+
+
 def finalize(
     engine: CalculationEngine,
     ctx: StepContext,
@@ -825,19 +863,20 @@ def finalize(
 ) -> StepResults:
     """Resolve a step's failures and persist the result — the one way a step ends.
 
-    Every path that finishes a step does the same two things in the same order: apply
-    ``on_failure`` (:func:`apply_failure_policy`), then write the cache
-    (:func:`chemrefine.cache.save`). Four callers need it — the full run, ``rebuild-cache``,
-    the failed-job resubmit, and the NMS re-attempt — and how they *reach* this point differs
-    (some retry unconverged structures first, some run NMS, some filter afterwards and some
-    return the raw results), which is why only the tail is shared and only the tail is
-    extracted.
+    Every path that finishes a step does the same things in the same order: put the
+    survivors in their parents' order (:func:`_in_parent_order`), apply ``on_failure``
+    (:func:`apply_failure_policy`), then write the cache (:func:`chemrefine.cache.save`).
+    Four callers need it — the full run, ``rebuild-cache``, the failed-job resubmit, and the
+    NMS re-attempt — and how they *reach* this point differs (some retry unconverged
+    structures first, some run NMS, some filter afterwards and some return the raw
+    results), which is why only the tail is shared and only the tail is extracted.
 
     One function rather than a convention, because a site that applies the policy and skips
     the write — or writes under a key of its own derivation — produces no crash, just a
     silent re-run or a silent reuse much later. The key is a value
     (:class:`chemrefine.cache.StepKey`), so this takes the one its caller already built.
     """
+    successes = _in_parent_order(successes, ctx.prev_state)
     results = apply_failure_policy(successes, failures, ctx, step_cfg)
     cache.save(
         step_cfg=step_cfg,

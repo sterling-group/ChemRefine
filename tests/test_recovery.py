@@ -1302,3 +1302,222 @@ def test_execute_fences_live_jobs_before_the_handler_runs(
 
     assert reached == [], "the handler must not run while recorded jobs are live"
     assert ledger.exists()
+
+
+# ---------------------------------------------------------------------------
+# The survivor order is a function of the parent order alone
+# ---------------------------------------------------------------------------
+#
+# `StepKey.of` composes the next step's fingerprint from the row keys *in order*, so the
+# order a step caches its survivors in is part of every downstream cache key. The fresh path
+# emits manifest order through `_ResultLedger`; the recovery paths appended what they
+# retried, so the same content cached under a different history keyed the tail differently
+# — and a `rebuild-cache` (manifest order) then recomputed a tail nothing had changed.
+
+
+def _register_flaky_convergence(*, streaming: bool = False):
+    """A fake engine whose ``unconverged`` ids report ``converged=False`` for their first
+    ``strikes`` submissions and converge after. Energies and geometries never depend on
+    the history, so any difference between two runs is the order alone. ``submitted``
+    counts submissions per id, which is what proves a history retried what it claims."""
+    from collections import deque
+    from typing import ClassVar
+
+    import numpy as np
+
+    from chemrefine.engines.api import register
+    from chemrefine.ids import structure_artifact_path
+    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+
+    engine_name = "flaky-conv-stream" if streaming else "flaky-conv"
+
+    class _FlakyConvergence:
+        name = engine_name
+        unconverged: ClassVar[set[str]] = set()
+        strikes: ClassVar[int] = 1
+        submitted: ClassVar[dict[str, int]] = {}
+
+        def prepare(self, ctx):
+            ctx.step_dir.mkdir(parents=True, exist_ok=True)
+            files = []
+            for s in ctx.prev_state.structures:
+                step = ctx.step_cfg.step
+                inp = structure_artifact_path(ctx.step_dir, step, s.id, "inp")
+                out = structure_artifact_path(ctx.step_dir, step, s.id, "out")
+                inp.parent.mkdir(parents=True, exist_ok=True)
+                inp.write_text("in\n", encoding="utf-8")
+                files.append((inp, out, s.id))
+            return StepInputs(files=tuple(files))
+
+        def submit(self, inputs, ctx):
+            cls = type(self)  # the registered class's own knobs, subclass included
+            for _inp, out, sid in inputs.files:
+                cls.submitted[sid] = cls.submitted.get(sid, 0) + 1
+                flaky = sid in cls.unconverged and cls.submitted[sid] <= cls.strikes
+                out.parent.mkdir(parents=True, exist_ok=True)
+                verdict = "no" if flaky else "yes"
+                out.write_text(
+                    f"FINAL ENERGY: {-1.0 - int(sid) * 1e-3}\nCONVERGED: {verdict}\n",
+                    encoding="utf-8",
+                )
+            return JobBatch(jobs={})
+
+        def parse(self, inputs, ctx):
+            seeds = ctx.prev_state.by_id
+            out = []
+            for _inp, o, sid in inputs.files:
+                energy_line, verdict_line = o.read_text(encoding="utf-8").splitlines()
+                seed = seeds[sid]
+                out.append(
+                    Structure(
+                        id=sid,
+                        atoms=seed.atoms,
+                        parent_id=seed.parent_id,
+                        energy_hartree=float(energy_line.split(":")[1]),
+                        converged=verdict_line.endswith("yes"),
+                        terminated_normally=True,
+                        forces_ev_per_a=np.zeros((len(seed.atoms), 3)),
+                    )
+                )
+            return StepResults(structures=tuple(out))
+
+    class _Streaming(_FlakyConvergence):
+        """The same engine reporting each job as it finishes, so the queue retries it."""
+
+        def submit_streaming(self, inputs, ctx, sink):
+            pending = deque(inputs.files)
+            while pending:
+                job = pending.popleft()
+                self.submit(StepInputs(files=(job,)), ctx)
+                pending.extend(sink.on_complete(job))
+            return JobBatch(jobs={})
+
+    engine: type[_FlakyConvergence] = _Streaming if streaming else _FlakyConvergence
+    register(engine_name)(engine)  # the gate returns the class it registered
+    return engine
+
+
+def _three_seed_config(tmp_path: Path, steps: list[StepConfig]) -> Config:
+    """Three seeds, so a retried middle structure is visible as an order change."""
+    seed_dir = tmp_path / "seeds"
+    io.write_xyz([Atoms("H")] * 3, ["a", "b", "c"], step_number=0, output_dir=seed_dir)
+    return Config(
+        template_dir=tmp_path / "templates",
+        output_dir=tmp_path / "outputs",
+        input=seed_dir,
+        steps=steps,
+    )
+
+
+def _cached(cfg: Config, step_number: int) -> tuple[list[str], str]:
+    """A step's cached survivor ids, in cache order, and its fingerprint."""
+    from chemrefine import cache
+
+    cached = cache.load(cfg.step_dir(cfg.steps[step_number - 1]).resolve())
+    assert cached is not None, f"step {step_number} left no cache"
+    return [s.id for s in cached.results.structures], cached.fingerprint
+
+
+#: Every way structure "1" can come to converge, and how many times each submits it.
+_HISTORIES: dict[str, int] = {
+    "converged-first-time": 1,
+    "retried-in-stream": 2,
+    "retried-in-stream-streaming": 2,
+    "retried-on-resume": 3,
+    "retried-on-rerun-errors": 3,
+    "rebuild-cache-after-a-resume-retry": 3,
+}
+
+
+def _run_history(root: Path, history: str) -> tuple[list[str], str]:
+    """Drive a two-step pipeline through ``history``; return step 1's cached survivor ids
+    and step 2's fingerprint — the key composed from those survivors, in that order.
+
+    Step 1's own fingerprint is not returned: it is a function of step 1's config and
+    parents, never of its output, and the streaming history runs a differently named
+    engine, so it would only compare the two registrations."""
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_flaky_convergence(streaming=history == "retried-in-stream-streaming")
+    try:
+        cfg = _three_seed_config(
+            root,
+            [
+                StepConfig(step=1, name="one", engine=eng.name, on_failure="stop"),
+                StepConfig(step=2, name="two", engine="fake", operation="opt_sp"),
+            ],
+        )
+        if history == "converged-first-time":
+            execute(cfg, Action.RUN)
+        elif history.startswith("retried-in-stream"):
+            eng.unconverged = {"1"}  # the queue's own retry converges it
+            execute(cfg, Action.RUN)
+        else:
+            eng.unconverged, eng.strikes = {"1"}, 2  # the in-stream retry fails too
+            with pytest.raises(ChemRefineError):  # stop halts with "1" pending
+                execute(cfg, Action.RUN)
+            if history == "retried-on-rerun-errors":
+                execute(cfg, Action.RERUN_ERRORS, target=1)
+            else:
+                execute(cfg, Action.RESUME)
+            if history == "rebuild-cache-after-a-resume-retry":
+                execute(cfg, Action.REBUILD_CACHE, target=1)
+        assert eng.submitted["1"] == _HISTORIES[history], "the history did not happen"
+        ids, _own = _cached(cfg, 1)
+        _tail_ids, tail = _cached(cfg, 2)
+        return ids, tail
+    finally:
+        eng.unconverged, eng.strikes, eng.submitted = set(), 1, {}
+        ENGINES.pop(eng.name, None)
+
+
+@pytest.mark.parametrize("history", sorted(_HISTORIES))
+def test_the_survivor_order_does_not_depend_on_how_a_structure_converged(
+    tmp_path: Path, history: str
+):
+    """The same content, cached under any history, keys the next step the same.
+
+    The fresh path always answered in manifest order; a ``resume`` or ``rerun-errors``
+    that retried a convergence failure cached the retried structure *last*, so the
+    tail's fingerprint depended on whether "1" had converged first time — and
+    ``rebuild-cache 1``, which re-parses in manifest order, then flipped it back and
+    recomputed a tail nothing had changed. Every history must match the first-time run
+    by list, not by set, and step 2's fingerprint is the assertion that matters.
+    """
+    ids, tail = _run_history(tmp_path / "baseline", "converged-first-time")
+    assert ids == ["0", "1", "2"]
+
+    assert _run_history(tmp_path / history, history) == (ids, tail)
+
+
+def test_an_nms_reattempt_keeps_the_survivor_order_of_a_clean_run(tmp_path: Path):
+    """``reattempt_nms`` kept the still-valid survivors first and the re-run parents after.
+
+    A parent whose round 1 left no output is resubmitted on the next ``resume``; the
+    merged result must land in parent order, as the clean run's does, or the step after
+    an NMS step is re-keyed by which parent happened to fail.
+    """
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        eng.resolved = {"0", "1"}
+        follow = StepConfig(step=2, name="two", engine="fake", operation="opt_sp")
+
+        clean = _seeded_config(tmp_path / "clean", [_nms_step(1.0, on_failure="stop"), follow])
+        execute(clean, Action.RESUME)
+        expected = (_cached(clean, 1), _cached(clean, 2)[1])
+        assert expected[0][0] == ["0", "1"]
+
+        eng.fail_round1 = {"0"}  # "0" leaves no round-1 output; "1" resolves
+        cfg = _seeded_config(tmp_path / "reattempt", [_nms_step(1.0, on_failure="stop"), follow])
+        with pytest.raises(ChemRefineError):
+            execute(cfg, Action.RESUME)
+        eng.fail_round1 = set()
+        execute(cfg, Action.RESUME)  # re-attempts "0" only, keeps "1"
+
+        assert (_cached(cfg, 1), _cached(cfg, 2)[1]) == expected
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)

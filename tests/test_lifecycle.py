@@ -797,3 +797,112 @@ def test_a_retry_of_an_engine_that_prepares_the_wrong_number_of_jobs_says_so(tmp
     best = Structure(id="0", atoms=Atoms("H", positions=[[0, 0, 0]]))
     with pytest.raises(ChemRefineError, match="expected one prepared job, got 2"):
         lifecycle._retry_input(_PreparesTwo(unconverged=set()), _ctx(tmp_path), best)
+
+
+# ---------------------------------------------------------------------------
+# The survivor order a step caches is a function of the parent order alone
+# ---------------------------------------------------------------------------
+
+
+class _FanOut:
+    """An engine whose every seed parses into three frames, one of which may fail once.
+
+    A retried frame comes back as a job of its own, under the frame's id — which is what
+    used to put it *after* its siblings in the cache, so the tail's key depended on which
+    frame had needed a second attempt.
+    """
+
+    name = "fake"  # unregistered: handed to `run_step` directly
+
+    def __init__(self, fail_frame: int | None) -> None:
+        self.fail_frame = fail_frame
+        self.parses: dict[str, int] = {}
+
+    def prepare(self, ctx: StepContext) -> StepInputs:
+        files = []
+        for s in ctx.prev_state.structures:
+            inp = ctx.step_dir / s.id / f"step1_{s.id}.inp"
+            inp.parent.mkdir(parents=True, exist_ok=True)
+            inp.write_text("in", encoding="utf-8")
+            files.append((inp, inp.with_suffix(".out"), s.id))
+        return StepInputs(files=tuple(files))
+
+    def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
+        for _inp, out, _sid in inputs.files:
+            out.write_text("out", encoding="utf-8")
+        return JobBatch(jobs={})
+
+    def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
+        def frame(i: int, *, converged: bool) -> ParsedResult:
+            return ParsedResult(
+                symbols=("H",),
+                positions=np.zeros((1, 3)),
+                energy_hartree=-1.0 - i * 1e-3,  # the frame's own, whichever job produced it
+                forces_ev_per_a=None,
+                converged=converged,
+                terminated_normally=True,
+            )
+
+        parsed = []
+        for _inp, _out, sid in inputs.files:
+            self.parses[sid] = self.parses.get(sid, 0) + 1
+            if "-" in sid:  # a retried frame: one structure, its own id, its own energy
+                parsed.append((sid, [frame(int(sid.rsplit("-", 1)[1]), converged=True)]))
+                continue
+            first = self.parses[sid] == 1
+            parsed.append(
+                (sid, [frame(i, converged=not (first and i == self.fail_frame)) for i in range(3)])
+            )
+        return build_structures(parsed, ctx.prev_state)
+
+
+def test_a_retried_fan_out_frame_lands_back_in_its_place(tmp_path: Path):
+    """Frame 1 of three fails once; the step still caches ``0-0, 0-1, 0-2``.
+
+    Driven through ``run_step`` because the order is fixed at :func:`lifecycle.finalize`,
+    which the full step ends in — ``run_with_retries`` alone still hands back the retried
+    frame last. The fingerprint of the step after is the assertion that matters: it is
+    composed from the row keys in order, so a frame out of place re-keys the whole tail.
+    """
+    from chemrefine import cache
+    from chemrefine.config import Config
+    from chemrefine.step import run_step
+
+    def survivors(fail_frame: int | None) -> tuple[list[str], str]:
+        root = tmp_path / str(fail_frame)
+        config = Config(
+            output_dir=root / "outputs",
+            steps=[
+                StepConfig(step=1, engine="fake", operation="opt_sp"),
+                StepConfig(step=2, engine="fake", operation="opt_sp"),
+            ],
+        )
+        engine = _FanOut(fail_frame)
+        seeds = PipelineState(structures=(Structure(id="0", atoms=Atoms("H")),))
+        outcome = run_step(config, config.steps[0], seeds, engine=engine)
+        assert engine.parses == ({"0": 1} if fail_frame is None else {"0": 1, f"0-{fail_frame}": 1})
+        key = cache.StepKey.of(config.steps[1], outcome.state.structures, None)
+        return [s.id for s in outcome.state.structures], key.fingerprint
+
+    clean = survivors(None)
+    assert clean[0] == ["0-0", "0-1", "0-2"]
+    assert survivors(1) == clean
+
+
+def test_a_structure_from_no_known_parent_sorts_last_and_keeps_its_order():
+    """The one shape no path mints: an origin the parents do not contain.
+
+    Sorted last rather than raised on, in arrival order, because the cache has to be
+    written whatever produced the structure — and the known ones must still land in
+    their parents' order around it.
+    """
+    parents = PipelineState(
+        structures=(Structure(id="a", atoms=Atoms("H")), Structure(id="b", atoms=Atoms("H")))
+    )
+    orphan = Structure(id="z", atoms=Atoms("H"))  # no parent at all
+    stranger = Structure(id="y-0", atoms=Atoms("H"), parent_id="y")  # a parent nobody has
+    b, a = (Structure(id=i, atoms=Atoms("H")) for i in ("b", "a"))
+
+    ordered = lifecycle._in_parent_order([orphan, b, stranger, a], parents)
+
+    assert [s.id for s in ordered] == ["a", "b", "z", "y-0"]

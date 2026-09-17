@@ -444,6 +444,18 @@ for the full map.
 
 ### Fixed
 
+- **A step's cached survivor order no longer depends on how its structures converged.**
+  A `resume` or `rerun-errors` that retried a convergence failure cached the retried
+  structure *last*, and an NMS re-attempt cached the re-run parents after the kept ones,
+  while a fresh run and `rebuild-cache` keep manifest order. That order is part of the
+  next step's cache key, so the same results cached under different histories keyed the
+  tail differently: after such a resume, `rebuild-cache N` flipped the order back,
+  refused `rebuild-cache N+1` as "a different configuration" and left `resume` to
+  recompute a tail nothing had changed. Survivors are now put in their parents' order at
+  the one point every path ends, so no history can move them — including a fan-out frame
+  retried mid-queue, which used to land after its siblings. A tree that already holds a
+  retry-ordered cache recomputes its tail once more on its next `rebuild-cache`, which is
+  the state it is in today.
 - **A managed backend environment runs the ChemRefine that drives it.** An editable
   orchestrator (`pip install -e .`) got a *snapshot* of its checkout in every managed
   environment, frozen at provisioning: the direct MLIP scripts and the ExtOpt server
