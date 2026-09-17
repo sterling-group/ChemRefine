@@ -39,6 +39,21 @@ async def test_every_shared_tool_is_listed_with_schema_and_description():
 
 
 @pytest.mark.anyio
+async def test_the_run_target_schema_admits_a_step_number():
+    """``start_run``'s ``target`` is a step number or name on the wire, as in the config.
+
+    The schema is derived from the signature, and typed as text alone it made an agent
+    spell the number it had just read off ``summarize_config`` as a string — a client
+    that validates arguments against the schema refused ``2`` outright while the tool
+    itself rendered it fine.
+    """
+    async with Client(mcp_server.build_server()) as client:
+        listed = {t.name: t for t in (await client.list_tools()).tools}
+    target = listed["start_run"].input_schema["properties"]["target"]
+    assert {option["type"] for option in target["anyOf"]} == {"integer", "string", "null"}
+
+
+@pytest.mark.anyio
 async def test_a_call_rides_the_wire_and_returns_structured_content(tmp_path: Path):
     config = tmp_path / "input.yaml"
     config.write_text(yaml.safe_dump({"steps": [{"step": 1, "engine": "fake"}]}), "utf-8")

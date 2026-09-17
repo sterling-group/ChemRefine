@@ -185,7 +185,7 @@ def scaffold_templates(config_path: str, overwrite: bool = False) -> dict[str, A
 def start_run(
     config_path: str,
     action: str = "run",
-    target: str | None = None,
+    target: int | str | None = None,
     max_cores: int | None = None,
     max_gpus: int | None = None,
 ) -> dict[str, Any]:
@@ -196,6 +196,8 @@ def start_run(
     Refuses while a live driver holds the lock (:func:`~chemrefine.pipeline.lock_status`),
     and validates ``action`` / ``target`` before anything launches, so the likeliest
     mistakes fail here with a message rather than in a log nobody is watching yet.
+    ``target`` is a step number or name — the two spellings every step selector takes,
+    and the tool schema says so, so an agent need not spell a number as text.
     """
     if action not in _ACTIONS:
         raise ConfigError(f"unknown action {action!r}; one of {list(_ACTIONS)}")
@@ -243,9 +245,8 @@ def start_run(
     argv.append("--")
     argv.append(str(path))
     if target is not None:
-        # `resolve_target` above takes a step number as an `int` as readily as a name, and the
-        # GUI hands a JSON number straight through. Rendered here, so it reaches the child
-        # the way a shell would spell it — appended raw, an `int` made `Popen` raise
+        # A step number arrives as an `int`. Rendered here, so it reaches the child the
+        # way a shell would spell it — appended raw, an `int` made `Popen` raise
         # `TypeError` *after* the log file below existed: a 500, and an empty log that
         # `run_status` then served as the newest.
         argv.append(str(target))
