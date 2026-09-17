@@ -16,11 +16,16 @@ import yaml
 from typer.testing import CliRunner
 
 from chemrefine import __version__
-from chemrefine.cli import app
-from chemrefine.cli_legacy import translate_argv as _translate_legacy_argv
+from chemrefine.cli import SUBCOMMANDS, app
+from chemrefine.cli_legacy import translate_argv
 from chemrefine.errors import CacheError, ConfigError
 
 runner = CliRunner()
+
+
+def _translate_legacy_argv(argv: list[str]) -> list[str]:
+    """`translate_argv` against the live CLI vocabulary, as `cli.main` calls it."""
+    return translate_argv(argv, SUBCOMMANDS)
 
 
 def _write_xyz(path: Path) -> None:
@@ -120,22 +125,20 @@ def test_the_legacy_translator_knows_every_subcommand():
     """A subcommand the translator doesn't know is rewritten to `chemrefine run <cmd>`.
 
     That is exactly how `chemrefine mcp` once became `run mcp` ("File 'mcp' does not
-    exist"): CliRunner-based tests bypass main() and its argv translation, so only this
-    pin holds the two vocabularies together.
+    exist") while the pass-through set was a hand-kept copy. `cli.SUBCOMMANDS` is now
+    read off the built app, and CliRunner-based tests bypass main() and its argv
+    translation, so this pins the derivation against the registrations themselves and
+    then sends every member through the translator.
     """
-    from chemrefine import cli_legacy
+    registered = {
+        info.name or info.callback.__name__.replace("_", "-")
+        for info in app.registered_commands
+        if info.callback is not None
+    } | {info.name for info in app.registered_groups if info.name is not None}
+    assert registered == SUBCOMMANDS
+    assert {"rebuild-cache", "backends"} <= SUBCOMMANDS  # a hyphenated command, a group
 
-    commands = {
-        c.name or c.callback.__name__.replace("_", "-")
-        for c in app.registered_commands
-        if c.name is not None or c.callback is not None
-    }
-    groups = {g.name for g in app.registered_groups if g.name is not None}
-    registered = {name for name in commands | groups if isinstance(name, str)}
-    assert registered <= cli_legacy._SUBCOMMANDS
-    assert len(registered) >= 12  # nothing silently fell out of the derivation
-
-    for command in sorted(registered):
+    for command in sorted(SUBCOMMANDS):
         argv = [command, "whatever.yaml"]
         assert _translate_legacy_argv(argv) == argv
 
@@ -629,7 +632,5 @@ def test_an_unusable_seed_exits_with_the_config_error_code(tmp_path: Path, seed_
 
 
 def test_translate_legacy_argv_passes_through_on_argparse_error():
-    from chemrefine.cli_legacy import translate_argv as _translate_legacy_argv
-
     argv = ["c.yaml", "--maxcores", "not-an-int"]  # argparse SystemExit
     assert _translate_legacy_argv(argv) == argv

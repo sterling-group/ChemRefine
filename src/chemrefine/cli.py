@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 import typer
+from typer.main import get_group
 
 from chemrefine import __version__, cli_legacy
 from chemrefine.errors import ChemRefineError
@@ -672,10 +673,20 @@ def backends_path(
 # Legacy (v1.3.1) flag-style CLI → subcommand translation
 # ---------------------------------------------------------------------------
 
+SUBCOMMANDS: frozenset[str] = frozenset(get_group(app).commands)
+"""Every subcommand and command group, spelled as Typer spells them.
+
+The vocabulary :func:`chemrefine.cli_legacy.translate_argv` passes through untouched:
+a first positional outside it is read as a v1.3.1 ``CONFIG`` and rewritten to
+``chemrefine run <name>``. Read off the built Click group once every command above is
+registered, so a new command joins the translator by existing — a hand-kept copy once
+lacked ``mcp``, and ``chemrefine mcp`` became ``run mcp`` ("File 'mcp' does not exist").
+"""
+
 
 def main() -> None:
     """Entry point: translate any legacy flag-style argv, then run the Typer app."""
     import sys
 
-    sys.argv[1:] = cli_legacy.translate_argv(sys.argv[1:])
+    sys.argv[1:] = cli_legacy.translate_argv(sys.argv[1:], SUBCOMMANDS)
     app()

@@ -42,11 +42,16 @@ from chemrefine.cache import load_failure_records
 from chemrefine.config import Config, StepConfig, load_config
 from chemrefine.engines.api import FrequencyOutputParsing, ParsedResult, get_engine
 from chemrefine.errors import EXIT_CODES, ConfigError, RunLockError
+from chemrefine.recovery import Action
 from chemrefine.state import Structure
 from chemrefine.validate import validate_config_file, validate_config_text
 
-_ACTIONS = ("run", "resume", "rerun", "rerun-errors", "rebuild-cache", "rebuild-nms")
-"""CLI actions :func:`start_run` may launch — the recovery vocabulary, nothing else."""
+_ACTIONS = tuple(action.value for action in Action)
+"""CLI actions :func:`start_run` may launch — :class:`~chemrefine.recovery.Action`'s
+spellings, read off the enum so a new action needs no second roster here."""
+
+_WHOLE_PIPELINE: frozenset[str] = frozenset({Action.RUN, Action.RESUME})
+"""The actions that drive the whole pipeline; every other one is aimed at a step."""
 
 _MAX_ROWS = 200
 """Hard ceiling on :func:`get_results`' page size — the module's pagination rule, enforced.
@@ -196,14 +201,15 @@ def start_run(
     """
     if action not in _ACTIONS:
         raise ConfigError(f"unknown action {action!r}; one of {list(_ACTIONS)}")
-    if target is not None and action in ("run", "resume"):
+    if target is not None and action in _WHOLE_PIPELINE:
         # The CLI's `run`/`resume` take no positional target, so the child would exit 2 on
         # "unexpected extra argument" — *after* this returned a pid and a log path, leaving
         # an agent polling a run that never started. The schema shows `action` and `target`
         # side by side; this is the validation the docstring promises for that pairing.
+        targeted = [name for name in _ACTIONS if name not in _WHOLE_PIPELINE]
         raise ConfigError(
             f"action {action!r} drives the whole pipeline and takes no target; "
-            f"aim at a step with rerun, rerun-errors, rebuild-cache or rebuild-nms"
+            f"aim at a step with one of {targeted}"
         )
     path = Path(config_path).resolve()
     config = load_config(path)

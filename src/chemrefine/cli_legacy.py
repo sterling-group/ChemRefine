@@ -17,52 +17,26 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections.abc import Collection
 
 logger = logging.getLogger(__name__)
 
 
-_SUBCOMMANDS = frozenset(
-    {
-        "run",
-        "resume",
-        "rerun",
-        "rerun-errors",
-        "rebuild-cache",
-        "rebuild-nms",
-        "agent",
-        "backends",
-        "engines",
-        "gui",
-        "mcp",
-        "scaffold",
-        "schema",
-        "validate",
-    }
-)
-"""Every current subcommand — the translator's pass-through list.
-
-A name missing here is treated as a v1.3.1 positional CONFIG and rewritten to
-``chemrefine run <name>``, which is how ``chemrefine mcp`` once became ``run mcp``
-with a "File 'mcp' does not exist" error. ``test_the_legacy_translator_knows_every_
-subcommand`` pins this set against the Typer app, so adding a command without
-extending it fails CI instead of failing users.
-"""
-
-
-def translate_argv(argv: list[str]) -> list[str]:
+def translate_argv(argv: list[str], subcommands: Collection[str]) -> list[str]:
     """Map a v1.3.1 flag-style invocation to the new subcommand argv.
 
-    The single home for the old flags. New-style argv (first positional is a
-    known subcommand, or ``--version`` / ``--help`` / no positional) is returned
-    unchanged. Otherwise the old flags are parsed and rewritten:
-    ``CONFIG``→``run``; ``--skip``→``resume``; ``--rebuild_cache [N]``→
-    ``rebuild-cache``; ``--rebuild_nms [N]``→``rebuild-nms``; ``--rerun_errors
-    [N]``→``rerun-errors``; ``--maxcores`` carried through.
+    The single home for the old flags. ``subcommands`` is the current CLI vocabulary
+    (:data:`chemrefine.cli.SUBCOMMANDS`, passed in because that module imports this
+    one): new-style argv (first positional is one of them, or ``--version`` /
+    ``--help`` / no positional) is returned unchanged. Otherwise the old flags are
+    parsed and rewritten: ``CONFIG``→``run``; ``--skip``→``resume``;
+    ``--rebuild_cache [N]``→``rebuild-cache``; ``--rebuild_nms [N]``→``rebuild-nms``;
+    ``--rerun_errors [N]``→``rerun-errors``; ``--maxcores`` carried through.
     """
     if any(a in ("--version", "--help", "-h") for a in argv):
         return argv
     first_positional = next((a for a in argv if not a.startswith("-")), None)
-    if first_positional is None or first_positional in _SUBCOMMANDS:
+    if first_positional is None or first_positional in subcommands:
         return argv
 
     parser = argparse.ArgumentParser(add_help=False)
