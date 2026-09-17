@@ -14,7 +14,10 @@ when something did open, because a local tunnel beats a forwarded display.
 
 The token rides in that URL's query string, which means it also rides in the ``argv`` of
 whatever browser process is launched. See ``docs/internals/security.md``: on a shared node
-that is readable by other users, and ``--no-browser`` is the way to avoid it.
+that is readable by other users, and ``--no-browser`` is the way to avoid it. The page
+itself moves the token out of the URL into the tab's ``sessionStorage`` before its first
+request, so the address bar, the history entry and a bookmark do not keep it; the argv
+does, for as long as the browser process shows its command line.
 
 waitress is imported at module scope for the reason :mod:`.app` imports Flask there: this
 is the module the CLI imports inside ``except ImportError``, so a deferred import would

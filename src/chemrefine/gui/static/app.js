@@ -4,7 +4,8 @@
  * what the form edits is what the file says). Every mutation triggers a debounced
  * POST /api/yaml so the right pane always shows the server-emitted YAML; "edit as
  * text" flips the direction (textarea -> /api/parse -> cfg). The token arrives once in
- * the launch URL's query string and is sent as X-ChemRefine-Token on every API call.
+ * the launch URL's query string, moves into the tab's sessionStorage before the first
+ * request (sessionToken()), and is sent as X-ChemRefine-Token on every API call.
  */
 "use strict";
 
@@ -171,12 +172,28 @@ const LABEL_TEXELS_HI = 1.3;
 const LABEL_FONT_MIN = 16;
 const LABEL_FONT_MAX = 192;
 
+// The token arrives once, in the URL `chemrefine gui` printed, and leaves that URL before
+// the first request: the address bar and the history entry are not where a session secret
+// belongs. sessionStorage is per tab and per browser session, so a reload keeps the
+// session while a copied or bookmarked URL carries nothing. A tab with a token in neither
+// place — the published playground, or a pasted tokenless URL — holds "".
+function sessionToken() {
+  const params = new URLSearchParams(window.location.search);
+  const fromUrl = params.get("token");
+  if (!fromUrl) return sessionStorage.getItem("cr-token") || "";
+  sessionStorage.setItem("cr-token", fromUrl);
+  params.delete("token");
+  const query = params.toString();
+  history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : ""));
+  return fromUrl;
+}
+
 // index.html calls this from x-data. Biome reads one file at a time and cannot see
 // the page; tests/test_gui_assets.py checks that wiring, in both directions.
 // biome-ignore lint/correctness/noUnusedVariables: the page is the caller
 function builder() {
   return {
-    token: new URLSearchParams(window.location.search).get("token") || "",
+    token: sessionToken(),
     staticMode: false,
     serverHost: "",
     ready: false,
@@ -309,7 +326,8 @@ function builder() {
         this.fatal = this.token
           ? "This tab's session token is stale — the server was restarted. Open the " +
             "URL printed by `chemrefine gui` again."
-          : "This URL is missing its ?token=… — open the exact URL `chemrefine gui` " + "printed.";
+          : "This tab has no session token — it stays with the tab that opened the URL " +
+            "`chemrefine gui` printed. Open that exact URL.";
         this.ready = true;
         return;
       }

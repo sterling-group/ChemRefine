@@ -80,7 +80,9 @@ connection (press Enter, type `~C`, then `-L 21244:127.0.0.1:21244`) — though 
 
 Always paste the URL the **current** launch printed: yesterday's URL reaches today's
 server on the same stable port, but its token died with its session, so the page
-reports a stale token — that is the gate working, not the tunnel failing.
+reports a stale token — that is the gate working, not the tunnel failing. A bookmark of
+the open page carries no token at all: the page moves it out of the address bar into the
+tab's `sessionStorage` on load, so a bookmark needs the printed URL too.
 
 ## What the builder knows
 

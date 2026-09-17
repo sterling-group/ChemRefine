@@ -574,19 +574,27 @@ def _run_component_in_node(script: str) -> str:
     """Evaluate ``script`` against a real ``builder()`` instance; return its stdout.
 
     ``forms.js``'s docstring says logic left in ``app.js`` "cannot be reached by a test at
-    all", because ``builder()`` reads ``window`` and ``localStorage`` as it is constructed.
-    That is true of the *browser* globals, not of the logic: stubbing those three is
-    enough, and what it buys is the ability to check behaviour the markup only describes —
-    which fields a provider shows, and whether a credential reaches ``localStorage``.
+    all", because ``builder()`` reads ``window``, the two storages and ``history`` as it
+    is constructed. That is true of the *browser* globals, not of the logic: stubbing
+    those is enough, and what it buys is the ability to check behaviour the markup only
+    describes — which fields a provider shows, whether a credential reaches
+    ``localStorage``, where the session token goes.
 
-    The stubbed ``localStorage`` is a plain object, so a test can read back exactly what
-    the component wrote to it.
+    The stubbed storages are plain objects and the stubbed ``history`` records every URL
+    it was asked to replace, so a test can read back exactly what the component wrote.
     """
     node = _node_or_skip("execute the GUI's component logic")
     preamble = """
-      global.window = { location: { search: "?token=t" } };
-      global.localStorage = { _d: {}, getItem(k){return this._d[k] ?? null;},
-                              setItem(k,v){this._d[k]=v;}, removeItem(k){delete this._d[k];} };
+      const fakeStorage = () => ({
+        _d: {},
+        getItem(k){return this._d[k] ?? null;},
+        setItem(k,v){this._d[k]=v;},
+        removeItem(k){delete this._d[k];},
+      });
+      global.window = { location: { search: "?token=t", pathname: "/" } };
+      global.localStorage = fakeStorage();
+      global.sessionStorage = fakeStorage();
+      global.history = { replaced: [], replaceState(_s, _t, url){ this.replaced.push(url); } };
       global.URLSearchParams = URLSearchParams;
     """
     # Both files, into one scope, because that is what the page gives them: classic
@@ -633,7 +641,8 @@ def test_the_api_key_never_reaches_localstorage_but_does_reach_the_request():
     The key is a live credential typed into a page whose provider and model *are*
     remembered, so the symmetry actively invites a fourth ``setItem`` — and a browser
     profile outlives the session the key was typed for. What must hold is both halves: it
-    goes out with the request, and it is not written down.
+    goes out with the request, and it is not written down — in either storage, since the
+    session token's ``sessionStorage`` is one more place a key could be written beside.
     """
     out = _run_component_in_node("""
       const b = builder();
@@ -641,9 +650,11 @@ def test_the_api_key_never_reaches_localstorage_but_does_reach_the_request():
       b.chat.baseUrl = "http://h/v1";
       b.chat.apiKey = "sk-secret-value";
       b.saveChatSettings();
+      const written = JSON.stringify([localStorage._d, sessionStorage._d]);
       console.log(JSON.stringify({
         stored: Object.keys(localStorage._d).sort(),
-        leaked: JSON.stringify(localStorage._d).includes("sk-secret-value"),
+        session: Object.keys(sessionStorage._d),
+        leaked: written.includes("sk-secret-value"),
         sent: b._chatPayload({ message: "hi" }).api_key,
       }));
     """)
@@ -651,6 +662,40 @@ def test_the_api_key_never_reaches_localstorage_but_does_reach_the_request():
     assert result["sent"] == "sk-secret-value"  # it does reach the request
     assert result["leaked"] is False  # and nowhere else
     assert result["stored"] == ["cr-baseurl", "cr-model", "cr-provider"]
+    assert result["session"] == ["cr-token"]
+
+
+def test_the_session_token_leaves_the_url_for_the_tab():
+    """The token is moved out of the address bar before the first request.
+
+    ``chemrefine gui`` hands it over in the launch URL because there is no login form, and
+    that URL is the one thing a reader copies, bookmarks or leaves in the browser's
+    history — each of which outlives the session it was printed for. So the component
+    reads it once, keeps it in ``sessionStorage`` (per tab, per browser session: a reload
+    keeps the session, a copied URL carries nothing) and rewrites the URL without it,
+    keeping any other query the page was opened with. A tab with a token in neither place
+    holds ``""``, which is the playground and a pasted tokenless URL alike.
+    """
+    out = _run_component_in_node("""
+      const first = builder();
+      const stored = sessionStorage.getItem("cr-token");
+      window.location.search = "";
+      const reload = builder();
+      window.location.search = "?token=t2&view=run";
+      const relaunch = builder();
+      window.location.search = "";
+      sessionStorage.removeItem("cr-token");
+      const stranger = builder();
+      console.log(JSON.stringify({
+        tokens: [first.token, reload.token, relaunch.token, stranger.token],
+        stored,
+        rewrites: history.replaced,
+      }));
+    """)
+    result = json.loads(out)
+    assert result["tokens"] == ["t", "t", "t2", ""]
+    assert result["stored"] == "t"  # the tab keeps it, the URL does not
+    assert result["rewrites"] == ["/", "/?view=run"]  # only a tokened load rewrites
 
 
 def test_send_is_armed_by_a_passing_check_and_disarmed_by_any_edit():

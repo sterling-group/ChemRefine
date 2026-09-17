@@ -66,10 +66,14 @@ access control.
   handler runs, and compared with `secrets.compare_digest` on the **encoded
   bytes** — same latin-1 reason as above, and the two were fixed a day apart.
 - The token is handed over once in the URL `chemrefine gui` prints, so it reaches
-  the page without a login form. It lasts only as long as the server process, and it
-  is exposed in three places, not two. Two are per-user and unremarkable: the
-  browser's history, and that terminal's scrollback. The third is not — **when the
-  launch opens a browser for you, the tokened URL is passed as a command-line
+  the page without a login form, and it lasts only as long as the server process. The
+  page moves it out of that URL before its first request — into `sessionStorage`,
+  which is per tab and per browser session, and the address bar is rewritten without
+  it — so a history entry, a bookmark or a copied URL carries no token, and a reload
+  keeps the session. That leaves it exposed in two places. One is per-user and
+  unremarkable: that terminal's scrollback (and, if you pasted the URL, whatever the
+  browser keeps of typed addresses). The other is not — **when the launch opens a
+  browser for you, the tokened URL is passed as a command-line
   argument** (`webbrowser` runs `xdg-open <url>`), and on Linux `/proc/<pid>/cmdline`
   is world-readable unless the node mounts `procfs` with `hidepid`. On a shared node
   that hands the token — the *only* access control here, per the paragraph above — to
