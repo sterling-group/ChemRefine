@@ -1047,6 +1047,26 @@ def test_rebuild_cache_step_refuses_outputs_from_another_configuration(tmp_path:
         step.rebuild_cache_step(cfg_b, cfg_b.steps[0], seeds)
 
 
+def test_rebuild_cache_step_refuses_a_parent_the_rows_do_not_cover(tmp_path: Path):
+    """A grown parent set is the other half of "produced for a different configuration".
+
+    Every stored row can match the current key and the tree still be the wrong one: an
+    upstream filter loosened, a parent joined, and its output was never computed. Adopting
+    the rows that exist would cache a survivor set one short, and the next `resume` would
+    serve it. `foreign` cannot see this — the refusal is `unproven`'s alone, and dropping
+    that half survived the whole suite until this test.
+    """
+    from chemrefine import step
+
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1"])
+    run_step(
+        cfg, cfg.steps[0], PipelineState(structures=seeds.structures[:1]), mode=StepMode.EXECUTE
+    )
+    with pytest.raises(CacheError, match=r"0 row\(s\) disagree.*1 current parent\(s\) have no row"):
+        step.rebuild_cache_step(cfg, cfg.steps[0], seeds)
+
+
 def test_rebuild_adopts_an_unprovenanced_tree(tmp_path: Path):
     """A manifest without row provenance is unprovable, not wrong — the explicit command adopts.
 

@@ -225,6 +225,16 @@ _BUNDLED: tuple[Mutation, ...] = (
         "serves that instead of computing what was asked for",
     ),
     Mutation(
+        id="rebuild-cache-unproven-rows",
+        path="src/chemrefine/step.py",
+        old="if foreign or unproven:",
+        new="if foreign:",
+        tests="tests/test_step.py",
+        breaks="`rebuild-cache` adopts a tree whose rows do not cover a grown parent set, "
+        "caching a survivor set one parent short — and the next `resume` serves it "
+        "(this exact mutant survived the whole suite before its test existed)",
+    ),
+    Mutation(
         id="resume-resolution-stamp-waits",
         path="src/chemrefine/step.py",
         old='stamp["search_key"] = provenance.search_key',

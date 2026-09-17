@@ -618,7 +618,10 @@ def test_an_engine_with_no_prepared_jobs_still_gets_submitted(tmp_path: Path):
 class _FakeRound:
     """A `ChildRound` that gives every named parent two children in a directory of its own."""
 
-    def __init__(self, *, wanted: set[str], unconverged: set[str] | None = None) -> None:
+    def __init__(
+        self, root: Path, *, wanted: set[str], unconverged: set[str] | None = None
+    ) -> None:
+        self.root = root
         self.wanted = set(wanted)
         self.unconverged = set(unconverged or ())
         self.asked: list[str] = []
@@ -629,7 +632,8 @@ class _FakeRound:
         self.asked.append(structure.id)
         if structure.id not in self.wanted:
             return None
-        directory = structure_dir_of(structure)
+        # Where a parent's children go — the real shape, one level down.
+        directory = self.root / structure.id / "attempt1"
         kids = tuple(
             Structure(
                 id=f"{structure.id}_c{i}",
@@ -645,17 +649,7 @@ class _FakeRound:
         self.settled_at[origin_sid] = [s.id for s in successes]
 
 
-def structure_dir_of(structure):
-    """Where `_FakeRound` puts a parent's children — the real shape, one level down."""
-    return _ROUND_ROOT / structure.id / "attempt1"
-
-
-_ROUND_ROOT = Path()
-
-
 def _run_with_round(cls, tmp_path: Path, ids, round_):
-    global _ROUND_ROOT
-    _ROUND_ROOT = tmp_path
     engine = cls(unconverged=round_.unconverged)
     seeds = tuple(
         Structure(id=i, atoms=Atoms("H", positions=[[0, 0, 0]]), parent_id="P") for i in ids
@@ -672,7 +666,7 @@ def test_a_child_round_lands_in_its_own_ledger(cls, tmp_path: Path):
     A step whose ledger held them would emit a survivor per child and fingerprint the next
     step on geometries it discarded.
     """
-    round_ = _FakeRound(wanted={"1"})
+    round_ = _FakeRound(tmp_path, wanted={"1"})
     _engine, (successes, failures) = _run_with_round(cls, tmp_path, ("0", "1"), round_)
 
     assert [s.id for s in successes] == ["0", "1"], "no child reached the step's results"
@@ -687,7 +681,7 @@ def test_a_child_is_retried_once_in_its_own_directory(cls, tmp_path: Path):
     `ctx.step_dir` is what `archive_previous` and `prepare` nest by, so the scope's context is
     what puts a child's second attempt beside its first instead of beside the step's.
     """
-    round_ = _FakeRound(wanted={"0"}, unconverged={"0_c0"})
+    round_ = _FakeRound(tmp_path, wanted={"0"}, unconverged={"0_c0"})
     _engine, (successes, _f) = _run_with_round(cls, tmp_path, ("0",), round_)
 
     assert [s.id for s in successes] == ["0"]
@@ -699,7 +693,7 @@ def test_a_child_is_retried_once_in_its_own_directory(cls, tmp_path: Path):
 @pytest.mark.parametrize("cls", [_Recorder, _StreamingRecorder], ids=["batched", "streaming"])
 def test_a_child_never_earns_a_round_of_its_own(cls, tmp_path: Path):
     """Rounds are second rounds; a child spawning one would recurse with nothing to stop it."""
-    round_ = _FakeRound(wanted={"0", "0_c0", "0_c1"})
+    round_ = _FakeRound(tmp_path, wanted={"0", "0_c0", "0_c1"})
     _engine, _out = _run_with_round(cls, tmp_path, ("0",), round_)
 
     assert round_.asked == ["0"], "only root-scope structures are asked"
@@ -713,7 +707,7 @@ def test_only_a_structure_that_succeeded_earns_a_round(cls, tmp_path: Path):
     Fanning out first would spend a whole round on a geometry the retry supersedes, and would
     put the children in the very `attempt1/` the retry is about to archive round 1 into.
     """
-    round_ = _FakeRound(wanted={"0"}, unconverged={"0"})
+    round_ = _FakeRound(tmp_path, wanted={"0"}, unconverged={"0"})
     _engine, (successes, _f) = _run_with_round(cls, tmp_path, ("0",), round_)
 
     assert [s.id for s in successes] == ["0"]
@@ -732,7 +726,7 @@ def test_a_round_settles_only_after_its_queue_drains(cls, tmp_path: Path):
     completion order and is nobody's business (`_resolve_all` reads the results back in
     manifest order), but a round arriving with one of its two children would be the bug.
     """
-    round_ = _FakeRound(wanted={"0", "1"})
+    round_ = _FakeRound(tmp_path, wanted={"0", "1"})
     engine, _out = _run_with_round(cls, tmp_path, ("0", "1"), round_)
 
     submitted_children = [b for b in engine.submitted if any("_c" in s for s in b)]
@@ -743,7 +737,7 @@ def test_a_round_settles_only_after_its_queue_drains(cls, tmp_path: Path):
 
 def test_run_child_rounds_submits_nothing_when_no_parent_earns_one(tmp_path: Path):
     """The entry point for a caller whose round 1 came off disk, with nothing to do."""
-    round_ = _FakeRound(wanted=set())
+    round_ = _FakeRound(tmp_path, wanted=set())
     engine = _Recorder(unconverged=set())
     ctx = _ctx(tmp_path)
     parents = (Structure(id="0", atoms=Atoms("H", positions=[[0, 0, 0]])),)
