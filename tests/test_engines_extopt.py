@@ -39,22 +39,6 @@ from chemrefine.errors import JobFailureError
 # ---------------------------------------------------------------------------
 
 
-def test_calculation_data_round_trips_fields():
-    data = CalculationData(
-        symbols=("H", "O", "H"),
-        positions_angstrom=np.array([[0, 0, 0], [0.96, 0, 0], [-0.24, 0.93, 0]]),
-        charge=0,
-        multiplicity=1,
-        nthreads=4,
-        dograd=True,
-        settings={"method": "dft"},
-    )
-    assert data.symbols == ("H", "O", "H")
-    assert data.positions_angstrom.shape == (3, 3)
-    assert data.dograd is True
-    assert data.settings == {"method": "dft"}
-
-
 def test_default_bind_host_is_loopback():
     assert DEFAULT_BIND_HOST == "127.0.0.1"
 

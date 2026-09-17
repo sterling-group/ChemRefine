@@ -206,7 +206,7 @@ def test_bootstrap_from_smiles_csv_empty_raises(tmp_path: Path):
     csv = tmp_path / "smiles.csv"
     csv.write_text("smiles\n", encoding="utf-8")
     cfg = _config(tmp_path, input=csv)
-    with pytest.raises(ConfigError):
+    with pytest.raises(ConfigError, match="converted to 3D structures"):
         pipeline.bootstrap(cfg)
 
 
@@ -396,7 +396,7 @@ def test_run_stops_when_no_survivors(tmp_path: Path):
     seed_dir = tmp_path / "seeds"
     seed_dir.mkdir()
     cfg = _config(tmp_path, input=seed_dir)
-    with pytest.raises(ConfigError):
+    with pytest.raises(ConfigError, match=r"no \.xyz files found under"):
         pipeline.run(cfg)
 
 

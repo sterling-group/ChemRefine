@@ -24,6 +24,7 @@ from ase import Atoms
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import get_engine
 from chemrefine.errors import ConfigError, OutputParseError
+from chemrefine.ids import step_template_path
 from chemrefine.state import JobBatch, PipelineState, StepContext, Structure
 
 # ---------------------------------------------------------------------------
@@ -57,10 +58,12 @@ def _write_templates(tmp_path: Path) -> Path:
 def _ctx(
     tmp_path: Path,
     structures: tuple[Structure, ...],
+    step_cfg: StepConfig | None = None,
     **overrides,
 ) -> StepContext:
+    """A context over ``tmp_path``; the template resolves as a run resolves it."""
     _write_templates(tmp_path)
-    step_cfg = StepConfig(
+    step_cfg = step_cfg or StepConfig(
         step=1,
         name="screen",
         engine="pyscf",
@@ -71,9 +74,11 @@ def _ctx(
     )
     return StepContext(
         step_cfg=step_cfg,
-        step_dir=tmp_path / "outputs" / "step1_screen",
+        step_dir=tmp_path / "outputs" / step_cfg.dir_name(),
         template_dir=tmp_path,
-        template=tmp_path / "step1.py",
+        template=step_template_path(
+            tmp_path, step_cfg.step, template=step_cfg.template, suffix="py"
+        ),
         scratch_dir=None,
         prev_state=PipelineState(structures=structures),
         charge=overrides.pop("charge", 0),
@@ -166,6 +171,7 @@ def test_prepare_missing_template_raises(tmp_path: Path):
 
 
 def test_prepare_uses_step_specific_template_when_given(tmp_path: Path):
+    """A step's ``template`` names the file rendered; the default ``stepN.py`` stays unread."""
     step_cfg = StepConfig(
         step=2,
         engine="pyscf",
@@ -173,24 +179,14 @@ def test_prepare_uses_step_specific_template_when_given(tmp_path: Path):
         template="custom.py",
         options={"method": "hf", "basis": "sto-3g"},
     )
-    _write_templates(tmp_path)
-    (tmp_path / "custom.py").write_text(_FAKE_TEMPLATE, encoding="utf-8")
-    ctx = StepContext(
-        step_cfg=step_cfg,
-        step_dir=tmp_path / "outputs" / "step2",
-        template_dir=tmp_path,
-        template=tmp_path / "custom.py",
-        scratch_dir=None,
-        prev_state=PipelineState(structures=(_seed(),)),
-        charge=0,
-        multiplicity=1,
-        max_cores=1,
-        slurm_template="cpu.slurm.header",
-        executables={},
+    ctx = _ctx(tmp_path, structures=(_seed(),), step_cfg=step_cfg)
+    (tmp_path / "custom.py").write_text(
+        _FAKE_TEMPLATE.replace("-1.234", "-9.876"), encoding="utf-8"
     )
-    engine = get_engine("pyscf")
-    inputs = engine.prepare(ctx)
-    assert "$" not in inputs.files[0][0].read_text()  # placeholders gone
+    inputs = get_engine("pyscf").prepare(ctx)
+    text = inputs.files[0][0].read_text(encoding="utf-8")
+    assert "-9.876" in text and "-1.234" not in text
+    assert "$" not in text  # placeholders gone
 
 
 # ---------------------------------------------------------------------------

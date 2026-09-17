@@ -189,7 +189,8 @@ def test_a_wait_sleeps_until_something_actually_finishes():
 
     with patch("time.sleep") as sleeper:
         assert t.wait_for_completion(finished=finished) == ("a",)
-    sleeper.assert_called()
+    assert state["calls"] == 3
+    assert sleeper.call_count == 2  # between polls, never before the first or after the last
     assert t.active_jobs == ("b",)
 
 

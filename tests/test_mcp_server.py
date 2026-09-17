@@ -119,8 +119,8 @@ async def test_the_guide_resource_serves_the_packaged_markdown():
     assert "start_run is detached" not in text  # instructions live on the server, not the guide
 
 
-def test_main_serves_stdio(monkeypatch: pytest.MonkeyPatch):
-    """`main` runs the assembled server on stdio — the transport clients launch."""
+def _record_transport(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Stand in for the assembled server; the list receives the transport ``run`` is given."""
     served: list[str] = []
 
     class _Stub:
@@ -128,19 +128,24 @@ def test_main_serves_stdio(monkeypatch: pytest.MonkeyPatch):
             served.append(transport)
 
     monkeypatch.setattr(mcp_server, "build_server", _Stub)
+    return served
+
+
+def test_main_serves_stdio(monkeypatch: pytest.MonkeyPatch):
+    """`main` runs the assembled server on stdio — the transport clients launch."""
+    served = _record_transport(monkeypatch)
     mcp_server.main()
     assert served == ["stdio"]
 
 
 def test_cli_mcp_serves_stdio_via_the_module(monkeypatch: pytest.MonkeyPatch):
-    """`chemrefine mcp` hands off to mcp_server.main — patched here so nothing blocks."""
+    """`chemrefine mcp` runs the assembled server on stdio — stubbed so nothing blocks."""
     from typer.testing import CliRunner
 
-    called: list[bool] = []
-    monkeypatch.setattr(mcp_server, "main", lambda: called.append(True))
+    served = _record_transport(monkeypatch)
     result = CliRunner().invoke(app, ["mcp"])
     assert result.exit_code == 0
-    assert called == [True]
+    assert served == ["stdio"]
 
 
 def test_cli_mcp_names_the_missing_extra(without_extra, caplog):

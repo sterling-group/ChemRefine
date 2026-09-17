@@ -13,6 +13,7 @@ from __future__ import annotations
 import dataclasses
 import json
 
+from chemrefine import __version__
 from chemrefine.config import Config
 from chemrefine.engines.api import ENGINES
 from chemrefine.introspect import EngineDescriptor, describe_engines, schema_document
@@ -110,7 +111,7 @@ def test_schema_document_serializes_whole_and_carries_the_config_schema():
     """
     document = schema_document()
     round_tripped = json.loads(json.dumps(document))
-    assert round_tripped["chemrefine_version"] == document["chemrefine_version"]
+    assert round_tripped["chemrefine_version"] == __version__
     assert document["config"] == Config.model_json_schema()
     assert "StepConfig" in document["config"]["$defs"]
     assert set(document["engines"]) == set(ENGINES)

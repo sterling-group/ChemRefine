@@ -664,18 +664,21 @@ def test_the_gradient_timeout_reaches_the_wrapper_and_zero_is_refused(tmp_path: 
 
 
 def test_mlip_extopt_calculator_from_args_builds_instance():
-    """``from_args`` should consume the shared server CLI namespace."""
+    """``from_args`` consumes the shared server CLI namespace: its flags reach the builder."""
     from chemrefine.engines._backend_server.server import parse_args
     from chemrefine.engines.mlip.extopt_calc import MlipExtOptCalculator
 
     args = parse_args(["--backend", "mlip", "--model", "small", "--task-name", "mace_off"])
+    seen: list[CalculatorSpec] = []
     with patch.dict(
         mlip_registry._BACKENDS,
-        {"mace_off": _spec(lambda _spec_arg: "MACE_CALC")},
+        {"mace_off": _spec(_recording_builder(seen, "MACE_CALC"))},
         clear=False,
     ):
         calc = MlipExtOptCalculator.from_args(args)
     assert calc.name == "mlip"
+    [spec] = seen
+    assert (spec.task_name, spec.model_name, spec.weights) == ("mace_off", "small", None)
 
 
 def test_mlip_add_cli_args_registers_mlip_flags_with_pydantic_defaults():
