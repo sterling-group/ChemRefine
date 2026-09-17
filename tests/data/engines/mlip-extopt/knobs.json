@@ -10,6 +10,7 @@
   "tests_only": [
     "cores",
     "backend_python",
-    "extra"
+    "extra",
+    "gradient_timeout_seconds"
   ]
 }

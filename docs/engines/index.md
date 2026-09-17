@@ -139,6 +139,7 @@ validated model as `$OPTIONS_JSON`, for `options = json.loads("$OPTIONS_JSON")`.
 | `cores` | `1` | Per-structure core budget. |
 | `backend_python` | `None` | Explicit interpreter for the backend (escape hatch). Normally unset: the step's managed env is resolved by name — see [Installing engines & backends](installing.md#available-backends). |
 | `extra` *(direct only)* | `{}` | Free knobs for your own `stepN.py`, as a mapping: validated only as a mapping, rendered as `$EXTRA` (a Python dict literal) and inside `$OPTIONS_JSON`. Declared, so a key you invent is deliberate while a typo of a real knob still warns; `mlip-extopt` and `mlip-train` render no template and refuse it. |
+| `gradient_timeout_seconds` *(ExtOpt only)* | `600` | How long the bridge ORCA invokes per geometry waits on one gradient before giving it up — a bound on a single server call, not on the optimisation. Raise it when a healthy server takes longer per geometry; on expiry the step records a timeout that names this knob, not an unreachable server. |
 
 ## Training a potential (`mlip-train`)
 
@@ -259,6 +260,7 @@ rather than accepted and ignored.
 | `save_tensors` *(ExtOpt only)* | `False` | Dump 1e/2e MO tensors after the SCF. |
 | `localized` *(ExtOpt only)* | `False` | Boys-localize before tensor extraction. |
 | `tensor_folder` *(ExtOpt only)* | `tensors` | Output dir for `save_tensors` `.npz`. A relative path (the default) is copied back into the structure's own dir (`outputs/stepN/<id>/tensors/`); an absolute path writes there directly. |
+| `gradient_timeout_seconds` *(ExtOpt only)* | `600` | How long the bridge ORCA invokes per geometry waits on one gradient before giving it up — a bound on a single server call, not on the optimisation. A DFT gradient on a large system can need more than the default; on expiry the step records a timeout that names this knob, not an unreachable server. |
 | `cores` | `1` | Per-structure core budget. |
 | `backend_python` | `None` | Explicit interpreter for the backend (escape hatch). Normally unset: the `pyscf` managed env is resolved by name. |
 | `extra` *(direct only)* | `{}` | Free knobs for your own `stepN.py`, as a mapping: validated only as a mapping, rendered as `$EXTRA` (a Python dict literal) and inside `$OPTIONS_JSON`. Declared, so a key you invent is deliberate while a typo of a real knob still warns; `pyscf-extopt` renders no template and refuses it. |

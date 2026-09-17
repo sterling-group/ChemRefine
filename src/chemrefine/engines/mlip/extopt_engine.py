@@ -13,7 +13,6 @@ from __future__ import annotations
 from typing import ClassVar
 
 from chemrefine.engines._backend_server.base import ComputeBackend
-from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import register
 from chemrefine.engines.mlip.backend import MlipBackend
 from chemrefine.engines.mlip.extopt_calc import MlipExtOptCalculator
@@ -28,5 +27,5 @@ class MlipExtOptEngine(MlipBackend, ExtOptOrcaEngine):
     name: ClassVar[str] = "mlip-extopt"
     backend: ClassVar[str] = "mlip"
     wrapper_filename: ClassVar[str] = "mlip_extopt.sh"
-    options_cls: ClassVar[type[EngineOptions]] = MlipExtOptOptions
+    options_cls: ClassVar[type[MlipExtOptOptions]] = MlipExtOptOptions
     calculator_cls: ClassVar[type[ComputeBackend]] = MlipExtOptCalculator

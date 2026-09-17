@@ -1046,7 +1046,7 @@ def test_non_provisionable_script_engine_uses_own_interpreter(monkeypatch, tmp_p
 
 def test_non_provisionable_extopt_engine_uses_own_interpreter(monkeypatch, tmp_path: Path):
     """A third-party ExtOpt engine without ``backend_requirement`` serves from this interpreter."""
-    from chemrefine.engines._options import EngineOptions
+    from chemrefine.engines._options import ExtOptOptions
     from chemrefine.engines.mlip.extopt_calc import MlipExtOptCalculator
     from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
 
@@ -1054,7 +1054,7 @@ def test_non_provisionable_extopt_engine_uses_own_interpreter(monkeypatch, tmp_p
         name = "plain-extopt-test"
         backend = "mlip"
         wrapper_filename = "plain.sh"
-        options_cls = EngineOptions
+        options_cls = ExtOptOptions
         calculator_cls = MlipExtOptCalculator
 
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))

@@ -695,7 +695,14 @@ def test_client_parse_args_defaults():
     assert args.bind is None
     assert args.url_file is None
     assert args.method == "dft"
+    assert args.timeout == bridge.DEFAULT_TIMEOUT
     assert args.inputfile == "job.extinp.tmp"
+
+
+def test_client_timeout_is_a_flag_of_the_shared_skeleton():
+    """The per-call bound is the client's own knob, so every backend's wrapper can set it."""
+    args = bridge.parse_args(["--backend", "pyscf", "--timeout", "900", "job.extinp.tmp"])
+    assert args.timeout == 900.0
 
 
 def test_client_settings_from_args_is_empty_single_channel():
@@ -792,6 +799,27 @@ def test_submit_calculation_url_error_becomes_jobfailure():
         pytest.raises(JobFailureError, match="unreachable"),
     ):
         bridge.submit_calculation(server_url="x", data=_data())
+
+
+@pytest.mark.parametrize("expiry", [TimeoutError("timed out"), None])
+def test_submit_calculation_timeout_is_named_as_one(expiry: TimeoutError | None):
+    """A gradient that does not come back in time is a timeout, not an unreachable server.
+
+    The bound expires two ways — a bare ``TimeoutError`` from the socket while the server is
+    still computing, or one wrapped in a ``URLError`` when the connection itself timed
+    out. The bare one escaped every handler and crashed the wrapper with a traceback; the
+    wrapped one read as "unreachable". Both now name the wait and the knob that sets it.
+    """
+    from urllib.error import URLError
+
+    raised = expiry if expiry is not None else URLError(TimeoutError("timed out"))
+    with (
+        patch.object(bridge, "urlopen", side_effect=raised),
+        pytest.raises(JobFailureError, match="no reply within 42s") as excinfo,
+    ):
+        bridge.submit_calculation(server_url="x", data=_data(), timeout=42.0)
+    assert "gradient_timeout_seconds" in str(excinfo.value)
+    assert "unreachable" not in str(excinfo.value)
 
 
 def test_submit_calculation_truncated_response_becomes_jobfailure():
@@ -914,14 +942,13 @@ def test_client_main_writes_engrad(tmp_path: Path, monkeypatch):
 
 def test_client_main_tags_calls_with_extinp_jobname(tmp_path: Path, monkeypatch):
     """Without an explicit ``--tag``, ``main`` derives a per-structure tag from the
-    ``.extinp.tmp`` jobname so per-call artefacts land in a per-structure file."""
+    ``.extinp.tmp`` jobname so per-call artefacts land in a per-structure file — and the
+    ``--timeout`` it parsed is the one the request waits on."""
     inp = _write_extinp(tmp_path)  # writes step1_structure_0.extinp.tmp
     url_file = tmp_path / "server.url"
     url_file.write_text("127.0.0.1:1234\n", encoding="utf-8")
-    monkeypatch.setattr(
-        "sys.argv",
-        ["bridge.py", "--backend", "mlip", "--url-file", str(url_file), str(inp)],
-    )
+    argv = ["bridge.py", "--backend", "mlip", "--url-file", str(url_file), "--timeout", "42"]
+    monkeypatch.setattr("sys.argv", [*argv, str(inp)])
     captured: dict = {}
 
     class _Resp(BytesIO):
@@ -933,12 +960,14 @@ def test_client_main_tags_calls_with_extinp_jobname(tmp_path: Path, monkeypatch)
 
     def _stub(req, timeout):
         captured["payload"] = json.loads(req.data.decode())
+        captured["timeout"] = timeout
         return _Resp(b'{"energy": -1.0, "gradient": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]}')
 
     with patch.object(bridge, "urlopen", side_effect=_stub):
         rc = bridge.main()
     assert rc == 0
     assert captured["payload"]["tag"] == "step1_structure_0"
+    assert captured["timeout"] == 42.0
 
 
 # ---------------------------------------------------------------------------
@@ -1062,7 +1091,7 @@ def test_an_extopt_subclass_is_refused_if_its_calculator_is_abstract():
     ``__abstractmethods__`` — Python's own ledger — at the engine's class statement.
     """
     from chemrefine.engines._backend_server.base import ComputeBackend
-    from chemrefine.engines._options import EngineOptions
+    from chemrefine.engines._options import ExtOptOptions
     from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
 
     class _Empty(ComputeBackend):
@@ -1074,7 +1103,7 @@ def test_an_extopt_subclass_is_refused_if_its_calculator_is_abstract():
             name = "bad-probe"
             backend = "bad-probe"
             wrapper_filename = "bad.sh"
-            options_cls = EngineOptions
+            options_cls = ExtOptOptions
             calculator_cls = _Empty
 
 
@@ -1086,7 +1115,7 @@ def test_an_extopt_subclass_is_refused_if_its_calculator_declares_no_name():
     ``required_declarations`` check refuses it at the same class statement.
     """
     from chemrefine.engines._backend_server.base import ComputeBackend
-    from chemrefine.engines._options import EngineOptions
+    from chemrefine.engines._options import ExtOptOptions
     from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
 
     class _Nameless(ComputeBackend):
@@ -1110,7 +1139,7 @@ def test_an_extopt_subclass_is_refused_if_its_calculator_declares_no_name():
             name = "bad-probe"
             backend = "bad-probe"
             wrapper_filename = "bad.sh"
-            options_cls = EngineOptions
+            options_cls = ExtOptOptions
             calculator_cls = _Nameless
 
 

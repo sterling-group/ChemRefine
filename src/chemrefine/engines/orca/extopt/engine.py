@@ -23,7 +23,7 @@ from typing import ClassVar
 from chemrefine.config import StepConfig
 from chemrefine.engines import _provision
 from chemrefine.engines._backend_server.base import SERVER_URL_FILENAME, ComputeBackend
-from chemrefine.engines._options import EngineOptions
+from chemrefine.engines._options import ExtOptOptions
 from chemrefine.engines.orca import input as orca_input
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.engines.orca.extopt import protocol, run_block
@@ -47,7 +47,7 @@ class ExtOptOrcaEngine(OrcaEngine):
 
     backend: ClassVar[str]
     wrapper_filename: ClassVar[str]
-    options_cls: ClassVar[type[EngineOptions]]
+    options_cls: ClassVar[type[ExtOptOptions]]
     calculator_cls: ClassVar[type[ComputeBackend]]
     preflight_refuses: ClassVar[str] = (
         "a typoed or missing server knob: these options configure a gradient server, so the "
@@ -163,15 +163,18 @@ class ExtOptOrcaEngine(OrcaEngine):
         return inputs
 
     def _wrapper_extra_args(self, ctx: StepContext) -> str:
-        """Per-call backend flags baked into the wrapper's client invocation.
+        """Per-call client flags baked into the wrapper's bridge invocation.
 
-        Empty for every shipped backend: MLIP and PySCF are both single-channel
-        (the calculator is constructed once on the server from the step's YAML
-        options, so the wrapper carries no per-call flags). The hook stays as an
-        extension point for a future backend that genuinely needs per-geometry
-        knobs in the POST.
+        One flag for every shipped backend: the client's own ``--timeout``, from the step's
+        ``gradient_timeout_seconds`` — how long the bridge waits on one ``/calculate`` call
+        before it gives the geometry up. Read over the engine's share of the options like
+        every strict read in this family. The backends themselves are single-channel (the
+        calculator is built once on the server from the step's YAML options), so nothing
+        backend-specific rides here; the hook stays the extension point for a backend that
+        genuinely needs per-geometry knobs in the POST.
         """
-        return ""
+        opts = self.options_cls.from_raw(ctx.step_cfg.engine_options())
+        return f"--timeout {opts.gradient_timeout_seconds:g}"
 
     def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> RunBlock:
         """Combine the engine's server command with the shared lifecycle bash.

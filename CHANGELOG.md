@@ -27,6 +27,14 @@ for the full map.
 
 ### Added
 
+- **A per-step gradient timeout for the ExtOpt engines.** `gradient_timeout_seconds`
+  (default `600`) bounds one call of the bridge ORCA invokes per geometry. The old bound
+  was fixed, and its expiry read as "server unreachable" — or, for a gradient the server
+  was still computing, as a traceback in the wrapper. Expiry is now recorded as a timeout
+  that names the knob. The cache key of every `mlip-extopt` / `pyscf-extopt` step moves
+  with the new knob — the options payload it digests gained a field — so a tree cached
+  before it recomputes those steps on `resume`, and `rebuild-cache` refuses such a tree as
+  foreign: `rerun N` is the migration.
 - **Every declared knob is a script placeholder, and the whole model is `$OPTIONS_JSON`.**
   A `stepN.py` for `mlip` or `pyscf` reads any field of its engine's options model as
   `$UPPERCASE` (`$MODEL_NAME`, `$BASIS`, `$GPU`, `$CORES`, …; an unset knob renders

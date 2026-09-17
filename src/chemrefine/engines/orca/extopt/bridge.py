@@ -68,6 +68,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help=f"sidecar auth-token file (default: $WORK_DIR/{SERVER_TOKEN_FILENAME})",
     )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT,
+        help="seconds to wait on one /calculate call before giving the geometry up",
+    )
     parser.add_argument("--tag", default=None, help="optional correlation tag for server log")
     for backend_name in known_backends():
         load_calculator(backend_name).add_cli_args(parser)
@@ -80,6 +86,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def settings_from_args(args: argparse.Namespace) -> dict[str, Any]:
     """Dispatch to the selected backend's ``settings_from_args``."""
     return load_calculator(args.backend).settings_from_args(args)
+
+
+def _timed_out(server_url: str, timeout: float) -> str:
+    """The one sentence for a gradient that did not come back in time."""
+    return (
+        f"ExtOpt server at {server_url} gave no reply within {timeout:g}s — a gradient "
+        "slower than the step's gradient_timeout_seconds, or a hung server"
+    )
 
 
 def submit_calculation(
@@ -96,6 +110,13 @@ def submit_calculation(
     a bearer ``Authorization`` header; the server rejects requests without
     it. Raises :class:`JobFailureError` on any HTTP / connection / JSON
     error so the calling step records a clean failure.
+
+    ``timeout`` bounds the one call. Its expiry arrives two ways — a ``TimeoutError``
+    straight from the socket while the server is still computing, or wrapped in a
+    ``URLError`` when the connection itself timed out — and both are named as what they
+    are: a gradient slower than the step's ``gradient_timeout_seconds``, or a hung
+    server. The bare form escaped every handler here and crashed the wrapper with a
+    traceback; the wrapped one read as an unreachable server.
     """
     payload = {
         "atom_types": list(data.symbols),
@@ -123,7 +144,11 @@ def submit_calculation(
     except HTTPError as e:
         raise JobFailureError(f"ExtOpt server returned HTTP {e.code}: {e.reason}") from e
     except URLError as e:
+        if isinstance(e.reason, TimeoutError):
+            raise JobFailureError(_timed_out(server_url, timeout)) from e
         raise JobFailureError(f"ExtOpt server unreachable at {server_url}: {e.reason}") from e
+    except TimeoutError as e:
+        raise JobFailureError(_timed_out(server_url, timeout)) from e
     except HTTPException as e:
         # A server that answers and then breaks the protocol mid-body (IncompleteRead on a
         # dying worker) — neither an HTTPError nor a URLError, so it crashed the wrapper
@@ -205,6 +230,7 @@ def main() -> int:
         data=data,
         tag=args.tag or _tag_for(args.inputfile),
         token=resolve_server_token(args),
+        timeout=args.timeout,
     )
     engrad_path = _engrad_path_for(args.inputfile)
     protocol.write_engrad(

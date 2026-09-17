@@ -15,7 +15,7 @@ from typing import Any, Self
 from pydantic import AliasChoices, ConfigDict, Field, field_validator, model_validator
 
 from chemrefine.config import reject_shell_unsafe
-from chemrefine.engines._options import EngineOptions, refuse_template_knobs
+from chemrefine.engines._options import EngineOptions, ExtOptOptions, refuse_template_knobs
 
 
 class MlipOptions(EngineOptions):
@@ -124,8 +124,8 @@ the source of names, defaults and YAML aliases. The sweep that motivated this co
 tuple hand-enumerated at ten sites."""
 
 
-class MlipExtOptOptions(MlipOptions):
-    """The MLIP knobs as the ``mlip-extopt`` engine reads them: the same fields, no template.
+class MlipExtOptOptions(MlipOptions, ExtOptOptions):
+    """The MLIP knobs as the ``mlip-extopt`` engine reads them, plus the ExtOpt family's.
 
     A subclass rather than the direct model itself because the direct engine and this one
     read ``extra`` differently: ``mlip`` renders it into the user's ``step{N}.py``, and this

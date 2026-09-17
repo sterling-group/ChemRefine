@@ -15,6 +15,7 @@
     "device",
     "cores",
     "backend_python",
-    "extra"
+    "extra",
+    "gradient_timeout_seconds"
   ]
 }

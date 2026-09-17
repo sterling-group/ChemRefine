@@ -24,7 +24,7 @@ from typing import Any, Literal, Self
 from pydantic import Field, field_validator, model_validator
 
 from chemrefine.config import reject_shell_unsafe
-from chemrefine.engines._options import EngineOptions, refuse_template_knobs
+from chemrefine.engines._options import EngineOptions, ExtOptOptions, refuse_template_knobs
 from chemrefine.errors import ConfigError
 
 
@@ -144,7 +144,7 @@ class PyscfOptions(EngineOptions):
         return super().from_raw(raw)
 
 
-class PyscfExtOptOptions(PyscfOptions):
+class PyscfExtOptOptions(PyscfOptions, ExtOptOptions):
     """The SCF knobs, plus the ones only the gradient server reads.
 
     ``pyscf`` renders a user ``step{N}.py`` and reaches its options through template

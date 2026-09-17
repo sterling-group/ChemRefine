@@ -379,3 +379,13 @@ def test_pyscf_extopt_nms_knobs_share_the_options_with_the_strict_server_read(tm
 
     with pytest.raises(ConfigError, match="target"):  # nms off: the knob is a stranger
         engine.check_step(ctx.step_cfg, charge=0, multiplicity=1)
+
+
+def test_the_gradient_timeout_reaches_the_pyscf_wrapper(tmp_path: Path):
+    """The ExtOpt family's knob, on the model this engine declares: a DFT gradient on a
+    large system is the case the default was too tight for."""
+    engine = get_engine("pyscf-extopt")
+    ctx = _pyscf_ctx(tmp_path, gradient_timeout_seconds=1800)
+    engine.prepare(ctx)
+    assert "--timeout 1800 " in engine._wrapper_path(ctx).read_text()
+    assert engine.options_cls.from_raw(ctx.step_cfg.options).gradient_timeout_seconds == 1800

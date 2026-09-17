@@ -599,6 +599,29 @@ def test_mlip_extopt_prepare_materializes_executable_wrapper(tmp_path: Path):
     assert "--backend mlip" in text
 
 
+def test_the_gradient_timeout_reaches_the_wrapper_and_zero_is_refused(tmp_path: Path):
+    """``gradient_timeout_seconds`` is the bridge's ``--timeout``, baked into the wrapper.
+
+    The bound used to be a constant in the bridge, so a slow but healthy DFT-sized
+    gradient could only be waited out by editing the package. It is a step knob now, read
+    over the engine's share of the options like every strict read in this family.
+    """
+    engine = get_engine("mlip-extopt")
+    engine.prepare(_mlip_extopt_ctx(tmp_path))
+    assert "--timeout 600 " in engine._wrapper_path(_mlip_extopt_ctx(tmp_path)).read_text()
+
+    longer = _mlip_extopt_ctx(tmp_path / "longer", gradient_timeout_seconds=900)
+    engine.prepare(longer)
+    assert "--timeout 900 " in engine._wrapper_path(longer).read_text()
+
+    with pytest.raises(ConfigError, match="gradient_timeout_seconds"):
+        engine.check_step(
+            _mlip_extopt_ctx(tmp_path, gradient_timeout_seconds=0).step_cfg,
+            charge=0,
+            multiplicity=1,
+        )
+
+
 # ---------------------------------------------------------------------------
 # MlipExtOptCalculator — ExtOpt-side adapter
 # ---------------------------------------------------------------------------
