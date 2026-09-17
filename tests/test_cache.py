@@ -347,6 +347,29 @@ def test_a_manifest_that_is_not_a_mapping_reads_as_unprovenanced(tmp_path: Path)
     assert provenance.rows == {}
 
 
+def test_a_provenanced_record_without_an_id_is_the_caches_own_error(tmp_path: Path):
+    """A row that carries a ``row_key`` but no ``id`` is a ``CacheError``, like its twin.
+
+    ``load_manifest`` already refused the record with the cache's exit code and the
+    rebuild advice; ``load_manifest_provenance`` let the same file escape as a bare
+    ``KeyError`` — and the ``CACHE_ONLY`` route reads the provenance without going
+    through the layout reader first, so a scoped rebuild over a hand-edited earlier
+    step ended in a traceback.
+    """
+    import json
+
+    from chemrefine.cache import load_manifest, load_manifest_provenance, manifest_path
+
+    manifest_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    record = {"row_key": "abc", "parent_digest": "d", "input": "0/a.inp", "output": "0/a.out"}
+    manifest_path(tmp_path).write_text(json.dumps({"files": [record]}), encoding="utf-8")
+
+    with pytest.raises(CacheError, match="corrupt manifest"):
+        load_manifest(tmp_path)
+    with pytest.raises(CacheError, match="corrupt manifest"):
+        load_manifest_provenance(tmp_path)
+
+
 def test_manifest_rows_align_ids_keys_and_digests():
     key = _key("0", "1")
     rows = key.manifest_rows()

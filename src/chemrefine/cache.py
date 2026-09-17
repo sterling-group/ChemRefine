@@ -1245,14 +1245,25 @@ def load_manifest_provenance(step_dir: Path) -> ManifestProvenance:
     are untouched. All-empty covers a missing manifest and one written before these keys
     existed alike — neither can equal a real stamp, so every reader falls back to the
     route that recomputes.
+
+    A record of the wrong *shape* is the :class:`CacheError` every ``_cache/`` reader
+    raises, held to the same net as :func:`load_manifest`: a row that carries a
+    ``row_key`` but no ``id`` used to escape as a bare ``KeyError`` — exit 1 and a
+    traceback instead of exit 7 and the rebuild advice — on the one route that reads the
+    provenance without going through the layout reader first (a step a scoped action
+    is not targeting, in :func:`chemrefine.step.run_step`).
     """
-    data = read_json(manifest_path(step_dir), None, label="manifest")
+    path = manifest_path(step_dir)
+    data = read_json(path, None, label="manifest")
     if not isinstance(data, dict):
         return ManifestProvenance(fingerprint="", criterion_key="", search_key="", rows={})
     rows: dict[str, tuple[str, str]] = {}
-    for rec in data.get("files") or []:
-        if isinstance(rec, dict) and "row_key" in rec:
-            rows[str(rec["id"])] = (str(rec["row_key"]), str(rec.get("parent_digest", "")))
+    try:
+        for rec in data.get("files") or []:
+            if isinstance(rec, dict) and "row_key" in rec:
+                rows[str(rec["id"])] = (str(rec["row_key"]), str(rec.get("parent_digest", "")))
+    except (KeyError, TypeError) as e:
+        raise CacheError(f"corrupt manifest at {path}: {e!r}") from e
     return ManifestProvenance(
         fingerprint=str(data.get("fingerprint", "")),
         criterion_key=str(data.get("criterion_key", "")),
