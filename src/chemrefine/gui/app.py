@@ -67,7 +67,24 @@ def _wire_int(value: Any, key: str) -> int:
     raise ConfigError(f"{key} {value!r} is not a whole number")
 
 
-def _field(payload: Any, key: str) -> Any:
+def _body() -> dict[str, Any]:
+    """The request's JSON object, or the 400 for a body that is not one.
+
+    ``force=True`` parses a bare list, a string or ``null`` as readily as an object, and a
+    handler that then reads ``.get`` off it raises ``AttributeError`` out of the handler —
+    a logged-traceback 500 for what is the client's mistake. The shape check used to live
+    inside :func:`_field`, which closed it only for the endpoints whose *first* read went
+    through that helper; the four whose first read was a ``.get`` (``/api/run``,
+    ``/api/agent/check``, ``/api/agent/chat``, ``/api/structure-file``) crashed on ``[]``.
+    The one place every POST handler starts is where the shape is decided, before any read.
+    """
+    payload = request.get_json(force=True)
+    if not isinstance(payload, dict):
+        raise ConfigError("request body must be a JSON object")
+    return payload
+
+
+def _field(payload: dict[str, Any], key: str) -> Any:
     """One field a JSON body must carry, or the 400 that names it.
 
     The page's own JavaScript sends every key its endpoint reads, so a body without one
@@ -77,11 +94,10 @@ def _field(payload: Any, key: str) -> Any:
     input: ``/api/structure-file`` answers ``{}`` with a 400 that says what to send, and
     :func:`_wire_int` refuses a malformed count the same way. One rule now: a missing
     field is the client's mistake, refused as a :class:`ConfigError` in the documented
-    ``{error, exit_code}`` shape. A body that is not a JSON object at all — ``force=True``
-    parses a bare list or string — is refused the same way rather than as a
-    ``TypeError`` from ``.get``.
+    ``{error, exit_code}`` shape. The body is already an object — :func:`_body` refused
+    every other shape before the handler read anything.
     """
-    if not isinstance(payload, dict) or key not in payload:
+    if key not in payload:
         raise ConfigError(f"request body is missing {key!r}")
     return payload[key]
 
@@ -188,7 +204,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     @app.post("/api/validate")
     def validate() -> Any:
         """The structured validation report for the current editor text."""
-        payload = request.get_json(force=True)
+        payload = _body()
         return jsonify(
             agent_tools.validate_config(_field(payload, "yaml_text"), payload.get("base_dir"))
         )
@@ -202,7 +218,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         reads like every shipped example regardless of the order the user clicked
         things together in.
         """
-        payload = request.get_json(force=True)
+        payload = _body()
         text = yaml.safe_dump(
             _canonical_order(_field(payload, "config")), sort_keys=False, allow_unicode=True
         )
@@ -211,7 +227,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     @app.post("/api/parse")
     def parse() -> Any:
         """YAML text → the raw mapping the form edits (or the reason it cannot)."""
-        payload = request.get_json(force=True)
+        payload = _body()
         try:
             raw = yaml.safe_load(_field(payload, "yaml_text"))
         except yaml.YAMLError as e:
@@ -252,7 +268,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         write: a kill mid-save must not truncate the config a run is pointed at. An
         unwritable destination is a plain 400, like every other bad input here.
         """
-        payload = request.get_json(force=True)
+        payload = _body()
         destination = agent_tools.expand_user_path(_field(payload, "path"))
         try:
             atomic_write(destination, _field(payload, "yaml_text").encode("utf-8"))
@@ -263,7 +279,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     @app.post("/api/scaffold")
     def scaffold() -> Any:
         """Fill the saved config's template gaps with starters (kept/written report)."""
-        payload = request.get_json(force=True)
+        payload = _body()
         return jsonify(
             agent_tools.scaffold_templates(
                 _field(payload, "config_path"), overwrite=bool(payload.get("overwrite", False))
@@ -280,7 +296,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     @app.post("/api/template")
     def write_template() -> Any:
         """Save the inline editor's template text."""
-        payload = request.get_json(force=True)
+        payload = _body()
         return jsonify(
             agent_tools.write_template(
                 _field(payload, "config_path"),
@@ -342,7 +358,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         and conflating "show me this molecule" with "open this project" is how one of them
         ends up doing the other by accident.
         """
-        payload = request.get_json(force=True)
+        payload = _body()
         path = payload.get("path")
         if path:
             return jsonify(agent_tools.read_structure_file(path))
@@ -357,13 +373,13 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     @app.post("/api/summary")
     def summary() -> Any:
         """The dry-run-style execution summary for a saved config."""
-        payload = request.get_json(force=True)
+        payload = _body()
         return jsonify(agent_tools.summarize_config(_field(payload, "config_path")))
 
     @app.post("/api/status")
     def status() -> Any:
         """Where the tree stands — lock holder, per-step progress, log tail."""
-        payload = request.get_json(force=True)
+        payload = _body()
         return jsonify(
             agent_tools.run_status(
                 _field(payload, "config_path"),
@@ -374,7 +390,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     @app.post("/api/results")
     def results() -> Any:
         """A paginated slice of steps.csv for the dashboard's results table."""
-        payload = request.get_json(force=True)
+        payload = _body()
         return jsonify(
             agent_tools.get_results(
                 _field(payload, "config_path"),
@@ -387,7 +403,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     @app.post("/api/failures")
     def failures() -> Any:
         """The failure ledger plus the suggested recovery action."""
-        payload = request.get_json(force=True)
+        payload = _body()
         return jsonify(
             agent_tools.get_failures(_field(payload, "config_path"), step=payload.get("step"))
         )
@@ -471,7 +487,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         """
         from chemrefine.agent import providers
 
-        payload = request.get_json(force=True)
+        payload = _body()
         key = payload.get("api_key")
         if key is not None and not _usable_as_header(key):
             # It becomes an Authorization header inside `check`. A bare newline there
@@ -521,7 +537,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         from chemrefine.agent.harness import build_web_agent
         from chemrefine.agent.providers import ProviderConfig
 
-        payload = request.get_json(force=True)
+        payload = _body()
         if payload.get("reset"):
             chat_state["history"] = None
             chat_state["pending"] = None
@@ -599,7 +615,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         The two budgets are wire numbers and go through :func:`_wire_int` like the
         rest of them.
         """
-        payload = request.get_json(force=True)
+        payload = _body()
         # These are the two numbers that reach a *child process*: `start_run` renders
         # them onto its argv, where one Typer cannot read is exit 2 into a log nobody is
         # watching — after this call has already returned a pid and a log path. That is

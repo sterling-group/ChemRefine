@@ -1242,7 +1242,33 @@ def test_a_missing_request_field_is_a_400_that_names_it(client: Any):
     # A body that is not a JSON object at all is the same refusal, not a TypeError.
     bare = client.post("/api/validate", json=["not", "an", "object"], headers=_HEADERS)
     assert bare.status_code == 400
-    assert "yaml_text" in bare.get_json()["error"]
+    assert "JSON object" in bare.get_json()["error"]
+
+
+def test_a_body_that_is_not_a_json_object_is_a_400_at_every_endpoint(client: Any):
+    """``force=True`` parses ``[]``, ``null`` and ``"x"`` as readily as an object.
+
+    The shape check lived inside ``_field``, so it closed the class only for the endpoints
+    whose *first* read went through that helper. The four whose first read was a ``.get``
+    raised ``AttributeError`` out of the handler — a logged-traceback 500 for the client's
+    mistake — while their siblings answered the documented 400. Every POST handler now
+    starts with ``_body``, so the refusal cannot depend on which read comes first.
+    """
+    for endpoint in (
+        "/api/run",
+        "/api/agent/check",
+        "/api/agent/chat",
+        "/api/structure-file",
+        "/api/status",
+        "/api/results",
+        "/api/scaffold",
+    ):
+        for body in ("[]", "null", '"x"'):
+            response = client.post(
+                endpoint, data=body, content_type="application/json", headers=_HEADERS
+            )
+            assert response.status_code == 400, (endpoint, body)
+            assert "JSON object" in response.get_json()["error"], (endpoint, body)
 
 
 def test_non_chemrefine_errors_are_not_swallowed(client: Any, monkeypatch: pytest.MonkeyPatch):
