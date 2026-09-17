@@ -1220,6 +1220,69 @@ def test_overlapping_chat_turns_contend_on_a_lock_not_on_the_state(
     assert _post(client, "/api/agent/chat", {"message": "three"}).status_code == 200
 
 
+@pytest.mark.parametrize(
+    ("endpoint", "field", "value"),
+    [
+        ("/api/validate", "yaml_text", 123),
+        ("/api/validate", "base_dir", 7),
+        ("/api/parse", "yaml_text", ["steps"]),
+        ("/api/save", "path", 123),
+        ("/api/save", "yaml_text", {"steps": []}),
+        ("/api/scaffold", "config_path", 123),
+        ("/api/template", "config_path", 123),
+        ("/api/template", "text", 123),
+        ("/api/summary", "config_path", ["a"]),
+        ("/api/status", "config_path", 123),
+        ("/api/results", "config_path", 123),
+        ("/api/failures", "config_path", {"a": 1}),
+        ("/api/run", "config_path", 123),
+        ("/api/structure-file", "path", 123),
+        ("/api/structure-file", "name", 123),
+        ("/api/structure-file", "text", 123),
+        ("/api/agent/chat", "base_url", 123),
+        ("/api/agent/chat", "model", ["m"]),
+    ],
+)
+def test_a_string_field_of_the_wrong_json_type_is_a_400(
+    client: Any, tmp_path: Path, endpoint: str, field: str, value: Any
+):
+    """The sibling of the wire-number guard, for the strings.
+
+    Every one of these went straight into ``yaml.safe_load``, ``Path()``, ``.encode`` or
+    ``.startswith`` and raised the stdlib's ``TypeError``/``AttributeError`` out of the
+    handler — a logged-traceback 500 for the client's mistake, at fifteen sites, while the
+    counts and the step selectors beside them answered the documented 400. ``_field``
+    now carries the type contract ``_wire_int`` always had; ``_optional`` is the same
+    rule for a field a body may omit. The refusal names the field and the shape.
+    """
+    config = _saved_config(tmp_path)
+    payload = {
+        "config_path": str(config),
+        "path": str(tmp_path / "proj" / "x.yaml"),
+        "yaml_text": "steps: []\n",
+        "text": "! Mine\n",
+        "step": 1,
+        "name": "x.xyz",
+        "message": "hi",
+        field: value,
+    }
+    if endpoint == "/api/structure-file" and field != "path":
+        payload.pop("path")  # a path present is read first, and would answer instead
+    response = _post(client, endpoint, payload)
+    assert response.status_code == 400, (endpoint, field)
+    assert f"'{field}' must be a string" in response.get_json()["error"]
+
+
+def test_the_preflight_answers_a_wrong_typed_setting_as_a_verdict(client: Any):
+    """``/api/agent/check`` always answers 200 — a bad shape is a finding, like a bad key."""
+    stranded = _post(
+        client, "/api/agent/check", {"provider": "custom", "model": "m", "base_url": 123}
+    )
+    assert stranded.status_code == 200
+    assert stranded.get_json()["ok"] is False
+    assert "'base_url' must be a string" in stranded.get_json()["findings"][0]
+
+
 def test_a_missing_request_field_is_a_400_that_names_it(client: Any):
     """A body without a key the endpoint needs is malformed input, not a server bug.
 

@@ -464,6 +464,14 @@ for the full map.
   become ready" — the wrong diagnosis for a missing binary. The probe is now a stdlib
   `urllib` one-liner under the interpreter that hosts the server, which the job resolves
   anyway.
+- **A GUI string field of the wrong JSON type is a 400, not a traceback.** A number,
+  list or object sent where an endpoint reads a string — `yaml_text`, `path`,
+  `config_path`, `text`, `name`, `base_dir`, a chat `model` or `base_url` — went straight
+  into `yaml.safe_load`, `Path()` or `.encode` and raised the stdlib's `TypeError` out of
+  the handler as a logged-traceback 500, at fifteen sites, while the counts and step
+  selectors beside them answered 400. Every field read now carries the type contract the
+  wire-number guard always had, and the refusal names the field and the shape; the agent
+  preflight answers such a value as a finding, like every other unusable setting.
 - **A GUI request missing a field it needs is a 400 that names the field.** Every
   `payload["…"]` read in the web app raised `KeyError`, re-raised as a logged-traceback
   500 — a rule one test pinned as deliberate while the newer endpoints on the same app

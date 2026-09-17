@@ -84,8 +84,28 @@ def _body() -> dict[str, Any]:
     return payload
 
 
-def _field(payload: dict[str, Any], key: str) -> Any:
-    """One field a JSON body must carry, or the 400 that names it.
+_KIND_NAMES: dict[type, str] = {str: "string", dict: "JSON object"}
+"""How a refusal names the shape a field must have — the wire's words, not Python's."""
+
+
+def _typed(value: Any, key: str, kind: type) -> Any:
+    """``value`` if it is a ``kind``, else the 400 naming the field and the shape it needs.
+
+    The type contract used to hold for the counts (:func:`_wire_int`) and the step
+    selectors and for nothing else: a JSON number, list or object in a *string* field went
+    straight into ``yaml.safe_load``, ``Path()`` or ``.encode`` and raised the stdlib's
+    ``TypeError``/``AttributeError`` out of the handler — a logged-traceback 500 for the
+    client's mistake, at fifteen sites. ``kind=object`` accepts every JSON value, for the
+    fields whose shape is judged downstream (a step selector, the raw config mapping).
+    """
+    if not isinstance(value, kind):
+        expected = _KIND_NAMES.get(kind, kind.__name__)
+        raise ConfigError(f"{key!r} must be a {expected}, not {type(value).__name__}")
+    return value
+
+
+def _field(payload: dict[str, Any], key: str, kind: type = str) -> Any:
+    """One field a JSON body must carry, of the shape it must have, or the 400 that names it.
 
     The page's own JavaScript sends every key its endpoint reads, so a body without one
     is a hand-made request — and it used to be a ``KeyError`` that :func:`surface`
@@ -93,13 +113,25 @@ def _field(payload: dict[str, Any], key: str) -> Any:
     loud bug". The newer endpoints on this app took the other side for the same class of
     input: ``/api/structure-file`` answers ``{}`` with a 400 that says what to send, and
     :func:`_wire_int` refuses a malformed count the same way. One rule now: a missing
-    field is the client's mistake, refused as a :class:`ConfigError` in the documented
-    ``{error, exit_code}`` shape. The body is already an object — :func:`_body` refused
-    every other shape before the handler read anything.
+    field, or one of the wrong JSON type (:func:`_typed`), is the client's mistake,
+    refused as a :class:`ConfigError` in the documented ``{error, exit_code}`` shape. The
+    body is already an object — :func:`_body` refused every other shape before the
+    handler read anything.
     """
     if key not in payload:
         raise ConfigError(f"request body is missing {key!r}")
-    return payload[key]
+    return _typed(payload[key], key, kind)
+
+
+def _optional(payload: dict[str, Any], key: str, kind: type = str) -> Any:
+    """A field a body may omit — ``None`` when absent or null, else typed like :func:`_field`.
+
+    Absence stays absent, because every callee here reads ``None`` as "unset" (a base
+    directory to resolve against, a provider preset's own URL); what must not pass is a
+    present value of the wrong shape, which is the same 500 :func:`_field` closes.
+    """
+    value = payload.get(key)
+    return None if value is None else _typed(value, key, kind)
 
 
 def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
@@ -206,7 +238,9 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         """The structured validation report for the current editor text."""
         payload = _body()
         return jsonify(
-            agent_tools.validate_config(_field(payload, "yaml_text"), payload.get("base_dir"))
+            agent_tools.validate_config(
+                _field(payload, "yaml_text"), _optional(payload, "base_dir")
+            )
         )
 
     @app.post("/api/yaml")
@@ -220,7 +254,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         """
         payload = _body()
         text = yaml.safe_dump(
-            _canonical_order(_field(payload, "config")), sort_keys=False, allow_unicode=True
+            _canonical_order(_field(payload, "config", object)), sort_keys=False, allow_unicode=True
         )
         return jsonify({"yaml_text": text})
 
@@ -300,7 +334,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         return jsonify(
             agent_tools.write_template(
                 _field(payload, "config_path"),
-                _step_key(_field(payload, "step")),
+                _step_key(_field(payload, "step", object)),
                 _field(payload, "text"),
             )
         )
@@ -359,14 +393,14 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         ends up doing the other by accident.
         """
         payload = _body()
-        path = payload.get("path")
+        path = _optional(payload, "path")
         if path:
             return jsonify(agent_tools.read_structure_file(path))
         if "text" not in payload:
             return jsonify({"error": "send either a path, or a name and text"}), 400
         return jsonify(
             agent_tools.read_structure_text(
-                payload.get("name") or "structure", _field(payload, "text")
+                _optional(payload, "name") or "structure", _field(payload, "text")
             )
         )
 
@@ -496,10 +530,13 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
             # endpoint, for a fault in the box the user just typed into.
             return jsonify({"ok": False, "findings": ["the API key contains invalid characters"]})
         try:
+            # The three reads sit inside the try for the reason the resolve does: a
+            # provider, model or URL of the wrong JSON type is a verdict about the panel's
+            # settings, answered as a finding like every other unusable value here.
             resolved = providers.ProviderConfig.resolve(
-                payload.get("provider", "custom"),
-                model=payload.get("model"),
-                base_url=payload.get("base_url"),
+                _optional(payload, "provider") or "custom",
+                model=_optional(payload, "model"),
+                base_url=_optional(payload, "base_url"),
                 api_key=key,
             )
         except ChemRefineError as e:
@@ -543,10 +580,10 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
             chat_state["pending"] = None
             return jsonify({"reply": None, "pending": None, "reset": True})
         resolved = ProviderConfig.resolve(
-            payload.get("provider", "custom"),
-            model=payload.get("model"),
-            base_url=payload.get("base_url"),
-            api_key=payload.get("api_key"),
+            _optional(payload, "provider") or "custom",
+            model=_optional(payload, "model"),
+            base_url=_optional(payload, "base_url"),
+            api_key=_optional(payload, "api_key"),
         )
         try:
             # Inside the try, not above it: `Agent("gpt-5-mini")` raises `UserError` at
@@ -571,7 +608,9 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
                 result = agent.run_sync(
                     message_history=pending,
                     deferred_tool_results=DeferredToolResults(
-                        approvals={k: bool(v) for k, v in _field(payload, "approvals").items()}
+                        approvals={
+                            k: bool(v) for k, v in _field(payload, "approvals", dict).items()
+                        }
                     ),
                 )
             else:
