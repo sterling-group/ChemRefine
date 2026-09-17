@@ -451,6 +451,18 @@ def test_gpu_step_with_zero_gpu_budget_raises_config_error(tmp_path: Path, monke
         engine.submit(inputs, ctx)
 
 
+def test_mlip_extopt_refuses_an_infinite_gradient_timeout():
+    """`.inf` passed `gt=0` and reached the socket as a timeout Python cannot represent.
+
+    The bridge's `urlopen(timeout=inf)` raised `OverflowError` — none of the four failures it
+    classifies — so every geometry step died in the wrapper with a traceback that named
+    neither the knob nor the value. Refused at the strict read, by the field's name.
+    """
+    engine = get_engine("mlip-extopt")
+    with pytest.raises(ConfigError, match="gradient_timeout_seconds"):
+        engine.options_cls.from_raw({"gradient_timeout_seconds": float("inf")})
+
+
 def test_mlip_extopt_extra_blocks_contains_progext_pointing_to_wrapper(tmp_path: Path):
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path)

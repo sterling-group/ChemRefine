@@ -78,8 +78,8 @@ class _SampleBase(BaseModel):
     by_parent: bool = False
     """Apply the filter within each parent-ID group instead of globally."""
 
-    temperature_k: float = Field(DEFAULT_TEMPERATURE_K, gt=0)
-    """Temperature used by Boltzmann-style filters (K)."""
+    temperature_k: float = Field(DEFAULT_TEMPERATURE_K, gt=0, allow_inf_nan=False)
+    """Temperature used by Boltzmann-style filters (K). Finite, like every float knob."""
 
     energy_type: Literal["electronic", "gibbs", "enthalpy", "electronic_zero_point"] = "electronic"
     """Which energy the filter sorts / selects on (default electronic).
@@ -116,7 +116,7 @@ class _WindowedSample(_SampleBase):
 
     method: str
     count: int | None = None
-    window_kcalmol: float | None = Field(None, gt=0)
+    window_kcalmol: float | None = Field(None, gt=0, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def _exactly_one_selector(self) -> Self:
@@ -181,8 +181,13 @@ class NmsKnobs(BaseModel):
     """``minimum`` removes all imaginary modes; ``ts`` keeps the reaction coordinate
     and removes the rest; ``random`` displaces along random modes (exploration)."""
 
-    displacement_value: float = 1.0
-    """Magnitude (Å) of the ± displacement along each selected mode."""
+    displacement_value: float = Field(1.0, gt=0, allow_inf_nan=False)
+    """Magnitude (Å) of the ± displacement along each selected mode.
+
+    Positive and finite, refused at config load like the other float knobs: ``0`` submits a
+    whole round-2 batch of children identical to their parents and then reports every
+    parent unresolved, and ``.nan`` / ``.inf`` put a non-number into every child geometry
+    the batch runs — the config boundary is the one place that can say so by name."""
 
     num_random_displacements: int = Field(1, ge=1)
     """``random`` only: how many modes to draw."""
@@ -574,11 +579,13 @@ class Config(BaseModel):
     ``max_cores`` once its siblings drain. Per-structure outputs, runlogs,
     and the failure ledger are identical to the per-job path. Ignored when
     running locally (no ``sbatch`` on PATH)."""
-    job_timeout_seconds: float | None = Field(None, gt=0)
+    job_timeout_seconds: float | None = Field(None, gt=0, allow_inf_nan=False)
     """How long a step may go with **nothing finishing**, in seconds.
 
     ``None`` (default) waits indefinitely, which is the right thing under SLURM: the
     scheduler already enforces the partition's own time limit and will kill the job itself.
+    ``null`` is the one spelling of that — ``.inf`` is refused, like every non-finite
+    value of every float knob.
     Set it when nothing else will — a local ``dispatch: local`` run, or a cluster where a
     job can sit in ``PD`` forever — so a stuck batch fails with
     :class:`~chemrefine.errors.ThrottleTimeoutError` (exit code 8) instead of blocking the

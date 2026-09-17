@@ -436,6 +436,15 @@ for the full map.
 
 ### Fixed
 
+- **A float knob refuses `.inf` and `.nan`.** `gradient_timeout_seconds: .inf` — an
+  ordinary spelling of "no timeout" — reached the bridge as a socket timeout Python cannot
+  represent, and every ExtOpt geometry step died in the wrapper with a traceback naming
+  neither the knob nor the value; an NMS `displacement_value` of `.nan`, `.inf` or `0`
+  submitted a full round-2 batch of unusable children. Those two, `window_kcalmol`,
+  `temperature_k` and `job_timeout_seconds` are now held finite (and `displacement_value`
+  positive) at config load, naming the field. There is no unbounded timeout: write `null`
+  for `job_timeout_seconds` to wait indefinitely, and raise `gradient_timeout_seconds`
+  rather than removing it.
 - **The ExtOpt readiness probe no longer needs `curl`.** The generated job polled
   `/healthz` with `curl`, which nothing declared or checked for: on a node image without
   it every iteration failed, the loop ran its full 120 s, and the job died with "did not

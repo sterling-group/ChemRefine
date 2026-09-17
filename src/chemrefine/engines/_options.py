@@ -177,10 +177,16 @@ class ExtOptOptions(EngineOptions):
     ExtOpt base type its ``options_cls`` to it and read the knob without a cast.
     """
 
-    gradient_timeout_seconds: float = Field(600.0, gt=0)
+    gradient_timeout_seconds: float = Field(600.0, gt=0, allow_inf_nan=False)
     """How long the bridge waits on one gradient before it gives the geometry up.
 
     A bound on a single ``/calculate`` call, not on the optimisation. The default is
     generous for a potential and tight for a DFT gradient on a large system — raise it when
     a healthy server takes longer than that per geometry. On expiry the step records a
-    timeout that names this knob, not an unreachable server."""
+    timeout that names this knob, not an unreachable server.
+
+    Finite as well as positive. ``.inf`` — an ordinary spelling of "no timeout" — passed
+    ``gt=0``, rode into the wrapper as ``--timeout inf``, and reached the socket as a
+    timeout Python cannot represent (``OverflowError``, none of the failures the bridge
+    classifies), so every geometry step died in the wrapper with a traceback naming
+    neither the knob nor the value. There is no unbounded setting: raise the number."""

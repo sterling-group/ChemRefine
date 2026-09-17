@@ -223,6 +223,39 @@ def test_engine_options_is_the_engines_share_of_the_mapping():
     assert sampled.engine_options() == {"task_name": "omol", "targt": "ts"}
 
 
+@pytest.mark.parametrize(
+    ("build", "value"),
+    [
+        (lambda v: NmsKnobs(displacement_value=v), float("inf")),
+        (lambda v: NmsKnobs(displacement_value=v), float("nan")),
+        (lambda v: NmsKnobs(displacement_value=v), 0.0),
+        (lambda v: NmsKnobs(displacement_value=v), -1.0),
+        (lambda v: MinSample(method="min", window_kcalmol=v), float("inf")),
+        (lambda v: BoltzmannSample(method="boltzmann", temperature_k=v), float("inf")),
+        (lambda v: Config(**_minimal_config(job_timeout_seconds=v)), float("inf")),
+    ],
+    ids=[
+        "displacement-inf",
+        "displacement-nan",
+        "displacement-zero",
+        "displacement-negative",
+        "window-inf",
+        "temperature-inf",
+        "job-timeout-inf",
+    ],
+)
+def test_a_float_knob_refuses_non_finite_and_degenerate_values(build, value):
+    """`gt=0` refuses NaN (the comparison is false) but admits `+inf`; YAML spells both.
+
+    Each of these once passed validation and failed somewhere a person cannot act on it:
+    a non-finite displacement inside every round-2 child geometry, a zero displacement as a
+    batch of children identical to their parents. The config boundary is the one place that
+    can refuse the value by the name of the field that carries it.
+    """
+    with pytest.raises(ValidationError):
+        build(value)
+
+
 def test_nms_knobs_read_their_subset_and_default_the_rest():
     """``NmsKnobs.from_raw`` keeps its own keys, ignores the rest, and takes ``None`` as empty."""
     knobs = NmsKnobs.from_raw({"target": "ts", "task_name": "omol"})
