@@ -20,7 +20,7 @@ other run of a structure set goes through :func:`chemrefine.lifecycle.submit_and
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -551,6 +551,65 @@ def _cached_outcome(
     return _step_outcome(ctx, step_cfg, cached.results, cache_hit=True)
 
 
+def _prepare_stamped(
+    engine: CalculationEngine,
+    ctx: StepContext,
+    step_cfg: StepConfig,
+    key: cache.StepKey,
+    *,
+    archive: Iterable[str],
+    stamp: cache.ManifestStamp | None = None,
+) -> StepInputs:
+    """Archive ``archive``, prepare, stamp the manifest — the head every submitting route shares.
+
+    In that order and no other. The previous artifacts in the named directories leave
+    *before* the manifest is stamped with the keys that condemn them: stamped first, a
+    driver killed during the submission pass left new row provenance vouching for old
+    outputs still at canonical, and the next resume adopted a stale output (parse-usable,
+    answering the previous parent's geometry) as the current parent's result — the
+    internally-consistent wrong state the provenance exists to prevent. Archived away, the
+    same crash re-reads as MISSING_OUTPUT and the row is resubmitted. The inputs are
+    prepared before the manifest is written, so the manifest describes files that exist;
+    the stamp is on disk before any job goes out, so an interrupted run leaves proof of
+    what its outputs were computed for — the per-row provenance is that proof at
+    structure grain, for the incremental resume.
+
+    Archiving happens here rather than inside ``prepare`` because the retry and NMS paths
+    call ``prepare`` too and manage their own attempt directories. ``stamp`` is the full
+    current stamp unless a route must carry a stored half forward: the incremental resume
+    keeps the stored resolution keys until the resolution they describe exists.
+    """
+    attempts.archive_previous(ctx.step_dir, archive)
+    inputs = engine.prepare(ctx)
+    cache.save_manifest(
+        inputs,
+        ctx.step_dir,
+        operation=step_cfg.operation,
+        engine=step_cfg.engine,
+        **(stamp if stamp is not None else key.manifest_stamp()),
+    )
+    return inputs
+
+
+def _restamp(
+    inputs: StepInputs, ctx: StepContext, step_cfg: StepConfig, key: cache.StepKey
+) -> None:
+    """Write the full current stamp over ``inputs``' manifest, after ``finalize``.
+
+    Cache first (``finalize``), then the manifest's provenance: a crash between them leaves
+    a current cache beside an unprovenanced manifest, which reads as "rebuild again" —
+    cheap; the other order would leave provenance vouching for a cache that was never
+    written.
+    """
+    cache.save_manifest(
+        inputs,
+        ctx.step_dir,
+        operation=step_cfg.operation,
+        engine=step_cfg.engine,
+        **key.manifest_stamp(),
+    )
+
+
 def _incremental_step_outcome(
     ctx: StepContext,
     step_cfg: StepConfig,
@@ -624,35 +683,23 @@ def _incremental_step_outcome(
         len(current) - len(changed),
         len(changed),
     )
-    # The condemned rows' canonical artifacts leave BEFORE the manifest is stamped with
-    # the keys that condemn them. Stamped first, a driver killed during the resubmission
-    # pass left the new row provenance vouching for the old outputs still at canonical —
-    # and the next resume computed `changed = {}`, adopting a stale output (parse-usable,
-    # answering the previous parent's geometry) as the changed parent's result: the
-    # internally-consistent wrong state this provenance exists to prevent. Archived away,
-    # the same crash re-reads as MISSING_OUTPUT and the row is resubmitted.
-    attempts.archive_previous(ctx.step_dir, changed)
-    # Fresh inputs for the whole current set: an adopted row re-renders byte-identically,
-    # a condemned row renders into the directory its stale artifacts just left (the
-    # resubmission knows they arrive pre-archived). Prepared before the manifest write so
-    # the manifest describes files that exist.
-    inputs = engine.prepare(ctx)
-    # The same discipline for the resolution half of the stamp: it describes the
-    # `attemptK/` children on disk, and those are still the previous submission's until
-    # the resolution pass below replaces them. Stamped current here, a driver killed
-    # anywhere in the hours between this write and that pass left old-search attempts
-    # under a current-search stamp — adoptable by `rebuild-cache`, whose search guard
-    # reads exactly this stamp, and trusted by the next resume's label check. So the
-    # stored halves are carried forward, and the current ones are written only once
-    # the resolution they describe exists (after `finalize`, cache first, then
-    # provenance — `rebuild_cache_step`'s order). Rows and fingerprint stamp early as
-    # before: they describe round-1 outputs, which the archive above just made honest.
+    # The resolution half of the stamp is carried forward from the stored one: it
+    # describes the `attemptK/` children on disk, and those are still the previous
+    # submission's until the resolution pass below replaces them. Stamped current here, a
+    # driver killed anywhere in the hours between this write and that pass left old-search
+    # attempts under a current-search stamp — adoptable by `rebuild-cache`, whose search
+    # guard reads exactly this stamp, and trusted by the next resume's label check. The
+    # current halves are written only once the resolution they describe exists (after
+    # `finalize`, cache first, then provenance — `_restamp`). Rows and fingerprint stamp
+    # early as every route's do: they describe round-1 outputs, which the archive of the
+    # condemned rows makes honest.
     stamp = key.manifest_stamp()
     stamp["criterion_key"] = provenance.criterion_key
     stamp["search_key"] = provenance.search_key
-    cache.save_manifest(
-        inputs, ctx.step_dir, operation=step_cfg.operation, engine=step_cfg.engine, **stamp
-    )
+    # Only the condemned rows are archived: an adopted row re-renders byte-identically, a
+    # condemned one renders into the directory its stale artifacts just left (the
+    # resubmission knows they arrive pre-archived).
+    inputs = _prepare_stamped(engine, ctx, step_cfg, key, archive=changed, stamp=stamp)
     successes, failures = lifecycle.resubmit_unusable(engine, ctx, inputs, stale=changed)
     successes, failures = lifecycle.retry_unconverged(engine, ctx, successes, failures)
     if nms_engine is not None:
@@ -671,13 +718,7 @@ def _incremental_step_outcome(
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
     results = lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
-    cache.save_manifest(
-        inputs,
-        ctx.step_dir,
-        operation=step_cfg.operation,
-        engine=step_cfg.engine,
-        **key.manifest_stamp(),
-    )
+    _restamp(inputs, ctx, step_cfg, key)
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
 
@@ -693,22 +734,11 @@ def _run_full_step(
     if nms_engine is not None:
         _check_nms_freq_gate(nms_engine, ctx, step_cfg)
     logger.info("step %d (%s): preparing inputs", step_cfg.step, step_cfg.engine)
-    # Anything already in these structure dirs is a previous run's work. Move it aside
-    # before writing new inputs, so a job that dies without producing output is seen as
-    # a failure rather than re-reading the old result. Done here rather than inside
-    # ``prepare``, because the retry and NMS paths call ``prepare`` too and already
-    # manage their own attempt dirs.
-    attempts.archive_previous(ctx.step_dir, (s.id for s in ctx.prev_state.structures))
-    inputs = engine.prepare(ctx)
-    cache.save_manifest(
-        inputs,
-        ctx.step_dir,
-        operation=step_cfg.operation,
-        engine=step_cfg.engine,
-        # Stamped before submission, so an interrupted run leaves proof of *what* these
-        # outputs were computed for — see :func:`_incremental_step_outcome`. The per-row
-        # provenance is the same proof at structure grain, for the incremental resume.
-        **key.manifest_stamp(),
+    # Anything already in these structure dirs is a previous run's work: every parent's
+    # directory is archived, so a job that dies without producing output is seen as a
+    # failure rather than re-reading the old result.
+    inputs = _prepare_stamped(
+        engine, ctx, step_cfg, key, archive=(s.id for s in ctx.prev_state.structures)
     )
 
     # Built before submission, so a `target` that cannot be resolved says so before the step
@@ -760,15 +790,7 @@ def _run_artifact_step(
     too, leaving a run that is internally consistent and describes a training that never
     happened. Moving the run directory aside first turns that into the failure it is.
     """
-    attempts.archive_previous(ctx.step_dir, (engine.run_dir(ctx).name,))
-    inputs = engine.prepare(ctx)
-    cache.save_manifest(
-        inputs,
-        ctx.step_dir,
-        operation=step_cfg.operation,
-        engine=step_cfg.engine,
-        **key.manifest_stamp(),
-    )
+    inputs = _prepare_stamped(engine, ctx, step_cfg, key, archive=(engine.run_dir(ctx).name,))
     engine.submit(inputs, ctx)
     return _finish_artifact_step(ctx, step_cfg, key, engine)
 
@@ -935,17 +957,7 @@ def rebuild_cache_step(
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
     results = lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
-    # Cache first (finalize), then the manifest's provenance: a crash between the two
-    # leaves a current cache beside an unprovenanced manifest, which reads as "rebuild
-    # again" — cheap; the other order would leave provenance vouching for a cache that
-    # was never written.
-    cache.save_manifest(
-        manifest,
-        ctx.step_dir,
-        operation=step_cfg.operation,
-        engine=step_cfg.engine,
-        **key.manifest_stamp(),
-    )
+    _restamp(manifest, ctx, step_cfg, key)
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
 
