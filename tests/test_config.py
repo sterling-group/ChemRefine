@@ -267,6 +267,27 @@ def test_find_step_by_number_and_name():
     assert cfg.find_step("٢") is cfg.steps[1]
 
 
+@pytest.mark.parametrize("selector", [2.5, [2], {"step": 2}, None, True])
+def test_a_selector_that_is_neither_a_number_nor_a_name_is_refused(selector: object):
+    """The wire funnel refuses what it cannot look up, instead of crashing on it.
+
+    ``/api/results``, ``/api/failures`` and the agent's ``get_results`` hand their
+    ``step`` straight here; a JSON float, list or mapping reached ``matches`` and raised
+    ``AttributeError`` (``isdecimal`` on a float) — a 500 out of the GUI and the generic
+    crash line out of an MCP tool — while ``true``, an ``int`` to ``isinstance``, quietly
+    selected step 1. The refusal is the module's own ``ConfigError``, so every caller
+    gets the documented 400 / exit 2 for free.
+    """
+    cfg = Config(
+        steps=[
+            StepConfig(step=1, name="screen", engine="fake", operation="opt_sp"),
+            StepConfig(step=2, name="refine", engine="fake", operation="opt_sp"),
+        ]
+    )
+    with pytest.raises(ConfigError, match="neither a step number nor a name"):
+        cfg.find_step(selector)
+
+
 # ---------------------------------------------------------------------------
 # Sample discriminated union
 # ---------------------------------------------------------------------------

@@ -436,6 +436,13 @@ for the full map.
 
 ### Fixed
 
+- **A step selector that is neither a number nor a name is refused, not crashed on.**
+  `/api/results`, `/api/failures` and the agent's `get_results`/`get_failures` handed
+  their `step` straight to the lookup, so a JSON float, list or mapping raised a bare
+  `AttributeError` — a logged-traceback 500 from the GUI — and a JSON `true`, an `int`
+  to `isinstance`, quietly selected step 1. `Config.find_step`, the one funnel every
+  wire selector passes through, now refuses such a value as a `ConfigError`, so every
+  caller answers the documented 400 / exit 2.
 - **`rerun-errors` on an NMS step re-runs every round-1 job that left no usable result.**
   The NMS re-attempt resubmitted only the parents with *no* output and re-parsed
   everyone else's round-1 file, so a parent whose output a walltime kill had truncated,

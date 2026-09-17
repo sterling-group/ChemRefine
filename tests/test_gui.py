@@ -424,6 +424,26 @@ def test_a_dashboard_count_arrives_as_number_or_string_alike(client: Any, tmp_pa
         assert len(results["rows"]) == 1
 
 
+@pytest.mark.parametrize("endpoint", ["/api/results", "/api/failures"])
+@pytest.mark.parametrize("step", [2.5, True, [2], {"step": 2}])
+def test_a_step_selector_of_the_wrong_shape_is_a_400(
+    client: Any, tmp_path: Path, endpoint: str, step: Any
+):
+    """The sibling the wire-number guard missed: ``step`` went to ``find_step`` raw.
+
+    ``limit: 2.5`` is a 400 above; ``step: 2.5`` reached ``StepConfig.matches`` and
+    raised ``AttributeError`` into a logged-traceback 500, and ``step: true`` — an
+    ``int`` to ``isinstance`` — selected step 1 without a word. The refusal now lives in
+    :meth:`~chemrefine.config.Config.find_step`, the one funnel every selector passes
+    through, so these two endpoints get the documented 400 with no wire helper of
+    their own.
+    """
+    config = _reported_tree(tmp_path)
+    response = _post(client, endpoint, {"config_path": str(config), "step": step})
+    assert response.status_code == 400
+    assert "neither a step number nor a name" in response.get_json()["error"]
+
+
 def test_dashboard_run_launches_detached(
     client: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

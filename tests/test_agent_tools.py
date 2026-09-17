@@ -536,6 +536,11 @@ def test_get_results_paginates_and_filters(tmp_path: Path):
 
     with pytest.raises(ConfigError, match="no step matches"):
         agent_tools.get_results(str(path), step=9)
+    # A selector of the wrong shape is refused, not crashed on — and `True` is not step 1.
+    with pytest.raises(ConfigError, match="neither a step number nor a name"):
+        agent_tools.get_results(str(path), step=True)
+    with pytest.raises(ConfigError, match="neither a step number nor a name"):
+        agent_tools.get_failures(str(path), step=True)
 
 
 @pytest.mark.parametrize(

@@ -729,8 +729,19 @@ class Config(BaseModel):
         """Return the absolute output directory for ``step_cfg``."""
         return self.output_dir / step_cfg.dir_name()
 
-    def find_step(self, key: str | int) -> StepConfig | None:
-        """Return the step matching ``key`` (a number or a name), or ``None``."""
+    def find_step(self, key: object) -> StepConfig | None:
+        """Return the step matching ``key`` (a number or a name), or ``None``.
+
+        ``None`` means no step matches. A ``key`` that is neither a number nor a name — a
+        JSON float, list or boolean off the GUI's or an agent's wire — is not a selector
+        at all and is refused as a :class:`~chemrefine.errors.ConfigError`: left to
+        :meth:`StepConfig.matches` it raised a bare ``AttributeError`` (``isdecimal`` on
+        a float), past the contract that every failure carries an exit code, and a JSON
+        ``true`` — an ``int`` to :func:`isinstance` — silently selected step 1. Typed
+        ``object`` because this is the one funnel every wire selector passes through.
+        """
+        if isinstance(key, bool) or not isinstance(key, (int, str)):
+            raise ConfigError(f"step selector {key!r} is neither a step number nor a name")
         for step_cfg in self.steps:
             if step_cfg.matches(key):
                 return step_cfg
