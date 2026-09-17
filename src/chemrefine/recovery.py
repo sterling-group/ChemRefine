@@ -55,11 +55,13 @@ class Action(StrEnum):
 def resolve_target(config: Config, key: str | int) -> StepConfig:
     """Look up a step by number or name; raise :class:`ConfigError` if missing.
 
-    A :class:`~chemrefine.errors.ConfigError` — exit 2, the documented "config invalid"
-    code — because a target no step matches is a mistake about the config's own
-    vocabulary, and because :func:`chemrefine.agent_tools.start_run` already answers the
-    identical refusal with that class. As the base :class:`ChemRefineError` it exited 1
-    from the CLI and 2 from the agent tools for one and the same typo.
+    **The one step lookup.** The CLI's targets, the agent tools' ``step`` arguments and
+    the GUI behind them all resolve here, so one typo gets one refusal, and the refusal
+    lists what would have matched — spelled per caller, the copies drifted, and the
+    agent's answer was the one without the list. A :class:`~chemrefine.errors.ConfigError`
+    — exit 2, the documented "config invalid" code — because a target no step matches is
+    a mistake about the config's own vocabulary; as the base :class:`ChemRefineError` the
+    same typo exited 1 from the CLI and 2 from the agent tools.
     """
     step = config.find_step(key)
     if step is None:

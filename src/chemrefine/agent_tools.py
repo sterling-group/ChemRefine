@@ -42,7 +42,7 @@ from chemrefine.cache import load_failure_records
 from chemrefine.config import Config, StepConfig, load_config
 from chemrefine.engines.api import FrequencyOutputParsing, ParsedResult, get_engine
 from chemrefine.errors import EXIT_CODES, ConfigError, RunLockError
-from chemrefine.recovery import Action
+from chemrefine.recovery import Action, resolve_target
 from chemrefine.state import Structure
 from chemrefine.validate import validate_config_file, validate_config_text
 
@@ -133,9 +133,7 @@ def summarize_config(config_path: str) -> dict[str, Any]:
 
 def _step_template_plan(config: Config, step: int | str) -> scaffold.TemplatePlan:
     """The template plan row for one step, or the :class:`ConfigError` saying why not."""
-    step_cfg = config.find_step(step)
-    if step_cfg is None:
-        raise ConfigError(f"no step matches {step!r}")
+    step_cfg = resolve_target(config, step)
     for plan in scaffold.plan_templates(config):
         if plan.kind == "step" and plan.step == step_cfg.step:
             return plan
@@ -213,8 +211,8 @@ def start_run(
         )
     path = Path(config_path).resolve()
     config = load_config(path)
-    if target is not None and config.find_step(target) is None:
-        raise ConfigError(f"no step matches target {target!r}")
+    if target is not None:
+        resolve_target(config, target)
     status = pipeline.lock_status(config.output_dir)
     if status.held:
         # A held lock with no holder fields is the unreadable-file case — refused with
@@ -245,7 +243,7 @@ def start_run(
     argv.append("--")
     argv.append(str(path))
     if target is not None:
-        # `find_step` above takes a step number as an `int` as readily as a name, and the
+        # `resolve_target` above takes a step number as an `int` as readily as a name, and the
         # GUI hands a JSON number straight through. Rendered here, so it reaches the child
         # the way a shell would spell it — appended raw, an `int` made `Popen` raise
         # `TypeError` *after* the log file below existed: a 500, and an empty log that
@@ -371,10 +369,7 @@ def _steps_for(config: Config, step: int | str | None) -> tuple[StepConfig, ...]
     """The step(s) a query names — all of them, or exactly the one that matches."""
     if step is None:
         return tuple(config.steps)
-    step_cfg = config.find_step(step)
-    if step_cfg is None:
-        raise ConfigError(f"no step matches {step!r}")
-    return (step_cfg,)
+    return (resolve_target(config, step),)
 
 
 def get_results(
@@ -571,14 +566,6 @@ def build_structures(
     }
 
 
-def _required_step(config: Config, step: int | str) -> StepConfig:
-    """The one step ``step`` names, or the :class:`ConfigError` saying it doesn't."""
-    step_cfg = config.find_step(step)
-    if step_cfg is None:
-        raise ConfigError(f"no step matches {step!r}")
-    return step_cfg
-
-
 def _mode_payload(table: dict[int, float] | None) -> dict[str, float] | None:
     """A mode table as JSON, sorted by index — ``None`` stays ``None``, never ``{}``.
 
@@ -606,7 +593,7 @@ def get_frequencies(
     re-parses the outputs and fills it in.
     """
     config = load_config(Path(config_path))
-    step_cfg = _required_step(config, step)
+    step_cfg = resolve_target(config, step)
     cached = cache.load(config.step_dir(step_cfg))
     if cached is None:
         raise ConfigError(
@@ -672,7 +659,7 @@ def get_structure(
     config = load_config(Path(config_path))
     if step is None:
         return _seed_structure(config, structure_id, mode_index)
-    step_cfg = _required_step(config, step)
+    step_cfg = resolve_target(config, step)
     if mode_index is not None:
         # Geometry AND displacement from the same parsed frame, never one of each: the
         # cache is a separate source with its own ordering, and a mode drawn onto
@@ -739,7 +726,7 @@ def list_structures(config_path: str, step: int | str | None = None) -> dict[str
                 {"id": s.id, "modes": {}, "imaginary": []} for s in _seeds_for_reading(config)
             ],
         }
-    step_cfg = _required_step(config, step)
+    step_cfg = resolve_target(config, step)
     cached = cache.load(config.step_dir(step_cfg))
     if cached is None:
         raise ConfigError(
@@ -1074,7 +1061,7 @@ def analyze_mode(
     list, and on the tool whose whole job is to say which atoms move most.
     """
     config = load_config(Path(config_path))
-    step_cfg = _required_step(config, step)
+    step_cfg = resolve_target(config, step)
     frame = _mode_frame(config, step_cfg, structure_id)
     displacement = _mode_displacements(frame, mode_index)
     norms = np.linalg.norm(displacement, axis=1)

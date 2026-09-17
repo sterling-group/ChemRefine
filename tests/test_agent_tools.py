@@ -324,7 +324,7 @@ def test_start_run_refuses_before_launching(tmp_path: Path, recorded_popen):
     path = _write_config(tmp_path)
     with pytest.raises(ConfigError, match="unknown action"):
         agent_tools.start_run(str(path), action="format-disk")
-    with pytest.raises(ConfigError, match="no step matches target"):
+    with pytest.raises(ConfigError, match=r"no step matches 'nope'; available: \["):
         agent_tools.start_run(str(path), action="rerun", target="nope")
     assert recorded_popen.calls == []
 
