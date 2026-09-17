@@ -362,6 +362,22 @@ def test_referenced_aux_files_of_an_unreadable_template_is_empty(tmp_path: Path)
     assert referenced_aux_files(tmp_path / "never-written.inp") == {}
 
 
+def test_referenced_aux_files_of_a_template_that_is_not_utf8_is_empty(tmp_path: Path):
+    """A latin-1 template contributes no aux files, for the reason a missing one doesn't.
+
+    The renderer refuses it by name (``build_input``'s "not UTF-8"); an enumeration that
+    raised first would front-run that message from the wrong module with a bare codec
+    error. The file it references is really there, so a decoder that replaced the byte
+    and carried on would have found it — ``{}`` is the decode arm, not a missing file.
+    """
+    from chemrefine.engines.orca.input import referenced_aux_files
+
+    template = tmp_path / "step1.inp"
+    template.write_bytes('! B3LYP  # Ångström\n%pointcharges "charges.pc"\n'.encode("latin-1"))
+    (tmp_path / "charges.pc").write_text("0\n", encoding="utf-8")
+    assert referenced_aux_files(template) == {}
+
+
 def test_build_input_requests_orca_property_json(tmp_path: Path):
     """Generated inputs ask ORCA (>= 6) for its native property.json artifact."""
     template = _template(tmp_path, "! B3LYP def2-SVP\n")

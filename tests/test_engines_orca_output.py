@@ -523,23 +523,20 @@ def test_an_error_terminated_run_quotes_the_stderr_that_says_why(orca_error_term
         parse_dft(orca_error_termination)
 
 
-def test_the_err_tail_survives_a_non_utf8_locale(tmp_path: Path):
-    """The `.err` tail is decoded as UTF-8 whatever locale the driver runs under."""
-    import locale
-    import sys
+def test_the_err_tail_is_read_as_utf8_with_replacement(tmp_path: Path):
+    """The `.err` tail is UTF-8 with replacement, whatever locale the driver runs under.
 
-    if sys.flags.utf8_mode:
-        pytest.skip("UTF-8 mode ignores the locale, so this pin cannot bite")
+    Pinned by the half no locale can hide: a byte that is not UTF-8 comes back as U+FFFD
+    beside the multi-byte character that is, so the tail still quotes what stderr said —
+    the one place ORCA names the cause. A locale-dependent read would either raise on the
+    byte or spell it as a latin-1 character; either fails here, under any locale and under
+    UTF-8 mode alike.
+    """
     out = tmp_path / "step1_0.out"
     out.write_text("ORCA finished by error termination in SCF\n", encoding="utf-8")
-    (tmp_path / "step1_0.err").write_text("café: Datei nicht gefunden\n", encoding="utf-8")
-    saved = locale.setlocale(locale.LC_CTYPE)
-    locale.setlocale(locale.LC_CTYPE, "C")
-    try:
-        with pytest.raises(OutputTerminationError, match="café"):
-            parse_dft(out)
-    finally:
-        locale.setlocale(locale.LC_CTYPE, saved)
+    (tmp_path / "step1_0.err").write_bytes(b"caf\xc3\xa9 \xff: Datei nicht gefunden\n")
+    with pytest.raises(OutputTerminationError, match="café \N{REPLACEMENT CHARACTER}: Datei"):
+        parse_dft(out)
 
 
 def test_a_termination_error_is_still_a_parse_error(tmp_path: Path):

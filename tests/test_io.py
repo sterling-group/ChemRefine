@@ -441,6 +441,26 @@ def test_smiles_to_xyz_logs_when_embed_fails(tmp_path: Path):
     assert written == []
 
 
+def test_embed_smiles_raises_at_the_molecule_that_would_not_embed():
+    """The single-molecule seam raises where the CSV sweep above logs and skips.
+
+    That opposite failure behaviour is why :func:`embed_smiles` is public: the agent's
+    structure-building tool embeds one explicit SMILES and wants the refusal at the
+    molecule it names, not a warning in a log it is not reading.
+    """
+    from rdkit.Chem import rdDistGeom
+
+    from chemrefine.io import embed_smiles
+
+    with pytest.raises(ValueError, match="invalid SMILES: not-a-molecule"):
+        embed_smiles("not-a-molecule")
+    with (
+        patch.object(rdDistGeom, "EmbedMolecule", return_value=1),
+        pytest.raises(ValueError, match="failed 3D embedding for SMILES: CCO"),
+    ):
+        embed_smiles("CCO")
+
+
 def test_smiles_to_xyz_is_reproducible(tmp_path: Path):
     """Two conversions of the same CSV must produce identical 3D geometries.
 

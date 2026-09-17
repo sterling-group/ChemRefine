@@ -13,9 +13,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
+import pytest
 import yaml
 
 from chemrefine.config import Config, load_config
+from chemrefine.errors import EngineNotFoundError
 from chemrefine.scaffold import TemplatePlan, _starter_for, plan_templates, scaffold_templates
 
 
@@ -44,6 +46,17 @@ def test_the_plan_lists_step_templates_and_the_shared_header(tmp_path: Path):
         ("slurm-header", "cpu.slurm.header", None, None),
     ]
     assert not any(p.exists for p in plans)
+
+
+def test_an_unknown_engine_is_refused_at_planning_time(tmp_path: Path):
+    """The plan resolves engines exactly as a run would, so an unknown one fails here.
+
+    Every consumer of this seam — the CLI, the GUI's chips, the agent tools — inherits
+    the refusal before a byte is written, rather than a starter file for an engine that
+    does not exist.
+    """
+    with pytest.raises(EngineNotFoundError, match="unknown engine 'nope'"):
+        plan_templates(_config(tmp_path, {"step": 1, "engine": "nope"}))
 
 
 def test_a_template_free_engine_plans_nothing(tmp_path: Path):
