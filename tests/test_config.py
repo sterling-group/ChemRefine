@@ -554,6 +554,22 @@ def test_step_charge_override(tmp_path: Path):
     assert cfg.steps[0].charge == -1
 
 
+def test_step_multiplicity_override_is_held_to_the_global_floor(tmp_path: Path):
+    """A per-step ``multiplicity`` obeys the same ``>= 1`` the workflow value does.
+
+    The override used to carry no bound at all: ``multiplicity: 0`` on a step loaded,
+    passed ``chemrefine validate``, and reached ORCA's ``* xyzfile 0 0`` line and PySCF's
+    ``spin = -1`` — every job of the step failing at the program's own input parse, after
+    the steps before it had already run.
+    """
+    steps = [{"step": 1, "engine": "fake", "operation": "opt_sp", "multiplicity": 0}]
+    with pytest.raises(ConfigError, match="multiplicity"):
+        load_config(_write_yaml(tmp_path, _minimal_config(steps=steps)))
+    steps[0]["multiplicity"] = 3
+    cfg = load_config(_write_yaml(tmp_path, _minimal_config(steps=steps)))
+    assert cfg.steps[0].effective_multiplicity(cfg.multiplicity) == 3
+
+
 def test_step_unknown_field_rejected(tmp_path: Path):
     data = _minimal_config(
         steps=[

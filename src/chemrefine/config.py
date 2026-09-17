@@ -287,8 +287,13 @@ class StepConfig(BaseModel):
     charge: int | None = None
     """Per-step charge override; falls back to ``Config.charge`` when ``None``."""
 
-    multiplicity: int | None = None
-    """Per-step multiplicity override; falls back to ``Config.multiplicity`` when ``None``."""
+    multiplicity: int | None = Field(None, ge=1)
+    """Per-step multiplicity override; falls back to ``Config.multiplicity`` when ``None``.
+
+    Held to the same floor as the workflow value: a ``0`` here reached the ORCA and
+    Q-Chem input lines and PySCF's ``spin = multiplicity - 1`` while ``chemrefine
+    validate`` said OK, so every job of the step died at the program's own input parse —
+    after the steps before it had run."""
 
     options: dict[str, Any] = Field(default_factory=dict)
     """Engine-specific knobs (model name, basis, device, etc.). Engine decides what to read."""
