@@ -444,6 +444,12 @@ for the full map.
 
 ### Fixed
 
+- **An unknown step target exits 2 from every entry point, `--dry-run` included.** The
+  same mistake — `rerun cfg.yaml ghost` when no step is called `ghost` — exited 0 under
+  `--dry-run` (the target was echoed as though it would run, after the dry run had
+  promised to validate), 1 from the CLI (after the run lock was already taken), and
+  carried exit code 2 from the agent tools. It is now the documented `ConfigError` (2)
+  everywhere, refused before the dry-run summary and before anything touches the tree.
 - **A negative `seed` is refused at config load.** The NMS `seed` and the training
   step's `seed` accepted any integer, and both hand it to `numpy.random.default_rng`,
   which refuses a negative with a bare `ValueError`: an NMS step died at its first

@@ -35,7 +35,7 @@ from enum import StrEnum
 
 from chemrefine import cache, pipeline
 from chemrefine.config import Config, StepConfig
-from chemrefine.errors import ChemRefineError
+from chemrefine.errors import ChemRefineError, ConfigError
 from chemrefine.step import RunPlan, StepMode
 
 logger = logging.getLogger(__name__)
@@ -53,10 +53,17 @@ class Action(StrEnum):
 
 
 def resolve_target(config: Config, key: str | int) -> StepConfig:
-    """Look up a step by number or name; raise if missing."""
+    """Look up a step by number or name; raise :class:`ConfigError` if missing.
+
+    A :class:`~chemrefine.errors.ConfigError` — exit 2, the documented "config invalid"
+    code — because a target no step matches is a mistake about the config's own
+    vocabulary, and because :func:`chemrefine.agent_tools.start_run` already answers the
+    identical refusal with that class. As the base :class:`ChemRefineError` it exited 1
+    from the CLI and 2 from the agent tools for one and the same typo.
+    """
     step = config.find_step(key)
     if step is None:
-        raise ChemRefineError(
+        raise ConfigError(
             f"no step matches {key!r}; available: {[s.dir_name() for s in config.steps]}"
         )
     return step

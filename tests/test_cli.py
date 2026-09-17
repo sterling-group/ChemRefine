@@ -350,7 +350,22 @@ def test_rerun_with_missing_target_errors(tmp_path: Path):
     config_path = _write_config(tmp_path)
     runner.invoke(app, ["run", str(config_path)])
     result = runner.invoke(app, ["rerun", str(config_path), "ghost"])
-    assert result.exit_code != 0
+    assert result.exit_code == ConfigError.exit_code
+
+
+def test_dry_run_refuses_a_target_no_step_matches(tmp_path: Path, caplog):
+    """A dry run is where a mistyped target should be caught, not echoed.
+
+    It printed ``target step: ghost`` and exited 0 while the real run refused the same
+    target with the lock already taken; the refusal is the same ``ConfigError`` (exit 2)
+    every other entry point gives it, and nothing on disk is touched.
+    """
+    config_path = _write_config(tmp_path)
+    result = runner.invoke(app, ["rerun", str(config_path), "ghost", "--dry-run"])
+    assert result.exit_code == ConfigError.exit_code
+    assert "no step matches 'ghost'" in caplog.text
+    assert "[dry-run]" not in result.stdout
+    assert not (tmp_path / "outputs").exists()
 
 
 def test_rebuild_nms_on_a_config_with_no_nms_step_says_so(tmp_path: Path):

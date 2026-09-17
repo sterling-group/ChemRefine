@@ -158,7 +158,8 @@ def _dispatch(
     """Load the config, then either describe the would-be execution (``--dry-run``) or run it.
 
     ``action_name`` is the subcommand string (== the :class:`Action` value); the
-    enum is resolved lazily so a plain ``--dry-run`` never imports ``recovery``.
+    enum is resolved lazily so a plain ``--dry-run`` never imports ``recovery``
+    (a ``--dry-run`` *with* a target does, to refuse a target no step matches).
     Loading happens inside the same handler as execution so **every**
     :class:`ChemRefineError` — a malformed config included — exits with its
     documented ``exit_code`` (see :mod:`chemrefine.errors`) instead of escaping
@@ -166,6 +167,14 @@ def _dispatch(
     """
     try:
         config = _load(config_path, maxcores=maxcores, maxgpus=maxgpus)
+        if target is not None:
+            # Resolved here, once, before the dry-run branch: `--dry-run` promises to
+            # validate, and it echoed a target no step matched as though it would run —
+            # exit 0 on the one mistake a dry run exists to catch. The real run refused
+            # the same target a moment later, with the lock already taken.
+            from chemrefine.recovery import resolve_target
+
+            resolve_target(config, target)
         if dry_run:
             typer.echo(f"[dry-run] action={action_name}")
             typer.echo(f"[dry-run] output_dir={config.output_dir}")

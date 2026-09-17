@@ -9,7 +9,7 @@ from ase import Atoms
 
 from chemrefine import io
 from chemrefine.config import Config, StepConfig
-from chemrefine.errors import ChemRefineError
+from chemrefine.errors import ChemRefineError, ConfigError
 from chemrefine.recovery import Action, execute, invalidate_step, resolve_target
 from chemrefine.state import FailureKind
 
@@ -60,8 +60,9 @@ def test_resolve_target_by_numeric_string(tmp_path: Path):
 
 
 def test_resolve_target_missing_raises(tmp_path: Path):
+    """A target no step matches is a ``ConfigError`` (exit 2), as the agent tools answer it."""
     cfg = _two_step_config(tmp_path)
-    with pytest.raises(ChemRefineError):
+    with pytest.raises(ConfigError, match="no step matches 'missing'"):
         resolve_target(cfg, "missing")
 
 
