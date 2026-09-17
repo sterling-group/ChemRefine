@@ -631,6 +631,50 @@ def test_a_flag_field_is_exempt_from_the_finiteness_sweep(tmp_path: Path):
     assert _parse({"energy_hartree": -1.0}, seed, tmp_path).converged is None
 
 
+@pytest.mark.parametrize("value", [0, 1, "false", "no", []])
+def test_a_flag_that_is_not_a_boolean_is_a_parse_failure(tmp_path: Path, value: object):
+    """``converged`` takes ``true``, ``false`` or nothing — a look-alike is refused by name.
+
+    The flag had no converter, so ``0`` and ``"false"`` landed on the structure as they
+    were, and ``lifecycle.succeeded`` — an identity test against ``False`` — read every one
+    of them as converged: the structure ranked as a survivor instead of the NOT_CONVERGED
+    retry the field exists to trigger. Refused at the boundary like a malformed geometry,
+    it reaches the ledger as this structure's UNPARSEABLE failure rather than as a wrong
+    verdict nothing downstream can see.
+    """
+    from chemrefine import lifecycle
+    from chemrefine.config import StepConfig
+    from chemrefine.state import FailureKind, PipelineState, StepContext, StepInputs, Structure
+
+    seed = Atoms("H", positions=[[0, 0, 0]])
+    with pytest.raises(OutputParseError, match="'converged' must be true or false"):
+        _parse({"energy_hartree": -1.0, "converged": value}, seed, tmp_path)
+
+    # And through the lifecycle, the same document is a ledgered failure, not a survivor.
+    class _Probe(ScriptEngine[EngineOptions]):
+        name = "flag-probe"
+        label = "Probe"
+
+    out = tmp_path / "step1_0.json"
+    ctx = StepContext(
+        step_cfg=StepConfig(step=1, engine="pyscf"),
+        step_dir=tmp_path,
+        template_dir=tmp_path,
+        template=tmp_path / "step1.py",
+        scratch_dir=None,
+        prev_state=PipelineState(structures=(Structure(id="0", atoms=seed),)),
+        charge=0,
+        multiplicity=1,
+        max_cores=1,
+        slurm_template="cpu.slurm.header",
+    )
+    successes, failures = lifecycle.parse_with_failures(
+        _Probe(), StepInputs(files=((tmp_path / "step1_0.py", out, "0"),)), ctx
+    )
+    assert successes == []
+    assert [f.kind for f in failures] == [FailureKind.UNPARSEABLE]
+
+
 def test_a_sidecar_field_is_harvested_but_lands_on_no_result_field(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

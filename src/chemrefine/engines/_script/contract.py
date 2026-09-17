@@ -82,6 +82,24 @@ def _as_float(value: Any, _seed: Atoms) -> float:
     return float(value)
 
 
+def _as_flag(value: Any, _seed: Atoms) -> bool | None:
+    """A verdict flag: ``True``, ``False`` or ``None`` (not reported), nothing else.
+
+    The flag is exempt from the finiteness sweep and had no converter, so whatever the
+    template assigned landed on the structure as it was — and
+    :func:`chemrefine.lifecycle.succeeded` reads only a literal ``False`` as a failure. A
+    template writing ``converged = 0``, ``"false"`` or ``"no"`` therefore ranked its
+    structure as a converged survivor, the exact verdict the field exists to refuse. The
+    numeric fields have a shape guard at this boundary; this is the flag's.
+    """
+    if value is None or isinstance(value, bool):
+        return value
+    raise OutputParseError(
+        f"'converged' must be true or false, got {value!r} ({type(value).__name__}); "
+        f"assign a bool, or leave it unassigned when the run has nothing to converge"
+    )
+
+
 def positions_from(value: Any, seed: Atoms) -> NDArray[np.float64]:
     """The optimised geometry, on the seed's atom count.
 
@@ -147,7 +165,8 @@ SCRIPT_OUTPUT: tuple[OutputField, ...] = (
     # is what makes an exhausted run a NOT_CONVERGED failure — ledgered, and retried from its
     # best geometry by `lifecycle.retry_unconverged` — instead of a survivor ranked against
     # converged siblings. Never assigned, it stays `None`, which `lifecycle.succeeded` reads
-    # as "not reported": the shape every non-reporting engine has always had.
-    OutputField("converged", "converged", finite=False),
+    # as "not reported": the shape every non-reporting engine has always had. `_as_flag`
+    # is what keeps `0` and `"false"` from passing as anything but a parse failure.
+    OutputField("converged", "converged", finite=False, convert=_as_flag),
 )
 """The quantities every script engine shares, whatever its backend."""

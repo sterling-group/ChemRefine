@@ -464,6 +464,14 @@ for the full map.
   become ready" — the wrong diagnosis for a missing binary. The probe is now a stdlib
   `urllib` one-liner under the interpreter that hosts the server, which the job resolves
   anyway.
+- **A script template's `converged` must be a boolean.** The flag had no shape guard, and
+  the lifecycle's verdict reads only a literal `false` as a failure — so a `stepN.py`
+  assigning `converged = 0` or `"false"` ranked its structure as a converged survivor
+  instead of the NOT_CONVERGED retry the field exists to trigger. Anything but `True`,
+  `False` or unassigned is now refused at the parse boundary, naming the field, and lands
+  in the ledger as that structure's UNPARSEABLE failure. The shipped starters already
+  assign a bool (`bool(mf.converged)`, `mlip.last_converged`); a template writing `0`/`1`
+  fails loudly from here on.
 - **A GUI string field of the wrong JSON type is a 400, not a traceback.** A number,
   list or object sent where an endpoint reads a string — `yaml_text`, `path`,
   `config_path`, `text`, `name`, `base_dir`, a chat `model` or `base_url` — went straight
