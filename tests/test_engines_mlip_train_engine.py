@@ -145,6 +145,25 @@ def test_an_on_failure_policy_with_nothing_to_act_on_is_refused(policy: str, tmp
         MlipTrainEngine().prepare(ctx)
 
 
+def test_a_negative_seed_is_refused_before_any_label_is_computed(tmp_path: Path):
+    """The split's seed goes to ``numpy.random.default_rng``, which refuses a negative.
+
+    Unbounded, ``seed: -5`` passed the strict read and preflight, and the ``ValueError``
+    came from numpy inside ``split_structures`` — after every labelling step upstream had
+    run. Refused on the field, it is a ``ConfigError`` at the t=0 walk like any other knob.
+    """
+    from chemrefine.engines.api import preflight_steps
+
+    with pytest.raises(ConfigError, match="seed"):
+        MlipTrainEngine().prepare(_ctx(tmp_path, seed=-5))
+    step_cfg = StepConfig(
+        step=4, engine="mlip-train", options={"task_name": "mace_off", "device": "cpu", "seed": -5}
+    )
+    with pytest.raises(ConfigError, match="seed"):
+        preflight_steps([step_cfg], charge=0, multiplicity=1)
+    assert MlipTrainEngine().options_cls.from_raw({**_ctx(tmp_path).step_cfg.options, "seed": 0})
+
+
 def test_a_typoed_knob_fails_the_step_rather_than_being_ignored(tmp_path: Path):
     ctx = _ctx(tmp_path, valid_fractoin=0.2)
     with pytest.raises(ConfigError, match="invalid mliptrain options"):

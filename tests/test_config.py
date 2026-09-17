@@ -224,6 +224,19 @@ def test_engine_options_is_the_engines_share_of_the_mapping():
     assert sampled.engine_options() == {"task_name": "omol", "targt": "ts"}
 
 
+def test_a_negative_nms_seed_is_refused_at_the_boundary():
+    """A seed is handed to ``numpy.random.default_rng``, which takes no negative.
+
+    ``NmsKnobs.seed: int`` accepted ``-1``; the refusal then came from numpy as a bare
+    ``ValueError`` at the first fan-out (``nms.rng_for``), after round 1 had run and been
+    paid for, and outside the exit-code contract. The field bound is the one place that
+    can say so by name, before anything is submitted.
+    """
+    with pytest.raises(ValidationError, match="seed"):
+        NmsKnobs.from_raw({"seed": -1})
+    assert NmsKnobs.from_raw({"seed": 0}).seed == 0  # the floor itself is a valid seed
+
+
 @pytest.mark.parametrize(
     ("build", "value"),
     [

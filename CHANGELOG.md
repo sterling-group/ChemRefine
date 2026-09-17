@@ -442,6 +442,13 @@ for the full map.
 
 ### Fixed
 
+- **A negative `seed` is refused at config load.** The NMS `seed` and the training
+  step's `seed` accepted any integer, and both hand it to `numpy.random.default_rng`,
+  which refuses a negative with a bare `ValueError`: an NMS step died at its first
+  fan-out after round 1 had run, a training step in `prepare` after every labelling
+  step upstream — each as a traceback outside the exit-code contract. Both fields are
+  now `>= 0`, so `chemrefine validate` and the run's preflight name the field before
+  anything is submitted. No cache key moves.
 - **A float knob refuses `.inf` and `.nan`.** `gradient_timeout_seconds: .inf` — an
   ordinary spelling of "no timeout" — reached the bridge as a socket timeout Python cannot
   represent, and every ExtOpt geometry step died in the wrapper with a traceback naming

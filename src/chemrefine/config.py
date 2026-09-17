@@ -196,8 +196,12 @@ class NmsKnobs(BaseModel):
     """``ts`` only: explicit reaction-coordinate mode index. ``None`` ⇒ the
     largest-magnitude imaginary mode."""
 
-    seed: int = 42
-    """Deterministic seed for ``random`` mode selection."""
+    seed: int = Field(42, ge=0)
+    """Deterministic seed for ``random`` mode selection.
+
+    Non-negative because that is what the generator behind it takes: a negative reached
+    ``numpy.random.default_rng`` as a bare ``ValueError`` at the first fan-out — after round
+    1 had run and been paid for, and outside the exit-code contract."""
 
     @classmethod
     def from_raw(cls, raw: dict[str, Any] | None) -> Self:

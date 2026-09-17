@@ -175,8 +175,11 @@ class MlipTrainOptions(MlipOptions):
     ``ranks_per_node``). The *allocation* is the ``--gres`` line in your own
     ``cuda.slurm.header``, so raise both together."""
 
-    seed: int = 42
-    """Seed for the train/validation/test split, so a re-run reproduces the same partition."""
+    seed: int = Field(42, ge=0)
+    """Seed for the train/validation/test split, so a re-run reproduces the same partition.
+
+    Non-negative because ``numpy.random.default_rng`` refuses anything else with a bare
+    ``ValueError`` — raised in ``prepare``, after every labelling step upstream had run."""
 
     valid_fraction: float = Field(0.1, ge=0, lt=1)
     """Share of the structures held out to validate on.
