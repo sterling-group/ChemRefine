@@ -95,8 +95,14 @@ def _load_output_json(
         raise OutputParseError(f"{label} output not found: {out_path}")
     try:
         data: dict[str, Any] = json.loads(out_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
-        raise OutputParseError(f"{label} output {out_path} is not valid JSON: {e}") from e
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        # One contract, UTF-8 JSON, and one refusal for whichever half a document breaks:
+        # the decode error is a `ValueError` raised before `json.loads` sees a byte, and
+        # caught alone the JSON half let it escape to the CLI as a traceback over one
+        # structure. `e` names which half — the codec and the byte, or the JSON position.
+        raise OutputParseError(
+            f"{label} output {out_path} is not a UTF-8 JSON document ({e})"
+        ) from e
     if not isinstance(data, dict):
         raise OutputParseError(
             f"{label} output {out_path} is not a JSON mapping "

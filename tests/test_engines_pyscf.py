@@ -375,7 +375,7 @@ def test_parse_raises_when_output_not_json(tmp_path: Path):
     output_json = inputs.files[0][1]
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_json.write_text("not json", encoding="utf-8")
-    with pytest.raises(OutputParseError, match="not valid JSON"):
+    with pytest.raises(OutputParseError, match="not a UTF-8 JSON document"):
         engine.parse(inputs, ctx)
 
 

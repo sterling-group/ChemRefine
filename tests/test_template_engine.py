@@ -478,6 +478,22 @@ def test_a_non_mapping_document_is_refused_as_a_parse_failure(tmp_path: Path, bo
         parse_output(out, label="MLIP", fallback=seed)
 
 
+def test_an_undecodable_document_is_refused_as_a_parse_failure(tmp_path: Path):
+    """Bytes that are not UTF-8 refuse like malformed JSON does — the same contract.
+
+    The generated footer writes ASCII, but a template that writes its own document (its
+    documented right) can write anything: one latin-1 byte raised `UnicodeDecodeError`
+    before `json.loads` saw it — a `ValueError` outside the family `lifecycle._parse_job`
+    contains — and ended the whole run with a traceback over one structure, where the
+    ORCA and Q-Chem readers already survive the same bytes.
+    """
+    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    out = tmp_path / "step1_0.json"
+    out.write_bytes(b'{"energy_hartree": -1.0, "note": "\xe5"}')
+    with pytest.raises(OutputParseError, match=r"not a UTF-8 JSON document.*0xe5"):
+        parse_output(out, label="MLIP", fallback=seed)
+
+
 # ---------------------------------------------------------------------------
 # _load_output_json — a diverged calculation must not read as a result
 # ---------------------------------------------------------------------------
