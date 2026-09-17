@@ -172,8 +172,9 @@ frequently — every upstream release would break every lockfile until regenerat
 is recurring work with no one to absorb it. Two things bound the exposure: a managed env
 holds only the backend and its dependencies, never credentials or job data, and
 `build_backend_env` installs the *same* ChemRefine source as the orchestrator driving it
-(pinned by version for an index install, by URL or commit for a direct one), so the
-package itself cannot be substituted.
+(pinned by version for an index install, by URL or commit for a direct one, editably for
+an editable one), and every run checks that it still does, so the package itself cannot
+be substituted.
 
 If you need the guarantee, provision the environment yourself with your own pinned
 requirements and point the step at it with `options.backend_python`.

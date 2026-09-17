@@ -17,7 +17,9 @@ works off that DTO — no backend names, tasks, or tables.
 * :func:`build_backend_env` — create a managed env under :func:`chemrefine_home`, using the
   **same tool that created the current env** (:func:`detect_env_tool`: conda / uv / venv), and
   install ``chemrefine[<extra>]`` into it matched to the orchestrator's own install (same
-  index version, or the same local/git source for direct installs).
+  index version, same git commit, or an editable install of the same checkout) — and
+  :func:`preflight_backends` refuses an env that no longer matches, since the direct
+  engines and the ExtOpt server import this package *inside* the env.
 * :func:`resolve_base_python` — **which Python that env is created on**. A backend's stack is
   isolated precisely so it never has to match anyone else's, and the interpreter is part of
   that stack: where ``chemrefine[<extra>]`` declares (through markers) that it does not
@@ -217,11 +219,12 @@ def require_backend(requirement: BackendRequirement, override: str | None = None
     actually import the backend, or the backend importable in the current env (a cheap
     :func:`importlib.util.find_spec` probe — no heavy import).
 
-    A managed env is proved by its **name** wherever the name determines its contents, and
-    that is everywhere except the shared-env case: ``[pyscf]`` and ``[pyscf-gpu]`` live in
-    one directory (see :func:`backend_env_path`), so ``backends/pyscf`` existing says
-    nothing about whether gpu4pyscf is in it. Only there is the env asked, and asking costs
-    one subprocess for one kind of step.
+    A managed env is proved by its **name** — and, where its own dist can be read off disk,
+    by holding the ChemRefine that is running (:func:`_require_matched`) — wherever the
+    name determines its contents, and that is everywhere except the shared-env case:
+    ``[pyscf]`` and ``[pyscf-gpu]`` live in one directory (see :func:`backend_env_path`),
+    so ``backends/pyscf`` existing says nothing about whether gpu4pyscf is in it. Only
+    there is the env asked, and asking costs one subprocess for one kind of step.
 
     Probing *everywhere* was the obvious alternative and is wrong: it would make a faked env
     — CI's `provisioned-backend` job, which symlinks a bare interpreter precisely to prove
@@ -236,7 +239,9 @@ def require_backend(requirement: BackendRequirement, override: str | None = None
         return
     env_python = backend_env_python(requirement.extra)
     if env_python.is_file():
-        shares_env = backend_env_path(requirement.extra).name != requirement.extra
+        env_path = backend_env_path(requirement.extra)
+        _require_matched(requirement.extra, env_path)
+        shares_env = env_path.name != requirement.extra
         if shares_env and not _importable_by(env_python, requirement.import_name):
             raise ConfigError(
                 f"the managed env for '{requirement.extra}' cannot import "
@@ -251,6 +256,41 @@ def require_backend(requirement: BackendRequirement, override: str | None = None
         f"backend '{requirement.extra}' is not available: '{requirement.import_name}' is not "
         f"importable here and no managed env exists. {_install_advice(requirement.extra)}"
     )
+
+
+def _require_matched(extra: str, env_path: Path) -> None:
+    """Raise :class:`ConfigError` if a managed env's ChemRefine is not the one driving it.
+
+    Compared by the arguments that would reproduce each (:func:`_install_spec`): a snapshot
+    where this install is editable, another checkout, another commit, another index version.
+    Each is an env whose ``import chemrefine`` inside a job answers for a ChemRefine that is
+    not this one — the direct script engines and the ExtOpt server run this package's code
+    *in* the env — and what that produces is an ``AttributeError`` in a job's ``.err`` that
+    nothing points back at the env, after the step passed preflight by name.
+
+    Unknown is not evidence of wrong, on either side. An env whose dist cannot be read is
+    left alone: CI's faked env is a bare interpreter, and a dist-info with no ``Version`` is
+    read through ``metadata.get`` because ``dist.version`` on one is a ``KeyError`` in
+    waiting (a ``DeprecationWarning`` today). So is every env when *this* ChemRefine
+    has no dist at all — a tree run, which :func:`_candidate_pythons` supports for the same
+    reason — because ``__version__`` is then ``0.0.0+unknown`` and would mismatch them all.
+    """
+    dist = _env_distribution(env_path)
+    if dist is None or _this_distribution() is None:
+        return
+    version = dist.metadata.get("Version")
+    if not version:
+        return
+    theirs = _install_spec(extra, version, _direct_url_of(dist))
+    ours = _install_target(extra)
+    if theirs != ours:
+        # Joined for reading, not for pasting: `shlex` would quote the `[extra]` token.
+        raise ConfigError(
+            f"the managed env for '{extra}' holds a different ChemRefine from the one "
+            f"running: it was installed as `{' '.join(theirs)}`, this one is "
+            f"`{' '.join(ours)}`. Run `chemrefine backends install {extra}`, which "
+            f"reinstalls into the env that is there so the two match again."
+        )
 
 
 def _install_advice(extra: str) -> str:
@@ -572,6 +612,22 @@ def _env_python_version(env_path: Path) -> str | None:
     return None if lib is None else lib.name.removeprefix("python")
 
 
+def _env_distribution(env_path: Path) -> importlib.metadata.Distribution | None:
+    """The ChemRefine dist a managed env holds, read off its own ``site-packages``.
+
+    Off the filesystem rather than through the env's interpreter, for the reason
+    :func:`_env_lib` gives — this runs at preflight, once per provisionable step of every
+    run — and it is the env's own metadata, not this process's. ``None`` when the layout
+    says nothing: CI's faked env, the tests' faked envs, a half-made one.
+    """
+    lib = _env_lib(env_path)
+    if lib is None:
+        return None
+    for info in sorted((lib / "site-packages").glob("chemrefine-*.dist-info")):
+        return importlib.metadata.Distribution.at(info)
+    return None
+
+
 def _require_supported_env(extra: str, env_path: Path) -> None:
     """Refuse to install into a managed env whose Python the extra does not install on.
 
@@ -596,16 +652,21 @@ def _require_supported_env(extra: str, env_path: Path) -> None:
         )
 
 
-def _direct_url() -> dict[str, Any] | None:
-    """Parsed PEP 610 ``direct_url.json`` for the installed ChemRefine dist, or ``None``.
+def _this_distribution() -> importlib.metadata.Distribution | None:
+    """The installed ChemRefine dist, or ``None`` on a tree run without one."""
+    try:
+        return importlib.metadata.distribution("ChemRefine")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _direct_url_of(dist: importlib.metadata.Distribution) -> dict[str, Any] | None:
+    """Parsed PEP 610 ``direct_url.json`` of ``dist``, or ``None``.
 
     ``None`` means a normal index (PyPI) install — or no/corrupt metadata — so the
     caller falls back to the version-pinned spec.
     """
-    try:
-        raw = importlib.metadata.distribution("ChemRefine").read_text("direct_url.json")
-    except importlib.metadata.PackageNotFoundError:
-        return None
+    raw = dist.read_text("direct_url.json")
     if raw is None:
         return None
     try:
@@ -615,27 +676,47 @@ def _direct_url() -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def _install_target(extra: str) -> str:
-    """The pip requirement that reproduces this orchestrator's install with ``extra``.
+def _direct_url() -> dict[str, Any] | None:
+    """:func:`_direct_url_of` for the installed ChemRefine, or ``None`` when there is none."""
+    dist = _this_distribution()
+    return None if dist is None else _direct_url_of(dist)
 
-    Keeps the managed env matched to the ChemRefine that drives it — by *source*, not
-    just version: an index install pins ``==__version__``; a PEP 610 direct install
-    (``pip install -e .``, a local path, a git URL) reinstalls from the same source,
-    since that version is typically not published on any index.
+
+def _install_spec(extra: str, version: str, direct: dict[str, Any] | None) -> list[str]:
+    """The ``pip install`` arguments that reproduce one install of ChemRefine, with ``extra``.
+
+    By *source*, not just version: an index install pins ``==version``; a PEP 610 direct
+    install (a local path, a git URL) reinstalls from the same source, since that version
+    is typically not published on any index; and an **editable** checkout is installed
+    editably — the env then runs the checkout itself, so the code the orchestrator drives
+    with is the code the job imports. A snapshot of an editable tree is what that
+    replaced: correct on the day it was built and behind by the next commit, while the
+    direct engines and the ExtOpt server import this package *inside* the env.
+
+    Pure, so the same description fits both sides of :func:`_require_matched`: the
+    orchestrator (:func:`_install_target`) and a managed env's own dist. A ``file://``
+    path is resolved so one checkout has one spelling however each tool wrote its URL.
+
+    Raises
+    ------
+    ConfigError
+        If a ``file://`` source no longer exists — at ``backends install``, where the env
+        cannot be built from it, and at preflight, where the env that was cannot be
+        compared to it; the advice is the same at both.
     """
-    direct = _direct_url()
     if direct is None or "url" not in direct:
-        return f"chemrefine[{extra}]=={__version__}"
+        return [f"chemrefine[{extra}]=={version}"]
     url = direct["url"]
+    subdirectory = direct.get("subdirectory")
     vcs = direct.get("vcs_info")
     if vcs:
         spec = f"{vcs['vcs']}+{url}"
         ref = vcs.get("commit_id") or vcs.get("requested_revision")
         if ref:
             spec += f"@{ref}"
-        if direct.get("subdirectory"):
-            spec += f"#subdirectory={direct['subdirectory']}"
-        return f"chemrefine[{extra}] @ {spec}"
+        if subdirectory:
+            spec += f"#subdirectory={subdirectory}"
+        return [f"chemrefine[{extra}] @ {spec}"]
     if url.startswith("file://"):
         path = Path(url2pathname(urlsplit(url).path))
         if not path.exists():
@@ -644,13 +725,23 @@ def _install_target(extra: str) -> str:
                 f"managed env for '{extra}' must be built from the same source. "
                 f"Reinstall ChemRefine, then re-run `chemrefine backends install {extra}`."
             )
+        path = path.resolve()
+        if (direct.get("dir_info") or {}).get("editable"):
+            source = path / subdirectory if subdirectory else path
+            return ["-e", f"{source}[{extra}]"]
+        url = path.as_uri()
     spec = url
-    if direct.get("subdirectory"):
+    if subdirectory:
         # PEP 610 records `subdirectory` beside the URL for *every* direct install, not
         # only VCS ones — a `file://…#subdirectory=…` install rebuilt the managed env
         # from the repository root when only the VCS branch re-appended it.
-        spec += f"#subdirectory={direct['subdirectory']}"
-    return f"chemrefine[{extra}] @ {spec}"
+        spec += f"#subdirectory={subdirectory}"
+    return [f"chemrefine[{extra}] @ {spec}"]
+
+
+def _install_target(extra: str) -> list[str]:
+    """The arguments that reproduce *this* orchestrator's install with ``extra``."""
+    return _install_spec(extra, __version__, _direct_url())
 
 
 def _build_commands(base: BasePython, path: Path, extra: str) -> tuple[list[str], list[str]]:
@@ -668,16 +759,16 @@ def _build_commands(base: BasePython, path: Path, extra: str) -> tuple[list[str]
             # uv takes a version or a path here, so an explicit `--python` is passed through
             # exactly as given rather than reduced to its version.
             ["uv", "venv", "--python", base.interpreter or base.version, str(path)],
-            ["uv", "pip", "install", "--python", env_python, target],
+            ["uv", "pip", "install", "--python", env_python, *target],
         )
     if base.tool == "conda":
         return (
             ["conda", "create", "-y", "-p", str(path), f"python={base.version}"],
-            [env_python, "-m", "pip", "install", target],
+            [env_python, "-m", "pip", "install", *target],
         )
     return (
         [base.interpreter or sys.executable, "-m", "venv", str(path)],
-        [env_python, "-m", "pip", "install", target],
+        [env_python, "-m", "pip", "install", *target],
     )
 
 

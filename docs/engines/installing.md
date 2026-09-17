@@ -28,13 +28,15 @@ Two ways to add one:
     have activated** (conda / uv / venv, detected automatically), reused by every later
     run, and resolved **by name** at run time — no interpreter paths in your YAML.
     They are built **from the same source as the orchestrator**: a PyPI install pins the
-    version, a Git or `pip install -e .` install reinstalls from that same repo or
-    checkout — and on the **Python that backend supports**, which is not always yours (see
-    below).
+    version, a Git install its commit, and an editable checkout (`pip install -e .`) is
+    installed editably too, so a managed environment runs the code you are running — and
+    on the **Python that backend supports**, which is not always yours (see below).
 
 `chemrefine backends list` shows what is provisioned. Every run validates its steps'
 backends **up front**: a step whose backend is neither importable nor provisioned fails
-before any job is submitted, naming the fix.
+before any job is submitted, naming the fix — and so does one whose managed environment
+holds a different ChemRefine from the one driving the run (provisioned by an older or
+another install), naming the `backends install` that brings it up to date.
 
 ## Available backends
 
@@ -163,5 +165,6 @@ authentication steps — they are defined upstream and may change.
 | `No matching distribution found for chemrefine==…` during `backends install` | Upgrade ChemRefine — older versions could only provision backends from a published PyPI release; current ones reinstall from the same Git/source install as the orchestrator. |
 | A C++ wall (`dm-tree`, abseil, `enum class … : uint8_t`) or a torch source build during an install | An older ChemRefine, or a hand-made environment, on a Python that backend has no wheels for. `chemrefine backends install <extra>` now builds on a Python the backend supports — see [above](#each-backend-gets-the-python-it-supports). |
 | `installs on Python 3.12 … neither python3.12 nor uv is on PATH` | The env tool in use (a plain venv) cannot produce the interpreter that backend needs. Install one — `pip install uv` is enough, it downloads the rest — or pass `--python /path/to/python3.12`. |
+| `holds a different ChemRefine from the one running` at run start | The environment was provisioned by another install of ChemRefine — an upgrade since, another checkout, or a snapshot built before managed environments followed an editable install. Re-run `chemrefine backends install <extra>`; it installs into the environment that is there. |
 | `was built on Python 3.13, which chemrefine[…] does not install on` | The environment predates the backend's Python constraint and holds nothing. Remove the directory it names and re-run `chemrefine backends install <extra>`. |
 | `Server crashed during startup` (MLIP) | Check the per-job `server_${SLURM_JOB_ID}.log`; common causes are out-of-memory at model load or a missing Hugging Face token for FAIRChem. |

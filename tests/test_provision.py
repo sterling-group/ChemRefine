@@ -7,6 +7,7 @@ so these tests also pin the end-to-end wiring: managed env → server command / 
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tomllib
@@ -177,6 +178,132 @@ def test_require_backend_does_not_advise_an_install_that_would_do_nothing(
     message = str(excinfo.value)
     assert "does not install on Python" in message and "it needs 3.12" in message
     assert "into this environment" not in message
+
+
+# ---------------------------------------------------------------------------
+# require_backend — the managed env holds the ChemRefine that drives it
+# ---------------------------------------------------------------------------
+
+
+def _env_dist(
+    tmp_path: Path,
+    extra: str,
+    *,
+    version: str = "2.0.0",
+    direct: dict | None,
+    python: str = "3.13",
+    metadata: bool = True,
+) -> Path:
+    """Give the fake managed env for ``extra`` a ChemRefine dist-info of its own.
+
+    What pip leaves in ``site-packages``: ``METADATA`` with the version and, for a direct
+    install, PEP 610 ``direct_url.json``. ``direct=None`` is an index install.
+    """
+    info = (
+        provision.backend_env_path(extra)
+        / "lib"
+        / f"python{python}"
+        / "site-packages"
+        / f"chemrefine-{version}.dist-info"
+    )
+    info.mkdir(parents=True)
+    if metadata:
+        info.joinpath("METADATA").write_text(
+            f"Metadata-Version: 2.1\nName: chemrefine\nVersion: {version}\n", encoding="utf-8"
+        )
+    if direct is not None:
+        info.joinpath("direct_url.json").write_text(json.dumps(direct), encoding="utf-8")
+    return info
+
+
+def _editable(tmp_path: Path) -> dict:
+    return {"url": tmp_path.as_uri(), "dir_info": {"editable": True}}
+
+
+def test_require_backend_refuses_an_env_another_install_built(monkeypatch, tmp_path: Path):
+    """The reproduced case: a snapshot of the checkout, driven by an editable install of it.
+
+    The env was right on the day it was built and behind by the next commit; every job
+    then died on an AttributeError inside the script, with nothing pointing at the env.
+    Refused up front, quoting both installs and the command that reconciles them.
+    """
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    monkeypatch.setattr(provision, "_direct_url", lambda: _editable(tmp_path))
+    _provisioned(tmp_path, "mlip-mace")
+    _env_dist(tmp_path, "mlip-mace", direct={"url": tmp_path.as_uri(), "dir_info": {}})
+
+    with pytest.raises(ConfigError, match="backends install mlip-mace") as excinfo:
+        provision.require_backend(_REQ)
+
+    message = str(excinfo.value)
+    assert f"chemrefine[mlip-mace] @ {tmp_path.as_uri()}" in message
+    assert f"-e {tmp_path}[mlip-mace]" in message
+
+
+def test_require_backend_refuses_an_env_of_another_version(monkeypatch, tmp_path: Path):
+    """An index install upgraded since the env was built: the version is the identity."""
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    monkeypatch.setattr(provision, "_direct_url", lambda: None)
+    _provisioned(tmp_path, "mlip-mace")
+    _env_dist(tmp_path, "mlip-mace", version="1.9.0", direct=None)
+
+    with pytest.raises(ConfigError, match=r"chemrefine\[mlip-mace\]==1.9.0"):
+        provision.require_backend(_REQ)
+
+
+@pytest.mark.parametrize("kind", ["editable", "index"])
+def test_require_backend_accepts_a_matching_env(monkeypatch, tmp_path: Path, kind: str):
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    direct = _editable(tmp_path) if kind == "editable" else None
+    monkeypatch.setattr(provision, "_direct_url", lambda: direct)
+    _provisioned(tmp_path, "mlip-mace")
+    _env_dist(tmp_path, "mlip-mace", version=provision.__version__, direct=direct)
+
+    provision.require_backend(_REQ)  # no raise
+
+
+def test_require_backend_trusts_every_env_on_a_tree_run(monkeypatch, tmp_path: Path):
+    """No dist here means `__version__` is `0.0.0+unknown`: nothing to compare against.
+
+    Unknown on *this* side is not evidence of wrong either — refusing every real env from
+    a tree run would make the mode `_candidate_pythons` supports unusable with a backend.
+    """
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+
+    def _raise(_name):
+        raise provision.importlib.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(provision.importlib.metadata, "distribution", _raise)
+    _provisioned(tmp_path, "mlip-mace")
+    _env_dist(tmp_path, "mlip-mace", direct={"url": tmp_path.as_uri(), "dir_info": {}})
+
+    provision.require_backend(_REQ)  # no raise
+
+
+def test_require_backend_leaves_an_env_it_cannot_read_alone(monkeypatch, tmp_path: Path):
+    """A layout with no dist-info, and a dist-info with no METADATA, are both unknown."""
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    monkeypatch.setattr(provision, "_direct_url", lambda: _editable(tmp_path))
+    _provisioned(tmp_path, "mlip-mace")
+    site = provision.backend_env_path("mlip-mace") / "lib" / "python3.13" / "site-packages"
+    site.mkdir(parents=True)
+    provision.require_backend(_REQ)  # no dist-info → no raise
+
+    _env_dist(tmp_path, "mlip-mace", direct=None, metadata=False)
+    provision.require_backend(_REQ)  # a dist-info answering no version → no raise
+
+
+def test_preflight_refuses_a_stale_managed_env_before_any_job(monkeypatch, tmp_path: Path):
+    """The seam every run takes: `pipeline.run` → `preflight_backends` → the match check."""
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    monkeypatch.setattr(provision, "_direct_url", lambda: None)
+    _provisioned(tmp_path, "mlip-mace")
+    _env_dist(tmp_path, "mlip-mace", version="1.9.0", direct=None)
+    steps = [
+        StepConfig(step=1, engine="mlip", operation="opt_sp", options={"task_name": "mace_off"})
+    ]
+    with pytest.raises(ConfigError, match="holds a different ChemRefine"):
+        preflight_backends(steps)
 
 
 # ---------------------------------------------------------------------------
@@ -634,6 +761,24 @@ def test_build_commands_per_tool(monkeypatch, tmp_path: Path):
         assert cmds[1][-1].startswith("chemrefine[") and "==" in cmds[1][-1]
 
 
+def test_every_tool_installs_an_editable_orchestrator_editably(monkeypatch, tmp_path: Path):
+    """The env runs the checkout itself, whichever tool installs into it.
+
+    The snapshot this replaces was correct on the day it was built and behind by the next
+    commit — the direct engines and the ExtOpt server import ChemRefine inside the env.
+    """
+    direct = {"url": tmp_path.as_uri(), "dir_info": {"editable": True}}
+    monkeypatch.setattr(provision, "_direct_url", lambda: direct)
+    env = tmp_path / "e"
+    for base in (
+        provision.BasePython("3.12", "uv"),
+        provision.BasePython("3.12", "conda"),
+        provision.BasePython("3.12", "venv", "/usr/bin/python3.12"),
+    ):
+        _, install = provision._build_commands(base, env, "mlip-mace")
+        assert install[-2:] == ["-e", f"{tmp_path}[mlip-mace]"], base.tool
+
+
 def test_uv_is_handed_an_explicit_interpreter_as_it_was_given(monkeypatch, tmp_path: Path):
     """uv's `--python` takes a path as happily as a version, so `--python` passes through."""
     monkeypatch.setattr(provision, "_direct_url", lambda: None)
@@ -652,6 +797,7 @@ def test_build_backend_env_installs_into_an_env_that_already_exists(monkeypatch,
     "install the CPU stack, then add the GPU one" work at all.
     """
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    monkeypatch.setattr(provision, "_direct_url", lambda: None)
     py = _provisioned(tmp_path, "pyscf")
     calls: list[list[str]] = []
     monkeypatch.setattr(provision.subprocess, "run", lambda argv, **_k: calls.append(argv))
@@ -906,14 +1052,41 @@ def test_an_interrupted_fresh_build_is_also_swept(monkeypatch, tmp_path: Path):
 
 def test_install_target_index_install_pins_version(monkeypatch):
     monkeypatch.setattr(provision, "_direct_url", lambda: None)
-    assert provision._install_target("pyscf") == f"chemrefine[pyscf]=={provision.__version__}"
+    assert provision._install_target("pyscf") == [f"chemrefine[pyscf]=={provision.__version__}"]
 
 
-def test_install_target_editable_local_dir(monkeypatch, tmp_path: Path):
-    url = tmp_path.as_uri()
-    direct = {"url": url, "dir_info": {"editable": True}}
+def test_install_target_editable_local_dir_is_installed_editably(monkeypatch, tmp_path: Path):
+    """An editable orchestrator gets an editable env: the checkout itself, not a copy of it.
+
+    The copy was the reproduced failure — an env built from `file://<checkout>` held the
+    tree of that day, and the next API change on the in-env side (`MlipCalculator
+    .last_converged`) failed every job with an AttributeError while preflight passed the
+    env by name.
+    """
+    direct = {"url": tmp_path.as_uri(), "dir_info": {"editable": True}}
     monkeypatch.setattr(provision, "_direct_url", lambda: direct)
-    assert provision._install_target("mlip-mace") == f"chemrefine[mlip-mace] @ {url}"
+    assert provision._install_target("mlip-mace") == ["-e", f"{tmp_path}[mlip-mace]"]
+
+
+def test_install_target_editable_keeps_the_subdirectory(monkeypatch, tmp_path: Path):
+    (tmp_path / "python").mkdir()
+    direct = {"url": tmp_path.as_uri(), "dir_info": {"editable": True}, "subdirectory": "python"}
+    monkeypatch.setattr(provision, "_direct_url", lambda: direct)
+    assert provision._install_target("pyscf") == ["-e", f"{tmp_path / 'python'}[pyscf]"]
+
+
+def test_install_target_non_editable_local_dir_is_a_snapshot(monkeypatch, tmp_path: Path):
+    """`pip install .` is itself a snapshot, so its env is one too — matched by URL only.
+
+    Neither side records the tree's content, so a checkout changed and reinstalled
+    non-editably is not caught by the match check; the documented developer install is
+    the editable one, which is.
+    """
+    direct = {"url": tmp_path.as_uri(), "dir_info": {}}
+    monkeypatch.setattr(provision, "_direct_url", lambda: direct)
+    assert provision._install_target("mlip-mace") == [
+        f"chemrefine[mlip-mace] @ {tmp_path.as_uri()}"
+    ]
 
 
 def test_install_target_missing_source_dir_raises(monkeypatch, tmp_path: Path):
@@ -934,10 +1107,9 @@ def test_install_target_keeps_the_subdirectory_of_a_non_vcs_install(monkeypatch,
     url = tmp_path.as_uri()
     direct = {"url": url, "dir_info": {}, "subdirectory": "python"}
     monkeypatch.setattr(provision, "_direct_url", lambda: direct)
-    assert (
-        provision._install_target("mlip-mace")
-        == f"chemrefine[mlip-mace] @ {url}#subdirectory=python"
-    )
+    assert provision._install_target("mlip-mace") == [
+        f"chemrefine[mlip-mace] @ {url}#subdirectory=python"
+    ]
 
 
 def test_install_target_git_install_pins_commit(monkeypatch):
@@ -950,31 +1122,31 @@ def test_install_target_git_install_pins_commit(monkeypatch):
             "subdirectory": "pkg",
         },
     )
-    assert provision._install_target("pyscf") == (
+    assert provision._install_target("pyscf") == [
         "chemrefine[pyscf] @ git+https://github.com/sterling-group/ChemRefine.git"
         "@abc123#subdirectory=pkg"
-    )
+    ]
 
 
 def test_install_target_git_install_without_ref(monkeypatch):
     direct = {"url": "https://example.com/repo.git", "vcs_info": {"vcs": "git"}}
     monkeypatch.setattr(provision, "_direct_url", lambda: direct)
-    assert (
-        provision._install_target("pyscf") == "chemrefine[pyscf] @ git+https://example.com/repo.git"
-    )
+    assert provision._install_target("pyscf") == [
+        "chemrefine[pyscf] @ git+https://example.com/repo.git"
+    ]
 
 
 def test_install_target_remote_archive_passes_url_through(monkeypatch):
     direct = {"url": "https://example.com/chemrefine.tar.gz", "archive_info": {}}
     monkeypatch.setattr(provision, "_direct_url", lambda: direct)
-    assert provision._install_target("pyscf") == (
+    assert provision._install_target("pyscf") == [
         "chemrefine[pyscf] @ https://example.com/chemrefine.tar.gz"
-    )
+    ]
 
 
 def test_install_target_metadata_without_url_pins_version(monkeypatch):
     monkeypatch.setattr(provision, "_direct_url", lambda: {"dir_info": {}})
-    assert provision._install_target("pyscf") == f"chemrefine[pyscf]=={provision.__version__}"
+    assert provision._install_target("pyscf") == [f"chemrefine[pyscf]=={provision.__version__}"]
 
 
 def test_direct_url_none_when_dist_missing(monkeypatch):

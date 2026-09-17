@@ -444,6 +444,17 @@ for the full map.
 
 ### Fixed
 
+- **A managed backend environment runs the ChemRefine that drives it.** An editable
+  orchestrator (`pip install -e .`) got a *snapshot* of its checkout in every managed
+  environment, frozen at provisioning: the direct MLIP scripts and the ExtOpt server
+  import ChemRefine inside that environment, so the next API change on that side failed
+  every job with an `AttributeError` that nothing traced back to the environment, while
+  preflight had passed it by name. An editable install is now mirrored as an editable
+  install of the same checkout, and every run checks that each managed environment holds
+  the same ChemRefine as the one running — same source, or same version from an index —
+  refusing up front with `chemrefine backends install <extra>` (which installs into the
+  environment that is there) where it does not. Environments built before this change
+  are refused once, until that command is run.
 - **`chemrefine backends install` accepts a conda-made env for what it is.** conda
   writes a `lib/python3.1 -> python3.12` alias symlink into the envs it creates; read
   first, it made the env "built on Python 3.1", which no backend supports, so installing
