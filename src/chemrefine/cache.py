@@ -1091,6 +1091,18 @@ def load_if_valid(*, key: StepKey, step_dir: Path) -> StepCache | None:
     return cached
 
 
+def has_results(step_dir: Path) -> bool:
+    """Whether ``step_dir`` holds a results document — the question "is this step cached?".
+
+    The document, not the directory: ``_cache/`` also holds the manifest, the failure
+    ledger and the lease ledger, and it outlives :func:`discard_step`. A status read that
+    probed the directory reported a step ``rerun`` had just discarded as cached, and the
+    GUI drew the tick. Existence only — validity against a key is :func:`load_if_valid`'s
+    question, and it needs the key.
+    """
+    return _cache_path(step_dir).is_file()
+
+
 def invalidate(step_dir: Path) -> None:
     """Delete the cached *results* for ``step_dir``. No-op if nothing is cached.
 

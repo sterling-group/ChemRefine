@@ -328,7 +328,7 @@ def run_status(config_path: str, log_tail_lines: int = 40) -> dict[str, Any]:
                 "engine": s.engine,
                 "reported_survivors": reported.get(s.step, 0),
                 "failures": len(load_failure_records(step_dir)),
-                "cached": (step_dir / "_cache").is_dir(),
+                "cached": cache.has_results(step_dir),
             }
         )
     log_path = _latest_log(config.output_dir)

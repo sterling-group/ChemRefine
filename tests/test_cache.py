@@ -1039,6 +1039,17 @@ def test_load_if_valid_false_when_no_cache(tmp_path: Path):
     assert not load_if_valid(key=_key("0"), step_dir=tmp_path / "step1")
 
 
+def test_has_results_answers_for_the_document_not_the_directory(tmp_path: Path):
+    """A ledger alone makes the directory; only ``step.json`` makes the step cached."""
+    step_dir = tmp_path / "step1"
+    cache.save_failure_records(step_dir, [])
+    assert not cache.has_results(step_dir)
+    cache._cache_path(step_dir).write_text("{}", encoding="utf-8")
+    assert cache.has_results(step_dir)
+    cache.invalidate(step_dir)
+    assert not cache.has_results(step_dir)
+
+
 # ---------------------------------------------------------------------------
 # load_if_valid — single load + fingerprint check (the cache-hit fast path)
 # ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@ from typing import Any, ClassVar
 import pytest
 import yaml
 
-from chemrefine import agent_tools, io, pipeline
+from chemrefine import agent_tools, cache, io, pipeline
 from chemrefine.cache import save_failure_records
 from chemrefine.errors import ConfigError, RunLockError
 from chemrefine.state import FailureKind, FailureRecord
@@ -423,6 +423,23 @@ def test_run_status_reads_the_persisted_truth(tmp_path: Path):
     assert (screen["reported_survivors"], screen["failures"]) == (2, 1)
     assert (refine["reported_survivors"], refine["failures"]) == (1, 0)
     assert status["log_tail"] == ["line2", "line3"]
+
+
+def test_run_status_cached_means_a_results_document_exists(tmp_path: Path):
+    """``cached`` answers for the results document, not for the ``_cache/`` directory.
+
+    The tree above holds a failure ledger under step 1's ``_cache/`` and no results at
+    all, and the flag read ``True`` there — as it did after ``rerun`` discarded a step,
+    since ``discard_step`` removes the documents and leaves the directory. The GUI's
+    status table drew that as a tick.
+    """
+    path = _reported_tree(tmp_path)
+    assert [s["cached"] for s in agent_tools.run_status(str(path))["steps"]] == [False, False]
+    step1 = tmp_path / "outputs" / "step1_screen"
+    (step1 / "_cache" / "step.json").write_text("{}", encoding="utf-8")
+    assert [s["cached"] for s in agent_tools.run_status(str(path))["steps"]] == [True, False]
+    cache.discard_step(step1)
+    assert [s["cached"] for s in agent_tools.run_status(str(path))["steps"]] == [False, False]
 
 
 def test_run_status_holder_carries_the_three_valued_liveness(tmp_path: Path):
