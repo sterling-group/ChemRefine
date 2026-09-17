@@ -175,6 +175,29 @@ def test_a_timeout_is_a_catch_for_the_named_file_and_inconclusive_for_the_whole_
     assert str(gate.TIMEOUT_SECONDS) in whole.why
 
 
+def test_a_run_that_collects_no_tests_is_never_a_catch(monkeypatch: pytest.MonkeyPatch):
+    """pytest exits 5 when nothing was collected, and "non-zero means red" read that as caught.
+
+    An emptied test file, or one whose tests are all deselected by the default addopts,
+    made every mutation naming it report `caught` while nothing ran — and `stale_anchors`
+    cannot see it, because `is_file()` is true of a 0-byte file. Split the way the timeout
+    is: a named file that ran nothing is not a catch (the whole-suite fallback then decides),
+    and the whole suite collecting nothing proves nothing either way.
+    """
+    gate = _load_gate()
+
+    def nothing_collected(argv: list[str], **_: object) -> object:
+        return gate.subprocess.CompletedProcess(argv, 5, stdout="", stderr="")
+
+    monkeypatch.setattr(gate.subprocess, "run", nothing_collected)
+    named = gate._run_suite(REPO, {}, "tests/test_throttle.py")
+    assert not named.caught and not named.inconclusive
+    assert "collected no tests" in named.why
+    whole = gate._run_suite(REPO, {})
+    assert whole.inconclusive and not whole.caught
+    assert "collected no tests" in whole.why
+
+
 def test_an_inconclusive_mutation_fails_the_gate_without_being_called_a_survivor(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):

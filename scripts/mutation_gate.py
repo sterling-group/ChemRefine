@@ -483,10 +483,11 @@ def _apply(work: Path, mutation: Mutation) -> None:
 class Verdict:
     """What one run of the suite said about a mutation.
 
-    ``caught`` is the suite going red. ``inconclusive`` is the suite not finishing at all
-    on a run whose timeout cannot be read as a catch — the whole-suite fallback, see
-    :data:`TIMEOUT_SECONDS` — so nothing is proven either way; it never comes with
-    ``caught``. Neither set is a survivor: the suite finished green with the mutation in.
+    ``caught`` is the suite going red. ``inconclusive`` is the suite proving nothing either
+    way — not finishing at all on a run whose timeout cannot be read as a catch (the
+    whole-suite fallback, see :data:`TIMEOUT_SECONDS`), or collecting no tests at all; it
+    never comes with ``caught``. Neither set is a survivor: the suite finished green with
+    the mutation in.
     """
 
     caught: bool
@@ -525,6 +526,17 @@ def _run_suite(work: Path, env: dict[str, str], target: str | None = None) -> Ve
             "runner, and the gate cannot tell which",
             inconclusive=True,
         )
+    if completed.returncode == 5:
+        # pytest's "no tests collected": the named file was emptied, or everything in it
+        # is deselected by the default addopts. Nothing ran, so nothing was caught — and
+        # "non-zero means red" reported it caught, the false green this gate exists to
+        # refuse. `stale_anchors` cannot see it: `is_file()` is true of a 0-byte file.
+        # A named file that ran nothing is simply not a catch, and `main` then asks the
+        # whole suite, which is where the verdict really comes from; the whole suite
+        # collecting nothing is the same "nothing proven" as its timeout.
+        if target is not None:
+            return Verdict(False, f"{target} collected no tests — nothing ran")
+        return Verdict(False, "the whole suite collected no tests — nothing ran", inconclusive=True)
     if completed.returncode != 0:
         first = next(
             (ln for ln in completed.stdout.splitlines() if ln.startswith("FAILED")),
