@@ -392,6 +392,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-package
     steps:
+      # The tree is here for one thing: the shipped quickstart the installed CLI validates
+      # below. The package under test is the downloaded artifact, never this checkout —
+      # the src layout keeps the tree off sys.path.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.13"
@@ -402,11 +409,18 @@ jobs:
           name: Packages
           path: dist
 
+      # `--help` proves the entry point imports; the three after it prove the package
+      # works. `validate` loads the shipped quickstart through the engine registry and its
+      # templates (its ORCA path is a placeholder, so it warns and exits 0), `schema`
+      # prints the packaged introspection document, `engines --json` the registry.
       - name: Install the wheel and exercise the entry point
         run: |
           pip install dist/*.whl
           chemrefine --version
           chemrefine --help > /dev/null
+          chemrefine validate examples/first_run/input.yaml
+          chemrefine schema > /dev/null
+          chemrefine engines --json > /dev/null
 
       # The sdist is the second artifact PyPI serves, and a distro packager builds from
       # it — so it needs the same proof the wheel gets. `--no-binary` forces a real build
@@ -417,6 +431,9 @@ jobs:
           pip install --no-binary chemrefine dist/*.tar.gz
           chemrefine --version
           chemrefine --help > /dev/null
+          chemrefine validate examples/first_run/input.yaml
+          chemrefine schema > /dev/null
+          chemrefine engines --json > /dev/null
 
       - name: The package must advertise its types
         run: |

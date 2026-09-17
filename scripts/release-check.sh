@@ -162,11 +162,16 @@ rm -rf dist
 # The sdist is the second artifact PyPI serves and a distro packager builds from it, so it
 # gets the same proof the wheel does. It used to get none: this script built it and then
 # installed `dist/*.whl`, which never matched the tarball — and that is how `examples/`
-# fell out of the sdist with every gate green (5246d7a).
+# fell out of the sdist with every gate green (5246d7a). `--help` proves the entry point
+# imports; `validate` on the shipped quickstart (its ORCA path is a placeholder, so it
+# warns and exits 0), `schema` and `engines --json` prove the installed package works.
 "$PY" -m venv "$work/smoke"
 "$work/smoke/bin/pip" install --disable-pip-version-check --quiet dist/*.whl
 "$work/smoke/bin/chemrefine" --version
 "$work/smoke/bin/chemrefine" --help > /dev/null
+"$work/smoke/bin/chemrefine" validate examples/first_run/input.yaml
+"$work/smoke/bin/chemrefine" schema > /dev/null
+"$work/smoke/bin/chemrefine" engines --json > /dev/null
 "$work/smoke/bin/python" - <<'PY'
 import importlib.util, pathlib, sys
 spec = importlib.util.find_spec("chemrefine")
@@ -177,6 +182,9 @@ PY
 "$work/smoke/bin/pip" install --disable-pip-version-check --quiet --no-binary chemrefine dist/*.tar.gz
 "$work/smoke/bin/chemrefine" --version
 "$work/smoke/bin/chemrefine" --help > /dev/null
+"$work/smoke/bin/chemrefine" validate examples/first_run/input.yaml
+"$work/smoke/bin/chemrefine" schema > /dev/null
+"$work/smoke/bin/chemrefine" engines --json > /dev/null
 
 step "the suite passes from the unpacked sdist (CI: install-smoke-test)"
 # The sdist ships tests and examples precisely so the suite can be run from it, and nothing
