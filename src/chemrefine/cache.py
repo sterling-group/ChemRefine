@@ -75,7 +75,7 @@ from ase import Atoms
 from numpy.typing import NDArray
 
 from chemrefine import ids
-from chemrefine.config import StepConfig
+from chemrefine.config import STEP_OPTION_PATHS, StepConfig
 from chemrefine.errors import CacheError
 from chemrefine.state import (
     FailureRecord,
@@ -200,49 +200,42 @@ def template_digest(path: Path | None) -> str:
 
 
 def option_file_digests(options: Mapping[str, Any] | None) -> dict[str, str]:
-    """Digest every ``step.options`` value that names a file on disk, keyed by option.
+    """Digest the file each path-valued ``step.options`` knob names, keyed by option.
 
     The counterpart to :func:`template_digest` for the *other* file a step can be pinned to.
-    A step that names a model — ``model_path``, or a ``model_name`` that is a path — depends
-    on that file's contents exactly as it depends on its template, and the ``options``
-    payload of a :func:`row_key` records only the *string*. Without these digests, retraining
-    a model in place would leave every consuming step's key unchanged and ``resume`` would
-    serve results computed with the previous weights — and nothing else moves that key,
-    because a training step passes its structures through untouched.
+    A step that names a model (``model_path``) depends on that file's contents exactly as
+    it depends on its template, and the ``options`` payload of a :func:`row_key` records
+    only the *string*. Without these digests, retraining a model in place would leave every
+    consuming step's key unchanged and ``resume`` would serve results computed with the
+    previous weights — and nothing else moves that key, because a training step passes its
+    structures through untouched.
 
-    Generic rather than a list of known knobs, and that is the point: it needs no
-    engine vocabulary, so a backend that invents a checkpoint knob tomorrow is covered by
-    existing rather than by remembering to edit this. The cost of the generality is bounded
-    — only values that resolve to a real file are read, and a step naming none pays nothing.
+    Which knobs are paths is :data:`chemrefine.config.STEP_OPTION_PATHS`, the one list the
+    loader resolves and :func:`chemrefine.step.derive_step_key` keys by basename; this is
+    its third reader, and the three agree by construction. Guessed from the value instead
+    — every string that happens to name an existing file — the digest pins the wrong
+    things: ``backend_python`` names an interpreter, so patching Python in place re-ran
+    every finished step of a workflow that had merely named it, and a value never meant
+    as a path resolved against the working directory, so a step keyed differently
+    depending on where the driver was launched from. A knob that names a file is declared
+    in that list, and the declaration is what makes it one.
 
-    ``model_path`` — the shipped option this exists for — arrives here already absolute: the
-    config loader resolves it against the config file's directory
-    (:func:`chemrefine.config._resolve_step_option_paths`), exactly as it resolves the
-    config's own paths, so the digest and the engine that later loads the file read the same
-    one. Any *other* value that happens to name a file resolves against the working
-    directory, nothing having declared a better anchor for it. A value that is not an
-    existing file contributes **no entry at all** rather than an empty one: "not a path" and
-    "a path that is missing" are different claims, and only the latter should later change
-    the key when the file appears.
-
-    Each file is **streamed**, not read whole. This runs on every :meth:`StepKey.of` — for
-    every step, on every run, in the driver process — and the files it is here for are model
-    checkpoints: a UMA one is 1-2 GB, and on a cluster the driver is a login node.
+    A declared path whose file is missing or unreadable contributes **no entry at all**
+    rather than an empty one: the file may be produced by an earlier step, and the key
+    should change exactly when it appears. Each file is **streamed**, not read whole. This
+    runs on every :meth:`StepKey.of` — for every step, on every run, in the driver process —
+    and the files it is here for are model checkpoints: a UMA one is 1-2 GB, and on a
+    cluster the driver is a login node.
     """
     digests: dict[str, str] = {}
-    for name, value in sorted((options or {}).items()):
+    for name in STEP_OPTION_PATHS:
+        value = (options or {}).get(name)
         if not isinstance(value, str) or not value:
             continue
         try:
-            path = Path(value)
-            if not path.is_file():
-                continue
-            with path.open("rb") as handle:
+            with Path(value).open("rb") as handle:
                 digests[name] = hashlib.file_digest(handle, _fingerprint_sha1).hexdigest()[:16]
         except OSError:
-            # A value that merely looks like a path — too long for the filesystem, a
-            # permission wall, a dangling mount. Not a file we can pin to, and not a reason
-            # to fail a run that never asked for one.
             continue
     return digests
 

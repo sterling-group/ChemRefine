@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -401,14 +402,33 @@ def test_a_path_that_does_not_exist_contributes_no_entry(tmp_path: Path):
     assert set(option_file_digests({"model_path": str(missing)})) == {"model_path"}
 
 
-def test_a_value_that_only_looks_like_a_path_is_not_a_reason_to_fail(tmp_path: Path):
-    """Options are free-form text; most values are not paths and some are hostile to being asked.
+def test_a_path_the_filesystem_refuses_to_answer_for_contributes_no_entry():
+    """A declared path can still be hostile to being asked.
 
-    A name past the filesystem's length limit raises from `is_file()` rather than returning
-    False. A step that never asked to be pinned to a file must not fail its whole run over
-    one — the value simply contributes no digest.
+    A name past the filesystem's length limit raises from ``open`` rather than reporting
+    a missing file. It is no more a file to pin to than a missing one, and no reason to
+    fail the run at key time — the value contributes no digest, and the job that goes on
+    to load it names the mistake.
     """
-    assert option_file_digests({"note": "x" * 5000}) == {}
+    assert option_file_digests({"model_path": "x" * 5000}) == {}
+
+
+def test_only_a_declared_path_knob_is_digested(tmp_path: Path):
+    """The knobs that name files are ``STEP_OPTION_PATHS``, not whatever resolves to one.
+
+    Guessing from the value pinned the wrong things. ``backend_python`` names an
+    interpreter, and an interpreter is a file: patching Python in place re-ran every
+    finished step of a workflow that had merely named it, with nothing saying why. And a
+    free-text value that happened to match a file in the driver's working directory keyed
+    the step differently from every other directory it could be launched in. The loader
+    resolves and the key basenames exactly the declared list; the digest reads it too, so
+    the three cannot disagree about which option is a path.
+    """
+    weights = tmp_path / "model.pt"
+    weights.write_bytes(b"weights")
+    assert option_file_digests({"backend_python": sys.executable}) == {}
+    assert option_file_digests({"note": str(weights)}) == {}
+    assert set(option_file_digests({"model_path": str(weights)})) == {"model_path"}
 
 
 def test_a_named_file_is_digested_by_its_contents(tmp_path: Path):

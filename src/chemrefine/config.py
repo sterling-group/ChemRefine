@@ -862,11 +862,13 @@ free-form text and most values are not paths at all, so guessing would rewrite s
 merely resemble one. Adding a knob here is the cost of introducing a path-valued option, and
 it is one line.
 
-Public, not underscored, because :func:`chemrefine.step.derive_step_key` reads it too: the
-resolved value is absolute, and an absolute string inside a cache row key would tie a
-finished tree to the directory it ran in. The key carries such an option by its basename
-and pins the file's bytes separately (:func:`chemrefine.cache.option_file_digests`), so the
-same list decides both what the loader resolves and what the key must not spell out."""
+Public, not underscored, because the cache reads it too. :func:`chemrefine.step.derive_step_key`
+keys such an option by its basename — the resolved value is absolute, and an absolute
+string inside a cache row key would tie a finished tree to the directory it ran in — and
+:func:`chemrefine.cache.option_file_digests` pins the named file's bytes under the same
+name. One list decides what the loader resolves, what the key must not spell out, and
+which files it pins; a knob absent from it is text to all three, whatever it happens to
+name on disk."""
 
 
 def _resolve_step_option_paths(step: StepConfig, *, base: Path) -> StepConfig:
