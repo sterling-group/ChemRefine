@@ -840,6 +840,25 @@ def test_run_lock_is_reentrant_within_one_process(tmp_path: Path):
     assert not lock.exists()
 
 
+def test_an_error_under_the_reentrant_lock_carries_no_lock_context(tmp_path: Path):
+    """The inner acquisition yields outside the handler, so a traceback starts at the error.
+
+    Yielding from inside ``except FileExistsError`` ran the whole inner action with that
+    exception still active, and any error the action raised was chained to it: every
+    traceback that escaped a run opened with "During handling of the above exception
+    (FileExistsError: … run.lock)", pointing the reader at the lock before the real error.
+    """
+    outputs = tmp_path / "outputs"
+    with (
+        pytest.raises(RuntimeError, match="the real error") as excinfo,
+        pipeline.run_lock(outputs),
+        pipeline.run_lock(outputs),
+    ):
+        raise RuntimeError("the real error")
+    assert excinfo.value.__context__ is None
+    assert not (outputs / pipeline.RUN_LOCK_NAME).exists()
+
+
 def test_a_live_holders_lock_raises_and_survives(tmp_path: Path):
     """A lock naming a live pid on this host refuses the run and is left in place."""
     import socket

@@ -421,6 +421,12 @@ for the full map.
 
 ### Fixed
 
+- **A traceback that escapes a run starts at the error, not at the run lock.** The
+  reentrant acquisition of the run lock (`recovery.execute` holds it, `pipeline.run` takes
+  it again) yielded from inside its `except FileExistsError`, so every error raised under
+  it was chained to that exception and every escaping traceback opened with "During
+  handling of the above exception (FileExistsError: … run.lock)". It yields after the
+  handler now.
 - **An unreadable or unwritable `_cache/` document is the cache's own error, exit 7.**
   `read_json` refused malformed JSON as a `CacheError` but let a `PermissionError` (a
   mode-000 document, another account's tree) or a `UnicodeDecodeError` (bytes that are
