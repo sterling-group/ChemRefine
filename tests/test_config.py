@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from chemrefine.config import (
     BoltzmannSample,
     Config,
+    FailurePolicy,
     MaxSample,
     MinSample,
     NmsKnobs,
@@ -1310,3 +1311,60 @@ def test_normalize_sample_block_without_method_passes_keys_through():
     from chemrefine.config_legacy import _normalize_sample_block
 
     assert _normalize_sample_block({"count": 5}, (), _silent) == {"count": 5}
+
+
+# ---------------------------------------------------------------------------
+# The failure-policy vocabulary is read as three questions
+# ---------------------------------------------------------------------------
+
+_POLICY_TABLE = [
+    # policy, halts_on_failure, leaves_failures_pending, stores_backfills
+    ("stop", True, True, False),
+    ("skip", False, False, False),
+    ("best", False, False, True),
+]
+
+
+def test_the_policy_table_covers_the_vocabulary():
+    """Every policy `on_failure` accepts has a row below — a fourth one must take a stand."""
+    from typing import get_args
+
+    from chemrefine.config import FailurePolicy
+
+    assert {row[0] for row in _POLICY_TABLE} == set(get_args(FailurePolicy))
+
+
+@pytest.mark.parametrize(("policy", "halts", "pending", "stores"), _POLICY_TABLE)
+def test_the_three_policy_predicates(
+    policy: FailurePolicy, halts: bool, pending: bool, stores: bool
+):
+    """The three predicates are the vocabulary's whole meaning; each row is one policy's."""
+    step = StepConfig(step=1, engine="orca", on_failure=policy)
+    assert (step.halts_on_failure, step.leaves_failures_pending, step.stores_backfills) == (
+        halts,
+        pending,
+        stores,
+    )
+
+
+def test_a_policy_outside_the_vocabulary_fails_loud():
+    """The wildcard arm holds only `assert_never`: a forced value fails where it lands.
+
+    The guard that matters is mypy's — a fourth policy without an arm fails type-checking —
+    but a value forced past validation must not inherit `skip`'s answer either.
+    """
+    from typing import cast
+
+    from chemrefine.config import policy_stores_backfills
+
+    with pytest.raises(AssertionError):
+        policy_stores_backfills(cast(FailurePolicy, "later"))
+
+
+def test_a_stored_policy_is_recognised_only_from_the_vocabulary():
+    """The cache's stored policy is text; only a name this version knows is a policy."""
+    from chemrefine.config import is_failure_policy
+
+    assert all(is_failure_policy(row[0]) for row in _POLICY_TABLE)
+    assert not is_failure_policy("")
+    assert not is_failure_policy("later")

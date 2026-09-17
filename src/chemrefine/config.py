@@ -35,7 +35,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Annotated, Any, Literal, Self, TypeAlias
+from typing import Annotated, Any, Literal, Self, TypeAlias, TypeGuard, assert_never, get_args
 
 import yaml
 from pydantic import (
@@ -211,6 +211,45 @@ class NmsKnobs(BaseModel):
 # Per-step configuration
 # ---------------------------------------------------------------------------
 
+FailurePolicy: TypeAlias = Literal["stop", "skip", "best"]
+"""What a step does with the structures that fail it — :attr:`StepConfig.on_failure`'s
+vocabulary. Its meaning is read as three questions, never as a string match:
+:meth:`StepConfig.halts_on_failure`, :meth:`StepConfig.leaves_failures_pending` and
+:func:`policy_stores_backfills`."""
+
+
+def policy_stores_backfills(policy: FailurePolicy) -> bool:
+    """Whether results finalized under ``policy`` carry backfilled failures.
+
+    The one question the cache asks of a policy. ``stop`` and ``skip`` persist the
+    successes alone, so a document written under either serves the other; ``best`` writes
+    the backfilled failures into the same document, so a change across that line would hand
+    the user the previous policy's survivor set with the fingerprint still matching. The
+    wildcard arm holds only :func:`typing.assert_never`, so a policy added to
+    :data:`FailurePolicy` fails type-checking here until it answers, where a literal
+    ``== "best"`` would have classed it with ``stop``/``skip`` and nothing would have said so.
+
+    A function rather than only a property because the cache asks it of the *stored*
+    policy too (:func:`chemrefine.step._policy_conflict`); :meth:`StepConfig.stores_backfills`
+    asks it for a config.
+    """
+    match policy:
+        case "best":
+            return True
+        case "stop" | "skip":
+            return False
+        case _:
+            assert_never(policy)
+
+
+def is_failure_policy(value: str) -> TypeGuard[FailurePolicy]:
+    """Whether ``value`` names a policy this version knows.
+
+    A cache document records the policy its results were finalized under as text, and a
+    document written by another version may name one this version cannot interpret.
+    """
+    return value in get_args(FailurePolicy)
+
 
 class StepConfig(BaseModel):
     """One stage of the pipeline."""
@@ -258,7 +297,7 @@ class StepConfig(BaseModel):
     (:class:`~chemrefine.engines.api.NmsCapableEngine`; the generated engine table's
     ``NMS`` column says which)."""
 
-    on_failure: Literal["stop", "skip", "best"] = "stop"
+    on_failure: FailurePolicy = "stop"
     """What to do when some structures fail this step (job error / no valid output,
     or NMS-unresolved): ``stop`` (default) halts the pipeline after caching the
     step's successes, ``skip`` drops the failures and keeps the successes, ``best``
@@ -270,12 +309,12 @@ class StepConfig(BaseModel):
     def halts_on_failure(self) -> bool:
         """Whether this step's failures stop the run.
 
-        The two predicates below spell what ``on_failure`` *means* to a caller, so the modules
-        that act on it ask a question instead of matching a string. Only ``stop`` answers yes
-        to either, but the two are different questions — one is about the run ending, the
-        other about work still owed — and a policy added later could answer them differently.
-        Compared literally at each site, that difference has nowhere to live and every site
-        has to be found and re-read to know which meaning it wanted.
+        The three predicates here spell what ``on_failure`` *means* to a caller, so the
+        modules that act on it ask a question instead of matching a string. Only ``stop``
+        answers yes to the first two, but they are different questions — one is about the run
+        ending, the other about work still owed — and a policy added later could answer them
+        differently. Compared literally at each site, that difference has nowhere to live and
+        every site has to be found and re-read to know which meaning it wanted.
         """
         return self.on_failure == "stop"
 
@@ -289,6 +328,15 @@ class StepConfig(BaseModel):
         second predicate rather than the same one.
         """
         return self.on_failure == "stop"
+
+    @property
+    def stores_backfills(self) -> bool:
+        """Whether this step's cached results carry backfilled failures.
+
+        :func:`policy_stores_backfills` for this step's policy — the question the cache asks
+        before serving a document to a config whose policy changed.
+        """
+        return policy_stores_backfills(self.on_failure)
 
     @field_validator("options")
     @classmethod

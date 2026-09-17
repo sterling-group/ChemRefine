@@ -247,7 +247,7 @@ _BUNDLED: tuple[Mutation, ...] = (
     Mutation(
         id="policy-change-over-cache",
         path="src/chemrefine/step.py",
-        old='return (stored == "best") != (current == "best")',
+        old="return policy_stores_backfills(stored) != current.stores_backfills",
         new="return False",
         tests="tests/test_step.py",
         breaks="editing on_failure over a cached step silently serves the previous "

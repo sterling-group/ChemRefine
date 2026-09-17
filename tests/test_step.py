@@ -514,6 +514,31 @@ def test_policy_change_over_a_legacy_cache_stays_a_hit(tmp_path: Path):
         ENGINES.pop("fake-fail", None)
 
 
+def test_policy_change_over_a_cache_of_unknown_policy_reattempts(tmp_path: Path):
+    """A document naming a policy this version does not know is not served.
+
+    ``skip`` over ``stop`` is a free hit — both persist the successes alone — but a stored
+    policy nobody here can classify has a shape nobody can judge, so the failure is
+    re-attempted instead of the document's survivor set being trusted.
+    """
+    outcome, step_dir = _run_policy_change(tmp_path, "stop", "stop")
+    document = json.loads((step_dir / "_cache" / "step.json").read_text(encoding="utf-8"))
+    document["on_failure"] = "later"
+    (step_dir / "_cache" / "step.json").write_text(json.dumps(document), encoding="utf-8")
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fail_engine()
+    try:
+        eng.fail = {"1": "missing"}
+        cfg = _config(tmp_path, engine="fake-fail", on_failure="skip")
+        outcome = run_step(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]), mode=StepMode.RESUME)
+        assert outcome.cache_hit is False
+        assert {s.id for s in outcome.state.structures} == {"0", "2"}
+    finally:
+        eng.fail = {}
+        ENGINES.pop("fake-fail", None)
+
+
 # ---------------------------------------------------------------------------
 # Auto-retry-once on convergence failure
 # ---------------------------------------------------------------------------
