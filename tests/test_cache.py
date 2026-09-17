@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -766,6 +767,65 @@ def test_load_if_valid_false_when_cache_is_corrupt(tmp_path: Path):
     cache_dir.mkdir(parents=True)
     (cache_dir / "step.json").write_bytes(b"{not json")
     assert not load_if_valid(key=_key("0", step_cfg=_cfg()), step_dir=step_dir)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_an_unreadable_document_is_the_cache_error_a_corrupt_one_gets(tmp_path: Path):
+    """Present-but-unreadable is the other half of what ``read_json`` promises to refuse.
+
+    ``is_file`` is true of a mode-000 document — a colleague's driver, a restored backup —
+    and the ``PermissionError`` from the read escaped every handler as a traceback with
+    exit 1, where the docs promise exit 7 and the ``rebuild-cache`` advice. The lease and
+    sidecar readers already said so; the JSON reader was the one copy without the net.
+    """
+    step_dir = tmp_path / "step1"
+    document = step_dir / "_cache" / "step.json"
+    document.parent.mkdir(parents=True)
+    document.write_text("{}", encoding="utf-8")
+    document.chmod(0)
+    try:
+        with pytest.raises(CacheError, match="unreadable step cache"):
+            load(step_dir)
+        # `load_if_valid` treats it as it treats a corrupt document: a miss, never a raise.
+        assert load_if_valid(key=_key("0", step_cfg=_cfg()), step_dir=step_dir) is None
+    finally:
+        document.chmod(0o644)
+
+
+def test_a_document_that_is_not_text_is_unreadable_too(tmp_path: Path):
+    """Bytes that are not UTF-8 raise ``UnicodeDecodeError`` — a ``ValueError``, not JSON's."""
+    document = tmp_path / "step1" / "_cache" / "step.json"
+    document.parent.mkdir(parents=True)
+    document.write_bytes(b"\xff\xfe\x00")
+    with pytest.raises(CacheError, match="unreadable step cache"):
+        load(tmp_path / "step1")
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+def test_an_unwritable_cache_directory_is_a_cache_error(tmp_path: Path):
+    """The write half of the same promise: "cache corrupt or unwritable" is the cache's code.
+
+    A read-only ``_cache/`` — another account's tree, a full or read-only mount — raised
+    the ``OSError`` from the temp-file write straight through ``save`` and every other
+    ``_cache/`` writer, a traceback where the docs promise exit 7.
+    """
+    step_dir = tmp_path / "step1"
+    cache_dir = step_dir / "_cache"
+    cache_dir.mkdir(parents=True)
+    cache_dir.chmod(0o500)
+    try:
+        with pytest.raises(CacheError, match="cannot write"):
+            save(
+                step_cfg=_cfg(),
+                key=_key("0", step_cfg=_cfg()),
+                results=_results(),
+                step_dir=step_dir,
+                chemrefine_version="2.0.0",
+            )
+        with pytest.raises(CacheError, match="cannot write"):
+            cache.write_json(cache_dir / "manifest.json", {"files": []})
+    finally:
+        cache_dir.chmod(0o755)
 
 
 def _saved(tmp_path: Path) -> Path:

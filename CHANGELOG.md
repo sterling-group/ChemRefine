@@ -421,6 +421,14 @@ for the full map.
 
 ### Fixed
 
+- **An unreadable or unwritable `_cache/` document is the cache's own error, exit 7.**
+  `read_json` refused malformed JSON as a `CacheError` but let a `PermissionError` (a
+  mode-000 document, another account's tree) or a `UnicodeDecodeError` (bytes that are
+  not text) escape, and no `_cache/` writer converted an `OSError` at all — so a `resume`
+  over a colleague's cache, or a `rerun` into a read-only `_cache/`, was a traceback with
+  exit 1 where the docs promise "cache corrupt or unwritable", exit 7 and the
+  `rebuild-cache` advice. Both halves now raise `CacheError`; `load_if_valid` treats an
+  unreadable cache as it treats a corrupt one, and recomputes.
 - **A seed the run cannot use is a config error, not a traceback — and never a run that
   computes nothing.** `input:` pointing at a file that is missing, malformed (a frame
   short of its atom count, a coordinate that is not a number, bytes that are not text),

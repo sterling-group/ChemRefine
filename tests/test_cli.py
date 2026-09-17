@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -17,7 +18,7 @@ from typer.testing import CliRunner
 from chemrefine import __version__
 from chemrefine.cli import app
 from chemrefine.cli_legacy import translate_argv as _translate_legacy_argv
-from chemrefine.errors import ConfigError
+from chemrefine.errors import CacheError, ConfigError
 
 runner = CliRunner()
 
@@ -267,6 +268,29 @@ def test_resume_after_run_is_cache_hit(tmp_path: Path):
     assert runner.invoke(app, ["run", str(config_path)]).exit_code == 0
     # Second invocation should succeed and not blow up on the cache.
     assert runner.invoke(app, ["resume", str(config_path)]).exit_code == 0
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_an_unreadable_cache_document_exits_with_the_cache_error_code(tmp_path: Path):
+    """The "cache corrupt or unwritable" row promises exit 7 — for unreadable too.
+
+    A rebuild has to read the manifest to know what to re-parse. ``is_file`` is true of
+    a mode-000 one, so the read was reached and ``PermissionError`` escaped the handler
+    that maps a ``ChemRefineError`` to its code: a traceback and exit 1 where the docs
+    promise 7. (An unreadable step document is a different case: ``load_if_valid`` treats
+    it as it treats a corrupt one, a miss, and a resume recomputes the step.)
+    """
+    config_path = _write_config(tmp_path)
+    assert runner.invoke(app, ["run", str(config_path)]).exit_code == 0
+    manifest = tmp_path / "outputs" / "step1_screen" / "_cache" / "manifest.json"
+    manifest.chmod(0)
+    try:
+        result = runner.invoke(app, ["rebuild-cache", str(config_path), "screen"])
+    finally:
+        manifest.chmod(0o644)
+
+    assert result.exit_code == CacheError.exit_code
+    assert not isinstance(result.exception, PermissionError)
 
 
 def test_dry_run_does_not_create_outputs(tmp_path: Path):

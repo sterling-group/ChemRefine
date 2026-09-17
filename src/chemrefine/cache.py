@@ -701,6 +701,22 @@ def atomic_write(path: Path, data: bytes) -> None:
 _COMPACT_SEPARATORS = (",", ":")
 
 
+def _write_cache_file(path: Path, data: bytes) -> None:
+    """:func:`atomic_write` for a ``_cache/`` document, with a failure named as the cache's.
+
+    ``atomic_write`` itself stays raw: the config writers (:func:`chemrefine.agent_tools.
+    save_config`, the GUI's save) call it for the user's own file and answer their own
+    error. Here the file is the cache's, and the docs promise "cache corrupt or unwritable"
+    the cache's exit code and the ``rebuild-cache`` advice — which the bare ``OSError`` from
+    a read-only ``_cache/`` (another account's tree, a full or read-only mount) never
+    reached: it escaped every handler as a traceback with exit 1.
+    """
+    try:
+        atomic_write(path, data)
+    except OSError as e:
+        raise CacheError(f"cannot write {path}: {e}") from e
+
+
 def write_json(path: Path, data: Any, *, indent: int | None = 2) -> None:
     """Serialize ``data`` to JSON and write it atomically to ``path``.
 
@@ -722,7 +738,7 @@ def write_json(path: Path, data: Any, *, indent: int | None = 2) -> None:
     means something upstream let one through.
     """
     separators = None if indent is not None else _COMPACT_SEPARATORS
-    atomic_write(
+    _write_cache_file(
         path, json.dumps(data, indent=indent, separators=separators, allow_nan=False).encode()
     )
 
@@ -764,9 +780,13 @@ def _read_arrays(path: Path) -> Any:
 def read_json(path: Path, default: Any, *, label: str) -> Any:
     """Return the JSON parsed from ``path``, or ``default`` if it doesn't exist.
 
-    Raises :class:`CacheError` (naming ``label``) if the file is present but
-    holds malformed JSON, so callers treat a corrupt sidecar as fatal rather
-    than silently continuing from an empty state.
+    Raises :class:`CacheError` (naming ``label``) if the file is present but cannot be
+    read as JSON — malformed, not text, or not readable by this account — so callers
+    treat a corrupt or unreadable sidecar as fatal rather than silently continuing from
+    an empty state. Unreadable is in the net for the reason the lease and sidecar readers
+    give: ``is_file`` is true of a mode-000 document or another user's, and left to the
+    reader the ``PermissionError`` escaped every handler as a traceback with exit 1,
+    where the docs promise the cache's own code and the ``rebuild-cache`` advice.
     """
     if not path.is_file():
         return default
@@ -774,6 +794,8 @@ def read_json(path: Path, default: Any, *, label: str) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise CacheError(f"corrupt {label} at {path}: {e}") from e
+    except (OSError, ValueError) as e:
+        raise CacheError(f"unreadable {label} at {path}: {e}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -864,7 +886,7 @@ def save(
     # `_cache/` atomic, and a step is re-saved whenever `resume` repairs one, which leaves the
     # previous document beside the new sidecar. `arrays_digest` is what makes the pair
     # provable rather than merely likely.
-    atomic_write(_arrays_path(step_dir), _npz_bytes(arrays))
+    _write_cache_file(_arrays_path(step_dir), _npz_bytes(arrays))
     write_json(_cache_path(step_dir), document, indent=None)
     logger.info("saved step %d cache (fingerprint %s)", step_cfg.step, key.fingerprint)
 
@@ -1054,8 +1076,8 @@ def load_if_valid(*, key: StepKey, step_dir: Path) -> StepCache | None:
     A single ``load`` + fingerprint compare, so a caller that needs the cached results on a
     hit (e.g. :func:`chemrefine.step._cached_outcome`) reads ``step.json`` **once** instead
     of validating and then re-loading — and there is no window in which the cache could
-    vanish between the two reads. A corrupt or absent cache returns ``None`` (treated as
-    "re-run"), never raises.
+    vanish between the two reads. A corrupt, unreadable or absent cache returns ``None``
+    (treated as "re-run"), never raises.
 
     Takes the key rather than the ingredients to derive one: the whole point of
     :class:`StepKey` is that the comparison and the write cannot use different recipes.
