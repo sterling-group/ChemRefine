@@ -24,26 +24,11 @@ from chemrefine.step import RunPlan, StepMode
 RUN_BATCH = "chemrefine.engines._execution.run_batch"
 
 ORCA_CASES = ["conformers", "nms_minimum", "ts_pes", "host_guest"]
+"""The replays that submit through a stubbed `run_batch`.
 
-ALL_CASES = [
-    *ORCA_CASES,
-    "mlip_screen",
-    "mlip_extopt",
-    "fairchem_sp",
-    "pyscf_sp",
-    "pyscf_extopt",
-]
-"""Every recorded case, for the checks that only re-parse.
-
-The ORCA-only list above is for replays that submit through a stubbed `run_batch`; a
-parse-only rebuild needs no backend at all, so the drift detector — the one thing standing
-between a recording and becoming a fossil — covers every case that has an archive.
-
-`mlip_train` has an archive but sits out of this list: the parse-only rebuild of its step 3
-validates a fingerprint that covers the trained model's **bytes** (`option_file_digests`),
-and the 4.7 MB model cannot live in a 1 MB recording — no stub can hash like the original.
-Its offline coverage is `test_e2e_replay.test_mlip_train_full_pipeline`, a fresh replay
-that computes its fingerprints from a stubbed model self-consistently."""
+A parse-only rebuild needs no backend at all, so the drift detector — the one thing
+standing between a recording and becoming a fossil — covers every recording on disk
+instead, each as far as `replay.VERIFIABLE_STEPS` says it can be re-derived."""
 
 
 def _with_step_update(config: Config, step_number: int, **updates: object) -> Config:
@@ -91,7 +76,7 @@ def test_rebuild_cache_reparses_outputs_without_submitting(
         ], f"rebuilding step {step_number} changed the survivors"
 
 
-@pytest.mark.parametrize("name", ALL_CASES)
+@pytest.mark.parametrize("name", replay.recorded_cases())
 def test_rebuilt_records_match_the_archived_ones_field_for_field(
     name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> None:
@@ -103,6 +88,11 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
     not match what the code produces is not a fixture, it is a fossil, and the whole value
     of record/replay rests on the difference.
 
+    Every recording on disk is checked, as far as it can be: one that is verifiable only
+    up to a step (`replay.VERIFIABLE_STEPS`) is rebuilt over that prefix and must carry no
+    cache document past it — nothing could check one, so it would be a fossil from the
+    day it was packed.
+
     A failure here means the parse changed on purpose and the recordings need
     regenerating (a parse-only rebuild from these same archived outputs — no ORCA and
     no MLIP stack required), not that the assertion is too strict.
@@ -110,10 +100,15 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
     case = extract_case(name, tmp_path)
     relocate(case)
     monkeypatch.setattr(RUN_BATCH, forbid_run_batch)
+    config = load_config(case.config_path)
+    prefix = replay.VERIFIABLE_STEPS.get(name, len(config.steps))
+    verifiable, beyond = config.steps[:prefix], config.steps[prefix:]
+    config = config.model_copy(update={"steps": verifiable})
 
     archived = {
         doc.relative_to(case.output_dir): json.loads(doc.read_text())
-        for doc in sorted(case.output_dir.rglob("_cache/step.json"))
+        for step in verifiable
+        for doc in sorted((case.output_dir / step.dir_name()).rglob("_cache/step.json"))
     }
     assert archived, "the recording carries no cache documents to compare against"
 
@@ -123,7 +118,17 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
         # rows keyed under another configuration — so the archived provenance is dropped
         # first (unprovable rather than wrong) and written back under today's key.
         forget_provenance(case)
-    pipeline.run(load_config(case.config_path), RunPlan(default=StepMode.REBUILD))
+    else:
+        fossils = sorted(
+            str(doc.relative_to(case.output_dir))
+            for step in beyond
+            for doc in (case.output_dir / step.dir_name()).rglob("_cache/*")
+        )
+        assert not fossils, (
+            f"{fossils} sit past what a parse-only rebuild can verify — fossils by "
+            f"construction; `pack_case` no longer archives them, so regenerate the recording"
+        )
+    pipeline.run(config, RunPlan(default=StepMode.REBUILD))
 
     if update:
         # The rebuild above rewrote every cache in `case.output_dir` from the archived native

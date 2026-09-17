@@ -284,7 +284,8 @@ class _StubModelSubmitter(ReplaySubmitter):
     its bytes — so recording it would dwarf every other archive combined for a file whose
     content no offline assertion can see. Stub bytes keep both facts true; the real model
     is the live tier's business, and the parse-only rebuild that genuinely needs its bytes
-    (step 3's fingerprint) is excluded in `test_e2e_relocate.ALL_CASES` for the same reason.
+    (step 3's fingerprint) is why `replay.VERIFIABLE_STEPS` stops that case's drift check
+    after step 1.
     """
 
     def _satisfy(self, inputs: StepInputs) -> None:

@@ -40,6 +40,11 @@ from chemrefine.state import JobBatch, StepContext, StepInputs
 DATA_DIR = Path(__file__).resolve().parent / "data" / "e2e" / "recordings"
 
 
+def recorded_cases() -> list[str]:
+    """Every recording on disk, by case name — what the drift detector has to cover."""
+    return sorted(path.name.removesuffix(".tar.xz") for path in DATA_DIR.glob("*.tar.xz"))
+
+
 @dataclass(frozen=True)
 class ReplayCase:
     """An extracted capture fixture."""
@@ -207,26 +212,46 @@ KEEP_PATTERNS = (
 # the generic *.json keep-pattern must not swallow them into the archive.
 DROP_SUFFIXES = (".result.json", ".property.json")
 
+VERIFIABLE_STEPS: dict[str, int] = {"mlip_train": 1}
+"""Recordings a parse-only rebuild can verify only up to a step; every other one, whole.
 
-def _kept(path: Path) -> bool:
-    if path.name.endswith(DROP_SUFFIXES):
+`mlip_train` stops at step 1: step 2 adopts a trained model whose 4.7 MB cannot live in a
+1 MB recording, and step 3's fingerprint covers that model's **bytes**
+(`option_file_digests`) — no stub can hash like the original. :func:`pack_case` archives
+no cache document past the prefix, since a document nothing can verify is a fossil by
+construction, and the drift detector (``test_e2e_relocate``) rebuilds the prefix and
+asserts the rest is absent. The steps past it are covered by
+``test_e2e_replay.test_mlip_train_full_pipeline``, a fresh replay that computes its
+fingerprints from a stubbed model self-consistently."""
+
+
+def _step_number(dir_name: str) -> int:
+    """The step a ``stepN`` / ``stepN_name`` output directory belongs to."""
+    return int(dir_name.removeprefix("step").split("_", 1)[0])
+
+
+def _kept(rel: Path, verifiable: int | None) -> bool:
+    """Whether the file at ``rel`` (under the output dir) belongs in the archive."""
+    if rel.name.endswith(DROP_SUFFIXES):
         return False
-    if path.parent.name == "_cache":
+    if rel.parent.name == "_cache":
+        if verifiable is not None and _step_number(rel.parts[0]) > verifiable:
+            return False  # past what a rebuild can verify: a fossil by construction
         # `.npz` is the step cache's coordinate sidecar. Dropping it would archive a
         # `step.json` whose arrays are gone, and since `cache.load` fails closed on a missing
         # sidecar, every replay would resubmit instead of hitting the cache.
-        return path.suffix in (".json", ".npz")
-    return any(fnmatch.fnmatch(path.name, pattern) for pattern in KEEP_PATTERNS)
+        return rel.suffix in (".json", ".npz")
+    return any(fnmatch.fnmatch(rel.name, pattern) for pattern in KEEP_PATTERNS)
 
 
 def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
     """Pack a finished live run into ``dest_dir/<name>.tar.xz`` (the recording).
 
-    Trims ``run_dir/outputs`` to what the parsers read (see ``KEEP_PATTERNS``),
-    tokenizes the absolute output prefix in the ``_cache`` documents, and
-    stages ``input.yaml`` + ``templates/`` + the seed alongside the trimmed
-    ``captured_outputs/`` tree. Fails when the archive would exceed
-    ``MAX_ARCHIVE_BYTES`` — recordings stay light by construction.
+    Trims ``run_dir/outputs`` to what the parsers read (see ``KEEP_PATTERNS``) and a
+    parse-only rebuild can verify (``VERIFIABLE_STEPS``), refuses a ``_cache`` document
+    that names the machine it was made on, and stages ``input.yaml`` + ``templates/`` +
+    the seed alongside the trimmed ``captured_outputs/`` tree. Fails when the archive
+    would exceed ``MAX_ARCHIVE_BYTES`` — recordings stay light by construction.
     """
     import tempfile
 
@@ -253,10 +278,12 @@ def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
 
         captured = staging / "captured_outputs"
         kept = 0
+        verifiable = VERIFIABLE_STEPS.get(name)
         for path in sorted(outputs.rglob("*")):
-            if not path.is_file() or not _kept(path):
+            rel = path.relative_to(outputs)
+            if not path.is_file() or not _kept(rel, verifiable):
                 continue
-            target = captured / path.relative_to(outputs)
+            target = captured / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, target)
             kept += 1
