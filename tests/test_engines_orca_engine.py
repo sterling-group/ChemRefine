@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 from collections.abc import Collection
 from pathlib import Path
@@ -354,6 +355,49 @@ def test_parse_unknown_operation_raises(tmp_path: Path):
 
     with pytest.raises(OutputParseError):
         engine.parse(inputs, ctx)
+
+
+def test_an_inferred_operation_without_a_reader_still_runs_and_reads_the_final_structure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+):
+    """A reaction path runs today, read as its final structure with a warning; it fans out
+    once the dispatch has a reader for ``irc`` — with no edit to the engine.
+
+    A run kind is never refused for want of a reader: the template names a feature the
+    program has, and the step has to run. The inferred ``operation`` used to fall through
+    to ``sp`` for every run kind the inspector did not know, so nothing said the output was
+    a path; now the word is inferred, the log says the final structure is all that was
+    read, and the same step fans out the day the reader joins the dispatch. An explicit
+    ``operation:`` is still held to the readers' vocabulary.
+    """
+    from chemrefine.engines.orca.output import coordinator
+
+    engine = get_engine("orca")
+    inferred = StepConfig(step=1, engine="orca")
+    ctx = _ctx(tmp_path, structures=(_seed_structure(),), step_cfg=inferred)
+    assert ctx.template is not None
+    ctx.template.write_text("! B3LYP def2-SVP IRC\n%pal\n  nprocs 2\nend\n", encoding="utf-8")
+    inputs = engine.prepare(ctx)  # not refused
+    out = inputs.files[0][1]
+    shutil.copy(FIXTURE, out)
+
+    with caplog.at_level(logging.WARNING, logger="chemrefine.engines.orca.engine"):
+        parsed = engine.parse_one(out, "0", ctx)
+    assert len(parsed) == 1 and parsed[0].positions.shape == (77, 3)
+    assert "'irc'" in caplog.text and "final structure" in caplog.text
+
+    explicit = StepConfig(step=1, engine="orca", operation="irc")
+    with pytest.raises(ConfigError, match="irc"):  # explicit: held to the vocabulary
+        engine.check_step(explicit, charge=0, multiplicity=1)
+
+    caplog.clear()
+    monkeypatch.setattr(coordinator, "_DFT_OPERATIONS", coordinator._DFT_OPERATIONS | {"irc"})
+    monkeypatch.setattr(
+        coordinator, "TEXT_BASED_OPERATIONS", coordinator.TEXT_BASED_OPERATIONS | {"irc"}
+    )
+    with caplog.at_level(logging.WARNING, logger="chemrefine.engines.orca.engine"):
+        assert len(engine.parse_one(out, "0", ctx)) == 1
+    assert "final structure" not in caplog.text
 
 
 # ---------------------------------------------------------------------------

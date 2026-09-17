@@ -16,6 +16,7 @@ backend gradients).
 
 from __future__ import annotations
 
+import logging
 import shlex
 from pathlib import Path
 from typing import ClassVar
@@ -28,6 +29,8 @@ from chemrefine.engines.orca import inspect, output
 from chemrefine.errors import ConfigError
 from chemrefine.ids import require_template
 from chemrefine.state import StepContext
+
+logger = logging.getLogger(__name__)
 
 
 @register("orca")
@@ -236,8 +239,28 @@ class OrcaEngine(JobEngine):
         For a single-structure ``.out`` the frequency values (``imaginary_freqs`` /
         ``normal_modes``) ride on the returned ``ParsedResult`` (and thus on the ``Structure``),
         so NMS never re-parses the file.
+
+        An *inferred* operation the parser dispatch has no reader for yet — a reaction path's
+        ``irc``, a band's ``neb``, a trajectory's ``md`` — is read as its final structure, and
+        the log says so: a run kind runs and yields something usable the day it appears in a
+        template, and fans out into its geometries the day its reader joins the dispatch,
+        with no edit here. An explicit ``operation:`` is held to the vocabulary by
+        :meth:`check_step`, so only an inferred one takes this path. The final-structure
+        read finds what a single-structure ``.out`` carries; a run that writes its
+        geometries elsewhere (a trajectory) leaves it nothing, and the structure is
+        ledgered unparseable — exactly what the ``sp`` these templates used to infer did,
+        now under the run kind's own name and with the warning.
         """
         operation = self._resolve_operation(ctx)
+        inferred = ctx.step_cfg.operation is None
+        if inferred and operation not in output.known_operations():
+            logger.warning(
+                "%s: the template's keywords infer operation %r, which has no reader of its "
+                "own yet — reading the final structure only",
+                output_path.name,
+                operation,
+            )
+            return output.parse_dft(output_path)
         if operation.lower().replace("+", "_") in output.TEXT_BASED_OPERATIONS:
             return output.parse_text(
                 output_path.read_text(encoding="utf-8", errors="replace"),

@@ -290,6 +290,13 @@ for the full map.
 
 ### Changed
 
+- **An ORCA template that walks a reaction path, a band or a trajectory is named for what
+  it is.** `! IRC`, the `NEB` family and a `%md` block infer `operation: irc`, `neb` and
+  `md` where they used to fall through to `sp`, so the run log and the step's records say
+  what the output is. None of the three has a reader of its own yet: the output is read
+  as its final structure with a warning, and the step fans out into its geometries the day
+  a reader joins the dispatch, with no config change. An explicit `operation:` is still
+  held to the readers' vocabulary. Both ExtOpt engines inherit the inspection.
 - **The cache identity is per-structure, and `resume` is incremental.** A step's key is
   layered the way its work is: a **row key** per structure (engine, template bytes,
   effective charge/multiplicity, the options as the engine's declared model reads them,

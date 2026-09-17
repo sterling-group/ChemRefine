@@ -30,10 +30,24 @@ def _write(tmp_path: Path, body: str) -> Path:
         ("! B3LYP def2-SVP OptTS\n", "opt_sp"),
         ("! PBE def2-SVP Freq\n", "sp"),  # frequency-only: a single point + Hessian
         ("! HF def2-SVP\n", "sp"),  # no run-type keyword → ORCA's SP fallback
+        ("! B3LYP def2-SVP IRC\n%irc MaxIter 50 end\n", "irc"),
+        ("! B3LYP def2-SVP OptTS Freq IRC\n", "irc"),  # the path is the product
+        ('! XTB NEB-TS\n%neb NEB_End_XYZFile "product.xyz" end\n', "neb"),
+        ("! XTB ZOOM-NEB-CI\n", "neb"),
+        ("! XTB Opt NEB-IDPP\n", "neb"),  # the band wins over the optimisation beside it
+        ("! XTB\n%md\n  timestep 0.5_fs\n  run 100\nend\n", "md"),
+        ("! B3LYP def2-SVP Opt\n%md timestep 0.5_fs end\n", "md"),
     ],
 )
 def test_inspect_picks_parser_from_keywords(tmp_path: Path, body: str, operation: str):
     assert inspect_template(_write(tmp_path, body)).operation == operation
+
+
+def test_a_keyword_that_merely_contains_a_run_kind_does_not_name_it(tmp_path: Path):
+    """Whole tokens only, as for ``opt`` and ``freq``: ``NEBULA`` is not a band, ``MDCI`` no MD."""
+    assert inspect_template(_write(tmp_path, "! NEBULA def2-SVP\n")).operation == "sp"
+    assert inspect_template(_write(tmp_path, "! MDCI def2-SVP\n")).operation == "sp"
+    assert inspect_template(_write(tmp_path, "# ! IRC later\n! HF def2-SVP\n")).operation == "sp"
 
 
 def test_inspect_is_case_insensitive(tmp_path: Path):

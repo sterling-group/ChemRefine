@@ -36,9 +36,23 @@ option model at all, which is why the table above shows none. The `!` keyword li
 structure.
 
 That is also why ORCA can infer `operation:`: when the key is omitted, the template's
-keyword lines decide (`GOAT` / `DOCKER` / `SOLVATOR` / a `%geom Scan` block / `Opt` /
-`OptTS` / `Freq`, case-insensitively, `#` comments ignored), defaulting to a single point.
-An explicit `operation:` always wins — set it when inspection cannot decide.
+keyword lines decide, case-insensitively, with `#` comments ignored:
+
+| Template | infers `operation:` |
+| --- | --- |
+| `! GOAT`, `! DOCKER`, `! SOLVATOR` | `goat`, `docker`, `solvator` — an ensemble |
+| a `%geom … Scan … end` block | `pes` — one structure per scan point |
+| `! IRC` | `irc` — the intrinsic reaction coordinate |
+| `! NEB`, `! NEB-TS`, `! NEB-CI`, `! ZOOM-NEB…`, `! FAST-NEB-TS` | `neb` — a band of images |
+| a `%md … end` block | `md` — a trajectory |
+| `! Opt` (any convergence level), `! OptTS` | `opt_sp` |
+| anything else — a bare single point, a frequency-only job | `sp` |
+
+A many-geometry kind wins over an optimisation keyword beside it (`! OptTS Freq IRC` is an
+`irc` run: the path is the product). An explicit `operation:` always wins — set it when
+inspection cannot decide. A word whose output has no reader of its own yet (`irc`, `neb`,
+`md`) still runs: the output is read as its final structure and the run log says so, and the
+step fans out into its geometries the day a reader for it joins the dispatch.
 
 `executables: { orca: /path/to/orca }` names the binary; an absolute path is required for
 ORCA's own MPI launcher to work.
