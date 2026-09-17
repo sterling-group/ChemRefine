@@ -742,6 +742,35 @@ def test_an_env_whose_layout_says_nothing_is_left_alone(monkeypatch, tmp_path: P
     provision.build_backend_env("mlip-orb", tool="conda")  # no raise
 
 
+def test_a_conda_alias_symlink_is_not_the_envs_python(monkeypatch, tmp_path: Path):
+    """conda's ``lib/python3.1 -> python3.12`` alias must not read as a Python 3.1 env.
+
+    It sorts before the real directory, and an env "built on Python 3.1" is one no extra
+    supports — so ``backends install`` into a working conda env was refused, with advice to
+    delete it. The alias resolves to the real directory, which is the one answer there is.
+    """
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    monkeypatch.setattr(provision, "_direct_url", lambda: None)
+    _supports(monkeypatch, ("3.12",))
+    env_path = provision.backend_env_path("mlip-chgnet")
+    _provisioned(tmp_path, "mlip-chgnet")
+    (env_path / "lib" / "python3.12" / "site-packages").mkdir(parents=True)
+    (env_path / "lib" / "python3.1").symlink_to("python3.12")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(provision.subprocess, "run", lambda argv, **_k: calls.append(argv))
+
+    assert provision._env_python_version(env_path) == "3.12"
+    provision.build_backend_env("mlip-chgnet", tool="conda")
+    assert len(calls) == 1, "the env is extended, not refused as built on Python 3.1"
+
+
+def test_two_real_lib_dirs_are_unknown_not_refused(tmp_path: Path):
+    """Two distinct ``lib/python3.X`` directories are a layout this cannot read."""
+    for version in ("3.12", "3.13"):
+        (tmp_path / "lib" / f"python{version}").mkdir(parents=True)
+    assert provision._env_python_version(tmp_path) is None
+
+
 def test_python_is_refused_against_an_env_that_already_exists(monkeypatch, tmp_path: Path):
     """`--python` only applies where an env is created; ignoring it would report a lie."""
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))

@@ -548,17 +548,28 @@ def _version_of(interpreter: str) -> str:
     return done.stdout.strip()
 
 
-def _env_python_version(env_path: Path) -> str | None:
-    """The ``X.Y`` a managed env was built on, read off its own layout.
+def _env_lib(env_path: Path) -> Path | None:
+    """The one ``<env>/lib/python3.X/`` a managed env has, or ``None`` when it cannot be read.
 
     ``<env>/lib/python3.12/`` is there in a conda prefix and a venv alike, so this costs a
     ``glob`` rather than a subprocess — which matters on a path that runs before every
-    install. ``None`` when the layout says nothing (a half-made or faked env): unknown is
-    not evidence of *wrong*, and this must not refuse an env it simply cannot read.
+    install and at every run's preflight. The entries are deduplicated through their real
+    path: a conda env also carries a ``lib/python3.1 -> python3.12`` alias symlink (an
+    artifact of conda's Python builds), which sorts first and, read as Python 3.1,
+    refused ``backends install`` into a working env as built on a Python no extra supports.
+
+    ``None`` when the layout says nothing — no such directory (a half-made or faked env)
+    or two *distinct* ones: unknown is not evidence of *wrong*, and the callers must not
+    refuse an env they simply cannot read.
     """
-    for lib in sorted((env_path / "lib").glob("python3.*")):
-        return lib.name.removeprefix("python")
-    return None
+    real = {lib.resolve() for lib in (env_path / "lib").glob("python3.*")}
+    return real.pop() if len(real) == 1 else None
+
+
+def _env_python_version(env_path: Path) -> str | None:
+    """The ``X.Y`` a managed env was built on, read off its own layout (:func:`_env_lib`)."""
+    lib = _env_lib(env_path)
+    return None if lib is None else lib.name.removeprefix("python")
 
 
 def _require_supported_env(extra: str, env_path: Path) -> None:

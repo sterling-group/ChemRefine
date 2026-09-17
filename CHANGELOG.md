@@ -444,6 +444,11 @@ for the full map.
 
 ### Fixed
 
+- **`chemrefine backends install` accepts a conda-made env for what it is.** conda
+  writes a `lib/python3.1 -> python3.12` alias symlink into the envs it creates; read
+  first, it made the env "built on Python 3.1", which no backend supports, so installing
+  into an existing conda env (a `pyscf-gpu` on top of `pyscf`, a refresh of any env) was
+  refused with advice to delete it. The env's one real `lib/` directory is now the answer.
 - **An unknown step target exits 2 from every entry point, `--dry-run` included.** The
   same mistake — `rerun cfg.yaml ghost` when no step is called `ghost` — exited 0 under
   `--dry-run` (the target was echoed as though it would run, after the dry run had
