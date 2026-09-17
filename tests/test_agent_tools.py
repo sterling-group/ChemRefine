@@ -272,6 +272,26 @@ def test_start_run_passes_the_target_through(tmp_path: Path, recorded_popen):
     assert call["argv"][-3:] == ["--", str(path.resolve()), "screen"]
 
 
+def test_start_run_renders_a_numeric_target_as_the_text_the_child_reads(
+    tmp_path: Path, recorded_popen
+):
+    """A step *number* is a legal target, and the child's argv is text.
+
+    ``find_step`` accepts an ``int`` (it is how ``/api/results`` selects a step), so
+    ``target=2`` passed validation and reached ``argv.append`` unrendered — ``Popen``
+    raised ``TypeError`` after the log file existed: a 500 out of the GUI and an empty
+    ``agent_runs/*.log`` that ``run_status`` served as the newest. Every element of the
+    argv has to be a ``str``, because that is the only thing a child process can be given.
+    """
+    path = _write_config(
+        tmp_path, {"step": 1, "name": "screen", "engine": "fake"}, {"step": 2, "engine": "fake"}
+    )
+    agent_tools.start_run(str(path), action="rerun", target=2)
+    [call] = recorded_popen.calls
+    assert call["argv"][-1] == "2"
+    assert all(isinstance(word, str) for word in call["argv"]), call["argv"]
+
+
 def test_start_run_ends_option_parsing_before_the_positionals(tmp_path: Path, recorded_popen):
     """``--`` stands between the flags and the positionals on the child's argv.
 

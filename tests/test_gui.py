@@ -508,6 +508,52 @@ def test_the_run_budgets_reach_the_child_and_absence_stays_absent(
     assert "--maxgpus" not in bare
 
 
+def test_a_numeric_run_target_launches_and_a_malformed_one_is_refused_before_any_log(
+    client: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """``target`` is the one wire field that reaches a child's argv, and it went unrendered.
+
+    ``find_step`` takes a step number as a JSON ``int`` (the ``step`` selectors do), so
+    ``{"target": 2}`` passed validation and ``start_run`` appended the bare ``int`` —
+    ``Popen`` then raised ``TypeError`` *after* the run log existed: a logged-traceback
+    500, and an empty ``agent_runs/*.log`` that ``run_status`` served as the newest run.
+    The stub refuses a non-string argv the way the real ``Popen`` does, so a regression
+    cannot pass on a lenient fake. A shape ``find_step`` refuses stays the documented 400,
+    and it refuses before the log directory is touched — nothing on disk to mislead.
+    """
+    import subprocess
+
+    argvs: list[list[str]] = []
+
+    class _Strict:
+        def __init__(self, argv: list[str], **kwargs: Any) -> None:
+            if not all(isinstance(word, str) for word in argv):
+                raise TypeError("expected str, bytes or os.PathLike object, not int")
+            self.pid = 4242
+            argvs.append(argv)
+
+    monkeypatch.setattr(subprocess, "Popen", _Strict)
+    config = _reported_tree(tmp_path)
+    logs = tmp_path / "outputs" / "agent_runs"
+
+    started = _post(
+        client, "/api/run", {"config_path": str(config), "action": "rerun", "target": 2}
+    )
+    assert started.status_code == 200, started.get_json()
+    [argv] = argvs
+    assert argv[-3:] == ["--", str(config.resolve()), "2"]
+    assert Path(started.get_json()["log"]).is_file()  # the launched run's own log
+    launched = sorted(logs.glob("*.log"))
+
+    refused = _post(
+        client, "/api/run", {"config_path": str(config), "action": "rerun", "target": [2]}
+    )
+    assert refused.status_code == 400
+    assert "neither a step number nor a name" in refused.get_json()["error"]
+    assert len(argvs) == 1, "a refused request launches nothing"
+    assert sorted(logs.glob("*.log")) == launched, "and leaves no log behind"
+
+
 def test_dashboard_run_surfaces_a_held_lock_as_exit_code_10(client: Any, tmp_path: Path):
     import json as jsonlib
     import os

@@ -456,6 +456,12 @@ for the full map.
   retried mid-queue, which used to land after its siblings. A tree that already holds a
   retry-ordered cache recomputes its tail once more on its next `rebuild-cache`, which is
   the state it is in today.
+- **A run started with a numeric step target launches.** `start_run` — and so the GUI's
+  Run panel over `/api/run` — accepted a step number as an integer (the same selector
+  `/api/results` takes) but appended it to the child's argv unrendered, so `Popen`
+  raised after the run log had been created: a 500 for the request and an empty
+  `agent_runs/*.log` that `run_status` then reported as the newest run. The target is
+  rendered as text like the two budgets are.
 - **A managed backend environment runs the ChemRefine that drives it.** An editable
   orchestrator (`pip install -e .`) got a *snapshot* of its checkout in every managed
   environment, frozen at provisioning: the direct MLIP scripts and the ExtOpt server

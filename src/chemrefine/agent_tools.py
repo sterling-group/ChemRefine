@@ -245,7 +245,12 @@ def start_run(
     argv.append("--")
     argv.append(str(path))
     if target is not None:
-        argv.append(target)
+        # `find_step` above takes a step number as an `int` as readily as a name, and the
+        # GUI hands a JSON number straight through. Rendered here, so it reaches the child
+        # the way a shell would spell it — appended raw, an `int` made `Popen` raise
+        # `TypeError` *after* the log file below existed: a 500, and an empty log that
+        # `run_status` then served as the newest.
+        argv.append(str(target))
     with log_path.open("wb") as log:
         # No shell, and nothing in `argv` is free text: the interpreter is `sys.executable`,
         # `action` was matched against `_ACTIONS` above, `path` is a resolved config file,
