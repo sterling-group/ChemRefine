@@ -329,45 +329,56 @@ def test_a_bare_manifest_reads_as_unprovenanced(tmp_path: Path):
     assert provenance.fingerprint == "feedfacefeedface"
 
 
-def test_a_manifest_that_is_not_a_mapping_reads_as_unprovenanced(tmp_path: Path):
-    """Valid JSON of the wrong shape — a bare list — is unprovable, not a crash.
+def test_a_manifest_that_is_not_a_mapping_is_the_caches_own_error(tmp_path: Path):
+    """Valid JSON of the wrong shape — a bare list — is a corrupt manifest to both readers.
 
     ``read_json`` guarantees only that the file parsed; a hand-edited or foreign manifest
-    can hold any JSON value, and provenance built on ``.get`` calls against a list would be
-    a ``AttributeError`` three frames from the file that caused it. All-empty provenance
-    routes the caller to the explicit ``rebuild-cache``, same as a pre-provenance tree.
+    can hold any JSON value. The provenance reader used to answer such a file with
+    all-empty provenance, routing the caller to ``rebuild-cache`` as for a pre-provenance
+    tree — but ``rebuild-cache`` reads the same file through ``load_manifest`` first and
+    refuses it as corrupt, so the advice led straight to the refusal. One reading of the
+    file now, one verdict: the cache's own error, exit 7, whichever reader meets it.
     """
-    from chemrefine.cache import load_manifest_provenance, manifest_path
+    from chemrefine.cache import load_manifest, load_manifest_provenance, manifest_path
 
     manifest_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
     manifest_path(tmp_path).write_text('["not", "a", "mapping"]', encoding="utf-8")
-    provenance = load_manifest_provenance(tmp_path)
-    assert provenance.fingerprint == ""
-    assert provenance.criterion_key == ""
-    assert provenance.search_key == ""
-    assert provenance.rows == {}
+    with pytest.raises(CacheError, match=r"corrupt manifest .*not a JSON object"):
+        load_manifest_provenance(tmp_path)
+    with pytest.raises(CacheError, match=r"corrupt manifest .*not a JSON object"):
+        load_manifest(tmp_path)
 
 
-def test_a_provenanced_record_without_an_id_is_the_caches_own_error(tmp_path: Path):
-    """A row that carries a ``row_key`` but no ``id`` is a ``CacheError``, like its twin.
+@pytest.mark.parametrize("missing", ["id", "input", "output"])
+def test_a_record_missing_a_field_is_the_caches_own_error_from_either_reader(
+    tmp_path: Path, missing: str
+):
+    """A record of the wrong shape is one ``CacheError``, whichever reader meets it first.
 
-    ``load_manifest`` already refused the record with the cache's exit code and the
-    rebuild advice; ``load_manifest_provenance`` let the same file escape as a bare
-    ``KeyError`` — and the ``CACHE_ONLY`` route reads the provenance without going
-    through the layout reader first, so a scoped rebuild over a hand-edited earlier
-    step ended in a traceback.
+    Both public readers project one shape-checked reading of the file, so a row that
+    carries a ``row_key`` but lacks a field is refused identically. The ``CACHE_ONLY``
+    route reads the provenance without going through the layout reader first, and it
+    used to get a bare ``KeyError`` there — exit 1 and a traceback over a hand-edited
+    earlier step — while ``load_manifest`` got the cache's error and the rebuild advice.
     """
     import json
 
     from chemrefine.cache import load_manifest, load_manifest_provenance, manifest_path
 
     manifest_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
-    record = {"row_key": "abc", "parent_digest": "d", "input": "0/a.inp", "output": "0/a.out"}
+    record = {
+        "row_key": "abc",
+        "parent_digest": "d",
+        "id": "0",
+        "input": "a.inp",
+        "output": "a.out",
+    }
+    del record[missing]
     manifest_path(tmp_path).write_text(json.dumps({"files": [record]}), encoding="utf-8")
 
-    with pytest.raises(CacheError, match="corrupt manifest"):
+    with pytest.raises(CacheError, match=rf"corrupt manifest .*{missing}"):
         load_manifest(tmp_path)
-    with pytest.raises(CacheError, match="corrupt manifest"):
+    with pytest.raises(CacheError, match=rf"corrupt manifest .*{missing}"):
         load_manifest_provenance(tmp_path)
 
 

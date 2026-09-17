@@ -1231,65 +1231,114 @@ class ManifestProvenance:
     rows: dict[str, tuple[str, str]]
 
 
+@dataclass(frozen=True)
+class _ManifestRecord:
+    """One ``files`` record of a manifest, shape-checked: the job triple and its provenance.
+
+    ``row_key`` is ``None`` for a record written without provenance — a pre-provenance
+    tree, or a hand-written v1 adoption manifest — which is a legal record, not a broken
+    one.
+    """
+
+    input: Path
+    output: Path
+    id: str
+    row_key: str | None
+    parent_digest: str
+
+
+@dataclass(frozen=True)
+class _Manifest:
+    """A manifest document as read from disk: the step stamp and every record."""
+
+    fingerprint: str
+    criterion_key: str
+    search_key: str
+    records: tuple[_ManifestRecord, ...]
+
+
+def _read_manifest(step_dir: Path) -> _Manifest | None:
+    """Read a step's manifest once, for both public readers; ``None`` when there is none.
+
+    **The one reader of the record shape.** :func:`load_manifest` projects the job
+    triples out of this reading and :func:`load_manifest_provenance` the stamp and the
+    provenanced rows, so the two cannot disagree about what a broken manifest is. Each
+    walked ``files`` on its own, each behind its own net, and the nets drifted: a record
+    without an ``id`` was the cache's error to one and a bare ``KeyError`` to the other,
+    and a document that was no object at all was corrupt to one and *unprovenanced* to
+    the other — advice that routed to ``rebuild-cache``, which reads the same file
+    through the first reader and refuses it.
+
+    A document of the wrong shape is the :class:`CacheError` every ``_cache/`` reader
+    raises — exit 7 with the cache's own advice, never a traceback. A relative entry is
+    anchored to ``step_dir`` (the spelling :func:`save_manifest` writes, which is what
+    lets a moved tree find its own outputs); an absolute one is taken verbatim, so every
+    manifest written before that spelling, and every hand-written v1 adoption manifest,
+    reads exactly as it did. ``Path.is_absolute`` tells the two apart without ambiguity.
+    """
+    path = manifest_path(step_dir)
+    data = read_json(path, None, label="manifest")
+    if data is None:
+        return None
+    if not isinstance(data, dict):
+        raise CacheError(f"corrupt manifest at {path}: not a JSON object")
+    try:
+        records = tuple(
+            _ManifestRecord(
+                input=_anchor(rec["input"], step_dir),
+                output=_anchor(rec["output"], step_dir),
+                id=str(rec["id"]),
+                row_key=str(rec["row_key"]) if "row_key" in rec else None,
+                parent_digest=str(rec.get("parent_digest", "")),
+            )
+            for rec in data["files"]
+        )
+    except (KeyError, TypeError) as e:
+        raise CacheError(f"corrupt manifest at {path}: {e}") from e
+    return _Manifest(
+        fingerprint=str(data.get("fingerprint", "")),
+        criterion_key=str(data.get("criterion_key", "")),
+        search_key=str(data.get("search_key", "")),
+        records=records,
+    )
+
+
 def load_manifest_provenance(step_dir: Path) -> ManifestProvenance:
     """The provenance recorded alongside a step's manifest; all-empty when there is none.
 
     Read separately from :func:`load_manifest` so callers that want only the file layout
     are untouched. All-empty covers a missing manifest and one written before these keys
     existed alike — neither can equal a real stamp, so every reader falls back to the
-    route that recomputes.
-
-    A record of the wrong *shape* is the :class:`CacheError` every ``_cache/`` reader
-    raises, held to the same net as :func:`load_manifest`: a row that carries a
-    ``row_key`` but no ``id`` used to escape as a bare ``KeyError`` — exit 1 and a
-    traceback instead of exit 7 and the rebuild advice — on the one route that reads the
-    provenance without going through the layout reader first (a step a scoped action
-    is not targeting, in :func:`chemrefine.step.run_step`).
+    route that recomputes. A manifest of the wrong shape is :func:`_read_manifest`'s
+    :class:`CacheError` — the same one :func:`load_manifest` raises over the same file.
     """
-    path = manifest_path(step_dir)
-    data = read_json(path, None, label="manifest")
-    if not isinstance(data, dict):
+    manifest = _read_manifest(step_dir)
+    if manifest is None:
         return ManifestProvenance(fingerprint="", criterion_key="", search_key="", rows={})
-    rows: dict[str, tuple[str, str]] = {}
-    try:
-        for rec in data.get("files") or []:
-            if isinstance(rec, dict) and "row_key" in rec:
-                rows[str(rec["id"])] = (str(rec["row_key"]), str(rec.get("parent_digest", "")))
-    except (KeyError, TypeError) as e:
-        raise CacheError(f"corrupt manifest at {path}: {e!r}") from e
     return ManifestProvenance(
-        fingerprint=str(data.get("fingerprint", "")),
-        criterion_key=str(data.get("criterion_key", "")),
-        search_key=str(data.get("search_key", "")),
-        rows=rows,
+        fingerprint=manifest.fingerprint,
+        criterion_key=manifest.criterion_key,
+        search_key=manifest.search_key,
+        rows={
+            rec.id: (rec.row_key, rec.parent_digest)
+            for rec in manifest.records
+            if rec.row_key is not None
+        },
     )
 
 
 def load_manifest(step_dir: Path) -> StepInputs | None:
     """Rehydrate :class:`StepInputs` from the persisted manifest, or ``None``.
 
-    A relative entry is anchored to ``step_dir`` — the spelling :func:`save_manifest`
-    writes, which is what lets a moved tree find its own outputs; an absolute one is
-    taken verbatim, so every manifest written before that spelling, and every hand-written
-    v1 adoption manifest, reads exactly as it did. ``Path.is_absolute`` tells the two apart
-    without ambiguity.
-
-    Raises :class:`CacheError` if the JSON is malformed or is missing the
-    expected ``files`` field — callers should treat a corrupt manifest as fatal
-    rather than silently re-parsing an empty batch.
+    The job triples of :func:`_read_manifest`'s reading: its anchoring is what lets a
+    moved tree find its own outputs, and its :class:`CacheError` for a malformed document
+    or a record missing a field is what makes a corrupt manifest fatal rather than
+    silently re-parsed as an empty batch.
     """
-    path = manifest_path(step_dir)
-    data = read_json(path, None, label="manifest")
-    if data is None:
+    manifest = _read_manifest(step_dir)
+    if manifest is None:
         return None
-    try:
-        files = tuple(
-            (_anchor(rec["input"], step_dir), _anchor(rec["output"], step_dir), rec["id"])
-            for rec in data["files"]
-        )
-    except (KeyError, TypeError) as e:
-        raise CacheError(f"corrupt manifest at {path}: {e}") from e
-    return StepInputs(files=files)
+    return StepInputs(files=tuple((rec.input, rec.output, rec.id) for rec in manifest.records))
 
 
 def _anchor(text: str, step_dir: Path) -> Path:
