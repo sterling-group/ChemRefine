@@ -1001,6 +1001,19 @@ def test_extopt_server_cmd_uses_managed_env(monkeypatch, tmp_path: Path):
     assert cmd.startswith(f"{py} -m chemrefine.engines._backend_server.server")
 
 
+def test_extopt_readiness_probe_uses_the_managed_env_too(monkeypatch, tmp_path: Path):
+    """The interpreter is resolved once for the launch and the probe runs under it as well."""
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    py = _provisioned(tmp_path, "mlip-mace")
+    ctx = _ctx(tmp_path, engine="mlip-extopt", options={"task_name": "mace_off"})
+    assert ctx.template is not None
+    ctx.template.parent.mkdir(parents=True)
+    ctx.template.write_text("! HF def2-SVP\n", encoding="utf-8")  # run_block reads its %pal
+    body = get_engine("mlip-extopt").run_block(ctx, Path("step1_0.inp"), Path("step1_0.out")).body
+    assert f"{py} -m chemrefine.engines._backend_server.server" in body
+    assert f'{py} -c "import sys, urllib.request; ' in body
+
+
 def test_extopt_server_cmd_defaults_to_sys_executable(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
     ctx = _ctx(tmp_path, engine="mlip-extopt", options={"task_name": "mace_off"})

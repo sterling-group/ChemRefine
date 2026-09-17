@@ -126,7 +126,7 @@ class ExtOptOrcaEngine(OrcaEngine):
         orca_input.require_whitespace_free(wrapper, what="the ExtOpt wrapper path")
         return f'%method\n  ProgExt "{wrapper}"\nend'
 
-    def _server_cmd(self, ctx: StepContext) -> str:
+    def _server_cmd(self, ctx: StepContext, interpreter: str | None = None) -> str:
         """Build the ``<python> -m ..._backend_server.server --backend <name> …`` command.
 
         Validates the engine's share of ``ctx.step_cfg.options`` through ``options_cls`` (so
@@ -135,11 +135,13 @@ class ExtOptOrcaEngine(OrcaEngine):
         into the matching server CLI tokens — the single source of truth for the backend's
         configuration. The wrapper and per-call POST carry nothing (single-channel). The
         server's interpreter comes from the provisioner (managed backend env when one exists),
-        so conflicting backends can serve side by side in one run.
+        so conflicting backends can serve side by side in one run; :meth:`run_block`
+        resolves it once and passes it in, since the readiness probe runs under it too.
         """
         validated = self.options_cls.from_raw(ctx.step_cfg.engine_options())
         tokens = self.calculator_cls.server_cli_from_options(validated.model_dump())
-        interpreter = _provision.launcher_for(self, ctx.step_cfg.options)
+        if interpreter is None:
+            interpreter = _provision.launcher_for(self, ctx.step_cfg.options)
         return run_block.server_command(
             backend=self.backend, extra_tokens=tokens, interpreter=interpreter
         )
@@ -192,10 +194,12 @@ class ExtOptOrcaEngine(OrcaEngine):
         # same number — the raw pal() let a `%pal` above the budget thread past what the
         # throttler charges (see the invariant stated in run_block.py beside the export).
         ntasks, cpus_per_task = self.slurm_layout(ctx)
+        interpreter = _provision.launcher_for(self, ctx.step_cfg.options)
         return run_block.build_extopt_run_block(
-            server_cmd=self._server_cmd(ctx),
+            server_cmd=self._server_cmd(ctx, interpreter),
             orca_command=self.orca_command(ctx, inp_path.name, out_path.name),
             pal=ntasks * cpus_per_task,
+            interpreter=interpreter,
         )
 
     def _wrapper_path(self, ctx: StepContext) -> Path:

@@ -436,6 +436,12 @@ for the full map.
 
 ### Fixed
 
+- **The ExtOpt readiness probe no longer needs `curl`.** The generated job polled
+  `/healthz` with `curl`, which nothing declared or checked for: on a node image without
+  it every iteration failed, the loop ran its full 120 s, and the job died with "did not
+  become ready" — the wrong diagnosis for a missing binary. The probe is now a stdlib
+  `urllib` one-liner under the interpreter that hosts the server, which the job resolves
+  anyway.
 - **A GUI request missing a field it needs is a 400 that names the field.** Every
   `payload["…"]` read in the web app raised `KeyError`, re-raised as a logged-traceback
   500 — a rule one test pinned as deliberate while the newer endpoints on the same app

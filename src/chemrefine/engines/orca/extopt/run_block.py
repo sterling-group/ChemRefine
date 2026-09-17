@@ -50,6 +50,7 @@ def build_extopt_run_block(
     server_cmd: str,
     orca_command: str,
     pal: int,
+    interpreter: str = "python",
 ) -> RunBlock:
     """Return the :class:`~chemrefine.engines.api.RunBlock` orchestrating the ExtOpt server + ORCA.
 
@@ -58,6 +59,14 @@ def build_extopt_run_block(
     * Binds the server on a kernel-assigned port (sidecar URL file).
     * Loops up to ``_SERVER_READY_TIMEOUT_SECONDS`` polling ``/healthz``,
       exiting fast if the server process dies during startup.
+
+    ``interpreter`` is the Python that hosts the server — the same one
+    :func:`server_command` was given — and it is what polls ``/healthz``: a stdlib
+    ``urllib`` one-liner, so the probe needs nothing the job does not already have.
+    ``curl`` used to do it, and nothing declared or checked for it; on a node image
+    without one every iteration failed with exit 127, the loop ran its full
+    ``SERVER_TIMEOUT`` and the job died with "did not become ready" — the wrong
+    diagnosis for a missing binary.
 
     The ``cleanup`` stops the server — ``kill -TERM`` + ``wait``, which gives it a chance to
     release GPU memory — and :func:`chemrefine.slurm.script._run_body_lines` interpolates it
@@ -115,7 +124,9 @@ def build_extopt_run_block(
         'for i in $(seq 1 "$SERVER_TIMEOUT"); do\n'
         '  if [ -s "$URL_FILE" ] \\\n'
         '     && SERVER_URL=$(cat "$URL_FILE") \\\n'
-        '     && curl -fsS --max-time 2 "http://${SERVER_URL}/healthz" >/dev/null; then\n'
+        f'     && {shlex.quote(interpreter)} -c "import sys, urllib.request; '
+        'urllib.request.urlopen(sys.argv[1], timeout=2)" "http://${SERVER_URL}/healthz" '
+        ">/dev/null 2>&1; then\n"
         '    echo "ExtOpt server ready at $SERVER_URL after ${i}s"\n'
         "    ready=1\n"
         "    break\n"

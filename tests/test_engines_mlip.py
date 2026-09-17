@@ -541,6 +541,30 @@ def test_mlip_extopt_run_block_has_a_readiness_loop_and_a_cleanup_hook(tmp_path:
     assert "trap " not in block.cleanup
 
 
+def test_the_readiness_probe_is_the_launcher_interpreter_not_curl(tmp_path: Path):
+    """The loop polls ``/healthz`` with the Python that hosts the server; no ``curl``.
+
+    ``curl`` was the probe, and nothing declared or checked for it: on a node image without
+    one every iteration failed with exit 127, the loop ran its full 120 s, and the job died
+    with "did not become ready" — the wrong diagnosis for a missing binary. The server's
+    interpreter is resolved for the launch anyway and carries ``urllib`` by definition, so
+    the probe is a stdlib one-liner under it. With no managed env that is this interpreter.
+    """
+    import shlex
+    import sys
+
+    engine = get_engine("mlip-extopt")
+    ctx = _mlip_extopt_ctx(tmp_path)
+    body = engine.run_block(
+        ctx,
+        inp_path=ctx.step_dir / "step1_structure_0.inp",
+        out_path=ctx.step_dir / "step1_structure_0.out",
+    ).body
+    assert "curl" not in body
+    assert f'{shlex.quote(sys.executable)} -c "import sys, urllib.request; ' in body
+    assert 'urllib.request.urlopen(sys.argv[1], timeout=2)" "http://${SERVER_URL}/healthz"' in body
+
+
 def test_the_server_gets_the_steps_threads_and_orca_gets_one(tmp_path: Path):
     """The server is the compute half of an ExtOpt job; ORCA is only the stepper.
 

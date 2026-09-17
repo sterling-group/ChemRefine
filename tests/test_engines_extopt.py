@@ -568,7 +568,7 @@ def test_calculate_accepts_bearer_token():
 
 
 def test_healthz_stays_open_with_token_configured():
-    """The run_block readiness curl carries no token — healthz must stay open."""
+    """The run_block readiness probe carries no token — healthz must stay open."""
     app = server.create_app(_MockCalculator(), token="s3cret")
     assert app.test_client().get("/healthz").status_code == 200
 
