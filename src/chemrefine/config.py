@@ -822,7 +822,7 @@ def resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
     Absolute paths pass through unchanged.
 
     A step's ``options`` get the same treatment for the keys in
-    :data:`_STEP_OPTION_PATHS`, and they need it more than the rest: an option's value
+    :data:`STEP_OPTION_PATHS`, and they need it more than the rest: an option's value
     reaches a *job*, and a job runs neither where the config sits nor where the user stood —
     the generated script copies its input into a scratch ``$WORK_DIR`` and runs there. A
     relative ``model_path`` would resolve against that scratch directory and simply not be
@@ -849,13 +849,19 @@ def resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
     return cfg.model_copy(update=updates) if updates else cfg
 
 
-_STEP_OPTION_PATHS = ("model_path",)
+STEP_OPTION_PATHS = ("model_path",)
 """``step.options`` keys whose value is a filesystem path, resolved like the config's own.
 
 A deliberately short list rather than "anything that looks like a path": an option is
 free-form text and most values are not paths at all, so guessing would rewrite strings that
 merely resemble one. Adding a knob here is the cost of introducing a path-valued option, and
-it is one line."""
+it is one line.
+
+Public, not underscored, because :func:`chemrefine.step.derive_step_key` reads it too: the
+resolved value is absolute, and an absolute string inside a cache row key would tie a
+finished tree to the directory it ran in. The key carries such an option by its basename
+and pins the file's bytes separately (:func:`chemrefine.cache.option_file_digests`), so the
+same list decides both what the loader resolves and what the key must not spell out."""
 
 
 def _resolve_step_option_paths(step: StepConfig, *, base: Path) -> StepConfig:
@@ -863,7 +869,7 @@ def _resolve_step_option_paths(step: StepConfig, *, base: Path) -> StepConfig:
     options = step.options or {}
     rewritten = {
         key: str((base / value).resolve())
-        for key in _STEP_OPTION_PATHS
+        for key in STEP_OPTION_PATHS
         if isinstance(value := options.get(key), str) and value and not Path(value).is_absolute()
     }
     if not rewritten:

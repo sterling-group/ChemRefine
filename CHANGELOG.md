@@ -464,6 +464,16 @@ for the full map.
   become ready" — the wrong diagnosis for a missing binary. The probe is now a stdlib
   `urllib` one-liner under the interpreter that hosts the server, which the job resolves
   anyway.
+- **A step naming a `model_path` keeps its cache when the tree moves.** The loader
+  resolves `model_path` to an absolute path so the job can open it, and that string rode
+  into the step's cache row key — so the same config over the same model bytes derived a
+  different key at every directory it ran from. A tree copied off a cluster recomputed
+  the step that runs the model on `resume`, and `rebuild-cache` refused it as a different
+  configuration. The key now carries the option by its basename; the model's bytes were
+  always pinned separately, so retraining still re-runs the consumer. The cache key of
+  every step naming `model_path` moves once with this change — a tree cached before it
+  recomputes those steps on `resume`, and `rebuild-cache` refuses such a tree as foreign:
+  `rerun N` is the migration.
 - **A script template's `converged` must be a boolean.** The flag had no shape guard, and
   the lifecycle's verdict reads only a literal `false` as a failure — so a `stepN.py`
   assigning `converged = 0` or `"false"` ranked its structure as a converged survivor

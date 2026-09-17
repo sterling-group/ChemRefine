@@ -29,7 +29,13 @@ from typing import assert_never
 from pydantic import ValidationError
 
 from chemrefine import attempts, cache, filtering, ids, io, lifecycle, nms
-from chemrefine.config import Config, StepConfig, is_failure_policy, policy_stores_backfills
+from chemrefine.config import (
+    STEP_OPTION_PATHS,
+    Config,
+    StepConfig,
+    is_failure_policy,
+    policy_stores_backfills,
+)
 from chemrefine.engines.api import (
     ArtifactEngine,
     AuxFileConsuming,
@@ -323,12 +329,25 @@ def derive_step_key(
     present exactly when this step resolves. Living here rather than in
     :mod:`chemrefine.cache` keeps that module free of engine and NMS knowledge — it
     keys values it does not interpret.
+
+    A path-valued option (:data:`chemrefine.config.STEP_OPTION_PATHS`) is keyed by its
+    **basename**. The loader resolved it to an absolute path so the job can find the file,
+    and the same config over the same model bytes then derived a different row key at
+    every directory it ran from: a tree copied off a cluster missed its cache on
+    ``resume`` and was refused by ``rebuild-cache`` as a different configuration. The
+    file's *bytes* are pinned by :func:`chemrefine.cache.option_file_digests` under the
+    same option name, so the basename is all the key needs from the string — enough to
+    tell two same-byte files with different names apart, and nothing that names a machine.
     """
     engine_options: Mapping[str, object] = {}
     if isinstance(engine, OptionsDeclaring):
-        engine_options = engine.options_cls.from_raw_lenient(step_cfg.options).model_dump(
-            mode="json"
-        )
+        dumped = engine.options_cls.from_raw_lenient(step_cfg.options).model_dump(mode="json")
+        engine_options = {
+            key: (
+                Path(value).name if key in STEP_OPTION_PATHS and isinstance(value, str) else value
+            )
+            for key, value in dumped.items()
+        }
     aux_files: Mapping[str, Path] = {}
     if isinstance(engine, AuxFileConsuming) and ctx.template is not None:
         aux_files = engine.template_aux_files(ctx.template)

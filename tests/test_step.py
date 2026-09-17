@@ -758,6 +758,43 @@ def test_invalid_nms_options_are_refused_when_the_key_is_derived(tmp_path: Path)
         derive_step_key(ctx, cfg.steps[0], get_engine(cfg.steps[0].engine))
 
 
+def test_a_model_path_is_keyed_by_basename_so_a_relocated_tree_derives_the_same_key(
+    tmp_path: Path,
+):
+    """The same config over the same model bytes keys identically wherever the tree sits.
+
+    The loader resolves ``model_path`` to an absolute path so the job can open it, and the
+    whole options dump rode into the row key — so a tree copied to another directory or
+    machine derived a different key for the step that ran the model: ``resume`` recomputed
+    it and ``rebuild-cache`` refused it as a different configuration, for a run nothing
+    about had changed. The bytes are pinned by ``option_file_digests`` under the same
+    option name; the string contributes its basename and nothing that names a machine.
+    Both halves are held: identical bytes at two roots agree, and a retrained file or a
+    differently named one still moves the key.
+    """
+    from chemrefine.step import derive_step_key
+
+    def key_for(root: Path, *, name: str = "train.model", weights: bytes = b"weights"):
+        model = root / "outputs" / "step2" / "train" / name
+        model.parent.mkdir(parents=True)
+        model.write_bytes(weights)
+        cfg = _config(
+            root, engine="mlip", options={"task_name": "mace_off", "model_path": str(model)}
+        )
+        engine = get_engine("mlip")
+        ctx = build_context(cfg, cfg.steps[0], _seed_state(["0"]), engine)
+        return derive_step_key(ctx, cfg.steps[0], engine)
+
+    here, there = key_for(tmp_path / "cluster"), key_for(tmp_path / "laptop")
+    assert here.row_keys == there.row_keys, "the absolute path leaked into the row key"
+    assert here.fingerprint == there.fingerprint
+
+    retrained = key_for(tmp_path / "retrained", weights=b"other weights")
+    assert retrained.row_keys != here.row_keys, "the bytes must still pin the key"
+    renamed = key_for(tmp_path / "renamed", name="other.model")
+    assert renamed.row_keys != here.row_keys, "two same-byte files stay distinguishable"
+
+
 def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypatch):
     """run_step routes an `nms: true` step through the generic coordinator (nms.run_nms),
     then applies the on_failure policy to its survivors/failures."""

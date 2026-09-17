@@ -57,8 +57,9 @@ The cache identity is layered the way a step's work is layered:
   jobs render, whether set on the step or inherited from the workflow), the options
   **as the engine's declared model reads them** (a key nothing declares reaches no job
   and moves no key — `validate` warns about it instead), a digest of any file an
-  option names (retraining a model re-runs its consumers), and the parent structure's
-  own content (ID, symbols, coordinates, energy);
+  option names (retraining a model re-runs its consumers; the path-valued option itself
+  is keyed by its basename, so a tree copied elsewhere derives the same key), and the
+  parent structure's own content (ID, symbols, coordinates, energy);
 - a **resolution key** for an NMS step — the flag plus the `nms` options, split into
   the *criterion* (`target`, `ts_mode_index`) and the *search*
   (`displacement_value`, `num_random_displacements`, `seed`). It touches no row key:

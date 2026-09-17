@@ -339,6 +339,42 @@ def test_mlip_train_full_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert all(s.energy_hartree is not None for s in outcomes[2].state.structures)
 
 
+def _replay_mlip_train(root: Path, monkeypatch: pytest.MonkeyPatch) -> ReplayCase:
+    """The label → train → run replay, rooted wherever the caller says."""
+    case = extract_case("mlip_train", root)
+    monkeypatch.setattr(RUN_BATCH, _StubModelSubmitter(case))
+    config = load_config(case.config_path)
+    for step in (1, 2, 3):
+        config = _with_backend_python(config, step)
+    pipeline.run(config)
+    return case
+
+
+def test_mlip_train_replays_at_two_roots_derive_the_same_fingerprints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tree copied elsewhere keys every step — the model-consuming one included — the same.
+
+    Step 3 names the model by ``model_path: ./outputs/step2/train/train.model``, which the
+    loader resolves to an absolute path, and that string used to ride into the row key: the
+    same recording replayed at two roots derived two fingerprints for step 3, so a copied
+    tree recomputed it on ``resume`` and was refused by ``rebuild-cache``. The relocation
+    tests cannot see this case (its real model is too large to record), which is exactly
+    where it hid; this replays it twice with the stub model and compares.
+    """
+    first = _replay_mlip_train(tmp_path / "cluster", monkeypatch)
+    second = _replay_mlip_train(tmp_path / "laptop", monkeypatch)
+
+    def fingerprints(case: ReplayCase) -> dict[str, str]:
+        return {
+            doc.parent.parent.name: json.loads(doc.read_text(encoding="utf-8"))["fingerprint"]
+            for doc in sorted(case.output_dir.glob("step*/_cache/step.json"))
+        }
+
+    assert set(fingerprints(first)) == {"step1", "step2", "step3"}
+    assert fingerprints(first) == fingerprints(second)
+
+
 def test_mlip_train_second_run_hits_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A re-run serves every step from cache — including the training step.
 

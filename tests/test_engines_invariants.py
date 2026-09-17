@@ -466,7 +466,7 @@ _ALLOWED_RAW_READS = {
     # Operates on `validated.model_dump()` (see extopt/engine.py), so this *is* the
     # model's output -- it just arrives as a dict because the server CLI is generic.
     "engines/_backend_server/base.py",
-    # `_resolve_step_option_paths` rewrites the path-valued knobs (`_STEP_OPTION_PATHS`)
+    # `_resolve_step_option_paths` rewrites the path-valued knobs (`STEP_OPTION_PATHS`)
     # against the config file's directory -- before any engine model exists to read
     # through, because resolution is the loader's job and the model cannot know the
     # file's directory. The read is variable-keyed over that declared list, which is
