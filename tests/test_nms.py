@@ -794,17 +794,26 @@ def test_rebuilding_does_not_rewrite_the_children_it_reads(tmp_path: Path):
 
 
 def _calls_in(obj) -> set[str]:
-    """Every plain-name function call in ``obj``'s source."""
+    """Every function call in ``obj``'s source, by its last name.
+
+    Attribute-spelled calls count too — ``nms._install_winner(...)`` and
+    ``self._install_winner(...)`` both read as ``_install_winner`` — so the negative
+    assertions below cannot be dodged by spelling the call through a module or ``self``.
+    """
     import ast
     import inspect
     import textwrap
 
     tree = ast.parse(textwrap.dedent(inspect.getsource(obj)))
-    return {
-        n.func.id
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-    }
+    names: set[str] = set()
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        if isinstance(n.func, ast.Name):
+            names.add(n.func.id)
+        elif isinstance(n.func, ast.Attribute):
+            names.add(n.func.attr)
+    return names
 
 
 def test_rebuilding_cannot_install_a_winner():

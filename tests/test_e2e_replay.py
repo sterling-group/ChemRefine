@@ -179,7 +179,7 @@ def test_nms_resolves_saddle_via_round_two(tmp_path: Path, monkeypatch: pytest.M
     (survivor,) = outcomes[0].state.structures
     assert survivor.id == "0", "the resolved child is written back under the parent id"
     assert survivor.converged
-    assert not survivor.imaginary_freqs
+    assert survivor.imaginary_freqs == {}, "a verified minimum — a table, with nothing in it"
     assert len(outcomes[1].state.structures) == 1
 
 

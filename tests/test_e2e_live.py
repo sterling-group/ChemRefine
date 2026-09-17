@@ -136,7 +136,7 @@ def test_live_case(name: str, tmp_path: Path, request: pytest.FixtureRequest) ->
         assert all(s.gibbs_hartree is not None for s in outcomes[1].state.structures)
     elif name == "nms_minimum":
         assert list((outputs / "step1" / "0" / "attempt1").iterdir()), "NMS round 2 must run"
-        assert not outcomes[0].state.structures[0].imaginary_freqs
+        assert outcomes[0].state.structures[0].imaginary_freqs == {}, "a verified minimum"
     elif name == "ts_pes":
         (ts,) = outcomes[1].state.structures
         assert ts.imaginary_freqs is not None and len(ts.imaginary_freqs) == 1

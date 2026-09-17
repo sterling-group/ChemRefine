@@ -210,8 +210,9 @@ def test_on_failure_skip_drops_the_failed_structure(
     assert len(outcomes) == 2, "skip lets the pipeline finish"
     survivors = {s.id for s in outcomes[1].state.structures}
     assert sid not in survivors
-    ran = len(submitter.calls[1].files)
-    assert len(survivors) == min(3, ran - 1)
+    # Step 2 samples `count: 2` (the conformers case) from the two that succeeded: exactly
+    # two survive, and none of them is the dropped one.
+    assert len(survivors) == 2
 
 
 def test_on_failure_best_keeps_the_structure_with_its_best_geometry(
