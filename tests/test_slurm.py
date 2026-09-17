@@ -1541,11 +1541,13 @@ def test_the_lease_ledger_is_written_readable_for_the_next_driver(tmp_path: Path
     """
     import stat
 
-    slurm.record_lease(tmp_path, "local-1")
-    mode = stat.S_IMODE(slurm.lease_path(tmp_path).stat().st_mode)
-    umask = os.umask(0)
-    os.umask(umask)
-    assert mode == 0o666 & ~umask
+    previous = os.umask(0o027)
+    try:
+        slurm.record_lease(tmp_path, "local-1")
+        mode = stat.S_IMODE(slurm.lease_path(tmp_path).stat().st_mode)
+    finally:
+        os.umask(previous)
+    assert mode == 0o640
 
 
 def test_a_failed_lease_write_leaves_no_temp_file_behind(tmp_path: Path):

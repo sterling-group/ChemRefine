@@ -88,6 +88,7 @@ def test_dropped_in_plugin_package_is_discovered(monkeypatch, tmp_path: Path):
     finally:
         ENGINES.pop("goodplug-test", None)
         sys.modules.pop("chemrefine.engines.goodplug", None)
+        vars(engines_pkg).pop("goodplug", None)  # the import bound it as an attribute too
 
 
 def _dummy_plan(tmp_path: Path):
@@ -181,6 +182,7 @@ def test_a_dropped_in_library_module_registers_both_its_capabilities(monkeypatch
     finally:
         _BACKENDS.pop("dummy_head", None)
         sys.modules.pop("chemrefine.engines.mlip.backends.dummylib", None)
+        vars(backends_pkg).pop("dummylib", None)  # the import bound it as an attribute too
 
 
 def test_a_builder_that_is_not_a_single_spec_callable_is_refused_at_its_own_line():

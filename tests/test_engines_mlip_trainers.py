@@ -18,7 +18,6 @@ process is also what production does, and it keeps a backend's own import-time w
 
 from __future__ import annotations
 
-import functools
 import json
 import subprocess
 from pathlib import Path
@@ -46,7 +45,6 @@ from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
 
 
-@functools.cache
 def _backend_python(task_name: str) -> str | None:
     """The interpreter that can import this backend, or ``None`` when nothing here can.
 

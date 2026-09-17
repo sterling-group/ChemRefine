@@ -1,12 +1,13 @@
 """The embedded agent: same tools, human-gated mutations, any model — proven offline.
 
-``ALLOW_MODEL_REQUESTS = False`` at import, so nothing in here (or anywhere the suite
-wanders) can reach a real endpoint: the harness runs against PydanticAI's ``TestModel``
-(schema-driven synthetic calls) and ``FunctionModel`` (scripted turns, for exact
-code-path control). What must hold: provider resolution is flags → environment →
-preset with honest errors; every shared tool is registered under its own name with the
-mutating ones behind the confirmation callback; a declined mutation returns a
-structured refusal the model continues from, and the mutation did not happen.
+The suite's ``conftest`` holds ``ALLOW_MODEL_REQUESTS`` at ``False`` for the whole
+session, so nothing in here can reach a real endpoint: the harness runs against
+PydanticAI's ``TestModel`` (schema-driven synthetic calls) and ``FunctionModel``
+(scripted turns, for exact code-path control). What must hold: provider resolution is
+flags → environment → preset with honest errors; every shared tool is registered under
+its own name with the mutating ones behind the confirmation callback; a declined
+mutation returns a structured refusal the model continues from, and the mutation did
+not happen.
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ from typing import Any
 
 import pytest
 import yaml
-from pydantic_ai import models
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -26,9 +26,6 @@ from chemrefine import agent_tools
 from chemrefine.agent import harness
 from chemrefine.agent.providers import ProviderConfig
 from chemrefine.errors import ConfigError
-
-models.ALLOW_MODEL_REQUESTS = False  # the whole suite stays offline, permanently
-
 
 # ---------------------------------------------------------------------------
 # Providers

@@ -192,14 +192,16 @@ def test_the_good_mode_is_drawn_on_the_geometry_the_tutorial_ships():
         ("1\ncomment\nC 0.0 0.0 0.0 0.1 0.2 0.3\n", "comment line"),
     ],
 )
-def test_a_malformed_mode_file_fails_the_build(tmp_path: Path, broken: str, complaint: str):
+def test_a_malformed_mode_file_fails_the_build(
+    tmp_path: Path, broken: str, complaint: str, monkeypatch: pytest.MonkeyPatch
+):
     """Each of these renders as a blank rectangle if it is allowed through.
 
     A viewer that fails at run time fails in the reader's browser, where no gate is
     watching. The build is the last place it can still be a loud failure.
     """
     hook = _hook()
-    hook._MODES = tmp_path
+    monkeypatch.setattr(hook, "_MODES", tmp_path)
     (tmp_path / "wrong.xyz").write_text(broken, encoding="utf-8")
     with pytest.raises(ValueError, match=complaint):
         hook.on_page_markdown("<!-- chemrefine:mode wrong -->", page=_page())

@@ -116,6 +116,28 @@ def _restore_engine_registries() -> Iterator[None]:
     registry._BACKENDS.update(backends_before)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _keep_model_requests_offline() -> Iterator[None]:
+    """Hold PydanticAI's ``ALLOW_MODEL_REQUESTS`` at ``False`` for the whole session.
+
+    The suite drives real agents against ``TestModel`` / ``FunctionModel`` only, and the
+    flag is the library's own fence against a test that reaches a real endpoint. It is a
+    process-global, so it is owned here with the others (``CHEMREFINE_HOME``,
+    ``CUDA_VISIBLE_DEVICES``, ``DISPLAY``, the engine registries) rather than assigned at
+    import of one test module — a fence that stood only when collection happened to
+    include that file. Without the ``agent`` extra there is nothing to fence.
+    """
+    try:
+        from pydantic_ai import models
+    except ImportError:
+        yield
+        return
+    previous = models.ALLOW_MODEL_REQUESTS
+    models.ALLOW_MODEL_REQUESTS = False
+    yield
+    models.ALLOW_MODEL_REQUESTS = previous
+
+
 @pytest.fixture(autouse=True)
 def _isolate_display_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pin a non-headless display environment — the suite must not care where it runs.
