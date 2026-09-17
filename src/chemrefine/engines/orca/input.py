@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from chemrefine import io
 from chemrefine.engines.orca.inspect import PAL_PATTERNS
 from chemrefine.errors import ConfigError
 
@@ -207,7 +208,7 @@ def build_input(
         raise ConfigError(f"ORCA template not found: {template_path}")
     require_whitespace_free(xyz_path, what="the ORCA geometry path")
 
-    template = template_path.read_text(encoding="utf-8")
+    template = io.read_utf8(template_path, what="ORCA template")
     cleaned = _XYZFILE_DIRECTIVE_RE.sub("", template).rstrip()
     cleaned = _absolutize_template_paths(cleaned, template_path.parent)
     if max_pal is not None:

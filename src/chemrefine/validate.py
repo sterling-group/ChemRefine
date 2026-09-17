@@ -43,7 +43,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from chemrefine import config_legacy, slurm
+from chemrefine import config_legacy, io, slurm
 from chemrefine.config import (
     Config,
     StepConfig,
@@ -222,9 +222,12 @@ def validate_config_file(path: Path) -> ValidationReport:
     :func:`~chemrefine.config.load_config` resolves them.
     """
     try:
-        text = path.read_text(encoding="utf-8")
+        text = io.read_utf8(path, what="config")
     except OSError as e:
         return _failed("io", f"could not read {path}: {e}")
+    except ConfigError as e:
+        # The decode half of "cannot be read" — the reader's own refusal, as a row.
+        return _failed("io", str(e))
     return validate_config_text(text, base_dir=path.parent)
 
 

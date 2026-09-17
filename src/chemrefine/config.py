@@ -47,7 +47,7 @@ from pydantic import (
     model_validator,
 )
 
-from chemrefine import config_legacy
+from chemrefine import config_legacy, io
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 
@@ -826,7 +826,7 @@ def load_config(path: str | Path) -> Config:
     """
     p = Path(path)
     try:
-        text = p.read_text(encoding="utf-8")
+        text = io.read_utf8(p, what="config")
     except OSError as e:
         raise ConfigError(f"could not read {p}: {e}") from e
     try:

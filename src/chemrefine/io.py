@@ -31,6 +31,7 @@ from ase import Atoms
 from ase.io import read as ase_read
 from numpy.typing import NDArray
 
+from chemrefine.errors import ConfigError
 from chemrefine.quantities import (
     DEFAULT_TEMPERATURE_K,
     HARTREE_TO_KCALMOL,
@@ -89,6 +90,29 @@ def natural_key(name: str | Path) -> list[object]:
     unchanged: every chunk the ``\\d+`` capture isolates is decimal already.
     """
     return [int(p) if p.isdecimal() else p.lower() for p in _NATURAL_PART.split(str(name))]
+
+
+# ---------------------------------------------------------------------------
+# Text
+# ---------------------------------------------------------------------------
+
+
+def read_utf8(path: Path, *, what: str) -> str:
+    """Read a user-authored text file as UTF-8, or refuse it as a :class:`ConfigError`.
+
+    The one reader for the files a person writes and ChemRefine parses — the config, the
+    step templates, the SLURM header. ``UnicodeDecodeError`` is a ``ValueError``, not an
+    ``OSError``, so every ``except OSError`` around a ``read_text`` let a latin-1 file
+    (an ``Å`` in a comment, saved by an editor on a cluster) escape as a traceback: the
+    loader exited 1 where every other malformed file exits 2, the validator raised past
+    its never-raises contract, and the GUI answered a logged 500. ``what`` names the kind
+    of file so the refusal reads as the mistake it is. ``OSError`` is left to the caller,
+    which already has its own wording for a file that cannot be opened.
+    """
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as e:
+        raise ConfigError(f"{what} {path} is not UTF-8 text ({e})") from e
 
 
 # ---------------------------------------------------------------------------

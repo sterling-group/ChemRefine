@@ -63,7 +63,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
-from chemrefine import ids
+from chemrefine import ids, io
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
@@ -591,7 +591,7 @@ def render_config(
     user never wrote. The message names the placeholder to add.
     """
     source = ids.require_template(template, label="MLIP training")
-    text = source.read_text(encoding="utf-8")
+    text = io.read_utf8(source, what="MLIP training template")
     missing = required - set(Template(text).get_identifiers())
     if missing:
         wanted = ", ".join(f"${name}" for name in sorted(missing))

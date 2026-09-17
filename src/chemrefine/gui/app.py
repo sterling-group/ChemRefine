@@ -35,7 +35,7 @@ import yaml
 from flask import Flask, jsonify, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 
-from chemrefine import agent_tools, introspect
+from chemrefine import agent_tools, introspect, io
 from chemrefine.cache import atomic_write
 from chemrefine.errors import ChemRefineError, ConfigError
 from chemrefine.gui import STATIC_DIR
@@ -170,19 +170,19 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         see what had happened.
 
         A directory or an unreadable file is a plain 400 like every other bad input here.
-        ``UnicodeDecodeError`` is caught with it on purpose: it is a ``ValueError``, not an
-        ``OSError``, so a binary file picked by mistake would otherwise reach
-        :func:`surface` and become a 500 with a traceback. A ``~name`` the host cannot
-        resolve is :func:`chemrefine.agent_tools.expand_user_path`'s refusal, which
-        :func:`surface` answers with the same 400 — every path a user types here goes
-        through it.
+        A binary file picked by mistake is the same 400: :func:`chemrefine.io.read_utf8`
+        refuses it as a :class:`ConfigError` (``UnicodeDecodeError`` is a ``ValueError``,
+        not an ``OSError``, and would otherwise reach :func:`surface` as a 500 with a
+        traceback). A ``~name`` the host cannot resolve is
+        :func:`chemrefine.agent_tools.expand_user_path`'s refusal, which :func:`surface`
+        answers with the same 400 — every path a user types here goes through it.
         """
         path = agent_tools.expand_user_path(request.args["path"])
         if not path.is_file():
             return jsonify({"error": f"not a file: {path}"}), 400
         try:
             return jsonify(_config_payload(path))
-        except (OSError, UnicodeDecodeError) as e:
+        except (OSError, ConfigError) as e:
             return jsonify({"error": f"cannot read {path}: {e}"}), 400
 
     @app.post("/api/validate")
@@ -626,7 +626,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
 
 def _config_payload(path: Path) -> dict[str, str]:
     """One config file as the page wants it — the shape ``bootstrap`` has always sent."""
-    return {"path": str(path), "yaml_text": path.read_text(encoding="utf-8")}
+    return {"path": str(path), "yaml_text": io.read_utf8(path, what="config")}
 
 
 def _config_written_by(result: Any) -> str | None:

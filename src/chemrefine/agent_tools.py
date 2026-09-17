@@ -144,7 +144,7 @@ def read_template(config_path: str, step: int | str) -> dict[str, Any]:
         raise ConfigError(
             f"template {plan.path} does not exist yet (scaffold_templates writes a starter)"
         )
-    return {"path": str(plan.path), "text": plan.path.read_text(encoding="utf-8")}
+    return {"path": str(plan.path), "text": io.read_utf8(plan.path, what="template")}
 
 
 def write_template(config_path: str, step: int | str, text: str) -> dict[str, Any]:

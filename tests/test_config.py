@@ -115,6 +115,19 @@ def test_malformed_yaml_rejected(tmp_path: Path):
         load_config(p)
 
 
+def test_a_config_that_is_not_utf8_is_a_config_error(tmp_path: Path):
+    """A latin-1 file is a malformed config, not a traceback.
+
+    ``UnicodeDecodeError`` is a ``ValueError``, so the ``except OSError`` around the read
+    let it escape past the exit-code contract: ``chemrefine run`` exited 1 with a traceback
+    where every other bad file exits 2 naming itself.
+    """
+    p = tmp_path / "input.yaml"
+    p.write_bytes("# Ångström\nsteps:\n  - step: 1\n    engine: orca\n".encode("latin-1"))
+    with pytest.raises(ConfigError, match="not UTF-8"):
+        load_config(p)
+
+
 # ---------------------------------------------------------------------------
 # Step ordering + uniqueness
 # ---------------------------------------------------------------------------

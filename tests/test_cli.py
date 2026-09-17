@@ -169,6 +169,14 @@ def test_validate_prints_warnings_without_failing(tmp_path: Path):
     assert "OK: 1 step(s) validated" in result.stdout
 
 
+def test_a_config_that_is_not_utf8_exits_two(tmp_path: Path):
+    """The decode failure carries ConfigError's code, like every other malformed file."""
+    config = tmp_path / "input.yaml"
+    config.write_bytes("# Ångström\nsteps:\n  - step: 1\n    engine: fake\n".encode("latin-1"))
+    result = runner.invoke(app, ["run", str(config), "--dry-run"])
+    assert result.exit_code == 2
+
+
 def test_validate_exits_two_on_an_unrunnable_config(tmp_path: Path):
     """Exit 2 mirrors ConfigError's documented code; findings print one per line."""
     config = _write_config(tmp_path, steps=[{"step": 1, "engine": "no-such-engine"}])

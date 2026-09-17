@@ -21,7 +21,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from chemrefine import job_log
+from chemrefine import io, job_log
 from chemrefine.errors import ConfigError
 from chemrefine.state import JobTriple, RunBlock
 
@@ -73,7 +73,7 @@ def _read_header(template_path: Path) -> tuple[list[str], list[str]]:
         raise ConfigError(f"SLURM header template {template_path} not found")
     sbatch_lines: list[str] = []
     body_lines: list[str] = []
-    for raw in template_path.read_text(encoding="utf-8").splitlines():
+    for raw in io.read_utf8(template_path, what="SLURM header template").splitlines():
         stripped = raw.strip()
         if stripped.startswith("#SBATCH"):
             kept = _SBATCH_OWNED_OPTION_RE.sub("", raw.rstrip())

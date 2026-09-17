@@ -29,7 +29,7 @@ import re
 from pathlib import Path
 
 from chemrefine.errors import ConfigError
-from chemrefine.io import read_xyz_frames
+from chemrefine.io import read_utf8, read_xyz_frames
 
 # Both markers are anchored to their own lines, which is where Q-Chem reads them. Matched
 # anywhere, the literal text ``$molecule`` inside a ``$comment`` block starts the match and
@@ -87,7 +87,7 @@ def build_input(
     """
     if not template_path.is_file():
         raise ConfigError(f"Q-Chem template not found: {template_path}")
-    template = template_path.read_text(encoding="utf-8")
+    template = read_utf8(template_path, what="Q-Chem template")
     if _INPUT_BOHR_RE.search(template):
         # The block below is written in Å (every geometry this package writes is), so a
         # template declaring Bohr input would have Q-Chem compute on a molecule scaled by

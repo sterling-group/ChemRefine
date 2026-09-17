@@ -132,6 +132,25 @@ def test_build_input_refuses_a_geometry_path_with_whitespace(tmp_path: Path):
         )
 
 
+def test_build_input_refuses_a_template_that_is_not_utf8(tmp_path: Path):
+    """A latin-1 template is refused by name where it is rendered, not as a traceback.
+
+    The inspector reads templates with ``errors="replace"``, so ``pal()`` and the run-type
+    detection sail through — the writer was the one reader that raised, mid-step, with a
+    ``UnicodeDecodeError`` no handler on the way to the CLI names.
+    """
+    template = tmp_path / "template.inp"
+    template.write_bytes("! B3LYP  # Ångström\n".encode("latin-1"))
+    with pytest.raises(ConfigError, match="not UTF-8"):
+        build_input(
+            xyz_path=tmp_path / "step1_0_inp.xyz",
+            template_path=template,
+            output_path=tmp_path / "step1_0.inp",
+            charge=0,
+            multiplicity=1,
+        )
+
+
 def test_build_input_names_the_reason_and_the_unaffected_engines(tmp_path: Path):
     """The message has to be actionable: what ORCA does, and who is not affected."""
     spaced = tmp_path / "my outputs"

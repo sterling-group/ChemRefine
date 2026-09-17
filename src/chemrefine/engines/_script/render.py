@@ -39,6 +39,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from string import Template
 
+from chemrefine import io
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines._script.contract import SCRIPT_OUTPUT, OutputField
 from chemrefine.errors import ConfigError
@@ -164,7 +165,7 @@ def build_input(
     """
     if not template_path.is_file():
         raise ConfigError(f"template not found: {template_path}")
-    text = template_path.read_text(encoding="utf-8")
+    text = io.read_utf8(template_path, what="script template")
     substitutions: dict[str, object] = {
         "XYZ_PATH": str(xyz_path),
         "CHARGE": charge,

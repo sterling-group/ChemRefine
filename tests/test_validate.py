@@ -412,6 +412,16 @@ def test_an_unreadable_file_is_one_io_issue(tmp_path: Path):
     assert _kinds(report) == ["io"]
 
 
+def test_a_file_that_is_not_utf8_is_one_io_issue(tmp_path: Path):
+    """The decode half of "cannot be read", held to the same never-raises contract."""
+    path = tmp_path / "input.yaml"
+    path.write_bytes("# Ångström\nsteps: []\n".encode("latin-1"))
+    report = validate_config_file(path)
+    assert not report.ok
+    assert _kinds(report) == ["io"]
+    assert "not UTF-8" in report.issues[0].message
+
+
 def test_a_deprecated_spelling_is_a_warning_not_silence(tmp_path: Path):
     """A legacy key still runs, but the report has to say so.
 
