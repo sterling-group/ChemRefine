@@ -57,6 +57,14 @@ step fans out into its geometries the day a reader for it joins the dispatch.
 `executables: { orca: /path/to/orca }` names the binary; an absolute path is required for
 ORCA's own MPI launcher to work.
 
+Every centre in the output's coordinate table becomes an atom of the structure carried to
+the next step, so a template cannot use centres that are not atoms. A dummy atom (`DA`, a
+constraint anchor) is refused when its output is parsed — ORCA prints it as `XX`, which
+names no element, so that structure is ledgered as unparseable rather than silently losing
+or gaining a nucleus. A ghost atom (`H:`, a basis-only centre for a counterpoise
+correction) is printed as a plain `H` and cannot be told from one: it would be carried
+into every later step as a real hydrogen. Keep both out of pipeline steps.
+
 ## Q-Chem (`qchem`)
 
 | Key | Default | Description |

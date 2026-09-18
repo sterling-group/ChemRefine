@@ -454,6 +454,15 @@ for the full map.
 
 ### Fixed
 
+- **A native output that cannot be read as the molecule it claims is that structure's
+  parse failure, never a smaller molecule or a dead run.** A PES scan point whose
+  coordinate row overflowed (`*****`) or parsed to `nan` used to ship with one atom fewer
+  and the whole molecule's energy; every scan point is now held to the first point's atom
+  count and a corrupt row is refused. A dummy centre in the coordinate table (ORCA prints
+  `DA` as `XX`) used to end the whole run in a traceback from inside ASE, discarding the
+  step's successes; it is now refused where the structure is assembled, for every engine,
+  as an unparseable output naming the symbol. A non-finite component in an ORCA normal-mode
+  table withholds the tensor instead of displacing every NMS child along it.
 - **A step's cached survivor order no longer depends on how its structures converged.**
   A `resume` or `rerun-errors` that retried a convergence failure cached the retried
   structure *last*, and an NMS re-attempt cached the re-run parents after the kept ones,

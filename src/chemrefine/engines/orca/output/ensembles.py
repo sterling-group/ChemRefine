@@ -178,13 +178,28 @@ def parse_pes_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
     terminated = status.parse_terminated_normally(text)
 
     structures: list[ParsedResult] = []
+    n_atoms: int | None = None
     for seg in segments:
-        atoms = _parse_last_pes_coord_block(seg)
+        try:
+            atoms = _parse_last_pes_coord_block(seg)
+        except ValueError as e:
+            raise OutputParseError(f"malformed coordinate row in {src}: {e}") from e
         if not atoms:
             continue
         seg_energy = energy.parse_final_energy_from_text(seg)
         if seg_energy is None:
             continue
+        # A scan is one molecule at many geometries, so every point has the first point's
+        # atom count. A shorter one lost a row the block reader could not tell from prose,
+        # and an N-1-atom frame carrying the whole molecule's energy is exactly what the
+        # gradient reader's row count refuses — the same rule, at the same grain.
+        if n_atoms is None:
+            n_atoms = len(atoms)
+        elif len(atoms) != n_atoms:
+            raise OutputParseError(
+                f"PES scan point {len(structures) + 1} in {src} has {len(atoms)} atom(s) "
+                f"where the first point has {n_atoms}; a coordinate row was lost"
+            )
         symbols = tuple(sym for sym, *_ in atoms)
         positions = np.array([[x, y, z] for _, x, y, z in atoms], dtype=np.float64)
         structures.append(
@@ -204,7 +219,17 @@ def parse_pes_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
 
 
 def _parse_last_pes_coord_block(segment: str) -> list[tuple[str, float, float, float]]:
-    """Return ``(symbol, x, y, z)`` rows from the last coord block in ``segment``."""
+    """Return ``(symbol, x, y, z)`` rows from the last coord block in ``segment``.
+
+    A line shaped like an atom row whose numbers are not numbers — a ``*****`` field
+    overflow, a ``nan`` / ``inf`` — raises :class:`ValueError` rather than being skipped:
+    skipped, it left a shorter molecule carrying the whole molecule's energy, and nothing
+    downstream re-counts atoms (the rule :func:`~chemrefine.engines.orca.output.forces.
+    parse_forces_from_text` states for gradient rows). A line that is not shaped like an
+    atom row at all — prose, a summary line — is still skipped, which is what the
+    ``*****`` distinction is for: an overflow is a number that would not fit, and a word is
+    not a number that failed.
+    """
     matches = list(_PES_COORD_HEADER_RE.finditer(segment))
     if not matches:
         return []
@@ -218,27 +243,34 @@ def _parse_last_pes_coord_block(segment: str) -> list[tuple[str, float, float, f
         ln = lines[idx]
         if not ln.strip():
             break
-        parts = ln.split()
-        # ORCA prints either "C  x y z" (4 tokens) or "1  C  x y z" (5 tokens).
-        if len(parts) == 4 and _is_float_triplet(parts[1:]):
-            sym = parts[0]
-            x, y, z = (float(p) for p in parts[1:])
-            atoms.append((sym, x, y, z))
-        elif len(parts) == 5 and _is_float_triplet(parts[2:]):
-            sym = parts[1]
-            x, y, z = (float(p) for p in parts[2:])
-            atoms.append((sym, x, y, z))
+        row = _atom_row(ln.split())
+        if row is not None:
+            atoms.append(row)
         idx += 1
     return atoms
 
 
-def _is_float_triplet(tokens: list[str]) -> bool:
-    """Return ``True`` if every token in a 3-element list is a **finite** float.
+def _atom_row(parts: list[str]) -> tuple[str, float, float, float] | None:
+    """The atom row ``parts`` spells, or ``None`` for a line that is not one.
 
-    ``nan`` and ``inf`` parse but are not coordinates, and admitting them here would let a
-    diverged frame through the one gate an overflowed (``*****``) frame is stopped by.
+    ORCA prints either ``C  x y z`` (4 tokens) or ``1  C  x y z`` (5 tokens); the last
+    three tokens are the coordinates either way. Raises :class:`ValueError` when the line has
+    an atom row's shape but a coordinate is an overflow marker (all ``*``) or parses to a
+    non-finite value — ``float()`` accepts ``nan`` and ``inf``, so the second check is what
+    stops a diverged frame riding through on the same gate an overflowed one is refused by.
     """
-    try:
-        return bool(np.isfinite([float(tok) for tok in tokens]).all())
-    except ValueError:
-        return False
+    if len(parts) not in (4, 5):
+        return None
+    symbol, tokens = parts[-4], parts[-3:]
+    values: list[float] = []
+    for token in tokens:
+        if set(token) == {"*"}:
+            raise ValueError(f"overflowed coordinate field in {' '.join(parts)!r}")
+        try:
+            values.append(float(token))
+        except ValueError:
+            return None  # a word where a number would be: not an atom row
+    if not np.isfinite(values).all():
+        raise ValueError(f"non-finite coordinate in {' '.join(parts)!r}")
+    x, y, z = values
+    return symbol, x, y, z

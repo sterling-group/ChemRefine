@@ -959,11 +959,13 @@ def test_parse_pes_skips_segment_without_energy(tmp_path: Path):
 
 
 def test_parse_pes_skips_non_atom_lines_inside_coord_block(tmp_path: Path):
-    """A 4-token line that isn't ``sym x y z`` (e.g. has non-numeric tokens) is skipped."""
+    """A line that is not ``sym x y z`` — words for numbers, or a token count no atom row has —
+    is skipped."""
     body = (
         "CARTESIAN COORDINATES (ANGSTROEM)\n"
         "  H   0.0    0.0    0.0\n"
         "  C   not    a      number\n"  # 4 tokens but two are non-numeric
+        "  Total charge   0\n"  # 3 tokens: not shaped like an atom row at all
         "  H   0.74   0.0    0.0\n"
         "\n"
         "FINAL SINGLE POINT ENERGY     -1.10\n"
@@ -973,6 +975,59 @@ def test_parse_pes_skips_non_atom_lines_inside_coord_block(tmp_path: Path):
     out.write_text(body, encoding="utf-8")
     parsed = parse_pes(out)
     assert parsed[0].symbols == ("H", "H")
+
+
+@pytest.mark.parametrize(
+    ("row", "reason"),
+    [
+        ("  C   ******   0.0    0.0\n", "overflowed coordinate"),
+        ("  C   nan      0.0    0.0\n", "non-finite coordinate"),
+        ("  C   1.0E+999 0.0    0.0\n", "non-finite coordinate"),
+    ],
+)
+def test_parse_pes_refuses_an_atom_row_whose_numbers_are_not_numbers(
+    tmp_path: Path, row: str, reason: str
+):
+    """A row shaped like an atom row with a corrupt coordinate is the frame's parse failure.
+
+    Skipped, as a word where a number would be still is, it left a two-atom frame carrying
+    the three-atom energy — a smaller molecule the next step would optimise as the real one.
+    An overflow (``*****``) is a number that did not fit; ``nan`` and ``1e999`` are what
+    ``float()`` accepts without complaint.
+    """
+    body = (
+        "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "  H   0.0    0.0    0.0\n" + row + "  H   0.74   0.0    0.0\n"
+        "\n"
+        "FINAL SINGLE POINT ENERGY     -1.10\n"
+        "*** OPTIMIZATION RUN DONE ***\n"
+    )
+    out = tmp_path / "pes.out"
+    out.write_text(body, encoding="utf-8")
+    with pytest.raises(OutputParseError, match=reason):
+        parse_pes(out)
+
+
+def test_parse_pes_refuses_a_scan_point_that_lost_an_atom(tmp_path: Path):
+    """Every scan point is the same molecule; a shorter one lost a row and is refused.
+
+    The prose skip above is bounded by this: a line the block reader cannot read as an
+    atom row is only ever a lost atom if the count says so, and then the whole scan is
+    refused rather than one point shipping short.
+    """
+    text = (
+        "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "  H   0.0  0.0  0.0\n  H   0.74 0.0 0.0\n\n"
+        "FINAL SINGLE POINT ENERGY     -1.10\n"
+        "*** OPTIMIZATION RUN DONE ***\n" + "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "  H   0.0  0.0  0.0\n  H   see  the  log\n\n"
+        "FINAL SINGLE POINT ENERGY     -1.05\n"
+        "*** OPTIMIZATION RUN DONE ***\n"
+    )
+    out = tmp_path / "pes.out"
+    out.write_text(text, encoding="utf-8")
+    with pytest.raises(OutputParseError, match=r"scan point 2 .* has 1 atom.* first point has 2"):
+        parse_pes(out)
 
 
 def test_parse_pes_skips_segment_without_coords(tmp_path: Path):

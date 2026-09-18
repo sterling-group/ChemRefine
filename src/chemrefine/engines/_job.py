@@ -24,9 +24,11 @@ from pathlib import Path
 from typing import ClassVar
 
 from ase import Atoms
+from ase.data import atomic_numbers
 
 from chemrefine.engines import _execution
 from chemrefine.engines.api import CompletionSink, OptionsDeclaring, ParsedResult, RunBlock
+from chemrefine.errors import OutputParseError
 from chemrefine.ids import (
     allocate_child_ids,
     input_geometry_path,
@@ -66,6 +68,7 @@ def build_structures(
         input_struct = prev_by_id.get(sid)
         is_fanout = len(parsed) > 1
         for ps in parsed:
+            _require_elements(ps.symbols, sid)
             child_parent = (
                 sid if is_fanout else (input_struct.parent_id if input_struct is not None else None)
             )
@@ -87,6 +90,26 @@ def build_structures(
                 )
             )
     return StepResults(structures=tuple(out))
+
+
+def _require_elements(symbols: Sequence[str], sid: str) -> None:
+    """Refuse a symbol that names no element, as this job's parse failure.
+
+    The readers hand symbols through as the program printed them, and only the
+    :class:`~ase.Atoms` built below judges them — with a ``KeyError``, which is outside the
+    family :func:`chemrefine.lifecycle._parse_job` contains. Left to it, one dummy centre
+    (a constraint anchor a program prints as ``XX``) ended the whole run in a traceback and
+    discarded the successes of the same step, which were about to be cached. Judged here,
+    beside the construction and for every engine at once, it is this structure's ledgered
+    failure, naming what it saw. A ghost centre is a different case and cannot be caught:
+    a program prints it with its element's own symbol, so it reads as an atom.
+    """
+    unknown = sorted({s for s in symbols if s not in atomic_numbers})
+    if unknown:
+        raise OutputParseError(
+            f"job {sid}: symbol(s) {unknown} in the coordinate table are not chemical "
+            f"elements — a dummy centre, which ChemRefine cannot carry as an atom"
+        )
 
 
 class JobEngine(abc.ABC):

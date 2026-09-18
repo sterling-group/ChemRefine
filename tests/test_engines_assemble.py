@@ -9,10 +9,12 @@ IDs and threading parents through a step's fan-out. The engines (ORCA, script) o
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from ase import Atoms
 
 from chemrefine.engines._job import build_structures
 from chemrefine.engines.api import ParsedResult
+from chemrefine.errors import OutputParseError
 from chemrefine.state import PipelineState, Structure
 
 
@@ -83,6 +85,18 @@ def test_input_with_no_parsed_results_contributes_nothing():
     """A parsed-but-empty input (e.g. all frames dropped) yields no structures."""
     prev = _prev(Structure(id="0", atoms=Atoms("H")))
     assert build_structures([("0", [])], prev).structures == ()
+
+
+def test_a_symbol_that_names_no_element_is_this_jobs_parse_failure():
+    """A dummy centre in a program's coordinate table (ORCA prints ``DA`` as ``XX``).
+
+    Left to ``Atoms(symbols=...)`` it was a ``KeyError`` — outside the family
+    ``lifecycle._parse_job`` contains, so one such structure ended the whole run in a
+    traceback. Refused here, before the ``Atoms`` is built, it is an ``OutputParseError``
+    naming the job and the symbol, which that net turns into this structure's ledger entry.
+    """
+    with pytest.raises(OutputParseError, match=r"job 7: symbol\(s\) \['XX'\]"):
+        build_structures([("7", [_result(symbol="XX")])], _prev())
 
 
 def test_unknown_input_id_yields_none_parent():

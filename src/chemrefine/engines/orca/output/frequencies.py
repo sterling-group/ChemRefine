@@ -202,6 +202,11 @@ def parse_normal_modes_tensor_from_text(text: str, *, num_atoms: int) -> NDArray
         raise ValueError("no normal-mode blocks found; is this a frequency-calculation output?")
 
     full = np.hstack(blocks)
+    if not np.isfinite(full).all():
+        # `float()` accepts ``nan`` / ``inf``. A non-finite displacement would ride the
+        # tensor into `nms.displace_along_mode` and put NaN into every child geometry it
+        # builds, so it withholds the tensor exactly as a wrong row count does.
+        raise ValueError("non-finite component in the normal-mode block")
     if full.shape[0] != 3 * num_atoms:
         raise ValueError(
             f"malformed normal-mode block: got {full.shape[0]} rows, "

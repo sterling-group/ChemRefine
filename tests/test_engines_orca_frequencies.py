@@ -151,6 +151,13 @@ def test_parse_normal_modes_tensor_raises_when_no_block():
         parse_normal_modes_tensor_from_text("NORMAL MODES\nnothing tabular here\n", num_atoms=3)
 
 
+def test_parse_normal_modes_tensor_refuses_a_non_finite_component():
+    """An overflowing exponent parses to ``inf`` and would ride into every child geometry."""
+    text = _SYNTH_MODES.replace("0.100000", "1.0E999", 1)
+    with pytest.raises(ValueError, match="non-finite component"):
+        parse_normal_modes_tensor_from_text(text, num_atoms=2)
+
+
 def test_parse_normal_modes_tensor_raises_on_wrong_atom_count():
     """The 2-atom synthetic block should mismatch a 3-atom expectation."""
     with pytest.raises(ValueError, match="expected 9"):

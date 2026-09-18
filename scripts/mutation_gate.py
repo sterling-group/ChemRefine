@@ -468,6 +468,15 @@ _BUNDLED: tuple[Mutation, ...] = (
         "MISSING_OUTPUT while the jobs finish into an archived tree (this exact mutant "
         "survived while the partial-drain tests held no assertions)",
     ),
+    Mutation(
+        id="pes-atom-count",
+        path="src/chemrefine/engines/orca/output/ensembles.py",
+        old="        elif len(atoms) != n_atoms:",
+        new="        elif False:",
+        tests="tests/test_engines_orca_output.py",
+        breaks="a scan point that lost a coordinate row ships as a smaller molecule "
+        "carrying the whole molecule's energy — the next step optimises the wrong species",
+    ),
 )
 
 #: What an engine files beside its contract fixture — ``tests/data/engines/<name>/`` — to
