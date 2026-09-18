@@ -74,6 +74,7 @@ import math
 import shutil
 import subprocess
 import sys
+import tempfile
 from itertools import pairwise
 from pathlib import Path
 
@@ -646,9 +647,10 @@ def main() -> int:
     _require_font()
     ASSETS.mkdir(parents=True, exist_ok=True)
     GUI_BRAND.mkdir(parents=True, exist_ok=True)
-    wd = Path.home() / "chemrefine_logo_build"
-    wd.mkdir(exist_ok=True)
-    try:
+    # A directory of its own, made and removed here: a fixed name under `$HOME` adopted
+    # whatever was already there and then deleted it with the build's own files.
+    with tempfile.TemporaryDirectory(prefix="chemrefine_logo_") as scratch:
+        wd = Path(scratch)
         (ASSETS / "logo.svg").write_text(mark_svg(), encoding="utf-8")
         (ASSETS / "logo-dark.svg").write_text(mark_svg(dark=True), encoding="utf-8")
         (ASSETS / "favicon.svg").write_text(icon_svg(boost=True), encoding="utf-8")
@@ -702,8 +704,6 @@ def main() -> int:
         # without depending on the export being deterministic.
         for name in GUI_SUBSET:
             shutil.copy2(ASSETS / name, GUI_BRAND / name)
-    finally:
-        shutil.rmtree(wd, ignore_errors=True)
     print(f"brand kit written to {ASSETS}")
     print(f"GUI subset mirrored to {GUI_BRAND} ({len(GUI_SUBSET)} files)")
     return 0

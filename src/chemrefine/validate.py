@@ -271,6 +271,40 @@ def undeclared_options(step: StepConfig) -> str | None:
     )
 
 
+def shared_template_clash(config: Config) -> str | None:
+    """Why two steps of different engines naming one template file cannot both be served.
+
+    ``None`` when no template is shared across an engine boundary. Steps may share a
+    ``template:`` name — reusing one input across steps is ordinary — but engines read
+    different formats, so one file cannot be the starter for both: the scaffold snapshots
+    ``exists`` before writing, and the second starter would silently replace the first.
+    The planner (:func:`chemrefine.scaffold.plan_templates`) refuses on this answer and
+    every template tool plans through it; the validator reports the same answer as a
+    warning. One function, so a config ``validate`` calls OK cannot be one ``scaffold``
+    and the template editor turn away. A step whose engine is not registered is skipped
+    — that is the validator's own issue row, and the planner's own error.
+    """
+    claimed: dict[Path, StepConfig] = {}
+    for step in config.steps:
+        if step.engine not in ENGINES:
+            continue
+        engine = get_engine(step.engine)
+        if not isinstance(engine, TemplateDriven):
+            continue
+        path = step_template_path(
+            config.template_dir, step.step, template=step.template, suffix=engine.template_suffix
+        )
+        earlier = claimed.setdefault(path, step)
+        if earlier.engine != step.engine:
+            return (
+                f"steps {earlier.step} ({earlier.engine}) and {step.step} "
+                f"({step.engine}) both name {path.name} as their template, and the "
+                f"two engines read different formats — one starter would silently "
+                f"overwrite the other. Give each engine's steps a template of its own."
+            )
+    return None
+
+
 def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[ValidationIssue]]:
     """The registry-aware per-step checks; returns ``(issues, warnings)``."""
     issues: list[ValidationIssue] = []
@@ -412,6 +446,11 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                     ),
                 )
             )
+    if (clash := shared_template_clash(config)) is not None:
+        # A run serves both steps the same file, so the config is runnable; the scaffold
+        # and the template editor refuse it. A warning here, because the run is not
+        # broken — and a row, because the very next command was otherwise the first to say.
+        warnings.append(ValidationIssue(loc=("steps",), kind="template", message=clash))
     return issues, warnings
 
 

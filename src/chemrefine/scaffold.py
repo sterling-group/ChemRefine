@@ -34,7 +34,7 @@ from chemrefine.config import Config
 from chemrefine.engines.api import JobExecutable, StarterProviding, TemplateDriven, get_engine
 from chemrefine.errors import ConfigError, EngineNotFoundError
 from chemrefine.ids import step_template_path
-from chemrefine.validate import effective_header
+from chemrefine.validate import effective_header, shared_template_clash
 
 _SCRIPT_FALLBACK = (
     "# Script starter. Rendered per structure: $XYZ_PATH / $CHARGE / $MULTIPLICITY\n"
@@ -81,12 +81,15 @@ def plan_templates(config: Config) -> tuple[TemplatePlan, ...]:
     (:func:`chemrefine.agent_tools.read_template`) keep answering for every step. What a
     share must *not* cross is an engine boundary: the sharers' starters then differ, and
     ``scaffold_templates`` snapshots ``exists`` before writing anything, so the second
-    starter silently replaced the first with ``overwrite`` still False. Refused here, at
-    planning time, so every consumer of this seam — the CLI, the GUI's chips, the agent
-    tools — inherits the refusal before a byte is written.
+    starter would silently replace the first with ``overwrite`` still False. Refused here,
+    at planning time, on :func:`chemrefine.validate.shared_template_clash`'s answer — the
+    validator reports the same answer, so a config it calls OK is one this planner
+    accepts — and every consumer of this seam (the CLI, the GUI's chips, the agent tools)
+    inherits the refusal before a byte is written.
     """
+    if (clash := shared_template_clash(config)) is not None:
+        raise ConfigError(clash)
     plans: list[TemplatePlan] = []
-    step_plans: dict[Path, TemplatePlan] = {}
     headers: dict[str, None] = {}
     for step in config.steps:
         engine = get_engine(step.engine)
@@ -97,14 +100,6 @@ def plan_templates(config: Config) -> tuple[TemplatePlan, ...]:
                 template=step.template,
                 suffix=engine.template_suffix,
             )
-            earlier = step_plans.get(path)
-            if earlier is not None and earlier.engine != step.engine:
-                raise ConfigError(
-                    f"steps {earlier.step} ({earlier.engine}) and {step.step} "
-                    f"({step.engine}) both name {path.name} as their template, and the "
-                    f"two engines read different formats — one starter would silently "
-                    f"overwrite the other. Give each engine's steps a template of its own."
-                )
             plan = TemplatePlan(
                 path=path,
                 exists=path.is_file(),
@@ -112,7 +107,6 @@ def plan_templates(config: Config) -> tuple[TemplatePlan, ...]:
                 step=step.step,
                 engine=step.engine,
             )
-            step_plans.setdefault(path, plan)
             plans.append(plan)
         if isinstance(engine, JobExecutable):
             headers.setdefault(effective_header(config, step, engine), None)

@@ -392,6 +392,33 @@ def test_options_errors_suppress_the_gpu_header_probe(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
+def test_a_template_shared_across_engines_is_the_warning_the_planner_refuses_on(
+    tmp_path: Path,
+):
+    """``validate`` and ``scaffold`` read one rule, so OK here is never a refusal there.
+
+    Steps of different engines naming one template file run — each renders the same file — but
+    the scaffold planner, and every template tool through it, refuse the config, and the
+    validator said nothing: a green Validate button beside a red Scaffold button. One
+    function answers both now; the validator reports it as a warning because the run
+    itself is not broken. Sharing within one engine is ordinary and says nothing.
+    """
+    shared = [
+        {"step": 1, "engine": "orca", "template": "shared.inp"},
+        {"step": 2, "engine": "qchem", "template": "shared.inp"},
+    ]
+    report = _validate(tmp_path, steps=shared)
+    assert report.ok
+    clash = [w for w in report.warnings if w.kind == "template" and "both name" in w.message]
+    assert len(clash) == 1
+    assert clash[0].loc == ("steps",)
+    assert "shared.inp" in clash[0].message
+
+    within_one_engine = [dict(step, engine="orca") for step in shared]
+    report = _validate(tmp_path, steps=within_one_engine)
+    assert not [w for w in report.warnings if "both name" in w.message]
+
+
 def test_validate_config_file_reads_and_resolves_like_load_config(tmp_path: Path):
     templates = tmp_path / "templates"
     templates.mkdir()
