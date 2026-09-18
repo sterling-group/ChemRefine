@@ -309,6 +309,37 @@ def test_steps_sharing_a_template_scaffold_it_once(tmp_path: Path):
     assert [p.name for p in written if p.name.endswith(".inp")] == ["shared.inp"]
 
 
+def test_a_starter_that_fails_to_write_leaves_the_edited_template_intact(
+    tmp_path: Path, monkeypatch
+):
+    """With ``overwrite``, a torn write must not leave a stub where an edited template was.
+
+    ``write_text`` truncates before it writes, so a kill or a full disk between the two
+    left an empty ``step1.inp`` where the user's file had been. Each starter is written
+    whole or not at all now — the rule the template editor and the config writer already
+    follow — pinned by failing the write at its last step and finding the old text there.
+    """
+    import os
+
+    import pytest
+
+    from chemrefine.errors import ConfigError
+
+    config = _config(tmp_path, {"step": 1, "engine": "orca"})
+    template = tmp_path / "templates" / "step1.inp"
+    template.parent.mkdir()
+    template.write_text("! Mine\n", encoding="utf-8")
+
+    def refuse(_fd: int) -> None:
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(os, "fsync", refuse)
+    with pytest.raises(ConfigError, match="cannot scaffold"):
+        scaffold_templates(config, overwrite=True)
+    assert template.read_text(encoding="utf-8") == "! Mine\n"
+    assert not list(template.parent.glob(".tmp_*"))
+
+
 def test_a_cross_engine_template_share_is_refused_at_planning(tmp_path: Path):
     """Engines of different formats naming one template file refuse by name, never clobber.
 
@@ -333,12 +364,13 @@ def test_a_cross_engine_template_share_is_refused_at_planning(tmp_path: Path):
 def test_a_mid_scaffold_failure_names_what_already_landed(tmp_path: Path, monkeypatch):
     """A disk refusal partway through says which starters are already on disk.
 
-    The failure leaves the earlier starters behind, and a retry reads a half-written
-    last file as "exists — kept"; naming what landed is what makes that state
-    inspectable rather than invisible.
+    The failure leaves the earlier starters behind — whole, each written atomically —
+    and nothing at all where the failed one would have been, so a retry writes it; naming
+    what landed is what makes the partial state inspectable rather than invisible.
     """
     import pytest
 
+    from chemrefine import scaffold as scaffold_module
     from chemrefine.errors import ConfigError
 
     config = _config(
@@ -346,13 +378,13 @@ def test_a_mid_scaffold_failure_names_what_already_landed(tmp_path: Path, monkey
         {"step": 1, "engine": "orca"},
         {"step": 2, "engine": "qchem"},
     )
-    real_write = Path.write_text
+    real_write = scaffold_module.atomic_write
 
-    def fail_on_qchem(self: Path, *args: object, **kwargs: object):
-        if self.name == "step2.in":
+    def fail_on_qchem(path: Path, data: bytes) -> None:
+        if path.name == "step2.in":
             raise OSError(28, "No space left on device")
-        return real_write(self, *args, **kwargs)
+        real_write(path, data)
 
-    monkeypatch.setattr(Path, "write_text", fail_on_qchem)
+    monkeypatch.setattr(scaffold_module, "atomic_write", fail_on_qchem)
     with pytest.raises(ConfigError, match=r"already written before the failure: .*step1\.inp"):
         scaffold_templates(config)

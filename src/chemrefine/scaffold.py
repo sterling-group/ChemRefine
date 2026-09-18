@@ -30,6 +30,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Literal, cast
 
+from chemrefine.cache import atomic_write
 from chemrefine.config import Config
 from chemrefine.engines.api import JobExecutable, StarterProviding, TemplateDriven, get_engine
 from chemrefine.errors import ConfigError, EngineNotFoundError
@@ -209,13 +210,16 @@ def scaffold_templates(config: Config, *, overwrite: bool = False) -> tuple[Path
                 continue
             # A `template:` override may name a subdirectory (or an absolute path elsewhere)
             # — the same shape `agent_tools.write_template` already creates parents for.
-            plan.path.parent.mkdir(parents=True, exist_ok=True)
-            plan.path.write_text(_starter_for(plan), encoding="utf-8")
+            # Whole or not at all, like every other writer of a file a user edits: with
+            # `overwrite`, this replaces a template the user may have worked on, and a
+            # write torn by a kill or a full disk would leave a stub where it had been.
+            atomic_write(plan.path, _starter_for(plan).encode("utf-8"))
             written.append(plan.path)
     except OSError as e:
         # `written` is in the message because the failure is mid-loop: the starters
-        # already on disk stay there, and a retry would read a half-written last file as
-        # "exists — kept". Naming what landed makes the partial state inspectable.
+        # already on disk stay there — whole, each having been written atomically — and a
+        # retry writes the one that failed. Naming what landed makes the partial state
+        # inspectable.
         landed = ", ".join(str(p) for p in written) or "nothing"
         raise ConfigError(
             f"cannot scaffold templates under {config.template_dir}: {e} "

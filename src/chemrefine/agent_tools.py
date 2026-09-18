@@ -562,7 +562,7 @@ def build_structures(
                 build_warnings.append(f"structure_{i}: {parity}")
     else:
         path = out / "structure_0.xyz"
-        path.write_text(xyz_text or "", encoding="utf-8")
+        cache.atomic_write(path, (xyz_text or "").encode("utf-8"))
         try:
             frames = io.read_xyz_frames(path)
         except (ValueError, IndexError, KeyError, OSError) as e:
