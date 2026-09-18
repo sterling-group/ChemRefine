@@ -54,10 +54,10 @@ the whole page and an `@click` naming a deleted method fails silently. It uses
 any `node` on `PATH` first and falls back to the one `nodejs-wheel-binaries`
 ships, so there is nothing to install and nothing to remember.
 
-Those seven cases used to **skip** without a Node, which meant a machine with
-none ran every gate green while checking the frontend not at all. Setting
+Without a Node those cases **skip**, and a skip exits 0 — a machine with none
+would run every gate green while checking the frontend not at all. Setting
 `CHEMREFINE_REQUIRE_NODE=1` turns that skip into a failure; `ci.yml` and
-`scripts/release-check.sh` both set it, so a skip can no longer reach a release.
+`scripts/release-check.sh` both set it, so a skip can never reach a release.
 
 **Biome is the frontend's ruff.** `pre-commit` runs `biome check --write` over
 `src/chemrefine/gui/static/`: it formats the JavaScript and CSS and lints all

@@ -192,9 +192,9 @@ class TrainingPlan:
     def bindir(self) -> Path:
         """The backend environment's ``bin/``, where its console scripts live.
 
-        Derived from the launcher rather than resolved separately, so it is right in all three
-        cases the provisioner can return — a managed env, an explicit ``backend_python``, or
-        this interpreter when the backend is importable alongside the orchestrator.
+        Derived from the launcher rather than resolved separately, so it is right for whatever
+        the provisioner returns — a managed env, an explicit ``backend_python``, or this
+        interpreter when the backend is importable alongside the orchestrator.
         """
         return self.launcher.parent
 

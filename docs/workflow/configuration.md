@@ -133,7 +133,8 @@ kept as `…_inp.xyz` distinct from the engine's output geometry:
 outputs/
 ├── step1_screen/
 │   ├── 0/                     step1_0_inp.xyz  step1_0.{inp,out,xyz,...}  step1_0.runlog
-│   │   └── 0_m5_pos/          NMS round-2 (a displaced re-run) nests under its parent
+│   │   └── attempt1/          one resolution attempt of structure 0 (see NMS)
+│   │       └── 0_m5_pos/      NMS round-2 (a displaced re-run) nests under that attempt
 │   ├── 1/                     …
 │   ├── step1_ensemble.xyz     every final structure of the step, one multi-frame XYZ
 │   ├── step1_survivors.xyz    the subset the `sample:` filter kept for the next step
@@ -147,14 +148,17 @@ holds **every** parsed final structure (a GOAT step's whole conformer ensemble,
 say), `stepN_survivors.xyz` only what the `sample:` filter passed on. Frames are
 sorted ascending by the step's own ranking energy (the `sample.energy_type`,
 electronic by default — the same energy `steps.csv` reports), and each comment
-line carries `stepN id=<id> E=<hartree> Eh`, so a frame is traceable to its
-structure directory and its `steps.csv` row. Both files are rewritten
+line carries `stepN id=<id> <label>=<hartree> Eh` — the label is `E`, `G`, `H` or
+`E_ZPE`, naming that energy — so a frame is traceable to its structure directory and
+its `steps.csv` row. Both files are rewritten
 deterministically on every run of the step — `resume`, a cache hit, and
 `rebuild-cache` regenerate them byte-identically.
 
-NMS round-2 — re-optimising a displaced geometry — is treated like any "redo this
-structure" step: the child lives in a sub-directory *inside* its parent's directory
-(`stepN/<parent>/<child>/`), the same place a failure re-run would go.
+NMS round-2 — re-optimising a displaced geometry — is an *attempt* on its parent, the
+same model the convergence retry uses: the child lives inside its parent's directory
+under the attempt that displaced it (`stepN/<parent>/attemptK/<child>/`), and the
+winner is promoted back to the parent's canonical files — see [normal-mode
+sampling](nms.md).
 
 ## Legacy (v1.3.1) configs
 

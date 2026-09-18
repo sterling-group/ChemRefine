@@ -8,15 +8,15 @@ panes) and a **broken binding** (an ``@click`` naming a method that no longer ex
 fails silently at click time, which is exactly how a reset button comes to "do
 nothing").
 
-Neither needs a browser. The syntax check shells out to ``node --check``, and three cases
-execute the pure form logic through ``node -e``; the binding check is pure text analysis:
+Neither needs a browser. The syntax check shells out to ``node --check``, and the component
+cases execute the pure form logic through ``node -e``; the binding check is pure text analysis:
 every handler an Alpine attribute calls must exist in the component, and every state root
 it reads must be declared on it.
 
 A Node is a hard test dependency (``nodejs-wheel-binaries`` in ``[test]``) rather than an
-optional nicety, because these seven cases are the only ones that ever *execute* this
-JavaScript and they used to skip: pytest printed "7 skipped" and exited 0, so a machine
-without Node ran every gate green while checking the frontend not at all.
+optional nicety, because these cases are the only ones that ever *execute* this
+JavaScript, and a skip exits 0: without the requirement a machine with no Node ran every
+gate green while checking the frontend not at all.
 :func:`_node_or_skip` is what makes that impossible to ship — see its docstring.
 """
 

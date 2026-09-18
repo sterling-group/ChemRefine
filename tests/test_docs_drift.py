@@ -308,12 +308,20 @@ def test_every_documented_default_and_alias_is_the_models(model: str, target: _D
 
 _SRC = Path(__file__).resolve().parent.parent / "src" / "chemrefine"
 _TESTS = Path(__file__).resolve().parent
+_PROSE_DOCS = (_TESTS.parent / "CONTRIBUTING.md",)
+"""Markdown that describes the tree the way a docstring does, held to the same rule.
+
+CONTRIBUTING counted the GUI's Node-executed test cases — "seven" — for as long as it took
+that census to reach seventy, because only ``.py`` prose was read. The docs site is not
+here: its option tables and rosters are generated, and its tutorials are frozen artifacts.
+"""
 
 # Populations the tree *grows*: a registry gains an entry, a recording is captured, a module
-# imports one more thing. Deliberately not "readers" / "call sites" / "places" — those are
-# usually an argument's shape ("two readers of one knob cannot disagree"), not a census.
+# imports one more thing, a test file gains a case. Deliberately not "readers" / "call sites"
+# / "places" — those are usually an argument's shape ("two readers of one knob cannot
+# disagree"), not a census.
 _COUNTABLE = (
-    r"engines|backends|trainers|builders|libraries|plugins|heads|extras"
+    r"engines|backends|trainers|builders|libraries|plugins|heads|extras|cases"
     r"|modules|archives|recordings|recorded outputs|recorded blocks|recorded runs"
 )
 _MAGNITUDE = r"\b(?:\d+|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|seventeen)\b"
@@ -323,6 +331,8 @@ _ALLOWED = (
     # Structural constants — fixed by a format or by geometry, not by what the tree holds.
     "three Cartesian",
     "three splits",
+    # The shape of a cross-module change, not a count of modules.
+    "spans two modules",
 )
 
 
@@ -351,6 +361,11 @@ def _prose_blocks(path: Path) -> Iterator[tuple[int, str]]:
             yield number, stripped
 
 
+def _markdown_lines(path: Path) -> Iterator[tuple[int, str]]:
+    """Every line of a Markdown file is prose — the whole file, numbered."""
+    yield from enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+
+
 def test_no_docstring_counts_something_the_tree_can_grow() -> None:
     """A magnitude in prose rots the moment an engine, backend or recording arrives.
 
@@ -365,8 +380,13 @@ def test_no_docstring_counts_something_the_tree_can_grow() -> None:
     splits a dataset has — add it to ``_ALLOWED`` with the reason.
     """
     offenders: list[str] = []
-    for path in sorted([*_SRC.rglob("*.py"), *_TESTS.glob("test_*.py")]):
-        for number, text in _prose_blocks(path):
+    prose = [
+        (path, _prose_blocks(path))
+        for path in sorted([*_SRC.rglob("*.py"), *_TESTS.glob("test_*.py")])
+    ]
+    prose += [(path, _markdown_lines(path)) for path in _PROSE_DOCS]
+    for path, blocks in prose:
+        for number, text in blocks:
             flat = " ".join(text.split())
             for match in _COUNTED_PROSE.finditer(flat):
                 phrase = match.group(0)

@@ -84,7 +84,8 @@ outputs/
 ```
 
 Both ensemble files are sorted by the step's own ranking energy and carry
-`stepN id=<id> E=<hartree> Eh` on each comment line, so any frame traces back to its
+`stepN id=<id> E=<hartree> Eh` on each comment line (`G=`, `H=` or `E_ZPE=` when the step
+ranks on a thermochemical energy), so any frame traces back to its
 directory and its `steps.csv` row. Structure ids are hierarchical (`0` → `0-1` →
 `0-1-2`), so every survivor traces back to the seed it came from.
 

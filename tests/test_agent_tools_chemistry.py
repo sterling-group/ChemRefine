@@ -372,7 +372,7 @@ def test_a_negative_top_atoms_is_no_atoms_never_all_but_some(
 def test_get_structure_returns_extended_xyz_from_the_cache(tmp_path: Path):
     """Geometry out of the step cache, in the one format that carries everything.
 
-    Extended XYZ because the same text has to serve three cases the viewer cannot tell
+    Extended XYZ because the same text has to serve every case the viewer cannot tell
     apart in advance: a molecule, a periodic cell (``Lattice="…"``), and a normal mode
     (three more columns per atom). Nothing here needs an output file — symbols and
     positions are persisted with every parsed structure.
