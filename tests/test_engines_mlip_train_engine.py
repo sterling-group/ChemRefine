@@ -408,4 +408,5 @@ def test_the_training_job_is_one_task_of_many_cpus_and_declares_no_memory(tmp_pa
     engine = MlipTrainEngine()
     ctx = _ctx(tmp_path, cores=4)
     assert engine.slurm_layout(ctx) == (1, 4)
+    assert engine.single_node(ctx) is False  # one task cannot be split; nothing to pin
     assert engine.memory_mb(ctx) is None

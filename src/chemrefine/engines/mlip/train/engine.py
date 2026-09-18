@@ -378,6 +378,10 @@ class MlipTrainEngine(MlipBackend):
         """
         return (1, min(self.pal(ctx), ctx.max_cores))
 
+    def single_node(self, ctx: StepContext) -> bool:
+        """No: one task with N CPUs cannot be split. Declared, as the protocol is met directly."""
+        return False
+
     def memory_mb(self, ctx: StepContext) -> int | None:
         """No declared memory — a trainer config carries no ``mem_total``-like knob.
 

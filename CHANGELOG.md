@@ -306,7 +306,10 @@ for the full map.
   process the first node's share of a budget the throttler charged in full. They now
   request `--ntasks=1 --cpus-per-task=N`, the shape Q-Chem's threaded jobs already used,
   so the allocation is one node by construction. The core count, the thread exports and
-  the budget charged are unchanged; only the directive pair moves.
+  the budget charged are unchanged; only the directive pair moves. An ExtOpt step keeps
+  the ranks' spelling — ORCA still runs its `%pal` MPI processes in `ProgExt` mode — and
+  its script now pins `#SBATCH --nodes=1`, since the gradient server threads that same
+  count in one process; an engine declares this through `single_node`.
 - **The quickstart runs on a base install and ORCA.** `examples/first_run/` is the
   README's two-step pipeline — an xTB screen (ORCA's bundled GFN2-xTB) and a DFT
   refinement of three ethylene-glycol conformers, under a minute on a laptop, nothing

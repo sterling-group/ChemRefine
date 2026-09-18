@@ -229,6 +229,10 @@ class JobEngine(abc.ABC):
         """
         return (min(self.pal(ctx), ctx.max_cores), 1)
 
+    def single_node(self, ctx: StepContext) -> bool:
+        """No: an MPI job's ranks may span nodes, and a threaded job is one task anyway."""
+        return False
+
     def gpus(self, ctx: StepContext) -> int:
         """GPUs one job needs: what the step's validated options ask for, ``0`` otherwise.
 

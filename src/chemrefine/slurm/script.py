@@ -192,6 +192,34 @@ def _apply_memory(
     return [*kept, f"#SBATCH --mem-per-cpu={per_cpu}"]
 
 
+# A header's own node count, in either spelling, for stripping the directive (not its
+# line) when the engine pins the node — the `_SBATCH_OWNED_OPTION_RE` rule. `--nodes` and
+# `-N` only; `--nodelist` / `--ntasks-per-node` share a prefix and are kept.
+_NODES_STRIP_RE = re.compile(r"[ \t]*(?:--nodes|-N)(?:=|[ \t]+)\S+(?=\s|$)")
+
+
+def _apply_single_node(sbatch_lines: list[str], single_node: bool) -> list[str]:
+    """Pin the job to one node when the engine says its processes must share one.
+
+    ``False`` leaves the header byte-untouched, which is what every job gets whose shape
+    already decides the matter — one task with N CPUs cannot be split, and MPI ranks may
+    span. ``True`` is the ExtOpt case (:meth:`~chemrefine.engines.api.JobExecutable.
+    single_node`): N tasks for ORCA's ranks *and* one process threading N, which is only
+    right on one machine. The directive is written by the script rather than asked of
+    every header, because a header that forgot it produced a job that was wrong only on
+    the partitions that split it — the failure that is never reproduced on a laptop. A
+    header's own ``--nodes`` is stripped in place so the two cannot disagree.
+    """
+    if not single_node:
+        return sbatch_lines
+    kept = []
+    for line in sbatch_lines:
+        remainder = _NODES_STRIP_RE.sub("", line)
+        if remainder.strip() != "#SBATCH":
+            kept.append(remainder)
+    return [*kept, "#SBATCH --nodes=1"]
+
+
 def _run_body_lines(
     *,
     work_dir_expr: str,
@@ -284,6 +312,7 @@ def build_script(
     ntasks: int,
     cpus_per_task: int = 1,
     memory_mb: int | None = None,
+    single_node: bool = False,
     template_path: Path,
     script_path: Path,
     input_path: Path,
@@ -316,6 +345,9 @@ def build_script(
       (:meth:`~chemrefine.engines.api.JobExecutable.memory_mb`). A header allocation that
       covers it stands untouched; a short or absent one is replaced by the derived
       ``--mem-per-cpu`` — see :func:`_apply_memory`. ``None`` never touches the header.
+    * ``single_node`` → ``#SBATCH --nodes=1`` when the engine's processes must share a
+      node (:meth:`~chemrefine.engines.api.JobExecutable.single_node`); ``False`` never
+      touches the header — see :func:`_apply_single_node`.
     * ``scratch_dir`` → base for the per-calc ``$WORK_DIR``; ``None`` auto-derives
       ``_work_<jobid>_<ts>_<rand>`` under ``output_dir`` (see :class:`Config`).
     * ``run_block`` → engine bash run after ``cd $WORK_DIR`` (may use
@@ -329,6 +361,7 @@ def build_script(
     sbatch_lines = _apply_memory(
         sbatch_lines, memory_mb, ntasks=ntasks, cpus_per_task=cpus_per_task, job_name=job_name
     )
+    sbatch_lines = _apply_single_node(sbatch_lines, single_node)
     runlog_path = output_dir / f"{job_name}.runlog"
     err_path = output_dir / f"{job_name}.err"
     sbatch_lines += [
@@ -418,6 +451,7 @@ def build_array_script(
     ntasks: int,
     cpus_per_task: int = 1,
     memory_mb: int | None = None,
+    single_node: bool = False,
     template_path: Path,
     script_path: Path,
     output_dir: Path,
@@ -460,6 +494,7 @@ def build_array_script(
         cpus_per_task=cpus_per_task,
         job_name=f"{step_label}_array",
     )
+    sbatch_lines = _apply_single_node(sbatch_lines, single_node)
     fallback_log = output_dir / "array_%A_%a.log"
     sbatch_lines += [
         f"#SBATCH --job-name={step_label}_array",

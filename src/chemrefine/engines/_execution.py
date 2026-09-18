@@ -73,6 +73,7 @@ class _BatchPlan:
     ntasks: int
     cpus_per_task: int
     memory_mb: int | None
+    single_node: bool
     gpus: int
     local: bool
     gpu_budget: throttle.GpuBudget
@@ -134,6 +135,7 @@ class _BatchPlan:
             ntasks=ntasks,
             cpus_per_task=cpus_per_task,
             memory_mb=engine.memory_mb(ctx),
+            single_node=engine.single_node(ctx),
             gpus=gpus,
             local=local,
             gpu_budget=gpu_budget,
@@ -220,6 +222,7 @@ def _submit_one(
         ntasks=plan.ntasks,
         cpus_per_task=plan.cpus_per_task,
         memory_mb=plan.memory_mb,
+        single_node=plan.single_node,
         template_path=plan.header_path,
         script_path=script_path,
         input_path=inp,
@@ -349,6 +352,7 @@ def _run_array(
         ntasks=plan.ntasks,
         cpus_per_task=plan.cpus_per_task,
         memory_mb=plan.memory_mb,
+        single_node=plan.single_node,
         template_path=plan.header_path,
         script_path=script_path,
         output_dir=output_dir,

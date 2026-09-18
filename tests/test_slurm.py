@@ -174,6 +174,27 @@ def test_no_memory_declaration_leaves_the_header_alone(tmp_path: Path):
     assert text.count("--mem-per-cpu") == 1
 
 
+def test_a_single_node_job_pins_the_node_and_a_headers_own_count_yields(tmp_path: Path):
+    """``single_node`` writes ``--nodes=1`` and strips the header's own; ``False`` touches nothing.
+
+    The directive is the script's rather than every header's because a header that forgot
+    it produced a job wrong only on the partitions that split it. Stripped in place, not by
+    line: a ``--nodes=4`` sharing a line with ``--time`` must lose only the node count.
+    """
+    header = _write_header_with(tmp_path, "--nodes=4 --time=01:00:00", "-N 2")
+    pinned = slurm.build_script(
+        **_build_kwargs(tmp_path, template_path=header, single_node=True)
+    ).read_text()
+    assert "#SBATCH --nodes=1" in pinned
+    assert "--nodes=4" not in pinned and "-N 2" not in pinned
+    assert "#SBATCH --time=01:00:00" in pinned
+    assert pinned.count("--nodes") == 1
+
+    left_alone = slurm.build_script(**_build_kwargs(tmp_path, template_path=header)).read_text()
+    assert "#SBATCH --nodes=4 --time=01:00:00" in left_alone
+    assert "--nodes=1" not in left_alone
+
+
 def test_a_sufficient_header_memory_allocation_stands(tmp_path: Path):
     """The cluster's own policy wins whenever it covers the input's requirement."""
     header = _write_header_with(tmp_path, "--mem-per-cpu=4000")

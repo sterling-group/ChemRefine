@@ -386,6 +386,34 @@ def test_declaring_an_options_model_stays_a_claim_not_boilerplate():
 
 
 @pytest.mark.parametrize("engine_name", _job_executables())
+def test_the_threads_a_run_block_exports_live_inside_one_task(engine_name: str, tmp_path: Path):
+    """A process that threads N must be granted N CPUs it can reach.
+
+    The SBATCH pair and the run block's ``OMP_NUM_THREADS`` export are decided by two
+    methods of one engine, and they used to disagree for every threaded script: the base
+    layout is MPI's shape — N one-CPU tasks a scheduler may place across nodes — while
+    the block exported N threads into one process, which could use only the first node's
+    share of them. So either the threads are one task's CPUs (``cpus_per_task == N``), or
+    the engine has declared that its processes share a node — the ExtOpt case, whose
+    ORCA ranks need the tasks while its server threads the same count — and the threads
+    fit the allocation. Asserted over every engine so a new one cannot inherit the ranks
+    spelling for a threaded program silently.
+    """
+    engine = get_engine(engine_name)
+    ctx = _ctx(tmp_path, engine_name, {"cores": 4})
+    block = engine.run_block(ctx, Path("step1_0.inp"), Path("step1_0.out")).body
+    threads = max((int(n) for n in re.findall(r"export OMP_NUM_THREADS=(\d+)", block)), default=1)
+    ntasks, cpus_per_task = engine.slurm_layout(ctx)
+    if threads == 1 or cpus_per_task == threads:
+        return
+    assert engine.single_node(ctx), (
+        f"{engine_name} threads {threads} across {ntasks} task(s) x {cpus_per_task} cpu(s) "
+        f"without pinning one node"
+    )
+    assert threads <= ntasks * cpus_per_task
+
+
+@pytest.mark.parametrize("engine_name", _job_executables())
 def test_run_block_survives_paths_with_spaces(engine_name: str, tmp_path: Path):
     """Every engine's generated bash must parse, with a space in the executable path.
 
@@ -657,6 +685,7 @@ _BASH_PARAM_SAFETY: dict[str, str] = {
     "ntasks": "an integer",
     "cpus_per_task": "an integer",
     "memory_mb": "an integer or None",
+    "single_node": "a boolean that selects a literal directive; never interpolated",
     "template_path": "a path that is read, never interpolated — its lines become the "
     "cluster header the user already owns",
     "script_path": "the write destination; never part of the script's text",

@@ -202,6 +202,19 @@ class ExtOptOrcaEngine(OrcaEngine):
             interpreter=interpreter,
         )
 
+    def single_node(self, ctx: StepContext) -> bool:
+        """``True``: the MPI ranks need the tasks, and the gradient server needs them on one node.
+
+        ORCA in ``ProgExt`` mode still runs the ``%pal`` MPI processes of its input — it
+        reports "running with N parallel MPI-processes" and waits on the wrapper from
+        them — while the server this engine starts threads the same N in one process on
+        the same allocation. Neither spelling of N cores alone is right: N one-CPU tasks
+        may be granted across nodes, which one server process cannot use, and one task
+        with N CPUs offers ORCA a single MPI slot. So the ranks' spelling stays and the
+        script pins the node.
+        """
+        return True
+
     def _wrapper_path(self, ctx: StepContext) -> Path:
         """Path of the per-step ``ProgExt`` wrapper script."""
         return (ctx.step_dir / self.wrapper_filename).resolve()

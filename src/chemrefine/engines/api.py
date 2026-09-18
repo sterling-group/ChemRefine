@@ -429,6 +429,18 @@ class JobExecutable(Protocol):
         """
         ...
 
+    def single_node(self, ctx: StepContext) -> bool:
+        """Whether this job's processes must share one node, whatever its task count.
+
+        ``False`` for almost everything: a threaded program is one task with N CPUs,
+        which cannot be split, and an MPI program's ranks may land anywhere. ``True`` for
+        a job that is both at once — ORCA driven by an ExtOpt server runs its ``%pal``
+        MPI processes *and* a gradient server threading the same count in one process,
+        so the ranks need the tasks and the server needs them on one machine. The script
+        then carries ``#SBATCH --nodes=1`` itself, so no header has to remember it.
+        """
+        ...
+
     def gpus(self, ctx: StepContext) -> int:
         """GPUs one job needs (``0`` = CPU)."""
         ...

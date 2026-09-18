@@ -114,6 +114,25 @@ class _ThreadedJobEngine(_FakeJobEngine):
         return (1, min(self.pal(ctx), ctx.max_cores))
 
 
+class _OneNodeJobEngine(_FakeJobEngine):
+    """Ranks that must share a node — the ExtOpt shape."""
+
+    def single_node(self, ctx) -> bool:
+        return True
+
+
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
+@patch.object(slurm, "submit", return_value="1001")
+def test_a_single_node_declaration_reaches_the_generated_script(_submit, _finished, tmp_path: Path):
+    """The engine's `single_node` decides whether the script pins `--nodes=1`."""
+    for engine, pinned in ((_OneNodeJobEngine(), True), (_FakeJobEngine(), False)):
+        ctx = _ctx(tmp_path)
+        inputs = engine.prepare(ctx)
+        _execution.run_batch(engine, inputs, ctx)
+        text = inputs.files[0][0].with_suffix(".slurm").read_text()
+        assert ("#SBATCH --nodes=1" in text) is pinned
+
+
 @patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
 @patch.object(slurm, "submit", return_value="1001")
 def test_a_threads_layout_reaches_the_generated_script(_submit, _finished, tmp_path: Path):
