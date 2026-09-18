@@ -1,6 +1,8 @@
 """Shared pytest fixtures for the ChemRefine test suite."""
 
+import asyncio
 import builtins
+import contextlib
 import importlib
 import sys
 from collections.abc import Callable, Iterator
@@ -136,6 +138,80 @@ def _keep_model_requests_offline() -> Iterator[None]:
     models.ALLOW_MODEL_REQUESTS = False
     yield
     models.ALLOW_MODEL_REQUESTS = previous
+
+
+@contextlib.contextmanager
+def _owned_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    """Give the calling thread an event loop of its own for the block, and close it after.
+
+    The one rule behind both fixtures below: a thread that runs a synchronous agent turn
+    owns the loop that turn runs on. ``Agent.run_sync`` takes whatever loop the policy holds
+    for the thread and, finding none, creates one and leaves it there — open, and owned by
+    nobody. Owned here, it is closed on the way out and the policy is left as it was found.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        yield loop
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
+
+
+@pytest.fixture(scope="session")
+def _owned_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    """The one event loop the suite's synchronous agent paths run on, owned and closed here.
+
+    ``Agent.run_sync`` — what ``chat.repl``, the GUI's chat endpoint and the harness tests
+    drive — runs on whatever loop ``asyncio.get_event_loop()`` answers, and when the policy
+    holds none it *creates* one and leaves it there: open, and owned by nobody. The anyio
+    tests (``test_mcp_server``) run under anyio's own runner, which installs its loop on the
+    policy for the test and unsets it afterwards — dropping the only reference to that
+    implicit loop while it is still open. It sits in a reference cycle, so the collector
+    reaches it whenever the object graph happens to trigger a pass, and its ``__del__`` then
+    raises ``ResourceWarning`` (the loop and its self-pipe socket pair) into whichever test is
+    running — which ``filterwarnings = error`` turns into a failure of an innocent test. The
+    dev environment reached that point only at exit; a fresh dependency resolution reached
+    it mid-run, and the sdist gate went red on ``test_package_boundaries``.
+
+    Owned here, the loop is never garbage: ``_current_event_loop`` below puts it back on the
+    policy before every test that finds none, so no path ever creates an implicit one, and
+    the session closes it. The ``DeprecationWarning`` the stdlib raises on implicit creation
+    is therefore no longer filtered in ``pyproject.toml`` — it would now mean a new path has
+    started creating loops of its own.
+    """
+    with _owned_loop() as loop:
+        yield loop
+
+
+@pytest.fixture
+def owned_event_loop() -> Callable[
+    [], contextlib.AbstractContextManager[asyncio.AbstractEventLoop]
+]:
+    """:func:`_owned_loop` for a test that runs a synchronous agent turn on a thread of its own.
+
+    The session loop above belongs to the main thread; ``run_sync`` on any other thread
+    creates that thread's own implicit loop, which dies unowned with the thread — the same
+    ``ResourceWarning`` by a shorter route, raised into whichever test the collector reaches
+    it under. A thread that sends a turn wraps it in this, so the loop is closed with the
+    thread. Waitress's workers never leave, which is why the GUI itself needs no such care.
+    """
+    return _owned_loop
+
+
+@pytest.fixture(autouse=True)
+def _current_event_loop(_owned_event_loop: asyncio.AbstractEventLoop) -> None:
+    """Install the session's loop on the policy whenever a test would otherwise find none.
+
+    Anyio's runner sets the policy's loop to ``None`` when it closes; the next synchronous
+    ``run_sync`` would then create an implicit loop. Reinstalled per test rather than once,
+    for that reason. A loop that is present and open is left alone — an anyio test's own
+    runner installs its loop inside the test, after this fixture has run.
+    """
+    policy = asyncio.get_event_loop_policy()
+    current = getattr(getattr(policy, "_local", None), "_loop", None)
+    if current is None or current.is_closed():
+        asyncio.set_event_loop(_owned_event_loop)
 
 
 @pytest.fixture(autouse=True)

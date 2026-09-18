@@ -14,9 +14,11 @@ question: ``ssh -X`` sets one on nodes whose only browser is lynx.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import types
 import webbrowser
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -1318,7 +1320,9 @@ def test_chat_reset_forgets_the_conversation(client: Any, chat_env: pytest.Monke
 
 
 def test_overlapping_chat_turns_contend_on_a_lock_not_on_the_state(
-    client: Any, chat_env: pytest.MonkeyPatch
+    client: Any,
+    chat_env: pytest.MonkeyPatch,
+    owned_event_loop: Callable[[], contextlib.AbstractContextManager[Any]],
 ):
     """A second Send during a turn hears "busy" — it must not run from the same history.
 
@@ -1348,7 +1352,9 @@ def test_overlapping_chat_turns_contend_on_a_lock_not_on_the_state(
     first: dict[str, Any] = {}
 
     def send_first() -> None:
-        first["response"] = _post(client, "/api/agent/chat", {"message": "one"})
+        # The turn runs on this thread, so the loop `run_sync` uses is this thread's to own.
+        with owned_event_loop():
+            first["response"] = _post(client, "/api/agent/chat", {"message": "one"})
 
     turn = threading.Thread(target=send_first)
     turn.start()

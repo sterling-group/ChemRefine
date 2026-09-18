@@ -449,10 +449,6 @@ pythonpath = ["tests"]
 # rather than the one that removes the API. The suite is clean under this today.
 filterwarnings = [
     "error",
-    # PydanticAI's run_sync spins its own loop; on 3.12+ the stdlib deprecates the
-    # implicit get_event_loop it touches on the way. Their issue, not a signal in ours —
-    # matched narrowly so every other DeprecationWarning still fails the suite.
-    "ignore:There is no current event loop:DeprecationWarning",
     # numpy 2.5 deprecates assigning `.shape`, and ase 3.29 still does it in ~18 places —
     # `Atoms.new_array` among them, so *any* empty `Atoms()` warns. On a fresh install
     # (numpy 2.5.2 + ase 3.29.0) that is 68 failures, none of them ours: chemrefine
