@@ -454,6 +454,16 @@ for the full map.
 
 ### Fixed
 
+- **The ExtOpt gradient server answers one call at a time, refuses a non-finite answer,
+  and is given the time its backend takes to load.** The server served one stateful ASE
+  calculator on four worker threads, so two overlapping gradient calls could answer one
+  geometry with another's energy and forces; it now runs one worker. A model that could
+  not evaluate a geometry answered `nan`, which the bridge accepted and wrote into ORCA's
+  `.engrad`; both the server and the bridge now refuse a non-finite energy or gradient as
+  the classified backend failure. And the model load — on a cold cache, its download —
+  was counted against the two-minute readiness budget, so a first run on a slow link died
+  as "did not become ready" for a download that would have finished; the server now
+  reports while it is loading and the job waits through that separately.
 - **An `on_failure: best` backfill of the submitted input is a geometry alone.** On a
   step after the first, the structure a failed job was given is the previous step's
   result, and the backfill carried it whole — so this step's filter ranked, and

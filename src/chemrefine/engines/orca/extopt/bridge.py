@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 from http.client import HTTPException
 from pathlib import Path
 from typing import Any, cast
@@ -162,9 +163,22 @@ def submit_calculation(
     if "error" in parsed:
         raise JobFailureError(f"ExtOpt server error: {parsed['error']}")
     try:
-        return float(parsed["energy"]), list(parsed["gradient"])
+        energy = float(parsed["energy"])
+        gradient = [[float(component) for component in row] for row in parsed["gradient"]]
     except (KeyError, TypeError, ValueError) as e:
         raise JobFailureError(f"ExtOpt server response missing fields: {parsed!r}") from e
+    # `json.loads` accepts the bare `NaN` / `Infinity` Python's encoder emits, and
+    # `f"{x:.12e}"` writes them into the .engrad as text ORCA then reads. The server
+    # refuses them on its side too; this is the classified failure for a server that
+    # does not — the same JobFailureError every other unusable answer becomes.
+    if not math.isfinite(energy) or any(
+        not math.isfinite(component) for row in gradient for component in row
+    ):
+        raise JobFailureError(
+            "ExtOpt server returned a non-finite energy or gradient (nan/inf): the backend "
+            "could not evaluate this geometry"
+        )
+    return energy, gradient
 
 
 def _engrad_path_for(inputfile: str) -> Path:

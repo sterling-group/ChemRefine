@@ -487,6 +487,33 @@ def test_mlip_extopt_run_block_starts_shared_extopt_server(tmp_path: Path):
     assert ctx.executables.get("orca", "orca") in run_block
 
 
+def test_mlip_extopt_run_block_waits_through_a_backend_load(tmp_path: Path):
+    """The readiness loop counts idle seconds and loading seconds against separate ceilings.
+
+    Building the calculator — the model load, and on a cold cache the download — happens
+    before the server binds; counted against the two-minute readiness budget, a first run
+    on a slow link died as "did not become ready" for a download that would have
+    finished. The server holds a marker for the whole load, and the loop reads it.
+    """
+    from chemrefine.engines._backend_server.base import SERVER_LOADING_FILENAME
+    from chemrefine.engines.orca.extopt import run_block as rb
+
+    engine = get_engine("mlip-extopt")
+    ctx = _mlip_extopt_ctx(tmp_path)
+    body = engine.run_block(
+        ctx,
+        inp_path=ctx.step_dir / "step1_structure_0.inp",
+        out_path=ctx.step_dir / "step1_structure_0.out",
+    ).body
+    assert f'LOADING_FILE="$WORK_DIR/{SERVER_LOADING_FILENAME}"' in body
+    assert f"LOAD_TIMEOUT={rb._SERVER_LOAD_TIMEOUT_SECONDS}" in body
+    assert f"SERVER_TIMEOUT={rb._SERVER_READY_TIMEOUT_SECONDS}" in body
+    assert rb._SERVER_LOAD_TIMEOUT_SECONDS > rb._SERVER_READY_TIMEOUT_SECONDS
+    assert 'if [ -e "$LOADING_FILE" ]' in body
+    assert "still loading its backend" in body
+    assert "did not become ready" in body
+
+
 def test_mlip_extopt_nms_knobs_share_the_options_with_the_strict_server_read(tmp_path: Path):
     """With ``nms: true`` the NMS knobs are the sampler's, not strangers to the server model.
 

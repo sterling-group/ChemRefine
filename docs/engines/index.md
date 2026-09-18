@@ -244,6 +244,15 @@ submits:
 Whatever trained, running the result is the same one line: `model_path:` pointing at the
 artifact, with the same `task_name`.
 
+On the ExtOpt path the job starts the gradient server before ORCA, and the server builds
+its calculator — loads the model, and on a cold cache downloads it — before it answers.
+The job waits through that load (for up to an hour, then gives the server up as stuck)
+and separately gives up a server that sits idle for two minutes without answering. A
+first run on a compute node with a slow link is best preceded by one calculation on the
+login node, which fills the model cache the job then reads. The server answers one
+gradient at a time: the calculator behind the route keeps per-call state, so a second
+worker would answer one geometry with another's numbers.
+
 ## PySCF (`pyscf`, `pyscf-extopt`)
 
 Both engines read the SCF selection — `pyscf` renders every knob below into your `stepN.py`

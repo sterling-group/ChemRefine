@@ -428,7 +428,7 @@ def test_server_parse_args_defaults():
     args = server.parse_args(["--backend", "mlip"])
     assert args.backend == "mlip"
     assert args.bind == "127.0.0.1:0"
-    assert args.nthreads == 4
+    assert args.nthreads == 1  # one stateful calculator behind the route
     assert args.log_level == "INFO"
     assert args.method == "dft"  # PySCF default available regardless of backend
 
@@ -516,6 +516,35 @@ _CALC_PAYLOAD = {
     "nthreads": 1,
     "dograd": True,
 }
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [(float("nan"), [[0.0, 0.0, 0.0]]), (-1.0, [[0.0, float("inf"), 0.0]])],
+    ids=["energy", "gradient"],
+)
+def test_calculate_refuses_a_non_finite_answer(answer, caplog):
+    """A model that cannot evaluate a geometry answers nan/inf; that is a 500, not a number.
+
+    Flask serialises ``NaN`` bare and the bridge's ``json.loads`` accepts it, so without
+    this the value reached ORCA's ``.engrad`` as the text ``nan``. The refusal takes the
+    same classified path as any other backend failure: a correlation id on the wire, the
+    reason in the server log.
+    """
+    import logging
+
+    class _Diverged:
+        name = "diverged"
+
+        def calc(self, data):
+            return answer
+
+    app = server.create_app(_Diverged())
+    with caplog.at_level(logging.ERROR):
+        resp = app.test_client().post("/calculate", json=_CALC_PAYLOAD)
+    assert resp.status_code == 500
+    assert "non-finite energy or gradient" in caplog.text
+    assert "nan" not in resp.get_data(as_text=True)
 
 
 def test_calculate_rejects_requests_without_token():
@@ -723,6 +752,22 @@ def test_submit_calculation_round_trip():
         )
     assert energy == -1.5
     assert gradient == [[0.0, 0.0, 0.0]]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"energy": NaN, "gradient": [[0.0, 0.0, 0.0]]}',
+        b'{"energy": -1.5, "gradient": [[0.0, Infinity, 0.0]]}',
+    ],
+    ids=["energy", "gradient"],
+)
+def test_submit_calculation_refuses_a_non_finite_answer(body: bytes):
+    """``json.loads`` accepts a bare ``NaN``; the bridge must not hand it to ORCA."""
+    with patch.object(bridge, "urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value = BytesIO(body)
+        with pytest.raises(JobFailureError, match="non-finite energy or gradient"):
+            bridge.submit_calculation(server_url="127.0.0.1:54321", data=_data())
 
 
 def test_submit_calculation_sends_bearer_token():
@@ -1017,9 +1062,20 @@ def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
         ],
     )
 
+    seen: dict[str, bool] = {}
+    real_bind = fake_sock.bind
+
+    def bind_while_loading(address):
+        # The marker is held for the whole calculator build, so it is still there at bind.
+        seen["loading"] = (tmp_path / "server.loading").is_file()
+        return real_bind(address)
+
+    fake_sock.bind = bind_while_loading
     with patch("socket.socket", return_value=fake_sock):
         rc = server.main()
     assert rc == 0
+    assert seen["loading"], "the loading marker is held until the URL is published"
+    assert not (tmp_path / "server.loading").exists(), "and released once it is"
     create_server_mock.assert_called_once()
     # The pre-bound socket must be what waitress serves on — the one property the fake
     # socket exists to prove. Passing the app without `sockets=` starts a second server

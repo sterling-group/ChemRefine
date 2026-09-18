@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import secrets
 import socket
 from typing import TYPE_CHECKING, Any
@@ -25,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 from chemrefine.engines._backend_server.base import (
     DEFAULT_BIND_HOST,
     DEFAULT_BIND_PORT,
+    SERVER_LOADING_FILENAME,
     SERVER_TOKEN_FILENAME,
     SERVER_URL_FILENAME,
     CalculationData,
@@ -62,7 +64,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help=f"path of the sidecar URL file (default: $WORK_DIR/{SERVER_URL_FILENAME})",
     )
-    parser.add_argument("--nthreads", type=int, default=4, help="waitress worker threads")
+    parser.add_argument(
+        "--nthreads",
+        type=int,
+        default=1,
+        help="waitress worker threads (default 1: the one calculator behind the route keeps "
+        "per-call state, so two threads would answer one geometry with another's numbers)",
+    )
     parser.add_argument("--log-file", default=None, help="logging destination (default: stderr)")
     parser.add_argument(
         "--log-level",
@@ -72,6 +80,23 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     for backend_name in known_backends():
         load_calculator(backend_name).add_cli_args(parser)
     return parser.parse_args(argv)
+
+
+def _require_finite(energy: Any, gradient: Any) -> None:
+    """Refuse a non-finite energy or gradient component before it leaves the server.
+
+    Every other numeric boundary in the package refuses ``nan`` / ``inf`` by name; this
+    was the one that did not, and it is the one that feeds numbers *back into* a running
+    calculation: Flask serialises ``NaN`` bare, the bridge accepts it, and ORCA read
+    ``nan`` out of its ``.engrad``. A model that cannot evaluate a geometry (two centres
+    driven together, an out-of-distribution structure, a diverged SCF) is a backend
+    failure like any other, and it takes the same 500 with the same correlation id.
+    """
+    values = [float(energy), *(float(component) for row in gradient for component in row)]
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError(
+            "non-finite energy or gradient (nan/inf): the backend could not evaluate this geometry"
+        )
 
 
 def create_app(calculator: ComputeBackend, *, token: str | None = None) -> Flask:
@@ -120,6 +145,7 @@ def create_app(calculator: ComputeBackend, *, token: str | None = None) -> Flask
                     data.dograd,
                 )
             energy, gradient = calculator.calc(data)
+            _require_finite(energy, gradient)
         except Exception as e:
             # The full exception — message, paths, backend internals — goes to the
             # server log, which only the job owner can read. The response carries a
@@ -216,25 +242,34 @@ def main() -> int:
 
     from waitress.server import create_server
 
-    backend_cls = load_calculator(args.backend)
-    calculator = backend_cls.from_args(args)
-    token = secrets.token_hex(32)
-    app = create_app(calculator, token=token)
-
-    host, port_str = args.bind.rsplit(":", 1)
-    # Bind a real OS socket first so getsockname() reveals the
-    # kernel-assigned ephemeral port (when port=0). waitress's
-    # documented ``sockets=`` parameter then accepts the pre-bound
-    # socket directly.
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind((host, int(port_str)))
-    actual_host, actual_port = sock.getsockname()
-    actual_url = f"{actual_host}:{actual_port}"
-
     default_dir = Path(os.environ.get("WORK_DIR", "."))
     url_file = args.url_file or str(default_dir / SERVER_URL_FILENAME)
-    sidecar.write_server_url(url_file, actual_url)
-    sidecar.write_server_token(Path(url_file).with_name(SERVER_TOKEN_FILENAME), token)
+    # Held from here until the URL is published: building the calculator is the model
+    # load, and on a cold cache the download, which the wrapper's readiness loop could
+    # not otherwise tell from a hang — see `SERVER_LOADING_FILENAME`.
+    loading = Path(url_file).with_name(SERVER_LOADING_FILENAME)
+    loading.parent.mkdir(parents=True, exist_ok=True)
+    loading.touch()
+    try:
+        backend_cls = load_calculator(args.backend)
+        calculator = backend_cls.from_args(args)
+        token = secrets.token_hex(32)
+        app = create_app(calculator, token=token)
+
+        host, port_str = args.bind.rsplit(":", 1)
+        # Bind a real OS socket first so getsockname() reveals the
+        # kernel-assigned ephemeral port (when port=0). waitress's
+        # documented ``sockets=`` parameter then accepts the pre-bound
+        # socket directly.
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind((host, int(port_str)))
+        actual_host, actual_port = sock.getsockname()
+        actual_url = f"{actual_host}:{actual_port}"
+
+        sidecar.write_server_url(url_file, actual_url)
+        sidecar.write_server_token(Path(url_file).with_name(SERVER_TOKEN_FILENAME), token)
+    finally:
+        loading.unlink(missing_ok=True)
     logger.info("ExtOpt server (%s) bound at %s, sidecar=%s", args.backend, actual_url, url_file)
     # Serve on the pre-bound socket. Passing the server to ``waitress.serve``
     # would ignore this socket and start a *second* server on the default
