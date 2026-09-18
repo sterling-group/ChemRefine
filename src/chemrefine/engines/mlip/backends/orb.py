@@ -25,6 +25,12 @@ from chemrefine.state import Structure
 ORB = MlipLibrary(extra="mlip-orb", package="orb-models", import_name="orb_models")
 """The one declaration of what provides this library."""
 
+#: The loader an unset ``model_name`` runs — the conservative v3 model trained on OMat24,
+#: the release ORB's own README leads with. ORB has no notion of a default loader (every
+#: pretrained function is named), so the builder supplies one: the ``model_name`` contract
+#: is that unset means the library's own default, and it must hold for every library.
+_DEFAULT_MODEL = "orb_v3_conservative_inf_omat"
+
 
 @ORB.calculator("orb")
 def _build_orb(spec: CalculatorSpec) -> Any:
@@ -33,9 +39,11 @@ def _build_orb(spec: CalculatorSpec) -> Any:
     The loader is the *architecture*, so it is selected by ``model_name`` even when the
     weights come from a file: a checkpoint carries weights, not an architecture, and the
     pretrained loaders take a ``weights_path`` (defaulting to the release URL, accepting
-    a local file). An older loader without the keyword is reported as the version
-    limitation it is (:class:`~chemrefine.errors.ConfigError`), not left as a
-    ``TypeError`` naming neither the step nor the option.
+    a local file). Unset, the loader is :data:`_DEFAULT_MODEL` — with a ``model_path``
+    too, so a checkpoint an ``mlip-train`` step produced runs without naming the
+    architecture its own training defaulted to. An older loader without the keyword is
+    reported as the version limitation it is (:class:`~chemrefine.errors.ConfigError`),
+    not left as a ``TypeError`` naming neither the step nor the option.
     """
     from orb_models.forcefield import pretrained
 
@@ -44,11 +52,12 @@ def _build_orb(spec: CalculatorSpec) -> Any:
     except ImportError:  # older layout
         from orb_models.forcefield.calculator import ORBCalculator
 
-    loader = getattr(pretrained, spec.model_name, None)
+    name = spec.model_name or _DEFAULT_MODEL
+    loader = getattr(pretrained, name, None)
     if loader is None:
         raise ValueError(
-            f"unknown ORB model {spec.model_name!r}; pick a loader from "
-            "orb_models.forcefield.pretrained (e.g. 'orb_v3_conservative_inf_omat')"
+            f"unknown ORB model {name!r}; pick a loader from "
+            f"orb_models.forcefield.pretrained (e.g. {_DEFAULT_MODEL!r})"
         )
     if spec.weights is None:
         loaded = loader(device=spec.device)
@@ -57,7 +66,7 @@ def _build_orb(spec: CalculatorSpec) -> Any:
             loaded = loader(weights_path=str(spec.weights), device=spec.device)
         except TypeError as e:
             raise ConfigError(
-                f"this orb-models version's {spec.model_name!r} loader takes no local "
+                f"this orb-models version's {name!r} loader takes no local "
                 f"weights_path, so model_path cannot be honoured; upgrade orb-models "
                 f"or drop model_path to run the named release"
             ) from e

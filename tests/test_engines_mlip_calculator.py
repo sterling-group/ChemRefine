@@ -365,6 +365,27 @@ def test_build_orb_constructs_real_orb_calculator(monkeypatch):
     assert calc.calculator == "ORB_CALC"
 
 
+def test_an_unset_orb_model_name_runs_the_default_loader(monkeypatch, tmp_path: Path):
+    """``task_name: orb`` alone runs a model, as every other library's builder does.
+
+    The ``model_name`` contract is that unset means the library's own default. Every other
+    builder honoured it while ORB's asked ``pretrained`` for a loader named ``""`` and
+    reported "unknown ORB model ''" — inside the job, after the step was scheduled. A
+    checkpoint from an ``mlip-train`` step is the same case: it carries weights, not an
+    architecture, and the run that produced it never had to name one either.
+    """
+    loader, calc_class, orbff = _install_fake_orb(monkeypatch)
+    MlipCalculator(task_name="orb", device="cpu")
+    loader.assert_called_once_with(device="cpu")
+    calc_class.assert_called_once_with(orbff, device="cpu")
+
+    loader.reset_mock()
+    model_file = tmp_path / "finetuned.ckpt"
+    model_file.touch()
+    MlipCalculator(task_name="orb", device="cpu", model_path=str(model_file))
+    loader.assert_called_once_with(weights_path=str(model_file), device="cpu")
+
+
 def test_build_orb_unknown_loader_raises(monkeypatch):
     """A model that isn't a loader in orb_models.forcefield.pretrained errors."""
     _install_fake_orb(monkeypatch)

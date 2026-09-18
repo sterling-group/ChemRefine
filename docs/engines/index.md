@@ -132,7 +132,7 @@ validated model as `$OPTIONS_JSON`, for `options = json.loads("$OPTIONS_JSON")`.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `model_name` (aliases `model`, `size`) | `""` (the library's own default) | Model weights, in whatever spelling the library `task_name` selected uses — a size for MACE, a checkpoint name for FAIRChem (its default is `uma-s-1p2`), an id for the others. Unset means the chosen library picks its own default — one spelling could not be right for every library at once. |
+| `model_name` (aliases `model`, `size`) | `""` (the library's own default) | Model weights, in whatever spelling the library `task_name` selected uses — a size for MACE, a checkpoint name for FAIRChem (its default is `uma-s-1p2`), a loader name for ORB (its default is `orb_v3_conservative_inf_omat`), an id for the others. Unset means the chosen library picks its own default — one spelling could not be right for every library at once. |
 | `task_name` (alias `task`) | `omol` | Method/head — **the only thing that selects the backend builder**. |
 | `model_path` | `None` | A local checkpoint to load *instead of* `model_name`, with the library `task_name` named. Selects nothing itself: to run a model an `mlip-train` step produced, name the same `task_name` it trained with. Relative paths resolve against the config file's directory. |
 | `device` | `cpu` | `cuda` or `cpu`. CPU is the floor that always runs; asking for a GPU is one line, whereas a wrong `cuda` default schedules a CPU job whose script then asks for a device it wasn't given. |
