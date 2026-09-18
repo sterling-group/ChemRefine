@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
+import struct
 import sys
+import zipfile
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -949,6 +953,68 @@ def test_the_sidecar_refuses_to_unpickle(tmp_path: Path):
 
     with pytest.raises(CacheError, match="corrupt coordinate sidecar"):
         load(step_dir)
+
+
+def _empty_file(path: Path) -> None:
+    path.write_bytes(b"")
+
+
+def _torn_archive(path: Path) -> None:
+    data = path.read_bytes()
+    path.write_bytes(data[: len(data) // 2])
+
+
+def _bad_member_crc(path: Path) -> None:
+    # The last byte of the first member's array data: the bytes still parse as an array,
+    # and only the container's CRC knows they are not the ones that were written.
+    with zipfile.ZipFile(path) as archive:
+        info = archive.infolist()[0]
+    raw = bytearray(path.read_bytes())
+    name_len, extra_len = struct.unpack_from("<HH", raw, info.header_offset + 26)
+    start = info.header_offset + 30 + name_len + extra_len
+    raw[start + info.compress_size - 1] ^= 0xFF
+    path.write_bytes(bytes(raw))
+
+
+def _short_member(path: Path) -> None:
+    buf = io.BytesIO()
+    np.save(buf, np.zeros((2, 3)))
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("positions.npy", buf.getvalue()[:-8])
+
+
+def _directory(path: Path) -> None:
+    path.unlink()
+    path.mkdir()
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [_empty_file, _torn_archive, _bad_member_crc, _short_member, _directory],
+    ids=["empty-file", "torn-archive", "bad-member-crc", "short-member", "directory"],
+)
+def test_a_damaged_sidecar_is_the_caches_own_error_at_every_layer(
+    tmp_path: Path, damage: Callable[[Path], None]
+):
+    """One case per layer the file has, because each layer refuses in its own type.
+
+    A sidecar is a filesystem entry (``OSError``) holding a ZIP container (``BadZipFile``:
+    torn, or a member whose CRC no longer matches) holding ``.npy`` members (``ValueError``
+    for a short or garbled one; ``EOFError`` for a file with no bytes at all). A net written
+    from the failures that had been seen covered two of the four, and a sidecar half-copied
+    off a cluster reached the user as a traceback with exit 1 where the docs promise the
+    cache's own error and its rebuild advice. Held per layer so a numpy that moves a
+    refusal between them goes red here rather than back to the traceback. A directory
+    where the file should be is refused one line earlier, by the existence check, with
+    the "has no arrays.npz" wording — the same error type by a shorter route, so the
+    match is on the file every message names.
+    """
+    step_dir = _saved(tmp_path)
+    damage(cache._arrays_path(step_dir))
+
+    with pytest.raises(CacheError, match=r"arrays\.npz"):
+        load(step_dir)
+    assert load_if_valid(key=_key("0", "1", step_cfg=_cfg()), step_dir=step_dir) is None
 
 
 def _orphan_sidecar(step_dir: Path, *structures: Structure) -> None:

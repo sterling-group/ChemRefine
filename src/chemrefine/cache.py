@@ -65,6 +65,7 @@ import json
 import logging
 import os
 import tempfile
+import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -764,9 +765,23 @@ def _read_arrays(path: Path) -> Any:
     if not path.is_file():
         raise CacheError(f"step cache at {path.parent} has no {path.name}; rebuild the step")
     try:
-        with np.load(path, allow_pickle=False) as loaded:
+        # The handle is opened here rather than left to ``np.load``: handed a path, numpy
+        # opens the file itself and hands it to the archive reader *after* releasing its
+        # own guard on it, so a container it cannot read leaks the descriptor to the
+        # collector — a ``ResourceWarning`` on every torn sidecar. Owned by this ``with``,
+        # the handle closes on every exit below.
+        with path.open("rb") as handle, np.load(handle, allow_pickle=False) as loaded:
             return {key: loaded[key] for key in loaded.files}
-    except (OSError, ValueError) as e:
+    except (OSError, EOFError, ValueError, zipfile.BadZipFile) as e:
+        # The net is the file's layers, not a list of the failures that have been seen. A
+        # sidecar is a filesystem entry holding a ZIP container holding ``.npy`` members,
+        # and each layer refuses in its own type: the filesystem in ``OSError`` (a
+        # directory, a mode-000 file); an empty file in ``EOFError`` (nothing to sniff);
+        # a torn archive or a member whose CRC no longer matches in ``BadZipFile``; a short
+        # or garbled member in ``ValueError``, which is also numpy's refusal of an object
+        # array. Named by layer the list can be checked complete — one test per layer holds
+        # it — where a list grown from surprises let a truncated ``rsync`` reach the user
+        # as a traceback with exit 1, in place of this error and its rebuild advice.
         raise CacheError(f"corrupt coordinate sidecar at {path}: {e}") from e
 
 
