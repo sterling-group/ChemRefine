@@ -21,6 +21,7 @@ import pytest
 from ase import Atoms
 
 from chemrefine.engines.mlip.calculator import MlipCalculator, build_calculator
+from chemrefine.engines.mlip.registry import backend_spec, registered_backends
 from chemrefine.errors import ConfigError
 
 
@@ -384,6 +385,41 @@ def test_an_unset_orb_model_name_runs_the_default_loader(monkeypatch, tmp_path: 
     model_file.touch()
     MlipCalculator(task_name="orb", device="cpu", model_path=str(model_file))
     loader.assert_called_once_with(weights_path=str(model_file), device="cpu")
+
+
+_FAKE_LIBRARIES = {
+    "mace": _install_fake_mace,
+    "fairchem": _install_fake_fairchem,
+    "chgnet": _install_fake_chgnet,
+    "sevenn": _install_fake_sevenn,
+    "orb_models": _install_fake_orb,
+}
+"""One fake per library the registry knows, keyed by the module the provisioner probes."""
+
+
+@pytest.mark.parametrize("task_name", sorted(registered_backends()))
+def test_every_backend_builds_a_calculator_with_model_name_unset(monkeypatch, task_name: str):
+    """Unset ``model_name`` means the library's own default, for every registered backend.
+
+    The contract is stated on the options model and in the docs table, and it was held by
+    hand: one builder asked its library for a loader named ``""`` and reported an unknown
+    model — inside the job, after the step was scheduled. Held here over the registry
+    rather than per backend, a backend added later is covered by existing, and a library
+    with no fake in the table above fails loudly instead of going quietly untested.
+
+    The one task that names no library default — the legacy ``custom_mace`` alias, whose
+    meaning is "your own checkpoint" — keeps the other half of the contract: a
+    :class:`ConfigError` before the library is touched, naming ``model_path`` as the
+    knob to write. Anything else escaping a builder is the failure this test refuses.
+    """
+    library = backend_spec(task_name).library.import_name
+    _FAKE_LIBRARIES[library](monkeypatch)
+    try:
+        calc = MlipCalculator(task_name=task_name, device="cpu")
+    except ConfigError as e:
+        assert "model_path" in str(e), f"{task_name}: a refusal that does not name the fix"
+    else:
+        assert calc.calculator is not None
 
 
 def test_build_orb_unknown_loader_raises(monkeypatch):
