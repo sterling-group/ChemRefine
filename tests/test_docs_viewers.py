@@ -194,6 +194,8 @@ def test_the_good_mode_is_drawn_on_the_geometry_the_tutorial_ships():
         ("1\ncomment\nC 0.0 0.0 0.0 0.0\n", "columns"),
         ("31\nmethod=x mode=0 frequency_cm1=-1 imaginary=0:-1 source=s\nC 0 0 0 0 0 0\n", "atoms"),
         ("1\ncomment\nC 0.0 0.0 0.0 0.1 0.2 0.3\n", "comment line"),
+        ("", "no header"),
+        ("one\ncomment\nC 0.0 0.0 0.0 0.1 0.2 0.3\n", "no atom count"),
     ],
 )
 def test_a_malformed_mode_file_fails_the_build(

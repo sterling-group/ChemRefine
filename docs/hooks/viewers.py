@@ -117,14 +117,19 @@ def viewer_file(out_path: Path, mode_index: int, *, method: str) -> str:
 
 
 def _atom_lines(text: str, source: str, *, columns: int) -> list[str]:
-    """A frame's atom lines, or a build failure saying which of the two ways it is wrong.
+    """A frame's atom lines, or a build failure saying which of the ways it is wrong.
 
     Every failure here is deliberate. The alternative — a viewer div whose data never
     arrives or never parses — renders as a blank rectangle that no test and no reviewer
     sees, which is exactly how six viewers came to point at paths that 404.
     """
     lines = text.splitlines()
-    declared = int(lines[0])
+    if len(lines) < 2:
+        raise ValueError(f"{source} has no header: an xyz file starts with a count and a comment")
+    try:
+        declared = int(lines[0])
+    except ValueError:
+        raise ValueError(f"{source} declares no atom count: {lines[0].strip()!r}") from None
     atoms = [line for line in lines[2 : 2 + declared] if line.strip()]
     if len(atoms) != declared:
         raise ValueError(f"{source} declares {declared} atoms and carries {len(atoms)}")

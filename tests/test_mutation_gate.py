@@ -198,6 +198,39 @@ def test_a_run_that_collects_no_tests_is_never_a_catch(monkeypatch: pytest.Monke
     assert "collected no tests" in whole.why
 
 
+def test_a_mutation_that_changes_nothing_stops_the_gate(tmp_path: Path):
+    """An entry whose replacement is its anchor must not be reported as a survivor.
+
+    ``stale_anchors`` proves the anchor is unique in the checked tree; it says nothing
+    about ``new``. A copy-paste slip that made them equal ran the suite over unmutated
+    code and printed ``SURVIVED`` with a ``breaks`` sentence about a hole that was never
+    opened.
+    """
+    gate = _load_gate()
+    (tmp_path / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    same = gate.Mutation("noop", "mod.py", "x = 1", "x = 1", "tests/test_x.py", "nothing")
+    with pytest.raises(SystemExit, match=r"\[noop\] would not change mod\.py.*is identical"):
+        gate._apply(tmp_path, same)
+    assert (tmp_path / "mod.py").read_text(encoding="utf-8") == "x = 1\n"
+
+    drifted = gate.Mutation("gone", "mod.py", "y = 2", "y = 3", "tests/test_x.py", "nothing")
+    with pytest.raises(SystemExit, match=r"\[gone\] would not change mod\.py.*0 time"):
+        gate._apply(tmp_path, drifted)
+
+    real = gate.Mutation("real", "mod.py", "x = 1", "x = 2", "tests/test_x.py", "nothing")
+    gate._apply(tmp_path, real)
+    assert (tmp_path / "mod.py").read_text(encoding="utf-8") == "x = 2\n"
+
+
+def test_the_copy_is_put_ahead_of_an_existing_pythonpath_not_in_its_place(tmp_path: Path):
+    """A developer's own ``PYTHONPATH`` entries survive; the copy's ``src`` leads them."""
+    gate = _load_gate()
+    src = tmp_path / "src"
+    assert gate._prepended_path({}, src) == str(src)
+    joined = gate._prepended_path({"PYTHONPATH": "/site/deps"}, src)
+    assert joined.split(gate.os.pathsep) == [str(src), "/site/deps"]
+
+
 def test_an_inconclusive_mutation_fails_the_gate_without_being_called_a_survivor(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):

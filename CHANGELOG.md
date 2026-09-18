@@ -454,6 +454,15 @@ for the full map.
 
 ### Fixed
 
+- **The developer tooling fails where it used to lie.** The docs viewer hook names the
+  mode file when its header is missing or not a count, instead of a bare traceback from
+  `mkdocs build --strict`; the mutation gate stops on an entry that would change nothing
+  and puts its scratch copy *ahead of* an existing `PYTHONPATH` rather than in its place;
+  the logo checker's resemblance gate skips only when numpy or Pillow is missing, not on
+  any error inside it; and the logo generator writes the hand-authored SVGs after every
+  inkscape step has succeeded, bounds each render with a timeout, and refuses an empty
+  glyph query. The security page now says what the cache rule never covered: a model
+  checkpoint is unpickled by its library, so it is code.
 - **An output tree on a filesystem without hard links is refused by the run lock, with its
   exit code.** The lock is a fail-if-exists `os.link`, and a mount that refuses the call
   (vfat/exfat, some FUSE and SMB shares) escaped as a traceback from inside the claim.

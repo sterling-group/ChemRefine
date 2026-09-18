@@ -118,6 +118,10 @@ DARK_MAP = {"#1d4a75": "#2b689c", "#25567d": "#7fb0d8", "#1d4a73": "#2a659a"}
 
 FONT = "Arial"  # real Arial Bold required; _require_font() refuses lookalikes
 FONT_WEIGHT = "bold"
+# Every subprocess here is a local render of a file this run wrote. A snap-managed inkscape
+# that stops to ask something, or a fontconfig scan of a cold cache, otherwise hangs the
+# build rather than failing it.
+INKSCAPE_TIMEOUT_SECONDS = 600
 LS = "-0.01em"
 
 GRAD_RISE = 140.0  # fill-ramp axis climb tip-to-tip (lightens up-right)
@@ -562,6 +566,7 @@ def fit_wordmark(wd: Path):
         check=True,
         capture_output=True,
         text=True,
+        timeout=INKSCAPE_TIMEOUT_SECONDS,
     ).stdout
     boxes = []
     for line in out.strip().splitlines():
@@ -569,6 +574,8 @@ def fit_wordmark(wd: Path):
         if len(parts) == 5:
             _, x, y, w, h = parts
             boxes.append((float(x), float(y), float(w), float(h)))
+    if not boxes:
+        raise RuntimeError(f"inkscape --query-all reported no boxes for {probe}:\n{out}")
     px0 = min(b[0] for b in boxes)
     py0 = min(b[1] for b in boxes)
     px1 = max(b[0] + b[2] for b in boxes)
@@ -607,6 +614,7 @@ def text_to_path(src: Path, dst: Path):
         ["inkscape", str(src), "--export-text-to-path", "--export-plain-svg", "-o", str(dst)],  # noqa: S607 - snap-managed, not on a fixed path
         check=True,
         capture_output=True,
+        timeout=INKSCAPE_TIMEOUT_SECONDS,
     )
     if not dst.exists():
         raise RuntimeError(f"inkscape produced no output: {dst}")
@@ -622,6 +630,7 @@ def export_png(svg: Path, png: Path, width: int, height: int | None = None):
         ["inkscape", str(svg), *dims, "-o", str(png)],  # noqa: S607 - snap-managed, not on a fixed path
         check=True,
         capture_output=True,
+        timeout=INKSCAPE_TIMEOUT_SECONDS,
     )
     if not png.exists():
         raise RuntimeError(f"inkscape produced no output: {png}")
@@ -634,6 +643,7 @@ def _require_font():
         check=True,
         capture_output=True,
         text=True,
+        timeout=INKSCAPE_TIMEOUT_SECONDS,
     ).stdout
     if f'"{FONT}"' not in out:
         raise RuntimeError(f"fontconfig resolves {FONT} {FONT_WEIGHT} to: {out.strip()}")
@@ -651,10 +661,6 @@ def main() -> int:
     # whatever was already there and then deleted it with the build's own files.
     with tempfile.TemporaryDirectory(prefix="chemrefine_logo_") as scratch:
         wd = Path(scratch)
-        (ASSETS / "logo.svg").write_text(mark_svg(), encoding="utf-8")
-        (ASSETS / "logo-dark.svg").write_text(mark_svg(dark=True), encoding="utf-8")
-        (ASSETS / "favicon.svg").write_text(icon_svg(boost=True), encoding="utf-8")
-        (ASSETS / "logo-header.svg").write_text(header_svg(), encoding="utf-8")
         (wd / "favicon.svg").write_text(icon_svg(boost=True), encoding="utf-8")
         # The square display canvas is a raster source and nothing else - no page or
         # stylesheet ever wanted a mark with a third of its height empty - so it lives
@@ -662,7 +668,6 @@ def main() -> int:
         (wd / "icon.svg").write_text(icon_svg(), encoding="utf-8")
 
         fit = fit_wordmark(wd)
-        (ASSETS / "logo-wordmark-src.svg").write_text(lockup_svg(fit), encoding="utf-8")
         (wd / "light.svg").write_text(lockup_svg(fit), encoding="utf-8")
         (wd / "dark.svg").write_text(lockup_svg(fit, dark=True), encoding="utf-8")
         text_to_path(wd / "light.svg", wd / "logo-wordmark.svg")
@@ -689,6 +694,15 @@ def main() -> int:
 
         export_png(wd / "logo-wordmark.svg", wd / "logo-wordmark-1200.png", 1200)
         shutil.copy2(wd / "logo-wordmark-1200.png", ASSETS / "logo-wordmark-1200.png")
+
+        # The hand-written SVGs land last, once every inkscape step has succeeded: written
+        # first, a failed text-to-path left the kit half new and half old, which no check
+        # could tell from a finished one.
+        (ASSETS / "logo.svg").write_text(mark_svg(), encoding="utf-8")
+        (ASSETS / "logo-dark.svg").write_text(mark_svg(dark=True), encoding="utf-8")
+        (ASSETS / "favicon.svg").write_text(icon_svg(boost=True), encoding="utf-8")
+        (ASSETS / "logo-header.svg").write_text(header_svg(), encoding="utf-8")
+        (ASSETS / "logo-wordmark-src.svg").write_text(lockup_svg(fit), encoding="utf-8")
 
         try:
             from PIL import Image

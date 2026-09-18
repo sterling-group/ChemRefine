@@ -102,6 +102,12 @@ access control.
 
 - The step cache is **JSON, never pickle** — loading a cache file cannot execute
   code. This is a deliberate choice, not an accident of format.
+- A **model checkpoint is code.** Every MLIP backend loads `model_path` through its
+  library's own reader, and those readers unpickle: a checkpoint can carry an object
+  whose reconstruction runs arbitrary Python, and it runs with the job's identity on the
+  node that loads it. ChemRefine adds no check here because none is possible — the
+  library decides what a checkpoint contains. Load only a checkpoint you would run as a
+  script: one you trained, or one from a source you would install a package from.
 - The YAML config is read with `yaml.safe_load`, so tags cannot construct
   arbitrary Python objects.
 - Caches, manifests, ledgers, and sidecars are written **atomically** (temp file

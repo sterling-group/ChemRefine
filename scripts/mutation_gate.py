@@ -47,7 +47,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -624,6 +624,17 @@ def stale_anchors(root: Path, mutations: Sequence[Mutation]) -> list[str]:
     return problems
 
 
+def _prepended_path(environ: Mapping[str, str], first: Path) -> str:
+    """``PYTHONPATH`` with *first* ahead of whatever the caller already had on it.
+
+    Replacing the variable outright dropped a developer's own entries — on a login node
+    whose dependencies arrive through ``PYTHONPATH`` the baseline then failed to import
+    them, and the gate reported its copy "not green" with a message pointing at the copy.
+    """
+    existing = environ.get("PYTHONPATH", "")
+    return os.pathsep.join([str(first), existing]) if existing else str(first)
+
+
 def _apply(work: Path, mutation: Mutation) -> None:
     """Rewrite the single occurrence of ``old`` in the copy.
 
@@ -632,7 +643,17 @@ def _apply(work: Path, mutation: Mutation) -> None:
     """
     target = work / mutation.path
     text = target.read_text(encoding="utf-8")
-    target.write_text(text.replace(mutation.old, mutation.new), encoding="utf-8")
+    mutated = text.replace(mutation.old, mutation.new)
+    if text.count(mutation.old) != 1 or mutated == text:
+        # A copy that drifted from the checked tree, or an entry whose `new` is its `old`:
+        # either way the suite would run over unmutated code and every verdict from here
+        # would be about nothing. Stop rather than report a survivor that does not exist.
+        raise SystemExit(
+            f"[{mutation.id}] would not change {mutation.path}: the anchor occurs "
+            f"{text.count(mutation.old)} time(s) and the replacement "
+            f"{'is identical' if mutation.new == mutation.old else 'differs'}."
+        )
+    target.write_text(mutated, encoding="utf-8")
 
 
 @dataclass(frozen=True)
@@ -728,7 +749,7 @@ def main(argv: list[str] | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="chemrefine-mutation-") as tmp:
         work = Path(tmp)
         _copy_tree(work)
-        env = {**os.environ, "PYTHONPATH": str(work / "src")}
+        env = {**os.environ, "PYTHONPATH": _prepended_path(os.environ, work / "src")}
         _assert_isolated(work, env)
         _assert_baseline_is_green(work, env)
         print(f"baseline green; {len(selected)} mutation(s) to check\n", flush=True)

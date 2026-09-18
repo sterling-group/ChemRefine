@@ -433,7 +433,9 @@ def main() -> int:
         try:
             import numpy as np
             from PIL import Image, ImageDraw
-
+        except ImportError:
+            print("      (numpy/Pillow missing - resemblance gate skipped)")
+        else:
             rim = Image.open(ref).convert("RGB")
             ra = np.asarray(rim).astype(int)[:850]
             rmask = ra.sum(2) < 690
@@ -552,8 +554,6 @@ def main() -> int:
                 )
             else:
                 bad += fail(f"ink-color gate: {worst_line} median dE {worst_med:.1f} > 5")
-        except ImportError:
-            print("      (numpy/Pillow missing - resemblance gate skipped)")
     else:
         print("      (set CHEMREFINE_LOGO_REF to the original raster to run the resemblance gate)")
 
