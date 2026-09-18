@@ -8,6 +8,7 @@ engine that drives both is ``test_engines_mlip_train_engine.py``.
 from __future__ import annotations
 
 import inspect
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -45,6 +46,27 @@ def _labelled(sid: str, *, energy: float = -1.0) -> Structure:
         energy_hartree=energy,
         forces_ev_per_a=np.zeros((2, 3)),
     )
+
+
+def _boxed(split: DatasetSplit) -> DatasetSplit:
+    """``split`` with every structure in a 10 Å box — what a periodic-only library needs."""
+
+    def box(struct: Structure) -> Structure:
+        atoms = struct.atoms.copy()
+        atoms.set_cell(10.0 * np.eye(3))
+        atoms.pbc = True
+        return replace(struct, atoms=atoms)
+
+    return DatasetSplit(
+        train=tuple(map(box, split.train)),
+        valid=tuple(map(box, split.valid)),
+        test=tuple(map(box, split.test)),
+    )
+
+
+def _accepted(trainer: training.TrainerBase, split: DatasetSplit) -> DatasetSplit:
+    """``split`` as this trainer can take it: boxed when its model is periodic-only."""
+    return _boxed(split) if trainer.periodic_only else split
 
 
 def _plan(tmp_path: Path, **overrides: object) -> TrainingPlan:
@@ -451,7 +473,7 @@ def test_every_trainer_writes_its_dataset_in_the_orchestrators_process(tmp_path:
     environment is live.
     """
     trainer = trainer_for(task)()
-    files = trainer.write_dataset(_plan(tmp_path), _full_split())
+    files = trainer.write_dataset(_plan(tmp_path), _accepted(trainer, _full_split()))
     assert files.train.is_file()
     assert files.valid is not None and files.valid.is_file()
 
@@ -466,7 +488,7 @@ def test_every_trainer_covers_its_required_placeholders(tmp_path: Path, task: st
     """
     trainer = trainer_for(task)()
     plan = _plan(tmp_path)
-    files = trainer.write_dataset(plan, _full_split())
+    files = trainer.write_dataset(plan, _accepted(trainer, _full_split()))
     provided = set(placeholders_for(trainer, plan, files))
     missing = trainer.required_placeholders - provided
     assert not missing, f"{task} requires placeholders it never supplies: {sorted(missing)}"
@@ -541,10 +563,35 @@ def test_a_missing_validation_set_is_refused_exactly_when_the_library_needs_one(
     if trainer.needs_validation:
         assert trainer.validation_reason, f"{task}: a refusal with no why-clause"
         with pytest.raises(ConfigError, match=f"{trainer.label} training needs a validation set"):
-            trainer.write_dataset(_plan(tmp_path), split)
+            trainer.write_dataset(_plan(tmp_path), _accepted(trainer, split))
     else:
-        files = trainer.write_dataset(_plan(tmp_path), split)
+        files = trainer.write_dataset(_plan(tmp_path), _accepted(trainer, split))
         assert files.train.is_file() and files.valid is None
+
+
+@pytest.mark.parametrize("task", sorted(registered_trainers()))
+def test_a_molecular_dataset_is_refused_exactly_when_the_library_is_periodic_only(
+    tmp_path: Path, task: str
+):
+    """The refusal fires iff ``periodic_only`` — and says why in the library's words.
+
+    Every structure the pipeline holds is a molecule with no cell. A library whose model
+    is periodic converts each one through a lattice (CHGNet: pymatgen's ``Structure``),
+    and a zero lattice is a ``LinAlgError`` inside the training job, after the labelling
+    steps were paid for. The refusal is one base branch driven by one declaration; the
+    same data in a box passes, and a molecular library takes it unboxed.
+    """
+    trainer = trainer_for(task)()
+    if trainer.periodic_only:
+        assert trainer.periodic_reason, f"{task}: a refusal with no why-clause"
+        with pytest.raises(ConfigError, match=f"{trainer.label} training needs a periodic cell"):
+            trainer.write_dataset(_plan(tmp_path), _full_split())
+        assert not (tmp_path / "train").exists(), "refused before anything was written"
+    files = trainer.write_dataset(_plan(tmp_path), _boxed(_full_split()))
+    assert files.train.is_file()
+    if not trainer.periodic_only:
+        files = trainer.write_dataset(_plan(tmp_path / "bare"), _full_split())
+        assert files.train.is_file()
 
 
 @pytest.mark.parametrize("task", sorted(registered_trainers()))
@@ -561,13 +608,15 @@ def test_non_neutral_data_warns_exactly_when_the_format_cannot_carry_it(
 
     trainer = trainer_for(task)()
     with caplog.at_level(logging.WARNING):
-        trainer.write_dataset(_plan(tmp_path, charge=-1, multiplicity=2), _full_split())
+        trainer.write_dataset(
+            _plan(tmp_path, charge=-1, multiplicity=2), _accepted(trainer, _full_split())
+        )
     warned = "no charge/spin channel" in caplog.text
     assert warned == (not trainer.charge_spin_aware), f"{task}: warning iff unaware"
 
     caplog.clear()
     with caplog.at_level(logging.WARNING):
-        trainer.write_dataset(_plan(tmp_path / "neutral"), _full_split())
+        trainer.write_dataset(_plan(tmp_path / "neutral"), _accepted(trainer, _full_split()))
     assert "no charge/spin channel" not in caplog.text
 
 
@@ -583,7 +632,7 @@ def test_an_empty_split_gets_no_file_from_any_trainer(tmp_path: Path, task: str)
         [_labelled(str(i)) for i in range(8)], valid_fraction=0.25, test_fraction=0, seed=1
     )
     plan = _plan(tmp_path)
-    files = trainer.write_dataset(plan, split)
+    files = trainer.write_dataset(plan, _accepted(trainer, split))
     assert files.test is None
     assert not list(plan.run_dir.glob("test.*")), f"{task}: an empty split left a file"
 
@@ -598,7 +647,7 @@ def test_every_trainer_supplies_the_dataset_placeholder(tmp_path: Path, task: st
     """
     trainer = trainer_for(task)()
     plan = _plan(tmp_path)
-    files = trainer.write_dataset(plan, _full_split())
+    files = trainer.write_dataset(plan, _accepted(trainer, _full_split()))
     assert placeholders_for(trainer, plan, files)["TRAIN_SET"] == str(files.train)
 
 
@@ -612,7 +661,8 @@ def test_no_trainer_mutates_the_pipelines_structures(tmp_path: Path, task: str):
     """
     structures = [_labelled(str(i)) for i in range(8)]
     split = split_structures(structures, valid_fraction=0.25, test_fraction=0.125, seed=1)
-    trainer_for(task)().write_dataset(_plan(tmp_path), split)
+    trainer = trainer_for(task)()
+    trainer.write_dataset(_plan(tmp_path), _accepted(trainer, split))
     for struct in structures:
         assert struct.atoms.calc is None
         assert not struct.atoms.info, f"{task}: the seed's info dict gained training keys"

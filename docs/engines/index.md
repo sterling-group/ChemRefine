@@ -232,7 +232,9 @@ submits:
   (`epochs`, `learning_rate`, `batch_size`, `targets`). The step runs chemrefine's shared
   train driver inside the backend env; the device, the seed and a `model_path`/
   `model_name` to start from arrive on the driver's command line from the step's options
-  — never through the template.
+  — never through the template. CHGNet is a periodic model: every structure it is fitted
+  to must carry a cell, and a step handed molecules (every seed read from `.xyz` or built
+  from SMILES) is refused before anything is written, naming the fact.
 - **ORB** — the same driver route: `train_set: $TRAIN_SET`, `run_name: $RUN_NAME`, and a
   `base_model:` naming the pretrained loader (the architecture — the step's `model_name`
   serves when the template names none); a local checkpoint arrives as the step's

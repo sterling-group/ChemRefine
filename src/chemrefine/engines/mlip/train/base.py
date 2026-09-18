@@ -247,6 +247,16 @@ class TrainerBase(ABC):
     charge_spin_aware: ClassVar[bool] = False
     """True when the dataset carries charge and spin; False warns on non-neutral data."""
 
+    periodic_only: ClassVar[bool] = False
+    """True when this library fits periodic structures only — every geometry must carry a
+    cell. The pipeline's own structures never do (a seed read from ``.xyz`` or built from
+    SMILES has none), so such a library refuses a molecular ensemble before anything is
+    written, naming the fact; left to the library it surfaced after the labelling steps
+    were paid for, as a singular-matrix error naming neither."""
+
+    periodic_reason: ClassVar[str] = ""
+    """The why-clause of that refusal — the one library fact in it. No trailing period."""
+
     required_placeholders: ClassVar[frozenset[str]] = frozenset({"TRAIN_SET"})
     """Placeholders this backend's template must reference, or the step is misconfigured.
 
@@ -302,9 +312,11 @@ class TrainerBase(ABC):
     def write_dataset(self, plan: TrainingPlan, split: DatasetSplit) -> DatasetFiles:
         """Refuse, warn, and write each non-empty split through :meth:`write_split`.
 
-        The refusal fires only when :attr:`needs_validation` says the library cannot
-        train without one, and says why in that library's own words
-        (:attr:`validation_reason`). The warning fires for non-neutral data only when
+        The refusals fire only when a declaration says the library cannot take the data —
+        :attr:`needs_validation` without a validation split, :attr:`periodic_only` over a
+        structure with no cell — and say why in that library's own words
+        (:attr:`validation_reason`, :attr:`periodic_reason`). The warning fires for
+        non-neutral data only when
         the dataset format carries no charge/spin channel — silence is the only wrong
         answer, and it is not per-library prose any more. An empty split gets no file at
         all: ase refuses a zero-byte extxyz, so naming one would turn "no test set" into
@@ -315,6 +327,22 @@ class TrainerBase(ABC):
                 f"{self.label} training needs a validation set — "
                 f"{self.validation_reason}. Raise `valid_fraction` above 0."
             )
+        if self.periodic_only:
+            unboxed = [
+                s.id
+                for _name, structures in split.items()
+                for s in structures
+                if not s.atoms.cell.rank
+            ]
+            if unboxed:
+                shown = ", ".join(unboxed[:5]) + (", …" if len(unboxed) > 5 else "")
+                raise ConfigError(
+                    f"{self.label} training needs a periodic cell on every structure — "
+                    f"{self.periodic_reason}. {len(unboxed)} structure(s) carry none "
+                    f"({shown}): a molecule seeded from .xyz or SMILES never does. Train a "
+                    f"library whose model is molecular on this data instead (see the "
+                    f"backends table)."
+                )
         if not self.charge_spin_aware and not plan.is_neutral_singlet:
             logger.warning(
                 "%s has no charge/spin channel: charge %d, multiplicity %d will be "

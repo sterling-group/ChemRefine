@@ -273,6 +273,12 @@ def test_a_trainer_that_breaks_the_contract_is_refused_at_its_own_line():
     with pytest.raises(TypeError, match=r"missing declaration\(s\) \['validation_reason'\]"):
         lib.trainer("bad_head")(_NoReason)
 
+    class _NoCellReason(base):  # type: ignore[misc]
+        periodic_only = True
+
+    with pytest.raises(TypeError, match=r"missing declaration\(s\) \['periodic_reason'\]"):
+        lib.trainer("bad_head")(_NoCellReason)
+
     class _BareApi(ApiTrainerBase):
         label = "BadApi"
         output_globs = ()

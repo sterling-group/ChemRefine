@@ -77,13 +77,20 @@ class ChgnetTrainer(ApiTrainerBase):
     pointer and the docs carry a worked example.
 
     The declarations carry the library facts: a validation set is required because
-    ``Trainer.train(train_loader, val_loader, …)`` has no train-only mode, and CHGNet has
-    no charge or spin channel, so the base warns on non-neutral data.
+    ``Trainer.train(train_loader, val_loader, …)`` has no train-only mode; the model is
+    periodic, so a structure with no cell is refused before anything is written (the
+    hook's ``AseAtomsAdaptor.get_structure`` inverts the lattice, and a zero one is a
+    ``LinAlgError`` naming neither the structure nor the library); and CHGNet has no
+    charge or spin channel, so the base warns on non-neutral data.
     """
 
     label = "CHGNet"
     needs_validation = True
     validation_reason = "its Trainer.train takes a validation loader, with no train-only mode"
+    periodic_only = True
+    periodic_reason = (
+        "its dataset is built from pymatgen Structures, whose lattice must be invertible"
+    )
     driver_task = "chgnet"
     required_config_keys = ("train_set", "valid_set", "run_name", "device", "seed")
     """The base's plan-fact keys plus ``valid_set`` — ``Trainer.train`` takes a validation

@@ -225,6 +225,8 @@ class MlipLibrary:
             missing = [name for name in required if not hasattr(cls, name)]
             if cls.needs_validation and not cls.validation_reason:
                 missing.append("validation_reason")
+            if cls.periodic_only and not cls.periodic_reason:
+                missing.append("periodic_reason")
             if missing:
                 raise TypeError(
                     f"{self.extra}: trainer {cls.__name__} is missing declaration(s) "

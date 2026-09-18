@@ -454,6 +454,13 @@ for the full map.
 
 ### Fixed
 
+- **A periodic-only library refuses a molecular dataset before anything is written.**
+  `mlip-train` with `task_name: chgnet` over the pipeline's own structures — molecules with
+  no cell, which is every seed read from `.xyz` or built from SMILES — passed every
+  pre-run check, wrote its splits, submitted, and died inside the training job with a
+  singular-matrix error naming neither the structure nor the library, after the labelling
+  steps were paid for. The trainer now declares that its model is periodic and the shared
+  dataset writer refuses, naming the structures and the reason.
 - **A native output that cannot be read as the molecule it claims is that structure's
   parse failure, never a smaller molecule or a dead run.** A PES scan point whose
   coordinate row overflowed (`*****`) or parsed to `nan` used to ship with one atom fewer
