@@ -53,6 +53,16 @@ The [workflow builder](../workflow/builder.md#from-a-cluster) belongs on the log
 too: `chemrefine gui` there prints the SSH forwarding recipe that puts it in the browser
 on your own machine.
 
+## How a job's cores are spelled
+
+ChemRefine writes the `--ntasks` / `--cpus-per-task` pair itself, from what the program
+does with its cores. An MPI program (ORCA) gets *N* tasks of one CPU. A threaded program
+— the `pyscf` and `mlip` scripts, an `mlip-train` job, Q-Chem's `-nt` — gets **one task
+with *N* CPUs**, a shape SLURM cannot split across nodes; the thread exports
+(`OMP_NUM_THREADS` and friends) say the same number. So a header for a threaded step needs
+no `--nodes` line to keep the job on one machine, and a `--ntasks` or `--cpus-per-task`
+of its own is replaced rather than honoured.
+
 ## Job arrays
 
 `slurm_array: true` submits each step as SLURM job array(s) instead of one job per

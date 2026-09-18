@@ -127,6 +127,18 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
         """
         return self.options_cls.from_raw_lenient(ctx.step_cfg.options).cores
 
+    def slurm_layout(self, ctx: StepContext) -> tuple[int, int]:
+        """One threaded process: ``(1, min(cores, max_cores))``.
+
+        A script is one Python process threading through OpenMP, MKL or torch — never MPI
+        ranks — so its cores are spelled as ``--cpus-per-task`` on a single task, which
+        SLURM cannot split across nodes. The ranks spelling asks for N tasks of one CPU
+        each, which a scheduler may grant across nodes: the process then runs N threads on
+        the first node's share while the throttler is charged all N. The clamp is the base
+        rule's — one process can use fewer threads than asked.
+        """
+        return (1, min(self.pal(ctx), ctx.max_cores))
+
     def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> RunBlock:
         """Run the rendered Python script inside ``$WORK_DIR``, capped to its core budget.
 

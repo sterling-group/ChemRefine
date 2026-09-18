@@ -300,6 +300,13 @@ for the full map.
 
 ### Changed
 
+- **A threaded job is one SLURM task with N CPUs.** The `pyscf` and `mlip` script engines
+  and `mlip-train` used to request `--ntasks=N --cpus-per-task=1` — MPI's shape — for a
+  single OpenMP/torch process, which a scheduler may place across nodes, leaving the
+  process the first node's share of a budget the throttler charged in full. They now
+  request `--ntasks=1 --cpus-per-task=N`, the shape Q-Chem's threaded jobs already used,
+  so the allocation is one node by construction. The core count, the thread exports and
+  the budget charged are unchanged; only the directive pair moves.
 - **The quickstart runs on a base install and ORCA.** `examples/first_run/` is the
   README's two-step pipeline — an xTB screen (ORCA's bundled GFN2-xTB) and a DFT
   refinement of three ethylene-glycol conformers, under a minute on a laptop, nothing

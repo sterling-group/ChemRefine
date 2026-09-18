@@ -219,7 +219,7 @@ class JobEngine(abc.ABC):
         """Per-job core count (PAL) before the scheduler clamps it to ``max_cores``."""
 
     def slurm_layout(self, ctx: StepContext) -> tuple[int, int]:
-        """The MPI-ranks spelling ``(min(pal, max_cores), 1)`` — every engine's until now.
+        """The MPI-ranks spelling ``(min(pal, max_cores), 1)`` — the default, for MPI programs.
 
         One task per core, clamped to the budget exactly as the scheduler always has; the
         clamp lives here rather than in the scheduler so an override cannot silently

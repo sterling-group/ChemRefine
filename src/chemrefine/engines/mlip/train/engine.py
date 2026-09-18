@@ -367,15 +367,16 @@ class MlipTrainEngine(MlipBackend):
         )
 
     def slurm_layout(self, ctx: StepContext) -> tuple[int, int]:
-        """The ranks spelling, matching what this job has always been granted.
+        """One threaded process: ``(1, min(cores, max_cores))``, as the script engines spell it.
 
-        A training run is one threaded process, so ``(1, cores)`` would be the more honest
-        SLURM spelling — but flipping it changes every user's allocation shape and belongs
-        to the same follow-up decision as the threaded script engines. Declared explicitly
-        because this class satisfies :class:`~chemrefine.engines.api.JobExecutable` directly
-        rather than through :class:`~chemrefine.engines._job.JobEngine`.
+        A training run is one process threading through torch and MKL, so its cores are
+        ``--cpus-per-task`` on a single task — a shape SLURM cannot split across nodes,
+        where N one-CPU tasks can be, leaving one process the first node's share of a
+        budget the throttler charged in full. Declared explicitly because this class
+        satisfies :class:`~chemrefine.engines.api.JobExecutable` directly rather than
+        through :class:`~chemrefine.engines._job.JobEngine`.
         """
-        return (min(self.pal(ctx), ctx.max_cores), 1)
+        return (1, min(self.pal(ctx), ctx.max_cores))
 
     def memory_mb(self, ctx: StepContext) -> int | None:
         """No declared memory — a trainer config carries no ``mem_total``-like knob.

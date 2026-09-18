@@ -397,13 +397,15 @@ def test_training_from_scratch_says_so_in_the_runlog(tmp_path: Path):
     assert fields["started_from"] == "scratch"
 
 
-def test_the_training_job_keeps_the_ranks_layout_and_declares_no_memory(tmp_path: Path):
-    """The explicit JobExecutable members: the historical SBATCH spelling, no memory ask.
+def test_the_training_job_is_one_task_of_many_cpus_and_declares_no_memory(tmp_path: Path):
+    """The explicit JobExecutable members: the threads spelling, no memory ask.
 
-    Declared on the class because it satisfies the protocol directly; flipping training to
-    the `(1, cores)` threads spelling is a named follow-up, not an accident of this test.
+    Declared on the class because it satisfies the protocol directly. One task with N CPUs
+    is the shape SLURM cannot split across nodes; N one-CPU tasks is a shape it can, and a
+    single training process would then thread on one node's share of a budget it was
+    charged in full.
     """
     engine = MlipTrainEngine()
     ctx = _ctx(tmp_path, cores=4)
-    assert engine.slurm_layout(ctx) == (4, 1)
+    assert engine.slurm_layout(ctx) == (1, 4)
     assert engine.memory_mb(ctx) is None

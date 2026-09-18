@@ -248,6 +248,20 @@ def test_template_run_block_caps_threads_to_cores(tmp_path: Path):
     assert f"{shlex.quote(sys.executable)} step1_structure_0.py" in run_block
 
 
+@pytest.mark.parametrize("engine_name", ["pyscf", "mlip"])
+def test_a_script_engine_is_one_task_of_many_cpus(tmp_path: Path, engine_name: str):
+    """The SBATCH pair for a threaded script is ``--ntasks=1 --cpus-per-task=N``.
+
+    The base layout spells cores as MPI ranks — N tasks of one CPU — which SLURM may grant
+    across nodes, and a single OpenMP/torch process can only use the first node's share
+    of them while the throttler is charged all N. One task with N CPUs cannot be split.
+    The clamp to ``max_cores`` is the same one the thread exports read.
+    """
+    step_cfg = StepConfig(step=1, engine=engine_name, options={"cores": 8})
+    ctx = _ctx(tmp_path, structures=(_seed(),), step_cfg=step_cfg, max_cores=4)
+    assert get_engine(engine_name).slurm_layout(ctx) == (1, 4)
+
+
 def test_thread_exports_say_the_grant_not_the_ask(tmp_path: Path):
     """A ``cores:`` above ``max_cores`` exports the clamped budget, not the request.
 
@@ -289,9 +303,12 @@ def test_submit_respects_cores_option(tmp_path: Path):
     inputs = engine.prepare(ctx)
     with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         engine.submit(inputs, ctx)
-    # The generated SLURM script should request the configured cores.
+    # The configured cores reach the script as one task's CPUs — a threaded process is
+    # never spelled as MPI ranks, which SLURM may place across nodes.
     script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
-    assert "#SBATCH --ntasks=2" in script_text
+    assert "#SBATCH --ntasks=1" in script_text
+    assert "#SBATCH --cpus-per-task=2" in script_text
+    assert "--ntasks=2" not in script_text
 
 
 def test_submit_uses_template_engine_output_globs(tmp_path: Path):

@@ -1080,8 +1080,11 @@ def test_mlip_direct_submit_respects_cores_option(tmp_path: Path):
     inputs = engine.prepare(ctx)
     with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         engine.submit(inputs, ctx)
+    # One task with the configured CPUs — the threads spelling every script engine uses.
     script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
-    assert "#SBATCH --ntasks=2" in script_text
+    assert "#SBATCH --ntasks=1" in script_text
+    assert "#SBATCH --cpus-per-task=2" in script_text
+    assert "--ntasks=2" not in script_text
 
 
 # --- orb backend success path (mock the optional library) -------------------
