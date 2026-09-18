@@ -93,12 +93,12 @@ def validate_config(yaml_text: str, base_dir: str | None = None) -> dict[str, An
 
 def validate_config_path(config_path: str) -> dict[str, Any]:
     """Validate a config file on disk — the report shape, not an exception."""
-    return validate_config_file(Path(config_path)).to_json()
+    return validate_config_file(_config_path(config_path)).to_json()
 
 
 def summarize_config(config_path: str) -> dict[str, Any]:
     """A loaded config's execution summary: settings plus one row per step."""
-    config = load_config(Path(config_path))
+    config = load_config(_config_path(config_path))
     return {
         "output_dir": str(config.output_dir),
         "template_dir": str(config.template_dir),
@@ -142,7 +142,7 @@ def _step_template_plan(config: Config, step: int | str) -> scaffold.TemplatePla
 
 def read_template(config_path: str, step: int | str) -> dict[str, Any]:
     """One step's template text — the file the engine will actually render."""
-    plan = _step_template_plan(load_config(Path(config_path)), step)
+    plan = _step_template_plan(load_config(_config_path(config_path)), step)
     if not plan.exists:
         raise ConfigError(
             f"template {plan.path} does not exist yet (scaffold_templates writes a starter)"
@@ -153,14 +153,19 @@ def read_template(config_path: str, step: int | str) -> dict[str, Any]:
 def write_template(config_path: str, step: int | str, text: str) -> dict[str, Any]:
     """Replace one step's template with ``text`` (creating template_dir if needed).
 
+    Replaced whole or not at all (:func:`chemrefine.cache.atomic_write`): a kill or a
+    full disk between truncating the file and writing it would leave an empty template
+    where an edited one was, and :func:`~chemrefine.ids.require_template` would hand that
+    stub to the engine on the next run — the rule :func:`save_config` already holds for
+    the config a run is pointed at, held here for the template it renders.
+
     An unwritable destination is a :class:`~chemrefine.errors.ConfigError` naming the
     path — the module's stated contract — not a raw :class:`OSError` the GUI's error
     handler re-raises as a 500 whose traceback names neither.
     """
-    plan = _step_template_plan(load_config(Path(config_path)), step)
+    plan = _step_template_plan(load_config(_config_path(config_path)), step)
     try:
-        plan.path.parent.mkdir(parents=True, exist_ok=True)
-        plan.path.write_text(text, encoding="utf-8")
+        cache.atomic_write(plan.path, text.encode("utf-8"))
     except OSError as e:
         raise ConfigError(f"cannot write template {plan.path}: {e}") from e
     return {"path": str(plan.path), "bytes": len(text.encode("utf-8"))}
@@ -168,7 +173,7 @@ def write_template(config_path: str, step: int | str, text: str) -> dict[str, An
 
 def scaffold_templates(config_path: str, overwrite: bool = False) -> dict[str, Any]:
     """Write starter templates into every gap the config expects; report both sides."""
-    config = load_config(Path(config_path))
+    config = load_config(_config_path(config_path))
     written = set(scaffold.scaffold_templates(config, overwrite=overwrite))
     plans = scaffold.plan_templates(config)
     return {
@@ -219,7 +224,7 @@ def start_run(
         raise ConfigError(f"max_cores must be >= 1; got {max_cores}")
     if max_gpus is not None and max_gpus < 0:
         raise ConfigError(f"max_gpus must be >= 0; got {max_gpus}")
-    path = Path(config_path).resolve()
+    path = _config_path(config_path)
     config = load_config(path)
     if target is not None:
         resolve_target(config, target)
@@ -330,7 +335,7 @@ def run_status(config_path: str, log_tail_lines: int = 40) -> dict[str, Any]:
     reading the log and slicing it, because the GUI re-asks for this every five seconds
     for the length of the run.
     """
-    config = load_config(Path(config_path))
+    config = load_config(_config_path(config_path))
     status = pipeline.lock_status(config.output_dir)
     reported: dict[int, int] = {}
     for row in _steps_csv_rows(config.output_dir):
@@ -403,7 +408,7 @@ def get_results(
     the answer always describes the slice actually returned and never implies it is
     everything.
     """
-    config = load_config(Path(config_path))
+    config = load_config(_config_path(config_path))
     rows = _steps_csv_rows(config.output_dir)
     if step is not None:
         wanted = {s.step for s in _steps_for(config, step)}
@@ -604,7 +609,7 @@ def get_frequencies(
     index alone. It is ``null`` on a tree cached before it was persisted — ``rebuild-cache``
     re-parses the outputs and fills it in.
     """
-    config = load_config(Path(config_path))
+    config = load_config(_config_path(config_path))
     step_cfg = resolve_target(config, step)
     cached = cache.load(config.step_dir(step_cfg))
     if cached is None:
@@ -668,7 +673,7 @@ def get_structure(
     the tensor is a transient the pipeline displaces along and is deliberately not cached
     (see :mod:`chemrefine.cache`). Without it, only the cache is touched.
     """
-    config = load_config(Path(config_path))
+    config = load_config(_config_path(config_path))
     if step is None:
         return _seed_structure(config, structure_id, mode_index)
     step_cfg = resolve_target(config, step)
@@ -730,7 +735,7 @@ def list_structures(config_path: str, step: int | str | None = None) -> dict[str
     than ``{}`` where the frequency table predates being cached — unknown, not empty; see
     :func:`get_frequencies`.
     """
-    config = load_config(Path(config_path))
+    config = load_config(_config_path(config_path))
     if step is None:
         return {
             "step": None,
@@ -772,6 +777,19 @@ def expand_user_path(raw: str) -> Path:
         return Path(raw).expanduser()
     except RuntimeError as e:
         raise ConfigError(f"cannot resolve {raw!r}: {e}") from e
+
+
+def _config_path(raw: str) -> Path:
+    """The ``config_path`` argument every tool here takes, as the one path it means.
+
+    User-expanded and resolved, so the string an agent typed to :func:`save_config` is the
+    string every reader accepts back. Spelled per tool, the two came apart: ``save_config``
+    expanded a ``~`` and wrote the file, and ``validate_config_path`` handed the same
+    ``~/…`` to ``Path`` unexpanded and answered "could not read" about the file the tool
+    next door had just written — an agent reusing its own input string, which is the
+    natural thing for one to do, was told its config did not exist.
+    """
+    return expand_user_path(raw).resolve()
 
 
 _MAX_STRUCTURE_BYTES = 8 * 1024 * 1024
@@ -1072,7 +1090,7 @@ def analyze_mode(
     quietly returned every atom *but* the least-displaced one — the opposite of a shorter
     list, and on the tool whose whole job is to say which atoms move most.
     """
-    config = load_config(Path(config_path))
+    config = load_config(_config_path(config_path))
     step_cfg = resolve_target(config, step)
     frame = _mode_frame(config, step_cfg, structure_id)
     displacement = _mode_displacements(frame, mode_index)
@@ -1146,7 +1164,7 @@ def get_failures(config_path: str, step: int | str | None = None) -> dict[str, A
     step's failures are pending for re-attempt, which is why the suggestion is
     ``rerun-errors`` (re-attempt just those, then continue) rather than a full rerun.
     """
-    config = load_config(Path(config_path))
+    config = load_config(_config_path(config_path))
     failures = [
         {
             "step": s.step,

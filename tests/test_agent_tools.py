@@ -167,6 +167,53 @@ def test_a_home_the_host_cannot_resolve_is_the_contracts_refusal():
         agent_tools.read_structure_file("~nosuchuser1234/x.xyz")
     with pytest.raises(ConfigError, match="cannot resolve"):
         agent_tools.save_config("~nosuchuser1234/input.yaml", "steps: []\n")
+    with pytest.raises(ConfigError, match="cannot resolve"):
+        agent_tools.validate_config_path("~nosuchuser1234/input.yaml")
+
+
+def test_a_config_path_an_agent_typed_is_the_one_every_tool_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The string ``save_config`` accepted is the string the readers accept back.
+
+    ``save_config`` expanded ``~`` and wrote the file; every reader handed the same
+    ``~/…`` to ``Path`` unexpanded, so ``validate_config_path`` answered "could not
+    read" and ``start_run`` resolved a literal ``~`` against the cwd — about a config the
+    tool next door had just written. One spelling of ``config_path`` now, for all of
+    them.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    text = _write_config(tmp_path).read_text(encoding="utf-8")
+    saved = agent_tools.save_config("~/proj/input.yaml", text)
+    assert saved["written"] and saved["path"] == str(tmp_path / "proj" / "input.yaml")
+    assert agent_tools.validate_config_path("~/proj/input.yaml")["ok"]
+    assert agent_tools.summarize_config("~/proj/input.yaml")["steps"]
+
+
+def test_a_template_write_that_fails_leaves_the_edited_template_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The editor's write is whole or nothing — a failure mid-write is not a truncation.
+
+    Written in place, a kill or a full disk between the truncate and the write left a
+    zero-length ``step1.inp`` where the user's edited one had been, and the next run
+    rendered the stub. The config writer beside it already went through
+    ``cache.atomic_write``; this pins the template writer to the same rule by failing the
+    write at its last step and finding the previous text still there.
+    """
+    path = _write_config(tmp_path, {"step": 1, "engine": "orca"})
+    agent_tools.write_template(str(path), 1, "! Mine\n")
+    template = agent_tools.read_template(str(path), 1)
+    assert template["text"] == "! Mine\n"
+
+    def refuse(_fd: int) -> None:
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(os, "fsync", refuse)
+    with pytest.raises(ConfigError, match="cannot write template"):
+        agent_tools.write_template(str(path), 1, "! Lost\n")
+    assert Path(template["path"]).read_text(encoding="utf-8") == "! Mine\n"
+    assert not list(Path(template["path"]).parent.glob(".tmp_*"))
 
 
 def test_write_template_answers_an_unwritable_destination_with_the_contract(tmp_path: Path):
