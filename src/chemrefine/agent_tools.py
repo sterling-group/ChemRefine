@@ -450,10 +450,13 @@ def lookup_smiles(name: str) -> dict[str, Any]:
     try:
         with urlopen(request, timeout=15) as response:  # noqa: S310 — scheme is fixed https
             smiles = response.read().decode("utf-8").strip().splitlines()[0]
-    except (URLError, OSError, IndexError, HTTPException) as e:
+    except (URLError, OSError, IndexError, HTTPException, ValueError) as e:
         # HTTPException covers a response that arrives and then breaks the protocol
         # (IncompleteRead on a dropped connection) — neither an OSError nor a URLError,
         # so it escaped as a traceback where every other network failure became this hint.
+        # ValueError is the body that arrives whole and is not UTF-8 (UnicodeDecodeError):
+        # a proxy's or captive portal's interception page in a legacy encoding, which is
+        # the same "no answer from PubChem" as the rest and was the one left uncaught.
         raise ConfigError(
             f"PubChem lookup for {name!r} failed ({e}); offline or unknown name — "
             "pass a SMILES to build_structures instead"

@@ -98,6 +98,23 @@ def test_lookup_smiles_offline_names_the_alternative(monkeypatch: pytest.MonkeyP
         agent_tools.lookup_smiles("aspirin")
 
 
+def test_lookup_smiles_survives_a_body_it_cannot_decode(monkeypatch: pytest.MonkeyPatch):
+    """A reply that is not UTF-8 gets the offline hint, like every other failed lookup.
+
+    A proxy's or captive portal's interception page in a legacy encoding arrives whole and
+    raises ``UnicodeDecodeError`` — a ``ValueError``, not an ``OSError`` — so it escaped
+    the tool as a traceback, which the terminal chat then reported as a failure of the
+    *model endpoint*.
+    """
+
+    def answer_in_latin1(request: urllib.request.Request, timeout: float) -> _CannedResponse:
+        return _CannedResponse("<html>Se connecter au réseau</html>\n".encode("latin-1"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", answer_in_latin1)
+    with pytest.raises(ConfigError, match="pass a SMILES"):
+        agent_tools.lookup_smiles("aspirin")
+
+
 def test_lookup_smiles_survives_a_truncated_reply(monkeypatch: pytest.MonkeyPatch):
     """IncompleteRead — a reply that arrives and then breaks — gets the same offline hint.
 

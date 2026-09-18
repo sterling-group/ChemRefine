@@ -24,12 +24,13 @@ _PYSCF = BackendRequirement(extra="pyscf", import_name="pyscf")
 _PYSCF_GPU = BackendRequirement(extra="pyscf-gpu", import_name="gpu4pyscf")
 """The GPU stack. ``import_name`` is the load-bearing half.
 
-Probed for ``gpu4pyscf`` rather than ``pyscf``, a step that asks for a GPU now fails at
-preflight, by name, on an env that has only the CPU stack. Probed for ``pyscf`` — as it was
-when this requirement did not exist — the step started, :func:`
-chemrefine.engines.pyscf._runtime._build_scf` caught the missing import, fell back to CPU,
-and recorded why in the ExtOpt *server* log: a run that succeeds on the wrong hardware and
-says so nowhere the user is looking."""
+Probed for ``gpu4pyscf`` rather than ``pyscf``, a step that asks for a GPU fails at
+preflight, by name, on an env that has only the CPU stack. Probed for ``pyscf`` alone, the
+step would start, :func:`chemrefine.engines.pyscf._runtime._build_scf` would catch the
+missing import and fall back to CPU, and the only trace would be the calculator's warning
+in the ExtOpt *server* log: a run that succeeds on the wrong hardware, reported somewhere
+the user is not looking. That warning is kept for the failure preflight cannot see — an
+import that succeeds on the login node and a construction that fails on the GPU node."""
 
 
 class PyscfBackend:

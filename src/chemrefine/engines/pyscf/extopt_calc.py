@@ -233,6 +233,13 @@ class PyscfExtOptCalculator(ComputeBackend):
             meta["gpu_used"],
             meta["elapsed_seconds"],
         )
+        if self.gpu and not meta["gpu_used"]:
+            # `_build_scf` answers a GPU that could not be set up by falling back to CPU
+            # and *returning* the reason; this is where that reason reaches a log. Without
+            # it a `device: cuda` step whose gpu4pyscf import passed preflight on the login
+            # node and failed to construct on the compute node ran every gradient on CPU,
+            # with `gpu=False` in the line above the only trace and the exception dropped.
+            logger.warning("%s", meta["gpu_msg"])
         if self.strict_scf and not meta["converged"]:
             raise JobFailureError(
                 f"PySCF SCF did not converge (E={energy:.10f} Eh, method={self.method}, "

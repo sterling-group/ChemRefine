@@ -615,6 +615,27 @@ def test_extopt_calc_returns_energy_and_gradient(monkeypatch):
     assert len(gradient) == 2
 
 
+def test_a_gpu_that_could_not_be_set_up_is_a_warning_in_the_server_log(monkeypatch, caplog):
+    """The reason for a CPU fallback reaches the log a user can read, not only ``meta``.
+
+    ``_build_scf`` answers a gpu4pyscf that will not import or construct by falling back to
+    CPU and *returning* why. Returned and never logged, a ``device: cuda`` step whose
+    import passed preflight on the login node and failed on the compute node ran every
+    gradient on CPU with ``gpu=False`` in one INFO line as the only trace. A calculator
+    that never asked for a GPU has nothing to warn about.
+    """
+    _install_fake_pyscf(monkeypatch)
+    monkeypatch.setitem(sys.modules, "gpu4pyscf.dft", None)  # forces ImportError
+    with caplog.at_level("WARNING", logger="chemrefine.engines.pyscf.extopt_calc"):
+        extopt_calc.PyscfExtOptCalculator(basis="def2-svp", xc="pbe", gpu=True).calc(_data())
+    assert "fell back to CPU" in caplog.text
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="chemrefine.engines.pyscf.extopt_calc"):
+        extopt_calc.PyscfExtOptCalculator(basis="def2-svp", xc="pbe", gpu=False).calc(_data())
+    assert caplog.text == ""
+
+
 def test_extopt_calc_skips_tensor_extraction_by_default(monkeypatch):
     _install_fake_pyscf(monkeypatch)
     with patch.object(_runtime, "get_active_space_tensors") as mock_tensors:
