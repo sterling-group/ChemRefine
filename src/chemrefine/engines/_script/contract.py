@@ -78,7 +78,20 @@ class OutputField:
 
 
 def _as_float(value: Any, _seed: Atoms) -> float:
-    """The energy: one number, already vetted finite by the sweep."""
+    """The energy: one number, already vetted finite by the sweep.
+
+    Shape is the converter's business — the sweep yields every scalar of whatever arrived, so
+    a one-element list passes it finite — and this is the shape guard the two array
+    converters below carry for the same reason. Without it ``float([-1.0])`` raised a bare
+    ``TypeError`` past :func:`chemrefine.lifecycle._parse_job`, and a template that handed
+    back ``energies.tolist()`` ended the whole run over one structure instead of ledgering
+    it. ``bool`` is refused by the sweep for every numeric field; the shape is this field's.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise OutputParseError(
+            f"'energy_hartree' must be one number, got {value!r} ({type(value).__name__}); "
+            f"assign the scalar, not a list or an array around it"
+        )
     return float(value)
 
 

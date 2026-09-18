@@ -168,6 +168,14 @@ def _require_finite(value: Any, *, what: str, label: str, path: Path) -> float:
     ``arrays.npz`` sidecar instead, which has no such check: there the NaN is simply stored and
     served to every later step. Refused here, both become this one ledger entry.
     """
+    # ``bool`` first: ``float(True)`` is ``1.0``, so a JSON ``true`` — a flag assigned to
+    # the wrong name — read as one Hartree, or as a coordinate, without a word. Refused
+    # here, once, for every numeric field the sweep visits.
+    if isinstance(value, bool):
+        raise OutputParseError(
+            f"{label} output {path} has a non-numeric {what!r} ({value!r}); a boolean is not "
+            f"a quantity"
+        )
     try:
         number = float(value)
     except (TypeError, ValueError) as e:

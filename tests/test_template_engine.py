@@ -436,6 +436,9 @@ def test_a_gradient_of_the_wrong_shape_is_refused(gradient: list):
         '{"energy_hartree": -1.0, "positions_angstrom": [0.0, 0.0, 0.0, 0.74, 0.0, 0.0]}',
         '{"energy_hartree": -1.0, "gradient_hartree_per_bohr": [[0.1, 0.2, 0.3], [0.1, 0.2]]}',
         '{"energy_hartree": -1.0, "gradient_hartree_per_bohr": [0.1, 0.2, 0.3, 0.1, 0.2, 0.3]}',
+        '{"energy_hartree": [-1.0]}',
+        '{"energy_hartree": true}',
+        '{"energy_hartree": -1.0, "positions_angstrom": [[0.0, 0.0, 0.0], [true, 0.0, 0.0]]}',
     ],
 )
 def test_a_malformed_shape_stays_inside_the_exit_code_contract(tmp_path: Path, body: str):
@@ -447,6 +450,42 @@ def test_a_malformed_shape_stays_inside_the_exit_code_contract(tmp_path: Path, b
     seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
     with pytest.raises(ChemRefineError):
         parse_output(_write_output(tmp_path, body), label="MLIP", fallback=seed)
+
+
+def test_a_list_shaped_energy_is_a_parse_failure_not_a_traceback(tmp_path: Path):
+    """The energy converter has the shape guard its two array siblings carry.
+
+    The sweep yields every scalar of whatever arrived, so ``[-1.0]`` passed it finite and
+    reached ``float([-1.0])`` — a bare ``TypeError`` outside the family
+    ``lifecycle._parse_job`` contains, ending the run over one structure. A template that
+    hands back ``energies.tolist()`` is the natural way to write one.
+    """
+    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    out = _write_output(tmp_path, '{"energy_hartree": [-1.0]}')
+    with pytest.raises(OutputParseError, match=r"energy_hartree.*must be one number.*list"):
+        parse_output(out, label="MLIP", fallback=seed)
+
+
+@pytest.mark.parametrize(
+    ("body", "what"),
+    [
+        ('{"energy_hartree": true}', "energy_hartree"),
+        (
+            '{"energy_hartree": -1.0, "positions_angstrom": [[0.0, 0.0, 0.0], [true, 0.0, 0.0]]}',
+            "positions_angstrom",
+        ),
+    ],
+)
+def test_a_boolean_is_not_a_quantity_in_any_numeric_field(tmp_path: Path, body: str, what: str):
+    """``float(True)`` is ``1.0``, so a JSON ``true`` read as one Hartree, or as a coordinate.
+
+    Refused by the finiteness sweep, which every numeric field passes through, rather than by
+    each converter — one refusal, named after the field it found the flag in.
+    """
+    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    out = _write_output(tmp_path, body)
+    with pytest.raises(OutputParseError, match=rf"non-numeric '{what}'.*boolean"):
+        parse_output(out, label="MLIP", fallback=seed)
 
 
 def test_a_null_required_field_is_refused_by_name(tmp_path: Path):
