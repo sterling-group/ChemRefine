@@ -65,6 +65,13 @@ or gaining a nucleus. A ghost atom (`H:`, a basis-only centre for a counterpoise
 correction) is printed as a plain `H` and cannot be told from one: it would be carried
 into every later step as a real hydrogen. Keep both out of pipeline steps.
 
+Forces are read only from a gradient block printed *after* the last geometry — an
+`EnGrad` single point, a `Freq` — because an `Opt` prints its gradient inside each cycle
+and the converged geometry once more afterwards, so its last gradient describes the
+point before the result. An `Opt` step therefore carries no forces; a step that labels a
+training set computes them with a single point on the optimised geometries, which is
+what the [MLIP training tutorial](../tutorials/mlip_training.md) does.
+
 ## Q-Chem (`qchem`)
 
 | Key | Default | Description |

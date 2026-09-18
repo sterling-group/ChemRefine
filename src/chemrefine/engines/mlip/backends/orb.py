@@ -55,7 +55,11 @@ def _build_orb(spec: CalculatorSpec) -> Any:
     name = spec.model_name or _DEFAULT_MODEL
     loader = getattr(pretrained, name, None)
     if loader is None:
-        raise ValueError(
+        # A ConfigError, not a ValueError: the name came from the YAML, and every failure
+        # a config can cause carries the exit code the CLI maps (the rule the registry
+        # states for an unknown task_name). Bare, it reached the ExtOpt server as a crash
+        # during startup and the CLI as a traceback.
+        raise ConfigError(
             f"unknown ORB model {name!r}; pick a loader from "
             f"orb_models.forcefield.pretrained (e.g. {_DEFAULT_MODEL!r})"
         )

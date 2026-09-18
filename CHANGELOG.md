@@ -454,6 +454,15 @@ for the full map.
 
 ### Fixed
 
+- **Four engine contracts brought back into line.** An ORCA `Opt` output no longer
+  carries forces: its last gradient block is printed inside the last optimisation cycle
+  and describes the geometry *before* the converged one, so the forces stored beside the
+  result were computed at a different point (label a training set with a single point, as
+  the tutorial does). An ORCA frequency banner with no mode under it is now "no data"
+  rather than a verified minimum, as the Q-Chem reader already answered. Q-Chem reads its
+  knobs strictly, so a misspelled `cores` is refused up front instead of dropping the job
+  to one thread. An unknown ORB `model_name` is a `ConfigError` with the exit code every
+  config mistake carries, not a bare `ValueError`.
 - **The ExtOpt gradient server answers one call at a time, refuses a non-finite answer,
   and is given the time its backend takes to load.** The server served one stateful ASE
   calculator on four worker threads, so two overlapping gradient calls could answer one

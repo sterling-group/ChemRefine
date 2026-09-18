@@ -73,7 +73,11 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
     try:
         # The atom count comes from the coordinates block just read, which is what lets the
         # gradient reader tell a skipped summary line from a lost atom row.
-        force_vectors = forces.parse_forces_from_text(text, n_atoms=len(symbols))
+        force_vectors = (
+            forces.parse_forces_from_text(text, n_atoms=len(symbols))
+            if _gradient_belongs_to_last_geometry(text)
+            else None
+        )
     except ValueError as e:
         # Held to the same rule as the coordinates above. A bare ValueError escaping here
         # would pass straight through `lifecycle._parse_job`, which contains only
@@ -180,19 +184,44 @@ def _stderr_tail(src: str) -> str:
     return f"; {err_path.name} ends: " + " | ".join(tail) if tail else ""
 
 
+_GRADIENT_MARKER = "CARTESIAN GRADIENT"
+_COORDINATES_MARKER = "CARTESIAN COORDINATES (ANGSTROEM)"
+
+
+def _gradient_belongs_to_last_geometry(text: str) -> bool:
+    """Whether the last gradient block was evaluated at the last coordinate block.
+
+    ORCA prints the gradient *inside* each optimisation cycle and re-prints the geometry
+    after convergence, so in an ``Opt`` output the last gradient describes the
+    penultimate geometry: taking "the last of each" stored forces beside coordinates they
+    were not computed at, and a dataset fitted to them learned a force at the wrong
+    point. A gradient that *follows* the last geometry (an ``EnGrad`` single point, a
+    ``Freq`` after an optimisation) is that geometry's own. An ``Opt`` therefore carries no
+    forces — label with a single point, which is what the training tutorial does.
+    """
+    return text.rfind(_GRADIENT_MARKER) > text.rfind(_COORDINATES_MARKER)
+
+
 def _parse_frequency_block(
     text: str, *, n_atoms: int
 ) -> tuple[dict[int, float] | None, dict[int, float] | None, NDArray[np.float64] | None]:
     """Imaginary modes, the whole table, and the normal-mode tensor from the shared text.
 
-    ``None`` for all three when the output has no ``VIBRATIONAL FREQUENCIES`` block at all
-    (distinct from ``{}`` = a freq calc with zero imaginary modes); the tensor is ``None``
-    when it's absent / unparseable.
+    ``None`` for all three when the output has no ``VIBRATIONAL FREQUENCIES`` block at all,
+    or has the banner and no mode under it (distinct from ``{}`` = a freq calc with zero
+    imaginary modes); the tensor is ``None`` when it's absent / unparseable.
     """
     if "VIBRATIONAL FREQUENCIES" not in text:
         return None, None, None
     imaginary = frequencies.parse_imaginary_frequencies_from_text(text)
     table = frequencies.parse_mode_table_from_text(text)
+    if not table:
+        # The banner is there and no mode parsed under it: no data, not a verified
+        # minimum. ``{}`` for the imaginary set is the verdict "counted, and none" —
+        # `nms._already_at_target` passes such a structure through as resolved and
+        # `get_frequencies` reports it as a minimum — and a table that parsed nothing has
+        # counted nothing. The Q-Chem reader draws the same line.
+        return None, None, None
     try:
         modes: NDArray[np.float64] | None = frequencies.parse_normal_modes_tensor_from_text(
             text, num_atoms=n_atoms

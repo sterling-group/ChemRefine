@@ -423,9 +423,14 @@ def test_every_backend_builds_a_calculator_with_model_name_unset(monkeypatch, ta
 
 
 def test_build_orb_unknown_loader_raises(monkeypatch):
-    """A model that isn't a loader in orb_models.forcefield.pretrained errors."""
+    """A model that isn't a loader in orb_models.forcefield.pretrained is a config error.
+
+    ``ConfigError`` rather than ``ValueError``: the name came from the YAML, and the
+    exit-code contract every config mistake honours must hold here too — bare, it
+    reached the ExtOpt server as "crashed during startup" and the CLI as a traceback.
+    """
     _install_fake_orb(monkeypatch)
-    with pytest.raises(ValueError, match="unknown ORB model"):
+    with pytest.raises(ConfigError, match="unknown ORB model"):
         MlipCalculator(task_name="orb", model_name="orb_not_a_loader", device="cpu")
 
 

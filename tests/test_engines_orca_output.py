@@ -289,18 +289,70 @@ def test_parse_dft_symbols_are_strings():
     assert {"C", "N"} <= set(parsed[0].symbols)
 
 
-def test_parse_dft_forces_are_read_from_the_opt_outputs_gradient_block():
-    """The fixture's final gradient block is read and lands per atom beside the coordinates.
+def test_parse_dft_reads_no_forces_from_an_opt_whose_last_gradient_predates_its_geometry():
+    """An ``Opt`` output's last gradient describes the penultimate geometry, not the result.
 
-    This used to guard its one assertion with ``if forces is not None``, so dropping the
-    gradient parse from ``parse_dft_from_text`` left it green; the fixture does carry a
-    gradient block, and the reader must find it.
+    ORCA prints the gradient inside each cycle and the geometry once more after
+    convergence; the fixture's last ``CARTESIAN GRADIENT`` precedes its last
+    ``CARTESIAN COORDINATES``. Reading it "beside the coordinates" stored a force the
+    structure was not computed at, and a dataset fitted to it learned the wrong point.
     """
     parsed = parse_dft(FIXTURE)
-    forces = parsed[0].forces_ev_per_a
-    assert forces is not None
-    assert forces.shape == parsed[0].positions.shape == (77, 3)
-    assert np.isfinite(forces).all()
+    assert parsed[0].forces_ev_per_a is None
+    assert FIXTURE.read_text().rfind("CARTESIAN GRADIENT") < FIXTURE.read_text().rfind(
+        "CARTESIAN COORDINATES (ANGSTROEM)"
+    )
+
+
+_GEOMETRY_THEN_GRADIENT = (
+    "FINAL SINGLE POINT ENERGY     -1.10\n"
+    "---------------------------------\n"
+    "CARTESIAN COORDINATES (ANGSTROEM)\n"
+    "---------------------------------\n"
+    "  H   0.0  0.0  0.0\n"
+    "  H   0.0  0.0  0.74\n"
+    "---------------------------------\n"
+    "CARTESIAN GRADIENT\n"
+    "------------------\n"
+    "   1   H   :   0.000000000    0.000000000    0.010000000\n"
+    "   2   H   :   0.000000000    0.000000000   -0.010000000\n"
+    "------------------\n"
+)
+
+
+_GRADIENT_THEN_GEOMETRY = (
+    "FINAL SINGLE POINT ENERGY     -1.10\n"
+    "CARTESIAN GRADIENT\n"
+    "------------------\n"
+    "   1   H   :   0.000000000    0.000000000    0.010000000\n"
+    "   2   H   :   0.000000000    0.000000000   -0.010000000\n"
+    "------------------\n"
+    "---------------------------------\n"
+    "CARTESIAN COORDINATES (ANGSTROEM)\n"
+    "---------------------------------\n"
+    "  H   0.0  0.0  0.0\n"
+    "  H   0.0  0.0  0.74\n"
+    "---------------------------------\n"
+)
+
+
+def test_parse_dft_pairs_a_gradient_with_the_geometry_it_follows():
+    """A gradient printed after the last geometry (``EnGrad``, ``Freq``) is that geometry's;
+    one printed before it belongs to a geometry the optimiser then moved on from."""
+    [frame] = parse_dft_from_text(_GEOMETRY_THEN_GRADIENT)
+    assert frame.forces_ev_per_a is not None
+    assert frame.forces_ev_per_a.shape == (2, 3)
+    assert frame.forces_ev_per_a[0, 2] < 0  # F = -dE/dx
+    [moved] = parse_dft_from_text(_GRADIENT_THEN_GEOMETRY)
+    assert moved.forces_ev_per_a is None
+    assert moved.positions[1, 2] == 0.74
+
+
+def test_parse_dft_treats_a_frequency_banner_with_no_modes_as_no_data():
+    """``{}`` is "counted, and none" — a verified minimum; a table that parsed nothing has
+    counted nothing, so every frequency field is ``None``, as for a run with no banner."""
+    [frame] = parse_dft_from_text(_GEOMETRY_THEN_GRADIENT + "VIBRATIONAL FREQUENCIES\n")
+    assert (frame.imaginary_freqs, frame.frequencies, frame.normal_modes) == (None, None, None)
 
 
 # ---------------------------------------------------------------------------

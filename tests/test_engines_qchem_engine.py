@@ -353,6 +353,22 @@ def test_a_qc_configured_step_survives_its_own_runlog_header(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
+def test_a_misspelled_knob_is_refused_up_front():
+    """``core: 8`` (for ``cores``) is a refusal, not a job on one thread.
+
+    Every Q-Chem knob reaches the command line and the SLURM layout, and no template can
+    consume a stranger — read leniently, the typo was dropped and the job ran at 1/8 of
+    the parallelism it was written for, at full wall-clock cost. The NMS knobs stay out of
+    the strict read through ``engine_options()``, like the ExtOpt family's.
+    """
+    engine = get_engine("qchem")
+    bad = StepConfig(step=1, engine="qchem", options={"nprocs": 4, "core": 8})
+    with pytest.raises(ConfigError, match="core"):
+        engine.check_step(bad, charge=0, multiplicity=1)
+    nms = StepConfig(step=1, engine="qchem", nms=True, options={"cores": 8, "target": "ts"})
+    engine.check_step(nms, charge=0, multiplicity=1)
+
+
 def test_an_unknown_operation_is_refused_up_front():
     """A typo'd ``operation:`` fails at the run's t=0 walk, not after every job ran.
 

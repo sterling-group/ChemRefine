@@ -140,7 +140,7 @@ class QchemEngine(JobEngine):
         decides. ``charge`` / ``multiplicity`` are unread — the signature is the
         capability's.
         """
-        opts = self.options_cls.from_raw_lenient(step_cfg.options)
+        opts = self.options_cls.from_raw(step_cfg.engine_options())
         if opts.device != "cpu":
             raise ConfigError(
                 f"step {step_cfg.step}: `device: {opts.device}` on a Q-Chem step — the engine "
@@ -166,8 +166,15 @@ class QchemEngine(JobEngine):
     # -- run ---------------------------------------------------------------
 
     def _opts(self, ctx: StepContext) -> QchemOptions:
-        """This step's validated options — the single reader of the YAML knobs."""
-        return self.options_cls.from_raw_lenient(ctx.step_cfg.options)
+        """This step's validated options — the single reader of the YAML knobs.
+
+        Strict, over the engine's share of the mapping (:meth:`~chemrefine.config.StepConfig.
+        engine_options`, which keeps the NMS knobs out of the read): every knob here reaches
+        the command line and the SLURM layout, and nothing else reads the mapping, so a
+        misspelled one has no reader to fall back on. Read leniently, ``core: 8`` was
+        dropped and the job ran on one thread at full wall-clock cost.
+        """
+        return self.options_cls.from_raw(ctx.step_cfg.engine_options())
 
     def pal(self, ctx: StepContext) -> int:
         """Total cores one job uses: threads, times MPI ranks when the step opts in."""

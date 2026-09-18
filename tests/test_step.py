@@ -1270,10 +1270,14 @@ def test_rebuild_cache_step_nms_branch(tmp_path: Path):
     out = structure_artifact_path(step_dir, 1, "0", "out")
     inp = structure_artifact_path(step_dir, 1, "0", "inp")
     out.parent.mkdir(parents=True, exist_ok=True)
-    # A frequency table with NO imaginary modes ⇒ already at the minimum ⇒ resolved.
+    # A frequency table with NO imaginary modes ⇒ already at the minimum ⇒ resolved. The
+    # scaling line is what the row scan anchors on, as in every real ORCA output; a banner
+    # with no row under it is "no data", not a minimum.
     out.write_text(
         synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)])
-        + "VIBRATIONAL FREQUENCIES\n-----------------------\n     6:    100.00 cm**-1\n"
+        + "VIBRATIONAL FREQUENCIES\n-----------------------\n"
+        + "Scaling factor for frequencies =  1.000000000  (already applied!)\n\n"
+        + "     6:    100.00 cm**-1\n"
         + "\n****ORCA TERMINATED NORMALLY****\n",
         encoding="utf-8",
     )
