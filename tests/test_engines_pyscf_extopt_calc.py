@@ -475,6 +475,51 @@ def test_run_dft_uses_gpu_classes_when_available(monkeypatch):
     assert energy == -2.0
 
 
+class _OnDevice:
+    """A device array as the seam sees it: reachable through ``.get()`` and nothing else.
+
+    No ``__array__``, no ``.T``, no ``@`` — so any read that bypasses the host transfer
+    fails loudly instead of quietly working on the fake and failing on the hardware.
+    """
+
+    def __init__(self, host: np.ndarray) -> None:
+        self._host = host
+
+    def get(self) -> np.ndarray:
+        return self._host
+
+
+def test_run_dft_brings_a_device_gradient_to_the_host(monkeypatch):
+    """The gradient leaves the SCF through the host seam, whatever computed it."""
+    _install_fake_pyscf(monkeypatch)
+    gpu_dft = types.ModuleType("gpu4pyscf.dft")
+    gpu_rks = MagicMock()
+    gpu_rks.kernel.return_value = -2.0
+    gpu_rks.converged = True
+    gpu_rks.nuc_grad_method.return_value.kernel.return_value = _OnDevice(
+        np.array([[0.1, 0.2, 0.3]])
+    )
+    gpu_dft.RKS = MagicMock(return_value=gpu_rks)
+    gpu_dft.UKS = MagicMock(return_value=gpu_rks)
+    gpu_pkg = types.ModuleType("gpu4pyscf")
+    gpu_pkg.dft = gpu_dft
+    monkeypatch.setitem(sys.modules, "gpu4pyscf", gpu_pkg)
+    monkeypatch.setitem(sys.modules, "gpu4pyscf.dft", gpu_dft)
+
+    mol = _runtime.build_mol(
+        symbols=("H",),
+        positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
+        charge=0,
+        multiplicity=1,
+        basis="sto-3g",
+    )
+    mol.spin = 0
+    _, gradient, meta, _ = _runtime.run_dft(mol, xc="pbe", use_df=False, want_gpu=True)
+    assert meta["gpu_used"] is True
+    assert gradient == [[0.1, 0.2, 0.3]]
+    assert meta["grad_norm"] == pytest.approx(float(np.linalg.norm([0.1, 0.2, 0.3])))
+
+
 # ---------------------------------------------------------------------------
 # _runtime.get_active_space_tensors
 # ---------------------------------------------------------------------------
@@ -533,6 +578,46 @@ def test_get_active_space_tensors_assembles_h1_in_the_mo_basis(monkeypatch):
     np.testing.assert_array_equal(got_eri, eri)
     np.testing.assert_array_equal(got_mo, mf.mo_coeff)
     assert h2.shape == (2, 2, 2, 2)
+
+
+@pytest.mark.parametrize("localized", [False, True])
+def test_get_active_space_tensors_reads_device_arrays_off_the_scf_object(
+    monkeypatch, localized: bool
+):
+    """``gpu: true`` with ``save_tensors: true``: the orbitals come home before the maths.
+
+    gpu4pyscf keeps ``mo_coeff`` / ``mo_occ`` on the device, and the transform is numpy and
+    pyscf, which refuse a device operand — so every geometry failed *after* its SCF and
+    gradient had succeeded, as a generic server 500 naming neither knob. The fake carries
+    the arrays behind ``.get()`` and nothing else, so a read that skips the seam fails here
+    the way it would on the hardware. The result is the same hand-computed ``h1`` as the
+    host-array case above; ``localized`` routes the same arrays through Boys first.
+    """
+    mocks = _install_fake_pyscf(monkeypatch)
+    kin = np.array([[1.0, 2.0], [3.0, 4.0]])
+    nuc_attr = np.array([[10.0, 20.0], [30.0, 40.0]])
+    eri = np.arange(16, dtype=float).reshape(2, 2, 2, 2)
+    mol = MagicMock()
+    mol.spin = 0
+    mol.energy_nuc.return_value = 1.234
+    mol.intor.side_effect = lambda label: {
+        "int1e_kin": kin,
+        "int1e_nuc": nuc_attr,
+        "int2e": eri,
+    }[label]
+    mf = MagicMock()
+    mf.mo_coeff = _OnDevice(np.array([[1.0, 1.0], [0.0, 1.0]]))
+    mf.mo_occ = _OnDevice(np.array([2.0, 0.0]))
+    if localized:
+        # Boys is pyscf's own; the fake hands each block back unchanged, so the localized
+        # transform sees the same columns and lands on the same matrix.
+        mocks["lo"].Boys.side_effect = lambda _mol, block: MagicMock(
+            kernel=MagicMock(return_value=block)
+        )
+
+    _nuc, h1, _h2 = _runtime.get_active_space_tensors(mol, mf, localized=localized)
+
+    np.testing.assert_array_equal(h1, np.array([[11.0, 33.0], [44.0, 110.0]]))
 
 
 def test_localized_tensors_localize_each_block_and_transform_with_the_stack(monkeypatch):

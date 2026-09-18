@@ -22,6 +22,24 @@ from chemrefine.quantities import BOHR_TO_ANGSTROM
 logger = logging.getLogger(__name__)
 
 
+def _host(array: Any) -> NDArray[Any]:
+    """``array`` as a numpy array on the host, whichever device computed it.
+
+    The one seam through which an array leaves the SCF object. gpu4pyscf keeps its orbital
+    coefficients and occupations as CuPy arrays, whose documented way home is ``.get()``;
+    numpy and pyscf refuse a CuPy operand, so every downstream ``@``, ``ao2mo`` and Boys
+    localisation fails after the SCF and gradient have already succeeded — with the CPU
+    fallback the only reason ``device: cuda`` and ``save_tensors`` ever worked together.
+    Applied to every array read off ``mf`` or its kernels rather than at the one site that
+    happened to fail, so the rule is "arrays leaving the SCF are host arrays" and a future
+    reader inherits it. A numpy array has no ``.get`` and passes straight through.
+    """
+    transfer = getattr(array, "get", None)
+    if callable(transfer) and not isinstance(array, np.ndarray):
+        return np.asarray(transfer())
+    return np.asarray(array)
+
+
 # ---------------------------------------------------------------------------
 # Molecule + SCF
 # ---------------------------------------------------------------------------
@@ -153,8 +171,8 @@ def run_dft(
     gradient_rows: list[list[float]] = []
     grad_norm = 0.0
     if dograd:
-        g = mf.nuc_grad_method().kernel()
-        gradient_rows = [[float(c) for c in row] for row in np.asarray(g).reshape(-1, 3)]
+        g = _host(mf.nuc_grad_method().kernel())
+        gradient_rows = [[float(c) for c in row] for row in g.reshape(-1, 3)]
         grad_norm = float(np.linalg.norm(g))
 
     meta = {
@@ -209,12 +227,12 @@ def get_active_space_tensors(
     ao_nuc = mol.intor("int1e_nuc")
     ao_obi = ao_kin + ao_nuc
     ao_eri = mol.intor("int2e")
-    coeff = mf.mo_coeff
+    coeff = _host(mf.mo_coeff)
 
     if localized:
         from pyscf import lo
 
-        nocc = int((mf.mo_occ > 0).sum())
+        nocc = int((_host(mf.mo_occ) > 0).sum())
         coeff_occ = coeff[:, :nocc]
         coeff_vir = coeff[:, nocc:]
         loc_occ = lo.Boys(mol, coeff_occ).kernel(verbose=0)
