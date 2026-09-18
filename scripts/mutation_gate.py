@@ -268,8 +268,8 @@ _BUNDLED: tuple[Mutation, ...] = (
     Mutation(
         id="best-backfills-best-not-seed",
         path="src/chemrefine/lifecycle.py",
-        old="if (fallback := (f.best if f.best is not None else prev_by_id.get(f.sid)))",
-        new="if (fallback := prev_by_id.get(f.sid))",
+        old="    if failure.best is not None:\n        return failure.best\n",
+        new="    if failure.best is not None:\n        return prev_by_id.get(failure.sid)\n",
         tests="tests/test_step.py",
         breaks="`on_failure: best` silently carries the submitted seed geometry downstream "
         "instead of the best geometry the failed run reached — ids and counts unchanged, "
@@ -476,6 +476,19 @@ _BUNDLED: tuple[Mutation, ...] = (
         tests="tests/test_engines_orca_output.py",
         breaks="a scan point that lost a coordinate row ships as a smaller molecule "
         "carrying the whole molecule's energy — the next step optimises the wrong species",
+    ),
+    Mutation(
+        id="best-backfill-is-a-geometry",
+        path="src/chemrefine/lifecycle.py",
+        old="    return replace(\n        submitted,\n        energy_hartree=None,",
+        new=(
+            "    return submitted\n    return replace(\n        submitted,\n"
+            "        energy_hartree=None,"
+        ),
+        tests="tests/test_step.py",
+        breaks="an `on_failure: best` backfill carries the previous step's energy into this "
+        "step's filter and steps.csv — ranked and reported on a number this step never "
+        "computed",
     ),
 )
 

@@ -16,7 +16,7 @@ import pytest
 import replay
 from replay import extract_case, forbid_run_batch, forget_provenance, relocate, replay_run_batch
 
-from chemrefine import pipeline
+from chemrefine import cache, pipeline
 from chemrefine.config import Config, MinSample, load_config
 from chemrefine.errors import ChemRefineError
 from chemrefine.step import RunPlan, StepMode
@@ -218,19 +218,31 @@ def test_on_failure_skip_drops_the_failed_structure(
 def test_on_failure_best_keeps_the_structure_with_its_best_geometry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    case, config, _sid = _fail_one_step2_structure(tmp_path)
+    """``best`` keeps the pipeline going; a backfilled input is kept but never ranked.
+
+    The structure whose job left no output is backfilled from its submitted input — the
+    geometry alone, with no energy of this step's — so it lands in the step's cache and
+    ledger, and the ``sample:`` filter, which cannot rank what has no energy, drops it
+    from the survivors rather than placing it by the previous step's number.
+    """
+    case, config, sid = _fail_one_step2_structure(tmp_path)
     config = _with_step_update(
         config, 2, on_failure="best", sample=MinSample(method="min", count=3)
     )
     config = config.model_copy(update={"steps": config.steps[:2]})
-    submitter = replay_run_batch(case, allow_missing={_sid})
+    submitter = replay_run_batch(case, allow_missing={sid})
     monkeypatch.setattr(RUN_BATCH, submitter)
 
     outcomes = pipeline.run(config)
 
     assert len(outcomes) == 2, "best lets the pipeline finish"
     ran = len(submitter.calls[1].files)
-    assert len(outcomes[1].state.structures) == min(3, ran)
+    survivors = outcomes[1].state.structures
+    assert len(survivors) == min(3, ran) - 1
+    assert all(s.energy_hartree is not None for s in survivors)
+    cached = cache.load(config.step_dir(config.steps[1]).resolve())
+    assert cached is not None
+    assert [s.id for s in cached.results.structures if s.energy_hartree is None] == [sid]
 
 
 def test_resume_after_stop_resubmits_only_the_failed_structure(

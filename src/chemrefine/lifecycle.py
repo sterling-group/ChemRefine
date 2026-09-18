@@ -770,7 +770,8 @@ def apply_failure_policy(
     they're visible regardless of policy) and cleared on a clean step. ``skip``
     drops the failures and keeps the successes; ``best`` keeps every
     structure, backfilling a failure with the best geometry obtained for it
-    (else its submitted input); ``stop`` (the default) keeps the successes too but the run is
+    (else its submitted input, as a geometry alone — :func:`_backfill_for`);
+    ``stop`` (the default) keeps the successes too but the run is
     halted by :func:`chemrefine.step.halt_if_pending` (from the pipeline)
     *after* the cache is written (so ``resume`` / ``rerun-errors`` re-attempt
     only those failed jobs).
@@ -803,16 +804,48 @@ def apply_failure_policy(
             # crossing this module is frozen, and a policy function quietly rewriting its
             # argument is the one aliasing bug this file would not survive.
             backfilled = [
-                fallback
-                for f in failures
-                if (fallback := (f.best if f.best is not None else prev_by_id.get(f.sid)))
-                is not None
+                fallback for f in failures if (fallback := _backfill_for(f, prev_by_id)) is not None
             ]
             return StepResults(structures=(*successes, *backfilled))
         case "skip" | "stop":
             # `stop` keeps the successes too; the run is halted afterwards by
             # `chemrefine.step.halt_if_pending`, once this cache is written.
             return StepResults(structures=tuple(successes))
+
+
+def _backfill_for(failure: Failure, prev_by_id: dict[str, Structure]) -> Structure | None:
+    """What ``best`` carries for one failure: the best geometry obtained, else the input.
+
+    The input is carried as a **geometry with its lineage and nothing else**. The
+    structure the step was given is the previous step's result, energies and
+    thermochemistry included — and a backfill that kept them handed this step a number
+    it never computed: the previous level of theory's energy, ranked by this step's
+    filter against this step's energies and printed in ``steps.csv`` under this step.
+    The docs describe the backfill as "the input it was submitted with", and a submitted
+    input is a geometry; every field that only a calculation of *this* step could have
+    filled is left unfilled, exactly as a step-1 seed arrives. The best geometry obtained
+    is different: it was parsed from this step's own output and its values are this
+    step's.
+    """
+    if failure.best is not None:
+        return failure.best
+    submitted = prev_by_id.get(failure.sid)
+    if submitted is None:
+        return None
+    return replace(
+        submitted,
+        energy_hartree=None,
+        forces_ev_per_a=None,
+        converged=None,
+        terminated_normally=None,
+        gibbs_hartree=None,
+        enthalpy_hartree=None,
+        energy_zpe_hartree=None,
+        imaginary_freqs=None,
+        frequencies=None,
+        normal_modes=None,
+        resolved_from=None,
+    )
 
 
 def _in_parent_order(structures: list[Structure], parents: PipelineState) -> list[Structure]:

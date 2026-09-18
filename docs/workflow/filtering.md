@@ -8,10 +8,11 @@ step with the engine's `StepResults` and the step's `sample` config; it returns 
 `sample: None` (no `sample:` block) is the identity filter — **every** structure
 passes through untouched, including one with no computed energy. That is
 deliberate: `on_failure: best` backfills a failed structure from its submitted
-input, which on step 1 is a seed with no energy yet, and dropping those here
-would silently turn `best` into `skip`. With a `sample:` set, structures without
-a computed energy are dropped before ranking — they cannot be sorted or
-weighted.
+input — the geometry alone, with no energy, on every step — and dropping those
+here would silently turn `best` into `skip`. With a `sample:` set, structures
+without a computed energy are dropped before ranking — they cannot be sorted or
+weighted, and a backfilled input is never ranked on a number this step did not
+compute.
 
 ## Methods
 
@@ -34,7 +35,7 @@ populated that energy (ORCA writes Gibbs / enthalpy / ZPE in its
 `THERMOCHEMISTRY` block; see [`Structure`](../api/state.md)). If **no** structure
 carries the chosen energy, filtering raises a `ConfigError` — no frequency calc
 ran at all, which is a config mistake. If only *some* lack it (an
-`on_failure: best` backfill carries no thermochemistry by construction), those
+`on_failure: best` backfill carries no energy of any kind by construction), those
 are excluded from the ranking with a warning naming them, rather than aborting
 the one policy whose purpose is to keep going — they stay visible in the cache
 and the failure ledger.

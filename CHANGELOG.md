@@ -454,6 +454,15 @@ for the full map.
 
 ### Fixed
 
+- **An `on_failure: best` backfill of the submitted input is a geometry alone.** On a
+  step after the first, the structure a failed job was given is the previous step's
+  result, and the backfill carried it whole — so this step's filter ranked, and
+  `steps.csv` reported under this step, an energy from the previous level of theory. The
+  backfill now keeps the geometry and the lineage and nothing a calculation of this step
+  could have filled, exactly as a step-1 seed arrives; the best geometry obtained keeps
+  this step's own values. The next step's cache rows for such backfilled parents move
+  once on an existing `best` tree (the parent's digest covers its energy), so a `resume`
+  recomputes exactly those rows.
 - **A periodic-only library refuses a molecular dataset before anything is written.**
   `mlip-train` with `task_name: chgnet` over the pipeline's own structures — molecules with
   no cell, which is every seed read from `.xyz` or built from SMILES — passed every

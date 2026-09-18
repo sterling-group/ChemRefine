@@ -392,6 +392,55 @@ def test_on_failure_best_backfills_all(tmp_path: Path):
         ENGINES.pop("fake-fail", None)
 
 
+def test_on_failure_best_backfills_the_submitted_input_as_a_geometry_alone(tmp_path: Path):
+    """A step-N backfill of the submitted input carries no energy from step N-1.
+
+    The structures a step is given are the previous step's results, energies and
+    thermochemistry included. Carried whole, a missing-output backfill handed this step
+    the previous level of theory's energy — ranked by this step's filter against this
+    step's energies, and printed in ``steps.csv`` under this step. The geometry and the
+    lineage are the input; every field only this step's calculation could fill stays
+    unfilled. The best-obtained backfill is different: its values are this step's own.
+    """
+    from chemrefine.engines.api import ENGINES
+
+    given = tuple(
+        Structure(
+            id=i,
+            atoms=Atoms("H", positions=[[float(i), 0.0, 0.0]]),
+            parent_id="seed",
+            energy_hartree=-40.0 - int(i),
+            gibbs_hartree=-39.0 - int(i),
+            converged=True,
+            terminated_normally=True,
+            resolved_from=f"{i}_m6_pos",
+        )
+        for i in ["0", "1", "2"]
+    )
+    eng = _register_fail_engine()
+    try:
+        eng.fail = {"1": "unconverged", "2": "missing"}
+        cfg = _config(tmp_path, engine="fake-fail", on_failure="best")
+        outcome = run_step(cfg, cfg.steps[0], PipelineState(structures=given))
+        by_id = {s.id: s for s in outcome.state.structures}
+        assert set(by_id) == {"0", "1", "2"}
+        backfilled = by_id["2"]
+        assert backfilled.atoms.get_positions()[0] == pytest.approx([2.0, 0.0, 0.0])
+        assert backfilled.parent_id == "seed"
+        assert (
+            backfilled.energy_hartree,
+            backfilled.gibbs_hartree,
+            backfilled.converged,
+            backfilled.terminated_normally,
+            backfilled.resolved_from,
+        ) == (None, None, None, None, None), "the submitted input is a geometry, not a result"
+        # The best geometry obtained keeps this step's own parse.
+        assert by_id["1"].energy_hartree == pytest.approx(-1.0 - 1e-3)
+    finally:
+        eng.fail = {}
+        ENGINES.pop("fake-fail", None)
+
+
 # ---------------------------------------------------------------------------
 # Changing on_failure over a cached step
 # ---------------------------------------------------------------------------
