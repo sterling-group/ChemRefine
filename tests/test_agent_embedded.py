@@ -54,6 +54,28 @@ def test_provider_resolution_is_flags_env_preset(monkeypatch: pytest.MonkeyPatch
     assert ProviderConfig.resolve("ollama", api_key="").api_key == "env-key"  # blank falls through
 
 
+@pytest.mark.parametrize("key", ["sk-good\r\nX-Injected: 1", "sk-good\nX: 1", "sk\x00", "k" * 1025])
+def test_a_key_that_cannot_be_a_header_is_refused_at_resolution(
+    monkeypatch: pytest.MonkeyPatch, key: str
+):
+    """The key leaves as ``Authorization: Bearer …``; a newline in it is header injection.
+
+    Judged here, on the *resolved* key, at the one place every entry point resolves — the
+    GUI panel's box, the CLI's flags and ``CHEMREFINE_LLM_API_KEY`` alike. The GUI's check
+    endpoint used to ask this of the raw box before resolution and answered a blank one
+    "invalid characters", while the chat endpoint beside it read the same blank as "use the
+    environment". A fault in the environment's key is refused the same way, by name.
+    """
+    monkeypatch.delenv("CHEMREFINE_LLM_API_KEY", raising=False)
+    with pytest.raises(ConfigError, match="cannot be sent as an Authorization header"):
+        ProviderConfig.resolve("ollama", model="qwen3", api_key=key)
+    if "\x00" in key:
+        return  # an environment variable cannot carry a NUL, so that route has no such key
+    monkeypatch.setenv("CHEMREFINE_LLM_API_KEY", key)
+    with pytest.raises(ConfigError, match="cannot be sent as an Authorization header"):
+        ProviderConfig.resolve("ollama", model="qwen3")
+
+
 def test_a_supplied_key_reaches_openai_and_hijacks_nothing_else(monkeypatch: pytest.MonkeyPatch):
     """The one branch where a key changes which model object gets built.
 

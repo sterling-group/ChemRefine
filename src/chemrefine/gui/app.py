@@ -530,22 +530,17 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         from chemrefine.agent import providers
 
         payload = _body()
-        key = payload.get("api_key")
-        if key is not None and not _usable_as_header(key):
-            # It becomes an Authorization header inside `check`. A bare newline there
-            # would raise out of urllib and land in that function's `except ValueError`,
-            # which reports "not an OpenAI-style model listing" — a finding about the
-            # endpoint, for a fault in the box the user just typed into.
-            return jsonify({"ok": False, "findings": ["the API key contains invalid characters"]})
         try:
-            # The three reads sit inside the try for the reason the resolve does: a
-            # provider, model or URL of the wrong JSON type is a verdict about the panel's
-            # settings, answered as a finding like every other unusable value here.
+            # The four reads sit inside the try for the reason the resolve does: a
+            # provider, model, URL or key of the wrong JSON type is a verdict about the
+            # panel's settings, answered as a finding like every other unusable value
+            # here. A key that cannot be a header is `resolve`'s refusal too — judged on
+            # the resolved key, so a blank box means what it means at every entry point.
             resolved = providers.ProviderConfig.resolve(
                 _optional(payload, "provider") or "custom",
                 model=_optional(payload, "model"),
                 base_url=_optional(payload, "base_url"),
-                api_key=key,
+                api_key=_optional(payload, "api_key"),
             )
         except ChemRefineError as e:
             return jsonify({"ok": False, "findings": [str(e)]})
@@ -716,18 +711,6 @@ def _config_written_by(result: Any) -> str | None:
             ):
                 return str(part.content.get("path"))
     return None
-
-
-def _usable_as_header(value: object) -> bool:
-    """Whether ``value`` can be interpolated into an HTTP header without breaking it.
-
-    An API key arrives from the browser and leaves as ``Authorization: Bearer …``. A
-    carriage return or newline in it is header injection in any client that does not
-    reject it, and in ``urllib`` — which does — it is a ``ValueError`` raised from inside
-    the preflight, where the surrounding handler would report it as a fault of the
-    endpoint being probed. Bounded, too: nothing legitimate here is a kilobyte long.
-    """
-    return isinstance(value, str) and 0 < len(value) <= 1024 and not set(value) & set("\r\n\x00")
 
 
 def _step_key(value: str | int) -> int | str:

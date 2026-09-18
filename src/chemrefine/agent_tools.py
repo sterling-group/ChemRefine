@@ -65,6 +65,20 @@ row twice — once reading, once quoting.
 Truncation is never silent: ``total`` is the unpaginated count and the answer echoes the
 ``limit`` actually applied, so a caller can always see there is more and page for it."""
 
+_MAX_TAIL_LINES = 2000
+"""Hard ceiling on the log tail :func:`run_status` returns — the same rule, for the log.
+
+Held by :func:`_tail_budget`, which is the one place the bound is spelled: the primitive
+that reads the tail applies it, and the answer echoes it, so no caller of either can reopen
+it. Two thousand lines is more than a panel or a model will read and less than a driver log
+grows in a day; the file's path is in the answer for anyone who needs the rest."""
+
+
+def _tail_budget(wanted: int) -> int:
+    """The lines a tail request is actually granted: ``0`` and below mean none, and there
+    is a ceiling. Both ends of the rule in one function, so the reader and the echo agree."""
+    return min(max(0, wanted), _MAX_TAIL_LINES)
+
 
 # ---------------------------------------------------------------------------
 # Introspection + validation (thin re-exposures of the library seams)
@@ -85,9 +99,13 @@ def validate_config(yaml_text: str, base_dir: str | None = None) -> dict[str, An
     """Validate config YAML text; every finding at once, never raises.
 
     ``base_dir`` resolves relative paths (and locates templates) as if the text lived in
-    that directory — pass the directory the config will be saved to.
+    that directory — pass the directory the config will be saved to. It is a user-typed
+    path like every other one this module takes, and goes through :func:`expand_user_path`
+    like them: handed to ``Path`` raw, a ``~/proj`` looked for templates under a literal
+    ``~`` in the working directory and reported them missing, while ``save_config`` a call
+    later resolved the same string fine.
     """
-    base = Path(base_dir) if base_dir is not None else None
+    base = expand_user_path(base_dir) if base_dir is not None else None
     return validate_config_text(yaml_text, base_dir=base).to_json()
 
 
@@ -308,7 +326,13 @@ def _tail_lines(path: Path, wanted: int) -> list[str]:
     Decoding happens once, after the blocks are joined, never per block: a multi-byte
     character straddling a chunk boundary would otherwise be split into replacement
     characters by the very ``errors="replace"`` that is meant to make partial output safe.
+
+    ``wanted`` is clamped by :func:`_tail_budget` here, in the primitive, rather than by
+    whoever calls it: bounded only at ``run_status`` and only from below, the backwards
+    read ran to the start of the file for a request of a billion lines and handed back the
+    whole driver log — the one payload the module's pagination rule exists to forbid.
     """
+    wanted = _tail_budget(wanted)
     if wanted <= 0:
         return []
     end = path.stat().st_size
@@ -334,9 +358,11 @@ def run_status(config_path: str, log_tail_lines: int = 40) -> dict[str, Any]:
     path still reported. It cannot mean anything larger — Python's ``-0 == 0``, so the
     bare slice read ``[-0:]`` as "the whole file", inverting a zero into the one value the
     module's pagination rule exists to forbid (a multi-MB driver log in a tool result).
-    The tail itself is read backwards from the end (:func:`_tail_lines`) rather than by
-    reading the log and slicing it, because the GUI re-asks for this every five seconds
-    for the length of the run.
+    Nor can a large number: the request is granted up to :data:`_MAX_TAIL_LINES`, and the
+    answer echoes the budget actually applied as ``log_tail_lines``, the way
+    :func:`get_results` echoes its ``limit``. The tail itself is read backwards from the
+    end (:func:`_tail_lines`) rather than by reading the log and slicing it, because the
+    GUI re-asks for this every five seconds for the length of the run.
     """
     config = load_config(_config_path(config_path))
     status = pipeline.lock_status(config.output_dir)
@@ -360,7 +386,7 @@ def run_status(config_path: str, log_tail_lines: int = 40) -> dict[str, Any]:
     log_path = _latest_log(config.output_dir)
     tail: list[str] | None = None
     if log_path is not None:
-        tail = _tail_lines(log_path, max(0, log_tail_lines))
+        tail = _tail_lines(log_path, log_tail_lines)
     return {
         "running": status.held,
         "holder": (
@@ -379,6 +405,7 @@ def run_status(config_path: str, log_tail_lines: int = 40) -> dict[str, Any]:
         "steps": steps,
         "log": str(log_path) if log_path is not None else None,
         "log_tail": tail,
+        "log_tail_lines": _tail_budget(log_tail_lines),
     }
 
 
@@ -456,7 +483,10 @@ def lookup_smiles(name: str) -> dict[str, Any]:
 
     from chemrefine import USER_AGENT
 
-    url = _PUBCHEM_URL.format(quote(name))
+    # `safe=""`: the name is one path segment, and `quote`'s default keeps `/` unescaped
+    # for whole URLs — a name carrying one was sent as two segments, and PubChem's 404 for
+    # a name it knows came back as "offline or unknown".
+    url = _PUBCHEM_URL.format(quote(name, safe=""))
     # A `Request` rather than a bare URL for one reason: the header. urllib's default
     # announces `Python-urllib/3.x`, and NCBI's E-utilities usage policy asks callers to
     # identify themselves — an unnamed client is the one they throttle first, and other
@@ -533,7 +563,10 @@ def build_structures(
             "smiles is empty — name at least one molecule to build "
             "(this call would otherwise clear the seed set in out_dir and write nothing)"
         )
-    out = Path(out_dir)
+    # `expand_user_path`, like every path argument here: handed to `Path` raw, a `~/seeds`
+    # made a directory literally named `~` under the cwd and reported paths beginning with
+    # it, which the readers next door then expanded to somewhere else.
+    out = expand_user_path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     for stale in out.glob("structure_*.xyz"):
         stale.unlink()

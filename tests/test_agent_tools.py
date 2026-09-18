@@ -12,10 +12,13 @@ hand-rolled lookalikes.
 
 from __future__ import annotations
 
+import ast
+import inspect
 import json
 import os
 import socket
 import subprocess
+import textwrap
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -188,6 +191,72 @@ def test_a_config_path_an_agent_typed_is_the_one_every_tool_reads(
     assert saved["written"] and saved["path"] == str(tmp_path / "proj" / "input.yaml")
     assert agent_tools.validate_config_path("~/proj/input.yaml")["ok"]
     assert agent_tools.summarize_config("~/proj/input.yaml")["steps"]
+
+
+def _expander_calls(tool: Any) -> set[str]:
+    """The parameter names ``tool`` hands, by name, to one of the two path expanders."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(tool)))
+    return {
+        node.args[0].id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"expand_user_path", "_config_path"}
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+    }
+
+
+def test_every_path_argument_of_every_tool_goes_through_the_one_expander():
+    """A gate keyed to the property, because discipline missed the same drift twice.
+
+    ``_config_path``'s docstring records ``config_path`` coming apart between two tools;
+    ``out_dir`` and ``base_dir`` then drifted the same way, unseen, because nothing looked
+    at every path argument at once. This does: every parameter of every registered tool
+    that is named ``path`` or ends in ``_path``/``_dir`` must be handed, by name, to
+    ``expand_user_path`` or ``_config_path`` somewhere in the tool's body. Asserted on the
+    source's shape rather than by calling each tool, since each needs its own other
+    arguments to run — the behaviour is held per site by the tests around this one.
+    """
+    unexpanded = {
+        f"{tool.__name__}({name})"
+        for tool in agent_tools.TOOLS
+        for name in inspect.signature(tool).parameters
+        if (name == "path" or name.endswith(("_path", "_dir")))
+        and name not in _expander_calls(tool)
+    }
+    assert not unexpanded, f"path arguments not passed through the expander: {sorted(unexpanded)}"
+
+
+def test_build_structures_writes_under_the_expanded_out_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """``~/seeds`` is the user's directory, not a directory called ``~`` under the cwd.
+
+    Handed to ``Path`` raw, the tool created the literal one and reported paths beginning
+    with ``~`` — which ``read_structure_file`` next door then expanded to somewhere else.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    built = agent_tools.build_structures("~/seeds", xyz_text="2\n\nH 0 0 0\nH 0.74 0 0\n")
+    assert built["written"] == [str(tmp_path / "seeds" / "structure_0.xyz")]
+    assert (tmp_path / "seeds" / "structure_0.xyz").is_file()
+    assert not (Path.cwd() / "~").exists()
+
+
+def test_validate_config_resolves_against_the_expanded_base_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The report for ``base_dir="~/proj"`` is the report for the directory ``~`` names.
+
+    Unexpanded, the templates were looked for under a literal ``~/proj`` in the cwd and
+    reported missing, while ``save_config`` a call later resolved the same string fine.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    text = yaml.safe_dump({"steps": [{"step": 1, "engine": "orca"}]})
+    expanded = agent_tools.validate_config(text, base_dir=str(tmp_path / "proj"))
+    assert agent_tools.validate_config(text, base_dir="~/proj") == expanded
+    assert str(tmp_path / "proj") in json.dumps(expanded)
+    assert "~" not in json.dumps(expanded)
 
 
 def test_a_template_write_that_fails_leaves_the_edited_template_intact(
@@ -566,6 +635,28 @@ def test_a_zero_or_negative_tail_means_no_tail(tmp_path: Path, wanted: int):
     status = agent_tools.run_status(str(_reported_tree(tmp_path)), log_tail_lines=wanted)
     assert status["log_tail"] == []
     assert status["log"] is not None
+    assert status["log_tail_lines"] == 0
+
+
+def test_a_tail_request_is_granted_up_to_the_ceiling_and_the_answer_says_so(tmp_path: Path):
+    """The module's pagination rule, applied to the log: no request returns the whole file.
+
+    ``get_results`` caps ``limit`` because a bare bound made the guarantee decorative; the
+    tail was bounded only from below, so a billion lines walked back to the start of a
+    multi-day driver log and returned all of it. The ceiling lives in the primitive that
+    reads, and the applied budget is echoed the way ``limit`` is, so a caller can see it
+    was cut and go to the file.
+    """
+    path = _reported_tree(tmp_path)
+    log = next((tmp_path / "outputs" / "agent_runs").glob("*.log"))
+    total = agent_tools._MAX_TAIL_LINES + 5
+    log.write_text("".join(f"line {i:06d}\n" for i in range(total)), encoding="utf-8")
+
+    status = agent_tools.run_status(str(path), log_tail_lines=10**9)
+    assert len(status["log_tail"]) == agent_tools._MAX_TAIL_LINES
+    assert status["log_tail"][-1] == f"line {total - 1:06d}"
+    assert status["log_tail_lines"] == agent_tools._MAX_TAIL_LINES
+    assert agent_tools.run_status(str(path), log_tail_lines=2)["log_tail_lines"] == 2
 
 
 def test_the_tail_is_read_from_the_end_not_by_reading_the_whole_log(tmp_path: Path):

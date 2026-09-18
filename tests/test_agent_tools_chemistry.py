@@ -70,6 +70,24 @@ def test_lookup_smiles_hits_pubchem_and_trims(monkeypatch: pytest.MonkeyPatch):
     assert "aspirin" in seen["request"].full_url
 
 
+def test_lookup_smiles_sends_a_slashed_name_as_one_path_segment(monkeypatch: pytest.MonkeyPatch):
+    """``quote``'s default keeps ``/`` for whole URLs; the name is one segment of one.
+
+    Sent unescaped, a name carrying a slash became two segments, PubChem answered 404 for
+    a name it knows, and the tool reported it "offline or unknown".
+    """
+    seen: dict[str, Any] = {}
+
+    def fake_urlopen(request: urllib.request.Request, timeout: float) -> _CannedResponse:
+        seen["request"] = request
+        return _CannedResponse(b"C1CCC2CCCCC2C1\n")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    agent_tools.lookup_smiles("cis/trans-decalin")
+    path = seen["request"].full_url.split("/compound/name/", 1)[1]
+    assert path.startswith("cis%2Ftrans-decalin/")
+
+
 def test_lookup_smiles_identifies_chemrefine_to_pubchem(monkeypatch: pytest.MonkeyPatch):
     """NCBI's usage policy asks callers to say who they are; urllib will not by default.
 

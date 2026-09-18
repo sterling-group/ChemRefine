@@ -1092,16 +1092,16 @@ def test_check_answers_a_verdict_never_an_error(client: Any, monkeypatch: pytest
     assert "not probed" in native.get_json()["findings"][0]
 
 
-@pytest.mark.parametrize(
-    "key", ["sk-good\r\nX-Injected: 1", "sk-good\nX: 1", "sk\x00", "", "k" * 1025, 17]
-)
-def test_a_key_that_cannot_be_a_header_is_refused_before_it_becomes_one(client: Any, key: Any):
+@pytest.mark.parametrize("key", ["sk-good\r\nX-Injected: 1", "sk-good\nX: 1", "sk\x00", "k" * 1025])
+def test_a_key_that_cannot_be_a_header_is_refused_before_it_becomes_one(client: Any, key: str):
     """The key leaves as ``Authorization: Bearer …``; a newline in it is header injection.
 
     Refused up front rather than left to fail inside the probe: ``urllib`` raises
     ``ValueError`` on a CR/LF header, and ``providers.check`` catches ``ValueError`` to
     mean "the reply was not a model listing" — so a fault in the box the user just typed
-    into would have been reported as a fault of the endpoint being probed.
+    into would have been reported as a fault of the endpoint being probed. The refusal is
+    ``ProviderConfig.resolve``'s, reported here as a finding like every other unusable
+    setting, so the chat endpoint and the CLI refuse the same key the same way.
     """
     response = _post(
         client,
@@ -1114,10 +1114,50 @@ def test_a_key_that_cannot_be_a_header_is_refused_before_it_becomes_one(client: 
         },
     )
     assert response.status_code == 200
-    assert response.get_json() == {
-        "ok": False,
-        "findings": ["the API key contains invalid characters"],
-    }
+    body = response.get_json()
+    assert body["ok"] is False
+    assert "cannot be sent as an Authorization header" in body["findings"][0]
+
+
+def test_a_key_of_the_wrong_json_type_is_a_finding_that_names_the_field(client: Any):
+    """A non-string key is the panel's mistake, answered the way every typed field is."""
+    response = _post(
+        client, "/api/agent/check", {"provider": "custom", "model": "m", "api_key": 17}
+    )
+    assert response.status_code == 200
+    assert response.get_json() == {"ok": False, "findings": ["'api_key' must be a string, not int"]}
+
+
+def test_a_blank_key_means_the_environment_at_check_as_it_does_at_chat(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+):
+    """An empty box falls through to ``CHEMREFINE_LLM_API_KEY`` — at every endpoint.
+
+    The check endpoint used to judge the raw box before resolution and refused ``""`` as
+    "invalid characters", while the chat endpoint resolved the same blank to the
+    environment's key and worked. Both resolve now, and the probe is handed the resolved
+    key.
+    """
+    monkeypatch.setenv("CHEMREFINE_LLM_API_KEY", "env-key")
+    seen: list[providers.ProviderConfig] = []
+
+    def fake_check(config: providers.ProviderConfig, **_: Any) -> providers.CheckReport:
+        seen.append(config)
+        return providers.CheckReport(ok=True, findings=("probed",))
+
+    monkeypatch.setattr(providers, "check", fake_check)
+    response = _post(
+        client,
+        "/api/agent/check",
+        {
+            "provider": "custom",
+            "model": "m",
+            "base_url": "https://example.invalid/v1",
+            "api_key": "",
+        },
+    )
+    assert response.get_json() == {"ok": True, "findings": ["probed"]}
+    assert [config.api_key for config in seen] == ["env-key"]
 
 
 def test_the_panels_key_reaches_resolution_and_never_comes_back(

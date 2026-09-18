@@ -106,6 +106,22 @@ def chat_timeout_seconds() -> float:
     return seconds
 
 
+def _header_fault(key: str) -> str | None:
+    """Why ``key`` cannot be interpolated into an HTTP header, or ``None`` when it can.
+
+    The key leaves as ``Authorization: Bearer …``. A carriage return or newline in it is
+    header injection in any client that does not reject it, and in ``urllib`` — which does
+    — it is a ``ValueError`` raised from inside :func:`check`, where the surrounding handler
+    would report it as a fault of the endpoint being probed. Bounded, too: nothing
+    legitimate here is a kilobyte long.
+    """
+    if set(key) & set("\r\n\x00"):
+        return "it contains a newline, carriage return or NUL"
+    if len(key) > 1024:
+        return "it is longer than 1024 characters"
+    return None
+
+
 @dataclass(frozen=True)
 class ProviderConfig:
     """The resolved answer: a model name, and (for compatible endpoints) where it lives."""
@@ -153,10 +169,19 @@ class ProviderConfig:
         resolved_url = base_url or os.environ.get("CHEMREFINE_LLM_BASE_URL") or preset_url
         if resolved_url is not None and not resolved_url.startswith(("http://", "https://")):
             raise ConfigError(f"base URL {resolved_url!r} is not HTTP(S)")
+        resolved_key = api_key or os.environ.get("CHEMREFINE_LLM_API_KEY") or preset_key
+        if resolved_key is not None and (fault := _header_fault(resolved_key)):
+            # Judged on the *resolved* key, after blank has fallen through, at the one
+            # place every entry point resolves: the GUI's check endpoint used to ask this
+            # of the raw box before resolution, and answered a blank one "invalid
+            # characters" while the chat endpoint beside it took the same blank as "use
+            # the environment". One rule, one home, and it now covers the environment's
+            # key and the CLI's as well as the panel's.
+            raise ConfigError(f"the API key cannot be sent as an Authorization header: {fault}")
         return cls(
             model=resolved_model,
             base_url=resolved_url,
-            api_key=api_key or os.environ.get("CHEMREFINE_LLM_API_KEY") or preset_key,
+            api_key=resolved_key,
             provider=provider,
         )
 
