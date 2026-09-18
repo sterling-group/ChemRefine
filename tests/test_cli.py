@@ -425,13 +425,19 @@ def test_maxgpus_omitted_shows_auto(tmp_path: Path):
     assert "max_gpus=auto" in result.stdout
 
 
-def test_maxcores_zero_is_rejected_before_anything_runs(tmp_path: Path):
-    """The override is applied via ``model_copy`` (no re-validation), so the
-    flag itself must enforce the ``>= 1`` floor — otherwise an invalid budget
-    surfaces only mid-run as a raw Throttler ValueError, after inputs exist."""
+def test_maxcores_zero_is_rejected_before_anything_runs(tmp_path: Path, caplog):
+    """An override is held to the config model's own floor, as exit 2, before any input exists.
+
+    ``Config.with_overrides`` validates the value by the field's declared ``ge=1`` — the
+    flag carries no floor of its own to drift from it — so a ``0`` here is refused with
+    the same code and wording a ``0`` in the YAML gets, never a raw Throttler
+    ``ValueError`` mid-run.
+    """
     config_path = _write_config(tmp_path)
-    result = runner.invoke(app, ["run", str(config_path), "--maxcores", "0"])
-    assert result.exit_code != 0
+    with caplog.at_level("ERROR", logger="chemrefine.cli"):
+        result = runner.invoke(app, ["run", str(config_path), "--maxcores", "0"])
+    assert result.exit_code == 2
+    assert "max_cores 0: Input should be greater than or equal to 1" in caplog.text
     assert not (tmp_path / "outputs").exists()
 
 

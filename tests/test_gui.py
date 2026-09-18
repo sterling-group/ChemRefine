@@ -562,7 +562,7 @@ def test_an_out_of_range_budget_is_a_400_before_any_child_launches(
     config = _reported_tree(tmp_path)
     response = _post(client, "/api/run", {"config_path": str(config), field: value})
     assert response.status_code == 400
-    assert f"{field} must be" in response.get_json()["error"]
+    assert f"{field} {value}: Input should be greater" in response.get_json()["error"]
     assert argvs == []
 
 

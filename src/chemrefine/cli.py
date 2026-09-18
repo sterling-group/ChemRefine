@@ -130,8 +130,8 @@ def _load(config_path: Path, *, maxcores: int | None, maxgpus: int | None) -> Co
 
     The return annotation resolves under ``TYPE_CHECKING`` only — the
     pydantic/config import stays lazy (it loads only when a command actually
-    runs). Both flags beat the YAML; ``model_copy`` skips re-validation, so the
-    flags enforce their own bounds (see :data:`MaxCoresOpt` / :data:`MaxGpusOpt`).
+    runs). Both flags beat the YAML, through :meth:`Config.with_overrides`, so
+    each is held to its field's own floor rather than to a copy of it here.
     """
     from chemrefine.config import load_config
 
@@ -142,7 +142,7 @@ def _load(config_path: Path, *, maxcores: int | None, maxgpus: int | None) -> Co
     if maxgpus is not None:
         updates["max_gpus"] = maxgpus
     if updates:
-        cfg = cfg.model_copy(update=updates)
+        cfg = cfg.with_overrides(**updates)
     return cfg
 
 
@@ -204,18 +204,18 @@ def _dispatch(
 
 
 ConfigArg = Annotated[Path, typer.Argument(..., exists=True, dir_okay=False, readable=True)]
+# No ``min=`` on either budget: the floor is the config model's (``max_cores: ge=1``,
+# ``max_gpus: ge=0``) and ``Config.with_overrides`` applies it to an override, so a ``0``
+# here is the same exit-2 ``ConfigError`` a ``0`` in the YAML is — one rule, one wording.
 MaxCoresOpt = Annotated[
     int | None,
-    # min=1 mirrors Config's ``max_cores: ge=1`` — the override is applied via
-    # ``model_copy`` (no re-validation), so the flag must reject 0/negative itself.
-    typer.Option("--maxcores", min=1, help="Override max_cores from the YAML."),
+    typer.Option("--maxcores", help="Override max_cores from the YAML."),
 ]
 MaxGpusOpt = Annotated[
     int | None,
-    # min=0 mirrors Config's ``max_gpus: ge=0``; applied via ``model_copy`` (no
-    # re-validation), so the flag enforces its own bound. Beats the YAML, like
-    # --maxcores; omit to keep the YAML's value (``None`` ⇒ auto-resolve).
-    typer.Option("--maxgpus", min=0, help="Override max_gpus from the YAML."),
+    # Beats the YAML, like --maxcores; omit to keep the YAML's value (``None`` ⇒
+    # auto-resolve).
+    typer.Option("--maxgpus", help="Override max_gpus from the YAML."),
 ]
 DryRunOpt = Annotated[
     bool,

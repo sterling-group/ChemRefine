@@ -380,16 +380,16 @@ def test_start_run_refuses_before_launching(tmp_path: Path, recorded_popen):
 def test_an_out_of_range_budget_is_refused_here_not_in_the_child(
     tmp_path: Path, recorded_popen, budget: str, value: int
 ):
-    """A budget the child's flags would refuse is refused before a pid is returned.
+    """A budget below the config model's floor is refused before a pid is returned.
 
-    The child holds the floors (``--maxcores`` min 1, ``--maxgpus`` min 0), and it held
-    them alone: a ``0`` reached its argv, Typer exited 2 into a log nobody was watching
-    yet, and ``run_status`` served that usage error as the newest log — after this call
-    had already answered with a pid. The config model's own floors never see these
-    values either; the override is applied through ``model_copy``.
+    A ``0`` used to reach the child's argv, where the CLI flag exited 2 into a log nobody
+    was watching yet, and ``run_status`` served that usage error as the newest log —
+    after this call had already answered with a pid. The floor is the model's own
+    (``Config.with_overrides``), the one the child applies too, so the refusal here
+    carries the model's wording rather than a copy of it.
     """
     path = _write_config(tmp_path)
-    with pytest.raises(ConfigError, match=f"{budget} must be"):
+    with pytest.raises(ConfigError, match=f"{budget} {value}: Input should be greater"):
         agent_tools.start_run(str(path), **{budget: value})
     assert recorded_popen.calls == []
 

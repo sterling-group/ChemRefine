@@ -217,15 +217,18 @@ def start_run(
             f"action {action!r} drives the whole pipeline and takes no target; "
             f"aim at a step with one of {targeted}"
         )
-    # The child's flags hold these floors (`--maxcores` min 1, `--maxgpus` min 0), but a
-    # refusal there is exit 2 into the log after this has returned a pid. The config
-    # model's own floors never see an override either — it is applied via `model_copy`.
-    if max_cores is not None and max_cores < 1:
-        raise ConfigError(f"max_cores must be >= 1; got {max_cores}")
-    if max_gpus is not None and max_gpus < 0:
-        raise ConfigError(f"max_gpus must be >= 0; got {max_gpus}")
     path = _config_path(config_path)
     config = load_config(path)
+    # The budgets are validated the way the child will apply them — by the config
+    # model's own floors, through `with_overrides` — so a refusal lands here, before a
+    # pid is returned, rather than as exit 2 in a log nobody is watching yet.
+    budgets = {
+        name: value
+        for name, value in (("max_cores", max_cores), ("max_gpus", max_gpus))
+        if value is not None
+    }
+    if budgets:
+        config.with_overrides(**budgets)
     if target is not None:
         resolve_target(config, target)
     status = pipeline.lock_status(config.output_dir)

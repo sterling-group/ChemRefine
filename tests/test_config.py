@@ -1397,3 +1397,33 @@ def test_a_stored_policy_is_recognised_only_from_the_vocabulary():
     assert all(is_failure_policy(row[0]) for row in _POLICY_TABLE)
     assert not is_failure_policy("")
     assert not is_failure_policy("later")
+
+
+# ---------------------------------------------------------------------------
+# Overrides are held to the fields' own rules
+# ---------------------------------------------------------------------------
+
+
+def test_an_override_is_validated_by_its_fields_own_rule():
+    """``with_overrides`` applies the declared constraint, in the model's wording.
+
+    ``model_copy`` runs no validators, which is how the budget floors came to be restated
+    at every entry point that applies an override — a CLI flag's ``min=1`` beside the
+    model's ``ge=1``, an agent tool's ``< 1`` beside both. One rule now, read off the
+    field: a valid value lands, an invalid one is the same ``ConfigError`` a bad YAML
+    value is, and a name that is not a field is a programming error rather than a
+    silently copied-in attribute.
+    """
+    config = Config.model_validate(_minimal_config())
+    assert config.with_overrides(max_cores=3).max_cores == 3
+    assert config.with_overrides(max_gpus=0).max_gpus == 0
+    with pytest.raises(
+        ConfigError, match="max_cores 0: Input should be greater than or equal to 1"
+    ):
+        config.with_overrides(max_cores=0)
+    with pytest.raises(
+        ConfigError, match="max_gpus -1: Input should be greater than or equal to 0"
+    ):
+        config.with_overrides(max_gpus=-1)
+    with pytest.raises(ConfigError, match="'max_nodes' is not a config field"):
+        config.with_overrides(max_nodes=2)
