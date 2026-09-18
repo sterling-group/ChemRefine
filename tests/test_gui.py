@@ -293,6 +293,35 @@ def test_scaffold_then_template_roundtrip(client: Any, tmp_path: Path):
     assert again["text"] == "! Mine\n"
 
 
+def test_a_scaffold_overwrite_that_is_not_a_boolean_is_a_400(client: Any, tmp_path: Path):
+    """``overwrite`` is the one boolean on the wire, and truthiness is not its type.
+
+    ``bool("false")`` is ``True``: coerced rather than typed, a string spelling of "no"
+    replaced every existing template with a starter and answered 200 with a ``written``
+    list reporting it as success. The page never sends the field, so a wrong-shaped value
+    is a hand-made request — the class this app answers with the documented 400. The two
+    real booleans still do what they say: ``false`` keeps an edited template, ``true``
+    replaces it.
+    """
+    config = _saved_config(tmp_path)
+    _post(client, "/api/scaffold", {"config_path": str(config)})
+    template = tmp_path / "templates" / "step1.inp"
+    template.write_text("! Mine\n", encoding="utf-8")
+
+    refused = _post(client, "/api/scaffold", {"config_path": str(config), "overwrite": "false"})
+    assert refused.status_code == 400
+    assert "'overwrite' must be a boolean, not str" in refused.get_json()["error"]
+    assert template.read_text(encoding="utf-8") == "! Mine\n"
+
+    kept = _post(client, "/api/scaffold", {"config_path": str(config), "overwrite": False})
+    assert kept.get_json()["written"] == []
+    assert template.read_text(encoding="utf-8") == "! Mine\n"
+
+    replaced = _post(client, "/api/scaffold", {"config_path": str(config), "overwrite": True})
+    assert any(p.endswith("step1.inp") for p in replaced.get_json()["written"])
+    assert "%pal" in template.read_text(encoding="utf-8")
+
+
 def test_summary_mirrors_the_config(client: Any, tmp_path: Path):
     config = _saved_config(tmp_path)
     summary = _post(client, "/api/summary", {"config_path": str(config)}).get_json()
@@ -506,6 +535,35 @@ def test_the_run_budgets_reach_the_child_and_absence_stays_absent(
     assert budgeted[budgeted.index("--maxgpus") + 1] == "0"
     assert "--maxcores" not in bare
     assert "--maxgpus" not in bare
+
+
+@pytest.mark.parametrize(("field", "value"), [("max_cores", 0), ("max_gpus", -1)])
+def test_an_out_of_range_budget_is_a_400_before_any_child_launches(
+    client: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str, value: int
+):
+    """A whole number outside the child's floors is refused here, not by the child.
+
+    ``_wire_int`` decides whole-numberness and nothing more, so ``0`` cores and ``-1``
+    GPUs passed it and reached the detached child's argv, where Typer's ``min=1`` /
+    ``min=0`` exited 2 into a log nobody was watching — after this endpoint had answered
+    200 with a pid. ``start_run`` now holds the floors itself; this pins that the route
+    reaches them and that no child is launched on the way.
+    """
+    import subprocess
+
+    argvs: list[list[str]] = []
+
+    class _Recorded:
+        def __init__(self, argv: list[str], **kwargs: Any) -> None:
+            self.pid = 4242
+            argvs.append(argv)
+
+    monkeypatch.setattr(subprocess, "Popen", _Recorded)
+    config = _reported_tree(tmp_path)
+    response = _post(client, "/api/run", {"config_path": str(config), field: value})
+    assert response.status_code == 400
+    assert f"{field} must be" in response.get_json()["error"]
+    assert argvs == []
 
 
 def test_a_numeric_run_target_launches_and_a_malformed_one_is_refused_before_any_log(

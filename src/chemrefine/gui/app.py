@@ -84,7 +84,7 @@ def _body() -> dict[str, Any]:
     return payload
 
 
-_KIND_NAMES: dict[type, str] = {str: "string", dict: "JSON object"}
+_KIND_NAMES: dict[type, str] = {str: "string", dict: "JSON object", bool: "boolean"}
 """How a refusal names the shape a field must have — the wire's words, not Python's."""
 
 
@@ -312,11 +312,19 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
 
     @app.post("/api/scaffold")
     def scaffold() -> Any:
-        """Fill the saved config's template gaps with starters (kept/written report)."""
+        """Fill the saved config's template gaps with starters (kept/written report).
+
+        ``overwrite`` is the one boolean on the wire and is typed like every other field
+        — a JSON ``true``/``false``, never Python truthiness. Coerced with ``bool()``, the
+        string ``"false"`` is true, and true here replaces every existing template with a
+        starter: the one request on this app that can destroy a user's edits must refuse
+        a value it cannot read rather than guess.
+        """
         payload = _body()
         return jsonify(
             agent_tools.scaffold_templates(
-                _field(payload, "config_path"), overwrite=bool(payload.get("overwrite", False))
+                _field(payload, "config_path"),
+                overwrite=_typed(payload.get("overwrite", False), "overwrite", bool),
             )
         )
 

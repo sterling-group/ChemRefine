@@ -329,6 +329,24 @@ def test_start_run_refuses_before_launching(tmp_path: Path, recorded_popen):
     assert recorded_popen.calls == []
 
 
+@pytest.mark.parametrize(("budget", "value"), [("max_cores", 0), ("max_gpus", -1)])
+def test_an_out_of_range_budget_is_refused_here_not_in_the_child(
+    tmp_path: Path, recorded_popen, budget: str, value: int
+):
+    """A budget the child's flags would refuse is refused before a pid is returned.
+
+    The child holds the floors (``--maxcores`` min 1, ``--maxgpus`` min 0), and it held
+    them alone: a ``0`` reached its argv, Typer exited 2 into a log nobody was watching
+    yet, and ``run_status`` served that usage error as the newest log — after this call
+    had already answered with a pid. The config model's own floors never see these
+    values either; the override is applied through ``model_copy``.
+    """
+    path = _write_config(tmp_path)
+    with pytest.raises(ConfigError, match=f"{budget} must be"):
+        agent_tools.start_run(str(path), **{budget: value})
+    assert recorded_popen.calls == []
+
+
 @pytest.mark.parametrize("action", ["run", "resume"])
 def test_a_target_with_a_targetless_action_is_refused_here(
     tmp_path: Path, recorded_popen, action: str

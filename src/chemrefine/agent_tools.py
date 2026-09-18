@@ -194,8 +194,9 @@ def start_run(
     The child owns the run lock, logs to ``output_dir/agent_runs/``, and survives this
     process exiting — an agent session ending must not kill a three-day refinement.
     Refuses while a live driver holds the lock (:func:`~chemrefine.pipeline.lock_status`),
-    and validates ``action`` / ``target`` before anything launches, so the likeliest
-    mistakes fail here with a message rather than in a log nobody is watching yet.
+    and validates ``action`` / ``target`` and the two budgets before anything launches, so
+    the likeliest mistakes fail here with a message rather than in a log nobody is
+    watching yet.
     ``target`` is a step number or name — the two spellings every step selector takes,
     and the tool schema says so, so an agent need not spell a number as text.
     """
@@ -211,6 +212,13 @@ def start_run(
             f"action {action!r} drives the whole pipeline and takes no target; "
             f"aim at a step with one of {targeted}"
         )
+    # The child's flags hold these floors (`--maxcores` min 1, `--maxgpus` min 0), but a
+    # refusal there is exit 2 into the log after this has returned a pid. The config
+    # model's own floors never see an override either — it is applied via `model_copy`.
+    if max_cores is not None and max_cores < 1:
+        raise ConfigError(f"max_cores must be >= 1; got {max_cores}")
+    if max_gpus is not None and max_gpus < 0:
+        raise ConfigError(f"max_gpus must be >= 0; got {max_gpus}")
     path = Path(config_path).resolve()
     config = load_config(path)
     if target is not None:
