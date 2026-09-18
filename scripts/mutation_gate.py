@@ -145,6 +145,77 @@ _BUNDLED: tuple[Mutation, ...] = (
         "passes — each direction is its own constant, so swapping both is invisible to it",
     ),
     Mutation(
+        id="boltzmann-sign",
+        path="src/chemrefine/quantities.py",
+        old="    weights = np.exp(-arr / (R_KCALMOL_K * temperature_k))",
+        new="    weights = np.exp(arr / (R_KCALMOL_K * temperature_k))",
+        tests="tests/test_quantities.py",
+        breaks="every Boltzmann weight, filter and steps.csv column prefers the higher-energy "
+        "conformer",
+    ),
+    Mutation(
+        id="boltzmann-shift",
+        path="src/chemrefine/quantities.py",
+        old="        arr = arr - arr.min()",
+        new="        arr = arr - 0.0",
+        tests="tests/test_quantities.py",
+        breaks="raw absolute energies underflow every exponential to zero, so a step's weights "
+        "are all 0 and its cumulative filter keeps nothing",
+    ),
+    Mutation(
+        id="ranking-energy-fallback",
+        path="src/chemrefine/filtering.py",
+        old='    energy_type = "electronic" if sample is None else sample.energy_type',
+        new='    energy_type = "electronic"',
+        tests="tests/test_filtering.py",
+        breaks="a step sampling on gibbs ranks, promotes, captions and reports on the "
+        "electronic energy — four readers wrong at once",
+    ),
+    Mutation(
+        id="min-count-zero-keeps-all",
+        path="src/chemrefine/filtering.py",
+        old="return list(sorted_structures) if sample.count <= 0 else",
+        new="return list(sorted_structures) if sample.count < 0 else",
+        tests="tests/test_filtering.py",
+        breaks="`count: 0`, documented as keep everything, keeps nothing",
+    ),
+    Mutation(
+        id="max-keeps-the-high-end",
+        path="src/chemrefine/filtering.py",
+        old="    high_first = list(reversed(sorted_structures))",
+        new="    high_first = list(sorted_structures)",
+        tests="tests/test_filtering.py",
+        breaks="`method: max` keeps the lowest-energy structures — PES-style sampling inverted",
+    ),
+    Mutation(
+        id="ts-reaction-coordinate",
+        path="src/chemrefine/nms.py",
+        old="        return max(imag_freqs, key=lambda i: abs(imag_freqs[i]))",
+        new="        return min(imag_freqs, key=lambda i: abs(imag_freqs[i]))",
+        tests="tests/test_nms.py",
+        breaks="a `ts` step keeps the least imaginary mode and displaces along the reaction "
+        "coordinate itself, destroying the saddle it was asked to keep",
+    ),
+    Mutation(
+        id="nms-crashed-child-not-resolved",
+        path="src/chemrefine/nms.py",
+        old="    if child.terminated_normally is False:\n        return False\n"
+        "    if target is None:",
+        new="    if target is None:",
+        tests="tests/test_nms.py",
+        breaks="a child whose program died is promoted as resolved on whatever frequency "
+        "table its truncated output still carried",
+    ),
+    Mutation(
+        id="random-skips-trivial-modes",
+        path="src/chemrefine/nms.py",
+        old="        candidates = list(range(_TRIVIAL_MODES, n_modes))",
+        new="        candidates = list(range(n_modes))",
+        tests="tests/test_nms.py",
+        breaks="`random` sampling spends jobs displacing along translations and rotations — "
+        "the same molecule moved, re-computed, and reported as an exploration",
+    ),
+    Mutation(
         id="boltzmann-cutoff",
         path="src/chemrefine/filtering.py",
         old="sorted_structures[: n_below + 1]",

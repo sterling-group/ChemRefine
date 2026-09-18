@@ -263,9 +263,19 @@ def test_energy_attr_follows_the_steps_sample_filter(sample, expected):
     assert nms._energy_attr(step_cfg) == expected
 
 
-def test_is_resolved_false_for_non_terminated_child():
-    child = Structure(id="c", atoms=Atoms("H"), terminated_normally=False)
-    assert nms._is_resolved(child, 0) is False
+@pytest.mark.parametrize("target", [0, 1, None])
+def test_a_child_whose_program_died_is_never_resolved(target: int | None):
+    """A crash refuses the child whatever its frequency table says — and under ``random`` too.
+
+    The table is deliberately the one that *would* resolve the target: a truncated output
+    can still carry a full frequency block from before the program died, and the
+    termination clause is the only thing standing between that and a promotion. With
+    no table at all the other clause refuses the child anyway, which is why a crashed
+    child with no table proved nothing about this one.
+    """
+    table = {} if target in (0, None) else {6: -100.0}
+    child = Structure(id="c", atoms=Atoms("H"), terminated_normally=False, imaginary_freqs=table)
+    assert nms._is_resolved(child, target) is False
 
 
 # ---------------------------------------------------------------------------

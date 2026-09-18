@@ -14,7 +14,7 @@ from chemrefine.config import (
     MinSample,
 )
 from chemrefine.errors import ConfigError
-from chemrefine.filtering import apply
+from chemrefine.filtering import apply, ranking_energy
 from chemrefine.quantities import HARTREE_TO_KCALMOL
 from chemrefine.state import StepResults, Structure
 
@@ -405,3 +405,38 @@ def test_full_thermochemistry_ranks_on_it_not_on_electronic():
 
     # Lowest *Gibbs* is "0", even though "1" has the lower electronic energy.
     assert [s.id for s in survivors.structures] == ["0"]
+
+
+# ---------------------------------------------------------------------------
+# The one answer to "which energy is this step's energy"
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("sample", "energy_type", "attr", "label"),
+    [
+        (None, "electronic", "energy_hartree", "E"),
+        (MinSample(method="min", count=1), "electronic", "energy_hartree", "E"),
+        (MinSample(method="min", count=1, energy_type="gibbs"), "gibbs", "gibbs_hartree", "G"),
+        (
+            MinSample(method="min", count=1, energy_type="enthalpy"),
+            "enthalpy",
+            "enthalpy_hartree",
+            "H",
+        ),
+        (
+            MinSample(method="min", count=1, energy_type="electronic_zero_point"),
+            "electronic_zero_point",
+            "energy_zpe_hartree",
+            "E_ZPE",
+        ),
+    ],
+)
+def test_ranking_energy_is_the_steps_own(sample, energy_type: str, attr: str, label: str):
+    """The filter, NMS's promotion, ``steps.csv`` and the ensemble caption read one answer.
+
+    No ``sample`` means no declared preference — electronic, the energy every calculation
+    reports. Any other answer hardcoded here would send all four readers to the wrong
+    energy at once, which is why the fallback is a mutation-gate entry.
+    """
+    assert ranking_energy(sample) == (energy_type, attr, label)
