@@ -248,6 +248,19 @@ def test_best_ranks_by_the_energy_the_step_filters_on():
     assert nms._best(children, lo_elec, "gibbs_hartree") is lo_gibbs
 
 
+def test_best_never_promotes_a_child_without_the_ranking_energy():
+    """``None`` sorts last: a child with no thermochemistry cannot win a Gibbs ranking.
+
+    Keyed on ``value or 0.0`` alone it would key as ``0.0`` and beat every real (negative)
+    Gibbs energy — promoting the one child whose calculation reported no such number, and
+    copying its output over the real winner's.
+    """
+    no_gibbs = replace(_h2("no_gibbs"), energy_hartree=-2.0, gibbs_hartree=None)
+    real = replace(_h2("real"), energy_hartree=-0.9, gibbs_hartree=-0.7)
+    assert nms._best([no_gibbs, real], no_gibbs, "gibbs_hartree") is real
+    assert nms._best([no_gibbs], real, "gibbs_hartree") is no_gibbs  # the only candidate
+
+
 @pytest.mark.parametrize(
     ("sample", "expected"),
     [

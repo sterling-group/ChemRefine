@@ -247,7 +247,7 @@ def _register_flaky():
             seeds = {s.id: s for s in ctx.prev_state.structures}
             out = []
             for _inp, o, sid in inputs.files:
-                energy = float(o.read_text().split("FINAL ENERGY:")[1])
+                energy = float(o.read_text(encoding="utf-8").split("FINAL ENERGY:")[1])
                 seed = seeds[sid]
                 out.append(
                     Structure(
@@ -807,7 +807,9 @@ def test_reattempt_resubmits_a_crashed_round1_from_a_fresh_input(tmp_path: Path)
         eng.submitted = []
         execute(cfg, Action.RESUME)  # same config → full-valid + ledger → reattempt_nms
         assert eng.submitted == ["1"]  # the crashed parent ran again, and only it
-        assert "CRASHED" in (step_dir / "1" / "attempt1" / "step1_1.out").read_text()
+        assert "CRASHED" in (step_dir / "1" / "attempt1" / "step1_1.out").read_text(
+            encoding="utf-8"
+        )
         assert cache.load_failure_records(step_dir) == []
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
     finally:

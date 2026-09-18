@@ -310,7 +310,9 @@ def test_unknown_sample_type_raises():
         energy_type = "electronic"
 
     r = _results(("a", -1.0))
-    with pytest.raises(TypeError):
+    # `assert_never`'s own refusal. A bare `TypeError` came from `tuple(None)` three
+    # frames on, so the test also passed a filter that returned None by mistake.
+    with pytest.raises(AssertionError, match="unreachable"):
         apply(r, BogusSample())
 
 

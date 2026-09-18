@@ -255,7 +255,7 @@ def test_the_fairchem_dataset_does_not_land_inside_its_own_checkpoint_tree(tmp_p
     ctx = _ctx(tmp_path, template=_FAIRCHEM_TEMPLATE, task_name="omol")
     run_dir = ctx.step_dir / "train"
 
-    rendered = MlipTrainEngine().prepare(ctx).files[0][0].read_text()
+    rendered = MlipTrainEngine().prepare(ctx).files[0][0].read_text(encoding="utf-8")
 
     assert f"train_file: {run_dir / 'data' / 'train' / 'train.db'}" in rendered
     assert (run_dir / "data" / "train" / "train.db").is_file()
@@ -267,7 +267,7 @@ def test_prepare_renders_the_template_against_the_dataset_it_wrote(tmp_path: Pat
     ctx = _ctx(tmp_path)
     inputs = MlipTrainEngine().prepare(ctx)
 
-    rendered = inputs.files[0][0].read_text()
+    rendered = inputs.files[0][0].read_text(encoding="utf-8")
     run_dir = ctx.step_dir / "train"
     assert f"train_file: {run_dir / 'train.xyz'}" in rendered
     assert f"valid_file: {run_dir / 'valid.xyz'}" in rendered
@@ -287,7 +287,9 @@ def test_the_split_honours_the_steps_own_fractions(tmp_path: Path):
     MlipTrainEngine().prepare(ctx)
 
     run_dir = ctx.step_dir / "train"
-    counts = {p.stem: p.read_text().count("Properties=") for p in run_dir.glob("*.xyz")}
+    counts = {
+        p.stem: p.read_text(encoding="utf-8").count("Properties=") for p in run_dir.glob("*.xyz")
+    }
     assert counts == {"train": 13, "valid": 5, "test": 2}
 
 
@@ -322,7 +324,7 @@ def test_parse_hands_the_ensemble_on_unchanged_and_records_the_model(tmp_path: P
     results = engine.parse(StepInputs(files=()), ctx)
 
     assert results.structures == ctx.prev_state.structures
-    sidecar = json.loads((ctx.step_dir / "train" / SIDECAR_NAME).read_text())
+    sidecar = json.loads((ctx.step_dir / "train" / SIDECAR_NAME).read_text(encoding="utf-8"))
     assert sidecar["task_name"] == "mace_off"
     assert sidecar["backend"] == "mlip-mace"
     assert sidecar["started_from"] == "small"

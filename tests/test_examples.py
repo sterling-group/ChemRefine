@@ -218,7 +218,7 @@ def test_example_scan_indices_fit_seed(yml: Path) -> None:
             continue
         template = _resolved_template(cfg, step)
         assert template is not None
-        text = template.read_text()
+        text = template.read_text(encoding="utf-8")
         for match in re.finditer(r"^\s*Scan\s+[BAD]\s+([\d\s,]+?)\s*=", text, re.MULTILINE):
             for index in re.findall(r"\d+", match.group(1)):
                 assert int(index) < n_atoms, (
@@ -236,7 +236,9 @@ def test_example_docker_guest_ships(yml: Path) -> None:
             continue
         template = _resolved_template(cfg, step)
         assert template is not None
-        for match in re.finditer(r"GUEST\s+\"([^\"]+)\"", template.read_text(), re.IGNORECASE):
+        for match in re.finditer(
+            r"GUEST\s+\"([^\"]+)\"", template.read_text(encoding="utf-8"), re.IGNORECASE
+        ):
             guest = Path(match.group(1))
             # The runtime's own predicate, exactly: `_absolutize_template_paths` resolves
             # the full quoted relative path against the template's directory and, when
@@ -360,7 +362,7 @@ def _filed(section: str) -> tuple[set[str], set[str]]:
 
 
 def _raw_examples() -> list[dict[str, Any]]:
-    return [yaml.safe_load(p.read_text()) for p in EXAMPLES]
+    return [yaml.safe_load(p.read_text(encoding="utf-8")) for p in EXAMPLES]
 
 
 def test_knob_universe_is_fully_filed() -> None:
@@ -477,7 +479,9 @@ def test_the_mlip_training_tutorials_labels_compute_forces():
     """
     template = REPO / "examples" / "tutorials" / "mlip_training" / "templates" / "step3.inp"
     keyword_lines = [
-        line.lower() for line in template.read_text().splitlines() if line.startswith("!")
+        line.lower()
+        for line in template.read_text(encoding="utf-8").splitlines()
+        if line.startswith("!")
     ]
     assert any("engrad" in line for line in keyword_lines), (
         "the label step computes no gradients — the shipped mlip-train step will refuse "

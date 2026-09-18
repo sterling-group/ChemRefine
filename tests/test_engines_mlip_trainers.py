@@ -69,6 +69,7 @@ def _backend_python(task_name: str) -> str | None:
             f"sys.exit(0 if u.find_spec({requirement.import_name!r}) else 1)",
         ],
         capture_output=True,
+        timeout=120,
         check=False,
     )
     return python if probe.returncode == 0 else None
@@ -90,7 +91,7 @@ def _in_backend(python: str, script: str, *args: str) -> dict:
     print cannot get in front of one.
     """
     result = subprocess.run(
-        [python, "-c", script, *args], capture_output=True, text=True, check=False
+        [python, "-c", script, *args], capture_output=True, text=True, check=False, timeout=600
     )
     assert result.returncode == 0, result.stderr
     loaded: dict = json.loads(result.stdout.strip().splitlines()[-1])
@@ -168,7 +169,7 @@ def test_the_dataset_uses_maces_own_label_keys(tmp_path: Path):
 
     data = MaceTrainer().write_dataset(plan, split)
 
-    text = data.train.read_text()
+    text = data.train.read_text(encoding="utf-8")
     assert f"{ENERGY_KEY}=" in text
     assert FORCES_KEY in text
 

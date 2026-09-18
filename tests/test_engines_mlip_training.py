@@ -184,7 +184,7 @@ def test_rendering_substitutes_the_placeholders(tmp_path: Path):
         dest=dest,
     )
 
-    assert dest.read_text() == "train_file: /data/train.xyz\nname: train\n"
+    assert dest.read_text(encoding="utf-8") == "train_file: /data/train.xyz\nname: train\n"
 
 
 def test_rendering_leaves_a_placeholder_it_does_not_supply(tmp_path: Path):
@@ -199,7 +199,7 @@ def test_rendering_leaves_a_placeholder_it_does_not_supply(tmp_path: Path):
 
     render_config(template, {"TRAIN_SET": "/d/t.db"}, required=frozenset({"TRAIN_SET"}), dest=dest)
 
-    text = dest.read_text()
+    text = dest.read_text(encoding="utf-8")
     assert "${data.lr}" in text
     assert "$UNKNOWN" in text
 

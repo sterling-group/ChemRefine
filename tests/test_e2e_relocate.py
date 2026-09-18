@@ -106,7 +106,7 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
     config = config.model_copy(update={"steps": verifiable})
 
     archived = {
-        doc.relative_to(case.output_dir): json.loads(doc.read_text())
+        doc.relative_to(case.output_dir): json.loads(doc.read_text(encoding="utf-8"))
         for step in verifiable
         for doc in sorted((case.output_dir / step.dir_name()).rglob("_cache/step.json"))
     }
@@ -139,7 +139,7 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
         return
 
     for rel, before in archived.items():
-        after = json.loads((case.output_dir / rel).read_text())
+        after = json.loads((case.output_dir / rel).read_text(encoding="utf-8"))
         assert after["structures"] == before["structures"], (
             f"{rel}: rebuilt records differ from the archive — regenerate the recording"
         )
@@ -191,7 +191,7 @@ def test_on_failure_stop_halts_and_records_the_ledger(
 
     ledger = case.output_dir / "step2" / "_cache" / "failed_jobs.json"
     assert ledger.is_file()
-    assert sid in ledger.read_text()
+    assert sid in ledger.read_text(encoding="utf-8")
 
 
 def test_on_failure_skip_drops_the_failed_structure(

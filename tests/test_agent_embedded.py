@@ -294,12 +294,18 @@ def test_check_reports_other_http_statuses_plainly():
     assert "HTTP 500" in report.findings[0]
 
 
-def test_check_reports_an_unreachable_endpoint():
+def test_check_reports_an_unreachable_endpoint(monkeypatch: pytest.MonkeyPatch):
+    from urllib.error import URLError
+
     from chemrefine.agent.providers import check
 
-    with _listing_server(b"{}") as (base, _seen):
-        pass  # the context closed the server — the port now refuses connections
-    report = check(_cfg(base), timeout=2.0)
+    # Scripted rather than a just-closed ephemeral port, which the kernel may hand to
+    # another listener between the close and the probe.
+    def refused(*args, **kwargs):
+        raise URLError(ConnectionRefusedError(111, "Connection refused"))
+
+    monkeypatch.setattr("urllib.request.urlopen", refused)
+    report = check(_cfg("http://127.0.0.1:1/v1"), timeout=2.0)
     assert report.ok is False
     assert "unreachable" in report.findings[0]
 

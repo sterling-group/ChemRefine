@@ -140,7 +140,7 @@ def test_a_fanout_failure_carries_its_lowest_energy_bad_frame(tmp_path: Path):
     out = tmp_path / "s.out"
     out.write_text("fine", encoding="utf-8")
 
-    def _frame(sid: str, energy: float) -> Structure:
+    def _frame(sid: str, energy: float | None) -> Structure:
         return Structure(id=sid, atoms=Atoms("H"), energy_hartree=energy, converged=False)
 
     class _Engine:
@@ -150,6 +150,7 @@ def test_a_fanout_failure_carries_its_lowest_energy_bad_frame(tmp_path: Path):
                     Structure(id="0-0", atoms=Atoms("H"), energy_hartree=-2.0, converged=True),
                     _frame("0-1", -0.5),
                     _frame("0-2", -1.0),  # lower energy: the geometry the failure must carry
+                    _frame("0-3", None),  # no energy at all: sorts last, never "lowest"
                 )
             )
 

@@ -86,7 +86,7 @@ class FakeEngine:
         seeds = ctx.prev_state.by_id
         out_structures: list[Structure] = []
         for _inp, out, sid in inputs.files:
-            text = out.read_text()
+            text = out.read_text(encoding="utf-8")
             energy = float(text.split("FINAL ENERGY:")[1].strip())
             seed = seeds.get(sid)
             atoms = seed.atoms if seed is not None else Atoms("H")

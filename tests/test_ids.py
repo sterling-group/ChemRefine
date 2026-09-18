@@ -29,7 +29,9 @@ def test_allocate_child_ids_mixed():
 
 
 def test_allocate_child_ids_length_mismatch_raises():
-    with pytest.raises(ValueError):
+    # The explicit refusal's wording; `zip(strict=True)` below it raises the same type,
+    # so an unmatched raise let the documented message be deleted unnoticed.
+    with pytest.raises(ValueError, match="same length"):
         allocate_child_ids(["0"], [1, 2])
 
 

@@ -28,7 +28,7 @@ def test_build_input_appends_xyzfile_directive(tmp_path: Path):
         charge=0,
         multiplicity=1,
     )
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert "! B3LYP def2-SVP" in text
     assert "%pal" in text
     assert "%base" not in text  # ORCA defaults base to the .inp stem
@@ -49,7 +49,7 @@ def test_build_input_strips_existing_xyzfile_line(tmp_path: Path):
         charge=-1,
         multiplicity=2,
     )
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert "stale.xyz" not in text
     assert f"* xyzfile -1 2 {xyz}" in text
 
@@ -67,7 +67,7 @@ def test_build_input_inserts_extra_blocks_before_xyzfile(tmp_path: Path):
         multiplicity=1,
         extra_blocks=extra,
     )
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert "ProgExt" in text
     # extra blocks must appear before the xyzfile directive
     assert text.index("ProgExt") < text.index("* xyzfile")
@@ -85,7 +85,7 @@ def test_build_input_omits_base_directive(tmp_path: Path):
         charge=0,
         multiplicity=1,
     )
-    assert "%base" not in out.read_text()
+    assert "%base" not in out.read_text(encoding="utf-8")
 
 
 def test_the_xyzfile_path_is_emitted_bare_which_is_why_whitespace_is_refused(tmp_path: Path):
@@ -105,7 +105,11 @@ def test_the_xyzfile_path_is_emitted_bare_which_is_why_whitespace_is_refused(tmp
     out = tmp_path / "step1_0.inp"
     xyz = tmp_path / "step1_0_inp.xyz"
     build_input(xyz_path=xyz, template_path=template, output_path=out, charge=0, multiplicity=1)
-    directive = next(line for line in out.read_text().splitlines() if line.startswith("* xyzfile"))
+    directive = next(
+        line
+        for line in out.read_text(encoding="utf-8").splitlines()
+        if line.startswith("* xyzfile")
+    )
     assert directive == f"* xyzfile 0 1 {xyz}"
     assert '"' not in directive
 
@@ -265,7 +269,7 @@ def test_build_input_clamps_template_pal_to_max_pal(tmp_path: Path):
         multiplicity=1,
         max_pal=8,
     )
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert "nprocs 8" in text
     assert "nprocs 16" not in text
     assert inspect_template(out).pal == 8
@@ -294,7 +298,7 @@ def test_build_input_absolutizes_relative_template_paths(tmp_path: Path):
         charge=0,
         multiplicity=1,
     )
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert f'GUEST "{guest.resolve()}"' in text
     assert '"../templates/cl.xyz"' not in text
 
@@ -313,7 +317,7 @@ def test_build_input_leaves_absolute_and_unresolvable_paths_alone(tmp_path: Path
         charge=0,
         multiplicity=1,
     )
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert 'GUEST "/abs/cl.xyz"' in text
     assert '"not-a-file.xyz"' in text
 
@@ -389,7 +393,7 @@ def test_build_input_requests_orca_property_json(tmp_path: Path):
         charge=0,
         multiplicity=1,
     )
-    assert "JSONPropFile True" in out.read_text()
+    assert "JSONPropFile True" in out.read_text(encoding="utf-8")
 
 
 def test_build_input_respects_template_jsonpropfile_override(tmp_path: Path):
@@ -403,6 +407,6 @@ def test_build_input_respects_template_jsonpropfile_override(tmp_path: Path):
         charge=0,
         multiplicity=1,
     )
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert "JSONPropFile False" in text
     assert "JSONPropFile True" not in text

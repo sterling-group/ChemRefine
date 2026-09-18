@@ -172,10 +172,14 @@ def test_the_good_mode_is_drawn_on_the_geometry_the_tutorial_ships():
     example = _REPO_ROOT / "examples" / "tutorials" / "transition_state" / "step1.xyz"
     if not example.is_file():
         pytest.skip("examples/ is absent")
-    shipped = [line.split()[:4] for line in example.read_text().splitlines()[2:] if line.strip()]
+    shipped = [
+        line.split()[:4]
+        for line in example.read_text(encoding="utf-8").splitlines()[2:]
+        if line.strip()
+    ]
     figure = [
         line.split()[:4]
-        for line in (_MODES / "ts_good.xyz").read_text().splitlines()[2:]
+        for line in (_MODES / "ts_good.xyz").read_text(encoding="utf-8").splitlines()[2:]
         if line.strip()
     ]
     assert [row[0] for row in figure] == [row[0] for row in shipped]

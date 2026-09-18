@@ -48,7 +48,7 @@ def test_fake_engine_submit_writes_output_files(tmp_path: Path):
     engine.submit(inputs, ctx)
     for _inp, out, _sid in inputs.files:
         assert out.exists()
-        assert "FINAL ENERGY" in out.read_text()
+        assert "FINAL ENERGY" in out.read_text(encoding="utf-8")
 
 
 def test_fake_engine_parse_returns_structures_with_energy(tmp_path: Path):

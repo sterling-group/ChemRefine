@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import operator
 from collections import defaultdict
-from typing import NamedTuple, cast
+from typing import NamedTuple, assert_never, cast
 
 import numpy as np
 
@@ -223,6 +223,12 @@ def _dispatch(
             return _filter_boltzmann(
                 sorted_structures, sample.percent_cumulative, sample.temperature_k, energy_attr
             )
+        case _:
+            # The same wildcard arm `StepMode`'s predicates carry: a variant added to the
+            # union stops narrowing to `Never` here and strict mypy refuses the call, and a
+            # value that is no variant at all is refused at runtime by name rather than by
+            # the `TypeError` that `tuple(None)` happened to raise three frames on.
+            assert_never(sample)
 
 
 def _filter_min(

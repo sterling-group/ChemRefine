@@ -66,7 +66,9 @@ def _ctx(
     template_dir.mkdir(parents=True, exist_ok=True)
     (template_dir / "step1.inp").write_text("template\n", encoding="utf-8")
     (template_dir / "cpu.slurm.header").write_text("#!/bin/bash\n", encoding="utf-8")
-    (template_dir / "cuda.slurm.header").write_text("#!/bin/bash\n#SBATCH --gres=gpu:1\n")
+    (template_dir / "cuda.slurm.header").write_text(
+        "#!/bin/bash\n#SBATCH --gres=gpu:1\n", encoding="utf-8"
+    )
     seeds = tuple(Structure(id=i, atoms=Atoms("H", positions=[[0, 0, 0]])) for i in ids)
     return StepContext(
         step_cfg=StepConfig(step=1, engine="fake-job", operation="opt_sp"),
@@ -98,7 +100,12 @@ def test_run_batch_submits_one_job_per_structure(submit_mock, _finished_jobs, tm
     assert isinstance(batch, JobBatch)
     assert set(batch.jobs.values()) == {"1001", "1002"}
     for inp, _out, _sid in inputs.files:
-        assert inp.with_suffix(".slurm").read_text().splitlines()[-1].startswith("echo run")
+        assert (
+            inp.with_suffix(".slurm")
+            .read_text(encoding="utf-8")
+            .splitlines()[-1]
+            .startswith("echo run")
+        )
 
 
 class _ThreadedJobEngine(_FakeJobEngine):
@@ -129,7 +136,7 @@ def test_a_single_node_declaration_reaches_the_generated_script(_submit, _finish
         ctx = _ctx(tmp_path)
         inputs = engine.prepare(ctx)
         _execution.run_batch(engine, inputs, ctx)
-        text = inputs.files[0][0].with_suffix(".slurm").read_text()
+        text = inputs.files[0][0].with_suffix(".slurm").read_text(encoding="utf-8")
         assert ("#SBATCH --nodes=1" in text) is pinned
 
 
@@ -141,7 +148,7 @@ def test_a_threads_layout_reaches_the_generated_script(_submit, _finished, tmp_p
     ctx = _ctx(tmp_path)
     inputs = engine.prepare(ctx)
     _execution.run_batch(engine, inputs, ctx)
-    text = inputs.files[0][0].with_suffix(".slurm").read_text()
+    text = inputs.files[0][0].with_suffix(".slurm").read_text(encoding="utf-8")
     assert "#SBATCH --ntasks=1" in text
     assert "#SBATCH --cpus-per-task=4" in text
     assert "cores=4" in text  # the runlog reports the product
@@ -186,7 +193,7 @@ def test_declared_memory_reaches_the_generated_script(_submit, _finished, tmp_pa
     inputs = engine.prepare(ctx)
     with patch.object(_FakeJobEngine, "memory_mb", return_value=2000):
         _execution.run_batch(engine, inputs, ctx)
-    text = inputs.files[0][0].with_suffix(".slurm").read_text()
+    text = inputs.files[0][0].with_suffix(".slurm").read_text(encoding="utf-8")
     assert "#SBATCH --mem-per-cpu=2000" in text
 
 

@@ -1198,20 +1198,23 @@ def test_pid_alive_reads_permission_denied_as_alive(monkeypatch: pytest.MonkeyPa
 # ---------------------------------------------------------------------------
 
 
-def test_sigterm_inside_the_lock_unwinds_and_releases_it(tmp_path: Path):
-    """A SIGTERM while the lock is held becomes SystemExit(143) and the lock is released.
+def test_the_installed_sigterm_handler_unwinds_and_releases_the_lock(tmp_path: Path):
+    """The handler the lock installs raises SystemExit(143), and the unwind releases it.
 
-    Python's default SIGTERM disposition terminates without unwinding — no ``finally``,
-    no ``atexit`` — which is how a ``scancel``-ed driver left the tree locked. Raising
-    from the handler is what lets every ``finally`` on the stack do its job.
+    Invoked through ``signal.getsignal`` rather than delivered with ``os.kill``: sent to the
+    pytest process itself, a regression in the handler (the very case this guards) would
+    terminate the runner under Python's default disposition, with no report for any test.
+    Called as a function, a missing handler is ``SIG_DFL`` — not callable — and this test
+    fails on its own. The delivery half is proven in a child process one test down.
     """
-    import os
     import signal
 
     lock = tmp_path / "outputs" / pipeline.RUN_LOCK_NAME
     with pytest.raises(SystemExit) as excinfo, pipeline.run_lock(tmp_path / "outputs"):
         assert lock.exists()
-        os.kill(os.getpid(), signal.SIGTERM)
+        handler = signal.getsignal(signal.SIGTERM)
+        assert callable(handler), "the unwind handler is not installed"
+        handler(signal.SIGTERM, None)
     assert excinfo.value.code == 143
     assert not lock.exists()
 

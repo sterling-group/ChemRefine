@@ -303,7 +303,11 @@ def test_the_javascript_parses(filename: str):
     """
     node = _node_or_skip("parse-check the GUI assets")
     result = subprocess.run(  # argv list, no shell
-        [node, "--check", str(STATIC / filename)], capture_output=True, text=True, check=False
+        [node, "--check", str(STATIC / filename)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
     )
     assert result.returncode == 0, f"{filename} does not parse:\n{result.stderr}"
 
@@ -565,7 +569,7 @@ def _run_in_node(script: str) -> str:
     node = _node_or_skip("execute the GUI's pure form logic")
     source = (STATIC / "forms.js").read_text(encoding="utf-8") + "\n" + script
     result = subprocess.run(  # argv list, no shell
-        [node, "-e", source], capture_output=True, text=True, check=False
+        [node, "-e", source], capture_output=True, text=True, check=False, timeout=120
     )
     assert result.returncode == 0, result.stderr
     return result.stdout.strip()
@@ -606,7 +610,7 @@ def _run_component_in_node(script: str) -> str:
     # page's own load order is not something this has to reproduce.
     source = preamble + _component_source() + "\n" + script
     result = subprocess.run(  # argv list, no shell
-        [node, "-e", source], capture_output=True, text=True, check=False
+        [node, "-e", source], capture_output=True, text=True, check=False, timeout=120
     )
     assert result.returncode == 0, result.stderr
     return result.stdout.strip()

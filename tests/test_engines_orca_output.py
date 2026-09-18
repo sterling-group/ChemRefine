@@ -299,9 +299,8 @@ def test_parse_dft_reads_no_forces_from_an_opt_whose_last_gradient_predates_its_
     """
     parsed = parse_dft(FIXTURE)
     assert parsed[0].forces_ev_per_a is None
-    assert FIXTURE.read_text().rfind("CARTESIAN GRADIENT") < FIXTURE.read_text().rfind(
-        "CARTESIAN COORDINATES (ANGSTROEM)"
-    )
+    text = FIXTURE.read_text(encoding="utf-8")
+    assert text.rfind("CARTESIAN GRADIENT") < text.rfind("CARTESIAN COORDINATES (ANGSTROEM)")
 
 
 _GEOMETRY_THEN_GRADIENT = (

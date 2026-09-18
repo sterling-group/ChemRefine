@@ -595,13 +595,15 @@ def test_the_step_document_is_compact_but_the_records_beside_it_are_not(tmp_path
         chemrefine_version="2.0.0",
     )
 
-    document = (step_dir / "_cache" / "step.json").read_text()
+    document = (step_dir / "_cache" / "step.json").read_text(encoding="utf-8")
     assert "\n" not in document, "the step document carries no layout"
     assert '"step":' in document and '"step": ' not in document
 
     save_result_records(_results().structures, step_dir, step=1)
     records = list(step_dir.glob("*.result.json"))
-    assert records and all("\n" in p.read_text() for p in records), "records stay readable"
+    assert records and all("\n" in p.read_text(encoding="utf-8") for p in records), (
+        "records stay readable"
+    )
 
 
 def test_save_and_load_round_trip(tmp_path: Path):
@@ -705,7 +707,7 @@ def test_load_tolerates_cache_without_thermochemistry(tmp_path: Path):
         chemrefine_version="2.0.0",
     )
     path = _cache_path(tmp_path / "step1")
-    doc = json.loads(path.read_text())
+    doc = json.loads(path.read_text(encoding="utf-8"))
     for entry in doc["structures"]:  # simulate an older document
         entry.pop("gibbs_hartree", None)
         entry.pop("enthalpy_hartree", None)
@@ -1296,7 +1298,7 @@ def test_manifest_save_records_operation_and_engine(tmp_path: Path):
 
     inputs = _manifest_inputs(tmp_path)
     path = save_manifest(inputs, tmp_path / "step1", operation="goat", engine="orca")
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     assert data["operation"] == "goat"
     assert data["engine"] == "orca"
 
@@ -1338,7 +1340,7 @@ def test_save_result_records_writes_versioned_canonical_records(tmp_path: Path):
 
     path = tmp_path / "step2_0-1.result.json"
     assert path.is_file()
-    record = json.loads(path.read_text())
+    record = json.loads(path.read_text(encoding="utf-8"))
     assert record["result_format"] == RESULT_FORMAT_VERSION
     assert record["id"] == "0-1"
     assert record["parent_id"] == "0"
@@ -1359,7 +1361,7 @@ def test_result_record_round_trips_through_structure_from_record(tmp_path: Path)
         terminated_normally=True,
     )
     save_result_records([structure], tmp_path, step=1)
-    record = json.loads((tmp_path / "step1_0.result.json").read_text())
+    record = json.loads((tmp_path / "step1_0.result.json").read_text(encoding="utf-8"))
     record.pop("result_format")
 
     rebuilt = structure_from_record(record)

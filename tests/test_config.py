@@ -614,7 +614,10 @@ def test_directory_paths_with_shell_metacharacters_rejected(tmp_path: Path, fiel
     broken — or dangerous — job script at submit time.
     """
     data = _minimal_config(**{field: bad})
-    with pytest.raises(ConfigError):
+    # `match="path"`: the field validator's own wording. The post-resolution re-check
+    # (`shell_unsafe_after_resolution`) refuses the same string as "resolved <field>", so
+    # without the match the field-level refusal could be deleted and this stay green.
+    with pytest.raises(ConfigError, match=r"path .* contains"):
         load_config(_write_yaml(tmp_path, data))
 
 

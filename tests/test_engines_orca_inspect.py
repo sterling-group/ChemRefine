@@ -171,7 +171,7 @@ def test_extopt_is_an_optimisation():
     keyword line without allowing for it reclassified all of them as single points.
     """
     template = REPO_ROOT / "examples/tutorials/redox/amines/templates/step2.inp"
-    assert "!ExtOpt" in template.read_text()
+    assert "!ExtOpt" in template.read_text(encoding="utf-8")
     assert inspect_template(template).operation == "opt_sp"
 
 

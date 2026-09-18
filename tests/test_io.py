@@ -32,6 +32,7 @@ def test_importing_io_does_not_pull_pandas():
         capture_output=True,
         text=True,
         check=True,
+        timeout=120,
     )
     assert out.stdout.strip() == "False"
 
@@ -130,7 +131,9 @@ def test_write_xyz_accepts_tuple_form(tmp_path: Path):
 
 
 def test_write_xyz_length_mismatch_raises(tmp_path: Path):
-    with pytest.raises(ValueError):
+    # The explicit refusal's wording; `zip(strict=True)` below it raises the same type,
+    # so an unmatched raise let the documented message be deleted unnoticed.
+    with pytest.raises(ValueError, match="same length"):
         write_xyz([_h2o()], ["0", "1"], step_number=1, output_dir=tmp_path)
 
 
@@ -189,7 +192,11 @@ def test_write_ensemble_xyz_orders_by_energy_with_energyless_last(tmp_path: Path
     )
     path = write_ensemble_xyz(structures, tmp_path / "step1_ensemble.xyz", step=1)
 
-    ids = [line.split()[1] for line in path.read_text().splitlines() if line.startswith("step1 ")]
+    ids = [
+        line.split()[1]
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.startswith("step1 ")
+    ]
 
     assert ids == ["id=low", "id=high", "id=no-e-first", "id=no-e-second"]
 
@@ -201,7 +208,7 @@ def test_write_ensemble_xyz_comment_carries_step_id_and_energy(tmp_path: Path):
         tmp_path / "step1_ensemble.xyz",
         step=1,
     )
-    assert path.read_text().splitlines()[1] == "step1 id=0-3 E=-153.12345679 Eh"
+    assert path.read_text(encoding="utf-8").splitlines()[1] == "step1 id=0-3 E=-153.12345679 Eh"
 
 
 def test_write_ensemble_xyz_captions_the_steps_own_ranking_energy(tmp_path: Path):
@@ -222,7 +229,9 @@ def test_write_ensemble_xyz_captions_the_steps_own_ranking_energy(tmp_path: Path
         energy_attr="gibbs_hartree",
         energy_label="G",
     )
-    comments = [line for line in path.read_text().splitlines() if line.startswith("step2 ")]
+    comments = [
+        line for line in path.read_text(encoding="utf-8").splitlines() if line.startswith("step2 ")
+    ]
     assert comments == ["step2 id=1 G=-2.00000000 Eh", "step2 id=0 G=-1.00000000 Eh"]
 
 
@@ -231,7 +240,7 @@ def test_write_ensemble_xyz_marks_a_missing_energy_as_na(tmp_path: Path):
     path = write_ensemble_xyz(
         (_ensemble_structure("0", energy=None),), tmp_path / "step1_ensemble.xyz", step=1
     )
-    assert path.read_text().splitlines()[1] == "step1 id=0 E=n/a"
+    assert path.read_text(encoding="utf-8").splitlines()[1] == "step1 id=0 E=n/a"
 
 
 def test_write_ensemble_xyz_empty_input_removes_a_stale_file(tmp_path: Path):
@@ -287,7 +296,7 @@ def test_gather_output_files_missing_dir_returns_empty(tmp_path: Path):
 
 def test_save_step_csv_writes_header_on_step_one(tmp_path: Path):
     path = save_step_csv([-1.0, -1.001], ["0", "1"], step_number=1, output_dir=tmp_path)
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert "Step,Conformer,Energy (Hartree)" in text.splitlines()[0]
     assert "% Cumulative" in text.splitlines()[0]
 
@@ -295,14 +304,14 @@ def test_save_step_csv_writes_header_on_step_one(tmp_path: Path):
 def test_save_step_csv_appends_without_header_on_later_steps(tmp_path: Path):
     save_step_csv([-1.0], ["0"], step_number=1, output_dir=tmp_path)
     save_step_csv([-2.0], ["1"], step_number=2, output_dir=tmp_path)
-    text = (tmp_path / "steps.csv").read_text()
+    text = (tmp_path / "steps.csv").read_text(encoding="utf-8")
     # header appears exactly once
     assert text.count("Step,Conformer,Energy (Hartree)") == 1
 
 
 def test_save_step_csv_sorts_by_energy(tmp_path: Path):
     path = save_step_csv([-1.0, -2.0, -0.5], ["a", "b", "c"], step_number=1, output_dir=tmp_path)
-    rows = path.read_text().strip().splitlines()[1:]  # drop header
+    rows = path.read_text(encoding="utf-8").strip().splitlines()[1:]  # drop header
     conformers = [row.split(",")[1] for row in rows]
     assert conformers == ["b", "a", "c"]  # ascending by absolute energy
 
@@ -475,4 +484,6 @@ def test_smiles_to_xyz_is_reproducible(tmp_path: Path):
     csv.write_text("smiles\nCCO\nc1ccccc1\n", encoding="utf-8")
     first = smiles_to_xyz(csv, tmp_path / "out_a")
     second = smiles_to_xyz(csv, tmp_path / "out_b")
-    assert [p.read_text() for p in first] == [p.read_text() for p in second]
+    assert [p.read_text(encoding="utf-8") for p in first] == [
+        p.read_text(encoding="utf-8") for p in second
+    ]

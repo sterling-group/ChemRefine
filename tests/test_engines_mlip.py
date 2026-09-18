@@ -640,7 +640,7 @@ def test_mlip_extopt_prepare_writes_inp_with_method_block(tmp_path: Path):
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path)
     inputs = engine.prepare(ctx)
-    inp_text = inputs.files[0][0].read_text()
+    inp_text = inputs.files[0][0].read_text(encoding="utf-8")
     assert "%method" in inp_text
     assert "ProgExt" in inp_text
 
@@ -657,7 +657,7 @@ def test_mlip_extopt_prepare_materializes_executable_wrapper(tmp_path: Path):
     assert wrapper.is_file()
     assert os.access(wrapper, os.X_OK)
 
-    text = wrapper.read_text()
+    text = wrapper.read_text(encoding="utf-8")
     assert "chemrefine.engines.orca.extopt.bridge" in text
     assert "--backend mlip" in text
 
@@ -671,11 +671,13 @@ def test_the_gradient_timeout_reaches_the_wrapper_and_zero_is_refused(tmp_path: 
     """
     engine = get_engine("mlip-extopt")
     engine.prepare(_mlip_extopt_ctx(tmp_path))
-    assert "--timeout 600 " in engine._wrapper_path(_mlip_extopt_ctx(tmp_path)).read_text()
+    assert "--timeout 600 " in engine._wrapper_path(_mlip_extopt_ctx(tmp_path)).read_text(
+        encoding="utf-8"
+    )
 
     longer = _mlip_extopt_ctx(tmp_path / "longer", gradient_timeout_seconds=900)
     engine.prepare(longer)
-    assert "--timeout 900 " in engine._wrapper_path(longer).read_text()
+    assert "--timeout 900 " in engine._wrapper_path(longer).read_text(encoding="utf-8")
 
     with pytest.raises(ConfigError, match="gradient_timeout_seconds"):
         engine.check_step(
@@ -927,7 +929,7 @@ def test_mlip_direct_prepare_renders_one_py_and_xyz_per_structure(tmp_path: Path
         assert script_path.name == f"step1_{sid}.py"
         assert output_json.name == f"step1_{sid}.json"
         assert (script_path.parent / f"{script_path.stem}_inp.xyz").is_file()
-        rendered = script_path.read_text()
+        rendered = script_path.read_text(encoding="utf-8")
         assert "$XYZ_PATH" not in rendered
         assert "$CHARGE" not in rendered
         assert f'with open(\'{output_json.name}\', "w", encoding="utf-8")' in rendered
@@ -960,7 +962,7 @@ def test_mlip_direct_substitutes_option_placeholders(tmp_path: Path):
         slurm_template="cpu.slurm.header",
         executables={},
     )
-    rendered = get_engine("mlip").prepare(ctx).files[0][0].read_text()
+    rendered = get_engine("mlip").prepare(ctx).files[0][0].read_text(encoding="utf-8")
     assert "model = 'medium'" in rendered
     assert "task = 'mace_off'" in rendered
     assert "device = 'cpu'" in rendered
@@ -993,7 +995,7 @@ def test_mlip_direct_substitutes_option_aliases(tmp_path: Path):
         slurm_template="cpu.slurm.header",
         executables={},
     )
-    rendered = get_engine("mlip").prepare(ctx).files[0][0].read_text()
+    rendered = get_engine("mlip").prepare(ctx).files[0][0].read_text(encoding="utf-8")
     assert "model = 'large'" in rendered
     assert "task = 'mace_mp'" in rendered
 
@@ -1019,7 +1021,7 @@ def test_mlip_direct_submit_runs_template_locally_when_no_sbatch(tmp_path: Path)
     assert all(jid.startswith("local-") for jid in batch.jobs.values())
     output_json = inputs.files[0][1]
     assert output_json.is_file()
-    data = json.loads(output_json.read_text())
+    data = json.loads(output_json.read_text(encoding="utf-8"))
     assert data["energy_hartree"] == pytest.approx(-2.0)
 
 
@@ -1108,7 +1110,7 @@ def test_mlip_direct_submit_respects_cores_option(tmp_path: Path):
     with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         engine.submit(inputs, ctx)
     # One task with the configured CPUs — the threads spelling every script engine uses.
-    script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
+    script_text = inputs.files[0][0].with_suffix(".slurm").read_text(encoding="utf-8")
     assert "#SBATCH --ntasks=1" in script_text
     assert "#SBATCH --cpus-per-task=2" in script_text
     assert "--ntasks=2" not in script_text
@@ -1118,7 +1120,10 @@ def test_mlip_direct_submit_respects_cores_option(tmp_path: Path):
 
 
 def test_build_orb_success_path(monkeypatch):
-    pretrained = types.SimpleNamespace(orb_v2=MagicMock(return_value="ORBFF"))
+    """The v3 layout, whose loaders return ``(model, atoms_adapter)``: the model is what
+    reaches the calculator, and the step's device reaches both the loader and the
+    calculator — asserted on the calls, not on the mock's own return value."""
+    pretrained = types.SimpleNamespace(orb_v2=MagicMock(return_value=("ORBFF", "ADAPTER")))
     forcefield = types.ModuleType("orb_models.forcefield")
     forcefield.pretrained = pretrained
     calc_mod = types.ModuleType("orb_models.forcefield.inference.calculator")
@@ -1134,8 +1139,10 @@ def test_build_orb_success_path(monkeypatch):
     from chemrefine.engines.mlip.backends.orb import _build_orb
     from chemrefine.engines.mlip.registry import CalculatorSpec
 
-    spec = CalculatorSpec(task_name="orb", model_name="orb_v2", device="cpu", weights=None)
+    spec = CalculatorSpec(task_name="orb", model_name="orb_v2", device="cuda", weights=None)
     assert _build_orb(spec) == "ORB_CALC"
+    pretrained.orb_v2.assert_called_once_with(device="cuda")
+    calc_mod.ORBCalculator.assert_called_once_with("ORBFF", device="cuda")
 
 
 # --- orb older-layout fallback ----------------------------------------------
@@ -1206,3 +1213,5 @@ def test_build_orb_older_layout(monkeypatch):
 
     spec = CalculatorSpec(task_name="orb", model_name="orb_v2", device="cpu", weights=None)
     assert _build_orb(spec) == "OLD_CALC"
+    # A bare-model loader, the older layout: the same device discipline holds.
+    older_calc.ORBCalculator.assert_called_once_with("ORBFF", device=spec.device)

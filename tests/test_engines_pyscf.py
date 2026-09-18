@@ -121,7 +121,7 @@ def test_prepare_renders_one_py_and_xyz_per_structure(tmp_path: Path):
         assert script_path.name == f"step1_{sid}.py"
         assert output_json.name == f"step1_{sid}.json"
         assert (script_path.parent / f"{script_path.stem}_inp.xyz").is_file()
-        rendered = script_path.read_text()
+        rendered = script_path.read_text(encoding="utf-8")
         # Geometry placeholders should all be substituted.
         assert "$XYZ_PATH" not in rendered
         assert "$CHARGE" not in rendered
@@ -207,7 +207,7 @@ def test_submit_runs_template_locally_when_no_sbatch(tmp_path: Path):
     # The template ran and wrote the JSON output.
     output_json = inputs.files[0][1]
     assert output_json.is_file()
-    data = json.loads(output_json.read_text())
+    data = json.loads(output_json.read_text(encoding="utf-8"))
     assert "energy_hartree" in data
 
 
@@ -305,7 +305,7 @@ def test_submit_respects_cores_option(tmp_path: Path):
         engine.submit(inputs, ctx)
     # The configured cores reach the script as one task's CPUs — a threaded process is
     # never spelled as MPI ranks, which SLURM may place across nodes.
-    script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
+    script_text = inputs.files[0][0].with_suffix(".slurm").read_text(encoding="utf-8")
     assert "#SBATCH --ntasks=1" in script_text
     assert "#SBATCH --cpus-per-task=2" in script_text
     assert "--ntasks=2" not in script_text
@@ -318,7 +318,7 @@ def test_submit_uses_template_engine_output_globs(tmp_path: Path):
     inputs = engine.prepare(ctx)
     with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         engine.submit(inputs, ctx)
-    script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
+    script_text = inputs.files[0][0].with_suffix(".slurm").read_text(encoding="utf-8")
     assert "*.json" in script_text
     # ORCA-only globs must not leak into a direct-engine script.
     assert "*.gbw" not in script_text

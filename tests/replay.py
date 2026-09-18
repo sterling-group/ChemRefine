@@ -258,7 +258,7 @@ def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
     import yaml
 
     run_dir = run_dir.resolve()
-    config = yaml.safe_load((run_dir / "input.yaml").read_text())
+    config = yaml.safe_load((run_dir / "input.yaml").read_text(encoding="utf-8"))
     outputs = (run_dir / config.get("output_dir", "outputs")).resolve()
     if not outputs.is_dir():
         raise AssertionError(f"no outputs to pack in {run_dir}")
@@ -299,7 +299,7 @@ def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
         machine_bound = sorted(
             str(doc.relative_to(captured))
             for doc in captured.rglob("_cache/*.json")
-            if str(outputs) in doc.read_text()
+            if str(outputs) in doc.read_text(encoding="utf-8")
         )
         assert not machine_bound, (
             f"{machine_bound} name absolute paths under {outputs} — a recording that "

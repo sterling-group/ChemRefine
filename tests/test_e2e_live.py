@@ -132,7 +132,9 @@ def test_live_case(name: str, tmp_path: Path, request: pytest.FixtureRequest) ->
 
     if name == "conformers":
         ensemble = next(outputs.glob("step1/0/*.finalensemble.xyz"))
-        assert len(ensemble.read_text().splitlines()) >= 3 * 12, "GOAT must yield >= 3 conformers"
+        assert len(ensemble.read_text(encoding="utf-8").splitlines()) >= 3 * 12, (
+            "GOAT must yield >= 3 conformers"
+        )
         assert all(s.gibbs_hartree is not None for s in outcomes[1].state.structures)
     elif name == "nms_minimum":
         assert list((outputs / "step1" / "0" / "attempt1").iterdir()), "NMS round 2 must run"

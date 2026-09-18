@@ -920,7 +920,7 @@ def test_run_step_writes_canonical_result_records(tmp_path: Path):
     for sid in ("0", "1"):
         record_path = step_dir / sid / f"step1_{sid}.result.json"
         assert record_path.is_file()
-        record = json.loads(record_path.read_text())
+        record = json.loads(record_path.read_text(encoding="utf-8"))
         assert record["result_format"] == cache.RESULT_FORMAT_VERSION
         assert record["id"] == sid
         assert record["energy_hartree"] is not None

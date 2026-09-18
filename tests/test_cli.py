@@ -251,7 +251,9 @@ def test_importing_cli_does_not_pull_the_heavy_stack():
         "heavy = ('chemrefine.pipeline', 'chemrefine.engines', 'chemrefine.recovery', 'ase'); "
         "print(','.join(m for m in heavy if m in sys.modules))"
     )
-    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=120
+    )
     assert out.stdout.strip() == "", f"cli import leaked heavy modules: {out.stdout.strip()}"
 
 

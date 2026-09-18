@@ -112,7 +112,7 @@ def test_prepare_input_contains_charge_and_multiplicity(tmp_path: Path):
         executables=ctx.executables,
     )
     inputs = engine.prepare(ctx)
-    text = inputs.files[0][0].read_text()
+    text = inputs.files[0][0].read_text(encoding="utf-8")
     assert "* xyzfile -2 3" in text
 
 
@@ -124,7 +124,7 @@ def test_prepare_clamps_template_pal_to_max_cores(tmp_path: Path):
         "! B3LYP def2-SVP\n%pal\n  nprocs 16\nend\n", encoding="utf-8"
     )
     inputs = engine.prepare(ctx)
-    text = inputs.files[0][0].read_text()
+    text = inputs.files[0][0].read_text(encoding="utf-8")
     assert "nprocs 4" in text  # ctx.max_cores
     assert "nprocs 16" not in text
 
@@ -166,7 +166,7 @@ def test_prepare_uses_step_specific_template_when_given(tmp_path: Path):
     ctx = _ctx(tmp_path, structures=(_seed_structure(),), step_cfg=step_cfg)
     (ctx.template_dir / "custom.inp").write_text("! HF\n", encoding="utf-8")
     inputs = engine.prepare(ctx)
-    text = inputs.files[0][0].read_text()
+    text = inputs.files[0][0].read_text(encoding="utf-8")
     assert "! HF" in text
 
 
@@ -199,7 +199,7 @@ def test_submit_script_contains_orca_executable_invocation(_submit, _finished_jo
     ctx = _ctx(tmp_path, structures=(_seed_structure(),))
     inputs = engine.prepare(ctx)
     engine.submit(inputs, ctx)
-    script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
+    script_text = inputs.files[0][0].with_suffix(".slurm").read_text(encoding="utf-8")
     assert "orca step1_0.inp" in script_text
     assert "$OUTPUT_DIR/step1_0.out" in script_text
     # ORCA's output_globs ClassVar flows through chemrefine.engines._execution.run_batch.
@@ -259,7 +259,7 @@ def test_submit_uses_one_array_when_slurm_array_set(
     assert set(batch.jobs.values()) == {"777"}
     script = ctx.step_dir / "step1_array.slurm"
     assert script.is_file()
-    assert "$INP_NAME" in script.read_text()
+    assert "$INP_NAME" in script.read_text(encoding="utf-8")
     manifest = kwargs["manifest"]
     assert manifest.read_text(encoding="utf-8").count("\n") == 2
 

@@ -254,7 +254,7 @@ def test_build_input_preserves_python_braces(tmp_path: Path):
         charge=0,
         multiplicity=1,
     )
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert 'payload = {"key": float(mf.e_tot)}' in text
     assert "gradient = [(i, x) for i, x in enumerate(grad)]" in text
     assert 'f = f"step{step}_done"' in text
@@ -276,7 +276,7 @@ def test_build_input_leaves_unknown_placeholders_intact(tmp_path: Path):
         charge=0,
         multiplicity=1,
     )
-    assert "$VIRTUAL_ENV" in out.read_text()
+    assert "$VIRTUAL_ENV" in out.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

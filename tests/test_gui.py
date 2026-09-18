@@ -1073,14 +1073,23 @@ def test_check_answers_a_verdict_never_an_error(client: Any, monkeypatch: pytest
     not a failed request.
     """
     monkeypatch.delenv("CHEMREFINE_LLM_MODEL", raising=False)
+    # Nothing here may dial the real Ollama port: on a machine running `ollama serve` the
+    # probe would be answered and the verdict below would change for a reason unrelated to
+    # the endpoint under test. The refusal is scripted where `providers.check` reaches it.
+    from urllib.error import URLError
+
+    def refused(*args, **kwargs):
+        raise URLError(ConnectionRefusedError(111, "Connection refused"))
+
+    monkeypatch.setattr("urllib.request.urlopen", refused)
 
     unconfigured = _post(client, "/api/agent/check", {})
     assert unconfigured.status_code == 200
     assert unconfigured.get_json()["ok"] is False
     assert "no model configured" in unconfigured.get_json()["findings"][0]
 
-    # Nothing is listening on the ollama port in a test environment, which is exactly the
-    # case the panel needs rendered: a verdict plus the one-command fix.
+    # An unreachable Ollama is exactly the case the panel needs rendered: a verdict plus
+    # the one-command fix.
     unreachable = _post(client, "/api/agent/check", {"provider": "ollama", "model": "qwen3"})
     assert unreachable.status_code == 200
     body = unreachable.get_json()

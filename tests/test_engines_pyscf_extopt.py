@@ -94,7 +94,7 @@ def test_pyscf_wrapper_carries_no_per_call_flags(tmp_path: Path):
     engine.prepare(ctx)
     wrapper = engine._wrapper_path(ctx)
     assert os.access(wrapper, os.X_OK)
-    text = wrapper.read_text()
+    text = wrapper.read_text(encoding="utf-8")
     assert "--df" not in text
     assert "--gpu" not in text
     # ... they reach the backend via the server construction instead.
@@ -153,7 +153,7 @@ def test_pyscf_save_tensors_reaches_server_cmd(tmp_path: Path):
     assert "--tensor_folder td" in run_block
 
     engine.prepare(ctx)
-    wrapper_text = engine._wrapper_path(ctx).read_text()
+    wrapper_text = engine._wrapper_path(ctx).read_text(encoding="utf-8")
     assert os.access(engine._wrapper_path(ctx), os.X_OK)
     assert "--save_tensors" not in wrapper_text
     assert "--tensor_folder" not in wrapper_text
@@ -271,7 +271,7 @@ def test_pyscf_prepare_writes_inp_with_method_block(tmp_path: Path):
     engine = get_engine("pyscf-extopt")
     ctx = _pyscf_ctx(tmp_path)
     inputs = engine.prepare(ctx)
-    inp_text = inputs.files[0][0].read_text()
+    inp_text = inputs.files[0][0].read_text(encoding="utf-8")
     assert "%method" in inp_text
     assert "ProgExt" in inp_text
     assert "pyscf_extopt.sh" in inp_text
@@ -289,7 +289,7 @@ def test_pyscf_prepare_materializes_executable_wrapper(tmp_path: Path):
     assert wrapper.is_file()
     assert os.access(wrapper, os.X_OK)
 
-    text = wrapper.read_text()
+    text = wrapper.read_text(encoding="utf-8")
     assert "chemrefine.engines.orca.extopt.bridge" in text
     assert "--backend pyscf" in text
     # Single channel: the SCF knobs live on the server, never baked into the wrapper.
@@ -387,5 +387,5 @@ def test_the_gradient_timeout_reaches_the_pyscf_wrapper(tmp_path: Path):
     engine = get_engine("pyscf-extopt")
     ctx = _pyscf_ctx(tmp_path, gradient_timeout_seconds=1800)
     engine.prepare(ctx)
-    assert "--timeout 1800 " in engine._wrapper_path(ctx).read_text()
+    assert "--timeout 1800 " in engine._wrapper_path(ctx).read_text(encoding="utf-8")
     assert engine.options_cls.from_raw(ctx.step_cfg.options).gradient_timeout_seconds == 1800

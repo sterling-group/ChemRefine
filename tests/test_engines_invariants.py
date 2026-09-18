@@ -238,7 +238,8 @@ def test_the_assembled_array_script_still_runs_its_exit_handler(
     runlog = tmp_path / "out" / "step1_0.runlog"
     assert runlog.is_file(), f"{engine_name}: the array task wrote no runlog"
     assert "files_copied=" in runlog.read_text(encoding="utf-8"), (
-        f"{engine_name}: the array script's _on_exit never fired.\n{runlog.read_text()}"
+        f"{engine_name}: the array script's _on_exit never fired.\n"
+        f"{runlog.read_text(encoding='utf-8')}"
     )
 
 
@@ -452,7 +453,9 @@ def test_run_block_survives_paths_with_spaces(engine_name: str, tmp_path: Path):
     block = engine.run_block(ctx, Path("step1_0.inp"), Path("step1_0.out")).body
 
     # `bash -n` parses the block without running it: unbalanced quoting fails here.
-    subprocess.run(["bash", "-n"], input=block, text=True, check=True, capture_output=True)
+    subprocess.run(
+        ["bash", "-n"], input=block, text=True, check=True, capture_output=True, timeout=60
+    )
     for line in block.splitlines():
         if "my orca" in line:
             command = shlex.split(line.split(">")[0])

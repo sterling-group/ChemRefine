@@ -123,11 +123,11 @@ def test_conformers_inputs_carry_charge_and_clamped_pal(
     case, _submitter, config = _replay("conformers", tmp_path, monkeypatch)
     pipeline.run(config)
 
-    goat_inp = (case.output_dir / "step1" / "0" / "step1_0.inp").read_text()
+    goat_inp = (case.output_dir / "step1" / "0" / "step1_0.inp").read_text(encoding="utf-8")
     assert f"nprocs {config.max_cores}" in goat_inp, "the template's 16 cores are clamped"
     assert "nprocs 16" not in goat_inp
     assert "* xyzfile 0 1 " in goat_inp
-    step2_inp = next(case.output_dir.glob("step2/*/step2_*.inp")).read_text()
+    step2_inp = next(case.output_dir.glob("step2/*/step2_*.inp")).read_text(encoding="utf-8")
     assert "* xyzfile 0 1 " in step2_inp
 
 
@@ -170,11 +170,15 @@ def test_nms_resolves_saddle_via_round_two(tmp_path: Path, monkeypatch: pytest.M
     # ...and the canonical location holds exactly one calculation — the winner's. Before,
     # only the winning *geometry* was written back, leaving a .xyz from one calculation
     # beside the .out of another with nothing to show they disagreed.
-    canonical_out = (structure_dir / "step1_0.out").read_text()
-    child_outs = [p.read_text() for p in sorted(attempt.glob("*/step1_*.out"))]
-    assert canonical_out != (attempt / "step1_0.out").read_text(), "not round 1's output"
+    canonical_out = (structure_dir / "step1_0.out").read_text(encoding="utf-8")
+    child_outs = [p.read_text(encoding="utf-8") for p in sorted(attempt.glob("*/step1_*.out"))]
+    assert canonical_out != (attempt / "step1_0.out").read_text(encoding="utf-8"), (
+        "not round 1's output"
+    )
     assert child_outs.count(canonical_out) == 1, "canonical is one specific child's output"
-    assert (structure_dir / "step1_0.xyz").read_text().splitlines()[1] == "NMS-resolved 0"
+    assert (structure_dir / "step1_0.xyz").read_text(encoding="utf-8").splitlines()[
+        1
+    ] == "NMS-resolved 0"
 
     (survivor,) = outcomes[0].state.structures
     assert survivor.id == "0", "the resolved child is written back under the parent id"
@@ -223,7 +227,7 @@ def test_host_guest_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         assert {s.id for s in outcomes[0].state.structures} <= {
             f"0-{i}" for i in range(len(poses))
         }, "docker children carry the seed's lineage"
-    step2_inp = next(case.output_dir.glob("step2/*/step2_*.inp")).read_text()
+    step2_inp = next(case.output_dir.glob("step2/*/step2_*.inp")).read_text(encoding="utf-8")
     assert "* xyzfile -1 1 " in step2_inp, "the per-step charge override reaches the input"
     assert len(submitter.calls[1].files) == kept
     assert outcomes[1].state.structures, "solvator output parses into survivors"
@@ -245,7 +249,7 @@ def test_mlip_screen_renders_options_and_parses(
     outcomes = pipeline.run(config)
 
     assert len(submitter.calls[0].files) == 2
-    rendered = (case.output_dir / "step1" / "0" / "step1_0.py").read_text()
+    rendered = (case.output_dir / "step1" / "0" / "step1_0.py").read_text(encoding="utf-8")
     assert '"small"' in rendered, "the model alias reaches the script"
     assert '"mace_off"' in rendered, "the task alias reaches the script"
     assert '"cpu"' in rendered, "device: cpu reaches the script"
@@ -264,7 +268,7 @@ def test_mlip_extopt_renders_server_block_and_parses(
 
     outcomes = pipeline.run(config)
 
-    rendered = (case.output_dir / "step1" / "0" / "step1_0.inp").read_text()
+    rendered = (case.output_dir / "step1" / "0" / "step1_0.inp").read_text(encoding="utf-8")
     assert "ProgExt" in rendered, "ExtOpt inputs must point ORCA at the gradient wrapper"
     (survivor,) = outcomes[0].state.structures
     assert survivor.converged
@@ -321,12 +325,12 @@ def test_mlip_train_full_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
     # The rendered trainer config names the dataset the step just wrote.
     run_dir = case.output_dir / "step2" / "train"
-    rendered = (run_dir / "step2_train.yaml").read_text()
+    rendered = (run_dir / "step2_train.yaml").read_text(encoding="utf-8")
     assert str(run_dir / "train.xyz") in rendered and (run_dir / "train.xyz").is_file()
     assert str(run_dir / "valid.xyz") in rendered and (run_dir / "valid.xyz").is_file()
 
     # The sidecar cites what was produced, and for which library.
-    sidecar = json.loads((run_dir / "trained_model.json").read_text())
+    sidecar = json.loads((run_dir / "trained_model.json").read_text(encoding="utf-8"))
     assert sidecar["task_name"] == "mace_off"
     assert sidecar["backend"] == "mlip-mace"
     assert sidecar["n_structures"] == 4
@@ -334,7 +338,7 @@ def test_mlip_train_full_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     # The ensemble passes through training untouched; step 3 runs all of it on the model.
     labelled = [s.id for s in outcomes[0].state.structures]
     assert [s.id for s in outcomes[1].state.structures] == labelled
-    rendered3 = (case.output_dir / "step3" / "0" / "step3_0.py").read_text()
+    rendered3 = (case.output_dir / "step3" / "0" / "step3_0.py").read_text(encoding="utf-8")
     assert str(run_dir / "train.model") in rendered3, "step 3 loads the model step 2 produced"
     assert len(outcomes[2].state.structures) == 4
     assert all(s.energy_hartree is not None for s in outcomes[2].state.structures)
