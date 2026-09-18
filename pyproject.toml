@@ -47,9 +47,6 @@ classifiers = [
 # / never published), so naming them would promise a minimum nobody can resolve; on Python
 # 3.13+ pip always resolves numpy to 2.x — pandas 2.2.3 (and later) supports both numpy
 # 1.26 and 2.x, so the matrix is internally consistent.
-#
-# Entries must stay exactly `name>=version`: ci.yml derives floors.txt with a regex that
-# silently drops anything else while the job stays green.
 dependencies = [
     "numpy>=1.26.2",
     "pyyaml>=6.0.2",

@@ -47,9 +47,9 @@ def _cold_python_lookups():
 def _provisioned(tmp_path: Path, extra: str) -> Path:
     """Create a fake managed env for ``extra`` under ``tmp_path`` and return its python.
 
-    A symlink to this interpreter rather than an empty file, matching what CI's
-    `provisioned-backend` job creates (`ln -s $(command -v python)`) — so a test that
-    reaches the shared-env probe meets something that can actually answer.
+    A symlink to this interpreter rather than an empty file, matching what a managed env
+    holds at ``bin/python`` — so a test that reaches the shared-env probe meets something
+    that can actually answer.
     """
     py = tmp_path / "backends" / extra / "bin" / "python"
     py.parent.mkdir(parents=True, exist_ok=True)
@@ -1414,8 +1414,8 @@ def test_a_gpu_step_is_refused_by_an_env_holding_only_the_base_stack(monkeypatch
 def test_an_unambiguous_env_is_trusted_without_being_run(monkeypatch, tmp_path: Path):
     """Only a shared env is probed; everywhere else the directory name is the proof.
 
-    Probing every backend would make CI's `provisioned-backend` job — which symlinks a bare
-    interpreter precisely to show the suite does not need real backends — require MACE and
+    Probing every backend would make a suite that symlinks bare interpreters into its
+    managed envs — precisely to show it does not need real backends — require MACE and
     FAIRChem to be installed before it could pass.
     """
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))

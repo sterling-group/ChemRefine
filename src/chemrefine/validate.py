@@ -45,6 +45,7 @@ from pydantic import ValidationError
 
 from chemrefine import config_legacy, io, slurm
 from chemrefine.config import (
+    STEP_OPTION_PATHS,
     Config,
     StepConfig,
     resolve_relative_paths,
@@ -326,9 +327,10 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
             continue
         engine = get_engine(step.engine)
         options_ok = True
+        declared = None  # the engine's own reading of the step's options, when it has one
         if isinstance(engine, OptionsDeclaring):
             try:
-                engine.options_cls.from_raw_lenient(step.options)
+                declared = engine.options_cls.from_raw_lenient(step.options)
             except ConfigError as e:
                 options_ok = False
                 issues.append(
@@ -405,6 +407,27 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                         message=(
                             f"{engine.label} template {template} does not exist yet "
                             "(chemrefine scaffold creates starters)"
+                        ),
+                    )
+                )
+        # The same "does not exist yet" the input, the template and the header get, for the
+        # option values the config declares to be paths — keyed to that declaration, so the
+        # next path-valued knob is covered by being declared, and read off the engine's own
+        # model rather than the raw dict, like every declared knob. A warning and never a
+        # refusal: the shipped tutorials point `model_path` at a product an earlier step
+        # trains, which does not exist until that step has run. A typo, by contrast, used to
+        # pass every pre-run check and fail inside the job's library loader — after the
+        # labelling steps upstream of a training step had run for days.
+        for key in STEP_OPTION_PATHS:
+            value = getattr(declared, key, None)
+            if isinstance(value, str) and not Path(value).is_file():
+                warnings.append(
+                    ValidationIssue(
+                        loc=("steps", index, "options", key),
+                        kind="options",
+                        message=(
+                            f"{key} {value} does not exist yet (fine if an earlier step "
+                            f"produces it; a typo here fails only inside the job)"
                         ),
                     )
                 )

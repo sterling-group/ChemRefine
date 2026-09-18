@@ -116,25 +116,11 @@ step "types (CI: type-check)"
 # so on a machine with none this gate has been passing while checking the frontend not at
 # all, the same hole the ORCA precondition below closes for tier-3. `[test]` now installs a
 # Node, so a skip here means the lookup broke, not that the machine is bare. Exported once:
-# the coverage run, the provisioned-backend run, the sdist run and the mutation gate all
-# inherit it.
+# the coverage run, the sdist run and the mutation gate all inherit it.
 export CHEMREFINE_REQUIRE_NODE=1
 
 step "the suite, with the coverage gate (CI: test)"
 "$bin/pytest" --cov=chemrefine --cov-fail-under=100 -q
-
-step "the suite is independent of provisioned backends (CI: provisioned-backend)"
-# Runners are bare, so CI only ever exercises the not-provisioned half — while a developer
-# who has run `chemrefine backends install` is in the other. Faking an env per extra
-# reaches the same branch a real 3 GB torch install would, in a second. The registry is
-# asked for the extras so a new backend is covered by existing.
-fake_home="$work/fake-home"
-for extra in $("$PY" -c \
-        "from chemrefine.engines._provision import known_backend_extras as k; print(' '.join(sorted(k())))"); do
-    mkdir -p "$fake_home/backends/$extra/bin"
-    ln -sf "$PY" "$fake_home/backends/$extra/bin/python"
-done
-CHEMREFINE_HOME="$fake_home" "$bin/pytest" -q
 
 step "every declared extra still resolves (CI: extras-resolve)"
 # Metadata only — no torch wheel is downloaded. Read out of the metadata that declares

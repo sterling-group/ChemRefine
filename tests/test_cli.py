@@ -276,10 +276,23 @@ def test_run_executes_full_pipeline(tmp_path: Path):
 
 
 def test_resume_after_run_is_cache_hit(tmp_path: Path):
+    """A resume over a finished run serves both steps from cache: nothing is rewritten.
+
+    Exit 0 alone was true of a resume that recomputed everything; the cache documents'
+    identity (inode + mtime — the cache writes atomically, replacing the inode) is what a
+    hit leaves untouched.
+    """
     config_path = _write_config(tmp_path)
     assert runner.invoke(app, ["run", str(config_path)]).exit_code == 0
-    # Second invocation should succeed and not blow up on the cache.
+    documents = [
+        tmp_path / "outputs" / "step1_screen" / "_cache" / "step.json",
+        tmp_path / "outputs" / "step2_refine" / "_cache" / "step.json",
+    ]
+    before = [(p.stat().st_ino, p.stat().st_mtime_ns) for p in documents]
+
     assert runner.invoke(app, ["resume", str(config_path)]).exit_code == 0
+
+    assert [(p.stat().st_ino, p.stat().st_mtime_ns) for p in documents] == before
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")

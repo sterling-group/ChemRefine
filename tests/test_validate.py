@@ -337,6 +337,28 @@ def test_missing_template_and_header_warn_with_the_scaffold_hint(tmp_path: Path)
     assert all("scaffold" in w.message for w in report.warnings)
 
 
+def test_a_path_valued_option_that_does_not_exist_yet_warns(tmp_path: Path):
+    """``model_path`` gets the "does not exist yet" its three siblings have.
+
+    Keyed to ``STEP_OPTION_PATHS`` — the config's own declaration of which option values
+    are paths — rather than to the knob by name. A warning, not a refusal: the tutorials
+    point ``model_path`` at a product an earlier step trains. A typo used to pass every
+    pre-run check and fail inside the job's loader, after the upstream steps had run.
+    """
+    steps = [{"step": 1, "engine": "mlip", "options": {"model_path": "./models/typo.model"}}]
+    report = _validate(tmp_path, steps=steps)
+    assert report.ok
+    missing = [w for w in report.warnings if w.loc == ("steps", 0, "options", "model_path")]
+    assert len(missing) == 1
+    assert "does not exist yet" in missing[0].message
+    assert str(tmp_path / "models" / "typo.model") in missing[0].message  # the resolved path
+
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "typo.model").write_bytes(b"")
+    report = _validate(tmp_path, steps=steps)
+    assert not [w for w in report.warnings if w.loc == ("steps", 0, "options", "model_path")]
+
+
 def test_existing_template_and_header_do_not_warn(tmp_path: Path):
     templates = tmp_path / "templates"
     templates.mkdir()
