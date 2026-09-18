@@ -498,9 +498,11 @@ def reject_shell_unsafe(text: str, *, what: str, fix: str) -> None:
     ==========================  ===============================================================
     Value                       How it is protected
     ==========================  ===============================================================
-    ``template_dir`` /          this rule — interpolated into ``export WORK_DIR=…``
-    ``output_dir`` /
-    ``scratch_dir``
+    ``template_dir`` /          this rule — interpolated into ``export WORK_DIR=…``; asked
+    ``output_dir`` /            at load as written and as anchored
+    ``scratch_dir``             (:func:`shell_unsafe_after_resolution`), and again at render
+                                on the *resolved* path bash receives
+                                (:mod:`chemrefine.slurm.script`)
     ``executables``             this rule — embedded raw in the runlog heredoc; the
                                 engine-documented root paths (qchem's ``qc``/``qcaux``)
                                 are additionally shell-quoted where their run block
@@ -572,6 +574,14 @@ def shell_unsafe_after_resolution(config: Config) -> str | None:
     Unlike the whitespace rule (which belongs to ORCA's input format and lives in the ORCA
     input writer), this one is engine-independent: every engine's job script exports these
     three paths, so there is nothing to scope it to.
+
+    This pass sees the anchored path with its symlinks intact, and the step directory the
+    script exports is the ``.resolve()``d one — so a symlink whose *target* carries a refused
+    character passes here. That route is closed where the path becomes bash: the script
+    builders ask the rule once more on the exact string they interpolate
+    (:func:`chemrefine.slurm.script._refuse_shell_unsafe`), which is what makes the rule a
+    property of reaching bash rather than of the two readings a loader can see. This pass
+    stays for what it is — the earliest point the user can be told, from both loaders.
     """
     for name in ("template_dir", "output_dir", "scratch_dir"):
         value = getattr(config, name)

@@ -92,6 +92,67 @@ def test_build_script_overrides_ntasks_and_writes_script(tmp_path: Path):
     assert "module load orca/6.0" in text
 
 
+@pytest.mark.parametrize("field", ["output_dir", "scratch_dir"])
+def test_a_builder_refuses_a_resolved_path_it_would_interpolate(tmp_path: Path, field: str):
+    """The rule is asked on the string bash receives, by both builders.
+
+    Load-time passes see a path as written and as anchored; the builders see the resolved
+    one, which is what the script exports. A refused character here is a `ConfigError`
+    naming the path — the exit-code contract, not a `ValueError` out of script assembly.
+    """
+    hostile = tmp_path / "run$1" / field
+    with pytest.raises(ConfigError, match=rf"resolved {field}.*\$"):
+        slurm.build_script(**_build_kwargs(tmp_path, **{field: hostile}))
+    with pytest.raises(ConfigError, match=rf"resolved {field}.*\$"):
+        slurm.build_array_script(
+            step_label="step1_refine",
+            ntasks=1,
+            template_path=_write_header(tmp_path),
+            script_path=tmp_path / "out" / "step1_array.slurm",
+            output_dir=tmp_path / "out" if field != "output_dir" else hostile,
+            scratch_dir=tmp_path / "scratch" if field != "scratch_dir" else hostile,
+            run_block=RunBlock(body="echo hi"),
+            engine="orca",
+            operation="opt_sp",
+            step=1,
+            output_globs=("*.out",),
+        )
+
+
+def test_a_symlink_target_passes_both_loaders_and_is_refused_at_render(tmp_path: Path):
+    """The route the load-time passes cannot see, closed where the path becomes bash.
+
+    `output_dir: ./outputs` is clean as written and clean once anchored to the config's
+    directory — `shell_unsafe_after_resolution` answers nothing — but `outputs` is a symlink
+    whose target carries `$`, and the step directory the script exports is the resolved one.
+    The builder refuses that string; before it did, the script exported
+    `…/run$1/outputs/step1/…` and `$1` expanded to nothing on the node.
+    """
+    import yaml
+
+    from chemrefine.config import load_config, shell_unsafe_after_resolution
+    from chemrefine.step import step_dir_for
+
+    target = tmp_path / "run$1" / "outputs"
+    target.mkdir(parents=True)
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "outputs").symlink_to(target)
+    config_path = project / "input.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"output_dir": "./outputs", "steps": [{"step": 1, "engine": "orca"}]}),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)  # as written and as anchored: nothing to refuse
+    assert shell_unsafe_after_resolution(config) is None
+    step_dir = step_dir_for(config, config.steps[0])
+    assert "$1" in str(step_dir)  # what the script would export
+
+    with pytest.raises(ConfigError, match=r"resolved output_dir.*\$"):
+        slurm.build_script(**_build_kwargs(tmp_path, output_dir=step_dir))
+
+
 def test_a_shared_sbatch_line_keeps_its_unowned_directives(tmp_path: Path):
     """Stripping an owned option must not take its line-mates with it.
 

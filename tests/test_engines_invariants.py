@@ -683,9 +683,9 @@ def test_every_cleanup_survives_the_armed_trap_window(engine_name: str, tmp_path
 VALIDATED = "reject_shell_unsafe"
 
 _BASH_PARAM_SAFETY: dict[str, str] = {
-    # --- user-supplied text, validated at config load -----------------------------------
+    # --- user-supplied text, validated at config load (the paths again at render) --------
     "operation": VALIDATED,
-    "output_dir": VALIDATED,  # config.output_dir
+    "output_dir": VALIDATED,  # config.output_dir — and the resolved path, at render
     "work_dir_expr": VALIDATED,  # built from output_dir + scratch_dir, both validated
     "output_dirs": VALIDATED,  # engine-declared; pyscf's tensor_folder goes through the rule
     # --- safe by construction ------------------------------------------------------------
@@ -695,14 +695,14 @@ _BASH_PARAM_SAFETY: dict[str, str] = {
     "structure_id": "minted by chemrefine.ids",
     "step_label": "StepConfig.dir_name(): 'step{int}' plus a name matched against _NAME_RE",
     "step_dir": "output_dir (validated) joined with step_label",
-    "input_path": "minted by chemrefine.ids under output_dir",
+    "input_path": "minted by chemrefine.ids under output_dir — and refused at render besides",
     "globs_expr": "a join of output_globs — engine-declared constants, never config",
     # These rows land in the runlog heredoc, where bash DOES interpolate a value as code —
     # a `$(…)` in one executed on the compute node, exempted here under the wrong claim
     # that they were "not interpolated". job_log.bash_header now refuses every value.
     "extra_fields": VALIDATED,  # per value, at emission in job_log.bash_header
     # --- the script builders' own surface ------------------------------------------------
-    "scratch_dir": VALIDATED,  # config.scratch_dir
+    "scratch_dir": VALIDATED,  # config.scratch_dir — and the resolved path, at render
     "job_name": "the input path's stem (ids-minted under the validated output_dir), or "
     "the _NAME_RE-checked step label plus a literal '_array' suffix",
     "ntasks": "an integer",

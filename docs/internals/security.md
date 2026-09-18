@@ -133,6 +133,15 @@ directory named `$(...)`, otherwise reaches the generated script as
 `export OUTPUT_DIR="…/$(...)/outputs"` — and bash substitutes inside double
 quotes. That matters most on exactly the shared filesystem this page is about.
 
+And it is asked a third time where a path becomes bash: the script builders
+refuse the *resolved* directory they are about to interpolate. Both load-time
+passes see the path as written and as anchored, with symlinks intact, and the
+directory the script exports is the resolved one — so a symlink whose target
+carries the character reached neither pass and would have reached the script.
+The render-time ask is the same placement the runlog rows have, for the same
+reason: on the exact string bash receives, no route around the loaders reaches
+the script.
+
 The rule is attached to that property, not to a list of fields — a value that
 reaches bash by a new route inherits it automatically:
 

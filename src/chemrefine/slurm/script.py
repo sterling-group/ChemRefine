@@ -22,6 +22,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from chemrefine import io, job_log
+from chemrefine.config import reject_shell_unsafe
 from chemrefine.errors import ConfigError
 from chemrefine.state import JobTriple, RunBlock
 
@@ -39,6 +40,35 @@ _SBATCH_OWNED_OPTION_RE = re.compile(
     r"[ \t]*--(?:ntasks|cpus-per-task|job-name|output|error)"
     r'(?:=(?:"[^"]*"|\S*)|[ \t]+(?:"[^"]*"|(?!--)\S+))?(?=\s|$)'
 )
+
+
+def _refuse_shell_unsafe(*named: tuple[str, Path | None]) -> None:
+    """The bash-safety rule, asked where a path becomes bash — on the string bash receives.
+
+    :func:`chemrefine.config.reject_shell_unsafe` is asked twice at load: on each directory
+    as written, and again after a relative one is anchored to the config file's directory.
+    Both passes see the path with its symlinks intact, and the step directory that reaches
+    ``export OUTPUT_DIR="…"`` here is the resolved one — so a symlink whose *target* carries
+    a refused character passed both and landed in the script, where bash substitutes inside
+    double quotes. The runlog rows are held to the rule at the moment they become bash
+    (:func:`chemrefine.job_log.bash_header`); this is the same placement for the paths, and
+    for the same reason: asked on the exact value interpolated, no route around the load-time
+    passes reaches the script. Those passes stay for what they are — the earliest point a
+    user can be told, from both loaders.
+
+    A :class:`~chemrefine.errors.ConfigError` rather than the rule's bare ``ValueError``:
+    the path originates in the user's YAML (or in what it points at), and a ``ValueError``
+    out of script assembly would leave the exit-code contract as a traceback.
+    """
+    for what, path in named:
+        if path is None:
+            continue
+        try:
+            reject_shell_unsafe(
+                str(path), what=f"resolved {what}", fix="rename the directory it sits in"
+            )
+        except ValueError as e:
+            raise ConfigError(str(e)) from e
 
 
 def _compute_work_dir_expr(output_dir: Path | str, scratch_dir: Path | None) -> str:
@@ -357,6 +387,9 @@ def build_script(
       ``extra_header_fields`` → forwarded to :mod:`chemrefine.job_log` for the
       runlog header/footer.
     """
+    _refuse_shell_unsafe(
+        ("output_dir", output_dir), ("input_path", input_path), ("scratch_dir", scratch_dir)
+    )
     sbatch_lines, body_lines = _read_header(template_path)
     sbatch_lines = _apply_memory(
         sbatch_lines, memory_mb, ntasks=ntasks, cpus_per_task=cpus_per_task, job_name=job_name
@@ -486,6 +519,7 @@ def build_array_script(
     output path truncated the variable, and every task of the array read a
     manifest that did not exist. The argument channel has no such character.
     """
+    _refuse_shell_unsafe(("output_dir", output_dir), ("scratch_dir", scratch_dir))
     sbatch_lines, body_lines = _read_header(template_path)
     sbatch_lines = _apply_memory(
         sbatch_lines,
