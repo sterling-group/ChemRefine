@@ -1056,6 +1056,28 @@ def test_a_foreign_hosts_lock_is_never_reclaimed(tmp_path: Path):
         pass
 
 
+def test_a_filesystem_that_refuses_hard_links_is_the_locks_own_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A mount with no hard links cannot hold the lock; that is a RunLockError, not a
+    traceback — the exit-code contract holds for the one primitive the lock is built on."""
+    import os
+
+    from chemrefine.errors import RunLockError
+
+    def refuse(src, dst, **kwargs):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(os, "link", refuse)
+    with (
+        pytest.raises(RunLockError, match="refuses hard links"),
+        pipeline.run_lock(tmp_path / "outputs"),
+    ):
+        pass  # pragma: no cover - never entered
+    assert not (tmp_path / "outputs" / pipeline.RUN_LOCK_NAME).exists()
+    assert not list((tmp_path / "outputs").glob(".chemrefine.lock.claim.*")), "no claim left"
+
+
 def test_an_unreadable_lock_raises(tmp_path: Path):
     """A lock with no readable holder cannot be liveness-checked, so it refuses the run."""
     from chemrefine.errors import RunLockError

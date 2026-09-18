@@ -362,7 +362,10 @@ def run_lock(output_dir: Path) -> Generator[None]:
 
     **Why a pidfile and not ``flock``.** The output tree lives on a shared filesystem on
     HPC, where ``flock`` semantics are the least reliable part of NFS; a fail-if-exists
-    ``os.link`` is atomic everywhere. The cost is that a lock can outlive a killed driver.
+    ``os.link`` is atomic on every filesystem that offers it, and one that does not (a
+    vfat or exfat drive, some FUSE and SMB mounts) is refused by name rather than being
+    left to raise from inside the claim. The cost is that a lock can outlive a killed
+    driver.
     :func:`_sigterm_unwinds` narrows that to SIGKILL alone — a ``scancel`` or walltime
     SIGTERM unwinds and releases — and a SIGKILLed holder on *this* host is probed with
     ``os.kill(pid, 0)`` and reclaimed when dead. A holder on another host cannot be probed
@@ -420,6 +423,16 @@ def run_lock(output_dir: Path) -> Generator[None]:
                     break
                 except FileExistsError:
                     holder = _lock_holder(lock)
+                except OSError as e:
+                    # Not "held by someone" but "this filesystem cannot hold a lock at
+                    # all": a mount that refuses hard links (vfat/exfat, some FUSE and SMB
+                    # shares). Named as the lock's own refusal, with its exit code, rather
+                    # than escaping as a traceback from inside the claim.
+                    raise RunLockError(
+                        f"cannot lock {output_dir}: the filesystem refuses hard links "
+                        f"({e}), which the run lock is built on. Put output_dir on a "
+                        f"filesystem that supports them."
+                    ) from e
                 # Every decision about a held lock is made here, past the handler, on purpose.
                 # The reentrant `yield` used to sit inside it, which ran the whole inner action
                 # with the FileExistsError still active — so any error the action raised was

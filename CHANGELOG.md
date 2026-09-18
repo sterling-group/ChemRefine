@@ -454,6 +454,14 @@ for the full map.
 
 ### Fixed
 
+- **An output tree on a filesystem without hard links is refused by the run lock, with its
+  exit code.** The lock is a fail-if-exists `os.link`, and a mount that refuses the call
+  (vfat/exfat, some FUSE and SMB shares) escaped as a traceback from inside the claim.
+- **A structure's cache digest no longer depends on the Python type of its energy.** The
+  digest hashed `repr(energy)`, and a numpy scalar spells itself differently from the
+  float it becomes after a cache round trip — a parser handing the driver one would have
+  re-keyed every downstream row on every resume. Today's parsers hand over plain floats,
+  so no existing key moves.
 - **Four engine contracts brought back into line.** An ORCA `Opt` output no longer
   carries forces: its last gradient block is printed inside the last optimisation cycle
   and describes the geometry *before* the converged one, so the forces stored beside the

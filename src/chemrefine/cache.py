@@ -174,7 +174,13 @@ def structure_digest(s: Structure) -> str:
     h.update(s.id.encode())
     h.update("".join(s.atoms.get_chemical_symbols()).encode())
     h.update(np.asarray(s.atoms.get_positions(), dtype=np.float64).tobytes())
-    h.update(repr(s.energy_hartree).encode())
+    # Through `float` first: `repr` is not a canonical spelling of a float, and a numpy
+    # scalar reprs as `np.float64(-76.4)` where the same value back from the JSON
+    # document reprs as `-76.4`. Hashed as they came, a parser handing the driver a numpy
+    # scalar gave a structure one digest in memory and another after a cache round trip,
+    # re-keying every downstream row on every resume — silently, as a recompute.
+    energy = None if s.energy_hartree is None else float(s.energy_hartree)
+    h.update(repr(energy).encode())
     return h.hexdigest()[:16]
 
 

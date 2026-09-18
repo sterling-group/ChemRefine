@@ -530,6 +530,21 @@ def test_structure_digest_changes_when_geometry_changes():
     assert structure_digest(_h2(spacing=0.74)) != structure_digest(_h2(spacing=0.75))
 
 
+def test_structure_digest_does_not_depend_on_the_energys_python_type():
+    """A numpy scalar and the float it round-trips to through JSON share one digest.
+
+    ``repr(np.float64(x))`` is ``np.float64(x)`` on numpy 2, ``repr(float(x))`` is ``x``.
+    Hashed as they came, a parser handing the driver a numpy scalar keyed a structure one
+    way in memory and another after a cache load, so every downstream row missed its
+    cache on every resume.
+    """
+    import numpy as np
+
+    from chemrefine.cache import structure_digest
+
+    assert structure_digest(_h2(energy=-1.25)) == structure_digest(_h2(energy=np.float64(-1.25)))
+
+
 def test_structure_digest_changes_when_energy_changes():
     from chemrefine.cache import structure_digest
 
