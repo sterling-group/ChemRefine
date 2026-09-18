@@ -41,7 +41,7 @@ from chemrefine import cache, ids, introspect, io, pipeline, scaffold
 from chemrefine.cache import load_failure_records
 from chemrefine.config import Config, StepConfig, load_config
 from chemrefine.engines.api import FrequencyOutputParsing, ParsedResult, get_engine
-from chemrefine.errors import EXIT_CODES, ConfigError, RunLockError
+from chemrefine.errors import ENDPOINT_UNREACHABLE, EXIT_CODES, ConfigError, RunLockError
 from chemrefine.recovery import Action, resolve_target
 from chemrefine.state import Structure
 from chemrefine.validate import validate_config_file, validate_config_text
@@ -433,6 +433,15 @@ def get_results(
 _PUBCHEM_URL = (
     "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{}/property/CanonicalSMILES/TXT"
 )
+_NO_SMILES: tuple[type[BaseException], ...] = (*ENDPOINT_UNREACHABLE, ValueError, IndexError)
+"""What makes a PubChem lookup answer nothing: the endpoint, or the body it did send.
+
+The endpoint half is :data:`chemrefine.errors.ENDPOINT_UNREACHABLE`, shared with every
+other fetch. The body half is this lookup's own: not UTF-8 (``UnicodeDecodeError`` — a
+proxy's interception page in a legacy encoding) or empty (``IndexError`` on its first
+line). Named rather than spelled in the ``except``, because a starred tuple there is
+one mypy cannot type.
+"""
 
 
 def lookup_smiles(name: str) -> dict[str, Any]:
@@ -442,8 +451,6 @@ def lookup_smiles(name: str) -> dict[str, Any]:
     an offline compute node; a failed lookup says so and names the offline alternative
     (pass a SMILES to :func:`build_structures` directly).
     """
-    from http.client import HTTPException
-    from urllib.error import URLError
     from urllib.parse import quote
     from urllib.request import Request, urlopen
 
@@ -458,13 +465,7 @@ def lookup_smiles(name: str) -> dict[str, Any]:
     try:
         with urlopen(request, timeout=15) as response:  # noqa: S310 — scheme is fixed https
             smiles = response.read().decode("utf-8").strip().splitlines()[0]
-    except (URLError, OSError, IndexError, HTTPException, ValueError) as e:
-        # HTTPException covers a response that arrives and then breaks the protocol
-        # (IncompleteRead on a dropped connection) — neither an OSError nor a URLError,
-        # so it escaped as a traceback where every other network failure became this hint.
-        # ValueError is the body that arrives whole and is not UTF-8 (UnicodeDecodeError):
-        # a proxy's or captive portal's interception page in a legacy encoding, which is
-        # the same "no answer from PubChem" as the rest and was the one left uncaught.
+    except _NO_SMILES as e:
         raise ConfigError(
             f"PubChem lookup for {name!r} failed ({e}); offline or unknown name — "
             "pass a SMILES to build_structures instead"

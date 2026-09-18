@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from chemrefine import USER_AGENT
-from chemrefine.errors import ConfigError
+from chemrefine.errors import ENDPOINT_UNREACHABLE, ConfigError
 
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
@@ -284,8 +284,7 @@ def check(config: ProviderConfig, *, timeout: float = 5.0) -> CheckReport:
         )
     if not probe.startswith(("http://", "https://")):
         return CheckReport(ok=False, findings=(f"base URL {probe!r} is not HTTP(S)",))
-    from http.client import HTTPException
-    from urllib.error import HTTPError, URLError
+    from urllib.error import HTTPError
     from urllib.request import Request, urlopen
 
     url = probe.rstrip("/") + "/models"
@@ -311,11 +310,7 @@ def check(config: ProviderConfig, *, timeout: float = 5.0) -> CheckReport:
                 findings=(f"{url}: authentication rejected ({e.code})", *_fixes(url, "auth")),
             )
         return CheckReport(ok=False, findings=(f"{url}: HTTP {e.code}",))
-    except (URLError, OSError, TimeoutError, HTTPException) as e:
-        # HTTPException is in the net for the endpoint that *answers* and then breaks the
-        # protocol — a truncated listing (IncompleteRead), a garbled status line. It
-        # subclasses neither OSError nor ValueError, so it escaped the function whose whole
-        # contract is that a bad endpoint becomes a finding, not a traceback.
+    except ENDPOINT_UNREACHABLE as e:
         return CheckReport(
             ok=False, findings=(f"{url}: unreachable ({e})", *_fixes(url, "unreachable"))
         )
