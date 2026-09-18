@@ -425,6 +425,23 @@ def test_maxgpus_omitted_shows_auto(tmp_path: Path):
     assert "max_gpus=auto" in result.stdout
 
 
+def test_takes_target_matches_the_subcommand_signatures():
+    """``Action.takes_target`` says which subcommands declare a ``target`` argument.
+
+    The enum's answer drives the agent's refusal and the page's buttons; the CLI's answer
+    is its signatures. Read off the built Click group, like ``SUBCOMMANDS``, so the two
+    cannot drift without this saying so.
+    """
+    from typer.main import get_group
+
+    from chemrefine.recovery import Action
+
+    commands = get_group(app).commands
+    for action in Action:
+        params = {param.name for param in commands[action.value].params}
+        assert ("target" in params) is action.takes_target, action
+
+
 def test_maxcores_zero_is_rejected_before_anything_runs(tmp_path: Path, caplog):
     """An override is held to the config model's own floor, as exit 2, before any input exists.
 

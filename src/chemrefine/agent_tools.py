@@ -50,8 +50,8 @@ _ACTIONS = tuple(action.value for action in Action)
 """CLI actions :func:`start_run` may launch — :class:`~chemrefine.recovery.Action`'s
 spellings, read off the enum so a new action needs no second roster here."""
 
-_WHOLE_PIPELINE: frozenset[str] = frozenset({Action.RUN, Action.RESUME})
-"""The actions that drive the whole pipeline; every other one is aimed at a step."""
+_WHOLE_PIPELINE: frozenset[str] = frozenset(a.value for a in Action if not a.takes_target)
+"""The actions that drive the whole pipeline — read off the enum, like ``_ACTIONS``."""
 
 _MAX_ROWS = 200
 """Hard ceiling on :func:`get_results`' page size — the module's pagination rule, enforced.

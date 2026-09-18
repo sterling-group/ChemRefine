@@ -42,7 +42,14 @@ logger = logging.getLogger(__name__)
 
 
 class Action(StrEnum):
-    """Lifecycle action requested by the CLI."""
+    """Lifecycle action requested by the CLI — the recovery vocabulary, in one place.
+
+    Everything that speaks it reads it from here: the CLI's subcommands, the agent's
+    ``start_run``, the GUI's Run panel (through the schema document, see
+    :func:`describe_actions`) and the tests that hold the agent guide to it. What a member
+    means to a caller is a property below rather than a roster kept beside the enum, in
+    another language, that a new member would have to be added to by hand.
+    """
 
     RUN = "run"
     RESUME = "resume"
@@ -50,6 +57,58 @@ class Action(StrEnum):
     REBUILD_NMS = "rebuild-nms"
     RERUN = "rerun"
     RERUN_ERRORS = "rerun-errors"
+
+    @property
+    def takes_target(self) -> bool:
+        """Whether the action aims at one step; ``run`` and ``resume`` drive the whole pipeline.
+
+        Held to the CLI by ``tests/test_cli.py``: the subcommand of the same name declares a
+        ``target`` argument exactly when this says so.
+        """
+        return self not in (Action.RUN, Action.RESUME)
+
+    @property
+    def label(self) -> str:
+        """The action as a button reads it."""
+        return _DESCRIPTIONS[self][0]
+
+    @property
+    def blurb(self) -> str:
+        """What the action does, in the words a confirmation dialog uses."""
+        return _DESCRIPTIONS[self][1]
+
+
+_DESCRIPTIONS: dict[Action, tuple[str, str]] = {
+    Action.RUN: ("Run", "start the full pipeline from step 1, ignoring the cache"),
+    Action.RESUME: ("Resume", "carry on where the tree left off, honouring the cache"),
+    Action.REBUILD_CACHE: (
+        "Rebuild cache",
+        "re-parse the outputs already on disk — submits nothing",
+    ),
+    Action.REBUILD_NMS: ("Rebuild NMS", "redo the normal-mode resolution from the outputs on disk"),
+    Action.RERUN: ("Rerun", "recompute, discarding what is cached for it"),
+    Action.RERUN_ERRORS: ("Rerun errors", "re-attempt the ledgered failures, then carry on"),
+}
+"""Label and blurb per action — beside the enum, held complete by ``tests/test_recovery.py``.
+
+A dialog that misdescribes what it confirms is worse than none, so each member's sentence is
+its own; a member without one fails the test rather than reaching a page as ``undefined``.
+"""
+
+
+def describe_actions() -> list[dict[str, object]]:
+    """The vocabulary as the schema document carries it: one record per action.
+
+    ``name`` is the spelling every entry point takes, ``label`` how a button reads it,
+    ``blurb`` what a confirmation says it does, ``takes_target`` whether it aims at a step.
+    Served rather than restated: the GUI's Run panel renders its buttons and confirms its
+    dialogs from this list, so an action added here reaches the page with no edit there —
+    the same way a new engine reaches the engine dropdown.
+    """
+    return [
+        {"name": a.value, "label": a.label, "blurb": a.blurb, "takes_target": a.takes_target}
+        for a in Action
+    ]
 
 
 def resolve_target(config: Config, key: str | int) -> StepConfig:

@@ -133,7 +133,7 @@ def describe_engines() -> tuple[EngineDescriptor, ...]:
 def schema_document() -> dict[str, Any]:
     """The complete machine-readable schema document, JSON-serializable.
 
-    Five parts: the package version (a consumer caches against it), the config schema
+    Six parts: the package version (a consumer caches against it), the config schema
     (:class:`~chemrefine.config.Config` — steps, sampling and top-level keys, with the
     nested models under ``$defs``), the NMS knob schema
     (:class:`~chemrefine.nms.NmsOptions` — read from ``step.options`` by the NMS
@@ -143,8 +143,13 @@ def schema_document() -> dict[str, Any]:
     — the model keeps the field a free string because engines interpret it themselves
     (ORCA even infers it from the template) — so the top-level list is the **union of
     every engine's declared vocabulary**, kept for flat-list consumers; the per-engine
-    truth is each descriptor's ``operations``, which is what the GUI's dropdown reads.
+    truth is each descriptor's ``operations``, which is what the GUI's dropdown reads. The
+    sixth is the recovery-action vocabulary (:func:`chemrefine.recovery.describe_actions`)
+    — what the GUI's Run panel renders and confirms from, and what an agent's
+    ``start_run`` accepts — served so no page keeps a copy of it.
     """
+    from chemrefine.recovery import describe_actions
+
     descriptors = describe_engines()
     return {
         "chemrefine_version": __version__,
@@ -152,4 +157,5 @@ def schema_document() -> dict[str, Any]:
         "nms": NmsOptions.model_json_schema(),
         "engines": {d.name: dataclasses.asdict(d) for d in descriptors},
         "operations": sorted({op for d in descriptors for op in d.operations}),
+        "actions": describe_actions(),
     }

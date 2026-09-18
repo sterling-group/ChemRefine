@@ -600,30 +600,20 @@
         <span class="muted" x-show="runStatus"
               x-text="runStatus ? (runStatus.running ? (runStatus.holder ? 'running (pid ' + runStatus.holder.pid + ')' : 'running (unreadable lock)') : 'idle') : ''"></span>
       </summary>
-      <!-- The whole recovery vocabulary, not the half of it that was reachable: a tree
-           whose cache predates a format, or whose NMS resolution needs redoing, was
-           fixable only from a terminal. Each button's title is the same sentence its
-           confirmation uses. -->
+      <!-- The whole recovery vocabulary, rendered from the schema document's `actions`
+           rather than written here: a tree whose cache predates a format, or whose NMS
+           resolution needs redoing, was fixable only from a terminal while this panel
+           offered half the vocabulary. Each button's title is the same sentence its
+           confirmation uses, because both come from the one served record. -->
       <div class="row">
-        <button type="button" @click="launch('run')" :disabled="!!runTarget"
-                title="Start the full pipeline from step 1, ignoring the cache. Takes no step.">
-          Run</button>
-        <button type="button" @click="launch('resume')" :disabled="!!runTarget"
-                title="Carry on where the tree left off, honouring the cache. Takes no step.">
-          Resume</button>
-        <button type="button" @click="launch('rerun')"
-                title="Recompute, discarding what is cached for it.">Rerun</button>
-        <button type="button" @click="launch('rerun-errors')"
-                title="Re-attempt the ledgered failures, then carry on.">Rerun errors</button>
-        <button type="button" @click="launch('rebuild-cache')"
-                title="Re-parse the outputs already on disk — submits nothing.">
-          Rebuild cache</button>
-        <button type="button" @click="launch('rebuild-nms')"
-                title="Redo the normal-mode resolution from the outputs on disk.">
-          Rebuild NMS</button>
-        <!-- Optional, and refused by the two whole-pipeline actions rather than ignored
-             by them: a control that silently does nothing is the worse of the two. -->
-        <select x-model="runTarget" title="Which step the four targeted actions act on">
+        <template x-for="action in (schema ? schema.actions : [])" :key="action.name">
+          <button type="button" @click="launch(action.name)"
+                  :disabled="!action.takes_target && !!runTarget"
+                  :title="actionTitle(action)" x-text="action.label"></button>
+        </template>
+        <!-- Optional, and refused by the whole-pipeline actions rather than ignored by
+             them: a control that silently does nothing is the worse of the two. -->
+        <select x-model="runTarget" title="Which step the targeted actions act on">
           <option value="">all steps</option>
           <template x-for="opt in stepOptions(cfg.steps, runTarget)" :key="'target' + opt.value">
             <option :value="opt.value" :selected="opt.selected" x-text="opt.label"></option>

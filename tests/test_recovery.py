@@ -1106,6 +1106,23 @@ def test_rebuild_cache_stops_the_tail_where_it_cannot_serve_and_names_the_repair
 _COVERED_ELSEWHERE = {Action.REBUILD_NMS: "test_rebuild_nms_*"}
 
 
+def test_every_action_is_described_and_handled():
+    """The enum is the roster; its two companion tables cannot fall behind it.
+
+    A member without a handler was "unknown action" at dispatch; one without a label and
+    blurb would reach a page as ``undefined``. Both tables are held to the enum here, and
+    the served record carries the four fields the page renders and confirms from.
+    """
+    from chemrefine import recovery
+
+    assert set(recovery._HANDLERS) == set(Action)
+    assert set(recovery._DESCRIPTIONS) == set(Action)
+    served = recovery.describe_actions()
+    assert [record["name"] for record in served] == [action.value for action in Action]
+    assert all(set(record) == {"name", "label", "blurb", "takes_target"} for record in served)
+    assert len({record["blurb"] for record in served}) == len(served)
+
+
 def test_recovery_matrix_covers_every_action():
     """A new Action must be given a row in the matrix, or named here with its own test.
 

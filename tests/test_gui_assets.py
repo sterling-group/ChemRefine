@@ -34,6 +34,7 @@ from pathlib import Path
 import pytest
 
 from chemrefine import io
+from chemrefine.recovery import Action, describe_actions
 
 STATIC = Path(__file__).resolve().parent.parent / "src" / "chemrefine" / "gui" / "static"
 INDEX = STATIC / "index.html"
@@ -1494,16 +1495,19 @@ def test_a_step_that_has_not_run_is_not_announced_on_every_switch():
     assert "no cached results" in result["loud"]
 
 
-_RUN_HARNESS = """
+# The served vocabulary, as `/api/bootstrap` (and the playground's baked schema.json) carry
+# it: the page renders its buttons and confirms its dialogs from `schema.actions`.
+_RUN_HARNESS = f"""
   const b = builder();
-  b.chatAvailability = () => {};
+  b.chatAvailability = () => {{}};
   b.savedPath = "/p/input.yaml";
-  b.cfg = { steps: [{ step: 1 }, { step: 2 }] };
-  b.refreshStatus = async () => {};
+  b.schema = {{ actions: {json.dumps(describe_actions())} }};
+  b.cfg = {{ steps: [{{ step: 1 }}, {{ step: 2 }}] }};
+  b.refreshStatus = async () => {{}};
   const posted = [];
   const asked = [];
-  b.api = async (m, u, body) => { posted.push(body); return { pid: 1, log: "/l" }; };
-  global.window = { ...global.window, confirm: (text) => { asked.push(text); return true; } };
+  b.api = async (m, u, body) => {{ posted.push(body); return {{ pid: 1, log: "/l" }}; }};
+  global.window = {{ ...global.window, confirm: (text) => {{ asked.push(text); return true; }} }};
 """
 
 
@@ -1515,30 +1519,23 @@ def test_every_recovery_action_is_reachable_and_described_as_itself():
     nothing at all, is not. A confirmation that misdescribes what it confirms is worse than
     none, so each action's own sentence is asserted here.
     """
+    names = [action.value for action in Action]
     out = _run_component_in_node(
         _RUN_HARNESS
-        + """
-      for (const a of ["run", "resume", "rerun", "rerun-errors",
-                       "rebuild-cache", "rebuild-nms"]) {
+        + f"""
+      for (const a of {json.dumps(names)}) {{
         await b.launch(a);
-      }
-      console.log(JSON.stringify({ posted, asked }));
+      }}
+      console.log(JSON.stringify({{ posted, asked }}));
     """
     )
     result = json.loads(out)
-    assert [p["action"] for p in result["posted"]] == [
-        "run",
-        "resume",
-        "rerun",
-        "rerun-errors",
-        "rebuild-cache",
-        "rebuild-nms",
-    ]
-    # Every dialog describes its own action, and no two share a sentence.
+    assert [p["action"] for p in result["posted"]] == names
+    # Every dialog describes its own action — the served blurb — and no two share a sentence.
     blurbs = [text.split("This will ")[1] for text in result["asked"]]
-    assert len(set(blurbs)) == 6
-    assert "submits nothing" in blurbs[4]  # rebuild-cache, which attempts no jobs
-    assert "normal-mode resolution" in blurbs[5]
+    assert len(set(blurbs)) == len(names)
+    for action, blurb in zip(Action, blurbs, strict=True):
+        assert blurb.startswith(action.blurb), action
     assert not any("undefined" in text for text in result["asked"])
 
 
@@ -1548,23 +1545,23 @@ def test_the_two_whole_pipeline_actions_never_carry_a_step():
     The page says so before the click instead: the buttons are disabled while a step is
     chosen, and the payload carries null even if one is reached another way.
     """
+    names = [action.value for action in Action]
     out = _run_component_in_node(
         _RUN_HARNESS
-        + """
+        + f"""
       b.runTarget = "2";
       await b.launch("rerun");        // takes one
       await b.launch("run");          // does not, even with the selection standing
-      console.log(JSON.stringify({
+      console.log(JSON.stringify({{
         posted, asked,
-        takes: ["run", "resume", "rerun", "rerun-errors", "rebuild-cache", "rebuild-nms"]
-                 .map((a) => b.takesTarget(a)),
-      }));
+        takes: {json.dumps(names)}.map((a) => b.takesTarget(a)),
+      }}));
     """
     )
     result = json.loads(out)
     assert result["posted"][0]["target"] == "2"
     assert result["posted"][1]["target"] is None
-    assert result["takes"] == [False, False, True, True, True, True]
+    assert result["takes"] == [action.takes_target for action in Action]
     # And the dialog names the step, so a targeted action cannot be confirmed blind.
     assert "step 2 of /p/input.yaml" in result["asked"][0]
     assert "on /p/input.yaml" in result["asked"][1]

@@ -9,12 +9,6 @@
  */
 "use strict";
 
-// What each run action does, in the words the confirmation dialog uses. A lookup, not a
-// chain of ternaries: the chain had no default arm, so its last branch described every
-// action it did not name — a rebuild-cache, which submits nothing, would have been
-// confirmed as "re-attempt failed jobs". A dialog that misdescribes what it is confirming
-// is worse than no dialog. The keys are `agent_tools._ACTIONS`, the whole recovery
-// vocabulary; a missing one shows up immediately as "undefined" in the prompt.
 // The chat settings that persist, as one vocabulary. They were nine bare string literals
 // across three methods — read, write and reset — while the recents key next door was already
 // a named constant. A typo in any one of the nine is a setting that silently stops
@@ -26,15 +20,6 @@ const CHAT_DEFAULTS = { provider: "ollama", model: "", baseUrl: "" };
 // buttons were three literals across two files, so changing the limit made the buttons page
 // by the old stride — skipping or repeating rows, with nothing to say so.
 const RESULTS_PAGE = 20;
-
-const RUN_BLURBS = {
-  run: "start the full pipeline from step 1, ignoring the cache",
-  resume: "carry on where the tree left off, honouring the cache",
-  rerun: "recompute, discarding what is cached for it",
-  "rerun-errors": "re-attempt the ledgered failures, then carry on",
-  "rebuild-cache": "re-parse the outputs already on disk — submits nothing",
-  "rebuild-nms": "redo the normal-mode resolution from the outputs on disk",
-};
 
 const SPHERE_SCALE = 0.25;
 // The one style the model is drawn with. Beside SPHERE_SCALE rather than written out at each
@@ -794,11 +779,32 @@ function builder() {
       this.flash = `${what} needs the local chemrefine gui — pip install 'chemrefine[gui]'`;
       return true;
     },
-    // Whether this action drives the whole pipeline, and so takes no step. start_run
-    // refuses a target for these two, so offering one would be a 400 after the click
-    // rather than a control that says what it accepts.
+    // The recovery vocabulary is the schema document's `actions` — name, label, blurb and
+    // whether it aims at a step — served by the same server that runs it, so the buttons,
+    // the dialogs and `start_run`'s refusals cannot disagree and a new action reaches this
+    // page with no edit here. An action the document does not carry is described as
+    // itself rather than as "undefined", and treated as targeted, which is the safe guess.
+    actionSpec(name) {
+      const known = (this.schema && this.schema.actions) || [];
+      return (
+        known.find((a) => a.name === name) || {
+          name,
+          label: name,
+          blurb: `run ${name}`,
+          takes_target: true,
+        }
+      );
+    },
+    // A button's title is its confirmation's sentence, plus the one fact the two
+    // whole-pipeline actions add: they take no step, and `start_run` refuses one.
+    actionTitle(action) {
+      const sentence = action.blurb.charAt(0).toUpperCase() + action.blurb.slice(1);
+      return action.takes_target ? `${sentence}.` : `${sentence}. Takes no step.`;
+    },
+    // Whether this action aims at one step. Offering a step to one that does not would
+    // be a 400 after the click rather than a control that says what it accepts.
     takesTarget(action) {
-      return action !== "run" && action !== "resume";
+      return this.actionSpec(action).takes_target;
     },
     async launch(action) {
       // Only the four that accept one, and only when a step is actually chosen.
@@ -806,7 +812,7 @@ function builder() {
       const where = target ? ` step ${target} of ` : " on ";
       if (
         !window.confirm(
-          `${action}${where}${this.savedPath}?\nThis will ${RUN_BLURBS[action]} — ` +
+          `${action}${where}${this.savedPath}?\nThis will ${this.actionSpec(action).blurb} — ` +
             "real compute on this machine.",
         )
       ) {

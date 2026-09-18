@@ -17,6 +17,7 @@ from chemrefine import __version__
 from chemrefine.config import Config
 from chemrefine.engines.api import ENGINES
 from chemrefine.introspect import EngineDescriptor, describe_engines, schema_document
+from chemrefine.recovery import describe_actions
 
 
 def _by_name() -> dict[str, EngineDescriptor]:
@@ -125,6 +126,7 @@ def test_the_operation_vocabulary_is_served_canonical_and_sorted():
     the document's top-level list is the union of every descriptor's declared
     vocabulary — a future declarer's operations join with no edit here — served
     canonical and sorted, the legacy ``dft`` excluded."""
+    assert schema_document()["actions"] == describe_actions()
     operations = schema_document()["operations"]
     assert operations == sorted(operations)
     assert set(operations) == {op for d in describe_engines() for op in d.operations}
