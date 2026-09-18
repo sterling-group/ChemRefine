@@ -136,6 +136,19 @@ _BUNDLED: tuple[Mutation, ...] = (
         "retry-best-frame's inversion, on the resolution side",
     ),
     Mutation(
+        id="resubmit-skips-unconverged",
+        path="src/chemrefine/lifecycle.py",
+        old=(
+            "    unusable = {f.sid for f in failures if f.kind is not FailureKind.NOT_CONVERGED}"
+            " | condemned"
+        ),
+        new="    unusable = {f.sid for f in failures} | condemned",
+        tests="tests/test_recovery.py",
+        breaks="every resume re-runs each unconverged structure twice — once from the seed, "
+        "discarding the geometry it had reached, and once more from best — so a structure "
+        "that needs one more step costs two jobs per resume and converges a resume late",
+    ),
+    Mutation(
         id="convert-direction",
         path="src/chemrefine/quantities.py",
         old='    ("hartree", "ev"): HARTREE_TO_EV,\n    ("ev", "hartree"): 1.0 / HARTREE_TO_EV,',

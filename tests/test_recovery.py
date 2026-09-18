@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from ase import Atoms
 
-from chemrefine import io
+from chemrefine import cache, io
 from chemrefine.config import Config, StepConfig
 from chemrefine.errors import ChemRefineError, ConfigError
 from chemrefine.recovery import Action, execute, invalidate_step, resolve_target
@@ -1538,3 +1538,42 @@ def test_an_nms_reattempt_keeps_the_survivor_order_of_a_clean_run(tmp_path: Path
         eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
         eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
         ENGINES.pop("fake-nms2", None)
+
+
+def test_a_resume_re_runs_an_unconverged_structure_once_from_where_it_left_off(tmp_path: Path):
+    """``resubmit_unusable`` leaves a convergence failure to ``retry_unconverged``, alone.
+
+    The rule is the docstring's — "resubmitting the identical input would only fail the
+    same way" — and nothing pinned it: with the exclusion dropped, every resume resubmitted
+    an unconverged structure from the seed *and then* retried it from best, two jobs where
+    one was owed, and the first of them threw the geometry away. The counts tell the two
+    apart. ``strikes=3``: the run submits twice (round 1 and the in-stream retry) and halts;
+    one resume owes exactly one more submission — three, still unconverged, still pending —
+    where the double route reaches four and converges a resume early.
+    """
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_flaky_convergence()
+    try:
+        cfg = _three_seed_config(
+            tmp_path, [StepConfig(step=1, name="one", engine=eng.name, on_failure="stop")]
+        )
+        eng.unconverged, eng.strikes = {"1"}, 3
+        with pytest.raises(ChemRefineError):  # round 1 and the in-stream retry: two strikes
+            execute(cfg, Action.RUN)
+        assert eng.submitted["1"] == 2
+
+        with pytest.raises(ChemRefineError):  # one more, from where it left off; still pending
+            execute(cfg, Action.RESUME)
+        assert eng.submitted["1"] == 3
+        assert [r.structure_id for r in cache.load_failure_records(cfg.step_dir(cfg.steps[0]))] == [
+            "1"
+        ]
+
+        execute(cfg, Action.RESUME)  # the fourth converges
+        assert eng.submitted["1"] == 4
+        ids, _fingerprint = _cached(cfg, 1)
+        assert "1" in ids
+    finally:
+        eng.unconverged, eng.strikes, eng.submitted = set(), 1, {}
+        ENGINES.pop(eng.name, None)
