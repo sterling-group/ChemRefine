@@ -289,12 +289,20 @@ def test_is_resolved_false_for_non_terminated_child():
         ({6: -100.0}, 1, True),  # a verified first-order saddle
         ({}, 1, False),  # fell into a minimum — NOT a transition state
         ({6: -100.0, 8: -50.0}, 1, False),  # second-order saddle — not a TS either
+        (None, 0, False),  # no frequency table — nothing is verified, not even zero
+        (None, 1, False),  # no frequency table — no saddle can be claimed either
     ],
 )
 def test_is_resolved_requires_the_exact_imaginary_count(
-    imaginary: dict[int, float], target: int, resolved: bool
+    imaginary: dict[int, float] | None, target: int, resolved: bool
 ):
-    """Both sides of the target, so neither `<=` nor `>=` can pass for `==`."""
+    """Both sides of the target, so neither `<=` nor `>=` can pass for `==`.
+
+    And no table at all: a parse that found no frequencies has counted nothing, so it
+    cannot claim zero imaginary modes. Branch coverage cannot hold that clause — the
+    predicate is one `return`, so the short-circuit leaves no arc — which is why it is a
+    row here and an entry in the mutation gate.
+    """
     child = Structure(id="c", atoms=Atoms("H"), terminated_normally=True, imaginary_freqs=imaginary)
     assert nms._is_resolved(child, target) is resolved
 
@@ -307,10 +315,12 @@ def test_is_resolved_requires_the_exact_imaginary_count(
         ({6: -100.0}, 1, True),
         ({}, 1, False),  # a minimum is not "already at" a ts target
         ({6: -100.0, 8: -50.0}, 1, False),
+        (None, 0, False),  # no frequency table — cannot claim to be anywhere
+        (None, 1, False),
     ],
 )
 def test_already_at_target_requires_the_exact_imaginary_count(
-    imaginary: dict[int, float], target: int, at_target: bool
+    imaginary: dict[int, float] | None, target: int, at_target: bool
 ):
     """The short-circuit is held to the same rule as the round-2 verdict.
 

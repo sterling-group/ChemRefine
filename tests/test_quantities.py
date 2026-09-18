@@ -68,6 +68,22 @@ def test_convert_length_pair():
     assert abs(convert(1.0, "bohr", "angstrom") - BOHR_TO_ANGSTROM) < 1e-12
 
 
+def test_convert_energy_pairs_by_value():
+    """Each direction of the kJ/mol and eV pairs, against a literal rather than the table.
+
+    The table stores each direction as its own constant, and the round-trip property
+    cannot tell a pair from its swap — `x · (1/H) · H` is `x` either way. Only a value
+    can: 1 Hartree is 2625.4996 kJ/mol and 27.211386 eV, and the inverse directions must
+    land back on 1.
+    """
+    assert abs(convert(1.0, "hartree", "kj/mol") - 2625.4996) < 1e-3
+    assert abs(convert(2625.4996, "kj/mol", "hartree") - 1.0) < 1e-6
+    assert abs(convert(1.0, "hartree", "ev") - 27.211386) < 1e-6
+    assert abs(convert(27.211386, "ev", "hartree") - 1.0) < 1e-6
+    assert abs(convert(4.184, "kj/mol", "kcal/mol") - 1.0) < 1e-12
+    assert abs(convert(1.0, "kcal/mol", "kj/mol") - 4.184) < 1e-12
+
+
 def test_convert_gradient_pair():
     from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
 

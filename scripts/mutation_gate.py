@@ -105,6 +105,46 @@ _BUNDLED: tuple[Mutation, ...] = (
         "never displaced and never reaches the saddle point",
     ),
     Mutation(
+        id="nms-no-frequency-evidence",
+        path="src/chemrefine/nms.py",
+        old="return child.imaginary_freqs is not None and len(child.imaginary_freqs) == target",
+        new="return child.imaginary_freqs is None or len(child.imaginary_freqs) == target",
+        tests="tests/test_nms.py",
+        breaks="a child whose parse found no frequency table is promoted as a verified "
+        "stationary point — a minimum claimed with no evidence that it is one",
+    ),
+    Mutation(
+        id="nms-already-at-target-no-evidence",
+        path="src/chemrefine/nms.py",
+        old="        and structure.imaginary_freqs is not None\n"
+        "        and len(structure.imaginary_freqs) == target",
+        new="        and (structure.imaginary_freqs is None or "
+        "len(structure.imaginary_freqs) == target)",
+        tests="tests/test_nms.py",
+        breaks="a structure with no frequency table passes through a `minimum` step as though "
+        "already resolved, so it is never displaced and never verified",
+    ),
+    Mutation(
+        id="nms-best-child",
+        path="src/chemrefine/nms.py",
+        old="    return min(\n        structures,\n"
+        "        key=lambda s: (getattr(s, energy_attr) is None, getattr(s, energy_attr) or 0.0),",
+        new="    return max(\n        structures,\n"
+        "        key=lambda s: (getattr(s, energy_attr) is None, getattr(s, energy_attr) or 0.0),",
+        tests="tests/test_nms.py",
+        breaks="the highest-energy resolved child is promoted to the parent's canonical id — "
+        "retry-best-frame's inversion, on the resolution side",
+    ),
+    Mutation(
+        id="convert-direction",
+        path="src/chemrefine/quantities.py",
+        old='    ("hartree", "ev"): HARTREE_TO_EV,\n    ("ev", "hartree"): 1.0 / HARTREE_TO_EV,',
+        new='    ("hartree", "ev"): 1.0 / HARTREE_TO_EV,\n    ("ev", "hartree"): HARTREE_TO_EV,',
+        tests="tests/test_quantities.py",
+        breaks="every eV a caller converts is wrong by 27.2 squared while the round trip still "
+        "passes — each direction is its own constant, so swapping both is invisible to it",
+    ),
+    Mutation(
         id="boltzmann-cutoff",
         path="src/chemrefine/filtering.py",
         old="sorted_structures[: n_below + 1]",
