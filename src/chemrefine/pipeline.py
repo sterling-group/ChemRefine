@@ -190,8 +190,10 @@ def _lock_holder(lock: Path) -> tuple[str, int, str] | None:
     """The ``(host, pid, started)`` recorded in ``lock``, or ``None`` if unreadable.
 
     ``None`` covers both a lock vacated between the failed claim and this read, and one
-    whose writer died between creating the file and writing it — the caller treats the
-    two alike, because neither names a holder whose liveness can be checked.
+    damaged from outside — a partial copy, a truncating editor. This program never creates
+    the path without its record (:func:`run_lock` links a complete claim into place), so an
+    unreadable lock is never one of its own half-written. The caller treats the two alike,
+    because neither names a holder whose liveness can be checked.
     """
     try:
         record = json.loads(lock.read_text(encoding="utf-8"))
@@ -247,11 +249,11 @@ def lock_status(output_dir: Path) -> LockStatus:
 
     A lock file that exists but names no holder reports ``held=True`` with every
     holder field ``None`` — the same side of "held" :func:`run_lock` puts it on. That
-    file is what a driver killed between creating and writing the lock (or a partial
-    write) leaves behind, and the claim path refuses it until someone deletes a lock
-    they know is dead; reporting it "not held" here sent :func:`~chemrefine.
-    agent_tools.start_run` past its own gate into a child that exited into a log
-    nobody was watching yet.
+    file was damaged from outside (a partial copy, a truncating editor — this program
+    never creates the lock without its record), and the claim path refuses it until
+    someone deletes a lock they know is dead; reporting it "not held" here sent
+    :func:`~chemrefine.agent_tools.start_run` past its own gate into a child that exited
+    into a log nobody was watching yet.
     """
     lock = output_dir / RUN_LOCK_NAME
     holder = _lock_holder(lock)
@@ -359,13 +361,21 @@ def run_lock(output_dir: Path) -> Generator[None]:
     resubmit duplicates — silently, since nothing in that sequence is an error.
 
     **Why a pidfile and not ``flock``.** The output tree lives on a shared filesystem on
-    HPC, where ``flock`` semantics are the least reliable part of NFS; an ``O_EXCL``
-    create is atomic everywhere. The cost is that a lock can outlive a killed driver.
+    HPC, where ``flock`` semantics are the least reliable part of NFS; a fail-if-exists
+    ``os.link`` is atomic everywhere. The cost is that a lock can outlive a killed driver.
     :func:`_sigterm_unwinds` narrows that to SIGKILL alone — a ``scancel`` or walltime
     SIGTERM unwinds and releases — and a SIGKILLed holder on *this* host is probed with
     ``os.kill(pid, 0)`` and reclaimed when dead. A holder on another host cannot be probed
     from here — that lock is treated as live, and the error says to delete it once its run
     is known dead.
+
+    **The record and the lock are one operation.** The record is written to a per-pid
+    claim beside the lock and *linked* into place, so the lock never exists without a
+    complete record from this program. Created empty and written afterwards, it could:
+    a full disk at that instant left a 0-byte lock the ownership-checked release below
+    could not recognise as its own, and every later driver refused the tree as
+    "unreadable" until someone deleted it by hand. An unreadable lock can now only have
+    been damaged from outside.
 
     **Reclaim is an atomic rename, and release is ownership-checked.** Deleting a stale
     lock with ``unlink()`` let two drivers that both probed the same dead pid interleave —
@@ -393,55 +403,63 @@ def run_lock(output_dir: Path) -> Generator[None]:
     with _sigterm_unwinds():
         output_dir.mkdir(parents=True, exist_ok=True)
         lock = output_dir / RUN_LOCK_NAME
-        reclaimed = False
-        while True:
-            try:
-                fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                break
-            except FileExistsError:
-                holder = _lock_holder(lock)
-            # Every decision about a held lock is made here, past the handler, on purpose.
-            # The reentrant `yield` used to sit inside it, which ran the whole inner action
-            # with the FileExistsError still active — so any error the action raised was
-            # chained to it, and every traceback that escaped a run opened with "During
-            # handling of the above exception (FileExistsError: … run.lock)", pointing the
-            # reader at the lock before the real error. Out here the exception is over,
-            # and the refusal below needs no `from None` to keep it out of its traceback.
-            if holder is not None and holder[0] == socket.gethostname():
-                host, pid, started = holder
-                if pid == os.getpid():
-                    # Ours, taken further out — see "reentrant by pid" above.
-                    yield
-                    return
-                if not reclaimed and not _pid_alive(pid):
-                    # One attempt per process, won or lost: a lost claim means another
-                    # driver got there first, and the next pass answers to its lock.
-                    reclaimed = True
-                    if _reclaim_stale(lock, holder):
-                        logger.warning(
-                            "reclaiming stale run lock %s (pid %d on %s, started %s, now dead)",
-                            lock,
-                            pid,
-                            host,
-                            started,
-                        )
-                    continue
-            raise RunLockError(
-                f"another ChemRefine run holds this output tree: {lock} "
-                + (
-                    f"names pid {holder[1]} on {holder[0]}, started {holder[2]}"
-                    if holder is not None
-                    else "exists but is unreadable"
-                )
-                + ". Two drivers on one tree archive and resubmit each other's work, so "
-                "this run stops here. Wait for that run to finish — or, if it is known "
-                "dead (e.g. killed on another node), delete the lock file and retry."
-            )
         # The record in `_lock_holder`'s field order, so the release below compares whole.
         me = (socket.gethostname(), os.getpid(), datetime.now(UTC).isoformat(timespec="seconds"))
+        # Complete on disk before the lock exists — see "the record and the lock are one
+        # operation" above. `os.link` is the fail-if-exists primitive `_reclaim_stale`
+        # already relies on; exactly one claimant's link lands.
+        claim = lock.with_name(f"{RUN_LOCK_NAME}.claim.{me[1]}")
+        reclaimed = False
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump({"pid": me[1], "host": me[0], "started": me[2]}, fh)
+            claim.write_text(
+                json.dumps({"pid": me[1], "host": me[0], "started": me[2]}), encoding="utf-8"
+            )
+            while True:
+                try:
+                    os.link(claim, lock)
+                    break
+                except FileExistsError:
+                    holder = _lock_holder(lock)
+                # Every decision about a held lock is made here, past the handler, on purpose.
+                # The reentrant `yield` used to sit inside it, which ran the whole inner action
+                # with the FileExistsError still active — so any error the action raised was
+                # chained to it, and every traceback that escaped a run opened with "During
+                # handling of the above exception (FileExistsError: … run.lock)", pointing the
+                # reader at the lock before the real error. Out here the exception is over,
+                # and the refusal below needs no `from None` to keep it out of its traceback.
+                if holder is not None and holder[0] == socket.gethostname():
+                    host, pid, started = holder
+                    if pid == os.getpid():
+                        # Ours, taken further out — see "reentrant by pid" above.
+                        yield
+                        return
+                    if not reclaimed and not _pid_alive(pid):
+                        # One attempt per process, won or lost: a lost claim means another
+                        # driver got there first, and the next pass answers to its lock.
+                        reclaimed = True
+                        if _reclaim_stale(lock, holder):
+                            logger.warning(
+                                "reclaiming stale run lock %s (pid %d on %s, started %s, now dead)",
+                                lock,
+                                pid,
+                                host,
+                                started,
+                            )
+                        continue
+                raise RunLockError(
+                    f"another ChemRefine run holds this output tree: {lock} "
+                    + (
+                        f"names pid {holder[1]} on {holder[0]}, started {holder[2]}"
+                        if holder is not None
+                        else "exists but is unreadable"
+                    )
+                    + ". Two drivers on one tree archive and resubmit each other's work, so "
+                    "this run stops here. Wait for that run to finish — or, if it is known "
+                    "dead (e.g. killed on another node), delete the lock file and retry."
+                )
+        finally:
+            claim.unlink(missing_ok=True)
+        try:
             yield
         finally:
             # On success and on failure alike: a raise must not leave the tree locked, and

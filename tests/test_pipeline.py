@@ -994,9 +994,12 @@ def test_a_swept_up_lock_that_cannot_be_restored_is_reported(
         real_replace(src, dst)
 
     def third_driver_got_there_first(src: object, dst: object) -> None:
-        # A third driver's O_EXCL create lands inside the rename→link window, so the
-        # real os.link fails with the real OS answer: FileExistsError.
-        _write_lock(outputs, host=socket.gethostname(), pid=third_pid)
+        # Only the *restore* link is overtaken: the acquisition's own claim link (the
+        # lock is linked into place from a complete record) goes through untouched. A
+        # third driver's lock lands inside the rename→link window, so the real os.link
+        # fails with the real OS answer: FileExistsError.
+        if ".reclaim." in str(src):
+            _write_lock(outputs, host=socket.gethostname(), pid=third_pid)
         real_link(src, dst)
 
     monkeypatch.setattr(os, "replace", overtaken)
@@ -1061,6 +1064,96 @@ def test_an_unreadable_lock_raises(tmp_path: Path):
     (tmp_path / "outputs" / pipeline.RUN_LOCK_NAME).write_text("", encoding="utf-8")
     with pytest.raises(RunLockError, match="unreadable"), pipeline.run_lock(tmp_path / "outputs"):
         pass
+
+
+def test_a_failed_record_write_leaves_no_lock_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A full disk at the moment the record is written strands nothing.
+
+    Created empty with `O_EXCL` and written afterwards, the lock existed with no record for
+    as long as the write took — and for good when it failed: the ownership-checked release
+    could not recognise a 0-byte file as its own, and every later driver refused the tree as
+    "unreadable" until someone deleted it by hand. The record is now complete before the
+    lock exists, so the failure is the write's alone and the next command acquires cleanly.
+    """
+    import errno
+
+    outputs = tmp_path / "outputs"
+    real_write_text = Path.write_text
+
+    def disk_full(self: Path, *args: object, **kwargs: object) -> int:
+        if self.name.startswith(pipeline.RUN_LOCK_NAME):
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", disk_full)
+    with pytest.raises(OSError, match="No space left"), pipeline.run_lock(outputs):
+        pass
+    monkeypatch.setattr(Path, "write_text", real_write_text)
+    assert not (outputs / pipeline.RUN_LOCK_NAME).exists()
+    assert not list(outputs.glob(f"{pipeline.RUN_LOCK_NAME}.claim.*"))
+    with pipeline.run_lock(outputs):  # the tree is not stranded
+        assert pipeline._lock_holder(outputs / pipeline.RUN_LOCK_NAME) is not None
+
+
+def test_the_lock_is_linked_from_a_complete_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The lock and its record are one operation: what is linked already names this process.
+
+    Asserted on the link's source at the moment of linking, since that ordering is the whole
+    guarantee — a lock that exists is a record, never a file waiting for one.
+    """
+    import json
+    import os
+
+    outputs = tmp_path / "outputs"
+    real_link = os.link
+    linked: list[dict[str, object]] = []
+
+    def link_after_reading(src: object, dst: object, **kwargs: object) -> None:
+        linked.append(json.loads(Path(str(src)).read_text(encoding="utf-8")))
+        real_link(src, dst, **kwargs)
+
+    monkeypatch.setattr(os, "link", link_after_reading)
+    with pipeline.run_lock(outputs):
+        holder = pipeline._lock_holder(outputs / pipeline.RUN_LOCK_NAME)
+    monkeypatch.setattr(os, "link", real_link)
+    assert linked and linked[0]["pid"] == os.getpid()
+    assert holder is not None and holder[1] == os.getpid()
+    assert not list(outputs.glob(f"{pipeline.RUN_LOCK_NAME}.claim.*"))
+
+
+def test_a_claimant_that_loses_the_link_race_answers_to_the_winner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Two drivers link at once; exactly one lands, and the other reads the winner's record.
+
+    The loser's `os.link` fails with the lock already present — a live same-host holder it
+    must not reclaim — and refuses naming that pid, leaving the winner's lock and no claim
+    residue of its own behind.
+    """
+    import os
+    import socket
+
+    from chemrefine.errors import RunLockError
+
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    lock = outputs / pipeline.RUN_LOCK_NAME
+    winner_pid = os.getppid()
+    real_link = os.link
+
+    def winner_landed_first(src: object, dst: object, **kwargs: object) -> None:
+        _write_lock(outputs, host=socket.gethostname(), pid=winner_pid)
+        raise FileExistsError(dst)
+
+    monkeypatch.setattr(os, "link", winner_landed_first)
+    with pytest.raises(RunLockError, match=rf"pid {winner_pid}"), pipeline.run_lock(outputs):
+        pass
+    monkeypatch.setattr(os, "link", real_link)
+    holder = pipeline._lock_holder(lock)
+    assert holder is not None and holder[1] == winner_pid, "the winner's lock must survive"
+    assert not list(outputs.glob(f"{pipeline.RUN_LOCK_NAME}.claim.*"))
 
 
 def test_pid_alive_reads_permission_denied_as_alive(monkeypatch: pytest.MonkeyPatch):
