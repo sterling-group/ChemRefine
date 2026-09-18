@@ -159,6 +159,24 @@ def header_name_for_device(device: str) -> str:
     return "cuda.slurm.header" if str(device).lower() == "cuda" else "cpu.slurm.header"
 
 
+def header_name_for_step(override: str | None, *, gpus: int, default: str) -> str:
+    """The SLURM header one step's job uses — the one rule, for the run and the validator.
+
+    A per-step ``slurm_template`` wins; otherwise a step that asks for a GPU takes the
+    cuda header (:func:`header_name_for_device`) so the job lands on a GPU node, and
+    everything else takes the workflow's ``default``. Values rather than a context: the
+    scheduler holds a :class:`~chemrefine.state.StepContext` and asks the engine for
+    ``gpus``, the validator holds a config and reads the demand leniently, and each used
+    to keep an implementation of this rule that agreed with the other's only by prose —
+    the scaffold planned a header with one while the run dispatched with the other.
+    """
+    if override:
+        return override
+    if gpus > 0:
+        return header_name_for_device("cuda")
+    return default
+
+
 def _index_tokens(count: int) -> tuple[str, ...]:
     """``("0", "1", …)`` — the device tokens of a host addressed by plain index."""
     return tuple(str(i) for i in range(count))

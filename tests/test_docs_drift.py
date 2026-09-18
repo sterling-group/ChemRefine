@@ -161,7 +161,7 @@ _TRAIN = "chemrefine.engines.mlip.train.engine.MlipTrainEngine"
 _PYSCF = "chemrefine.engines.pyscf.options.PyscfOptions"
 _STATED_RULES: dict[tuple[str, str], str] = {
     ("StepConfig", "template"): "chemrefine.ids.step_template_path",
-    ("StepConfig", "slurm_template"): "chemrefine.engines._execution._header_name",
+    ("StepConfig", "slurm_template"): "chemrefine.slurm.dispatch.header_name_for_step",
     ("StepConfig", "charge"): "chemrefine.config.StepConfig.effective_charge",
     ("StepConfig", "multiplicity"): "chemrefine.config.StepConfig.effective_multiplicity",
     ("NmsOptions", "target"): "chemrefine.nms._resolved_options",

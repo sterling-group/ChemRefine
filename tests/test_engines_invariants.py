@@ -294,6 +294,29 @@ def test_gpu_demand_matches_the_engines_own_device_option(
 
 
 @pytest.mark.parametrize("engine_name", _gpu_capable())
+@pytest.mark.parametrize("device", [None, "cpu", "cuda"])
+def test_the_run_and_the_validator_name_one_header(
+    engine_name: str, device: str | None, tmp_path: Path
+):
+    """The header the scheduler opens is the header the validator and the scaffold name.
+
+    Two implementations of the pick used to agree only by prose — one over a context and
+    the engine's ``gpus``, one over a config and a lenient options read — and the scaffold
+    planned with the second while the run dispatched with the first. Both ask
+    ``slurm.header_name_for_step`` now; this holds that their inputs still lead it to one
+    answer for every GPU-capable engine and every way of asking for a device.
+    """
+    from chemrefine.config import Config
+    from chemrefine.engines import _execution
+    from chemrefine.validate import effective_header
+
+    engine = get_engine(engine_name)
+    ctx = _ctx(tmp_path, engine_name, {} if device is None else {"device": device})
+    config = Config(steps=[ctx.step_cfg], slurm_template=ctx.slurm_template)
+    assert _execution._header_name(engine, ctx) == effective_header(config, ctx.step_cfg, engine)
+
+
+@pytest.mark.parametrize("engine_name", _gpu_capable())
 def test_unset_device_never_silently_requests_a_gpu(engine_name: str, tmp_path: Path):
     """CPU is the floor: a step that names no device must schedule as a CPU job."""
     engine = get_engine(engine_name)

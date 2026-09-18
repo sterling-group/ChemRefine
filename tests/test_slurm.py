@@ -174,6 +174,21 @@ def test_no_memory_declaration_leaves_the_header_alone(tmp_path: Path):
     assert text.count("--mem-per-cpu") == 1
 
 
+@pytest.mark.parametrize(
+    ("override", "gpus", "expected"),
+    [
+        ("special.header", 3, "special.header"),  # a per-step header wins over everything
+        ("special.header", 0, "special.header"),
+        (None, 1, "cuda.slurm.header"),  # GPU demand picks the cuda header
+        ("", 1, "cuda.slurm.header"),  # an empty override is no override
+        (None, 0, "cpu.slurm.header"),  # else the workflow's own
+    ],
+)
+def test_header_name_for_step_is_the_one_rule(override: str | None, gpus: int, expected: str):
+    """Override, then GPU demand, then the default — spelled once, asked by run and validator."""
+    assert slurm.header_name_for_step(override, gpus=gpus, default="cpu.slurm.header") == expected
+
+
 def test_a_single_node_job_pins_the_node_and_a_headers_own_count_yields(tmp_path: Path):
     """``single_node`` writes ``--nodes=1`` and strips the header's own; ``False`` touches nothing.
 

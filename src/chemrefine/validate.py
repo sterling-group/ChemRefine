@@ -455,23 +455,19 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
 
 
 def effective_header(config: Config, step: StepConfig, engine: CalculationEngine) -> str:
-    """The header dispatch would pick — per-step override, cuda on GPU demand, else global.
+    """The header the run would pick, by the run's own rule, without a :class:`StepContext`.
 
-    Mirrors ``_execution._header_name`` without needing a :class:`StepContext`: the GPU
-    demand is read through the engine's declared options model via
-    :attr:`~chemrefine.engines._options.EngineOptions.gpu_demand`, the same read the scheduler
-    performs. Options too broken to read fall back to the global header — the breakage
-    is the validation report's own row, and a second exception here would bury it.
-    Shared with :mod:`chemrefine.scaffold`, so the plan and the run cannot disagree
-    about a header file's name.
+    :func:`chemrefine.slurm.header_name_for_step` is the rule — the one the scheduler
+    dispatches with — fed the GPU demand read through the engine's declared options model
+    (:attr:`~chemrefine.engines._options.EngineOptions.gpu_demand`, the same read the
+    scheduler performs). Options too broken to read count as no demand: the breakage is
+    the validation report's own row, and a second exception here would bury it. Shared
+    with :mod:`chemrefine.scaffold`, so the plan names the file the run will open.
     """
-    if step.slurm_template:
-        return step.slurm_template
+    gpus = 0
     if isinstance(engine, OptionsDeclaring):
         try:
-            demands_gpu = engine.options_cls.from_raw_lenient(step.options).gpu_demand > 0
+            gpus = engine.options_cls.from_raw_lenient(step.options).gpu_demand
         except ConfigError:
-            demands_gpu = False
-        if demands_gpu:
-            return slurm.header_name_for_device("cuda")
-    return config.slurm_template
+            gpus = 0
+    return slurm.header_name_for_step(step.slurm_template, gpus=gpus, default=config.slurm_template)

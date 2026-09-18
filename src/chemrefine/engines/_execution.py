@@ -31,17 +31,14 @@ _LOCAL_POLL_SECONDS = 0.25
 
 
 def _header_name(engine: JobExecutable, ctx: StepContext) -> str:
-    """Pick the SLURM header for this step.
+    """The SLURM header for this step: :func:`chemrefine.slurm.header_name_for_step`.
 
-    An explicit per-step ``slurm_template`` wins; otherwise a GPU step (``engine.gpus`` > 0)
-    auto-selects the cuda header so the job lands on a GPU node, and everything else uses the
-    global ``Config.slurm_template``.
+    The engine answers the GPU demand from the step's validated options; the rule that
+    turns the answer into a header name is the scheduler's and the validator's alike.
     """
-    if ctx.step_cfg.slurm_template:
-        return ctx.step_cfg.slurm_template
-    if engine.gpus(ctx) > 0:
-        return slurm.header_name_for_device("cuda")
-    return ctx.slurm_template
+    return slurm.header_name_for_step(
+        ctx.step_cfg.slurm_template, gpus=engine.gpus(ctx), default=ctx.slurm_template
+    )
 
 
 def _header_path(engine: JobExecutable, ctx: StepContext) -> Path:
