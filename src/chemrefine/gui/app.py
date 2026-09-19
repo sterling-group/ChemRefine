@@ -123,6 +123,19 @@ def _field(payload: dict[str, Any], key: str, kind: type = str) -> Any:
     return _typed(payload[key], key, kind)
 
 
+def _arg(key: str) -> str:
+    """One query argument a GET must carry, or the 400 that names it.
+
+    :func:`_field`'s rule for the other half of the API. A query argument is always a
+    string, so presence is the whole contract. Read bare, an absent one is Werkzeug's
+    ``BadRequestKeyError`` — an :class:`HTTPException` that :func:`surface` passes through
+    as an HTML page, which the page's fetch cannot read for a reason.
+    """
+    if key not in request.args:
+        raise ConfigError(f"request is missing the {key!r} query argument")
+    return request.args[key]
+
+
 def _optional(payload: dict[str, Any], key: str, kind: type = str) -> Any:
     """A field a body may omit — ``None`` when absent or null, else typed like :func:`_field`.
 
@@ -225,7 +238,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         :func:`chemrefine.agent_tools.expand_user_path`'s refusal, which :func:`surface`
         answers with the same 400 — every path a user types here goes through it.
         """
-        path = agent_tools.expand_user_path(request.args["path"])
+        path = agent_tools.expand_user_path(_arg("path"))
         if not path.is_file():
             return jsonify({"error": f"not a file: {path}"}), 400
         try:
@@ -331,9 +344,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     @app.get("/api/template")
     def read_template() -> Any:
         """One step's template text for the inline editor."""
-        return jsonify(
-            agent_tools.read_template(request.args["config_path"], _step_key(request.args["step"]))
-        )
+        return jsonify(agent_tools.read_template(_arg("config_path"), _step_key(_arg("step"))))
 
     @app.post("/api/template")
     def write_template() -> Any:
@@ -363,7 +374,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         mode = request.args.get("mode_index")
         return jsonify(
             agent_tools.get_structure(
-                request.args["config_path"],
+                _arg("config_path"),
                 _step_key(step) if step not in (None, "") else None,
                 structure_id=request.args.get("structure_id"),
                 mode_index=_wire_int(mode, "mode_index") if mode not in (None, "") else None,
@@ -381,7 +392,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         step = request.args.get("step")
         return jsonify(
             agent_tools.list_structures(
-                request.args["config_path"],
+                _arg("config_path"),
                 _step_key(step) if step not in (None, "") else None,
             )
         )

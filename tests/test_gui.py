@@ -1497,6 +1497,34 @@ def test_a_missing_request_field_is_a_400_that_names_it(client: Any):
     assert "JSON object" in bare.get_json()["error"]
 
 
+@pytest.mark.parametrize(
+    ("url", "missing"),
+    [
+        ("/api/load", "path"),
+        ("/api/template?step=1", "config_path"),
+        ("/api/template?config_path=x.yaml", "step"),
+        ("/api/structure", "config_path"),
+        ("/api/structure-list", "config_path"),
+    ],
+)
+def test_a_get_without_its_query_argument_is_a_400_in_the_documented_shape(
+    client: Any, url: str, missing: str
+):
+    """The rule ``_field`` holds for a POST body holds for a GET's query string.
+
+    Read bare, an absent argument is Werkzeug's ``BadRequestKeyError`` — an
+    ``HTTPException`` that ``surface`` passes through as an HTML page — so the page flashed
+    ``400 error`` with no reason. Every query argument a handler requires now goes through
+    ``_arg``, and the refusal names it in the ``{error, exit_code}`` shape the page reads.
+    """
+    response = _get(client, url)
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "error": f"request is missing the {missing!r} query argument",
+        "exit_code": 2,
+    }
+
+
 def test_a_body_that_is_not_a_json_object_is_a_400_at_every_endpoint(client: Any):
     """``force=True`` parses ``[]``, ``null`` and ``"x"`` as readily as an object.
 

@@ -459,6 +459,12 @@ for the full map.
 
 ### Fixed
 
+- **Every read the agent tools and the GUI make answers in the documented shape.** A
+  template, `steps.csv` or run log this account cannot read is the tools' `ConfigError`
+  naming the file, where it was a 500 with a traceback in the GUI and a generic tool
+  failure over MCP; a GET without its query argument is the same `{error, exit_code}`
+  refusal the POST endpoints give, not an HTML page the page cannot read; and a run the
+  OS refuses to spawn leaves no empty log behind for `run_status` to serve as the newest.
 - **A relaxed scan is read inside the `%geom` block that declares it.** The detector
   accepted the word `scan` anywhere after a `%geom` block, so an `Opt Freq` template whose
   `%pointcharges` path, `%base` name or coordinate file contained it was read by the scan

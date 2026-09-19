@@ -41,7 +41,13 @@ from chemrefine import cache, ids, introspect, io, pipeline, scaffold
 from chemrefine.cache import load_failure_records
 from chemrefine.config import Config, StepConfig, load_config
 from chemrefine.engines.api import FrequencyOutputParsing, ParsedResult, get_engine
-from chemrefine.errors import ENDPOINT_UNREACHABLE, EXIT_CODES, ConfigError, RunLockError
+from chemrefine.errors import (
+    ENDPOINT_UNREACHABLE,
+    EXIT_CODES,
+    ConfigError,
+    JobSubmissionError,
+    RunLockError,
+)
 from chemrefine.recovery import Action, resolve_target
 from chemrefine.state import Structure
 from chemrefine.validate import validate_config_file, validate_config_text
@@ -159,13 +165,23 @@ def _step_template_plan(config: Config, step: int | str) -> scaffold.TemplatePla
 
 
 def read_template(config_path: str, step: int | str) -> dict[str, Any]:
-    """One step's template text — the file the engine will actually render."""
+    """One step's template text — the file the engine will actually render.
+
+    A file this account cannot read is a :class:`~chemrefine.errors.ConfigError` naming
+    the path — the module's contract, held for the read as :func:`write_template` holds it
+    for the write — rather than an :class:`OSError` the GUI answers as a 500 and the MCP
+    server as a generic tool failure.
+    """
     plan = _step_template_plan(load_config(_config_path(config_path)), step)
     if not plan.exists:
         raise ConfigError(
             f"template {plan.path} does not exist yet (scaffold_templates writes a starter)"
         )
-    return {"path": str(plan.path), "text": io.read_utf8(plan.path, what="template")}
+    try:
+        text = io.read_utf8(plan.path, what="template")
+    except OSError as e:
+        raise ConfigError(f"cannot read template {plan.path}: {e}") from e
+    return {"path": str(plan.path), "text": text}
 
 
 def write_template(config_path: str, step: int | str, text: str) -> dict[str, Any]:
@@ -284,14 +300,21 @@ def start_run(
         # `TypeError` *after* the log file below existed: a 500, and an empty log that
         # `run_status` then served as the newest.
         argv.append(str(target))
-    with log_path.open("wb") as log:
-        # No shell, and nothing in `argv` is free text: the interpreter is `sys.executable`,
-        # `action` was matched against `_ACTIONS` above, `path` is a resolved config file,
-        # `target` names a step the config was asked for, and the two budgets are ints.
-        # Passed as argv rather than interpolated, so none of it can become a command.
-        proc = subprocess.Popen(  # noqa: S603
-            argv, stdout=log, stderr=subprocess.STDOUT, start_new_session=True
-        )
+    try:
+        with log_path.open("wb") as log:
+            # No shell, and nothing in `argv` is free text: the interpreter is
+            # `sys.executable`, `action` was matched against `_ACTIONS` above, `path` is a
+            # resolved config file, `target` names a step the config was asked for, and the
+            # two budgets are ints. Passed as argv rather than interpolated, so none of it
+            # can become a command.
+            proc = subprocess.Popen(  # noqa: S603
+                argv, stdout=log, stderr=subprocess.STDOUT, start_new_session=True
+            )
+    except OSError as e:
+        # The log exists for the child alone. With no child it is an empty file that
+        # `run_status` would serve as the newest run, so it goes with the failure.
+        log_path.unlink(missing_ok=True)
+        raise JobSubmissionError(f"could not start `chemrefine {action}`: {e}") from e
     return {"pid": proc.pid, "log": str(log_path), "output_dir": str(config.output_dir)}
 
 
@@ -300,8 +323,11 @@ def _steps_csv_rows(output_dir: Path) -> list[dict[str, str]]:
     path = output_dir / "steps.csv"
     if not path.is_file():
         return []
-    with path.open(encoding="utf-8", newline="") as f:
-        return list(csv.DictReader(f))
+    try:
+        with path.open(encoding="utf-8", newline="") as f:
+            return list(csv.DictReader(f))
+    except OSError as e:
+        raise ConfigError(f"cannot read {path}: {e}") from e
 
 
 def _latest_log(output_dir: Path) -> Path | None:
@@ -335,16 +361,19 @@ def _tail_lines(path: Path, wanted: int) -> list[str]:
     wanted = _tail_budget(wanted)
     if wanted <= 0:
         return []
-    end = path.stat().st_size
-    block = b""
-    with path.open("rb") as handle:
-        # One newline more than asked for: the first line in the block is usually a
-        # fragment, and stopping at exactly `wanted` could hand back a truncated line.
-        while end > 0 and block.count(b"\n") <= wanted:
-            step = min(_TAIL_CHUNK, end)
-            end -= step
-            handle.seek(end)
-            block = handle.read(step) + block
+    try:
+        end = path.stat().st_size
+        block = b""
+        with path.open("rb") as handle:
+            # One newline more than asked for: the first line in the block is usually a
+            # fragment, and stopping at exactly `wanted` could hand back a truncated line.
+            while end > 0 and block.count(b"\n") <= wanted:
+                step = min(_TAIL_CHUNK, end)
+                end -= step
+                handle.seek(end)
+                block = handle.read(step) + block
+    except OSError as e:
+        raise ConfigError(f"cannot read {path}: {e}") from e
     return block.decode("utf-8", errors="replace").splitlines()[-wanted:]
 
 

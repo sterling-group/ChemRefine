@@ -27,7 +27,7 @@ import yaml
 
 from chemrefine import agent_tools, cache, io, pipeline
 from chemrefine.cache import save_failure_records
-from chemrefine.errors import ConfigError, RunLockError
+from chemrefine.errors import ConfigError, JobSubmissionError, RunLockError
 from chemrefine.state import FailureKind, FailureRecord
 
 
@@ -298,6 +298,58 @@ def test_write_template_answers_an_unwritable_destination_with_the_contract(tmp_
             agent_tools.write_template(str(path), 1, "! MyKeywords\n")
     finally:
         fortress.chmod(0o755)
+
+
+def test_read_template_answers_an_unreadable_file_with_the_contract(tmp_path: Path):
+    """The same rule for the read: a ConfigError naming the path, not a raw OSError."""
+    if os.geteuid() == 0:
+        pytest.skip("root reads everything; the permission wall cannot be built")
+    path = _write_config(tmp_path, {"step": 1, "engine": "orca"})
+    template = Path(agent_tools.write_template(str(path), 1, "! Mine\n")["path"])
+    template.chmod(0)
+    try:
+        with pytest.raises(ConfigError, match=f"cannot read template .*{template.name}"):
+            agent_tools.read_template(str(path), 1)
+    finally:
+        template.chmod(0o644)
+
+
+@pytest.mark.parametrize("victim", ["steps.csv", "agent_runs/20260815T000000Z-run.log"])
+def test_run_status_answers_an_unreadable_record_with_the_contract(tmp_path: Path, victim: str):
+    """A persisted record this account cannot read is a ConfigError naming it.
+
+    The report and the log are read on every status poll; an OSError out of either reached
+    the GUI as a 500 and an MCP client as a generic tool failure, naming neither file.
+    """
+    if os.geteuid() == 0:
+        pytest.skip("root reads everything; the permission wall cannot be built")
+    path = _reported_tree(tmp_path)
+    target = tmp_path / "outputs" / victim
+    target.chmod(0)
+    try:
+        with pytest.raises(ConfigError, match=f"cannot read .*{target.name}"):
+            agent_tools.run_status(str(path))
+    finally:
+        target.chmod(0o644)
+
+
+def test_start_run_leaves_no_log_when_the_child_cannot_be_started(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A spawn the OS refuses is the launcher's error, and the log opened for it goes too.
+
+    ``run_status`` serves the newest ``agent_runs`` log; an empty one left behind by a
+    ``Popen`` that raised would be served as the latest run.
+    """
+    path = _write_config(tmp_path)
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise OSError(11, "Resource temporarily unavailable")
+
+    monkeypatch.setattr(subprocess, "Popen", refuse)
+    with pytest.raises(JobSubmissionError, match="could not start `chemrefine run`"):
+        agent_tools.start_run(str(path))
+    assert not list((tmp_path / "outputs" / "agent_runs").glob("*.log"))
 
 
 # ---------------------------------------------------------------------------
