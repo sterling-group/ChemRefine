@@ -490,6 +490,16 @@ _BUNDLED: tuple[Mutation, ...] = (
         "step's filter and steps.csv — ranked and reported on a number this step never "
         "computed",
     ),
+    Mutation(
+        id="orca-scan-block-bound",
+        path="src/chemrefine/engines/orca/inspect.py",
+        old='_GEOM_BLOCK_RE = re.compile(r"%geom\\b([^%*!]*)", re.IGNORECASE)',
+        new='_GEOM_BLOCK_RE = re.compile(r"%geom\\b([\\s\\S]*)", re.IGNORECASE)',
+        tests="tests/test_engines_orca_inspect.py",
+        breaks="an `Opt Freq` template naming `scan` anywhere after its `%geom` block is read "
+        "by the scan parser — the step keeps its energies and silently loses its frequency "
+        "table and every imaginary mode",
+    ),
 )
 
 #: What an engine files beside its contract fixture — ``tests/data/engines/<name>/`` — to

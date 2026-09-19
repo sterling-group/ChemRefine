@@ -31,8 +31,14 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-# A ``%geom … Scan … end`` block (a relaxed surface scan) → the ``pes`` parser.
-_GEOM_SCAN_RE = re.compile(r"%geom\b.*?\bscan\b.*?\bend\b", re.IGNORECASE | re.DOTALL)
+# A relaxed surface scan is a ``Scan`` sub-block inside ``%geom`` → the ``pes`` parser. The
+# block's body is what lies between the ``%geom`` opener and the next element of the input —
+# another ``%`` block, a ``*`` coordinate section or a ``!`` keyword line — and ``scan`` is
+# looked for in that body alone: a path naming ``scan`` in a later block, or a ``scan.xyz``
+# on the coordinate line, belongs to a different element. The body is not cut at the first
+# ``end`` because the ``Scan`` sub-block closes with one of its own before the block's.
+_GEOM_BLOCK_RE = re.compile(r"%geom\b([^%*!]*)", re.IGNORECASE)
+_SCAN_TOKEN_RE = re.compile(r"\bscan\b", re.IGNORECASE)
 
 # Whole-token spellings of the two run-type keywords this keys on, as ORCA 6.1.1 accepts
 # them. Matched against whole tokens, so a keyword that merely contains one of these
@@ -130,6 +136,11 @@ def _read_pal(text: str) -> int:
     return 1
 
 
+def _has_geom_scan(decommented: str) -> bool:
+    """Whether any ``%geom`` block's body declares a ``Scan`` — see :data:`_GEOM_BLOCK_RE`."""
+    return any(_SCAN_TOKEN_RE.search(m.group(1)) for m in _GEOM_BLOCK_RE.finditer(decommented))
+
+
 def inspect_template(template_path: str | Path) -> OrcaInputInfo:
     """Infer run type + PAL from an ORCA template in a single read.
 
@@ -162,7 +173,7 @@ def inspect_template(template_path: str | Path) -> OrcaInputInfo:
         operation = "docker"
     elif "solvator" in keywords:
         operation = "solvator"
-    elif _GEOM_SCAN_RE.search(decommented):
+    elif _has_geom_scan(decommented):
         operation = "pes"
     elif "irc" in keywords:
         operation = "irc"

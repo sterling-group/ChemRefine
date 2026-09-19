@@ -136,6 +136,50 @@ def test_inspect_ignores_commented_out_scan_block(tmp_path: Path):
     assert inspect_template(_write(tmp_path, body)).operation == "opt_sp"
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        # The word in a later block's quoted path.
+        '! B3LYP def2-SVP Opt Freq\n%geom MaxIter 300 end\n%pointcharges "/data/scan/q.pc"\n'
+        "%pal nprocs 8 end\n",
+        # The word as a later block's value.
+        '! B3LYP def2-SVP Opt Freq\n%geom\n  MaxIter 300\nend\n%base "scan"\n',
+        # The word on the coordinate line that follows the block.
+        "! B3LYP def2-SVP Opt Freq\n%geom MaxIter 300 end\n* xyzfile 0 1 scan.xyz\n",
+        # The word on a keyword line that follows the block.
+        "%geom MaxIter 300 end\n! B3LYP def2-SVP Opt Freq scan\n",
+    ],
+    ids=["later-block-path", "later-block-value", "coordinate-line", "keyword-line"],
+)
+def test_scan_outside_the_geom_block_body_is_not_a_scan(tmp_path: Path, body: str):
+    """``scan`` names a relaxed scan only inside the ``%geom`` block that declares it.
+
+    An ``Opt Freq`` step read as ``pes`` is parsed by the scan reader, which reports no
+    frequency table — so the run keeps its energies and silently loses its thermochemistry
+    and every imaginary mode NMS would act on.
+    """
+    run = inspect_template(_write(tmp_path, body))
+    assert run.operation == "opt_sp"
+    assert run.has_freq is True
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # The sub-block on its own lines, its ``end`` before the block's own.
+        "! B3LYP def2-SVP Opt\n%geom\n  Scan\n    B 0 1 = 1.0, 2.0, 10\n  end\nend\n",
+        # A second sub-block after the scan, then another block and the coordinates.
+        "! B3LYP def2-SVP Opt\n%geom Scan B 0 1 = 1.0, 2.0, 10 end\n"
+        "  Constraints { B 2 3 C } end\nend\n%pal nprocs 4 end\n* xyzfile 0 1 geom.xyz\n",
+        # The scan block after another block.
+        "! B3LYP def2-SVP Opt\n%pal nprocs 4 end\n%GEOM SCAN D 0 1 2 3 = 0, 180, 19 END END\n",
+    ],
+    ids=["multi-line", "with-constraints", "after-another-block"],
+)
+def test_a_scan_sub_block_anywhere_in_the_geom_body_is_a_scan(tmp_path: Path, body: str):
+    assert inspect_template(_write(tmp_path, body)).operation == "pes"
+
+
 def test_inspect_keeps_a_hash_inside_a_quoted_filename(tmp_path: Path):
     """A ``#`` in a quoted path is part of the filename, not the start of a comment.
 
