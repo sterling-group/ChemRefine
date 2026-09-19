@@ -208,7 +208,11 @@ def parse_pes_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
                 positions=positions,
                 energy_hartree=seg_energy,
                 forces_ev_per_a=None,
-                # Each frame is a converged scan point (split on RUN DONE).
+                # A segment ends at a RUN DONE banner, and ORCA prints that banner only for
+                # a point whose optimisation converged: a point that reaches its cycle limit
+                # prints its warning without one and ends the job in error termination,
+                # which ``terminated`` carries. The ``pes_unconverged`` contract case holds
+                # both halves, so the segment count is the converged-point count.
                 converged=True,
                 terminated_normally=terminated,
             )

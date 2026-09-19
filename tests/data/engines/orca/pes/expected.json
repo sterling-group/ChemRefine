@@ -1,0 +1,77 @@
+{
+  "result_format": "v1.0",
+  "structures": [
+    {
+      "id": "0-0",
+      "parent_id": "0",
+      "energy_hartree": -74.965900789318,
+      "gibbs_hartree": null,
+      "enthalpy_hartree": null,
+      "energy_zpe_hartree": null,
+      "converged": true,
+      "terminated_normally": true,
+      "symbols": [
+        "O",
+        "H",
+        "H"
+      ],
+      "positions": [
+        [
+          0.0,
+          0.000284,
+          -4.4e-05
+        ],
+        [
+          0.0,
+          3.1e-05,
+          0.989956
+        ],
+        [
+          0.0,
+          0.974685,
+          -0.171912
+        ]
+      ],
+      "forces_ev_per_a": null,
+      "imaginary_freqs": null,
+      "frequencies": null,
+      "resolved_from": null
+    },
+    {
+      "id": "0-1",
+      "parent_id": "0",
+      "energy_hartree": -74.732311539346,
+      "gibbs_hartree": null,
+      "enthalpy_hartree": null,
+      "energy_zpe_hartree": null,
+      "converged": true,
+      "terminated_normally": true,
+      "symbols": [
+        "O",
+        "H",
+        "H"
+      ],
+      "positions": [
+        [
+          0.0,
+          0.040939,
+          -0.340623
+        ],
+        [
+          0.0,
+          -0.115724,
+          1.452546
+        ],
+        [
+          0.0,
+          1.049786,
+          -0.293923
+        ]
+      ],
+      "forces_ev_per_a": null,
+      "imaginary_freqs": null,
+      "frequencies": null,
+      "resolved_from": null
+    }
+  ]
+}
