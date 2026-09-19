@@ -612,7 +612,8 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
                     message_history=pending,
                     deferred_tool_results=DeferredToolResults(
                         approvals={
-                            k: bool(v) for k, v in _field(payload, "approvals", dict).items()
+                            k: _typed(v, f"approvals.{k}", bool)
+                            for k, v in _field(payload, "approvals", dict).items()
                         }
                     ),
                 )

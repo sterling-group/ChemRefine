@@ -1271,6 +1271,36 @@ def test_chat_denial_keeps_the_disk_untouched(
     assert not (tmp_path / "templates").exists()
 
 
+@pytest.mark.parametrize("verdict", ["false", "no", 0, [], ["yes"]], ids=repr)
+def test_chat_reads_an_approval_as_a_json_boolean_not_by_truthiness(
+    client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path, verdict: Any
+):
+    """A verdict that is not a JSON boolean is refused — never read as consent.
+
+    The approvals map is the one place a misread boolean runs a tool that writes to the
+    user's tree. It is typed on the wire like ``overwrite`` on ``/api/scaffold``: a string
+    ``"false"`` or a non-empty list is the client's mistake, answered in the documented error
+    shape with nothing run, and the suspended call still waits for a real verdict.
+    """
+    config = _saved_config(tmp_path)
+    _inject_model(chat_env, _script_model(config))
+    suspended = _post(client, "/api/agent/chat", {"message": "scaffold it"}).get_json()
+    [request_card] = suspended["pending"]
+
+    refused = _post(client, "/api/agent/chat", {"approvals": {request_card["id"]: verdict}})
+    assert refused.status_code == 400
+    assert refused.get_json()["error"] == (
+        f"'approvals.{request_card['id']}' must be a boolean, not {type(verdict).__name__}"
+    )
+    assert not (tmp_path / "templates").exists()
+
+    resumed = _post(
+        client, "/api/agent/chat", {"approvals": {request_card["id"]: False}}
+    ).get_json()
+    assert resumed["reply"] == "finished"
+    assert not (tmp_path / "templates").exists()
+
+
 def test_chat_refuses_approvals_with_nothing_pending(client: Any, chat_env: pytest.MonkeyPatch):
     from pydantic_ai.models.test import TestModel
 
