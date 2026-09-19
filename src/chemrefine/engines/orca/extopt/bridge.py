@@ -30,11 +30,17 @@ from chemrefine.engines._backend_server.base import (
     CalculationData,
 )
 from chemrefine.engines._backend_server.registry import known_backends, load_calculator
+from chemrefine.engines._options import ExtOptOptions
 from chemrefine.engines.orca.extopt import protocol
 from chemrefine.errors import JobFailureError
 
-DEFAULT_TIMEOUT: float = 600.0
-"""Seconds before a single ``/calculate`` request times out."""
+DEFAULT_TIMEOUT: float = float(ExtOptOptions.model_fields["gradient_timeout_seconds"].default)
+"""Seconds before a single ``/calculate`` request times out.
+
+The options model's default, read off the field that declares ``gradient_timeout_seconds``
+so the flag and the knob cannot name two numbers — the engine renders the flag from the
+model on every job, and a hand-run bridge without it answers with the same value.
+"""
 
 logger = logging.getLogger(__name__)
 

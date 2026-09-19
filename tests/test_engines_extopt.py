@@ -709,8 +709,21 @@ def test_client_parse_args_defaults():
     assert args.bind is None
     assert args.url_file is None
     assert args.method == "dft"
-    assert args.timeout == bridge.DEFAULT_TIMEOUT
+    assert args.timeout == 600.0
     assert args.inputfile == "job.extinp.tmp"
+
+
+def test_the_client_timeout_default_is_the_options_model_default():
+    """One number for ``gradient_timeout_seconds``: the flag reads it off the model's field.
+
+    Compared against the model rather than against ``bridge.DEFAULT_TIMEOUT``, which is the
+    value under test — a comparison with itself holds after either number moves.
+    """
+    from chemrefine.engines._options import ExtOptOptions
+
+    field_default = ExtOptOptions.model_fields["gradient_timeout_seconds"].default
+    assert field_default == bridge.DEFAULT_TIMEOUT
+    assert bridge.parse_args(["--backend", "mlip", "job.extinp.tmp"]).timeout == field_default
 
 
 def test_client_timeout_is_a_flag_of_the_shared_skeleton():
