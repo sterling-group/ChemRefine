@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import shlex
+import subprocess
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -716,6 +717,25 @@ def test_client_timeout_is_a_flag_of_the_shared_skeleton():
     """The per-call bound is the client's own knob, so every backend's wrapper can set it."""
     args = bridge.parse_args(["--backend", "pyscf", "--timeout", "900", "job.extinp.tmp"])
     assert args.timeout == 900.0
+
+
+def test_the_bridge_process_imports_no_ase_io():
+    """The wrapper runs once per ORCA optimizer step, so its import chain stays light.
+
+    ``ase.io`` is the heaviest import in reach — about half a second — and nothing on the
+    bridge's path reads a frame through ASE: :func:`protocol._read_xyz` exists so that it
+    does not have to. Held in a fresh interpreter, because this process imported ``ase.io``
+    long ago; the module name is what proves the whole chain, not one file's import list.
+    """
+    probe = (
+        "import sys\n"
+        "import chemrefine.engines.orca.extopt.bridge\n"
+        "sys.exit(1 if 'ase.io' in sys.modules else 0)\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, timeout=120, check=False
+    )
+    assert done.returncode == 0, done.stderr or "the bridge's import chain reached ase.io"
 
 
 def test_client_settings_from_args_is_empty_single_channel():

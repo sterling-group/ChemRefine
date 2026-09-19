@@ -11,8 +11,8 @@ stated price — the rule for a new engine is "use :func:`read_xyz_frames` /
 
 * the ExtOpt wrapper's plain-format reader
   (``chemrefine.engines.orca.extopt.protocol._read_xyz``) runs in a fresh process
-  once per ORCA optimizer step, and importing this module costs ~0.5 s of
-  ``ase.io`` before it reads a thing;
+  once per ORCA optimizer step, and :func:`read_xyz_frames` imports ~0.5 s of
+  ``ase.io`` on its first call;
 * the ORCA ensemble walkers (:mod:`chemrefine.engines.orca.output.ensembles`)
   parse per-format energy headers and skip corrupt frames mid-file — neither of
   which ASE's reader can express.
@@ -28,7 +28,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 from ase import Atoms
-from ase.io import read as ase_read
 from numpy.typing import NDArray
 
 from chemrefine.errors import ConfigError
@@ -290,7 +289,14 @@ def read_xyz_frames(path: str | Path) -> list[Atoms]:
     int(): '\\n'``) on the trailing blank lines that editors and ORCA routinely
     leave on real files. ``index=":"`` returns all frames; a single-frame file
     yields a one-element list, so callers never special-case frame count.
+
+    ``ase.io`` is imported here, on the first read, rather than with the module: it costs
+    about half a second, and importing this module is how every process in the package
+    starts — the CLI answering ``--help``, and the ExtOpt wrapper ORCA spawns once per
+    optimizer step, which never reads a frame through here.
     """
+    from ase.io import read as ase_read
+
     return cast("list[Atoms]", ase_read(str(path), index=":", format="extxyz"))
 
 

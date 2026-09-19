@@ -23,7 +23,6 @@ from typing import Any, ClassVar
 
 import numpy as np
 from ase import Atoms
-from ase.io import write as ase_write
 
 from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
 from chemrefine.engines.mlip.train.base import DatasetFiles, TrainerBase, TrainingPlan
@@ -162,7 +161,14 @@ class MaceTrainer(TrainerBase):
     these are what stop the model disappearing with it."""
 
     def write_split(self, plan: TrainingPlan, name: str, structures: tuple[Structure, ...]) -> Path:
-        """One split as extxyz with MACE's own ``REF_*`` label keys."""
+        """One split as extxyz with MACE's own ``REF_*`` label keys.
+
+        ``ase.io`` is imported here, when a split is written: this module is loaded with
+        every other plugin by any process that imports the engine package, and the ExtOpt
+        wrapper is one of those, once per ORCA optimizer step.
+        """
+        from ase.io import write as ase_write
+
         path = plan.run_dir / f"{name}.xyz"
         ase_write(str(path), [_to_atoms(s, plan) for s in structures], format="extxyz")
         return path

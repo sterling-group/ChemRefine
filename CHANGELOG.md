@@ -300,6 +300,11 @@ for the full map.
 
 ### Changed
 
+- **The ExtOpt wrapper starts in less than half the time.** ORCA spawns it once per
+  optimizer step, and its import chain reached `ase.io` twice — through the XYZ helpers
+  and through the MACE backend — for half a second it never used. Both import it on the
+  first call that reads or writes a frame, so the wrapper never pays for it (0.30 s where
+  it took 0.72 s), and a test holds its whole import chain free of it.
 - **A threaded job is one SLURM task with N CPUs.** The `pyscf` and `mlip` script engines
   and `mlip-train` used to request `--ntasks=N --cpus-per-task=1` — MPI's shape — for a
   single OpenMP/torch process, which a scheduler may place across nodes, leaving the
