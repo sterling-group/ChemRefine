@@ -54,11 +54,25 @@ def test_provider_resolution_is_flags_env_preset(monkeypatch: pytest.MonkeyPatch
     assert ProviderConfig.resolve("ollama", api_key="").api_key == "env-key"  # blank falls through
 
 
-@pytest.mark.parametrize("key", ["sk-good\r\nX-Injected: 1", "sk-good\nX: 1", "sk\x00", "k" * 1025])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "sk-good\r\nX-Injected: 1",
+        "sk-good\nX: 1",
+        "sk\x00",
+        "k" * 1025,
+        "sk\u2019pasted",
+        "sk\u2014dash",
+    ],
+)
 def test_a_key_that_cannot_be_a_header_is_refused_at_resolution(
     monkeypatch: pytest.MonkeyPatch, key: str
 ):
     """The key leaves as ``Authorization: Bearer …``; a newline in it is header injection.
+
+    A curly quote or an em dash is the other way a pasted key cannot be a header:
+    ``http.client`` encodes header values as latin-1 and raises before connecting, which the
+    check's body handler would otherwise report as the endpoint's fault.
 
     Judged here, on the *resolved* key, at the one place every entry point resolves — the
     GUI panel's box, the CLI's flags and ``CHEMREFINE_LLM_API_KEY`` alike. The GUI's check

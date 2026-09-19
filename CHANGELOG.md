@@ -459,6 +459,10 @@ for the full map.
 
 ### Fixed
 
+- **An API key holding a character HTTP headers cannot carry is refused by name.** A
+  curly quote or an em dash pasted into the key made `chemrefine agent --check` blame the
+  endpoint ("the reply is not a model listing") for a request it never sent; the key is
+  refused where it is resolved, as a newline in it already was.
 - **Every read the agent tools and the GUI make answers in the documented shape.** A
   template, `steps.csv` or run log this account cannot read is the tools' `ConfigError`
   naming the file, where it was a 500 with a traceback in the GUI and a generic tool

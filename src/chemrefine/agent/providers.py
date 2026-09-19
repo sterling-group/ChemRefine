@@ -112,11 +112,18 @@ def _header_fault(key: str) -> str | None:
     The key leaves as ``Authorization: Bearer …``. A carriage return or newline in it is
     header injection in any client that does not reject it, and in ``urllib`` — which does
     — it is a ``ValueError`` raised from inside :func:`check`, where the surrounding handler
-    would report it as a fault of the endpoint being probed. Bounded, too: nothing
+    would report it as a fault of the endpoint being probed. A character outside latin-1 is
+    the same class: ``http.client`` encodes header values as latin-1 and raises
+    ``UnicodeEncodeError`` — a ``ValueError`` — before any connection is made, which is what
+    a curly quote or an em dash pasted from a document turns into. Bounded, too: nothing
     legitimate here is a kilobyte long.
     """
     if set(key) & set("\r\n\x00"):
         return "it contains a newline, carriage return or NUL"
+    try:
+        key.encode("latin-1")
+    except UnicodeEncodeError:
+        return "it contains a character an HTTP header cannot carry"
     if len(key) > 1024:
         return "it is longer than 1024 characters"
     return None
