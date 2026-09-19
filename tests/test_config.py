@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -1000,6 +1001,45 @@ def test_scalar_options_are_a_field_error_not_a_traceback():
     report = validate_config_text("steps:\n  - step: 1\n    engine: orca\n    options: 3\n")
     assert not report.ok
     assert any("must be a mapping" in issue.message for issue in report.issues)
+
+
+@pytest.mark.parametrize(
+    ("text", "named"),
+    [
+        (
+            "steps:\n  - step: 1\n    engine: orca\n    operation: sp\n"
+            "    normal_mode_sampling_parameters: 5\n",
+            "steps[0].normal_mode_sampling_parameters",
+        ),
+        (
+            "steps:\n  - step: 1\n    engine: orca\n    operation: sp\n"
+            "    sample_type: {method: boltzmann, parameters: 5}\n",
+            "steps[0].sample_type.parameters",
+        ),
+        (
+            "orca_executable: /x\nexecutables: 3\n"
+            "steps:\n  - step: 1\n    engine: orca\n    operation: sp\n",
+            "executables",
+        ),
+    ],
+    ids=["nms-parameters", "sample-parameters", "executables"],
+)
+def test_a_scalar_where_a_legacy_mapping_belongs_is_a_field_error_from_both_loaders(
+    text: str, named: str
+):
+    """Every legacy key that holds a mapping refuses a scalar by name, as ``options`` does.
+
+    A ``dict()`` over the scalar raised a raw ``TypeError`` past both loaders — a traceback
+    out of ``load_config`` and a 500 out of ``validate_config_text``; the refusal is a
+    pydantic row from one and a report row from the other, and it names the key.
+    """
+    from chemrefine.validate import validate_config_text
+
+    with pytest.raises(ValidationError, match=re.escape(f"{named} must be a mapping")):
+        Config.model_validate(yaml.safe_load(text))
+    report = validate_config_text(text)
+    assert not report.ok
+    assert any(f"{named} must be a mapping" in issue.message for issue in report.issues)
 
 
 def test_every_legacy_rewrite_announces_itself():

@@ -78,6 +78,22 @@ _SAMPLE_KEY_RENAMES = {
 }
 
 
+def _mapping(value: Any, *, what: str, of: str) -> dict[str, Any]:
+    """A copy of ``value`` as the mapping ``what`` must hold; ``None`` is an empty one.
+
+    Every legacy key that holds a mapping is read through here, so a scalar in its place is
+    refused by name from both loaders rather than reaching a ``dict()`` call. A
+    ``ValueError`` is the one exception both callers account for: pydantic wraps it into a
+    row when this runs inside :class:`~chemrefine.config.Config`'s before-validator, and
+    :func:`chemrefine.validate.validate_config_text` suppresses it on its reporting pass.
+    """
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return dict(value)
+    raise ValueError(f"{what} must be a mapping of {of}, got {type(value).__name__}: {value!r}")
+
+
 def normalize(raw: dict[str, Any], *, report: DeprecationSink | None = None) -> dict[str, Any]:
     """Rewrite legacy (v1.3.1 / ``mlff``-named) YAML keys to the current schema.
 
@@ -98,7 +114,7 @@ def normalize(raw: dict[str, Any], *, report: DeprecationSink | None = None) -> 
         sink(
             ("orca_executable",), "`orca_executable` is deprecated; use `executables: {orca: ...}`"
         )
-        execs = dict(out.get("executables") or {})
+        execs = _mapping(out.get("executables"), what="executables", of="tool names to paths")
         execs.setdefault("orca", out.pop("orca_executable"))
         out["executables"] = execs
     if "initial_xyz" in out:
@@ -119,17 +135,9 @@ def _move_engine_block(
     Mutates ``s`` (pops the block, merges its keys into ``options``) and returns the
     canonical engine that block implies, or ``None`` when no block is present.
     """
-    raw_options = s.get("options") or {}
-    if not isinstance(raw_options, dict):
-        # ValueError, because pydantic wraps it: this runs inside `Config`'s
-        # before-validator, where a raw TypeError from `dict(3)` escaped *both*
-        # loaders — a traceback out of `load_config`'s exit-code contract, and a 500
-        # out of `validate_config_text`, whose documented contract is "never raises".
-        raise ValueError(
-            f"steps[{loc[1]}].options must be a mapping of option names to values, "
-            f"got {type(raw_options).__name__}: {raw_options!r}"
-        )
-    options = dict(raw_options)
+    options = _mapping(
+        s.get("options"), what=f"steps[{loc[1]}].options", of="option names to values"
+    )
     block_engine: str | None = None
     for block, engine_name in _LEGACY_BLOCKS.items():
         if isinstance(s.get(block), dict):
@@ -169,8 +177,12 @@ def _normalize_nms_keys(
     nms_on = bool(s.pop("normal_mode_sampling", False))
     if nms_on:
         s["nms"] = True
-    params = dict(s.pop("normal_mode_sampling_parameters", None) or {})
-    opts = dict(s.get("options") or {})
+    params = _mapping(
+        s.pop("normal_mode_sampling_parameters", None),
+        what=f"steps[{loc[1]}].normal_mode_sampling_parameters",
+        of="knob names to values",
+    )
+    opts = _mapping(s.get("options"), what=f"steps[{loc[1]}].options", of="option names to values")
     calc_type = str(params.pop("calc_type", "rm_imag")).lower()  # main default rm_imag → ts
     if nms_on:
         opts.setdefault("target", {"rm_imag": "ts"}.get(calc_type, calc_type))
@@ -237,7 +249,7 @@ def _normalize_step(step: Any, index: int, sink: DeprecationSink) -> Any:
     if "sample_type" in s:
         if "sample" not in s:
             sink((*loc, "sample_type"), "`sample_type` is deprecated; use `sample`")
-            s["sample"] = _flatten_sample_type(s["sample_type"])
+            s["sample"] = _flatten_sample_type(s["sample_type"], what=f"steps[{index}].sample_type")
         s.pop("sample_type")
     # Normalize the resulting `sample` block (from sample_type, or a direct
     # block, possibly using legacy method/key names) to the v2 vocabulary.
@@ -247,12 +259,19 @@ def _normalize_step(step: Any, index: int, sink: DeprecationSink) -> Any:
     return s
 
 
-def _flatten_sample_type(sample_type: Any) -> Any:
-    """Flatten a legacy ``sample_type`` ``{method, parameters: {…}}`` into a flat dict."""
+def _flatten_sample_type(sample_type: Any, *, what: str = "sample_type") -> Any:
+    """Flatten a legacy ``sample_type`` ``{method, parameters: {…}}`` into a flat dict.
+
+    ``what`` names the block in the refusal of a ``parameters`` that is not a mapping.
+    """
     if not isinstance(sample_type, dict):
         return sample_type
     flat: dict[str, Any] = {"method": sample_type.get("method")}
-    flat.update(sample_type.get("parameters") or {})
+    flat.update(
+        _mapping(
+            sample_type.get("parameters"), what=f"{what}.parameters", of="parameter names to values"
+        )
+    )
     for k, v in sample_type.items():  # carry through any non-nested extras
         if k not in ("method", "parameters"):
             flat.setdefault(k, v)
