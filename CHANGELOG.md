@@ -459,6 +459,20 @@ for the full map.
 
 ### Fixed
 
+- **A relaxed scan is read inside the `%geom` block that declares it.** The detector
+  accepted the word `scan` anywhere after a `%geom` block, so an `Opt Freq` template whose
+  `%pointcharges` path, `%base` name or coordinate file contained it was read by the scan
+  parser: the final energy survived, the frequency table did not, and NMS refused the step
+  for a reason that was not true. The keyword now counts only inside the block's own body.
+- **A legacy key that holds a mapping refuses a scalar by name, from both loaders.**
+  `executables` behind `orca_executable`, `normal_mode_sampling_parameters` and
+  `sample_type.parameters` given a number raised a bare `TypeError` — a traceback out of
+  `load_config` and a 500 out of `validate`, whose contract is never to raise. Each is now
+  the same field error `options: 3` already was, naming the key.
+- **An agent approval is a JSON boolean, never a truthy value.** The GUI's chat endpoint
+  read each verdict with `bool()`, so the string `"false"` approved a suspended
+  `save_config`, `write_template`, `scaffold_templates` or `start_run`. A verdict that is
+  not a JSON boolean is refused in the documented error shape, with nothing run.
 - **The developer tooling fails where it used to lie.** The docs viewer hook names the
   mode file when its header is missing or not a count, instead of a bare traceback from
   `mkdocs build --strict`; the mutation gate stops on an entry that would change nothing
