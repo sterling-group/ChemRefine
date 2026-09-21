@@ -7,6 +7,7 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
+from chemrefine.engines.qiskit.adapt import AdaptDiagnostics, tracked_adapt_vqe
 from chemrefine.engines.qiskit.context import (
     AlgorithmArtifacts,
     ElectronicStructureContext,
@@ -118,7 +119,7 @@ def build_adapt_vqe(
 ) -> AlgorithmArtifacts:
     """Build ADAPT-VQE around an inner VQE and an explicit excitation pool."""
     from qiskit import QuantumCircuit
-    from qiskit_algorithms import VQE, AdaptVQE
+    from qiskit_algorithms import VQE
 
     operator_pool = _require(components.ansatz.operator_pool, "an operator pool")
     if not operator_pool:
@@ -134,8 +135,11 @@ def build_adapt_vqe(
         transpiler=components.transpiler,
         transpiler_options=components.transpiler_options,
     )
-    solver = AdaptVQE(
+    diagnostics = AdaptDiagnostics()
+    solver = tracked_adapt_vqe(
         inner,
+        diagnostics=diagnostics,
+        pool_metadata=components.ansatz.pool_metadata,
         gradient_threshold=options.gradient_threshold,
         eigenvalue_threshold=options.eigenvalue_threshold,
         max_iterations=options.max_iterations,
@@ -143,4 +147,4 @@ def build_adapt_vqe(
         reps=options.reps,
         initial_state=_require(components.initial_state, "an initial state"),
     )
-    return AlgorithmArtifacts(solver=solver)
+    return AlgorithmArtifacts(solver=solver, diagnostics=diagnostics)
