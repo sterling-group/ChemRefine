@@ -223,14 +223,14 @@ dev = [
     "types-PyYAML",
     "pre-commit>=3.5",
 ]
-# Qiskit Nature electronic-structure backend.
-# PySCF supplies molecular orbitals and integrals for the initial implementation.
-qiskit = [
+# Driver-independent Qiskit Nature electronic-structure engine.
+qiskit-core = [
     "qiskit>=1.4,<2.0",
     "qiskit-nature>=0.8,<0.9",
     "qiskit-algorithms>=0.4,<0.5",
-    "chemrefine[pyscf]",
 ]
+# The existing geometry/pipeline backend also supplies the optional PySCF adapter.
+qiskit = ["chemrefine[qiskit-core,pyscf]"]
 # Local high-performance statevector and finite-shot simulation.  A separate
 # managed environment keeps estimator-provider dependencies modular.
 qiskit-aer = [
