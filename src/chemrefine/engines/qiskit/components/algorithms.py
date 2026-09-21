@@ -50,6 +50,7 @@ def build_exact(
     from qiskit_algorithms import NumPyMinimumEigensolver
 
     expected_particles = sum(context.num_particles)
+    expected_magnetization = (context.num_particles[0] - context.num_particles[1]) / 2
     spin = (context.multiplicity - 1) / 2
     expected_angular_momentum = spin * (spin + 1)
 
@@ -63,6 +64,9 @@ def build_exact(
             return True
         particle_number = aux_values.get("ParticleNumber")
         if particle_number is not None and not np.isclose(particle_number[0], expected_particles):
+            return False
+        magnetization = aux_values.get("Magnetization")
+        if magnetization is not None and not np.isclose(magnetization[0], expected_magnetization):
             return False
         angular_momentum = aux_values.get("AngularMomentum")
         return angular_momentum is None or bool(
