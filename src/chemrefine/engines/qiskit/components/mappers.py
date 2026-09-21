@@ -26,6 +26,15 @@ def build_jordan_wigner_mapper(*, options: BaseModel, problem: Any) -> object:
     return JordanWignerMapper()
 
 
+@MAPPERS.register("bravyi_kitaev", NoComponentOptions)
+def build_bravyi_kitaev_mapper(*, options: BaseModel, problem: Any) -> object:
+    """Build Bravyi-Kitaev mapping without imposing a symmetry reduction."""
+    del options, problem
+    from qiskit_nature.second_q.mappers import BravyiKitaevMapper
+
+    return BravyiKitaevMapper()
+
+
 @MAPPERS.register("parity", ParityMapperOptions)
 def build_parity_mapper(*, options: ParityMapperOptions, problem: Any) -> object:
     """Build a parity mapper, optionally reducing two qubits by particle parity."""

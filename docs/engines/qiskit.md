@@ -229,6 +229,7 @@ set a finite limit appropriate to the pool size and compute budget.
 | Name | Options | Notes |
 | --- | --- | --- |
 | `jordan_wigner` | none | Direct Jordan-Wigner mapping. STO-3G H2 uses four qubits. |
+| `bravyi_kitaev` | none | Bravyi–Kitaev mapping, with the unreduced spin-orbital qubit count. |
 | `parity` | `two_qubit_reduction=true` | With reduction enabled, ChemRefine passes the **transformed** problem's particle tuple to `ParityMapper`; STO-3G H2 uses two qubits. Set `false` to keep the unreduced parity mapping. |
 
 The mapper is constructed after active-space transformation. This ordering is
