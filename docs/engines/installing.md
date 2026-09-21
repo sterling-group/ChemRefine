@@ -155,6 +155,8 @@ The [Qiskit engine](qiskit.md) can share the main environment:
 
 ```bash
 pip install "chemrefine[qiskit]"
+# Integral-input Python API without the optional PySCF adapter:
+pip install "chemrefine[qiskit-core]"
 # Or include Aer:
 pip install "chemrefine[qiskit-aer]"
 ```
@@ -163,6 +165,8 @@ For a source checkout, use:
 
 ```bash
 pip install -e ".[qiskit]"
+# Integral-input Python API without PySCF:
+pip install -e ".[qiskit-core]"
 # Or include Aer:
 pip install -e ".[qiskit-aer]"
 ```
@@ -176,9 +180,12 @@ chemrefine backends install qiskit-aer
 chemrefine backends list
 ```
 
-The core extra supplies Qiskit `>=1.4,<2.0`, Qiskit Nature `>=0.8,<0.9`,
-Qiskit Algorithms `>=0.4,<0.5`, and PySCF; the Aer extra adds CPU Aer
-`>=0.17,<0.18`.
+The `[qiskit-core]` extra supplies Qiskit `>=1.4,<2.0`, Qiskit Nature
+`>=0.8,<0.9`, and Qiskit Algorithms `>=0.4,<0.5`. It supports upstream integral
+inputs without requiring PySCF. The existing `[qiskit]` extra adds PySCF for
+XYZ-driven calculations and the CLI examples; `[qiskit-aer]` additionally
+supplies CPU Aer `>=0.17,<0.18`. The managed backend names remain `qiskit` and
+`qiskit-aer`.
 
 The four built-in estimators all run locally and need no cloud credentials:
 `statevector`, the lightweight shot-based `basic_backend`, exact-expectation

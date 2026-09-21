@@ -9,6 +9,8 @@ change, not a new step template.
 The built-in workflow is intended for small active spaces, algorithm studies,
 and reproducible local simulation. It currently performs **single-point energy
 calculations**. It does not optimize geometries or return nuclear gradients.
+The Python API also accepts molecular-orbital integrals directly, so the solver
+pipeline does not depend on one classical electronic-structure program.
 
 ## Install and run the example
 
@@ -29,8 +31,9 @@ chemrefine backends install qiskit-aer
 chemrefine backends list
 ```
 
-The `[qiskit]` extra installs compatible Qiskit, Qiskit Nature, Qiskit
-Algorithms, and PySCF versions. `[qiskit-aer]` adds the compatible CPU Aer
+The `[qiskit-core]` extra installs compatible Qiskit, Qiskit Nature, and Qiskit
+Algorithms versions for integral-input calculations. `[qiskit]` adds PySCF for
+the XYZ adapter and shipped CLI examples. `[qiskit-aer]` adds the compatible CPU Aer
 distribution. See [Installation](installing.md#qiskit-nature) for the exact
 supported ranges, source-install commands, and separate Linux GPU-package
 guidance. ChemRefine resolves exact/reference/basic steps to the `qiskit`
@@ -43,6 +46,9 @@ A complete H2 VQE example is shipped at
 cd examples/tutorials/qiskit_sp
 chemrefine run input.yaml --dry-run
 chemrefine run input.yaml
+# Compare exact, UCCSD-VQE, and ADAPT-VQE on one prepared H2 problem:
+chemrefine run compare.yaml --dry-run
+chemrefine run compare.yaml
 # Aer variants (after installing chemrefine[qiskit-aer]):
 chemrefine run aer_statevector.yaml
 chemrefine run aer_shots.yaml
@@ -53,11 +59,13 @@ The important files are:
 ```text
 examples/tutorials/qiskit_sp/
 ├── input.yaml
+├── compare.yaml
 ├── aer_statevector.yaml
 ├── aer_shots.yaml
 ├── h2.xyz
 └── templates/
     ├── step1.py
+    ├── compare.py
     └── cpu.slurm.header
 ```
 
@@ -76,12 +84,21 @@ result = run_job(
 )
 
 energy_hartree = result.energy_hartree
-engine_metadata = result.metadata
+engine_metadata = result.as_metadata()
+if result.converged is not None:
+    converged = result.converged
 ```
 
 The scientific choices belong in YAML. Keep this template unless you are
 registering project-specific components or deliberately changing the output
 contract.
+
+`compare.yaml` uses the same CLI and output conventions. Its template prepares
+H2 once, solves all three algorithms against that problem, and records their
+energies, errors, and resource metrics under `engine_metadata.comparison`.
+The final ADAPT energy is the canonical pipeline energy. The XYZ geometry is
+H2 at 0.735 Å, and the exact STO-3G energy is approximately
+`-1.1373060358` hartree.
 
 ## How the workflow is assembled
 
@@ -95,7 +112,8 @@ flowchart TD
     OPT --> GRAPH[Registry and capability validation]
     GRAPH --> SCRIPT[Rendered per-structure Python job]
     SCRIPT --> DRIVER[PySCFDriver<br/>geometry, charge, multiplicity, basis]
-    DRIVER --> AS{Active space configured?}
+    INTEGRALS[ElectronicStructureData<br/>upstream MO integrals] --> AS
+    DRIVER --> AS{Freeze-core / supplied active space?}
     AS -- yes --> TRANS[ActiveSpaceTransformer]
     AS -- no --> PROBLEM[ElectronicStructureProblem]
     TRANS --> PROBLEM
@@ -209,7 +227,14 @@ The Qiskit engine translates the older flat pair `active_electrons` /
 `QiskitOptions` and `run_job` callers. New configurations should use the
 canonical nested form.
 ChemRefine rejects totals above two electrons per spatial orbital and rejects
-alpha or beta populations larger than the spatial-orbital count.
+alpha or beta populations larger than the spatial-orbital count. Add
+`active_space.active_orbitals: [0, 1]` to choose explicit spatial-orbital indices.
+Indices always refer to the original input orbitals, including when
+`freeze_core: true`; requesting a frozen orbital fails. Supplied ordering is
+preserved in the transformed problem, Hartree–Fock state, and UCCSD excitations.
+The selected occupations must match the requested active electron counts, and
+inactive occupied orbitals must be doubly occupied. No orbital-selection
+algorithm runs inside this engine.
 
 ## Built-in components
 
@@ -229,7 +254,7 @@ set a finite limit appropriate to the pool size and compute budget.
 | Name | Options | Notes |
 | --- | --- | --- |
 | `jordan_wigner` | none | Direct Jordan-Wigner mapping. STO-3G H2 uses four qubits. |
-| `bravyi_kitaev` | none | Bravyi–Kitaev mapping, with the unreduced spin-orbital qubit count. |
+| `bravyi_kitaev` | none | Bravyi–Kitaev mapping without an additional symmetry reduction. STO-3G H2 uses four qubits. |
 | `parity` | `two_qubit_reduction=true` | With reduction enabled, ChemRefine passes the **transformed** problem's particle tuple to `ParityMapper`; STO-3G H2 uses two qubits. Set `false` to keep the unreduced parity mapping. |
 
 The mapper is constructed after active-space transformation. This ordering is
@@ -248,10 +273,13 @@ counts, not the original molecule's counts.
 | Name | Capabilities | Options |
 | --- | --- | --- |
 | `uccsd` | fixed circuit, operator pool | `reps=1`, `generalized=false`, `preserve_spin=true`, `include_imaginary=false` |
+| `ucc` | fixed circuit, operator pool | The UCCSD options plus a required externally supplied `excitations` list. Each entry is `[occupied_indices, unoccupied_indices]` in alpha-then-beta spin-orbital order. |
 | `efficient_su2` | fixed circuit only | `reps=2`, `entanglement=reverse_linear`, `su2_gates=[ry, rz]`, `skip_final_rotation_layer=false`, `flatten=true` |
 
-`efficient_su2` cannot be used with `adapt_vqe` because it does not supply an
-operator pool. UCCSD supplies both forms: VQE consumes the completed UCCSD
+`efficient_su2` does not supply the operator pool required by an ADAPT YAML job.
+The Python API can instead accept an explicit `OperatorPool`, which replaces
+the configured ansatz builder for that run.
+UCCSD supplies both forms: VQE consumes the completed UCCSD
 circuit, while ADAPT consumes its mapped excitation generators. For ADAPT,
 `ansatz.options.reps` must remain `1`; repetitions describe the unused fixed
 circuit, not the operator pool.
@@ -309,8 +337,12 @@ the observable is split into multiple commuting groups.
 
 SPSA's `learning_rate` and `perturbation` must be specified together or both
 omitted. If both are omitted, Qiskit calibrates them with additional objective
-calls that are not reflected by `maxiter`. `seed` controls Qiskit's global SPSA
-perturbation generator inside the per-structure worker process.
+calls that are not reflected by `maxiter`. `seed` controls the SPSA
+perturbation stream independently for each optimizer instance. The supported
+Qiskit version samples through a global generator, so ChemRefine temporarily
+swaps and restores its state during optimization and serializes its own SPSA
+calls. Unrelated concurrent code that directly uses Qiskit's global generator
+does not participate in this lock; use separate processes in that situation.
 
 ### Initial points
 
@@ -723,6 +755,104 @@ To use Aer GPU simulation, install the compatible Linux GPU distribution, set
 `device: cuda` for `statevector` or `basic_backend`; ChemRefine rejects that
 component/device mismatch before submission.
 
+## Integral inputs and reusable solver APIs
+
+`chemrefine.engines.qiskit.api` exposes the prepared-problem boundary and
+solver functions. Given real, orthonormal molecular-orbital arrays `h_mo`
+(shape `(2, 2)`) and `eri_mo` (shape `(2, 2, 2, 2)`) from upstream software:
+
+```python
+from chemrefine.engines.qiskit.api import (
+    ElectronicStructureData,
+    map_problem,
+    prepare_problem,
+    run_adapt_vqe,
+    run_vqe,
+    solve_exact,
+)
+from chemrefine.engines.qiskit.options import ActiveSpaceOptions
+
+data = ElectronicStructureData(
+    num_alpha=1,
+    num_beta=1,
+    num_spatial_orbitals=2,
+    one_body_integrals=h_mo,
+    two_body_integrals=eri_mo,
+    two_body_order="chemist",
+    nuclear_repulsion_energy=nuclear_repulsion_hartree,
+    provenance={"source": "upstream calculation", "basis": "sto-3g"},
+)
+prepared = prepare_problem(
+    data,
+    active_space=ActiveSpaceOptions(electrons=(1, 1), orbitals=2, active_orbitals=[0, 1]),
+)
+mapped = map_problem(prepared, mapper="jordan_wigner")
+exact = solve_exact(prepared)
+vqe = run_vqe(prepared, reference_energy_hartree=exact.energy_hartree)
+adapt = run_adapt_vqe(prepared, reference_energy_hartree=exact.energy_hartree)
+print(mapped.num_qubits, vqe.energy_error_hartree, adapt.energy_error_hartree)
+```
+
+Integral values and energy offsets use atomic units. Declare
+`two_body_order="chemist"` for `(pq|rs)` or `"physicist"` for the Qiskit
+ordering; the engine does not infer tensor ordering or transform atomic-orbital
+integrals into molecular orbitals. The input validates dimensions, finite real
+values, Hermitian symmetries, electron counts, and reference occupations.
+For unrestricted inputs, supply the beta one-electron block, beta-beta and
+beta-alpha two-electron blocks, and `overlap_alpha_beta` for the spin observable.
+Optional orbital energies, molecular geometry, and provenance travel with the
+prepared problem. `freeze_core=True` needs all-electron `MolecularMetadata`;
+explicit active-space transformations do not require geometry or PySCF.
+
+`PreparedProblem` exposes the fermionic Hamiltonian, particle/spin-orbital
+counts, selected original orbital indices, and energy offsets. `map_problem`
+returns the mapped Hamiltonian and before/after qubit counts. These are
+implementation artifacts confined to the Qiskit module; solver results use
+the ChemRefine-owned `QiskitRunResult`.
+
+`prepare_pyscf_problem(path, charge=..., multiplicity=..., options=...)`
+provides the existing XYZ/PySCF adapter. All solvers accept `QiskitOptions` or
+the existing options mapping. `run_problem` selects the configured algorithm;
+`solve_exact`, `run_vqe`, and `run_adapt_vqe` select it explicitly. Reduction
+happens during preparation, so the prepared problem can be reused across
+algorithms. VQE also accepts an explicit `initial_point`. Both variational
+runners accept a `callback` receiving one JSON-safe evaluation-record dictionary
+and an optional reference energy in the same convention as the reported energy.
+
+For an external excitation list, indices refer to the **prepared** spin-orbital
+basis: all alpha orbitals, followed by all beta orbitals. For this two-orbital
+example, a supplied double excitation is:
+
+```python
+vqe = run_vqe(
+    prepared,
+    excitations=[((0, 2), (1, 3))],
+    reference_energy_hartree=exact.energy_hartree,
+)
+```
+
+The equivalent YAML selects `ansatz: {name: ucc, options: {excitations: ...}}`.
+For already mapped external ADAPT generators, provide a distinct pool:
+
+```python
+from chemrefine.engines.qiskit.operators import OperatorPool
+
+pool = OperatorPool(
+    operators=tuple(mapped_generators),
+    metadata=tuple(operator_descriptions),
+)
+adapt = run_adapt_vqe(prepared, operator_pool=pool)
+```
+
+Each generator must be a finite, nonzero, Hermitian `SparsePauliOp` using the
+same mapper, reduced register, and qubit ordering as the prepared problem.
+Metadata may include an excitation's occupied/unoccupied indices and a source
+label; stable `pool_index` values identify retained ADAPT operators. Validation
+checks dimensions and Hermiticity. Callers supplying arbitrary qubit operators
+remain responsible for particle and spin conservation. Pool selection and
+orbital selection belong to upstream code; this engine does not implement
+AutoCAS, SQD, determinant ranking, or correlation-based filtering.
+
 ## Output and metadata
 
 The normal ChemRefine outputs remain the source for downstream pipeline data:
@@ -733,8 +863,10 @@ The normal ChemRefine outputs remain the source for downstream pipeline data:
 - `outputs/stepN/<id>/stepN_<id>.result.json` is the normalized ChemRefine
   result.
 
-The shipped Qiskit template also assigns `engine_metadata`, so the raw script
-output `outputs/stepN/<id>/stepN_<id>.json` contains an additional block:
+The shipped Qiskit template assigns `result.as_metadata()` to
+`engine_metadata`. The raw script output
+`outputs/stepN/<id>/stepN_<id>.json` contains the existing diagnostic fields
+illustrated below, plus the structured result under `engine_metadata.result`:
 
 ```json
 {
@@ -808,6 +940,38 @@ not total adaptive work. Use the length of `evaluations` for the number of
 objective callback records, and remember that pool-gradient estimator calls are
 additional work.
 
+`QiskitRunResult.as_dict()` is a detached JSON-native snapshot. Its explicit
+fields distinguish `electronic_energy_hartree` (including inactive-space
+constants), `nuclear_repulsion_energy_hartree`, and `total_energy_hartree`.
+When nuclear repulsion is supplied, the existing `energy_hartree` remains the
+reported total energy. If nuclear repulsion is unknown, it reports electronic
+energy, `total_energy_hartree` stays `None`, and metadata identifies that
+convention. Supplied reference energies must use the same convention; callback
+objectives remain the uncorrected active Hamiltonian expectation values.
+
+Results also record runtime in seconds, mapping and reduction counts, Pauli
+terms, optimizer/energy evaluations, and ADAPT iterations, pool size, retained
+operators, and gradient checks. A final stopping gradient or a rolled-back
+candidate may appear in the gradient history without appearing in the final
+operator sequence. `success` records a completed valid calculation;
+`converged` is optional. VQE leaves convergence unknown when Qiskit's optimizer
+result does not expose a convergence verdict. ADAPT iteration-limit and cycle
+termination are distinct from convergence.
+
+Circuit resources are separated into `logical_circuit_metrics` and
+`transpiled_circuit_metrics`. Logical counts use an unoptimized generic `u`/`cx`
+decomposition, retaining the original symbolic parameter count. Estimators
+with a transpiler report resources from the returned compiled circuit, together
+with their estimator/target settings. Fixed VQE retains its original logical
+ansatz metrics. For transpiled ADAPT runs, logical metrics stay `None` because
+Qiskit Algorithms 0.4 does not expose the final circuit before compilation.
+The separate `transpiled_circuit_metrics` utility also accepts an explicitly
+supplied compiled circuit. Neither representation claims hardware cost without
+a defined target.
+Opaque logical operations leave gate/depth/size counts `None`; exact solvers
+have no circuit metrics. Barriers, measurement, reset, and delay are excluded
+from gate counts, while circuit depth and size follow Qiskit's conventions.
+
 Qiskit Algorithms 0.4 does not reliably pass the complete parameter vector to
 its VQE callback, so ChemRefine intentionally does not claim to record a
 parameter trajectory. The final `solver.optimal_point` remains available.
@@ -830,8 +994,9 @@ For repeatable local comparisons:
 7. Preserve the rendered `stepN_<id>.py` and raw `.json` output that ChemRefine
    leaves in each structure directory.
 8. Save `python -m pip freeze` or the managed environment lock alongside
-   published results. Package versions are not currently copied into
-   `engine_metadata`.
+   published results. Installed Qiskit, Nature, Algorithms, Aer, and PySCF
+   versions are also recorded under `engine_metadata.provenance.package_versions`
+   when available.
 
 The `statevector` or `aer_statevector` estimator with
 `default_precision: 0.0`, a deterministic initial point, and SLSQP is
@@ -974,6 +1139,13 @@ estimator.
   result. Tighten `gradient_threshold` or select a better initial state/pool.
 - Variational solvers do not use the exact solver's particle/spin filter. Their
   state and ansatz must keep the search in the desired sector when that matters.
+- ADAPT iteration diagnostics use a small compatibility boundary around
+  Qiskit Algorithms 0.4's private gradient hook and retained excitation list,
+  because upstream exposes no public selected-operator callback. The upstream
+  selection and convergence loop remains unchanged; dependency upgrades need
+  the termination/rollback tests to pass.
+- Parity's particle-number reduction is supported. General Z2 symmetry
+  detection/tapering is left for a future mapper extension.
 - All built-in estimators run locally. The standard `[qiskit-aer]` extra installs
   Aer's CPU distribution. Aer GPU simulation requires Linux, a compatible CUDA
   stack, and the separately installed `qiskit-aer-gpu` distribution.

@@ -1,0 +1,47 @@
+template_dir: ./templates
+output_dir: ./outputs_compare
+input: ./h2.xyz
+
+charge: 0
+multiplicity: 1
+max_cores: 1
+dispatch: local
+
+steps:
+  - step: 1
+    name: exact_vqe_adapt_comparison
+    engine: qiskit
+    operation: sp
+    template: compare.py
+    options:
+      basis: sto-3g
+      active_space:
+        electrons: [1, 1]
+        orbitals: 2
+        active_orbitals: [0, 1]
+      mapper: jordan_wigner
+      algorithm:
+        name: adapt_vqe
+        options:
+          gradient_threshold: 1.0e-6
+          eigenvalue_threshold: 1.0e-8
+          max_iterations: 50
+      ansatz:
+        name: uccsd
+        options:
+          reps: 1
+          preserve_spin: true
+      initial_state: hartree_fock
+      estimator:
+        name: statevector
+        options:
+          default_precision: 0.0
+          seed: 1234
+      optimizer:
+        name: slsqp
+        options:
+          maxiter: 500
+          # Resolve the inner minimum tightly enough for the ADAPT gradient test.
+          ftol: 1.0e-12
+      initial_point: zeros
+      cores: 1

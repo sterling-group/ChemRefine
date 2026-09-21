@@ -185,6 +185,15 @@ for the full map.
   custom Linux GPU environment can select Aer with `device: cuda`. Runs record
   resolved components, solver diagnostics, and variational evaluations, and a
   shipped H2 tutorial demonstrates the thin-template architecture.
+- A driver-independent Qiskit electronic-structure API accepts validated real
+  molecular-orbital integrals, preserves explicit active-orbital ordering and
+  freeze-core offsets, and reuses prepared problems across exact, VQE, and
+  ADAPT-VQE solves. Bravyi–Kitaev mapping, supplied UCC excitations, and external
+  mapped operator pools extend the existing component boundaries. Owned results
+  record energy contributions, reference errors, resource metrics, and retained
+  ADAPT operators/gradient history. The optional `[qiskit-core]` dependency group
+  omits PySCF; existing XYZ examples still use `[qiskit]`. The H2 `compare.yaml`
+  tutorial reports all three solver results through the normal CLI outputs.
 - Subcommand CLI — `run`, `resume`, `rerun [step]`, `rerun-errors [step]`,
   `rebuild-cache [step]`, `rebuild-nms [step]` — with documented process
   exit codes per failure class.
