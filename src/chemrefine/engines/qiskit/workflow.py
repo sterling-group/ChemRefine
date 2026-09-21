@@ -1,11 +1,14 @@
-"""Composition root for modular Qiskit Nature ground-state calculations."""
+"""Compose existing registries around independently prepared electronic problems."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import logging
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
-from dataclasses import dataclass
+from copy import deepcopy
+from numbers import Real
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import numpy as np
@@ -17,27 +20,27 @@ from chemrefine.engines.qiskit.context import (
     EstimatorResource,
     SolverComponents,
 )
+from chemrefine.engines.qiskit.mapping import map_problem
+from chemrefine.engines.qiskit.operators import OperatorPool
 from chemrefine.engines.qiskit.options import QiskitOptions
+from chemrefine.engines.qiskit.problem import PreparedProblem, prepare_pyscf_problem
+from chemrefine.engines.qiskit.problem import _atom_spec as _atom_spec
 from chemrefine.engines.qiskit.registry import (
     ALGORITHMS,
     ANSATZE,
     ESTIMATORS,
     INITIAL_POINTS,
     INITIAL_STATES,
-    MAPPERS,
     OPTIMIZERS,
-    REGISTRIES,
     validate_component_graph,
 )
+from chemrefine.engines.qiskit.reporting import jsonable as _jsonable
+from chemrefine.engines.qiskit.reporting import summarize_result
+from chemrefine.engines.qiskit.result import QiskitRunResult as QiskitRunResult
 from chemrefine.errors import ConfigError
 
-
-@dataclass(frozen=True)
-class QiskitRunResult:
-    """Energy and reproducibility diagnostics returned to the rendered job script."""
-
-    energy_hartree: float
-    metadata: dict[str, Any]
+logger = logging.getLogger(__name__)
+EvaluationCallback = Callable[[dict[str, Any]], None]
 
 
 def validate_options(options: QiskitOptions) -> None:
@@ -45,156 +48,17 @@ def validate_options(options: QiskitOptions) -> None:
     validate_component_graph(options)
 
 
-def _atom_spec(xyz_path: Path) -> str:
-    """Read one XYZ frame into the semicolon format expected by PySCFDriver."""
-    try:
-        lines = xyz_path.read_text(encoding="utf-8").splitlines()
-        atom_count = int(lines[0])
-    except (OSError, IndexError, ValueError) as exc:
-        raise ConfigError(f"cannot read Qiskit XYZ input {xyz_path}: {exc}") from exc
-    rows = lines[2 : 2 + atom_count]
-    if len(rows) != atom_count:
-        raise ConfigError(
-            f"Qiskit XYZ input {xyz_path} declares {atom_count} atoms but contains {len(rows)}"
-        )
-    atoms: list[str] = []
-    for index, line in enumerate(rows, start=1):
-        fields = line.split()
-        if len(fields) < 4:
-            raise ConfigError(f"Qiskit XYZ input {xyz_path} has malformed atom row {index}")
-        symbol, x, y, z = fields[:4]
-        atoms.append(f"{symbol} {x} {y} {z}")
-    return "; ".join(atoms)
-
-
-def _build_problem(
-    xyz_path: Path,
-    *,
-    charge: int,
-    multiplicity: int,
-    options: QiskitOptions,
-) -> Any:
-    """Run the classical driver and optional active-space transformation."""
-    if multiplicity < 1:
-        raise ConfigError("multiplicity must be at least 1")
-    from qiskit_nature.second_q.drivers import PySCFDriver
-    from qiskit_nature.second_q.transformers import ActiveSpaceTransformer
-    from qiskit_nature.units import DistanceUnit
-
-    problem: Any = PySCFDriver(
-        atom=_atom_spec(xyz_path),
-        unit=DistanceUnit.ANGSTROM,
-        charge=charge,
-        spin=multiplicity - 1,
-        basis=options.basis,
-    ).run()
-    if options.active_space is not None:
-        problem = ActiveSpaceTransformer(
-            num_electrons=options.active_space.electrons,
-            num_spatial_orbitals=options.active_space.orbitals,
-        ).transform(problem)
-    return problem
-
-
-def _electronic_context(
-    problem: Any, options: QiskitOptions, *, multiplicity: int
-) -> ElectronicStructureContext:
-    """Construct the mapper and immutable facts every later builder receives."""
-    mapper = MAPPERS.build(options.mapper, problem=problem)
-    hamiltonian = mapper.map(problem.hamiltonian.second_q_op())
-    particles = tuple(int(value) for value in problem.num_particles)
-    if len(particles) != 2:
-        raise ConfigError(f"Qiskit electronic problem reported invalid particles {particles!r}")
-    return ElectronicStructureContext(
-        problem=problem,
-        mapper=mapper,
-        qubit_hamiltonian=hamiltonian,
-        num_spatial_orbitals=int(problem.num_spatial_orbitals),
-        num_particles=(particles[0], particles[1]),
-        num_qubits=int(hamiltonian.num_qubits),
-        multiplicity=multiplicity,
-    )
-
-
-def _jsonable(value: Any) -> Any:
-    """Convert common Qiskit/numpy diagnostics into JSON-compatible values."""
-    if isinstance(value, np.generic):
-        return _jsonable(value.item())
-    if value is None or isinstance(value, str | int | float | bool):
-        return value
-    if isinstance(value, complex):
-        return {"real": value.real, "imag": value.imag}
-    if isinstance(value, Mapping):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, list | tuple):
-        return [_jsonable(item) for item in value]
-    if hasattr(value, "tolist"):
-        return _jsonable(value.tolist())
-    return str(value)
-
-
-def _result_metadata(
-    result: Any,
-    options: QiskitOptions,
+def _solve_context(
     context: ElectronicStructureContext,
-    evaluations: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Capture resolved configuration and stable solver diagnostics for provenance."""
-    raw_result = getattr(result, "raw_result", None)
-    diagnostics: dict[str, Any] = {}
-    for name in (
-        "cost_function_evals",
-        "num_iterations",
-        "optimal_point",
-        "optimal_value",
-        "termination_criterion",
-    ):
-        value = getattr(raw_result, name, None)
-        if value is not None:
-            diagnostics[name] = _jsonable(value)
-    return {
-        "components": {
-            category: {
-                "name": selection.name,
-                "options": REGISTRIES[category].options_for(selection).model_dump(mode="json"),
-            }
-            for category, selection in options.component_selections().items()
-        },
-        "basis": options.basis,
-        "device": options.device,
-        "cores": options.cores,
-        "active_space": (
-            options.active_space.model_dump(mode="json")
-            if options.active_space is not None
-            else None
-        ),
-        "num_spatial_orbitals": context.num_spatial_orbitals,
-        "num_particles": list(context.num_particles),
-        "num_qubits": context.num_qubits,
-        "evaluations": evaluations,
-        "solver": diagnostics,
-    }
-
-
-def run_job(
-    xyz_path: str | Path,
+    resolved: QiskitOptions,
     *,
-    charge: int,
-    multiplicity: int,
-    options: QiskitOptions | Mapping[str, Any],
+    operator_pool: OperatorPool | None,
+    supplied_initial_point: Sequence[float] | None,
+    user_callback: EvaluationCallback | None,
+    reference_energy_hartree: float | None,
+    started: float,
 ) -> QiskitRunResult:
-    """Build the configured component graph, solve the molecule, and return its energy."""
-    resolved = (
-        options if isinstance(options, QiskitOptions) else QiskitOptions.from_raw(dict(options))
-    )
-    validate_options(resolved)
-    problem = _build_problem(
-        Path(xyz_path),
-        charge=charge,
-        multiplicity=multiplicity,
-        options=resolved,
-    )
-    context = _electronic_context(problem, resolved, multiplicity=multiplicity)
+    """Assemble components once and own the estimator lifecycle for a single solve."""
     requirements = ALGORITHMS.spec(resolved.algorithm.name).requires
 
     initial_state: Any | None = None
@@ -203,14 +67,35 @@ def run_job(
     optimizer: Any | None = None
     if requirements & {"initial_state", "circuit", "operator_pool"}:
         initial_state = INITIAL_STATES.build(resolved.initial_state, context=context)
-    if requirements & {"circuit", "operator_pool"}:
+    if operator_pool is not None:
+        operator_pool.validate(context.num_qubits)
+        ansatz = AnsatzArtifacts(
+            operator_pool=operator_pool.operators, pool_metadata=operator_pool.metadata
+        )
+    elif requirements & {"circuit", "operator_pool"}:
         ansatz = ANSATZE.build(
             resolved.ansatz,
             context=context,
             initial_state=initial_state,
         )
     if "initial_point" in requirements:
-        initial_point = INITIAL_POINTS.build(resolved.initial_point, ansatz=ansatz)
+        if supplied_initial_point is None:
+            initial_point = INITIAL_POINTS.build(resolved.initial_point, ansatz=ansatz)
+        else:
+            try:
+                if np.iscomplexobj(supplied_initial_point):
+                    raise ValueError("complex initial point")
+                initial_point = np.asarray(supplied_initial_point, dtype=float)
+            except (TypeError, ValueError) as exc:
+                raise ConfigError("qiskit initial point must contain finite real numbers") from exc
+            if (
+                ansatz.circuit is None
+                or initial_point.shape != (int(ansatz.circuit.num_parameters),)
+                or not np.isfinite(initial_point).all()
+            ):
+                raise ConfigError(
+                    "qiskit initial point must have one finite value per ansatz parameter"
+                )
     if "optimizer" in requirements:
         optimizer = OPTIMIZERS.build(resolved.optimizer)
 
@@ -245,6 +130,9 @@ def run_job(
             }
         )
         previous_algorithm_evaluation = algorithm_evaluation
+        logger.debug("Qiskit energy evaluation %d: %.12f hartree", len(evaluations), mean)
+        if user_callback is not None:
+            user_callback(deepcopy(evaluations[-1]))
 
     estimator_resource: EstimatorResource | nullcontext[None]
     if "estimator" in requirements:
@@ -282,17 +170,97 @@ def run_job(
         )
         from qiskit_nature.second_q.algorithms import GroundStateEigensolver
 
-        result = GroundStateEigensolver(context.mapper, algorithm.solver).solve(problem)
+        result = GroundStateEigensolver(context.mapper, algorithm.solver).solve(context.problem)
 
-    if not getattr(result, "total_energies", None):
-        raise ConfigError("Qiskit solver returned no total ground-state energy")
-    energy = complex(result.total_energies[0])
-    if abs(energy.imag) > 1e-10:
-        raise ConfigError(f"Qiskit solver returned a complex total energy {energy!r}")
-    energy_hartree = float(energy.real)
-    if not np.isfinite(energy_hartree):
-        raise ConfigError(f"Qiskit solver returned non-finite total energy {energy_hartree!r}")
-    return QiskitRunResult(
-        energy_hartree=energy_hartree,
-        metadata=_result_metadata(result, resolved, context, evaluations),
+    summary = summarize_result(
+        result,
+        options=resolved,
+        context=context,
+        evaluations=evaluations,
+        ansatz=ansatz,
+        algorithm=algorithm,
+        runtime_seconds=perf_counter() - started,
+        reference_energy_hartree=reference_energy_hartree,
+        was_transpiled=transpiler is not None,
+        operator_pool_supplied=operator_pool is not None,
     )
+    logger.info(
+        "Qiskit %s finished: %.12f hartree", resolved.algorithm.name, summary.energy_hartree
+    )
+    if summary.energy_error_hartree is not None:
+        logger.info(
+            "Qiskit error against supplied reference: %.8g hartree", summary.energy_error_hartree
+        )
+    return summary
+
+
+def run_problem(
+    prepared: PreparedProblem,
+    *,
+    options: QiskitOptions | Mapping[str, Any] | None = None,
+    operator_pool: OperatorPool | None = None,
+    initial_point: Sequence[float] | None = None,
+    callback: EvaluationCallback | None = None,
+    reference_energy_hartree: float | None = None,
+) -> QiskitRunResult:
+    """Solve a prepared problem using the same component graph as a pipeline job.
+
+    Supplied pools replace the configured ansatz's pool for ADAPT only. Reference
+    energy is an explicitly supplied comparison, never a request to perform an
+    unbounded exact solve. Callback records use electronic-Hamiltonian objective
+    energies, excluding inactive and nuclear constants; they are evaluation
+    records rather than guaranteed optimizer iterations or parameter trajectories.
+    """
+    started = perf_counter()
+    resolved = options if isinstance(options, QiskitOptions) else QiskitOptions.from_raw(options)
+    if operator_pool is not None and resolved.algorithm.name != "adapt_vqe":
+        raise ConfigError("qiskit supplied operator_pool requires algorithm 'adapt_vqe'")
+    if initial_point is not None and resolved.algorithm.name != "vqe":
+        raise ConfigError("qiskit supplied initial_point requires algorithm 'vqe'")
+    if reference_energy_hartree is not None and (
+        isinstance(reference_energy_hartree, bool)
+        or not isinstance(reference_energy_hartree, Real)
+        or not np.isfinite(reference_energy_hartree)
+    ):
+        raise ConfigError("qiskit reference energy must be a finite number in hartree")
+    validate_component_graph(resolved, operator_pool_supplied=operator_pool is not None)
+    context = map_problem(prepared, resolved.mapper)
+    logger.info(
+        "Qiskit %s starting: ansatz=%s optimizer=%s",
+        resolved.algorithm.name,
+        resolved.ansatz.name,
+        resolved.optimizer.name,
+    )
+    return _solve_context(
+        context,
+        resolved,
+        operator_pool=operator_pool,
+        supplied_initial_point=initial_point,
+        user_callback=callback,
+        reference_energy_hartree=reference_energy_hartree,
+        started=started,
+    )
+
+
+def run_job(
+    xyz_path: str | Path,
+    *,
+    charge: int,
+    multiplicity: int,
+    options: QiskitOptions | Mapping[str, Any],
+) -> QiskitRunResult:
+    """Adapt a geometry/PySCF pipeline job to the driver-independent solver API."""
+    started = perf_counter()
+    resolved = options if isinstance(options, QiskitOptions) else QiskitOptions.from_raw(options)
+    validate_options(resolved)
+    prepared = prepare_pyscf_problem(
+        xyz_path,
+        charge=charge,
+        multiplicity=multiplicity,
+        options=resolved,
+    )
+    result = run_problem(prepared, options=resolved)
+    # Pipeline runtime includes its classical electronic-structure preparation.
+    from dataclasses import replace
+
+    return replace(result, runtime_seconds=perf_counter() - started)

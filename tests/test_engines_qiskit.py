@@ -1234,10 +1234,10 @@ def _patch_problem_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[object, ElectronicStructureContext]:
     """Bypass the real driver while retaining the workflow's assembly logic."""
-    problem = SimpleNamespace(name="problem")
     context = _context()
-    monkeypatch.setattr(workflow, "_build_problem", lambda *_args, **_kwargs: problem)
-    monkeypatch.setattr(workflow, "_electronic_context", lambda *_args, **_kwargs: context)
+    problem = context.problem
+    monkeypatch.setattr(workflow, "prepare_pyscf_problem", lambda *_args, **_kwargs: problem)
+    monkeypatch.setattr(workflow, "map_problem", lambda *_args, **_kwargs: context)
     return problem, context
 
 
@@ -1454,6 +1454,144 @@ def test_run_job_rejects_missing_complex_or_nonfinite_energies(
         )
 
 
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"operator_pool": object()}, "requires algorithm 'adapt_vqe'"),
+        ({"initial_point": [0.0]}, "requires algorithm 'vqe'"),
+        *[
+            ({"reference_energy_hartree": value}, "finite number in hartree")
+            for value in (True, np.bool_(True), "bad", complex(1, 2), float("nan"), float("inf"))
+        ],
+    ],
+)
+def test_supplied_solver_inputs_fail_before_mapping(monkeypatch, kwargs, message):
+    def unexpected_mapping(*_args):
+        pytest.fail("invalid supplied inputs must fail before mapping")
+
+    monkeypatch.setattr(workflow, "map_problem", unexpected_mapping)
+    with pytest.raises(ConfigError, match=message):
+        workflow.run_problem(object(), **kwargs)
+
+
+@pytest.fixture
+def supplied_problem_runner(monkeypatch):
+    """Record public solver assembly at its existing optional-component boundaries."""
+    _, context = _patch_problem_context(monkeypatch)
+    calls = []
+    circuit = SimpleNamespace(num_parameters=2)
+    ansatz = AnsatzArtifacts(circuit=circuit)
+
+    def optimizer(*_args, **_kwargs):
+        return object()
+
+    def build(**kwargs):
+        assembled = kwargs["components"]
+        calls.append(assembled)
+        assembled.callback(1, np.zeros(2), -1.2, {"nested": {"value": 1}})
+        return AlgorithmArtifacts(solver=object())
+
+    _put_spec(
+        monkeypatch,
+        ALGORITHMS,
+        "vqe",
+        build,
+        requires=frozenset({"circuit", "initial_point", "optimizer", "estimator"}),
+    )
+    _put_spec(
+        monkeypatch,
+        ALGORITHMS,
+        "adapt_vqe",
+        build,
+        requires=frozenset({"operator_pool", "initial_state", "optimizer", "estimator"}),
+    )
+    monkeypatch.setattr(workflow.INITIAL_STATES, "build", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(workflow.ANSATZE, "build", lambda *_args, **_kwargs: ansatz)
+    monkeypatch.setattr(workflow.OPTIMIZERS, "build", optimizer)
+    monkeypatch.setattr(
+        workflow.ESTIMATORS,
+        "build",
+        lambda *_args, **_kwargs: EstimatorResource(object(), close=lambda: calls.append("closed")),
+    )
+    _install_ground_state_solver(monkeypatch, SimpleNamespace(total_energies=[-1.25]))
+    return context, ansatz, calls
+
+
+@pytest.mark.parametrize(
+    "point",
+    [[0.0], [0.0, float("nan")], [[0.0, 0.0]], ["bad", 0.0], np.array([1 + 1j, 0])],
+)
+def test_supplied_initial_points_validate_before_provider_creation(supplied_problem_runner, point):
+    _, _, calls = supplied_problem_runner
+    with pytest.raises(ConfigError, match="initial point must"):
+        workflow.run_problem(object(), options={"algorithm": "vqe"}, initial_point=point)
+    assert calls == []
+
+
+def test_supplied_initial_point_requires_a_circuit(supplied_problem_runner, monkeypatch):
+    monkeypatch.setattr(workflow.ANSATZE, "build", lambda *_args, **_kwargs: AnsatzArtifacts())
+    with pytest.raises(ConfigError, match="per ansatz parameter"):
+        workflow.run_problem(object(), options={"algorithm": "vqe"}, initial_point=[])
+
+
+def test_user_callback_receives_detached_history_and_provider_closes(supplied_problem_runner):
+    _, _, calls = supplied_problem_runner
+
+    def callback(record):
+        record["metadata"]["nested"]["value"] = 99
+        record["evaluation"] = 99
+
+    result = workflow.run_problem(
+        object(),
+        options={"algorithm": "vqe"},
+        initial_point=[0.1, 0.2],
+        callback=callback,
+        reference_energy_hartree=np.float64(-1.3),
+    )
+    assert np.array_equal(calls[0].initial_point, [0.1, 0.2])
+    assert calls[-1] == "closed"
+    assert result.energy_error_hartree == pytest.approx(0.05)
+    assert result.metadata["evaluations"][0]["metadata"] == {"nested": {"value": 1}}
+    assert result.metadata["evaluations"][0]["evaluation"] == 1
+
+
+def test_callback_failure_releases_provider(supplied_problem_runner):
+    _, _, calls = supplied_problem_runner
+
+    def callback(_record):
+        raise RuntimeError("callback failed")
+
+    with pytest.raises(RuntimeError, match="callback failed"):
+        workflow.run_problem(object(), options={"algorithm": "vqe"}, callback=callback)
+    assert calls[-1] == "closed"
+
+
+def test_external_pool_replaces_configured_ansatz(supplied_problem_runner, monkeypatch):
+    context, _, calls = supplied_problem_runner
+    validated = []
+    pool = SimpleNamespace(
+        operators=(object(),),
+        metadata=({"label": "selected_double"},),
+        validate=validated.append,
+    )
+
+    def unexpected_ansatz(*_args, **_kwargs):
+        pytest.fail("external operators replace the ansatz builder")
+
+    monkeypatch.setattr(workflow.ANSATZE, "build", unexpected_ansatz)
+    result = workflow.run_problem(
+        object(),
+        options={"algorithm": "adapt_vqe", "ansatz": "efficient_su2"},
+        operator_pool=pool,
+    )
+    assert validated == [context.num_qubits]
+    assert calls[0].ansatz.operator_pool is pool.operators
+    assert calls[0].ansatz.pool_metadata is pool.metadata
+    assert calls[-1] == "closed"
+    assert result.ansatz == "external_pool"
+    assert result.metadata["operator_pool_source"] == "external"
+
+
 # ---------------------------------------------------------------------------
 # Driver/context helpers
 # ---------------------------------------------------------------------------
@@ -1478,95 +1616,6 @@ def test_atom_spec_reads_one_xyz_frame_and_rejects_bad_inputs(tmp_path: Path) ->
     xyz.write_text("1\ncomment\nH 0 0\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="malformed atom row 1"):
         workflow._atom_spec(xyz)
-
-
-def test_build_problem_is_lazy_and_applies_active_space(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    xyz = tmp_path / "h2.xyz"
-    xyz.write_text("2\nh2\nH 0 0 0\nH 0 0 0.735\n", encoding="utf-8")
-    base_problem = SimpleNamespace(name="base")
-    transformed_problem = SimpleNamespace(name="transformed")
-
-    class PySCFDriver:
-        calls: ClassVar[list[dict[str, object]]] = []
-
-        def __init__(self, **kwargs: object) -> None:
-            type(self).calls.append(kwargs)
-
-        def run(self) -> object:
-            return base_problem
-
-    class ActiveSpaceTransformer:
-        calls: ClassVar[list[dict[str, object]]] = []
-
-        def __init__(self, **kwargs: object) -> None:
-            type(self).calls.append(kwargs)
-
-        def transform(self, problem: object) -> object:
-            assert problem is base_problem
-            return transformed_problem
-
-    class DistanceUnit:
-        ANGSTROM = "angstrom"
-
-    _install_module(monkeypatch, "qiskit_nature.second_q.drivers", PySCFDriver=PySCFDriver)
-    _install_module(
-        monkeypatch,
-        "qiskit_nature.second_q.transformers",
-        ActiveSpaceTransformer=ActiveSpaceTransformer,
-    )
-    _install_module(monkeypatch, "qiskit_nature.units", DistanceUnit=DistanceUnit)
-
-    plain = workflow._build_problem(
-        xyz, charge=-1, multiplicity=2, options=QiskitOptions(active_space=None)
-    )
-    transformed = workflow._build_problem(
-        xyz,
-        charge=0,
-        multiplicity=1,
-        options=QiskitOptions(active_space={"electrons": (1, 1), "orbitals": 2}),
-    )
-
-    assert plain is base_problem
-    assert transformed is transformed_problem
-    assert PySCFDriver.calls[0]["spin"] == 1
-    assert PySCFDriver.calls[0]["charge"] == -1
-    assert ActiveSpaceTransformer.calls == [{"num_electrons": (1, 1), "num_spatial_orbitals": 2}]
-    with pytest.raises(ConfigError, match="multiplicity must be at least 1"):
-        workflow._build_problem(xyz, charge=0, multiplicity=0, options=QiskitOptions())
-
-
-def test_electronic_context_builds_mapper_and_checks_particles(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    mapped = SimpleNamespace(num_qubits=6)
-
-    class Mapper:
-        def map(self, operator: object) -> object:
-            assert operator == "hamiltonian"
-            return mapped
-
-    problem = SimpleNamespace(
-        hamiltonian=SimpleNamespace(second_q_op=lambda: "hamiltonian"),
-        num_particles=(2, 1),
-        num_spatial_orbitals=3,
-    )
-    monkeypatch.setattr(workflow.MAPPERS, "build", lambda *_args, **_kwargs: Mapper())
-    context = workflow._electronic_context(problem, QiskitOptions(), multiplicity=2)
-    assert context.num_particles == (2, 1)
-    assert context.num_spatial_orbitals == 3
-    assert context.num_qubits == 6
-    assert context.multiplicity == 2
-    assert context.qubit_hamiltonian is mapped
-
-    bad = SimpleNamespace(
-        hamiltonian=problem.hamiltonian,
-        num_particles=(1, 1, 0),
-        num_spatial_orbitals=3,
-    )
-    with pytest.raises(ConfigError, match="invalid particles"):
-        workflow._electronic_context(bad, QiskitOptions(), multiplicity=1)
 
 
 def test_jsonable_handles_qiskit_and_numpy_diagnostic_shapes() -> None:
